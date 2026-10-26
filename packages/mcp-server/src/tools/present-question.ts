@@ -28,14 +28,19 @@ import {
 import { formCallOf, formDepsOf, mcpHostOf, type HandleRunStores } from './start-run.js';
 import { replyAfterForm, sendQuestionForm, type FormCall } from '../form-path.js';
 import {
+  disclosureOfTool,
   mcpReplyOf,
   renderReply,
+  replySubject,
+  safeTool,
+  setForSubject,
   toolContentOf,
+  MCP_ENVELOPE_TABLE,
   PRESENT_QUESTION_DESCRIPTION,
   type McpEnvelope,
+  type WithDoorDisclosure,
   type WithPersonBlock,
 } from '../render-reply.js';
-import { sseJsonStringify } from '../sse-json.js';
 import { toolMeta } from '../tool-annotations.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
 
@@ -227,8 +232,12 @@ export async function handlePresentQuestion(
 }
 
 /** Registers the present_question MCP tool on the server, and returns it (listed per session). */
-export function registerPresentQuestion(server: McpServer, opts?: HandleRunStores): RegisteredTool {
+export function registerPresentQuestion(
+  server: McpServer,
+  opts?: HandleRunStores & WithDoorDisclosure,
+): RegisteredTool {
   markServedByTool(opts);
+  const door = disclosureOfTool(opts);
   return server.registerTool(
     'present_question',
     {
@@ -236,12 +245,22 @@ export function registerPresentQuestion(server: McpServer, opts?: HandleRunStore
       description: PRESENT_QUESTION_DESCRIPTION,
       inputSchema: presentQuestionArgsShape,
     },
-    async (args, extra) => {
-      const call = formCallOf(opts, extra);
-      try {
+    // #729 PR-3: inside safeTool, and every reply leaves through the door's walk with the set for
+    // the run it names (M-1, F11).
+    safeTool(
+      async (args, extra) => {
+        const call = formCallOf(opts, extra);
         const result = await handlePresentQuestion(args, opts, call);
-        return toolContentOf({ ...result, data: {}, evidence: [] }, sseJsonStringify);
-      } catch (err) {
+        return toolContentOf(
+          { ...result, data: {}, evidence: [] },
+          {
+            set: await setForSubject(door, await replySubject(opts, { runId: args.run_id })),
+            audience: 'agent',
+            table: MCP_ENVELOPE_TABLE,
+          },
+        );
+      },
+      async (err, args) => {
         const workflowErr =
           err instanceof WorkflowError
             ? err
@@ -265,8 +284,12 @@ export function registerPresentQuestion(server: McpServer, opts?: HandleRunStore
           ),
           mcpHostOf(opts),
         );
-        return toolContentOf(mcpReplyOf(rendered), sseJsonStringify);
-      }
-    },
+        return toolContentOf(mcpReplyOf(rendered), {
+          set: await setForSubject(door, await replySubject(opts, { runId: args.run_id })),
+          audience: 'agent',
+          table: MCP_ENVELOPE_TABLE,
+        });
+      },
+    ),
   );
 }

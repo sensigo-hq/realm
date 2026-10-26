@@ -328,6 +328,7 @@ export function checkProviderFlags(flags: ProviderFlags): ProviderFlagsCheck {
       const key = flags.provider === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY';
       return {
         ok: false,
+        // eslint-disable-next-line no-restricted-syntax -- prose naming the program, not a command to copy (#729 PR-3, L-2).
         message: `realm agent requires an LLM API key: --provider ${flags.provider} was given, and ${key} is not set or is empty. Set ${key}.`,
       };
     }

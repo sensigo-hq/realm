@@ -8,6 +8,8 @@ import {
   checkPreconditions,
   evaluateAllPreconditions,
   evaluateGuardConditions,
+  preconditionHint,
+  preconditionRefusal,
 } from './precondition.js';
 import { executeStep, executeChain } from './execution-loop.js';
 import { JsonFileStore } from '../store/json-file-store.js';
@@ -50,19 +52,21 @@ describe('checkPreconditions', () => {
     expect(result!.passed).toBe(false);
   });
 
-  // issue #154: the first-failure resolved_value (feeding the blocked-step suggestion string
-  // in execution-loop.ts) is now bounded/scrubbed too.
-  it('scrubs an email-bearing LHS in the first-failure result', () => {
+  // #729 PR-3: the first-failure resolved_value is returned RAW — the double bound is deleted, and
+  // its one renderer (`escapedBoundedValue` in `pending.ts`, pinned by the refusal's cells) bounds
+  // and scrubs it once. (a) red when `checkPreconditions` bounds again; (b) prints the value, an
+  // ordinary fake address or 600 `x`.
+  it('returns an email-bearing LHS raw in the first-failure result (its renderer scrubs it)', () => {
     const evidence = { step_a: { text: 'contact jane.doe@example.com' } };
     const result = checkPreconditions(["step_a.text == 'irrelevant'"], evidence);
-    expect(result!.resolved_value).toBe('contact [REDACTED_EMAIL]');
+    expect(result!.resolved_value).toBe('contact jane.doe@example.com');
   });
 
-  it('caps an oversized LHS in the first-failure result', () => {
+  it('returns an oversized LHS whole in the first-failure result (its renderer bounds it)', () => {
     const long = 'x'.repeat(600);
     const evidence = { step_a: { text: long } };
     const result = checkPreconditions(["step_a.text == 'irrelevant'"], evidence);
-    expect(result!.resolved_value).toBe(`${'x'.repeat(500)}…[truncated]`);
+    expect(result!.resolved_value).toBe(long);
   });
 
   it('leaves a scalar first-failure resolved_value byte-unchanged', () => {
@@ -209,11 +213,12 @@ describe('evaluateAllPreconditions', () => {
 
   // issue #154: precondition_trace's resolved_value is now bounded/scrubbed via
   // boundResolvedValue — the same helper #111 introduced for the when-skip trace.
-  it('caps an oversized string LHS with the truncation marker', () => {
+  // #729 PR-3 B0: (a) red when the cut returns; (b) prints the marker or a run of `x`.
+  it('replaces an oversized string LHS whole with its marker (B0)', () => {
     const long = 'x'.repeat(600);
     const evidence = { step_a: { text: long } };
     const results = evaluateAllPreconditions(["step_a.text == 'irrelevant'"], evidence);
-    expect(results[0]!.resolved_value).toBe(`${'x'.repeat(500)}…[truncated]`);
+    expect(results[0]!.resolved_value).toBe('‹600 characters, not kept›');
   });
 
   it('scrubs an email-bearing string LHS', () => {
@@ -351,13 +356,13 @@ describe('evaluateGuardConditions', () => {
     }
   });
 
-  it('abort path: caps an oversized LHS on a false comparison condition', () => {
+  it('abort path: replaces an oversized LHS whole with its marker (B0)', () => {
     const long = 'x'.repeat(600);
     const evidenceByStep = { step_a: { text: long } };
     const result = evaluateGuardConditions(["step_a.text == 'never-matches'"], evidenceByStep);
     expect(result.kind).toBe('abort');
     if (result.kind === 'abort') {
-      expect(result.conditions[0]!.resolved_value).toBe(`${'x'.repeat(500)}…[truncated]`);
+      expect(result.conditions[0]!.resolved_value).toBe('‹600 characters, not kept›');
     }
   });
 
@@ -370,13 +375,13 @@ describe('evaluateGuardConditions', () => {
     }
   });
 
-  it('pass path: caps an oversized LHS on a passing comparison condition', () => {
+  it('pass path: replaces an oversized LHS whole with its marker (B0)', () => {
     const long = 'x'.repeat(600);
     const evidenceByStep = { step_a: { text: long } };
     const result = evaluateGuardConditions([`step_a.text == '${long}'`], evidenceByStep);
     expect(result.kind).toBe('pass');
     if (result.kind === 'pass') {
-      expect(result.conditions[0]!.resolved_value).toBe(`${'x'.repeat(500)}…[truncated]`);
+      expect(result.conditions[0]!.resolved_value).toBe('‹600 characters, not kept›');
     }
   });
 
@@ -443,5 +448,80 @@ describe('guard abort — aborted_at.conditions is bounded end-to-end (issue #15
     const conditions = savedRun.aborted_at?.conditions;
     expect(conditions).toHaveLength(1);
     expect(conditions![0]!.resolved_value).toBe('contact [REDACTED_EMAIL]');
+  });
+});
+
+// #729 PR-3 (RECORD 01 #17; D1 D12): a guard's evaluated conditions leave its `output_summary` for
+// its step's diagnostics; `{aborted, abort_message}` stay, and so does `aborted_at.conditions`.
+describe("#729 PR-3 — a guard's conditions live in its diagnostics", () => {
+  let dir: string;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'realm-guard-diag-'));
+  });
+
+  const def = (expected: string): WorkflowDefinition => ({
+    id: 'guard-diag-wf',
+    name: 'Guard Diagnostics',
+    version: 1,
+    steps: {
+      'step-a': { description: 'Agent step', execution: 'agent', depends_on: [] },
+      'guard-b': {
+        description: 'Guard step',
+        execution: 'guard',
+        depends_on: ['step-a'],
+        abort_unless: [`step-a.text == '${expected}'`],
+        abort_message: 'stopped by the guard',
+      },
+    },
+  });
+
+  for (const [arm, expected, aborted] of [
+    ['abort', 'never-matches', true],
+    ['pass', 'ok', false],
+  ] as const) {
+    it(`${arm}: output_summary holds {aborted, abort_message?} only; diagnostics.guard_conditions holds the conditions`, async () => {
+      const store = new JsonFileStore(dir);
+      const { run } = await store.create({
+        workflowId: 'guard-diag-wf',
+        workflowVersion: 1,
+        params: {},
+      });
+      await executeChain(store, def(expected), {
+        runId: run.id,
+        command: 'step-a',
+        input: {},
+        dispatcher: async () => ({ text: 'ok' }),
+      });
+      const saved = await store.get(run.id);
+      const guard = saved.evidence.filter((e) => e.step_id === 'guard-b').at(-1)!;
+      // (a) red when `conditions` return to the output, or leave the diagnostics; (b) prints the
+      //     output's key list and the conditions' text and verdicts (no value: the LHS is 'ok').
+      expect(Object.keys(guard.output_summary)).toEqual(
+        aborted ? ['aborted', 'abort_message'] : ['aborted'],
+      );
+      expect(guard.diagnostics?.guard_conditions).toEqual([
+        { condition: `step-a.text == '${expected}'`, resolved_value: 'ok', passed: !aborted },
+      ]);
+      // (a) red when the run's own abort record loses its conditions; (b) prints the count.
+      expect(saved.aborted_at?.conditions?.length ?? 0).toBe(aborted ? 1 : 0);
+    });
+  }
+});
+
+// #729 PR-3 (RECORD 01 #8; D3/08 S1): core composes the precondition refusal once; each door passes
+// the value as its renderer drew it.
+describe('#729 PR-3 — preconditionRefusal', () => {
+  it("the hint is core's own first clause, the one pending.ts stores", () => {
+    // (a) red when the hint's words change (the stored refusal and the CLI's line would part); (b)
+    //     prints the hint.
+    expect(preconditionHint('s')).toBe("Precondition failed for step 's'.");
+  });
+
+  it('one sentence, the value as passed', () => {
+    // (a) red when the sentence changes (the stored `facts.refusal` would change with it); (b)
+    //     prints the sentence, made of the fake expression and value.
+    expect(preconditionRefusal("Precondition failed for step 's'.", 'a.n > 1', '0')).toBe(
+      "Precondition failed for step 's'. Precondition failed: 'a.n > 1'. Resolved value: 0.",
+    );
   });
 });

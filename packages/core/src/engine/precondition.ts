@@ -96,7 +96,27 @@ export interface PreconditionResult {
 }
 
 /**
- * Evaluates all preconditions in order. Returns the first failure, or null if all pass.
+ * The precondition refusal's one sentence (#729 PR-3; RECORD 01 #8): core composes it once, and
+ * each door passes the value as ITS renderer drew it — the stored `facts.refusal` with
+ * `escapedBoundedValue`, the CLI's broadcast audience with its value span — so the sentence is the
+ * same on every door apart from the value's rendering. This is its first part, the hint.
+ */
+export function preconditionHint(step: string): string {
+  return `Precondition failed for step '${step}'.`;
+}
+
+/** The precondition refusal's sentence: the hint, the expression, and the value as rendered. */
+export function preconditionRefusal(
+  hint: string,
+  expression: string,
+  renderedValue: string,
+): string {
+  return `${hint} Precondition failed: '${expression}'. Resolved value: ${renderedValue}.`;
+}
+
+/**
+ * Evaluates all preconditions in order. Returns the first failure, or null if all pass. The
+ * failure's `resolved_value` is the value as resolved, unbounded: its renderer bounds it.
  */
 export function checkPreconditions(
   preconditions: string[],
@@ -109,7 +129,8 @@ export function checkPreconditions(
       const split = splitComparison(expression);
       const resolvedValue: unknown =
         split.kind === 'comparison' ? resolvePath(evidenceByStep, split.lhsPath) : undefined;
-      return { expression, passed: false, resolved_value: boundResolvedValue(resolvedValue) };
+      // Raw (#729 PR-3): the one renderer, `escapedBoundedValue` in `pending.ts`, bounds it once.
+      return { expression, passed: false, resolved_value: resolvedValue };
     }
   }
   return null;

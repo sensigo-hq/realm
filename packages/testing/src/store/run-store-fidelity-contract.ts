@@ -219,6 +219,14 @@ const SAMPLE_VALUES: {
         truncated: false,
       },
       coverage: 'dir_tree_v1',
+      // #729 PR-3 (D-12; §0 rule 5): what decides the run's declared values — the manifest's
+      // `secrets` block hash beside its whole-file hash, and the secret names — round-trips whole.
+      manifest: {
+        path: '/tck/realm.yaml',
+        content_hash: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+        secrets_block_hash: 'cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe',
+      },
+      secret_names: ['TCK_SECRET'],
     },
   ],
   validation_rejections: { 'tck-step': 3 },
@@ -291,6 +299,35 @@ export function runStoreFidelityContract(
       },
     });
   }
+
+  // #729 PR-3 correction 5 (J-5): the identity entry a creator writes WITH the run (its manifest
+  // reference at the run's start) is kept by a store that declares `extension_identity`, in the
+  // creation write; a store that declares it not kept leaves it absent — never a field it says it
+  // does not keep.
+  cases.push({
+    law: 'FIDELITY_HONESTY',
+    name: "create's start entry: kept when the store declares 'extension_identity', absent when it does not",
+    run: async () => {
+      const entry = { ...SAMPLE_VALUES.extension_identity![0]!, origin: 'start' as const };
+      const { run } = await adapter.store.create({
+        workflowId: 'tck-fidelity-start-identity',
+        workflowVersion: 1,
+        params: {},
+        extensionIdentity: [entry],
+      });
+      const reread = await adapter.store.get(run.id);
+      const declared = declaredFields.has('extension_identity');
+      const want = declared ? JSON.stringify([entry]) : undefined;
+      const read = JSON.stringify(reread.extension_identity);
+      if (read !== want) {
+        throw new Error(
+          `store ${declared ? 'declares' : 'does not declare'} persistedRunRecordFields includes ` +
+            `'extension_identity', but create's start entry read back as ${read ?? 'absent'} ` +
+            `(#729 PR-3 correction 5, J-5). want: ${want ?? 'absent'}`,
+        );
+      }
+    },
+  });
 
   if (declaredFields.has('sealed_by')) {
     cases.push({

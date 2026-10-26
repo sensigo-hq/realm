@@ -252,7 +252,11 @@ describe('#729 PR-0 — Table rows 14–19: "its phase is P" — every caller pa
           if (text[end] === '(') depth++;
           else if (text[end] === ')' && --depth === 0) break;
         }
-        const call = text.slice(m.index!, end + 1);
+        // #729 PR-3 (L-2): a print site passes the writer's render context after the phase; the
+        // phase is still the argument before it.
+        const call = text
+          .slice(m.index!, end + 1)
+          .replace(/,\s*(writerCtx\(\)|ctx)\s*,?\s*\)$/, ')');
         const where = `${relative(src, file)}:${text.slice(0, m.index!).split('\n').length}`;
         calls.push(where);
         const derived = /(deriveRunPhase|derivePhase|derivePhaseOf)\([^()]*\)\s*,?\s*\)$/.test(

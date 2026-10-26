@@ -16,7 +16,7 @@ import type {
   SettlementResult,
   Attributed,
 } from '@sensigo/realm';
-import { CLI_COMMANDS, NO_DRIVE_FLAGS, cannotGoOnLines } from './ways-renderer.js';
+import { CLI_COMMANDS, cannotGoOnLines, writerHost } from './ways-renderer.js';
 import {
   describePending,
   owedList,
@@ -42,6 +42,7 @@ import { loadProjectExtensions } from '../extensions/load-project-extensions.js'
 import { resolveProgramIdentity } from '../lib/program-identity.js';
 import { agentReadyReason, inFlightReasons } from './run-advance.js';
 import { listRunsDiagnosed, unreadableRunLines } from './list.js';
+import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
 
 /**
  * issue #558 PR-C: ONE mint, rendered by BOTH surfaces that can find nothing to drain — the
@@ -103,6 +104,7 @@ const wayOutOf = (runId: string, run: RunRecord, now: Date, pending?: OwedView):
             composeWaysAt(run, now, { definition: pending.workflow }),
             runId,
             deriveRunPhase(run),
+            writerCtx(),
           );
     if (cannotGoOn.length > 0) return [cannotGoOn.join(' ')];
     // issue #625 PR-2a (decision C7): with engine work owed, the way on is `advance` — `abandon`
@@ -135,7 +137,7 @@ const wayOutOf = (runId: string, run: RunRecord, now: Date, pending?: OwedView):
   // drive, or nothing when the answer ended the run — and `abandon` is the way to end it then (it
   // refuses a run that waits on a question).
   return [
-    `To go on, answer its question first: ${CLI_COMMANDS.respond(respondWayOfGate(runId, gate), undefined, NO_DRIVE_FLAGS)}`,
+    `To go on, answer its question first: ${CLI_COMMANDS.respond(respondWayOfGate(runId, gate), undefined, writerHost())}`,
     `The answer can end the run by itself; if it does not, realm run respond names what the run ` +
       `owes next, and realm run abandon ${runId} ends it.`,
   ];
@@ -392,7 +394,7 @@ function renderDryRun(
     if (!gateReported) {
       const [first, ...more] = wayOutOf(runId, run, now, pending);
       console.log(
-        `Run '${runId}' is not terminal (phase: '${deriveRunPhase(run)}') — nothing to drain. ${first}`,
+        `Run '${runId}' is not terminal (phase: '${writerCtx().word(deriveRunPhase(run), RUN_PHASE_WORDS)}') — nothing to drain. ${first}`,
       );
       for (const line of more) console.log(line);
     }
@@ -403,7 +405,9 @@ function renderDryRun(
     console.log(nothingToDrain(runId));
     return;
   }
-  console.log(`Run '${runId}' (${run.run_phase}) — pending finalizers, rank order:`);
+  console.log(
+    `Run '${runId}' (${writerCtx().word(run.run_phase, RUN_PHASE_WORDS)}) — pending finalizers, rank order:`,
+  );
   for (const e of entries) {
     // issue #558 PR-C (walk): never predict "would lease, execute, and mark" for a finalizer the
     // workflow does not declare — --force halts on it and leaves it (and everything behind it)
@@ -818,7 +822,7 @@ export async function runDrainAction(
     if (!run.terminal_state && !hasEnactableGate) {
       const [first, ...more] = wayOutOf(runId, run, now, await ownedWork(run));
       console.error(
-        `Run '${runId}' is not terminal (phase: '${deriveRunPhase(run)}') — nothing to drain. ${first}`,
+        `Run '${runId}' is not terminal (phase: '${writerCtx().word(deriveRunPhase(run), RUN_PHASE_WORDS)}') — nothing to drain. ${first}`,
       );
       for (const line of more) console.error(line);
       process.exit(1);
@@ -861,7 +865,7 @@ export async function runDrainAction(
       // mid-drain is a race (a live writer advanced it), not a disposal case; pointing the
       // operator at `abandon` here would recommend killing a run somebody just advanced.
       console.log(
-        `Run '${runId}' is not terminal (phase: '${deriveRunPhase(workingRun)}') — nothing further to drain.`,
+        `Run '${runId}' is not terminal (phase: '${writerCtx().word(deriveRunPhase(workingRun), RUN_PHASE_WORDS)}') — nothing further to drain.`,
       );
       // issue #625 PR-2a (decision C7): the expiry left steps owed to the engine — name the call.
       const owed = await ownedWork(workingRun);
@@ -881,6 +885,7 @@ export async function runDrainAction(
               composeWaysAt(workingRun, now, { definition: owed.workflow }),
               runId,
               deriveRunPhase(workingRun),
+              writerCtx(),
             );
       for (const line of cannotGoOn) console.log(line);
       // decision C205: with no engine work and nothing that cannot run, an agent step ready (the

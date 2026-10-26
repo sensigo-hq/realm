@@ -1,7 +1,19 @@
 // attempts command — prints the durable failed agent-attempt sidecar for a run (observability P3).
 import chalk from 'chalk';
 import { Command } from 'commander';
-import type { FailedAttemptRecord } from '@sensigo/realm';
+import type { FailedAttemptRecord, RunRecord } from '@sensigo/realm';
+import {
+  noteDeclaredStanding,
+  noteRunManifest,
+  printJsonByTable,
+  valuesShownFor,
+  valuesShownLine,
+  valuesWithheldFor,
+  valuesWithheldLine,
+  withholdUnlessAccepted,
+  writerCtx,
+} from '../output/writer.js';
+import type { ClassTable } from '@sensigo/realm';
 
 /** The two core renderers this command needs, loaded lazily with the rest of core (see the test's
  *  header for the idiom). */
@@ -23,19 +35,86 @@ function summarize(rec: FailedAttemptRecord, core: Renderers): { label: string; 
   return { label, lines: core.renderProblemsLines(entries, more ?? 0) };
 }
 
+/** #729 PR-3 (L-5): the attempts' class table — ids, codes, times and counts are facts; the
+ *  validation summary and the submitted keys are diagnostic copies. */
+const ATTEMPTS_JSON_TABLE: ClassTable = {
+  records: {
+    nested: {
+      run_id: 'fact',
+      workflow_id: 'fact',
+      step_id: 'fact',
+      ts: 'fact',
+      error_code: 'fact',
+      validation_error_summary: 'bounded',
+      submitted_key_count: 'fact',
+      submitted_keys: 'bounded',
+      submitted_bytes: 'fact',
+      trace_entry_count: 'fact',
+      error_count: 'fact',
+    },
+  },
+  capped: 'fact',
+};
+
 export const attemptsCommand = new Command('attempts')
   .description('Show failed agent-step validation attempts recorded for a run')
   .argument('<run-id>', 'ID of the run to inspect')
   .option('--json', 'Print the raw records as JSON instead of a table')
-  .action(async (runId: string, opts: { json?: boolean }) => {
-    const { JsonFileStore, FailedAttemptStore, moreOf, renderProblemsLines } =
-      await import('@sensigo/realm');
-    const store = new FailedAttemptStore(new JsonFileStore().runsDirPath);
+  .option(
+    '--accept-partial-disclosure',
+    "Print the attempts' stored values even when Realm cannot read every declared secret of the run (masked with what is known)",
+  )
+  .action(async (runId: string, opts: { json?: boolean; acceptPartialDisclosure?: boolean }) => {
+    const {
+      JsonFileStore,
+      JsonWorkflowStore,
+      FailedAttemptStore,
+      getWorkflowForRun,
+      moreOf,
+      renderProblemsLines,
+      WorkflowError,
+    } = await import('@sensigo/realm');
+    const runs = new JsonFileStore();
+    const store = new FailedAttemptStore(runs.runsDirPath);
     try {
+      // #729 PR-3 correction 3 (H-7''): the run's declared values are read as `inspect` reads them,
+      // so its stored values are masked with them — and withheld under a failed or changed manifest
+      // unless the flag is given. A run this store does not hold reads nothing.
+      let run: RunRecord | undefined;
+      try {
+        run = await runs.get(runId);
+      } catch (err) {
+        // Correction 4 (I-4): a record this store holds and cannot read is a failed read — its
+        // declared values could not be read, so the attempts' values are withheld as for a failed
+        // manifest. Only "not found" reads nothing.
+        if (!(err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND'))
+          noteDeclaredStanding(`run ${runId}`, {
+            declared: 'unknown',
+            declaredCause: 'load_failed',
+          });
+      }
+      if (run !== undefined) {
+        const definition = await getWorkflowForRun(new JsonWorkflowStore(), run, {
+          retryVerb: 'read the attempts again',
+          verb: 'read the attempts',
+          terminalOk: true,
+        }).catch(() => undefined);
+        await noteRunManifest(definition, run);
+      }
+      withholdUnlessAccepted(opts.acceptPartialDisclosure === true);
       const { records, capped } = await store.read(runId);
+      // Correction 4 (I-5, I-6): the first line only when there are attempts to show — that they are
+      // withheld, or shown on the flag where they would have been.
+      if (records.length > 0) {
+        const withheld = valuesWithheldFor();
+        const shown = valuesShownFor();
+        if (withheld !== undefined) console.error(valuesWithheldLine(withheld));
+        else if (shown !== undefined) console.error(valuesShownLine(shown));
+      }
 
       if (opts.json === true) {
-        console.log(JSON.stringify({ records, capped }, null, 2));
+        // #729 PR-3 (L-5): built by table, printed as one data span.
+        printJsonByTable({ records, capped }, ATTEMPTS_JSON_TABLE);
         return;
       }
 
@@ -60,7 +139,8 @@ export const attemptsCommand = new Command('attempts')
           `${chalk.dim(ts)}  ${chalk.bold(rec.step_id)}  ${chalk.red(rec.error_code)}  ` +
             `${keyCount} key(s)${label !== '' ? `  ${label}` : ''}`,
         );
-        for (const line of lines) console.log(`    ${line}`);
+        // H-7'': a stored validation summary goes through the value span (its shape when withheld).
+        for (const line of lines) console.log(`    ${writerCtx().value(line)}`);
       }
       if (capped) {
         console.log(

@@ -53,6 +53,8 @@ import {
   renderChecksNotRunLine,
   type CheckNotRun,
 } from '../lib/admission-context.js';
+import { printJsonByTable, withCommand, writerCtx } from '../output/writer.js';
+import type { ClassTable } from '@sensigo/realm';
 
 /**
  * Advisory (issue A3, never rejects): an auto step declaring `retry:` but no `timeout_seconds`
@@ -365,27 +367,41 @@ interface ValidateJsonEmit {
  * purity guarantee this surface's cells assert on (nothing else may write to stdout on a
  * contract arm) — `JSON.stringify(obj, null, 2)`, the `workflow list --json` sibling's own idiom.
  */
+const VALIDATE_JSON_TABLE: ClassTable = {
+  valid: 'fact',
+  mode: 'fact',
+  path: 'fact',
+  workflow_id: 'fact',
+  loader_version: 'fact',
+  schema_version: 'fact',
+  error_count: 'fact',
+  warning_count: 'fact',
+  strict: 'fact',
+  diagnostics: 'bounded',
+  errors: 'bounded',
+  checks_not_run: 'fact',
+  extension_keys: 'fact',
+};
+
 function emitValidateJson(result: ValidateJsonEmit): void {
-  console.log(
-    JSON.stringify(
-      {
-        valid: result.valid,
-        mode: result.mode,
-        path: result.path,
-        workflow_id: result.workflowId,
-        loader_version: VERSION,
-        schema_version: result.schemaVersion,
-        error_count: result.errors.length,
-        warning_count: result.diagnostics.length,
-        strict: { requested: result.strictRequested, failed: result.strictFailed },
-        diagnostics: result.diagnostics.map(normalizeDiagnosticSeverity),
-        errors: result.errors,
-        checks_not_run: result.checksNotRun,
-        extension_keys: result.extensionKeys,
-      },
-      null,
-      2,
-    ),
+  // #729 PR-3 (L-5): built by table, printed as one data span.
+  printJsonByTable(
+    {
+      valid: result.valid,
+      mode: result.mode,
+      path: result.path,
+      workflow_id: result.workflowId,
+      loader_version: VERSION,
+      schema_version: result.schemaVersion,
+      error_count: result.errors.length,
+      warning_count: result.diagnostics.length,
+      strict: { requested: result.strictRequested, failed: result.strictFailed },
+      diagnostics: result.diagnostics.map(normalizeDiagnosticSeverity),
+      errors: result.errors,
+      checks_not_run: result.checksNotRun,
+      extension_keys: result.extensionKeys,
+    },
+    VALIDATE_JSON_TABLE,
   );
 }
 
@@ -626,9 +642,14 @@ async function validateRegistered(
         );
       }
       const r = repairActFor(err);
+      // G7: the act's shell command printed whole (a path in it is a fact: R31).
       if (r !== undefined)
         console.error(
-          `To repair: ${r.act}${r.alternative !== undefined ? `; ${r.alternative}` : ''}.`,
+          withCommand(
+            `To repair: ${r.act}${r.alternative !== undefined ? `; ${r.alternative}` : ''}.`,
+            r.command,
+            writerCtx(),
+          ),
         );
       process.exit(1);
     }

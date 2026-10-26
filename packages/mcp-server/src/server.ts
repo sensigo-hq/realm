@@ -20,8 +20,10 @@ import {
   type Principal,
   type RunStore,
   type TraceBufferStore,
+  type RunRecord,
 } from '@sensigo/realm';
 import type { PriceSource, WorkflowDefinition } from '@sensigo/realm';
+import { discloseByTable, type DisclosureClass, type DisclosureSet } from '@sensigo/realm';
 import { loadPriceSource, withSourceNote } from './price-source.js';
 import { JsonTraceBufferStore } from './json-trace-buffer-store.js';
 import { VERSION } from './version.js';
@@ -38,9 +40,9 @@ import { registerAbandonRun } from './tools/abandon-run.js';
 import { registerCreateWorkflow } from './tools/create-workflow.js';
 import { registerAppendTrace } from './tools/append-trace.js';
 import { registerStartRunBatch } from './tools/start-run-batch.js';
+import { doorDisclosureOf, type DoorDisclosure, type OperatorRoute } from './render-reply.js';
 import { registerPresentQuestion } from './tools/present-question.js';
 import { ABANDON_RUN_DESCRIPTION_NO_ANSWER_TOOL } from './tools/abandon-run.js';
-import type { OperatorRoute } from './render-reply.js';
 import {
   FORM_WAIT_ENV,
   GATE_ANSWERS_ENV,
@@ -128,6 +130,21 @@ export interface RealmMcpServerOptions {
    */
   operatorRoute?: OperatorRoute;
   /**
+   * #729 PR-3 (M-3): the disclosure set for a reply — the declared values of the definition's
+   * project and the environment's — built per reply by the host. `realm mcp` and `realm serve` pass
+   * the CLI's set, declared part included. Absent ⇒ the environment's set, read per reply, with the
+   * declared part `unknown` (cause `embedder_none`); a provider that throws gives the environment's
+   * set with cause `load_failed`. Every reply carries its receipt. It receives what the reply is
+   * about (D-11): the definition, and the run when the call names one; it reports that project's
+   * declared state and cause, and keeps its declared members one process-wide union.
+   */
+  disclosureProvider?: (
+    definition: WorkflowDefinition | undefined,
+    run?: RunRecord,
+  ) => Promise<DisclosureSet>;
+  /** #729 PR-3 (M-3): environment variable names the host shows (with `REALM_NOT_SECRET`). */
+  disclosure?: { notSecret?: string[] };
+  /**
    * #627 W (§5.1): how this server handles gate answers. `asked` (the default): in a chat app that
    * shows forms the question goes to the person in the app's own form and the agent gets no answer
    * tool; in an app without forms the agent keeps the answer tool, and the app is asked to have the
@@ -164,6 +181,37 @@ export interface RealmMcpServerOptions {
   /** #627 W: the monotonic clock a form's per-call budget is read from (default `performance.now`). */
   monotonicNow?: () => number;
 }
+
+/**
+ * #729 PR-3 (M-5; RECORD 01 #10): the elicitation request's class table. The message is what the
+ * person is asked (the declared tier); the mode and the schema — the choices — are facts: the
+ * choices are acts, never masked.
+ */
+export const ELICIT_TABLE = {
+  mode: 'fact',
+  message: 'question',
+  requestedSchema: 'fact',
+} as const satisfies Record<keyof Parameters<ElicitFn>[0], DisclosureClass>;
+
+/**
+ * The ONE wrapper around `elicitInput` (M-5): the request walked by {@link ELICIT_TABLE} with the
+ * definition's set, then sent. Whichever of W and PR-3 lands second binds W's `elicit` through it.
+ */
+export function elicitDisclosedWith(elicit: ElicitFn, door: DoorDisclosure): DisclosedElicit {
+  return async (params, options, context) => {
+    const set = await door.setFor(context.definition, context.run);
+    const shown = discloseByTable(params, ELICIT_TABLE, set, 'agent')
+      .value as Parameters<ElicitFn>[0];
+    return elicit(shown, options);
+  };
+}
+
+/** The send a form path holds (M-5): W's `ElicitFn`, plus what the question is about. */
+export type DisclosedElicit = (
+  params: Parameters<ElicitFn>[0],
+  options: Parameters<ElicitFn>[1],
+  context: { definition?: WorkflowDefinition; run?: RunRecord },
+) => ReturnType<ElicitFn>;
 
 /**
  * Returns an ExtensionRegistry pre-populated with Realm's built-in adapters.
@@ -307,21 +355,30 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
   // (`~/.realm/workflows`) internally, so receiving it explicitly changes nothing for them.
   const effectiveWorkflowStore = options?.workflowStore ?? new JsonWorkflowStore();
 
+  // #729 PR-3 (M-3): every reply's set comes from one door disclosure, per reply.
+  const doorDisclosure: DoorDisclosure = doorDisclosureOf(options);
   // #627 W: the door rides every tool's stores; on stdio a form is sent through this server's own
-  // `elicitInput` (bound per call, so a test client's capabilities are read at the call).
-  const elicit: ElicitFn = (params, opts) =>
-    server.server.elicitInput(params, opts) as ReturnType<ElicitFn>;
+  // `elicitInput` (bound per call, so a test client's capabilities are read at the call). #729 PR-3
+  // (M-5, F8): the raw elicit leaves only through `elicitDisclosedWith`, which walks the request by
+  // its class table with the set for the question's workflow.
+  const elicit = elicitDisclosedWith(
+    (params, opts) => server.server.elicitInput(params, opts) as ReturnType<ElicitFn>,
+    doorDisclosure,
+  );
+  // Shared trace buffer store: one instance used by both append_trace and execute_step so
+  // WAL entries written by append_trace are visible when execute_step finalizes the step. #729 PR-3
+  // correction 2 (E-10): it rides `effectiveOptions` too, so every reply reads its run from the same
+  // store — the masking's subject (`replySubject`) included, on a fresh process's first call.
+  const effectiveRunStore: RunStore = options?.runStore ?? new JsonFileStore();
   const effectiveOptions = {
     ...options,
     registry: effectiveRegistry,
     workflowStore: effectiveWorkflowStore,
+    runStore: effectiveRunStore,
+    doorDisclosure,
     door,
     elicit,
   };
-
-  // Shared trace buffer store: one instance used by both append_trace and execute_step so
-  // WAL entries written by append_trace are visible when execute_step finalizes the step.
-  const effectiveRunStore: RunStore = options?.runStore ?? new JsonFileStore();
 
   // issue #188, PR-1: the co-location seam. See the doc comment on `runStore` above for the full
   // contract. Three cases, checked in order:
@@ -410,6 +467,7 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
     // Correction 2 (8.6 (e)): the effective workflow store, as every other tool gets it — one instance.
     workflowStore: effectiveWorkflowStore,
     traceBufferStore,
+    doorDisclosure,
     // #627 W (correction 1, A2): the door, as every other tool gets it from `effectiveOptions`.
     door,
     ...(options?.operatorRoute !== undefined ? { operatorRoute: options.operatorRoute } : {}),

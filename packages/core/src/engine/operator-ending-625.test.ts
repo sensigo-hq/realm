@@ -71,8 +71,9 @@ describe('#625 PR-2a, F2 — a run an operator ended is never offered the undo',
 
   it('the escaped, bounded value renderer: one line, every control escaped, then capped (escaping first); undefined reads undefined', () => {
     const long = '\u001b'.repeat(300);
-    // (a) red when the renderer is missing, prints a raw newline or ESC, caps before escaping (the
-    //     cap would let 500 raw characters through), or loses `undefined`; (b) prints each rendering.
+    // (a) red when the renderer is missing, prints a raw newline or ESC, bounds before escaping (300
+    //     raw characters fit the cap, so the escaped 1,802 would print whole), cuts instead of
+    //     keeping whole (#729 PR-3 B0), or loses `undefined`; (b) prints each rendering.
     expect({
       reason: render?.(REASON),
       separators: render?.('a b\u0085c'),
@@ -82,7 +83,7 @@ describe('#625 PR-2a, F2 — a run an operator ended is never offered the undo',
     }).toEqual({
       reason: SHOWN,
       separators: '"a\\u2028b\\u0085c"',
-      long: `"${'\\u001b'.repeat(300)}`.slice(0, 500) + '…[truncated]',
+      long: '‹1802 characters, not kept›',
       undefined: 'undefined',
       number: '42',
     });

@@ -68,6 +68,7 @@ import type {
 } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
 import { listRunsDiagnosed } from './list.js';
+import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
 
 /**
  * Minimum `--older-than` EITHER sweep will ever honor (1 hour) — a conservative floor for hygiene
@@ -710,7 +711,9 @@ function printGcReport(
     } else if (dryRun) {
       console.log(`\n${healResult.would_heal.length} stale-phase record(s) WOULD be healed:`);
       for (const e of healResult.would_heal) {
-        console.log(`  • ${e.id}: persisted '${e.persisted_phase}' → derived '${e.derived_phase}'`);
+        console.log(
+          `  • ${e.id}: persisted '${writerCtx().word(e.persisted_phase, RUN_PHASE_WORDS)}' → derived '${writerCtx().word(e.derived_phase, RUN_PHASE_WORDS)}'`,
+        );
       }
       printRetentionClockNote();
     } else {
@@ -719,7 +722,9 @@ function printGcReport(
           `${healResult.skipped_conflict.length} skipped (concurrent writer), ${healResult.failed.length} failed.`,
       );
       for (const e of healResult.healed) {
-        console.log(`  • ${e.id}: persisted '${e.persisted_phase}' → derived '${e.derived_phase}'`);
+        console.log(
+          `  • ${e.id}: persisted '${writerCtx().word(e.persisted_phase, RUN_PHASE_WORDS)}' → derived '${writerCtx().word(e.derived_phase, RUN_PHASE_WORDS)}'`,
+        );
       }
       printRetentionClockNote();
     }

@@ -3,7 +3,7 @@
 import { createServer, type Server } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { Command } from 'commander';
-import { JsonWorkflowStore } from '@sensigo/realm';
+import { GATE_ANSWERS_VALUES, JsonWorkflowStore } from '@sensigo/realm';
 import type {
   ExtensionRegistry,
   WorkflowDefinition,
@@ -16,6 +16,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { makeProjectProviders } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
 import { hostRefusalLine } from '../lib/host-refusal-line.js';
+import { cliDisclosureProvider, writerCtx, writerInstalled } from '../output/writer.js';
 import {
   checkValueLine,
   gateAnswersStartLine,
@@ -103,6 +104,9 @@ export async function startHttpMcpServer(options: StartServerOptions): Promise<S
     // #729 PR-0 (P-6): the CLI's renderer as the operator route — an operator's command reaches
     // only the block addressed to the person.
     operatorRoute: cliOperatorRoute('realm serve'),
+    // #729 PR-3 (M-3): under the CLI's writer, every reply is masked with this process's set,
+    // declared part included; embedded without it, the server's own default applies.
+    ...(writerInstalled() ? { disclosureProvider: cliDisclosureProvider } : {}),
     // #627 W: one stateless request per server — it sends no forms, so `asked` is its fallback.
     statelessHttp: true,
     ...(gateAnswersFlag !== undefined ? { gateAnswersFlag } : {}),
@@ -257,7 +261,9 @@ export const serveCommand = new Command('serve')
     }
     if (options.check === true) {
       // W-s6 and the separation check (Part K): nothing is started.
-      console.log(checkValueLine(settings.answers));
+      console.log(
+        checkValueLine(settings.answers, (v) => writerCtx().word(v, GATE_ANSWERS_VALUES)),
+      );
       const evidence = await measureSeparation({
         probes: systemProbes(),
         value: { value: settings.answers.value, source: settings.answers.source },
@@ -266,7 +272,7 @@ export const serveCommand = new Command('serve')
         extensionsModule: options.extensionsModule as string | undefined,
         door: 'serve',
       });
-      for (const line of renderSeparation(evidence)) console.log(line);
+      console.log(renderSeparation(evidence, writerCtx()).join('\n'));
       process.exit(0);
     }
     // issue #625 (holder slice): this program's name, made once outside the per-request handler,

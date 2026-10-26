@@ -36,7 +36,9 @@ afterEach(() => {
 function realm(args: string[]): { code: number | null; out: string; err: string[] } {
   const r = spawnSync(process.execPath, [CLI_ENTRY, ...args], {
     cwd: home,
-    env: { PATH: process.env['PATH'] ?? '', HOME: home },
+    // #729 PR-3: the child's stderr is a log, where paths under HOME are hidden; these cells read
+    // the path the message names, so HOME is named not secret (the operator's opt-out).
+    env: { PATH: process.env['PATH'] ?? '', HOME: home, REALM_NOT_SECRET: 'HOME' },
     encoding: 'utf8',
     timeout: 60_000,
   });

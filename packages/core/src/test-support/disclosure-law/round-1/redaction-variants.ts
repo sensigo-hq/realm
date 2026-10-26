@@ -1,12 +1,14 @@
-// redaction-variants.ts — the forms a secret value takes in printed text, and the manifest path's
-// matcher.
+// FROZEN REFERENCE (test support; not part of the package). This file is
+// packages/core/src/utils/redaction-variants.ts exactly as it stood at commit a3bf69b1 (round 1),
+// below this header. The disclosure differential cell compares the current law
+// against it. Never edit it: a change here changes what the cell guards.
+
+// redaction-variants.ts — the forms a secret value takes in printed text.
 //
-// Two pure functions, no I/O. `variantsOf` is the ONE list of the forms a value can take once a
-// program has printed it; `redactWith` replaces each member of a set with a marker, one member
-// after another (the manifest path's matcher: `manifest-secrets.ts`, for `realm listen`'s log and a
-// builder's error text; and the agent walk's test of a number, a boolean or null). The agent path
-// (`agent-utils.ts`: error text, tool results, the agent step's prompt) marks every member on the
-// original text and replaces each marked run once (`sanitizeText`).
+// One pure function, no I/O. `variantsOf` is the ONE list of the forms a value can take once a
+// program has printed it. The disclosure law (`redaction.ts`: `compileDisclosure`, `disclose`) expands
+// every member of a set through it, marks every form on the original text and replaces each marked
+// run once.
 //
 // THE LIST IS GENERATED, family by family, from the printers that write each form:
 //   - JSON:      the escapers of Go, PHP, Perl, jq, Newtonsoft, Gson, System.Text.Json and Jackson
@@ -38,7 +40,7 @@
 // like E1 and E2, applied once per value: never to its own output or to a line.
 //
 // `variantsOf` is pure for a value and its options, so its lists are kept in a least-recently-used
-// map; `redactWith` skips a form the text does not hold.
+// map.
 //
 // They move into core unchanged with #729's disclosure step.
 
@@ -1023,19 +1025,5 @@ function buildVariants(value: string, parts: boolean, omit: string | undefined):
   };
   withLines(value);
   if (omit !== 'D') decodedReadings(value).forEach(withLines); // D: the value's escapes read
-  return out;
-}
-
-/**
- * Replaces each member of `set` in `text` with `marker`, one plain `split`/`join` per member it
- * holds (a member the text does not hold is skipped). The caller passes the set already sorted
- * LONGEST-FIRST, so a short member inside a longer one cannot leave fragments of the longer one
- * behind.
- */
-export function redactWith(text: string, set: readonly string[], marker = '[REDACTED]'): string {
-  let out = text;
-  for (const member of set) {
-    if (out.includes(member)) out = out.split(member).join(marker);
-  }
   return out;
 }

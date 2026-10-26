@@ -5,6 +5,15 @@ import { Command } from 'commander';
 import type { RunRecord, EvidenceSnapshot } from '@sensigo/realm';
 import { formatPrecondColumn } from './replay-format.js';
 import type { ReplayRecord } from '../store/replay-store.js';
+import {
+  digestSpan,
+  noteRunManifest,
+  valuesShownFor,
+  valuesShownLine,
+  valuesWithheldFor,
+  valuesWithheldLine,
+  withholdUnlessAccepted,
+} from '../output/writer.js';
 import { recordedAnswer } from '../lib/holder-render.js';
 
 /** Returns true when the given ID is a replay ID (starts with "rpl_"). */
@@ -103,24 +112,24 @@ function answerOf(run: RunRecord, stepId: string): StepAnswer {
   return view.choice !== undefined ? { kind, choice: view.choice } : { kind };
 }
 
+/** The last snapshot per step that is not a gate's answer — what `diff` compares. */
+function lastSnapshots(run: RunRecord): Map<string, EvidenceSnapshot> {
+  const last = new Map<string, EvidenceSnapshot>();
+  for (const snap of run.evidence) {
+    if (snap.kind === 'gate_response') continue;
+    last.set(snap.step_id, snap);
+  }
+  return last;
+}
+
 /**
  * Compares evidence chains of two runs, producing a row per unique step.
  * @param runA First run to compare.
  * @param runB Second run to compare.
  */
 export function diffRuns(runA: RunRecord, runB: RunRecord): DiffStepRow[] {
-  // Build last non-gate_response snapshot per step_id for each run.
-  const lastA = new Map<string, EvidenceSnapshot>();
-  const lastB = new Map<string, EvidenceSnapshot>();
-
-  for (const snap of runA.evidence) {
-    if (snap.kind === 'gate_response') continue;
-    lastA.set(snap.step_id, snap);
-  }
-  for (const snap of runB.evidence) {
-    if (snap.kind === 'gate_response') continue;
-    lastB.set(snap.step_id, snap);
-  }
+  const lastA = lastSnapshots(runA);
+  const lastB = lastSnapshots(runB);
 
   // Collect all unique step IDs, preserving appearance order from A then B.
   const allSteps = new Set<string>();
@@ -176,6 +185,13 @@ export function diffSymbol(row: DiffStepRow): string {
   return chalk.yellow('\u2260');
 }
 
+/** #729 PR-3 correction 4 (I-9, I-9b): an output's hash prefix — its shape where the output would be
+ *  one, or where the law hid anything inside the output (`source`); the em-dash of a missing step as
+ *  it is. */
+function hashCell(hash: string, source: unknown): string {
+  return hash === '\u2014' ? hash : digestSpan(hash.slice(0, 8), source);
+}
+
 /** Formats Δ ms: signed difference if both steps exist, em-dash otherwise. */
 function formatDelta(row: DiffStepRow): string {
   if (row.status_a === 'missing' || row.status_b === 'missing') return '\u2014';
@@ -188,7 +204,11 @@ export const diffCommand = new Command('diff')
   .argument('<run-id-a>', 'First run or replay ID')
   .argument('<run-id-b>', 'Second run or replay ID')
   .description('Compare evidence chains of two runs side by side')
-  .action(async (runIdA: string, runIdB: string) => {
+  .option(
+    '--accept-partial-disclosure',
+    "Print the outputs' hashes even when Realm cannot read every declared secret of a run (masked with what is known)",
+  )
+  .action(async (runIdA: string, runIdB: string, opts: { acceptPartialDisclosure?: boolean }) => {
     if (isReplayId(runIdA) !== isReplayId(runIdB)) {
       console.error(
         'Error: cannot diff a run against a replay. Provide two run IDs or two replay IDs.',
@@ -273,7 +293,30 @@ export const diffCommand = new Command('diff')
       );
     }
 
+    // #729 PR-3 correction 4 (I-9): the read-command rule — each run's manifest read as `inspect`
+    // reads it, each standing noted under its own run (two runs may name one manifest path), so an
+    // output's hash is withheld with the output under a failed or changed manifest unless the flag
+    // is given. `=`/`≠` is a fact and prints whole.
+    const { JsonWorkflowStore, getWorkflowForRun } = await import('@sensigo/realm');
+    const workflowStore = new JsonWorkflowStore();
+    for (const run of [runA, runB]) {
+      const definition = await getWorkflowForRun(workflowStore, run, {
+        retryVerb: 'diff again',
+        verb: 'diff',
+        terminalOk: true,
+      }).catch(() => undefined);
+      await noteRunManifest(definition, run, `run ${run.id}`);
+    }
+    withholdUnlessAccepted(opts.acceptPartialDisclosure === true);
+    const withheld = valuesWithheldFor();
+    const shown = valuesShownFor();
+    if (withheld !== undefined) console.log(valuesWithheldLine(withheld));
+    else if (shown !== undefined) console.log(valuesShownLine(shown));
+
     const rows = diffRuns(runA, runB);
+    // I-9b: each hash column asks the law about its own run's output.
+    const outputA = lastSnapshots(runA);
+    const outputB = lastSnapshots(runB);
 
     console.log(`Diff: ${runIdA}  vs  ${runIdB}`);
     console.log(`Workflow: ${runA.workflow_id}`);
@@ -282,24 +325,32 @@ export const diffCommand = new Command('diff')
     const col1 = 22;
     const col2 = 10;
     const col3 = 10;
+    // #729 PR-3 correction 5 (J-6): the hash columns take the longer of the hex and a shaped cell
+    // (`‹string, 8 characters›`), so a shaped hash never pushes the columns after it.
+    const hashes = rows.map((row) => ({
+      a: hashCell(row.hash_a, outputA.get(row.step_id)?.output_summary),
+      b: hashCell(row.hash_b, outputB.get(row.step_id)?.output_summary),
+    }));
+    const colHash = Math.max(col2, ...hashes.flatMap((h) => [h.a.length + 2, h.b.length + 2]));
     const sep1 = '\u2500'.repeat(col1 - 1);
     const sep2 = '\u2500'.repeat(col2 - 1);
     const sep3 = '\u2500'.repeat(col3 - 1);
+    const sepHash = '\u2500'.repeat(colHash - 1);
 
     console.log(
-      `${'Step'.padEnd(col1)} ${'A status'.padEnd(col2 + 2)} ${'B status'.padEnd(col2)} ${'A hash'.padEnd(col2)} ${'B hash'.padEnd(col2)} ${'\u0394 ms'}`,
+      `${'Step'.padEnd(col1)} ${'A status'.padEnd(col2 + 2)} ${'B status'.padEnd(col2)} ${'A hash'.padEnd(colHash)} ${'B hash'.padEnd(colHash)} ${'\u0394 ms'}`,
     );
-    console.log(`${sep1}  ${sep2}  ${sep2}  ${sep2}  ${sep2}  ${sep3}`);
+    console.log(`${sep1}  ${sep2}  ${sep2}  ${sepHash}  ${sepHash}  ${sep3}`);
 
-    for (const row of rows) {
+    rows.forEach((row, i) => {
       const sym = diffSymbol(row);
       const statusA = colorDiffStatus(row.status_a).padEnd(col2);
       const statusB = colorDiffStatus(row.status_b).padEnd(col2);
-      const hashA = row.hash_a.slice(0, 8).padEnd(col2);
-      const hashB = row.hash_b.slice(0, 8).padEnd(col2);
+      const hashA = hashes[i]!.a.padEnd(colHash);
+      const hashB = hashes[i]!.b.padEnd(colHash);
       const delta = formatDelta(row);
       console.log(
         `${row.step_id.padEnd(col1)} ${statusA} ${sym} ${statusB} ${hashA} ${hashB} ${delta}`,
       );
-    }
+    });
   });

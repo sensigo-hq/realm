@@ -12,11 +12,59 @@ import {
   type ExtensionRegistry,
   type Attributed,
   shellWord,
+  buildDisclosureSet,
+  disclose,
+  discloseGate,
+  type DisclosureSet,
 } from '@sensigo/realm';
+import { stripMarks, withoutMarks, writerSetFor } from '../../output/writer.js';
 import type { LlmProvider } from '../providers/llm-provider.js';
 import { startSlackGateServer } from './slack-gate-server.js';
 import { connectSocketMode } from './slack-socket-client.js';
 import { scheduleGateExpiryTimer } from './gate-expiry-timer.js';
+
+/**
+ * #729 PR-3 (L-3; RECORD 05 "Slack"): Slack is a broadcast surface. The gate post is composed from
+ * the gate as `discloseGate` shows it — the question at the declared tier, a message-less gate's
+ * preview as its shapes — and is not walked again after composing; its hand-built `--choice` lines
+ * stay as they are (PR-4/V-2's). Thread replies are walked with every tier. Every body leaves through
+ * ONE send function, which strips the span marks (U+E000–E002).
+ */
+function slackSet(): DisclosureSet {
+  return (
+    writerSetFor('broadcast') ??
+    buildDisclosureSet({
+      env: process.env,
+      declared: {},
+      declaredState: 'unknown',
+      declaredCause: 'embedder_none',
+      audience: 'broadcast',
+    }).set
+  );
+}
+
+/** The ONE send to Slack: a JSON body, with no span mark in it. */
+async function sendToSlack(
+  url: string,
+  body: Record<string, unknown>,
+  botToken?: string,
+): Promise<Response> {
+  return fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(botToken !== undefined ? { Authorization: `Bearer ${botToken}` } : {}),
+    },
+    body: stripMarks(JSON.stringify(body)),
+  });
+}
+
+/** The question text a gate post shows: `discloseGate`'s question, or its shaped preview. */
+export function slackQuestionText(gate: PendingGate): string {
+  // F26: the marks go before the law reads the gate.
+  const shown = discloseGate(withoutMarks(gate), slackSet(), 'broadcast');
+  return shown.resolved_message ?? formatGatePreviewForSlack(shown.preview);
+}
 
 /**
  * Formats a gate preview object as human-readable Slack mrkdwn text.
@@ -52,7 +100,7 @@ export async function postGateNotificationToSlack(
   runId: string,
 ): Promise<void> {
   const ownerLine = gate.owner !== undefined ? `\n*Owner:* ${gate.owner}` : '';
-  const previewText = gate.resolved_message ?? formatGatePreviewForSlack(gate.preview);
+  const previewText = slackQuestionText(gate);
   const gateId = gate.gate_id;
   const cmdLines = gate.choices
     .map((c) => `realm run respond ${runId} --gate ${gateId} --choice ${shellWord(c)}`)
@@ -73,11 +121,7 @@ export async function postGateNotificationToSlack(
     ],
   };
   try {
-    await fetch(webhookUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+    await sendToSlack(webhookUrl, body);
   } catch (err) {
     console.warn(
       `  ⚠  Slack notification failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -97,7 +141,7 @@ export async function postGateViaApi(
   runId: string,
 ): Promise<string | undefined> {
   const ownerLine = gate.owner !== undefined ? `\n*Owner:* ${gate.owner}` : '';
-  const previewText = gate.resolved_message ?? formatGatePreviewForSlack(gate.preview);
+  const previewText = slackQuestionText(gate);
   const choiceList = gate.choices.map((c) => `\`${c}\``).join(' or ');
   const gateId = gate.gate_id;
   const cmdLines = gate.choices
@@ -107,18 +151,15 @@ export async function postGateViaApi(
     `*Gate:* \`${gate.step_name}\`${ownerLine}\n\n${previewText}\n\n---\n` +
     `*Reply in this thread with ${choiceList} to resolve, or run:*\n\`\`\`${cmdLines}\`\`\``;
   try {
-    const response = await fetch('https://slack.com/api/chat.postMessage', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${botToken}`,
-      },
-      body: JSON.stringify({
+    const response = await sendToSlack(
+      'https://slack.com/api/chat.postMessage',
+      {
         channel: channelId,
         text: '⏸ Workflow gate waiting for approval',
         blocks: [{ type: 'section', text: { type: 'mrkdwn', text: blockText } }],
-      }),
-    });
+      },
+      botToken,
+    );
     const data = (await response.json()) as { ok: boolean; ts?: string };
     return data.ok ? data.ts : undefined;
   } catch (err) {
@@ -141,14 +182,16 @@ export async function postSlackReply(
   text: string,
 ): Promise<void> {
   try {
-    await fetch('https://slack.com/api/chat.postMessage', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${botToken}`,
+    // A thread reply is walked with every tier: it can carry an answer's words and a run's ending.
+    await sendToSlack(
+      'https://slack.com/api/chat.postMessage',
+      {
+        channel: channelId,
+        thread_ts: threadTs,
+        text: disclose(stripMarks(text), slackSet(), 'all').text,
       },
-      body: JSON.stringify({ channel: channelId, thread_ts: threadTs, text }),
-    });
+      botToken,
+    );
   } catch (err) {
     console.warn(`Slack reply failed: ${err instanceof Error ? err.message : String(err)}`);
   }

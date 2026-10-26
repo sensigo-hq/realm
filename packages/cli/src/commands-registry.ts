@@ -33,6 +33,9 @@ import { runMigrateCommand } from './commands/run-migrate.js';
 import { agentCommand } from './commands/agent.js';
 import { webhookCommand } from './commands/webhook.js';
 import { listenCommand } from './commands/listen.js';
+import { attachWriterHook } from './output/writer.js';
+
+export { attachWriterHook, writerHook } from './output/writer.js';
 
 /** Commands that operate on workflow definitions (realm workflow <cmd>). */
 export const workflowCommands = [
@@ -75,3 +78,8 @@ export const topLevelCommands = [
   webhookCommand,
   listenCommand,
 ];
+
+// #729 PR-3 (L-1): every command object in the three lists — nested ones included — carries the
+// writer's `preAction` hook, so the one writer is installed in any program that reuses realm's
+// commands (cli-cloud attaches the exported hook to its own commands too).
+attachWriterHook([workflowCommands, runCommands, topLevelCommands]);

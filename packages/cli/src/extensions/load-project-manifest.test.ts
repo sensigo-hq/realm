@@ -272,7 +272,7 @@ describe('secrets wiring, redaction, sentinel', () => {
       `version: 1\nadapters:\n  github:\n    use: github\n    config: { auth: { token: "\${secret:NOPE_TOKEN}" } }\n`,
     );
     await expect(loadProjectExtensions(anchoredDefinition())).rejects.toThrow(
-      /unresolved secret reference.*adapters\.github\.config\.auth\.token/s,
+      /secret\(s\) unresolved.*adapters\.github\.config\.auth\.token/s,
     );
   });
 
@@ -290,7 +290,8 @@ describe('secrets wiring, redaction, sentinel', () => {
     }
     expect(error).toBeDefined();
     expect(error!.message).toContain('constructing adapters.boom');
-    expect(error!.message).toContain('[redacted]');
+    // #729 PR-3 (L-5): masked at source with core's law — its one marker.
+    expect(error!.message).toContain('[REDACTED]');
     expect(error!.message).not.toContain('super-secret-value-9999');
   });
 
@@ -583,5 +584,30 @@ processors:
     const { manifest } = await loadProjectExtensions(anchoredDefinition());
     expect(manifest.secret_bearing_processors).toEqual(['secret_proc']);
     expect(manifest.processors.sort()).toEqual(['pure_proc', 'secret_proc']);
+  });
+});
+
+describe('#729 PR-3 correction 1 (F3, D-9) — a builder failure is masked at every tier', () => {
+  it('the thrown message and its cause hide an environment value and a Bearer token, not only declared values', async () => {
+    vi.stubEnv('REALM_NOT_SECRET', '');
+    vi.stubEnv('LOAD_CANARY_VAR', 'FAKECANENVLOAD0729');
+    writeFileSync(
+      join(root, 'dist', 'env-throw.js'),
+      "export function f() { throw new Error('cannot reach ' + process.env.LOAD_CANARY_VAR + ' with Bearer FAKECANANCHLOAD0729'); }\n",
+      'utf8',
+    );
+    writeManifest('version: 1\nhandlers:\n  h:\n    use: ./dist/env-throw.js#f\n    config: {}\n');
+    const message = await loadProjectExtensions(anchoredDefinition()).then(
+      () => 'loaded',
+      (e: Error) => `${e.message} | ${String((e.cause as Error | undefined)?.message)}`,
+    );
+    vi.unstubAllEnvs();
+    // (a) red when the loader masks at the declared tier only (the environment value and the
+    //     token show); (b) prints three booleans.
+    expect({
+      failed: message.includes('constructing handlers.h'),
+      env: message.includes('FAKECANENVLOAD0729'),
+      bearer: message.includes('FAKECANANCHLOAD0729'),
+    }).toEqual({ failed: true, env: false, bearer: false });
   });
 });

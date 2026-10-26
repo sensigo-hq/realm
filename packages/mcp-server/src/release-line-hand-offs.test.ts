@@ -477,7 +477,15 @@ async function refusal(
   stores: Record<string, unknown>,
 ): Promise<{ code?: string | undefined; message: string } | undefined> {
   try {
-    await call(stores);
+    const out = await call(stores);
+    // #729 PR-3 correction (F34): a tool wrapper checks its stores inside `safeTool`, so its refusal
+    // is a reply (the error code and message in the envelope), never a throw to the SDK.
+    const text = (out as { content?: Array<{ text?: string }> } | undefined)?.content?.[0]?.text;
+    if (text !== undefined) {
+      const reply = JSON.parse(text) as { status?: string; error_code?: string; errors?: string[] };
+      if (reply.status === 'error')
+        return { code: reply.error_code, message: reply.errors?.[0] ?? '' };
+    }
     return undefined;
   } catch (err) {
     return { code: (err as { code?: string }).code, message: (err as Error).message };

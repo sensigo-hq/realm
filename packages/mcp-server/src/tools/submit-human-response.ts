@@ -18,14 +18,19 @@ import {
 import { mcpHostOf, principalOfStores, type HandleRunStores } from './start-run.js';
 import { toolMeta } from '../tool-annotations.js';
 import {
+  disclosureOfTool,
   mcpReplyOf,
   renderReply,
+  safeTool,
   toolContentOf,
   withHintTail,
+  MCP_ENVELOPE_TABLE,
   type McpEnvelope,
+  type WithDoorDisclosure,
   type WithPersonBlock,
+  replySubject,
+  setForSubject,
 } from '../render-reply.js';
-import { sseJsonStringify } from '../sse-json.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
 import {
   assertRegistryLine,
@@ -230,10 +235,11 @@ function onFallback(stores: HandleRunStores | undefined): boolean {
  */
 export function registerSubmitHumanResponse(
   server: McpServer,
-  opts?: HandleRunStores,
+  opts?: HandleRunStores & WithDoorDisclosure,
   config: 'offered' | 'fallback' = 'offered',
 ): RegisteredTool {
   markServedByTool(opts);
+  const door = disclosureOfTool(opts);
   // issue #625: `registerTool` with a pass-through schema — `server.tool` strips unknown keys before
   // the handler sees them (see `create-workflow.ts`), so a misnamed `claimToken` would vanish
   // without a word.
@@ -248,9 +254,9 @@ export function registerSubmitHumanResponse(
       inputSchema: submitHumanResponseArgsSchema,
       ...(config === 'fallback' ? { _meta: { ...REQUIRES_USER_INTERACTION_META } } : {}),
     },
-    async (rawArgs) => {
-      const args = rawArgs as z.infer<typeof submitHumanResponseArgsSchema>;
-      try {
+    safeTool(
+      async (rawArgs) => {
+        const args = rawArgs as z.infer<typeof submitHumanResponseArgsSchema>;
         const result = await handleSubmitHumanResponse(args, opts);
         const unknown = unknownKeyWarnings(args as Record<string, unknown>);
         return toolContentOf(
@@ -262,9 +268,15 @@ export function registerSubmitHumanResponse(
             // did-you-mean before the reply's own "No claim_token was passed" sentence.
             ...(unknown.length > 0 ? { warnings: [...unknown, ...result.warnings] } : {}),
           },
-          sseJsonStringify,
+          {
+            set: await setForSubject(door, await replySubject(opts, { runId: args.run_id })),
+            audience: 'agent',
+            table: MCP_ENVELOPE_TABLE,
+          },
         );
-      } catch (err) {
+      },
+      async (err, rawArgs) => {
+        const args = rawArgs as z.infer<typeof submitHumanResponseArgsSchema>;
         const workflowErr =
           err instanceof WorkflowError
             ? err
@@ -290,8 +302,12 @@ export function registerSubmitHumanResponse(
           ),
           mcpHostOf(opts),
         );
-        return toolContentOf(mcpReplyOf(rendered), sseJsonStringify);
-      }
-    },
+        return toolContentOf(mcpReplyOf(rendered), {
+          set: await setForSubject(door, await replySubject(opts, { runId: args.run_id })),
+          audience: 'agent',
+          table: MCP_ENVELOPE_TABLE,
+        });
+      },
+    ),
   );
 }

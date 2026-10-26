@@ -8,6 +8,8 @@
 // contents, an environment variable's value, or a real login or host name.
 import { afterEach, describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
+import { relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { switchClausesOf, switchPathsCondition, type SwitchPathReading } from '@sensigo/realm';
 import {
   lookups,
@@ -1236,7 +1238,9 @@ describe("#790 — the probes: the spy, the one spawn site, the runner's refusal
     const lib = new URL('../', import.meta.url);
     const sources = new Map<string, string>();
     const visit = (url: URL): void => {
-      const name = url.href.slice(lib.href.length);
+      // PR-3 (merge of #819): a file outside lib/ (the writer the check renders through) is named by
+      // its path from lib/, not cut by length.
+      const name = relative(fileURLToPath(lib), fileURLToPath(url));
       if (sources.has(name)) return;
       const src = readFileSync(url, 'utf8');
       sources.set(name, src);
@@ -1256,7 +1260,12 @@ describe("#790 — the probes: the spy, the one spawn site, the runner's refusal
     //     import joins or leaves the closure unseen (the known members); (b) prints the files.
     expect({ files: [...sources.keys()].sort(), spawning }).toEqual({
       files: [
+        // PR-3: the check renders through the CLI writer (`PLAIN`, `RenderCtx`), which reads a run's
+        // manifest; none of the three starts a process.
+        '../extensions/manifest-secrets.ts',
+        '../output/writer.ts',
         'program-identity.ts',
+        'read-run-manifest.ts',
         'separation-check.ts',
         'separation/doas.ts',
         'separation/engines.ts',
@@ -1535,7 +1544,7 @@ describe('#790 — the sentence and the condition lines (D11, 01b #2, #3, #12)',
     // #819 Unit A re-pin (A7): the cause names runaspw too, and whose password each asks for
     // #819 Unit A, the capped correction re-pin (Part 3): su gains its entry toward root
     expect(conditionLine('become_service_user', evidence(ways))).toBe(
-      "This login can become Realm's service user (svc) without a password: no (measured now) — sudo: needs this login's password or is not allowed (sudo does not say which; LC_ALL=C /usr/bin/sudo -n -l says: a password is required; /etc/pam.d/sudo, /etc/pam.d/common-auth, /etc/pam.d/common-account, /etc/pam.d/common-session-noninteractive, /etc/pam.d/sudo-i, /etc/pam.d/common-session read); sudo: may need root's password (sudo does not show its Defaults or whether a rule exists, so rootpw, targetpw or runaspw cannot be ruled out: rootpw asks for root's password, targetpw for the target user's, runaspw for its runas_default user's; as above); sudo: may need svc's password (sudo does not show its Defaults or whether a rule exists, so rootpw, targetpw or runaspw cannot be ruled out: rootpw asks for root's password, targetpw for the target user's, runaspw for its runas_default user's; as above); su: not allowed (getent passwd svc and the shells files read: svc's shell /usr/sbin/nologin runs no command); su: needs root's password (/etc/pam.d/su, /etc/pam.d/common-auth, /etc/pam.d/common-account, /etc/pam.d/common-session, /etc/pam.d/su-l read).",
+      "This login can become Realm's service user (svc) without a password being asked: no (measured now) — sudo: needs this login's password or is not allowed (sudo does not say which; LC_ALL=C /usr/bin/sudo -n -l says: a password is required; /etc/pam.d/sudo, /etc/pam.d/common-auth, /etc/pam.d/common-account, /etc/pam.d/common-session-noninteractive, /etc/pam.d/sudo-i, /etc/pam.d/common-session read); sudo: may need root's password (sudo does not show its Defaults or whether a rule exists, so rootpw, targetpw or runaspw cannot be ruled out: rootpw asks for root's password, targetpw for the target user's, runaspw for its runas_default user's; as above); sudo: may need svc's password (sudo does not show its Defaults or whether a rule exists, so rootpw, targetpw or runaspw cannot be ruled out: rootpw asks for root's password, targetpw for the target user's, runaspw for its runas_default user's; as above); su: not allowed (getent passwd svc and the shells files read: svc's shell /usr/sbin/nologin runs no command); su: needs root's password (/etc/pam.d/su, /etc/pam.d/common-auth, /etc/pam.d/common-account, /etc/pam.d/common-session, /etc/pam.d/su-l read).",
     );
   });
 

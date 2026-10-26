@@ -230,7 +230,7 @@ After that attempt, `advance_run` says the step cannot run here (capability) wit
 If the secret is missing, nothing starts, and Realm names it:
 
 ```text
-Deployment manifest secrets: 1 unresolved secret reference(s):
+Deployment manifest: 1 secret(s) unresolved:
   adapters.github.config.auth.token → ${secret:GITHUB_TOKEN}
 ```
 

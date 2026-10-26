@@ -6,10 +6,11 @@
 // default, `--force` to act — ONLY claims that are provably safe: author-declared `idempotent`,
 // carrying a concrete past-deadline (`claim_stale`), non-gated. Everything else stays per-step-only.
 import { Command } from 'commander';
-import { cliCommandOf } from './ways-renderer.js';
+import { cliCommandOf, writerHost } from './ways-renderer.js';
 import type { RunRecord, StepDefinition, InProgressClaimInfo, ReclaimResult } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
 import { listRunsDiagnosed, unreadableRunLines } from './list.js';
+import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
 
 /**
  * Pure outcome→(glyph, message) renderer (issue #221 [M4]) — the SINGLE source of both reclaim
@@ -284,18 +285,20 @@ export const reclaimCommand = new Command('reclaim')
         // --- Dry-run (default): report the run's in-progress claims, no mutation ---
         if (run.terminal_state) {
           console.log(
-            `Run '${runId}' is terminal (${run.run_phase}); it has no reclaimable claim.`,
+            `Run '${runId}' is terminal (${writerCtx().word(run.run_phase, RUN_PHASE_WORDS)}); it has no reclaimable claim.`,
           );
           return;
         }
         const infos = classifyInProgressClaims(run);
         if (infos.length === 0) {
           console.log(
-            `Run '${runId}' (${run.run_phase}) has no in-progress claims. Nothing to reclaim.`,
+            `Run '${runId}' (${writerCtx().word(run.run_phase, RUN_PHASE_WORDS)}) has no in-progress claims. Nothing to reclaim.`,
           );
           return;
         }
-        console.log(`Run '${runId}' (${run.run_phase}) — in-progress claims:`);
+        console.log(
+          `Run '${runId}' (${writerCtx().word(run.run_phase, RUN_PHASE_WORDS)}) — in-progress claims:`,
+        );
         for (const c of infos) {
           const gated = run.pending_gate?.step_name === c.step;
           const deadline = c.deadline ?? 'none (unknown age)';
@@ -305,7 +308,7 @@ export const reclaimCommand = new Command('reclaim')
             // #729 PR-0 (Table row 43): the respond-path text — the answer command is the CLI
             // renderer's, from the open gate's `respond` way.
             console.log(
-              `      open gate — answer it, not reclaim: ${cliCommandOf(respondWayOfGate(runId, run.pending_gate))}`,
+              `      open gate — answer it, not reclaim: ${cliCommandOf(respondWayOfGate(runId, run.pending_gate), undefined, writerHost())}`,
             );
           } else if (c.state !== 'healthy') {
             console.log(

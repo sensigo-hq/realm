@@ -913,6 +913,8 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
         .sort(),
     ).toEqual([
       'agent_action',
+      // #729 PR-3: every reply carries its disclosure receipt.
+      'disclosure',
       'error_code',
       'error_details',
       'errors',

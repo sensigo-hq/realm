@@ -233,3 +233,28 @@ describe('parseDeploymentManifest (issue #600 caching PR P)', () => {
     ]).toEqual(['yaml', true, ["manifest: unknown key 'foo'"], 'p.yaml']);
   });
 });
+
+// #729 PR-3 (the owner's Q1; RECORD 01 #5): `disclosure.not_secret` names environment variables whose
+// values are shown. (a) red when the key is not accepted, or the strict schema stops refusing an
+// unknown key or a bad name inside it; (b) prints the error strings (key names only).
+describe('disclosure.not_secret (#729 PR-3)', () => {
+  it('accepts a list of environment variable names', () => {
+    expect(
+      validateDeploymentManifest({
+        version: 1,
+        disclosure: { not_secret: ['APP_REGION', 'LOG_LEVEL'] },
+      }),
+    ).toEqual([]);
+  });
+  it('refuses an unknown key under disclosure, a name that is not an environment name, and a repeat', () => {
+    expect(validateDeploymentManifest({ version: 1, disclosure: { show: ['X'] } })).toEqual([
+      "manifest/disclosure: unknown key 'show'",
+    ]);
+    expect(
+      validateDeploymentManifest({ version: 1, disclosure: { not_secret: ['NOT A NAME'] } }).length,
+    ).toBe(1);
+    expect(
+      validateDeploymentManifest({ version: 1, disclosure: { not_secret: ['A', 'A'] } }).length,
+    ).toBe(1);
+  });
+});

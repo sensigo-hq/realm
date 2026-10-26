@@ -44,6 +44,7 @@ import {
   type LlmClock,
   type WireCounters,
   attachBilledUsage,
+  passedSnippet,
 } from './agent-utils.js';
 
 /** The tool offered at `tool_choice:'auto'` so the model can return structured output directly —
@@ -701,7 +702,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     {
       const err = new WorkflowError(
         sanitizeError(
-          `Anthropic returned non-JSON content after retry: ${sanitizeError(retry.text).slice(0, 200)}`,
+          `Anthropic returned non-JSON content after retry: ${passedSnippet(retry.text)}`,
         ),
         { code: 'ENGINE_STEP_FAILED', category: 'ENGINE', agentAction: 'stop', retryable: false },
       );
@@ -1131,9 +1132,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       // Parse failure — a DISTINCT class from schema-invalid (no usable object could be
       // extracted at all) — this is the ONE case that still throws.
       throw new WorkflowError(
-        sanitizeError(
-          `max_tool_calls reached; final extraction failed: ${sanitizeError(text).slice(0, 200)}`,
-        ),
+        sanitizeError(`max_tool_calls reached; final extraction failed: ${passedSnippet(text)}`),
         {
           code: 'ENGINE_STEP_FAILED',
           category: 'ENGINE',

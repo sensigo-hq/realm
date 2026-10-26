@@ -14,8 +14,8 @@ const MAX_STRING_VALUE = 500;
 const RESERVED_PREFIX = 'trace.';
 const SENTINEL_EVENT = 'trace.truncated';
 
-function normalizeEvent(raw: string): string {
-  const trimmed = raw.trim();
+function normalizeEvent(raw: string | undefined): string {
+  const trimmed = (raw ?? '').trim();
   return trimmed.length === 0 ? 'unknown_event' : trimmed.slice(0, MAX_EVENT_LENGTH);
 }
 
@@ -41,6 +41,25 @@ function normalizeData(
     // Other types (object, array, undefined) are dropped silently.
   }
   return Object.keys(result).length > 0 ? result : undefined;
+}
+
+/**
+ * The ONE per-entry normaliser (#729 PR-3; RECORD 05 "deleted": the trace buffer's copy):
+ * {@link normalizeTrace} and every trace buffer (core's in-memory store, mcp's JSON-file store,
+ * realm-cloud's) run each entry through it. The event is trimmed, `unknown_event` when empty, and cut
+ * at 100 characters; `data` keeps its first 20 keys and its primitive values, each string cut at 500
+ * characters (v1's cut, kept: the named exception R14 to I4). Returns `null` for an event in the
+ * engine's reserved `trace.` namespace, which is dropped.
+ */
+export function normalizeEntryForBuffer(entry: AgentTraceEntry): AgentTraceEntry | null {
+  const event = normalizeEvent(entry.event);
+  if (event.startsWith(RESERVED_PREFIX)) return null;
+  const data = normalizeData(entry.data as Record<string, unknown> | undefined);
+  return {
+    event,
+    ...(entry.timestamp !== undefined ? { timestamp: entry.timestamp } : {}),
+    ...(data !== undefined ? { data } : {}),
+  };
 }
 
 export interface NormalizeTraceResult {
@@ -90,11 +109,11 @@ export function normalizeTrace(input: AgentTraceEntry[]): NormalizeTraceResult {
   let currentArrayBytes = 2;
 
   for (const entry of input) {
-    // Normalize event first so whitespace-padded reserved-prefix events are caught below.
-    const event = normalizeEvent(entry.event);
+    // The event is normalised first, so a whitespace-padded reserved-prefix event is dropped too.
+    const normalized = normalizeEntryForBuffer(entry);
 
     // Drop entries whose normalized event starts with the reserved engine prefix.
-    if (event.startsWith(RESERVED_PREFIX)) {
+    if (normalized === null) {
       discardedReserved++;
       continue;
     }
@@ -105,14 +124,7 @@ export function normalizeTrace(input: AgentTraceEntry[]): NormalizeTraceResult {
       continue;
     }
 
-    const data = normalizeData(entry.data as Record<string, unknown> | undefined);
-
-    const candidate: TraceEntry = {
-      seq: stored.length + 1,
-      event,
-      ...(entry.timestamp !== undefined ? { timestamp: entry.timestamp } : {}),
-      ...(data !== undefined ? { data } : {}),
-    };
+    const candidate = { seq: stored.length + 1, ...normalized } as TraceEntry;
 
     // Count limit check (evaluated before byte limit — first-trigger wins).
     if (stored.length >= MAX_ENTRIES) {

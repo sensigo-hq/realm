@@ -7,6 +7,11 @@
 // that the reply did not have at 358d3c83. Add a field to `EngineReply` and this file stops
 // compiling until someone routes it. (It fires against the BUILT core types — build, then typecheck.)
 //
+// #729 PR-3 (M-1): where a field is also a key of the MCP envelope, its route lives in production, as
+// the second column of the envelope's class table (`MCP_ENVELOPE_ROWS`); the rows here are the routes
+// of the fields the envelope does not carry. The two stale names (`agent_action`, `next_actions`,
+// never keys of `EngineReply`) left `Before`.
+//
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: field
 // names and booleans.
 import { describe, it, expect } from 'vitest';
@@ -20,7 +25,7 @@ import {
   type EngineReply,
   type WorkflowDefinition,
 } from '@sensigo/realm';
-import { renderReply } from './render-reply.js';
+import { renderReply, MCP_ENVELOPE_ROWS, type ReplyRoute } from './render-reply.js';
 
 /** The reply's keys at 358d3c83 (`ResponseEnvelope`), before PR-0. */
 type Before =
@@ -35,11 +40,9 @@ type Before =
   | 'errors'
   | 'error_code'
   | 'error_details'
-  | 'agent_action'
   | 'retry_after'
   | 'context_hint'
   | 'run_phase'
-  | 'next_actions'
   | 'blocked_reason'
   | 'gate'
   | 'chained_auto_steps'
@@ -57,22 +60,19 @@ type Before =
 /** The fields PR-0 added to the reply. */
 type Added = Exclude<keyof EngineReply, Before>;
 
-type Route =
-  | { mcp: 'published' }
-  | { mcp: 'rendered'; into: readonly string[] }
-  | { mcp: 'withheld'; reason: string };
+type Route = ReplyRoute;
 
-/** Where each added field goes on the MCP door (Amendment 9's published set). */
+/** Where each added field goes on the MCP door (Amendment 9's published set): the envelope table's
+ *  route column for the fields the envelope carries, and these rows for the ones it does not. */
 const ROUTES = {
   ways: { mcp: 'rendered', into: ['next_actions', 'also'] },
   // the elsewhere entries, the hint's sentences, the action word (D-8) and an await's until
   unavailable: { mcp: 'rendered', into: ['elsewhere', 'context_hint', 'agent_action'] },
-  basis: { mcp: 'published' },
-  outcome: { mcp: 'published' },
-  races: { mcp: 'published' },
-  expiry: { mcp: 'published' },
-  // `about` published as `error.about`; the remedy worded into the hint; typed facts as error_details
-  error: { mcp: 'rendered', into: ['error', 'context_hint', 'error_details'] },
+  basis: MCP_ENVELOPE_ROWS.basis.route,
+  outcome: MCP_ENVELOPE_ROWS.outcome.route,
+  races: MCP_ENVELOPE_ROWS.races.route,
+  expiry: MCP_ENVELOPE_ROWS.expiry.route,
+  error: MCP_ENVELOPE_ROWS.error.route,
   intrinsic_action: {
     mcp: 'withheld',
     reason: "the action table's input; its rendering is agent_action (D-8)",

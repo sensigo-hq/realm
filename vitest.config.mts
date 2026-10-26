@@ -53,5 +53,9 @@ export default defineConfig({
     // Tests read built output and never build: the run refuses to start when the build is older
     // than the source (the reason, and how the check stays read-only, are in the file).
     globalSetup: [fileURLToPath(new URL('./scripts/vitest-build-is-current.mjs', import.meta.url))],
+    // #729 PR-3: the disclosure law hides environment values in what an agent or a log is shown; this
+    // pins the environment every test file starts with as not secret, so no expected text depends on
+    // the machine (the reason is in the file).
+    setupFiles: [fileURLToPath(new URL('./scripts/vitest-pin-environment.mjs', import.meta.url))],
   },
 });

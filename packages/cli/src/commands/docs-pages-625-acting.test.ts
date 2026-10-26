@@ -1075,7 +1075,7 @@ describe(
         answered: 0,
         afterAnswer: `Last recorded driver: opener (from REALM_OPERATOR, via advance) at step 'confirm', ${confirmAt}.`,
         answerLine: expect.stringMatching(
-          /^\s+Answer: approve · answered by alice \(as stated\) · .* · token: /,
+          /^\s+Answer: approve · answered by alice \(as stated\) · .* · (no claim token|the claim token)/,
         ),
         openedThrough: '     Question opened through: opener (from REALM_OPERATOR, via advance)',
         afterStep: `Last recorded driver: third (from REALM_OPERATOR, via advance) at step 'after', ${afterAt}.`,
@@ -1087,7 +1087,9 @@ describe(
       // (a) red when an unstated answerer is shown otherwise; (b) prints the line.
       expect(
         realm(['run', 'inspect', other.id]).out.find((l) => l.trim().startsWith('Answer: ')),
-      ).toMatch(/^\s+Answer: approve · answered by \(not stated\) · .* · token: /);
+      ).toMatch(
+        /^\s+Answer: approve · answered by \(not stated\) · .* · (no claim token|the claim token)/,
+      );
     });
 
     it('advance, C197 (walk c10, W4-3): `realm run reclaim`’s entry is one newer entry that records no driver; the choice a question’s expiry made is not counted', async () => {

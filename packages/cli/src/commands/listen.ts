@@ -54,6 +54,8 @@ import {
   deriveRunPhase,
   hashParams,
   isPastDeadline,
+  persistsField,
+  startIdentityEntry,
 } from '@sensigo/realm';
 import { cannotGoOnLines } from './ways-renderer.js';
 import type {
@@ -66,6 +68,7 @@ import type {
   RunListing,
   UnreadableRunFileEntry,
   WorkflowRegistrar,
+  ExtensionIdentityEntry,
 } from '@sensigo/realm';
 import {
   verifyGithub,
@@ -80,6 +83,8 @@ import {
   loadProjectExtensions,
   onceReleaseLineSink,
 } from '../extensions/load-project-extensions.js';
+import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
+import { addDeclaredValues } from '../output/writer.js';
 
 const DEFAULT_TTL_MINUTES = 60;
 // Fixed signature-header names for the body-signature presets.
@@ -106,7 +111,12 @@ export interface ListenDeps {
   // preserves that optionality, so a store that doesn't declare settleStep still satisfies this.
   // issue #719 (B3): the JSON store's `listWithDiagnostics`, optional — when present the sweep acts
   // on the readable runs and logs each run file it cannot read instead of failing every pass.
-  runStore: Pick<RunStore, 'create' | 'get' | 'update' | 'list' | 'settleStep'> & {
+  // #729 PR-3 correction 5 (J-5): `persistedRunRecordFields` (optional) says whether the start entry
+  // can be written.
+  runStore: Pick<
+    RunStore,
+    'create' | 'get' | 'update' | 'list' | 'settleStep' | 'persistedRunRecordFields'
+  > & {
     listWithDiagnostics?: (workflowId?: string) => Promise<RunListing>;
   };
   dedupStoreFor: (workflowId: string) => DedupStore;
@@ -127,6 +137,10 @@ export interface WorkflowEntry {
   workflowDir: string;
   /** Resolved from env[auth.secret_from] at startup. undefined only for mode 'none'. */
   secret?: string;
+  /** #729 PR-3 correction 5 (J-5): the start entry of the project loaded at startup (its registry's
+   *  identity, `origin: 'start'`), written into every run this route creates; undefined when the
+   *  load carried no identity. */
+  startIdentity?: ExtensionIdentityEntry;
 }
 
 export interface HandlerOptions {
@@ -643,6 +657,11 @@ export function makeListenHandler(
           workflowVersion: entry.definition.version,
           params,
           ...(dedupId !== undefined ? { idempotencyKey: dedupId } : {}),
+          // #729 PR-3 correction 5 (J-5): the route's start entry, written with the record.
+          ...(entry.startIdentity !== undefined &&
+          persistsField(deps.runStore, 'extension_identity')
+            ? { extensionIdentity: [entry.startIdentity] }
+            : {}),
         }));
       } catch (err) {
         deps.logger.error('webhook: run creation failed', { path, error: String(err) });
@@ -662,7 +681,7 @@ export function makeListenHandler(
           deps.logger.warn('webhook: deduplicated', {
             path,
             run_id: run.id,
-            run_phase: runPhase,
+            run_phase: writerCtx().word(runPhase, RUN_PHASE_WORDS),
             reason: 'matched_spawn_failed_run',
           });
           const failed = spawnFailedReply(run.id);
@@ -693,8 +712,19 @@ export function makeListenHandler(
           reason: 'matched_existing_run',
           ...(paramsDiffer ? { params_differ: true } : {}),
         };
-        if (paramsDiffer) deps.logger.warn('webhook: deduplicated', logged);
-        else deps.logger.info('webhook: deduplicated', logged);
+        // #729 PR-3 correction 5 (J-2): the log line's phase is realm's word, spanned inside the print
+        // call (the key keeps its place); the HTTP reply's below stays the plain value — it never
+        // passes the writer.
+        if (paramsDiffer)
+          deps.logger.warn('webhook: deduplicated', {
+            ...logged,
+            run_phase: writerCtx().word(runPhase, RUN_PHASE_WORDS),
+          });
+        else
+          deps.logger.info('webhook: deduplicated', {
+            ...logged,
+            run_phase: writerCtx().word(runPhase, RUN_PHASE_WORDS),
+          });
         respond(res, 200, {
           status: 'deduplicated',
           run_id: run.id,
@@ -834,6 +864,8 @@ export function buildRouteTable(
         );
       }
       secret = value;
+      // #729 PR-3 (D3/08 m9): the webhook's secret is declared, not only swept.
+      addDeclaredValues({ [`webhook:${auth.secret_from}`]: value });
     }
 
     routes.set(path, {
@@ -867,7 +899,10 @@ export async function prepareListenWorkflows(
   const onReleaseLineWarning = onceReleaseLineSink((w) => deps.logger.warn(renderLoaderWarning(w)));
   for (const entry of routes.values()) {
     await deps.workflowStore.register(entry.definition);
-    const { manifest } = await loadExtensions(entry.definition, { onReleaseLineWarning });
+    const { manifest, registry } = await loadExtensions(entry.definition, { onReleaseLineWarning });
+    // #729 PR-3 correction 5 (J-5): kept, so each run this route creates is born naming its manifest.
+    const startIdentity = startIdentityEntry(registry);
+    if (startIdentity !== undefined) entry.startIdentity = startIdentity;
     if (manifest.modules.length > 0) {
       deps.logger.info('listen: extensions loaded', {
         workflow: entry.definition.id,
@@ -1052,7 +1087,17 @@ export async function sweepExpiredGates(
           ...(owedView !== undefined && owedView.owed.length > 0
             ? { owed: owedNames(owedView) }
             : {}),
-          ...(cannotGoOn.length > 0 ? { cannot_go_on: cannotGoOn } : {}),
+          // #729 PR-3 (L-2): the lines with the writer's context, inside the print call.
+          ...(cannotGoOn.length > 0
+            ? {
+                cannot_go_on: cannotGoOnLines(
+                  composeWaysAt(outcome.run, now, { definition }),
+                  outcome.run.id,
+                  deriveRunPhase(outcome.run),
+                  writerCtx(),
+                ),
+              }
+            : {}),
         });
         if (outcome.transitioned) {
           deps.logger.info(
@@ -1763,6 +1808,7 @@ export const listenCommand = new Command('listen')
       logger.info('listen: caching', listenCachingFacts(opts.provider, opts.promptCache));
       const addr = handle.server.address() as { port: number } | null;
       logger.info(
+        // eslint-disable-next-line no-restricted-syntax -- prose naming the listener and its address, not a command to copy (#729 PR-3, L-2).
         `realm listen on ${host}:${addr?.port ?? opts['port']} — ${routes.size} workflow(s) mounted`,
       );
     },

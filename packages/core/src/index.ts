@@ -528,6 +528,8 @@ export {
   evaluatePrecondition,
   checkPreconditions,
   evaluateAllPreconditions,
+  preconditionHint,
+  preconditionRefusal,
 } from './engine/precondition.js';
 export type { PreconditionResult } from './engine/precondition.js';
 export type { StepDiagnostics } from './types/run-record.js';
@@ -587,6 +589,7 @@ export {
   validateDeploymentManifest,
   parseDeploymentManifest,
   collectManifestSecretRefs,
+  manifestSecretsBlockHash,
   DEPLOYMENT_MANIFEST_JSON_SCHEMA,
 } from './manifest/deployment-manifest.js';
 export type {
@@ -611,7 +614,12 @@ export type {
   ExtensionIdentityTree,
   ExtensionIdentitySignals,
 } from './types/extension-identity.js';
-export { extensionIdentityDiffers } from './types/extension-identity.js';
+export {
+  extensionIdentityDiffers,
+  // #729 PR-3 correction 5 (J-5): the creators' start entry and the drift readers' baseline.
+  startIdentityEntry,
+  lastExecutionIdentity,
+} from './types/extension-identity.js';
 
 // Evidence
 export { captureEvidence } from './evidence/snapshot.js';
@@ -702,6 +710,84 @@ export { generateSchemaSkeleton } from './utils/schema-skeleton.js';
 // issue #729 PR-0 (E1 (b), (d)): the ONE escaped, bounded value renderer — a value read from a run or
 // stored text from elsewhere, printed as one line with no terminal escape (the doors use it).
 export { escapedBoundedValue } from './utils/redaction.js';
+// #729 PR-3: the disclosure law — one law for every exit, applied at the door (RECORD 01 #1–#8).
+export {
+  REDACTED_MARKER,
+  NOT_CHECKED_MARKER,
+  LIVE_CLAIM_MARKER,
+  REDACTED_EMAIL_MARKER,
+  DISCLOSURE_FLOORS,
+  NOT_SECRET_ENV,
+  REALM_SETTING_VARIABLES,
+  REALM_CREDENTIAL_VARIABLES,
+  notKeptMarker,
+  boundWhole,
+  tierFor,
+  compileDisclosure,
+  emptyDisclosureSet,
+  buildDisclosureSet,
+  environmentEntries,
+  notSecretNames,
+  notSecretIntersection,
+  weakestDeclared,
+  withDeclaredStanding,
+  unmaskableWarning,
+  isCredentialName,
+  disclose,
+  markersIn,
+  inboundMarkerWarning,
+} from './utils/redaction.js';
+export type {
+  DisclosureAudience,
+  DisclosureTier,
+  DeclaredState,
+  DeclaredCause,
+  EnvironmentState,
+  EnvironmentCause,
+  DisclosureEntry,
+  DisclosureSet,
+  DeclaredStanding,
+  HiddenCounts,
+  Disclosed,
+} from './utils/redaction.js';
+export {
+  discloseByTable,
+  discloseValue,
+  disclosureReceipt,
+  shapeOf,
+  CYCLE_SHAPE,
+  DISCLOSURE_MAX_DEPTH,
+  WITHHELD_WORDS,
+  withheldCauseOf,
+  withheldQuestion,
+} from './utils/disclosure-walk.js';
+export type {
+  DisclosureClass,
+  NestedClass,
+  MapClass,
+  ChosenClass,
+  ClassTable,
+  DisclosureTally,
+  WalkOptions,
+  WithheldCause,
+  DisclosureReceipt,
+  FactProducer,
+  FactProducers,
+} from './utils/disclosure-walk.js';
+export {
+  PENDING_GATE_TABLE,
+  GATE_INFO_TABLE,
+  RUN_RECORD_TABLE,
+  FIXED_TERMINAL_REASONS,
+  TERMINAL_REASON_ROW,
+  EVIDENCE_TABLE,
+  STEP_DIAGNOSTICS_TABLE,
+  USAGE_RECORD_TABLE,
+  discloseGate,
+  discloseRecord,
+  discloseReply,
+} from './utils/disclosure-tables.js';
+export type { ShownGate } from './utils/disclosure-tables.js';
 // decision C183 (issue #760, correction H2): the ONE spelling of a control character a terminal line
 // shows — the CLI's printers and the `check_quotes` warning share it.
 export { controlEscape } from './utils/redaction.js';
@@ -798,9 +884,9 @@ export type {
   SealedArtifact,
   BufferFullDetails,
 } from './store/trace-buffer-store.js';
+export { normalizeEntryForBuffer } from './engine/trace-normalizer.js';
 export {
   InMemoryTraceBufferStore,
-  normalizeEntryForBuffer,
   BUFFER_LIMIT_COUNT,
   BUFFER_LIMIT_BYTES,
   FINAL_LIMIT_ENTRIES,

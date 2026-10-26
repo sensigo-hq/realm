@@ -14,11 +14,12 @@ describe('redactErrorBody', () => {
     expect(out).not.toContain('jane.doe@example.com');
   });
 
-  it('caps an over-500-char body with the …[truncated] marker', () => {
-    const long = 'x'.repeat(600);
-    const out = redactErrorBody(long);
-    expect(out).toBe(`${'x'.repeat(500)}…[truncated]`);
-    expect(out.length).toBe(512);
+  // #729 PR-3 B0: a body over the cap is replaced whole by its marker; no start of it is kept.
+  // (a) red when the cut comes back (the old `…[truncated]` form) or the cap moves; (b) prints the
+  //     output, made only of `x` and the marker.
+  it('an over-500-char body is replaced whole by its marker (B0); one at 500 is kept whole', () => {
+    expect(redactErrorBody('x'.repeat(600))).toBe('‹600 characters, not kept›');
+    expect(redactErrorBody('x'.repeat(500))).toBe('x'.repeat(500));
   });
 
   it('returns a short plain body intact (no email, under the cap)', () => {

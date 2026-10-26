@@ -7,6 +7,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { executeStep } from './execution-loop.js';
+import { judgeProgramFit } from './pending.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import { WorkflowError } from '../types/workflow-error.js';
@@ -282,5 +283,79 @@ describe('execution loop — extension identity lazy append-on-change', () => {
     expect(run.extension_identity).toBeUndefined(); // dropped...
     const logged = errSpy.mock.calls.flat().map(String).join(' ');
     expect(logged).toContain('extension identity append dropped'); // ...but never silently
+  });
+});
+
+// #729 PR-3 correction 5 (J-5): a run is born with its creator's identity (`origin: 'start'`, the
+// manifest reference included). Drift is judged from EXECUTION entries only — the start entry is
+// never a baseline — so the drift judgement behaves as before the start entry existed.
+describe('#729 PR-3 correction 5 (J-5) — the start entry is never a drift baseline', () => {
+  let store: JsonFileStore;
+
+  beforeEach(async () => {
+    store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-ident-start-')));
+  });
+
+  async function bornWith(entry: ExtensionIdentityEntry): Promise<string> {
+    const { run } = await store.create({
+      workflowId: 'ident-wf',
+      workflowVersion: 1,
+      params: {},
+      extensionIdentity: [{ ...entry, origin: 'start' }],
+    });
+    return run.id;
+  }
+
+  it('created and executed by the same program: the execution entry is appended after the start entry, with no drift note', async () => {
+    const identity = makeIdentity('aaa');
+    const runId = await bornWith(identity);
+    const envelope = await executeStep(store, definition, {
+      runId,
+      command: 'step-one',
+      input: {},
+      dispatcher: echoDispatcher,
+      registry: registryWithIdentity(identity),
+    });
+    const run = await store.get(runId);
+    // (a) red when the compare reads the start entry as the baseline (no execution entry is
+    //     appended: one entry); (b) prints the entries' origins and the warnings.
+    expect({
+      origins: (run.extension_identity ?? []).map((e) => e.origin ?? 'execution'),
+      warnings: envelope.warnings,
+    }).toEqual({ origins: ['start', 'execution'], warnings: [] });
+  });
+
+  it('created by one program and executed by another whose code differs: no drift note, as for a run with no start entry', async () => {
+    const runId = await bornWith(makeIdentity('aaa'));
+    const envelope = await executeStep(store, definition, {
+      runId,
+      command: 'step-one',
+      input: {},
+      dispatcher: echoDispatcher,
+      registry: registryWithIdentity(makeIdentity('bbb')),
+    });
+    const run = await store.get(runId);
+    // (a) red when the compare reads `at(-1)` (the start entry: a drift note); (b) prints the
+    //     entries' tree hashes and the warnings.
+    expect({
+      trees: (run.extension_identity ?? []).map((e) => e.tree.tree_hash),
+      warnings: envelope.warnings,
+    }).toEqual({ trees: ['aaa', 'bbb'], warnings: [] });
+  });
+
+  it('the program fit is judged from execution entries: a run with only its start entry is `not_comparable`, as a run with none', async () => {
+    const runId = await bornWith(makeIdentity('aaa'));
+    const bare = await store.get(runId);
+    const executed = {
+      ...bare,
+      extension_identity: [...bare.extension_identity!, makeIdentity('bbb')],
+    };
+    // (a) red when the fit reads the start entry (`same` for the same code, `differs` for other
+    //     code); (b) prints the three fits.
+    expect([
+      judgeProgramFit(bare, makeIdentity('aaa')),
+      judgeProgramFit(bare, makeIdentity('ccc')),
+      judgeProgramFit(executed, makeIdentity('bbb')),
+    ]).toEqual(['not_comparable', 'not_comparable', 'same']);
   });
 });

@@ -767,6 +767,51 @@ describe('inspectRun — extension identity (drift evidence)', () => {
     });
     expect(result).toContain('no extension identity recorded for this run');
   });
+
+  it('#729 PR-3 correction 6 (C6-5): --check-drift judges drift from execution entries — a start-only run is not compared; a run with an execution entry is compared against it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'realm-inspect-drift-c6-'));
+    try {
+      const entryFile = join(dir, 'registry.js');
+      writeFileSync(entryFile, 'export default {};', 'utf8');
+      const executed = computeExtensionIdentity([
+        { declared: './registry.js', resolved: entryFile, format: 'esm' },
+      ]);
+      // The creator's entry names a module that is gone now: compared, it would read MISSING.
+      const start = {
+        ...executed,
+        origin: 'start' as const,
+        modules: [{ ...executed.modules[0]!, resolved: join(dir, 'gone.js') }],
+      };
+      const check = async (history: ExtensionIdentityEntry[]) =>
+        (
+          await inspectRun(
+            'run_test1',
+            makeRunStore(makeRun([], { extension_identity: history })),
+            makeWorkflowStore(basicDef),
+            { checkDrift: true },
+          )
+        )
+          .split('\n')
+          .filter((l) => l.includes('Drift check') || l.includes('module '))
+          .map((l) => l.trim());
+      // (a) red when the check reads the last entry, the start entry included (the start-only run
+      //     reports a comparison: `module …gone.js: MISSING`); (b) prints the drift lines (paths
+      //     under a temp folder, `same`/`MISSING`).
+      expect({ startOnly: await check([start]), executed: await check([start, executed]) }).toEqual(
+        {
+          startOnly: [
+            "Drift check: no execution has recorded project code yet; the run's creation entry is not compared.",
+          ],
+          executed: [
+            'Drift check (pure recompute of the last execution entry under its recorded rules):',
+            `module ${entryFile}: same`,
+          ],
+        },
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('--check-drift manifest hash (v0.14 hardening)', () => {

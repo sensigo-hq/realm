@@ -873,7 +873,7 @@ const HOLDER_ANSWER_VIEW = {
     surface: 'rendered',
     probe: (out) =>
       expect(out).toContain(
-        "token: none passed (a token is passed only by Realm's MCP answer tool, from the " +
+        "no claim token passed (a token is passed only by Realm's MCP answer tool, from the " +
           'conversation that opened the question, or by a program that calls the library with it)',
       ),
   },
@@ -882,7 +882,7 @@ const HOLDER_ANSWER_VIEW = {
     // `proof_not_recorded` — an answer with neither a verdict nor an expiry.
     probe: (out) =>
       expect(out).toContain(
-        'Answer: reject · answered by (not stated) · how it arrived was not recorded · token: none recorded',
+        'Answer: reject · answered by (not stated) · how it arrived was not recorded · no claim token recorded',
       ),
   },
 } satisfies Record<keyof AnswerView, DisclosureRoute>;

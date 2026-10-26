@@ -6,10 +6,10 @@
 // import, no createRequire), never the extensions loader.
 import chalk from 'chalk';
 import { Command } from 'commander';
-import { readFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import {
   describePending,
+  lastExecutionIdentity,
   pendingCleanupLine,
   pendingGateQuestion,
   resumeWay,
@@ -34,7 +34,10 @@ import {
   isAnswerEntry,
   outputSourceOf,
   readSupplier,
-  parseDeploymentManifest,
+  buildDisclosureSet,
+  escapedBoundedValue,
+  FIXED_TERMINAL_REASONS,
+  type DisclosureReceipt,
   controlEscape,
 } from '@sensigo/realm';
 import {
@@ -48,6 +51,7 @@ import {
   owedCallWords,
   owedItems,
   heldByAnswerWords,
+  writerHost,
 } from './ways-renderer.js';
 // issue #221 correction: the CLI's first command→command import (sanctioned — harmless
 // module-level Command construction; `listCommand` is a standalone Commander object never
@@ -86,6 +90,29 @@ import {
   renderAnswerLine,
   quotedForTerminal,
 } from '../lib/holder-render.js';
+import {
+  RUN_PHASE_WORDS,
+  digestSpan,
+  noteDeclaredStanding,
+  questionReceiptWords,
+  questionSpan,
+  valuesShownFor,
+  valuesShownLine,
+  valuesWithheldFor,
+  valuesWithheldLine,
+  warnManifestNotSecretUnset,
+  withCommand,
+  withholdUnlessAccepted,
+  writerCtx,
+} from '../output/writer.js';
+import {
+  addDeclaredValues,
+  declaredWords,
+  escapePassCut,
+  stdoutAudience,
+  writerTally,
+} from '../output/writer.js';
+import { readRunManifest, type RunManifest } from '../lib/read-run-manifest.js';
 
 /**
  * Renders one skipped step's reason inline (issue #111) — kind plus the salient detail.
@@ -105,8 +132,10 @@ function openQuestionLine(
   gate: NonNullable<RunRecord['pending_gate']>,
   definition: WorkflowDefinition | undefined,
 ): string {
+  // #729 PR-3 correction 2 (C2): a question is shown at the declared tier, as every surface shows it
+  // (P-9), and the receipt line says so.
   if (gate.resolved_message !== undefined)
-    return `  Question: ${quotedForTerminal(gate.resolved_message)}`;
+    return `  Question: ${questionSpan(quotedForTerminal(gate.resolved_message))}`;
   // Correction 1 (E6): with no frozen message and no definition to read, inspect cannot know whether
   // the gate declares one — it says so, never "none".
   if (definition === undefined)
@@ -124,7 +153,7 @@ function openQuestionLine(
       return "  Question: not shown — the step's prompt could not be rendered";
     }
     if (question !== undefined)
-      return `  Question (the step's prompt, from the workflow as registered now): ${quotedForTerminal(question)}`;
+      return `  Question (the step's prompt, from the workflow as registered now): ${questionSpan(quotedForTerminal(question))}`;
   }
   return '  Question: none — the gate declares no message and its step no prompt';
 }
@@ -210,7 +239,8 @@ function renderExtensionIdentity(
       `  ${idx + 1}. captured ${entry.captured_at}${entry.pid !== undefined ? ` (pid ${entry.pid})` : ''}${flags ? ` ${flags}` : ''}`,
     );
     if (entry.error !== undefined) {
-      lines.push(chalk.red(`     error: ${entry.error}`));
+      // H-7'': a stored load error goes through the value span (withheld as its shape).
+      lines.push(chalk.red(`     error: ${writerCtx().value(entry.error)}`));
     }
     for (const mod of entry.modules) {
       lines.push(`     module: ${mod.declared} -> ${mod.resolved} (${mod.format})`);
@@ -236,8 +266,18 @@ function renderExtensionIdentity(
 
   if (checkDrift) {
     lines.push('');
-    lines.push('Drift check (pure recompute of the last entry under its recorded rules):');
-    const last = history[history.length - 1]!;
+    // #729 PR-3 correction 6 (C6-5): drift is judged from execution entries; the creator's start
+    // entry is a record of the run's creation, never a baseline.
+    const last = lastExecutionIdentity(history);
+    if (last === undefined) {
+      lines.push(
+        "Drift check: no execution has recorded project code yet; the run's creation entry is not compared.",
+      );
+      return lines;
+    }
+    lines.push(
+      'Drift check (pure recompute of the last execution entry under its recorded rules):',
+    );
     if (last.error !== undefined) {
       lines.push(
         chalk.yellow(
@@ -341,10 +381,12 @@ function warnLine(warn: string): string {
   return warn.replace(/[\u0000-\u001f\u007f-\u009f]/g, controlEscape);
 }
 
+/** #729 PR-3 (D3/08 S2): escape → pass → cut, with a dimmed `…` (`escapePassCut`). Correction 3
+ *  (H-7''): a census render of a stored value, so through the value span while values are withheld
+ *  (its shape). */
 function formatSummary(value: unknown, maxLength = 120): string {
-  const raw = JSON.stringify(value);
-  if (raw.length <= maxLength) return raw;
-  return raw.slice(0, maxLength) + chalk.dim('…');
+  if (valuesWithheldFor() !== undefined) return writerCtx().value(value);
+  return escapePassCut(JSON.stringify(value) ?? 'undefined', maxLength, chalk.dim('…'));
 }
 /**
  * Issue #600 PR 1b — the ONE textual form for a summed figure that carries no "which request"
@@ -947,7 +989,7 @@ function formatOutputSegment(cost: CostView | undefined): string {
 
 /** Formats a diagnostics object plus its composed cost into the step line's readable string. */
 function formatDiagnostics(
-  diag: Pick<StepDiagnostics, 'input_token_estimate' | 'precondition_trace'>,
+  diag: Pick<StepDiagnostics, 'input_token_estimate' | 'precondition_trace' | 'guard_conditions'>,
   cost: CostView | undefined,
 ): string {
   const tokens = `~${diag.input_token_estimate} tokens (estimate, step input)`;
@@ -963,13 +1005,24 @@ function formatDiagnostics(
     cost !== undefined
       ? ` | ${formatCache(cost)}${ask}${money !== undefined ? ` | ${money}` : ''}`
       : '';
+  // F28 (#729 PR-3 correction 1): a guard step's conditions, every one — the condition, whether it
+  // passed, and its value (escaped and bounded; the writer masks the line at stdout's tier).
+  const guard =
+    diag.guard_conditions !== undefined && diag.guard_conditions.length > 0
+      ? ` | guard: ${diag.guard_conditions
+          .map(
+            (c) =>
+              `${c.condition} → ${c.passed ? 'passed' : 'failed'} (${escapedBoundedValue(c.resolved_value)})`,
+          )
+          .join(', ')}`
+      : '';
   if (diag.precondition_trace.length === 0) {
-    return `${tokens}${prompt}${output}${model} | no preconditions${cache}`;
+    return `${tokens}${prompt}${output}${model} | no preconditions${guard}${cache}`;
   }
   const traceStr = diag.precondition_trace
     .map((t) => `${t.expression} → ${t.passed ? 'true' : 'false'} (${String(t.resolved_value)})`)
     .join(', ');
-  return `${tokens}${prompt}${output}${model} | preconditions: ${traceStr}${cache}`;
+  return `${tokens}${prompt}${output}${model} | preconditions: ${traceStr}${guard}${cache}`;
 }
 /**
  * issue #625 (holder slice): the line naming the program whose code did an attempt's work. The
@@ -987,7 +1040,7 @@ function attemptProgramLine(
   const driven = attempt?.driven_by;
   if (driven === undefined) return undefined;
   const label = isQuestionStep ? 'Question opened through' : 'Taken by';
-  if (driven.by !== null) return `${label}: ${describeProgram(driven)}${supplier}`;
+  if (driven.by !== null) return `${label}: ${describeProgram(driven, writerCtx())}${supplier}`;
   if (driven.absent_cause === 'name_unreadable') return `${label}: ${UNSHOWABLE_NAME}${supplier}`;
   return undefined;
 }
@@ -1052,7 +1105,8 @@ export async function inspectRun(
   // issue #558 PR-T — the failure is KEPT (the bare `catch {` threw it away, so every class
   // printed "not found", false for a copy that exists). It names the line below and feeds
   // classifyRunHealth's `definition_unresolvable` finding.
-  let definitionError: { code: string; message: string; class?: string } | undefined;
+  let definitionError:
+    { code: string; message: string; class?: string; repairCommand?: string } | undefined;
   try {
     // issue #558 PR-T (review fold C8) — through the ONE helper every other surface uses, so the
     // line below carries the composed sentence: the class, the way out and the repair. It was
@@ -1074,10 +1128,13 @@ export async function inspectRun(
     // an error's shape is not its identity). A non-WorkflowError escape keeps the old behaviour.
     if (err instanceof WorkflowError) {
       const cls = (err.details as Record<string, unknown> | undefined)?.['class'];
+      // G7: the repair's shell command, printed whole below.
+      const command = (err.details as Record<string, unknown> | undefined)?.['repair_command'];
       definitionError = {
         code: err.code,
         message: err.message,
         ...(typeof cls === 'string' ? { class: cls } : {}),
+        ...(typeof command === 'string' ? { repairCommand: command } : {}),
       };
     }
   }
@@ -1113,13 +1170,16 @@ export async function inspectRun(
   // PR-C \u2014 D-3 leg vi: render sweep). A grandfathered terminal-with-stale-gate record (the #282
   // class) must render its TRUE phase here, not a stale 'gate_waiting'.
   const derivedPhase = deriveRunPhase(run);
+  // #729 PR-3 correction 2 (C1): the phase is realm's own word, printed whole (a span around the
+  // enum only, inside its colour).
+  const phaseWord = writerCtx().word(derivedPhase, RUN_PHASE_WORDS);
   let phaseLabel: string;
   if (derivedPhase === 'completed') {
-    phaseLabel = chalk.green(`${derivedPhase}  \u2713`);
+    phaseLabel = chalk.green(`${phaseWord}  \u2713`);
   } else if (derivedPhase === 'failed' || derivedPhase === 'abandoned') {
-    phaseLabel = chalk.red(derivedPhase);
+    phaseLabel = chalk.red(phaseWord);
   } else {
-    phaseLabel = chalk.yellow(derivedPhase);
+    phaseLabel = chalk.yellow(phaseWord);
   }
 
   const lines: string[] = [];
@@ -1168,14 +1228,29 @@ export async function inspectRun(
           : `was ${ruling.previous_arm}`;
       // The reason is the operator's own words, rendered verbatim — never truncated, never
       // summarised.
-      const because = ruling.reason !== undefined ? ` — ${ruling.reason}` : '';
+      const because = ruling.reason !== undefined ? ` — ${writerCtx().value(ruling.reason)}` : '';
       lines.push(`Ruled: ${ruling.by} at ${ruling.at} (${was})${because}`);
     }
   }
   // The one-line cause has never been rendered here — four rounds of #367/#373 review kept
   // finding that the operator's primary surface shows the failed SET but not why the run ended.
   if (run.terminal_reason !== undefined) {
-    lines.push(`Cause: ${run.terminal_reason}`);
+    // #729 PR-3 correction 3 (H-8): a fixed sentence is realm's own words, printed whole; any other
+    // reason is a stored value (H-7'': withheld as its shape).
+    const reason = run.terminal_reason;
+    lines.push(
+      `Cause: ${FIXED_TERMINAL_REASONS.includes(reason) ? writerCtx().word(reason, FIXED_TERMINAL_REASONS) : writerCtx().value(reason)}`,
+    );
+  }
+  // F28 (#729 PR-3 correction 1): the guard that aborted the run, and its message — a handler's
+  // runtime text, escaped and bounded whole (the class `bounded`); its conditions are on the guard
+  // step's `Diagnostics:` line.
+  if (run.aborted_at !== undefined) {
+    const message =
+      run.aborted_at.abort_message !== undefined
+        ? `: ${writerCtx().escaped(escapedBoundedValue(run.aborted_at.abort_message))}`
+        : '';
+    lines.push(`Aborted at: '${run.aborted_at.step_id}'${message}`);
   }
   // decision C205: a run that ended with failed steps `realm run resume` takes (core's one rule,
   // C204 — never a cleanup step) names them and the command that makes them runnable again.
@@ -1216,7 +1291,7 @@ export async function inspectRun(
       // decision C212: the words after the command are set off by a space — no punctuation follows
       // it (`owedCallWords`).
       lines.push(
-        `Owed to the engine: ${owedItems(advance).join(', ')} — ${CLI_COMMANDS.advance(advance, undefined, { driveFlags: '' })}${owedCallWords(advance)}`,
+        `Owed to the engine: ${owedItems(advance).join(', ')} — ${CLI_COMMANDS.advance(advance, undefined, writerHost())}${owedCallWords(advance)}`,
       );
     }
     // decision C205: an agent step ready — the drive, in the words `realm run advance` and `realm
@@ -1231,7 +1306,7 @@ export async function inspectRun(
       const verb = e.marker ? 'Could not run' : 'Cannot run';
       // decision C53: the marker line ends with its way out — a program that has the extension
       // runs the step.
-      const wayOut = e.marker ? capabilityMarkerWayOut(run.id) : '';
+      const wayOut = e.marker ? capabilityMarkerWayOut(run.id, writerCtx()) : '';
       lines.push(`${verb} '${e.step}' (${e.check}): ${e.refusal}${wayOut}`);
       // PR0-CONTRACT Amendment 14 (T-17's lever): an operator may supply this step's input — a fact.
       const lever = operatorInputLine(entry);
@@ -1239,7 +1314,8 @@ export async function inspectRun(
     }
     // decision C62: when the run cannot go on until its workflow is corrected, the way out follows
     // the steps that cannot run — the line `realm run advance` and the drive's stop line print.
-    if (cannotGoOnWithRefusal(ways)) lines.push(cannotRunWayOut(ways, run.id, deriveRunPhase(run)));
+    if (cannotGoOnWithRefusal(ways))
+      lines.push(cannotRunWayOut(ways, run.id, deriveRunPhase(run), writerCtx()));
   }
   // decision C211 (walk c14 W2-2): at an open question, the steps it holds — they go on after the
   // answer, and nothing is owed until then.
@@ -1304,7 +1380,7 @@ export async function inspectRun(
           // them routinely; rendered raw, one entry sprawls over four lines and the block stops
           // being scannable. The RECORD keeps the raw sanitized message — it is evidence, and it
           // must not go lossy because one surface wants a single line.
-          `${entry.message.replace(/\s+/g, ' ')}` +
+          `${writerCtx().value(entry.message.replace(/\s+/g, ' '))}` +
           `${status}${retryAfter}${declared}${ceiling}${attempts}`,
       );
       // issue #600 PR 1a (D9) / #611: what THIS attempt already cost, so a stuck run's screen
@@ -1336,7 +1412,7 @@ export async function inspectRun(
     // other absences are whole sentences of their own.
     const body =
       'holder' in described
-        ? `${verb} ${describeProgram(described.holder)}`
+        ? `${verb} ${describeProgram(described.holder, writerCtx())}`
         : described.absent_cause === 'name_unreadable'
           ? `${verb} ${ABSENCE_WORDS.name_unreadable}`
           : ABSENCE_WORDS[described.absent_cause];
@@ -1435,7 +1511,12 @@ export async function inspectRun(
         f.kind === 'never_claimed_idle' && f.since !== undefined
           ? ` ${formatGateAge(f.since)}`
           : '';
-      lines.push(`  ${chalk.yellow(f.kind)}${stepLabel}: ${f.reason}${idleSuffix}`);
+      // G7: a damaged copy's finding carries its repair command, printed whole.
+      const reason =
+        f.kind === 'definition_unresolvable'
+          ? withCommand(f.reason, definitionError?.repairCommand, writerCtx())
+          : f.reason;
+      lines.push(`  ${chalk.yellow(f.kind)}${stepLabel}: ${reason}${idleSuffix}`);
     }
   }
 
@@ -1456,7 +1537,7 @@ export async function inspectRun(
           // prints before this line, always).
           '(showing run record only \u2014 the reason is in Run Health above)'
         : definitionError !== undefined
-          ? `(showing run record only \u2014 ${definitionError.message})`
+          ? `(showing run record only \u2014 ${withCommand(definitionError.message, definitionError.repairCommand, writerCtx())})`
           : '(workflow definition not found \u2014 showing run record only)',
     );
   }
@@ -1557,7 +1638,11 @@ export async function inspectRun(
       );
       executionSnaps.forEach((snap, ai) => {
         const statusColored = colorStatus(snap.status);
-        const hashShort = chalk.dim(`hash: ${snap.evidence_hash.slice(0, 8)}`);
+        // #729 PR-3 correction 4 (I-9, I-9b): a hash of the output is a value — shown as its type and
+        // size where the output would be, and wherever the law hid anything inside the output.
+        const hashShort = chalk.dim(
+          `hash: ${digestSpan(snap.evidence_hash.slice(0, 8), snap.output_summary)}`,
+        );
         lines.push(
           `     (attempt ${ai + 1}/${totalAttempts})  ${statusColored}   ${snap.duration_ms}ms   ${hashShort}`,
         );
@@ -1598,12 +1683,12 @@ export async function inspectRun(
       } else {
         lines.push(`     Tool calls (${lastSnap.tool_calls.length}):`);
         for (const tc of lastSnap.tool_calls) {
-          const errSuffix = tc.error ? `  error: ${tc.error}` : '';
+          const errSuffix = tc.error ? `  error: ${writerCtx().value(tc.error)}` : '';
           lines.push(`       [${tc.server_id}:${tc.tool}]  ${tc.duration_ms}ms${errSuffix}`);
           if (options?.verbose) {
             lines.push(`         args:   ${formatSummary(tc.args)}`);
             const resultStr = typeof tc.result === 'string' ? tc.result : '(null)';
-            lines.push(`         result: ${resultStr}`);
+            lines.push(`         result: ${writerCtx().value(resultStr)}`);
           }
         }
       }
@@ -1656,7 +1741,11 @@ export async function inspectRun(
       // preview field named `choice` apart from the answer's.)
       const snap = snaps[0]!;
       const statusColored = colorStatus(snap.status);
-      const hashShort = chalk.dim(`hash: ${snap.evidence_hash.slice(0, 8)}`);
+      // #729 PR-3 correction 4 (I-9, I-9b): a hash of the output is a value — shown as its type and
+      // size where the output would be, and wherever the law hid anything inside the output.
+      const hashShort = chalk.dim(
+        `hash: ${digestSpan(snap.evidence_hash.slice(0, 8), snap.output_summary)}`,
+      );
       const kindLabel = snap.kind === 'gate_response' ? chalk.cyan(' gate_response') : '';
       const profileLabel =
         snap.agent_profile !== undefined ? chalk.cyan(` [profile: ${snap.agent_profile}]`) : '';
@@ -1702,12 +1791,12 @@ export async function inspectRun(
         } else {
           lines.push(`     Tool calls (${snap.tool_calls.length}):`);
           for (const tc of snap.tool_calls) {
-            const errSuffix = tc.error ? `  error: ${tc.error}` : '';
+            const errSuffix = tc.error ? `  error: ${writerCtx().value(tc.error)}` : '';
             lines.push(`       [${tc.server_id}:${tc.tool}]  ${tc.duration_ms}ms${errSuffix}`);
             if (options?.verbose) {
               lines.push(`         args:   ${formatSummary(tc.args)}`);
               const resultStr = typeof tc.result === 'string' ? tc.result : '(null)';
-              lines.push(`         result: ${resultStr}`);
+              lines.push(`         result: ${writerCtx().value(resultStr)}`);
             }
           }
         }
@@ -1743,9 +1832,11 @@ export async function inspectRun(
       // The question is printed quoted, on one line, every control character an escape
       // (`quotedForTerminal`, shared with `realm workflow run`'s question line).
       if (message !== undefined) {
-        lines.push(`     Message:  ${quotedForTerminal(message)}`);
+        lines.push(`     Message:  ${questionSpan(quotedForTerminal(message))}`);
       }
-      lines.push(`     ${renderAnswerLine(answer, answerArrivalOf(answerEntries[i]))}`);
+      lines.push(
+        `     ${renderAnswerLine(answer, answerArrivalOf(answerEntries[i]), writerCtx())}`,
+      );
     });
   });
 
@@ -1763,6 +1854,7 @@ export async function inspectRun(
  */
 export async function inspectPriceSource(
   definition: WorkflowDefinition | undefined,
+  manifest?: RunManifest,
 ): Promise<PriceSource> {
   const unreachable = (detail: string): PriceSource => {
     const result = { not_priced: 'economics_unreachable' as const, detail };
@@ -1771,29 +1863,76 @@ export async function inspectPriceSource(
   if (definition === undefined) return unreachable("the run's workflow copy could not be read");
   const root = definition.trust_root;
   if (root === undefined) return unreachable("the run's workflow copy records no deployment root");
-  const manifestPath = join(root, 'realm.yaml');
   const { loadPriceSource } = await import('@sensigo/realm-mcp');
-  let text: string;
-  try {
-    text = await readFile(manifestPath, 'utf8');
-  } catch (err) {
-    const code = (err as { code?: unknown } | null)?.code;
-    if (code === 'ENOENT') return loadPriceSource({});
-    return unreachable(
-      `cannot read '${manifestPath}': ${typeof code === 'string' ? code : String(err)}`,
-    );
+  // #729 PR-3 (L-4): the one read of the run's manifest, shared with the receipt's declared part.
+  const read = manifest ?? (await readRunManifest(definition));
+  if (read.document === undefined) {
+    // No `realm.yaml` found (none at the root, or the recorded one is gone): the installed price
+    // list only, as before; one that cannot be read or is invalid prices nothing, naming the file.
+    return read.declaredCause === 'load_failed'
+      ? unreachable(read.detail ?? 'the deployment manifest could not be read')
+      : loadPriceSource({});
   }
-  const parsed = parseDeploymentManifest(text);
-  if ('error' in parsed) {
-    return unreachable(
-      parsed.error.kind === 'yaml'
-        ? `'${manifestPath}' is not valid YAML`
-        : `'${manifestPath}' is invalid: ${parsed.error.errors[0] ?? 'invalid'}`,
-    );
-  }
-  const named = parsed.document.runner?.cache?.economics;
+  const named = read.document.runner?.cache?.economics;
   if (named === undefined) return loadPriceSource({});
   return loadPriceSource({ economicsPath: isAbsolute(named) ? named : join(root, named) });
+}
+
+/** What `realm run inspect` hid on its own surface (F13): the writer's counts while it printed, the
+ *  run's declared standing, and whether it showed a question. */
+export interface InspectSurfaceReceipt {
+  declared: DisclosureReceipt['declared'];
+  declared_cause?: DisclosureReceipt['declared_cause'];
+  /** The operator's own terminal (the declared tier): environment values and the values after a
+   *  credential's name are shown there. */
+  terminal: boolean;
+  hidden: { declared: number; environment: number; pattern: number };
+  unchecked: number;
+  unmaskable: number;
+  /** The sources of what was hidden — on the terminal only. */
+  members?: readonly string[];
+  question: boolean;
+  /** #729 PR-3 correction 3 (H-7''): while values are withheld, how many were shown as their shapes. */
+  withheld?: number;
+}
+
+/**
+ * #729 PR-3 (F13, F16): inspect's one `Disclosure:` line — what THIS surface hid while it printed
+ * the run, never the record walk's totals. On the operator's terminal (the declared tier) it says
+ * that environment values and the values after a credential's name are shown there, and names the
+ * sources it hid; on a log, kinds and counts. A shown question is said to be masked at the declared
+ * tier only.
+ */
+export function inspectReceiptLine(receipt: InspectSurfaceReceipt): string {
+  const declared = declaredWords({
+    declared: receipt.declared,
+    ...(receipt.declared_cause !== undefined ? { declaredCause: receipt.declared_cause } : {}),
+  });
+  const question =
+    // Correction 4 (I-6): under the flag, where it would have withheld, the words name the flag.
+    (receipt.question ? `; ${questionReceiptWords()}` : '') +
+    // I-7: nothing shaped is said as such, never a count of nothing.
+    (receipt.withheld === undefined
+      ? ''
+      : receipt.withheld === 0
+        ? '; values withheld (none to show)'
+        : `; values withheld: ${receipt.withheld} shown as ${receipt.withheld === 1 ? 'its' : 'their'} type and size`);
+  if (receipt.terminal) {
+    const names =
+      receipt.members !== undefined && receipt.members.length > 0
+        ? `: ${receipt.members.join(', ')}`
+        : '';
+    return (
+      `Disclosure: ${declared}; environment values and values after a credential's name are shown on this terminal; ` +
+      `hidden ${receipt.hidden.declared} declared${names}; ` +
+      `${receipt.unchecked} not checked; ${receipt.unmaskable} too short to hide${question}.`
+    );
+  }
+  return (
+    `Disclosure: ${declared}; environment swept; ` +
+    `hidden ${receipt.hidden.declared} declared, ${receipt.hidden.environment} environment, ${receipt.hidden.pattern} by pattern; ` +
+    `${receipt.unchecked} not checked; ${receipt.unmaskable} too short to hide${question}.`
+  );
 }
 
 export const inspectCommand = new Command('inspect')
@@ -1804,19 +1943,96 @@ export const inspectCommand = new Command('inspect')
     '--check-drift',
     'Recompute the last recorded extension identity against current disk state (pure hashing — never loads code)',
   )
-  .action(async (runId: string, cmdOpts: { verbose?: boolean; checkDrift?: boolean }) => {
-    const { JsonFileStore, JsonWorkflowStore } = await import('@sensigo/realm');
-    const store = new JsonFileStore();
-    const workflowStore = new JsonWorkflowStore();
-    try {
-      const output = await inspectRun(runId, store, workflowStore, {
-        ...(cmdOpts.verbose === true ? { verbose: true } : {}),
-        ...(cmdOpts.checkDrift === true ? { checkDrift: true } : {}),
-        priceSourceFor: inspectPriceSource,
-      });
-      console.log(output);
-    } catch (err) {
-      console.error(err instanceof Error ? err.message : String(err));
-      process.exit(1);
-    }
-  });
+  .option(
+    '--accept-partial-disclosure',
+    "Print the run's stored values even when Realm cannot read every declared secret of the run (masked with what is known)",
+  )
+  .action(
+    async (
+      runId: string,
+      cmdOpts: { verbose?: boolean; checkDrift?: boolean; acceptPartialDisclosure?: boolean },
+    ) => {
+      const { JsonFileStore, JsonWorkflowStore } = await import('@sensigo/realm');
+      const store = new JsonFileStore();
+      const workflowStore = new JsonWorkflowStore();
+      try {
+        // #729 PR-3 (L-4): the run's declared values join the writer's set before anything prints,
+        // and the receipt line says what the law hid in this record for stdout's audience.
+        const run = await store.get(runId);
+        const definition = await getWorkflowForRun(workflowStore, run, {
+          retryVerb: 'inspect again',
+          verb: 'inspect',
+          terminalOk: true,
+        }).catch(() => undefined);
+        const manifest = await readRunManifest(definition, run);
+        warnManifestNotSecretUnset(manifest.path, manifest.notSecret);
+        addDeclaredValues(
+          manifest.declared,
+          manifest.document !== undefined ? (manifest.notSecret ?? []) : undefined,
+        );
+        // #729 PR-3 correction 3 (H-7''): the run's declared standing is the writer's; under a
+        // failed or changed manifest its values are withheld unless the flag is given, and the
+        // first line says why.
+        noteDeclaredStanding(manifest.path ?? `run ${runId}`, {
+          declared: manifest.declaredState,
+          ...(manifest.declaredCause !== undefined
+            ? { declaredCause: manifest.declaredCause }
+            : {}),
+        });
+        withholdUnlessAccepted(cmdOpts.acceptPartialDisclosure === true);
+        const withheld = valuesWithheldFor();
+        if (withheld !== undefined) console.log(valuesWithheldLine(withheld));
+        else {
+          // Correction 4 (I-6): shown on the flag where they would have been withheld — said first.
+          const shown = valuesShownFor();
+          if (shown !== undefined) console.log(valuesShownLine(shown));
+        }
+        // F13: what this surface hid — its render's own passes (long values are passed and cut
+        // there) and the print — never the record walk's totals.
+        const before = writerTally();
+        const output = await inspectRun(runId, store, workflowStore, {
+          ...(cmdOpts.verbose === true ? { verbose: true } : {}),
+          ...(cmdOpts.checkDrift === true ? { checkDrift: true } : {}),
+          priceSourceFor: (def) => inspectPriceSource(def, manifest),
+        });
+        console.log(output);
+        const audience = stdoutAudience();
+        const after = writerTally();
+        if (audience !== undefined && before !== undefined && after !== undefined) {
+          const set = buildDisclosureSet({
+            env: process.env,
+            declared: manifest.declared,
+            declaredState: manifest.declaredState,
+            ...(manifest.declaredCause !== undefined
+              ? { declaredCause: manifest.declaredCause }
+              : {}),
+            audience,
+            ...(manifest.notSecret !== undefined ? { notSecret: manifest.notSecret } : {}),
+          }).set;
+          const terminal = audience === 'private';
+          console.log(
+            inspectReceiptLine({
+              declared: set.declared,
+              ...(set.declaredCause !== undefined ? { declared_cause: set.declaredCause } : {}),
+              terminal,
+              hidden: {
+                declared: after.declared - before.declared,
+                environment: after.environment - before.environment,
+                pattern: after.pattern - before.pattern,
+              },
+              unchecked: after.unchecked - before.unchecked,
+              unmaskable: set.unmaskable,
+              ...(terminal
+                ? { members: [...after.members].filter((m) => !before.members.has(m)).sort() }
+                : {}),
+              question: after.question && !before.question,
+              ...(withheld !== undefined ? { withheld: after.shaped - before.shaped } : {}),
+            }),
+          );
+        }
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+    },
+  );

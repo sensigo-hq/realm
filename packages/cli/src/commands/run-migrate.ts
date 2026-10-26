@@ -14,8 +14,14 @@
 // never auto-corrects one it finds incoherent — an operator adjudicates those.
 import { Command } from 'commander';
 import type { RunRecord, RunStore, SealArm, UnreadableRunFileEntry } from '@sensigo/realm';
-import { classifyLegacySeal, armToPhase, describeStoredFileFault } from '@sensigo/realm';
+import {
+  classifyLegacySeal,
+  armToPhase,
+  describeStoredFileFault,
+  FIXED_TERMINAL_REASONS,
+} from '@sensigo/realm';
 import { listRunsDiagnosed, unreadableRunLines } from './list.js';
+import { RUN_PHASE_WORDS, escapePassCut, writerCtx } from '../output/writer.js';
 
 /** One record's disposition. Every reachable state has exactly one home here. */
 export interface MigrateBuckets {
@@ -81,7 +87,14 @@ function whyUnclassifiable(run: RunRecord): string {
   if (run.terminal_reason === undefined) {
     return 'no terminal reason recorded and no marker to read';
   }
-  return `terminal reason "${run.terminal_reason.slice(0, 80)}" matches no known seal shape`;
+  // #729 PR-3 (D3/08 S2): escape → pass → cut at 80 with `…`, never a raw start of the reason.
+  // #729 PR-3 correction 5 (J-3): a fixed sentence is realm's own words — printed whole through the
+  // word span, branched BEFORE the cut (a span inside `escapePassCut` is consumed by its own pass and
+  // re-masked by the stream's). A fixed sentence is ASCII and short: nothing to escape or cut.
+  const reason = FIXED_TERMINAL_REASONS.includes(run.terminal_reason)
+    ? writerCtx().word(run.terminal_reason, FIXED_TERMINAL_REASONS)
+    : escapePassCut(JSON.stringify(run.terminal_reason).slice(1, -1), 80);
+  return `terminal reason "${reason}" matches no known seal shape`;
 }
 
 /**
@@ -230,7 +243,7 @@ export async function migrateStampSeals(
 function phaseLabel(phase: string | undefined): string {
   return phase === undefined
     ? 'phase unknown to this binary (written by a newer version?)'
-    : `phase ${phase}`;
+    : `phase ${writerCtx().word(phase, RUN_PHASE_WORDS)}`;
 }
 
 /** The ordering instruction, live since the vehicle exists. */
@@ -274,8 +287,11 @@ export function renderMigrateReport(
         : `${buckets.stamped.length} run(s) WOULD be stamped:`,
     );
     for (const e of buckets.stamped) {
+      const word = (p: string): string => writerCtx().word(p, RUN_PHASE_WORDS);
       const phase =
-        e.phase_before === e.phase_after ? e.phase_after : `${e.phase_before} → ${e.phase_after}`;
+        e.phase_before === e.phase_after
+          ? word(e.phase_after)
+          : `${word(e.phase_before)} → ${word(e.phase_after)}`;
       lines.push(`  • ${e.id}: ${e.arm} (phase ${phase})`);
     }
   } else if (force) {

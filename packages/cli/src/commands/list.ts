@@ -21,6 +21,7 @@ import type {
 } from '@sensigo/realm';
 import { dirname } from 'node:path';
 import { parseDuration } from '../lib/parse-duration.js';
+import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
 
 /**
  * issue #719 (B3): a run store as Realm's commands list it — the JSON store's
@@ -61,12 +62,15 @@ export function unreadableRunLines(
 }
 
 /** Returns a chalk-coloured phase label — `phase` is the caller's already-DERIVED value (issue
- *  #279, increment 2, PR-C — D-3 leg vi: render sweep), never a raw `run.run_phase` read here. */
+ *  #279, increment 2, PR-C — D-3 leg vi: render sweep), never a raw `run.run_phase` read here.
+ *  #729 PR-3 correction 3 (H-8): the phase is realm's own word, printed whole (a span around the
+ *  word only, inside its colour). */
 function colorState(phase: RunPhase): string {
-  if (phase === 'completed') return chalk.green(phase);
-  if (phase === 'failed' || phase === 'abandoned') return chalk.red(phase);
-  if (phase === 'gate_waiting') return chalk.cyan(phase);
-  return chalk.yellow(phase);
+  const word = writerCtx().word(phase, RUN_PHASE_WORDS);
+  if (phase === 'completed') return chalk.green(word);
+  if (phase === 'failed' || phase === 'abandoned') return chalk.red(word);
+  if (phase === 'gate_waiting') return chalk.cyan(word);
+  return chalk.yellow(word);
 }
 
 /**
@@ -701,7 +705,7 @@ export const listCommand = new Command('list')
       if (opts.status !== undefined) {
         if (!VALID_PHASES.includes(opts.status as RunPhase)) {
           console.error(
-            `Invalid --status value '${opts.status}'. Valid values: ${VALID_PHASES.join(', ')}`,
+            `Invalid --status value '${opts.status}'. Valid values: ${VALID_PHASES.map((p) => writerCtx().word(p, RUN_PHASE_WORDS)).join(', ')}`,
           );
           process.exit(1);
         }

@@ -63,6 +63,10 @@ const DIAG: StepDiagnostics = {
       },
     ],
   },
+  guard_conditions: [
+    { condition: 'steps.classify.output.ok', resolved_value: 'fake-guard-value', passed: false },
+    { condition: 'steps.classify.output.n > 1', resolved_value: 3, passed: true },
+  ],
 };
 
 const STEP_DIAGNOSTICS_DISCLOSURE = {
@@ -108,6 +112,16 @@ const STEP_DIAGNOSTICS_DISCLOSURE = {
     reason:
       'Reaches operators through the #316 `structured_output_downgraded` run-health finding, which ' +
       'names the affected steps. The per-step record is the finding’s evidence, not its surface.',
+  },
+  guard_conditions: {
+    surface: 'rendered',
+    // #729 PR-3 correction 1 (F28): a guard step's `Diagnostics:` line names each condition, whether
+    // it passed and its value (escaped and bounded) — moved here from the guard's `output_summary`
+    // by #729 PR-3 (D12).
+    probe: (out) =>
+      expect(out).toContain(
+        `guard: steps.classify.output.ok → failed ("fake-guard-value"), steps.classify.output.n > 1 → passed (3)`,
+      ),
   },
 } satisfies Record<keyof StepDiagnostics, DisclosureRoute>;
 
@@ -275,6 +289,7 @@ describe('#600 PR 1a (D7) — every StepDiagnostics field reaches an inspect rea
   it('the registry covers every field, and the waiver set is exactly the three named above', () => {
     expect(Object.keys(STEP_DIAGNOSTICS_DISCLOSURE).sort()).toEqual([
       'cache',
+      'guard_conditions',
       'input_token_estimate',
       'precondition_trace',
       'settled_by_default',
@@ -285,7 +300,8 @@ describe('#600 PR 1a (D7) — every StepDiagnostics field reaches an inspect rea
       .filter(([, r]) => (r as DisclosureRoute).surface === 'waived')
       .map(([f]) => f)
       .sort();
-    // NOT `[]` — see the header. A fourth waiver is a decision someone must make in this file.
+    // NOT `[]` — see the header. A fourth waiver is a decision someone must make in this file
+    // (`guard_conditions` is rendered since #729 PR-3 correction 1, F28).
     expect(waived).toEqual(['settled_by_default', 'structured_output', 'validation_rejections']);
   });
 });

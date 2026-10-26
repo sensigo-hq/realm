@@ -760,7 +760,7 @@ describe('#627 W correction 1 — the claims F asks for', () => {
     // Executed by answer-record-627 :: "`realm run respond` records route cli …" (no token passed).
     claim(
       READING,
-      "| `none passed (a token is passed only by Realm's MCP answer tool, from the conversation that opened the question, or by a program that calls the library with it)` | No token was passed, over either door. |",
+      "| `no claim token passed (a token is passed only by Realm's MCP answer tool, from the conversation that opened the question, or by a program that calls the library with it)` | No token was passed, over either door. |",
     );
   });
 

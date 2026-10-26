@@ -1095,11 +1095,14 @@ describe('#625 PR-2a — L8 witnesses (source text)', () => {
     const ra = code('cli/src/agent/run-agent.ts');
     for (const sentence of [
       'is not registered in this runner.',
-      'The run is NOT failed',
+      // #729 PR-3 correction 5 (J-2): the verb is realm's word, printed through the word span.
+      "The run is NOT ${writerCtx().word('failed', RUN_PHASE_WORDS)}",
       "failed: ${result.errors.join(', ')}${repairSuffix}",
       'CHOKEPOINT (4)',
       "error_class: 'validation_rejected'",
     ]) {
+      // (a) red when a sentence is written twice, or its text changes without this list (the
+      //     spanned verb printed plain again: 0 hits); (b) prints the sentence and its count.
       expect(read('cli/src/agent/run-agent.ts').split(sentence).length - 1, sentence).toBe(1);
     }
     // F7: no host keeps its own list of codes — the capability stop is core's classifier's kind.

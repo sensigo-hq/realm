@@ -44,6 +44,10 @@ import {
   releaseLineAdvisoryMessage,
   renderLoaderWarning,
   resolveSeverity,
+  buildDisclosureSet,
+  manifestSecretsBlockHash,
+  disclose,
+  unmaskableWarning,
 } from '@sensigo/realm';
 import type {
   LoaderWarning,
@@ -61,7 +65,12 @@ import {
   errorExtensionIdentityEntry,
   sha256HexOf,
 } from './extension-identity.js';
-import { resolveManifestSecrets, redactSecretValues, type SecretMode } from './manifest-secrets.js';
+import { resolveManifestSecrets, type SecretMode } from './manifest-secrets.js';
+import {
+  addDeclaredDisclosure,
+  noteDeclaredStanding,
+  warnManifestNotSecretUnset,
+} from '../output/writer.js';
 
 export interface LoadProjectExtensionsOptions {
   /**
@@ -179,6 +188,9 @@ const cache = new Map<string, CacheEntry>();
 export function clearProjectExtensionsCache(): void {
   cache.clear();
 }
+
+/** #729 PR-3 correction 3 (H-10): a manifest read that failed (parse, schema or a secret). */
+const MANIFEST_LOAD_FAILED = { declared: 'unknown', declaredCause: 'load_failed' } as const;
 
 function emptyManifest(): ExtensionManifest {
   return { modules: [], adapters: [], handlers: [], processors: [] };
@@ -330,6 +342,9 @@ function loadManifestContext(
   // its two kinds of failure keep their two throws.
   const parsed = parseDeploymentManifest(bytes.toString('utf8'));
   if ('error' in parsed) {
+    // #729 PR-3 correction 3 (H-10): the writer's standing says the manifest failed, not that
+    // there is none.
+    noteDeclaredStanding(manifestPath, MANIFEST_LOAD_FAILED);
     if (parsed.error.kind === 'yaml') {
       throw new Error(
         `Deployment manifest '${manifestPath}' is not valid YAML: ${errMsg(parsed.error.cause)}`,
@@ -504,20 +519,42 @@ export async function loadProjectExtensions(
         ...(definition.trust_root !== undefined ? { trustRoot: definition.trust_root } : {}),
         ...(overrideActive ? { overrideActive: true } : {}),
         ...(manifestCtx !== undefined
-          ? { manifest: { path: manifestCtx.path, content_hash: manifestCtx.contentHash } }
+          ? {
+              manifest: {
+                path: manifestCtx.path,
+                content_hash: manifestCtx.contentHash,
+                // #729 PR-3 (D-12): what decides the run's declared values, beside the names.
+                secrets_block_hash: manifestSecretsBlockHash(manifestCtx.document),
+              },
+            }
           : {}),
         secretNames,
       }),
     );
   } catch (err) {
+    // F3 (D-9; RECORD 01 #19): the failure's text is masked at its source with the set built for
+    // the `log` audience — the manifest's values, the environment and the patterns, every tier —
+    // before it is printed or stored as the entry's `error`.
+    const masked = disclose(
+      `identity capture failed: ${errMsg(err)}`,
+      buildDisclosureSet({
+        env: process.env,
+        declared: Object.fromEntries(
+          (secretValues ?? []).map((value, i) => [`manifest#${i + 1}`, value]),
+        ),
+        declaredState: 'resolved',
+        audience: 'log',
+        ...(manifestCtx?.document.disclosure?.not_secret !== undefined
+          ? { notSecret: manifestCtx.document.disclosure.not_secret }
+          : {}),
+      }).set,
+      'all',
+    ).text;
     console.error(
-      `[realm] extension identity capture failed: ${errMsg(err)} — drift evidence will carry an error entry for this load.`,
+      `[realm] extension ${masked} — drift evidence will carry an error entry for this load.`,
     );
     registry.setIdentity(
-      errorExtensionIdentityEntry(
-        `identity capture failed: ${errMsg(err)}`,
-        overrideActive ? { overrideActive: true } : {},
-      ),
+      errorExtensionIdentityEntry(masked, overrideActive ? { overrideActive: true } : {}),
     );
   }
 
@@ -594,9 +631,46 @@ async function applyDeploymentManifest(
   useFormats: Map<string, 'esm' | 'cjs' | 'ts-jiti'>;
 }> {
   const refs = collectManifestSecretRefs(ctx.document);
-  const resolved = resolveManifestSecrets(refs, ctx.document.secrets, ctx.dir, secretMode);
+  let resolved: ReturnType<typeof resolveManifestSecrets>;
+  try {
+    resolved = resolveManifestSecrets(refs, ctx.document.secrets, ctx.dir, secretMode);
+  } catch (err) {
+    // H-10: a secret it names could not be resolved — its declared values are not known.
+    noteDeclaredStanding(ctx.path, MANIFEST_LOAD_FAILED);
+    throw err;
+  }
   const resolveName = (name: string): string => resolved.values[name] ?? '';
-  const secretValues = Object.values(resolved.values);
+  // #729 PR-3 (RECORD 01 #19; D-9, F3): the loader's own failure messages are masked AT SOURCE with
+  // the set built for the `log` audience — the values it just resolved (every form of each, its parts
+  // included), the environment and the patterns — at tier `all`, before they are stored (an extension
+  // identity's `error`) or printed. A value too short to hide is said at load, with the four clauses
+  // (I8), naming the manifest and the `config` keys that refer to it (F37).
+  const declared = buildDisclosureSet({
+    env: process.env,
+    declared: resolved.values,
+    declaredState: 'resolved',
+    audience: 'log',
+    ...(ctx.document.disclosure?.not_secret !== undefined
+      ? { notSecret: ctx.document.disclosure.not_secret }
+      : {}),
+  });
+  const maskDeclared = (text: string): string => disclose(text, declared.set, 'all').text;
+  if (!resolved.sentinel) {
+    for (const source of declared.unmaskable) {
+      const name = source.startsWith('declared:') ? source.slice('declared:'.length) : source;
+      const keys = refs.filter((r) => r.name === name).map((r) => r.path);
+      console.warn(`[realm] ${unmaskableWarning(source, { manifest: ctx.path, keys })}`);
+    }
+  }
+  // #729 PR-3 correction 2 (C5): a listed name that is not set is said, as REALM_NOT_SECRET's is.
+  warnManifestNotSecretUnset(ctx.path, ctx.document.disclosure?.not_secret);
+  // The CLI writer's declared part (the union over every manifest this process loads) and the
+  // manifest's not-secret names (RECORD 01 #5).
+  addDeclaredDisclosure(
+    resolved.sentinel ? {} : resolved.values,
+    ctx.document.disclosure?.not_secret,
+  );
+  noteDeclaredStanding(ctx.path, { declared: 'resolved' });
   const useFormats = new Map<string, 'esm' | 'cjs' | 'ts-jiti'>();
   const secretBearingHandlers: string[] = [];
   const secretBearingProcessors: string[] = [];
@@ -637,9 +711,8 @@ async function applyDeploymentManifest(
       try {
         instance = factory({ id: name, config });
       } catch (err) {
-        const redacted = redactSecretValues(
+        const redacted = maskDeclared(
           `Deployment manifest '${ctx.path}': constructing ${site} (use: ${entry.use}) failed: ${errMsg(err)}`,
-          secretValues,
         );
         if (secretMode === 'sentinel') {
           // Sentinel degrade: warn-and-skip — never a hard failure, never silent.
@@ -648,7 +721,7 @@ async function applyDeploymentManifest(
         }
         // The cause carries the same redacted message (Node's `util.inspect` prints `[cause]`),
         // with the original's name; never the raw error.
-        const cause = new Error(redactSecretValues(errMsg(err), secretValues));
+        const cause = new Error(maskDeclared(errMsg(err)));
         cause.name = err instanceof Error ? err.name : 'Error';
         // eslint-disable-next-line preserve-caught-error -- the caught error, redacted: a raw cause prints the secret
         throw new Error(redacted, { cause });

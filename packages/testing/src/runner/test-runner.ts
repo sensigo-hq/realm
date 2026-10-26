@@ -16,6 +16,8 @@ import {
   composeWaysAt,
   cannotGoOnUntilCorrected,
   libraryCannotRunWords,
+  persistsField,
+  startIdentityEntry,
 } from '@sensigo/realm';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
@@ -210,6 +212,12 @@ async function runSingleFixture(
       workflowId: definition.id,
       workflowVersion: definition.version,
       params: fixture.params,
+      // #729 PR-3 correction 5 (J-5): a run of a project the CLI loader loaded is born with that
+      // project's identity; a registry with none writes none.
+      ...(startIdentityEntry(options.extensions?.registry) !== undefined &&
+      persistsField(store, 'extension_identity')
+        ? { extensionIdentity: [startIdentityEntry(options.extensions?.registry)!] }
+        : {}),
     });
     const runId = run.id;
 

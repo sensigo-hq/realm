@@ -116,8 +116,14 @@ describe('postGateNotificationToSlack — owner field', () => {
 
     const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
     const bodyStr = init.body as string;
-    // formatGatePreviewForSlack produces *Draft* for headline
-    expect(bodyStr).toContain('*Draft*');
+    // #729 PR-3 (owner Q6; RECORD 05 "Slack"): a message-less gate's preview is posted as its
+    // shapes on this broadcast surface — formatGatePreviewForSlack over the shaped preview, so the
+    // headline line holds the headline's shape, never its text. (a) red when the raw preview is
+    // posted; (b) prints booleans.
+    expect({
+      shapedHeadline: bodyStr.includes('*‹string, 5 characters›*'),
+      rawHeadline: bodyStr.includes('*Draft*'),
+    }).toEqual({ shapedHeadline: true, rawHeadline: false });
     expect(bodyStr).not.toContain('undefined');
 
     vi.unstubAllGlobals();
@@ -252,7 +258,12 @@ describe('postGateViaApi — resolved_message', () => {
 
     const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
     const bodyStr = init.body as string;
-    expect(bodyStr).toContain('*Draft headline*');
+    // #729 PR-3 (owner Q6): the message-less preview as its shapes. (a) red when the raw preview is
+    // posted; (b) prints booleans.
+    expect({
+      shapedHeadline: bodyStr.includes('*‹string, 14 characters›*'),
+      rawHeadline: bodyStr.includes('Draft headline'),
+    }).toEqual({ shapedHeadline: true, rawHeadline: false });
     expect(bodyStr).not.toContain('undefined');
   });
 });

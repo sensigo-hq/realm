@@ -291,6 +291,13 @@ export interface StepDiagnostics {
     resolved_value: unknown;
   }>;
   /**
+   * #729 PR-3: a guard step's evaluated `abort_unless` conditions, every one (no short-circuit),
+   * each with its resolved value. Present on a guard's pass and abort snapshots; absent on every
+   * other step's, and on a guard snapshot written before #729 PR-3, which carried them in
+   * `output_summary.conditions`.
+   */
+  guard_conditions?: Array<{ condition: string; resolved_value: unknown; passed: boolean }>;
+  /**
    * Issue #220: stamped on a SUCCESS settle evidence snapshot when the step's accrued
    * `RunRecord.validation_rejections` count was > 0 at settle time ("succeeded after N
    * rejections") — free diagnostic, never gates anything. Also present on the synthesized

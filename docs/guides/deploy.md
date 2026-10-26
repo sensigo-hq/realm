@@ -77,7 +77,7 @@ Registered: restock v1 (1 step)
 `validate` does not need the secrets, so it can run in CI. If a secret is missing, it says so and carries on with placeholders:
 
 ```text
-⚠ Deployment manifest secrets: 1 unresolved secret reference(s):
+⚠ Deployment manifest: 1 secret(s) unresolved:
   adapters.stock.config.auth.token → ${secret:STOCK_API_TOKEN}
 …
 ⚠ Validating with SENTINEL credentials — execution paths still require real secret resolution.
@@ -92,7 +92,7 @@ Running is stricter. With `STOCK_API_TOKEN` missing from `.env`, starting a run 
 
 ```text
 status: error
-Deployment manifest secrets: 1 unresolved secret reference(s):
+Deployment manifest: 1 secret(s) unresolved:
   adapters.stock.config.auth.token → ${secret:STOCK_API_TOKEN}
 Searched sources (in precedence order): dotenv (/srv/shop/.env).
 Fix: add the missing name(s) to your dotenv file, or declare 'env' in secrets.sources and export them in the daemon's environment.
@@ -218,7 +218,7 @@ realm run inspect <run-id> --check-drift
 After the handler file was edited while a server was still running the old code, a run from that server reported:
 
 ```text
-Drift check (pure recompute of the last entry under its recorded rules):
+Drift check (pure recompute of the last execution entry under its recorded rules):
   module /srv/shop/handlers.mjs: DIFFERS (recorded 95e24e2b…, current 2183f6a1…)
   manifest /srv/shop/realm.yaml: same
 ```

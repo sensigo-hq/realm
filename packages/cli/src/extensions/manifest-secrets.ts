@@ -9,13 +9,13 @@
 // resolves to a labeled sentinel string — config shape flows end-to-end without real
 // credentials; execution paths always require REAL resolution.
 //
-// Redaction: resolved secret VALUES never appear in logs, errors, or drift records —
-// redactSecretValues() replaces them (longest-first; values shorter than 4 chars skipped).
+// Disclosure (#729 PR-3): resolved secret VALUES never appear in logs, errors, or drift records —
+// the loader masks its own failure messages at source with core's law (`disclose`) over the values
+// it just resolved, and hands them to the CLI writer's declared part.
 import { readFileSync } from 'node:fs';
 import { isAbsolute, join, resolve as resolvePath } from 'node:path';
 import { parse as parseDotenv } from 'dotenv';
 import type { ManifestSecretsConfig, SecretRefSite } from '@sensigo/realm';
-import { redactWith, variantsOf } from '../agent/providers/redaction-variants.js';
 
 export type SecretMode = 'real' | 'sentinel';
 
@@ -85,7 +85,7 @@ export function resolveManifestSecrets(
         if (dotenvDeclared) {
           // Declared-but-missing (or unreadable) is a LOUD error, not an empty source.
           throw new ManifestSecretsError(
-            `Deployment manifest secrets: declared dotenv file '${dotenvPath}' cannot be read: ` +
+            `Deployment manifest: its declared dotenv file '${dotenvPath}' cannot be read: ` +
               `${err instanceof Error ? err.message : String(err)}`,
           );
         }
@@ -96,7 +96,7 @@ export function resolveManifestSecrets(
         layers.push(parseDotenv(content));
       } catch (err) {
         throw new ManifestSecretsError(
-          `Deployment manifest secrets: failed to parse dotenv file '${dotenvPath}': ` +
+          `Deployment manifest: its dotenv file '${dotenvPath}' could not be parsed: ` +
             `${err instanceof Error ? err.message : String(err)}`,
         );
       }
@@ -126,7 +126,7 @@ export function resolveManifestSecrets(
       .filter((r) => missing.includes(r.name))
       .map((r) => `  ${r.path} → \${secret:${r.name}}`);
     throw new ManifestSecretsError(
-      `Deployment manifest secrets: ${missing.length} unresolved secret reference(s):\n` +
+      `Deployment manifest: ${missing.length} secret(s) unresolved:\n` +
         `${siteLines.join('\n')}\n` +
         `Searched sources (in precedence order): ${searched.join(', ')}.\n` +
         `Fix: add the missing name(s) to your dotenv file, or declare 'env' in ` +
@@ -135,25 +135,4 @@ export function resolveManifestSecrets(
   }
 
   return { values, sentinel: false, searched };
-}
-
-/**
- * Replaces every resolved secret VALUE occurring in `message` — and every form the listed printers
- * write it in, each of its lines and its parts ({@link variantsOf} with `parts`: JSON at one and two
- * levels; the quoting, shell, HTML/XML, percent-encoding, base64, base64url and hex forms the printers
- * named in `variantsOf`'s members write; the value without its surrounding double quotes, the
- * sections around `&`, the value with `\\`, `\'`, `\"` and `\t` read or with each `\` or `^`
- * dropped; and, for a value holding a backslash, the value with its JSON- and JavaScript-style
- * escapes read, with its lines, expanded the same way) — with the `[redacted]` marker, through the
- * one matcher ({@link redactWith}), longest-first. `variantsOf` keeps each value's list in a
- * least-recently-used map, so a builder that fails again pays nothing to build it. Every value here
- * is a declared secret, so its parts are hidden too. Values shorter than 4 characters are skipped
- * (short values over-redact everything); over-redaction of longer values is accepted.
- */
-export function redactSecretValues(message: string, values: Iterable<string>): string {
-  const kept = [...new Set(values)].filter((v) => v.length >= 4);
-  const forms = [...new Set(kept.flatMap((value) => variantsOf(value, { parts: true })))].sort(
-    (a, b) => b.length - a.length,
-  );
-  return redactWith(message, forms, '[redacted]');
 }

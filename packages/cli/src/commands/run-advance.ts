@@ -11,6 +11,7 @@ import type {
 } from '@sensigo/realm';
 import {
   advanceRun,
+  lastExecutionIdentity,
   describePending,
   stepsThatCannotRun,
   describeRunDriver,
@@ -57,6 +58,13 @@ import {
   owedRunsWords,
   stopReasons,
 } from './ways-renderer.js';
+import {
+  PLAIN,
+  RUN_PHASE_WORDS,
+  errorWithCommand,
+  writerCtx,
+  type RenderCtx,
+} from '../output/writer.js';
 
 /** How the project code of this program compares with the run's last record, in words. */
 export const FIT_WORDS: Record<ProgramFit, string> = {
@@ -72,23 +80,26 @@ export const FIT_WORDS: Record<ProgramFit, string> = {
  * {@link FIT_WORDS}.
  */
 export function fitWords(fit: ProgramFit, run: Pick<RunRecord, 'extension_identity'>): string {
-  if (fit === 'not_comparable' && run.extension_identity?.at(-1) === undefined) {
+  // #729 PR-3 correction 5 (J-5): a run with only its start entry has recorded no project code yet.
+  if (fit === 'not_comparable' && lastExecutionIdentity(run.extension_identity) === undefined) {
     return 'not comparable — the run has recorded no project code yet';
   }
   return FIT_WORDS[fit];
 }
 
 /** `<by> (<class words>)` — this program's name in the house words. */
-function identityWords(driver: Attributed | undefined): string {
+function identityWords(driver: Attributed | undefined, ctx: RenderCtx): string {
+  // C1 (DQ 1): this program's label is a fact, printed whole.
   return driver === undefined
     ? 'no name could be recorded'
-    : `${driver.by} (${BY_SOURCE_WORDS[driver.by_source]})`;
+    : ctx.cmd(`${driver.by} (${BY_SOURCE_WORDS[driver.by_source]})`);
 }
 
 /** The last recorded driver, in words (D8). */
 function driverWords(
   run: Parameters<typeof describeRunDriver>[0],
   workflow: Parameters<typeof describeRunDriver>[1],
+  ctx: RenderCtx,
 ): string {
   const d = describeRunDriver(run, workflow);
   if (d.driver.by === null) return 'none recorded';
@@ -99,7 +110,7 @@ function driverWords(
       : n > 1
         ? `; ${n} newer entries record no driver`
         : '';
-  return `${describeProgram(d.driver)} at step '${d.step}', ${d.at}${newer}`;
+  return `${describeProgram(d.driver, ctx)} at step '${d.step}', ${d.at}${newer}`;
 }
 
 type RunForReasons = Parameters<typeof deriveRunPhase>[0] &
@@ -114,11 +125,15 @@ function inFlightSteps(run: RunForReasons): string[] {
  * The steps in flight elsewhere, each as `'<s>', <taken phrase>[ since <since>]` (decision C37) —
  * the preview's `In flight:` line, the one place the holder and the time are printed (decision C43).
  */
-export function inFlightItems(run: RunForReasons, keepsClaims: boolean): string[] {
+export function inFlightItems(
+  run: RunForReasons,
+  keepsClaims: boolean,
+  ctx: RenderCtx = PLAIN,
+): string[] {
   return inFlightSteps(run).map((step) => {
     const described = describeClaimHolder(run.claims?.[step], keepsClaims);
     const since = described.since !== undefined ? ` since ${described.since}` : '';
-    return `'${step}' is in flight, ${takenPhrase(described)}${since}`;
+    return `'${step}' is in flight, ${takenPhrase(described, ctx)}${since}`;
   });
 }
 
@@ -128,9 +143,14 @@ export function inFlightItems(run: RunForReasons, keepsClaims: boolean): string[
  * a `Stopped:` reason; `realm run respond` and `realm run drain` as their own line — the same words
  * from here. A step whose question is open is not in flight (it waits on the answer).
  */
-export function inFlightReasons(runId: string, run: RunForReasons): string[] {
-  // #729 PR-0: the words are the CLI renderer's one line.
-  return inFlightSteps(run).map((step) => inFlightLine(runId, step));
+export function inFlightReasons(
+  runId: string,
+  run: RunForReasons,
+  ctx: RenderCtx = writerCtx(),
+): string[] {
+  // #729 PR-0: the words are the CLI renderer's one line. #729 PR-3: a print helper, so its
+  // commands carry the writer's marks by default.
+  return inFlightSteps(run).map((step) => inFlightLine(runId, step, ctx));
 }
 
 /**
@@ -139,9 +159,13 @@ export function inFlightReasons(runId: string, run: RunForReasons): string[] {
  * more; `undefined` when none is ready. `realm run advance` prints it as a `Stopped:` reason and
  * `realm run respond` as its own line — the same words from here.
  */
-export function agentReadyReason(runId: string, agentSteps: readonly string[]): string | undefined {
-  // #729 PR-0: the words are the CLI renderer's one line.
-  return agentReadyLine(runId, agentSteps);
+export function agentReadyReason(
+  runId: string,
+  agentSteps: readonly string[],
+  ctx: RenderCtx = writerCtx(),
+): string | undefined {
+  // #729 PR-0: the words are the CLI renderer's one line. #729 PR-3: a print helper.
+  return agentReadyLine(runId, agentSteps, ctx);
 }
 
 /**
@@ -166,7 +190,7 @@ function withResumeWay(
 ): string[] {
   const resumable = endedResumeReason(run, workflow);
   if (resumable === undefined) return reasons;
-  const ended = `the run has ended (${deriveRunPhase(run)})`;
+  const ended = `the run has ended (${writerCtx().word(deriveRunPhase(run), RUN_PHASE_WORDS)})`;
   return reasons.map((reason) => (reason === ended ? resumable : reason));
 }
 
@@ -183,11 +207,12 @@ function endedResumeReason(
   workflow: Parameters<typeof resumeWay>[1],
 ): string | undefined {
   const operator = operatorEndingSentence(run);
-  if (operator !== undefined) return `the run has ended (${deriveRunPhase(run)}). ${operator}`;
+  if (operator !== undefined)
+    return `the run has ended (${writerCtx().word(deriveRunPhase(run), RUN_PHASE_WORDS)}). ${operator}`;
   const resume = offeredResumeWay(run, workflow);
   if (resume === undefined) return undefined;
   const which = resume.steps.length === 1 ? `'${resume.steps[0]}'` : 'a failed step';
-  return `the run has ended (${deriveRunPhase(run)}) — to make ${which} runnable again: ${resume.command}`;
+  return `the run has ended (${writerCtx().word(deriveRunPhase(run), RUN_PHASE_WORDS)}) — to make ${which} runnable again: ${writerCtx().cmd(resume.command)}`;
 }
 
 /**
@@ -408,12 +433,12 @@ export async function advanceRunFromShell(
   );
   if (words.notUsed !== undefined) print(words.notUsed);
   print(
-    `This program: ${identityWords(driver)} · project code: ${fitWords(judgeProgramFit(run, registry.identity), run)}.`,
+    `This program: ${identityWords(driver, writerCtx())} · project code: ${fitWords(judgeProgramFit(run, registry.identity), run)}.`,
   );
-  print(`Last recorded driver: ${driverWords(run, workflow)}.`);
+  print(`Last recorded driver: ${driverWords(run, workflow, writerCtx())}.`);
   // decision C37: a step another process holds is named before anything runs — so a second program
   // is told why it may find nothing to run.
-  const inFlight = run.terminal_state ? [] : inFlightItems(run, keepsClaims);
+  const inFlight = run.terminal_state ? [] : inFlightItems(run, keepsClaims, writerCtx());
   if (inFlight.length > 0) print(`In flight: ${withFullStop(inFlight.join('; '))}`);
   if (pending.owed.length === 0) {
     // decision C43: "Nothing is owed" only when nothing is; owed work none of which can run now
@@ -424,7 +449,11 @@ export async function advanceRunFromShell(
     // decision C103, F7 (a): at an open question the line renders the question's `respond` way,
     // composed by core from the record this command read — never by a call of the writer
     // `advanceRun`, which would run any step that became ready since that read.
-    const reasons = withResumeWay(stopReasons(ways, runId, deriveRunPhase(run)), run, workflow);
+    const reasons = withResumeWay(
+      stopReasons(ways, runId, deriveRunPhase(run), writerCtx()),
+      run,
+      workflow,
+    );
     // decision C212: a reason that ends with a command ends without a full stop; several reasons
     // are each a line of their own, so none is joined to a command.
     if (reasons.length === 1) print(`${opening}: ${sentenceEnd(reasons[0]!)}`);
@@ -441,7 +470,9 @@ export async function advanceRunFromShell(
     // by itself.
     const readyPreview = agentReadyReason(runId, pending.agent_steps);
     if (readyPreview !== undefined && reasons.includes(readyPreview)) print(attendingLine(1));
-    if (cannotGoOnWithRefusal(ways)) print(cannotRunWayOut(ways, runId, deriveRunPhase(run)));
+    if (cannotGoOnWithRefusal(ways)) {
+      print(cannotRunWayOut(ways, runId, deriveRunPhase(run), writerCtx()));
+    }
     // decision C23 with D4.4: a step that cannot run here (refused before its claim, or
     // capability-blocked) exits 1 whether or not anything else was owed — the same code as after a
     // call that ran other steps.
@@ -499,7 +530,9 @@ export async function advanceRunFromShell(
       // D6.1: a step another process took is said as a past-tense fact — never "cannot run here".
       onTaken: (step, record) => {
         sayDecidedGuards();
-        print(takenLine(step, describeClaimHolder(record.claims?.[step], keepsClaims)));
+        print(
+          takenLine(step, describeClaimHolder(record.claims?.[step], keepsClaims), writerCtx()),
+        );
       },
       // decisions C194, C199, F7: the step this call ran was settled, or taken over, by another
       // process — or the run was ended — before its own outcome was recorded. Core's classifier names
@@ -509,7 +542,7 @@ export async function advanceRunFromShell(
       // shows. The refusals' own warnings are said with the last reply's (the reply carries them).
       onNotRecorded: (step, kind, record) => {
         sayDecidedGuards();
-        print(outcomeNotRecordedLine(kind, record, step, keepsClaims));
+        print(outcomeNotRecordedLine(kind, record, step, keepsClaims, writerCtx()));
       },
     });
     return reply;
@@ -616,7 +649,11 @@ export async function advanceRunFromShell(
         }
       : composedAfter;
   reasons.push(
-    ...withResumeWay(stopReasons(afterWays, runId, deriveRunPhase(after)), after, workflow),
+    ...withResumeWay(
+      stopReasons(afterWays, runId, deriveRunPhase(after), writerCtx()),
+      after,
+      workflow,
+    ),
   );
   if (reasons.length > 1) {
     const none = reasons.indexOf('nothing is ready to run now');
@@ -624,7 +661,9 @@ export async function advanceRunFromShell(
   }
   // decision C37: a run that completed is not a stop — the phase line below says it, so its ending
   // gets no `Stopped:` line (any other reason that holds still does).
-  const completedEnding = 'the run has ended (completed)';
+  // #729 PR-3 correction 5 (J-2): the reason carries the phase as a word span, so the ending is
+  // built the same way in this process — equal by construction.
+  const completedEnding = `the run has ended (${writerCtx().word('completed', RUN_PHASE_WORDS)})`;
   // decision C181: right after the ready line for an agent step, the line `realm run respond` prints
   // after its commands.
   const ready = agentReadyReason(runId, afterView.agent_steps);
@@ -647,8 +686,8 @@ export async function advanceRunFromShell(
   // last line is the way out (it carries the phase); otherwise the phase line.
   print(
     cannotGoOnWithRefusal(afterWays)
-      ? cannotRunWayOut(afterWays, runId, deriveRunPhase(after))
-      : `Run ${runId}: phase '${deriveRunPhase(after)}'`,
+      ? cannotRunWayOut(afterWays, runId, deriveRunPhase(after), writerCtx())
+      : `Run ${runId}: phase '${writerCtx().word(deriveRunPhase(after), RUN_PHASE_WORDS)}'`,
   );
   const refused = !after.terminal_state && stepsThatCannotRun(afterView).length > 0;
   return refusal || refused || guardFailed ? 1 : 0;
@@ -680,7 +719,7 @@ export const runAdvanceCommand = new Command('advance')
       );
       process.exit(code);
     } catch (err) {
-      console.error(err instanceof Error ? err.message : String(err));
+      console.error(errorWithCommand(err, writerCtx()));
       process.exit(1);
     }
   });

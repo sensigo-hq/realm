@@ -44,6 +44,7 @@ import {
 } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
 import { listRunsDiagnosed, unreadableRunLines } from './list.js';
+import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
 
 export type PurgeEligibility =
   | { eligible: true; overriddenClaimStep?: string | undefined }
@@ -78,7 +79,10 @@ export function isPurgeEligible(
   if (!TERMINAL_PHASES.has(deriveRunPhase(run))) {
     // issue #558 PR-C: RENDER the derived phase too — the decision above already derives, so
     // printing the persisted label made the refusal name a phase the run is not in.
-    return { eligible: false, reason: `not terminal (phase: '${deriveRunPhase(run)}')` };
+    return {
+      eligible: false,
+      reason: `not terminal (phase: '${writerCtx().word(deriveRunPhase(run), RUN_PHASE_WORDS)}')`,
+    };
   }
 
   const now = opts.now ?? new Date();
@@ -480,7 +484,9 @@ export function printPurgeReport(result: PurgeRunsResult, dryRun: boolean): void
         c.overriddenClaimStep !== undefined
           ? ` — ${overriddenClaimPhrase(c.overriddenClaimStep, true)}`
           : '';
-      console.log(`  • ${c.run.id}  (${c.run.run_phase}, ${formatBytes(c.bytes)})${override}`);
+      console.log(
+        `  • ${c.run.id}  (${writerCtx().word(c.run.run_phase, RUN_PHASE_WORDS)}, ${formatBytes(c.bytes)})${override}`,
+      );
     }
     console.log(`\n${resumableLine}\nRe-run with --force to actually delete.`);
     return;

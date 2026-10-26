@@ -102,7 +102,8 @@ type HitClass =
   | 'echo' // an envelope echoing a stored value; reaches no store
   | 'fixture-input' // a published contract fixture constructing a shape to drive a law
   | 'string-literal' // the token inside a message or a test name
-  | 'guard-self'; // this guard's own source
+  | 'guard-self' // this guard's own source
+  | 'class-row'; // #729 PR-3: a disclosure class-table row naming the field (`'fact'`); reaches no store
 
 interface CensusEntry {
   count: number;
@@ -121,6 +122,9 @@ const EXPECTED: Record<string, CensusEntry> = {
     count: 1,
     classes: ['stripper-false'],
     reason: 'The retry path flips the run live again and strips the seal in the same write.',
+    // #729 PR-3 correction 1 (F26): the drive path's PLAIN.cmd rule shares `no-restricted-syntax`.
+    suppression:
+      "`terminalRunRefusal`'s `realm run drain` command: an Error's message, returned to a caller that may keep it (runAgent is a library API), so no span mark; no seal on it.",
   },
   'packages/core/src/engine/apply-resume.ts': {
     count: 1,
@@ -157,21 +161,65 @@ const EXPECTED: Record<string, CensusEntry> = {
     classes: ['writer-stamped'],
     reason: 'The create branch mints a fresh, non-terminal run record.',
   },
+  // #729 PR-3 (L-2): the drive path's command-template rule shares `no-restricted-syntax` with the
+  // seal rules; these files write no terminal state, and each disable names its prose line.
+  'packages/cli/src/agent/prompt-cache.ts': {
+    count: 0,
+    classes: [],
+    reason: '#729 PR-3: no terminal write; the entry authorizes its two prose disables.',
+    suppression: 'Two prose lines that name `realm listen --prompt-cache` (L-2); no seal on them.',
+  },
+  'packages/cli/src/agent/providers/llm-provider.ts': {
+    count: 0,
+    classes: [],
+    reason: '#729 PR-3: no terminal write; the entry authorizes its one prose disable.',
+    suppression: 'One message that names the program `realm agent` (L-2); no seal on it.',
+  },
+  'packages/cli/src/commands/listen.ts': {
+    count: 0,
+    classes: [],
+    reason: '#729 PR-3: no terminal write; the entry authorizes its one prose disable.',
+    suppression:
+      "The listener's startup line naming `realm listen` and its address (L-2); no seal on it.",
+  },
+  'packages/cli/src/commands/agent.ts': {
+    count: 0,
+    classes: [],
+    reason:
+      '#729 PR-3 correction 3: no terminal write; the entry authorizes its one context disable.',
+    suppression:
+      "The writer's context handed to `resolveRunAttach` for the ended-run refusal (H-8''), thrown before the run is claimed and printed only by the command's own catch; no seal on it.",
+  },
+  'packages/cli/src/commands/ways-renderer.ts': {
+    count: 0,
+    classes: [],
+    reason: '#729 PR-3: no terminal write; the entry authorizes its one context disable.',
+    suppression:
+      "`writerHost`'s own body, the print sites' helper called only inside print calls (L-2); no seal on it.",
+  },
+  'packages/core/src/utils/disclosure-tables.ts': {
+    count: 1,
+    classes: ['class-row'],
+    reason:
+      "#729 PR-3: `RUN_RECORD_TABLE`'s row classing the field as a fact — a table, not a write.",
+  },
   'packages/core/src/types/run-record.ts': {
     count: 1,
     classes: ['type-decl'],
     reason: 'The `RunRecord.terminal_state` field declaration itself.',
   },
   'packages/mcp-server/src/tools/abandon-run.ts': {
-    count: 2,
-    classes: ['type-decl', 'echo'],
-    reason: 'The response type field, and the envelope echo of the stored value.',
+    count: 3,
+    classes: ['type-decl', 'echo', 'class-row'],
+    reason:
+      "The response type field, the envelope echo of the stored value, and the summary's class-table row (#729 PR-3).",
     suppression: 'Inline at the echo: an envelope shape, not a writer — it reaches no store.',
   },
   'packages/mcp-server/src/tools/get-run-state.ts': {
-    count: 2,
-    classes: ['type-decl', 'echo'],
-    reason: 'The response type field, and the envelope echo of the stored value.',
+    count: 3,
+    classes: ['type-decl', 'echo', 'class-row'],
+    reason:
+      "The response type field, the envelope echo of the stored value, and the summary's class-table row (#729 PR-3).",
     suppression: 'Inline at the echo: an envelope shape, not a writer — it reaches no store.',
   },
   'packages/testing/src/runner/test-runner.ts': {
@@ -297,6 +345,17 @@ export function censusViolations(
     }
   }
   for (const file of Object.keys(expected)) {
+    // #729 PR-3: a ZERO-count entry exists only to authorize a suppression in a file that writes no
+    // terminal state (the drive-path lint's prose lines share `no-restricted-syntax` with the seal
+    // rules); it needs its `suppression` reason, and the cell below needs its disable in the tree.
+    if (expected[file]!.count === 0) {
+      if (expected[file]!.suppression === undefined) {
+        problems.push(
+          `${file}: a zero-count entry authorizes nothing without a \`suppression\` reason. Remove it.`,
+        );
+      }
+      continue;
+    }
     if (scan.hits[file] === undefined) {
       problems.push(
         `${file}: census expects ${expected[file]!.count} terminal_state write(s) and the file has ` +
@@ -330,7 +389,9 @@ describe('#367 — the terminal-writer census', () => {
       .filter(([, e]) => e.suppression !== undefined)
       .map(([f]) => f);
     for (const file of claimed) expect(scan.suppressions[file]).toBe(true);
-    expect(claimed).toHaveLength(5);
+    // #729 PR-3: +4 (the drive-path lint's disables). Correction 1 (F26): +1, run-attach.ts's
+    // PLAIN.cmd disable. Correction 3 (H-8''): +1, agent.ts's context disable.
+    expect(claimed).toHaveLength(11);
   });
 
   it("turbo.json globalDependencies matches the sweep table's join-list", () => {
@@ -350,11 +411,12 @@ describe('#367 — the terminal-writer census', () => {
     ]);
   });
 
-  it('the post-strip total is 80 across 14 files — the figure the map is built from', () => {
+  // #729 PR-3: +3 class-table rows (disclosure-tables.ts, abandon-run.ts, get-run-state.ts).
+  it('the post-strip total is 83 across 15 files — the figure the map is built from', () => {
     const scan = scanTerminalWriters(REPO_ROOT);
     const total = Object.values(scan.hits).reduce((n, l) => n + l.length, 0);
-    expect(total).toBe(80);
-    expect(Object.keys(scan.hits)).toHaveLength(14);
+    expect(total).toBe(83);
+    expect(Object.keys(scan.hits)).toHaveLength(15);
   });
 });
 

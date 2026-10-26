@@ -189,6 +189,8 @@ Residue: 0 terminal run(s) still without a recorded seal arm.
 
 If it lists runs it would change, run it again with `--force`.
 
+From the version after 0.47.1, what Realm prints is masked for who reads it: an agent, a log and an export hide every environment value of 8 or more characters (see [What the output hides](operate-runs.md#what-the-output-hides)). Name the ordinary variables you want to see in `REALM_NOT_SECRET`, or in a manifest's `disclosure.not_secret`. Adding `disclosure:` to `realm.yaml` does not make earlier runs refuse `realm run export`: only removing a secret a run referred to does, or, for a run made by this version, changing the manifest's `secrets` block (a run made by 0.47.1 or earlier is judged by its secret names alone; see [Deployment manifest](../reference/deployment-manifest.md#what-a-run-records)).
+
 ## 7. Restart what is running
 
 A `realm serve` or `realm listen` process that was started before the upgrade is still the old version. Restart it. An assistant's client starts `realm mcp` itself, so restart the client or reconnect it.

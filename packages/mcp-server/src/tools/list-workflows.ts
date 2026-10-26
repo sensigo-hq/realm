@@ -3,8 +3,16 @@
 // `[]` + "use create_workflow" over an unreadable registry — steering the agent into minting a
 // duplicate of a workflow that still exists).
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { JsonWorkflowStore } from '@sensigo/realm';
-import { sseJsonStringify } from '../sse-json.js';
+import { JsonWorkflowStore, type DisclosureClass } from '@sensigo/realm';
+import {
+  disclosureOfTool,
+  safeTool,
+  toolContentOf,
+  type WithDoorDisclosure,
+  replySubject,
+  setForWorkflows,
+  SAFE_TOOL_CONSTANT_RUNLESS,
+} from '../render-reply.js';
 import { toolMeta } from '../tool-annotations.js';
 import { assertToolStores } from './assert-tool-stores.js';
 
@@ -106,8 +114,37 @@ export async function handleListWorkflows(stores?: HandleStores): Promise<ListWo
   };
 }
 
+/** Every key of every member of a union. */
+type KeysOfUnion<T> = T extends unknown ? keyof T : never;
+
+/** #729 PR-3 (M-1): the list's class table, over both arms. A file's reason is the error text a read
+ *  gave (a diagnostic copy); paths, ids and the composed hint are facts. */
+export const LIST_WORKFLOWS_TABLE = {
+  status: 'fact',
+  workflows: 'fact',
+  unreadable: {
+    nested: {
+      file: 'fact',
+      class: 'fact',
+      errno: 'fact',
+      reason: 'bounded',
+      repair: 'fact',
+    } satisfies Record<keyof UnreadableWorkflowEntry, DisclosureClass>,
+  },
+  warnings: 'bounded',
+  hint: 'fact',
+  error_code: 'fact',
+  error_details: 'fact',
+  errors: 'bounded',
+  agent_action: 'fact',
+} as const satisfies Record<KeysOfUnion<ListWorkflowsResult>, DisclosureClass>;
+
 /** Registers the list_workflows MCP tool on the server. */
-export function registerListWorkflows(server: McpServer, opts?: HandleStores): void {
+export function registerListWorkflows(
+  server: McpServer,
+  opts?: HandleStores & WithDoorDisclosure,
+): void {
+  const door = disclosureOfTool(opts);
   server.registerTool(
     'list_workflows',
     {
@@ -115,9 +152,29 @@ export function registerListWorkflows(server: McpServer, opts?: HandleStores): v
       description:
         'List all registered Realm workflows; names every registered copy that could not be read, and refuses when the registry directory itself cannot be read.',
     },
-    async () => {
-      const result = await handleListWorkflows(opts);
-      return { content: [{ type: 'text' as const, text: sseJsonStringify(result) }] };
-    },
+    safeTool(
+      async () => {
+        const result = await handleListWorkflows(opts);
+        // F11 (D-11): the reply covers every listed workflow, so it reports the weakest standing.
+        const subjects = await Promise.all(
+          (result.workflows ?? []).map((w) => replySubject(opts, { workflowId: w.id })),
+        );
+        const definitions = subjects.flatMap((x) =>
+          x.definition !== undefined ? [x.definition] : [],
+        );
+        return toolContentOf(
+          { ...result },
+          {
+            set: await setForWorkflows(door, definitions),
+            audience: 'agent',
+            table: LIST_WORKFLOWS_TABLE,
+          },
+        );
+      },
+      async (err) => {
+        throw err;
+      },
+      SAFE_TOOL_CONSTANT_RUNLESS,
+    ),
   );
 }

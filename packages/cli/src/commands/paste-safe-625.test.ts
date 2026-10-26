@@ -315,8 +315,16 @@ describe('#625 PR-2a, F6 — a printed command is safe to paste', { timeout: 60_
       params: { note: "it's" },
     });
     const r = realm('run', 'abandon', run.id);
-    const again = r.out.find((l) => l.startsWith('To run the same work again:')) ?? '<none>';
-    expect(again).toContain(`--params '{"note":"it'\\''s"}'`);
+    // #729 PR-3 correction 2: the command is a line of its own.
+    const again = r.out.find((l) => l.startsWith('  realm workflow run ')) ?? '<none>';
+    // #729 PR-3 (D1 D5): the rerun refers to the run's params; no value is printed.
+    expect({
+      refers: again.includes(`--params-from-run ${run.id}`),
+      value: again.includes("it'"),
+    }).toEqual({
+      refers: true,
+      value: false,
+    });
   });
 
   it("the in-flight watch line's reclaim command (#706's): a step name with a space and a quote, quoted; the line ends with the command", () => {

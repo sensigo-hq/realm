@@ -295,6 +295,10 @@ export interface RepairAct {
    *  a file nothing ever registered has no source to re-register from — `rm` is the only act,
    *  and it was named nowhere; the review walk looped on it). Rendered after the retry. */
   alternative?: string;
+  /** #729 PR-3 correction 2 (G7): the shell command the act or its alternative names, alone (its path
+   *  is the copy's), so a renderer can print it whole as realm's own words. Absent when no command is
+   *  named (re-register's placeholder, a requirement with an errno). */
+  command?: string;
 }
 
 /**
@@ -337,6 +341,7 @@ export function repairActFor(err: WorkflowError): RepairAct | undefined {
     return {
       act: REREGISTER_ACT,
       alternative: `if it was never registered from a source, remove the file (rm ${path}) instead`,
+      command: `rm ${path}`,
     };
   if (err.code !== 'STATE_WORKFLOW_UNREADABLE') return undefined;
   const cls = probeClassOf(err);
@@ -346,26 +351,28 @@ export function repairActFor(err: WorkflowError): RepairAct | undefined {
     case 'missing': // not this code — kept for exhaustiveness
       return undefined;
     case 'unreadable':
-      return {
-        act: PERMISSION_ERRNOS.has(errno)
-          ? `make ${path} readable (chmod u+r ${path})`
-          : `make ${path} readable (${errno})`,
-      };
+      return PERMISSION_ERRNOS.has(errno)
+        ? { act: `make ${path} readable (chmod u+r ${path})`, command: `chmod u+r ${path}` }
+        : { act: `make ${path} readable (${errno})` };
     case 'not_a_file':
       // The command is named: "remove the directory" as prose sent a walker to `rm <path>`
       // ("Is a directory", twice).
-      return { act: `remove the directory at ${path} (rm -r ${path}), then ${REREGISTER_ACT}` };
+      return {
+        act: `remove the directory at ${path} (rm -r ${path}), then ${REREGISTER_ACT}`,
+        command: `rm -r ${path}`,
+      };
     case 'empty': // not this code — kept for exhaustiveness
       return { act: REREGISTER_ACT };
     case 'registry_broken':
       // "readable" alone is a LOOP for a directory: `chmod u+r` leaves it unsearchable and the
       // identical screen comes back (the review walk did exactly that, twice). A directory needs
       // the search bit too — the act says so and names the command.
-      return {
-        act: PERMISSION_ERRNOS.has(errno)
-          ? `make the registry directory ${path} readable and searchable (chmod u+rx ${path})`
-          : `make the registry directory ${path} readable and searchable (${errno})`,
-      };
+      return PERMISSION_ERRNOS.has(errno)
+        ? {
+            act: `make the registry directory ${path} readable and searchable (chmod u+rx ${path})`,
+            command: `chmod u+rx ${path}`,
+          }
+        : { act: `make the registry directory ${path} readable and searchable (${errno})` };
   }
   // The return type admits `undefined`, so a missing arm would NOT be TS2366 here (executed: a
   // sixth class fell through silently) — this assignment is what fails `tsc` for it.
@@ -858,6 +865,8 @@ export async function getWorkflowForRun(
       };
       return [register];
     };
+    // G7: the repair's shell command rides the copy's details, so a renderer prints it whole.
+    const repairCommand = repairActFor(err)?.command;
     const copy = (message: string, remedy?: readonly WayOn[]): WorkflowError => {
       const ways = remedy ?? gateRemedy();
       return new WorkflowError(message, {
@@ -865,7 +874,10 @@ export async function getWorkflowForRun(
         category: err.category,
         agentAction: err.agentAction,
         retryable: err.retryable,
-        details: err.details,
+        details:
+          repairCommand !== undefined && message.includes(repairCommand)
+            ? { ...err.details, repair_command: repairCommand }
+            : err.details,
         // #729 PR-0 (Amendment 7): a damaged copy's typed facts ride the copy — they moved from
         // `details` to `facts`, and the copy is what every caller reads them from.
         ...(err.facts !== undefined ? { facts: err.facts } : {}),

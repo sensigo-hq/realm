@@ -12,6 +12,8 @@ import {
   cannotGoOnFrom,
   cannotGoOnUntilCorrected,
   oneOf,
+  preconditionHint,
+  preconditionRefusal,
   sentenceEnd,
   shellWord,
   withFullStop,
@@ -24,6 +26,7 @@ import {
   type WayOn,
   type WayRenderer,
 } from '@sensigo/realm';
+import { PLAIN, RUN_PHASE_WORDS, writerCtx, type RenderCtx } from '../output/writer.js';
 
 /**
  * The CLI door's static settings. `driveFlags`: the flags a drive was started with, as shell words —
@@ -33,10 +36,27 @@ import {
  */
 export interface CliHost {
   driveFlags: string;
+  /**
+   * #729 PR-3 (L-2): how the command is marked. A print site passes the writer's context, so the
+   * command is a verified span the writer prints whole (I9); a non-print consumer (the MCP person
+   * block, a stored string) passes none — plain text with no mark (I13).
+   */
+  ctx?: RenderCtx;
 }
 
-/** A host with no drive flags. */
+/** A host with no drive flags and no marks. */
 export const NO_DRIVE_FLAGS: CliHost = { driveFlags: '' };
+
+/** A print site's host: the drive flags given, and the writer's context. */
+export function writerHost(driveFlags = ''): CliHost {
+  // eslint-disable-next-line no-restricted-syntax -- the print sites' own helper: `writerHost()` is called only inside print calls, where the rule holds (#729 PR-3, L-2).
+  return { driveFlags, ctx: writerCtx() };
+}
+
+/** The host a composer passes the command renderers, from its own context. */
+function hostOf(ctx: RenderCtx): CliHost {
+  return ctx === PLAIN ? NO_DRIVE_FLAGS : { driveFlags: '', ctx };
+}
 
 /**
  * The CLI door's command for each verb (PR0-CONTRACT §5, Amendment 4) — what an operator types to
@@ -52,24 +72,31 @@ export const NO_DRIVE_FLAGS: CliHost = { driveFlags: '' };
  *   at a terminal reads the question with `realm run inspect`.
  */
 export const CLI_COMMANDS: WayRenderer<string, CliHost> = {
-  respond: (way) =>
-    `realm run respond ${way.run_id} --gate ${way.gate_id} --choice ${oneOf(way.choice.one_of)}`,
+  // #729 PR-3 (L-2): the choice travels inside its command (R3-2), marked with it.
+  respond: (way, _basis, host) =>
+    (host.ctx ?? PLAIN).cmd(
+      `realm run respond ${way.run_id} --gate ${way.gate_id} --choice ${oneOf(way.choice.one_of)}`,
+    ),
   run_step: (way, _basis, host) => {
     // T-17 / Amendment 14: no realm command supplies an engine step's input.
     if (way.brief.execution !== 'agent') return null;
     // C89: the drive's own flags (`buildReattachFlags` builds them with the model), else the model's
     // placeholders — on the printing line, as the drive-command witness reads it.
-    return `realm agent --run-id ${way.run_id} ${host.driveFlags !== '' ? host.driveFlags : '--provider <provider> --model <model>'}`;
+    return (host.ctx ?? PLAIN).cmd(
+      `realm agent --run-id ${way.run_id} ${host.driveFlags !== '' ? host.driveFlags : '--provider <provider> --model <model>'}`,
+    );
   },
-  advance: (way) => `realm run advance ${way.run_id}`,
-  inspect: (way) => `realm run inspect ${way.run_id}`,
-  abandon: (way) => `realm run abandon ${way.run_id}`,
+  advance: (way, _basis, host) => (host.ctx ?? PLAIN).cmd(`realm run advance ${way.run_id}`),
+  inspect: (way, _basis, host) => (host.ctx ?? PLAIN).cmd(`realm run inspect ${way.run_id}`),
+  abandon: (way, _basis, host) => (host.ctx ?? PLAIN).cmd(`realm run abandon ${way.run_id}`),
   // Correction 2 (3.2): `path` is the registered COPY that cannot be used — `register` takes a source,
   // so the command for it reads why the copy cannot be used and its way out.
-  register: (way) =>
-    way.path !== undefined
-      ? `realm workflow validate --registered ${shellWord(way.workflow_id)}`
-      : 'realm workflow register <file>',
+  register: (way, _basis, host) =>
+    (host.ctx ?? PLAIN).cmd(
+      way.path !== undefined
+        ? `realm workflow validate --registered ${shellWord(way.workflow_id)}`
+        : 'realm workflow register <file>',
+    ),
   // #627 W: no realm command shows a question as a chat app's form (see above).
   present: () => null,
 };
@@ -94,6 +121,7 @@ function commandOfVerb(
   verb: WayOn['verb'],
   host: CliHost = NO_DRIVE_FLAGS,
 ): string | undefined {
+  // #729 PR-3: a composer's host carries its context.
   const way = ways.find((w) => w.verb === verb);
   return way === undefined ? undefined : (cliCommandOf(way, undefined, host) ?? undefined);
 }
@@ -147,9 +175,21 @@ export function cannotRunParts(
  * (C53: load the missing extension, or run the step on a runner that has it); `could not run
  * (capability)` judged from the run's own marker (C41).
  */
-export function cannotRunClause(entry: Unavailable): string {
+export function cannotRunClause(entry: Unavailable, ctx: RenderCtx = PLAIN): string {
   const parts = cannotRunParts(entry);
   if (parts === undefined) return `'${entry.step ?? ''}' cannot run`;
+  // #729 PR-3 (R3-3, D3/08 S1): a precondition's line is core's one sentence, composed from its
+  // facts with the value as this context renders it (a shape on broadcast) — never the stored
+  // `refusal`, which carries the value as text.
+  if (
+    entry.code === 'refused_before_claim' &&
+    parts.check === 'precondition' &&
+    entry.facts.precondition !== undefined
+  ) {
+    const { expression, value } = entry.facts.precondition;
+    // F27: the fact holds the value escaped and bounded; a shape describes the value it escapes.
+    return `'${parts.step}' cannot run (precondition): ${preconditionRefusal(preconditionHint(parts.step), expression, ctx.escaped(value))}`;
+  }
   const words =
     parts.check !== 'capability'
       ? `cannot run (${parts.check})`
@@ -166,8 +206,8 @@ export function cannotRunClause(entry: Unavailable): string {
  * The way out of a capability judged from the run's marker (C53): run the step from a program that
  * has the extension — ` — from a program that has it: realm run advance <id>`.
  */
-export function capabilityMarkerWayOut(runId: string): string {
-  return ` — from a program that has it: ${CLI_COMMANDS.advance({ verb: 'advance', conditions: [], run_id: runId, owed: [] }, undefined, NO_DRIVE_FLAGS)}`;
+export function capabilityMarkerWayOut(runId: string, ctx: RenderCtx = PLAIN): string {
+  return ` — from a program that has it: ${CLI_COMMANDS.advance({ verb: 'advance', conditions: [], run_id: runId, owed: [] }, undefined, hostOf(ctx))}`;
 }
 
 /**
@@ -234,10 +274,11 @@ export function cannotRunWayOut(
   composed: Pick<ComposedWays, 'ways' | 'unavailable'>,
   runId: string,
   phase: RunPhase,
+  ctx: RenderCtx = PLAIN,
 ): string {
-  const head = `Run ${runId} stays open (phase '${phase}'): `;
-  const advance = `realm run advance ${runId}`;
-  const abandon = `realm run abandon ${runId}`;
+  const head = `Run ${runId} stays open (phase '${ctx.word(phase, RUN_PHASE_WORDS)}'): `;
+  const advance = ctx.cmd(`realm run advance ${runId}`);
+  const abandon = ctx.cmd(`realm run abandon ${runId}`);
   const refused = refusedBeforeClaim(composed);
   if (refused.every((e) => e.facts.check !== 'input_schema')) {
     return `${head}correct the workflow, register it again, then ${advance} — or end it: ${abandon}`;
@@ -259,23 +300,24 @@ export function cannotGoOnLines(
   composed: Pick<ComposedWays, 'ways' | 'unavailable'>,
   runId: string,
   phase: RunPhase,
+  ctx: RenderCtx = PLAIN,
 ): string[] {
   if (!cannotGoOnHere(composed)) return [];
   const lines: string[] = [];
   for (const entry of cannotRunEntries(composed)) {
     const marker =
       entry.code === 'capability_missing' && entry.facts.basis === 'marker'
-        ? capabilityMarkerWayOut(runId)
+        ? capabilityMarkerWayOut(runId, ctx)
         : '';
     // C212: a line that ends with a command ends without a full stop.
-    lines.push(sentenceEnd(cannotRunClause(entry) + marker));
+    lines.push(sentenceEnd(cannotRunClause(entry, ctx) + marker));
     const lever = operatorInputLine(entry);
     if (lever !== undefined) lines.push(withFullStop(lever));
   }
   lines.push(
     cannotGoOnWithRefusal(composed)
-      ? cannotRunWayOut(composed, runId, phase)
-      : `To end the run instead: ${commandOfVerb(composed.ways, 'abandon') ?? `realm run abandon ${runId}`}`,
+      ? cannotRunWayOut(composed, runId, phase, ctx)
+      : `To end the run instead: ${commandOfVerb(composed.ways, 'abandon', hostOf(ctx)) ?? ctx.cmd(`realm run abandon ${runId}`)}`,
   );
   return lines;
 }
@@ -342,21 +384,25 @@ export function heldByAnswerWords(holds: readonly string[]): string | undefined 
  * more; `undefined` when none is ready. Since #676 `realm agent` refuses to start without a model, so
  * the line carries the placeholders the other printers use.
  */
-export function agentReadyLine(runId: string, agentSteps: readonly string[]): string | undefined {
+export function agentReadyLine(
+  runId: string,
+  agentSteps: readonly string[],
+  ctx: RenderCtx = PLAIN,
+): string | undefined {
   if (agentSteps.length === 0) return undefined;
   const ready =
     agentSteps.length === 1
       ? `an agent step is ready: '${agentSteps[0]}' — drive it`
       : `agent steps are ready: ${agentSteps.map((s) => `'${s}'`).join(', ')} — drive them`;
-  return `${ready} with realm agent --run-id ${runId} --provider <provider> --model <model>`;
+  return `${ready} with ${ctx.cmd(`realm agent --run-id ${runId} --provider <provider> --model <model>`)}`;
 }
 
 /**
  * The reason for one step in flight in another program (decisions C37, C205): `'<s>' is in flight in
  * another program — wait for it, or see realm run inspect <id>`.
  */
-export function inFlightLine(runId: string, step: string): string {
-  return `'${step}' is in flight in another program — wait for it, or see ${CLI_COMMANDS.inspect({ verb: 'inspect', conditions: [], run_id: runId }, undefined, NO_DRIVE_FLAGS)}`;
+export function inFlightLine(runId: string, step: string, ctx: RenderCtx = PLAIN): string {
+  return `'${step}' is in flight in another program — wait for it, or see ${CLI_COMMANDS.inspect({ verb: 'inspect', conditions: [], run_id: runId }, undefined, hostOf(ctx))}`;
 }
 
 /**
@@ -370,9 +416,10 @@ export function stopReasons(
   composed: Pick<ComposedWays, 'ways' | 'unavailable'>,
   runId: string,
   phase: RunPhase,
+  ctx: RenderCtx = PLAIN,
 ): string[] {
   if (composed.unavailable.some((u) => u.code === 'run_ended')) {
-    return [`the run has ended (${phase})`];
+    return [`the run has ended (${ctx.word(phase, RUN_PHASE_WORDS)})`];
   }
   const respond = composed.ways.find((w): w is WayOf<'respond'> => w.verb === 'respond');
   const listedQuestion = composed.unavailable.find((u) => u.verb === 'respond');
@@ -383,27 +430,27 @@ export function stopReasons(
     return [
       respond !== undefined
         ? // decision C206: the one answer command (`--choice <one of: a, b>`, or the one choice).
-          `${open} — ${CLI_COMMANDS.respond(respond, undefined, NO_DRIVE_FLAGS)}`
-        : `${open} — see ${commandOfVerb(composed.ways, 'inspect') ?? `realm run inspect ${runId}`}`,
+          `${open} — ${CLI_COMMANDS.respond(respond, undefined, hostOf(ctx))}`
+        : `${open} — see ${commandOfVerb(composed.ways, 'inspect', hostOf(ctx)) ?? ctx.cmd(`realm run inspect ${runId}`)}`,
     ];
   }
-  const reasons = cannotRunEntries(composed).map((e) => cannotRunClause(e));
+  const reasons = cannotRunEntries(composed).map((e) => cannotRunClause(e, ctx));
   const advance = composed.ways.find((w): w is WayOf<'advance'> => w.verb === 'advance');
   if (advance !== undefined) {
     const items = owedItems(advance);
     const one = items.length === 1;
     reasons.push(
-      `the engine still owes ${items.join(', ')} — to run ${one ? 'it' : 'them'}${one ? '' : OWED_UNTIL}: ${CLI_COMMANDS.advance(advance, undefined, NO_DRIVE_FLAGS)}`,
+      `the engine still owes ${items.join(', ')} — to run ${one ? 'it' : 'them'}${one ? '' : OWED_UNTIL}: ${CLI_COMMANDS.advance(advance, undefined, hostOf(ctx))}`,
     );
   }
   const agentSteps = composed.ways
     .filter((w): w is WayOf<'run_step'> => w.verb === 'run_step' && w.brief.execution === 'agent')
     .map((w) => w.step);
-  const ready = agentReadyLine(runId, agentSteps);
+  const ready = agentReadyLine(runId, agentSteps, ctx);
   if (ready !== undefined) reasons.push(ready);
   for (const held of composed.unavailable) {
     if (held.verb === 'run_step' && held.code === 'held_elsewhere') {
-      reasons.push(inFlightLine(runId, held.facts.step));
+      reasons.push(inFlightLine(runId, held.facts.step, ctx));
     }
   }
   return reasons.length > 0 ? reasons : ['nothing is ready to run now'];
@@ -413,13 +460,16 @@ export function stopReasons(
  * The answer lines of an open question at the run prompt (`realm workflow run`'s hand-back): one per
  * choice, each the command that records it (C206; T-7: the choice through `shellWord`).
  */
-export function respondLines(way: WayOf<'respond'>): { choice: string; command: string }[] {
+export function respondLines(
+  way: WayOf<'respond'>,
+  ctx: RenderCtx = PLAIN,
+): { choice: string; command: string }[] {
   return way.choice.one_of.map((choice) => ({
     choice,
     command: CLI_COMMANDS.respond(
       { ...way, choice: { one_of: [choice] } },
       undefined,
-      NO_DRIVE_FLAGS,
+      hostOf(ctx),
     )!,
   }));
 }
@@ -435,6 +485,7 @@ export function cliOperatorRoute(ref: 'realm mcp' | 'realm serve'): {
   source: { kind: 'default'; ref: string };
 } {
   return {
+    // PLAIN (I13): the person block leaves this process, so it carries no mark.
     render: (way, basis) => cliCommandOf(way, basis, NO_DRIVE_FLAGS),
     source: { kind: 'default', ref },
   };

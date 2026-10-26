@@ -139,7 +139,7 @@ describe('#627 W — the separation check (cell 26)', () => {
     }).toEqual({
       claim: CANNOT_RECORD,
       become:
-        "This login can become Realm's service user (realm) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH (polkitd also at /usr/lib/polkit-1/polkitd, /usr/libexec/polkitd, /usr/lib/policykit-1/polkitd; sshd's units ssh.socket, sshd.socket, ssh.service, sshd.service in /etc/systemd/system, /run/systemd/system, /usr/lib/systemd/system, /lib/systemd/system).",
+        "This login can become Realm's service user (realm) without a password being asked: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH (polkitd also at /usr/lib/polkit-1/polkitd, /usr/libexec/polkitd, /usr/lib/policykit-1/polkitd; sshd's units ssh.socket, sshd.socket, ssh.service, sshd.service in /etc/systemd/system, /run/systemd/system, /usr/lib/systemd/system, /lib/systemd/system).",
     });
   });
 
@@ -242,8 +242,8 @@ describe('#627 W — the separation check (cell 26)', () => {
       ],
       // #790 (01b #8): a sudo this login owns is not a root-owned system copy — unknown.
       become: [
-        "This login can become Realm's service user (realm) without a password: unknown (sudo: unknown: sudo at /usr/bin/sudo is not a root-owned system copy (sudo looked for in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs and on PATH); observed now).",
-        "This login can become Realm's service user (realm) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH (polkitd also at /usr/lib/polkit-1/polkitd, /usr/libexec/polkitd, /usr/lib/policykit-1/polkitd; sshd's units ssh.socket, sshd.socket, ssh.service, sshd.service in /etc/systemd/system, /run/systemd/system, /usr/lib/systemd/system, /lib/systemd/system).",
+        "This login can become Realm's service user (realm) without a password being asked: unknown (sudo: unknown: sudo at /usr/bin/sudo is not a root-owned system copy (sudo looked for in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs and on PATH); observed now).",
+        "This login can become Realm's service user (realm) without a password being asked: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH (polkitd also at /usr/lib/polkit-1/polkitd, /usr/libexec/polkitd, /usr/lib/policykit-1/polkitd; sshd's units ssh.socket, sshd.socket, ssh.service, sshd.service in /etc/systemd/system, /run/systemd/system, /usr/lib/systemd/system, /lib/systemd/system).",
       ],
       // #790 (01b #3): condition 3 is every engine that runs as root.
       rootEngine: [
@@ -273,7 +273,7 @@ describe('#627 W — the separation check (cell 26)', () => {
       `Separation: separate user — ${CANNOT_RECORD}`,
       `Measured for the login 'agent', against the store at ${STORE}.`,
       "  This login can write Realm's store or open its files: no (measured).",
-      "  This login can become Realm's service user (realm) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH (polkitd also at /usr/lib/polkit-1/polkitd, /usr/libexec/polkitd, /usr/lib/policykit-1/polkitd; sshd's units ssh.socket, sshd.socket, ssh.service, sshd.service in /etc/systemd/system, /run/systemd/system, /usr/lib/systemd/system, /lib/systemd/system).",
+      "  This login can become Realm's service user (realm) without a password being asked: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH (polkitd also at /usr/lib/polkit-1/polkitd, /usr/libexec/polkitd, /usr/lib/policykit-1/polkitd; sshd's units ssh.socket, sshd.socket, ssh.service, sshd.service in /etc/systemd/system, /run/systemd/system, /usr/lib/systemd/system, /lib/systemd/system).",
       '  This login can reach an engine that runs as root: no (measured).',
       `  ${CONDITION_4}: no (measured) — 3 files and folders checked.`,
       // #819 follow-up 2 re-pin (walk --check wording): nothing is read for it — was "unknown (…; observed now)"
@@ -330,13 +330,13 @@ describe('#627 W — the separation check (cell 26)', () => {
         store: `  This login can write Realm's store or open its files: unknown (Realm's store was not found at ${STORE}; observed now).`,
         become:
           // #819 follow-up 2 re-pin (walk --check wording): no way is read — was "unknown (…; observed now)"
-          "  This login can become Realm's service user without a password: not measured (there is no service user to name: no store was found).",
+          "  This login can become Realm's service user without a password being asked: not measured (there is no service user to name: no store was found).",
       },
       // Correction 2 (5.3): the owner read from the folder above the store is labelled so.
       denied: {
         header: `Separation: separate user — An agent running as agent cannot record a gate answer through this server, the terminal or Realm's files, provided no program Realm runs as realm, read from the owner of ${HOME}, can run code for it, Realm's server runs this Node and this Realm package, every Realm server on this machine starts with --gate-answers withheld, and no registered workflow's extension file (not read: the store cannot be read) can be changed by this login.`,
         store: `  This login can write Realm's store or open its files: no (measured) — ${STORE}: permission denied.`,
-        become: `  This login can become Realm's service user (realm, read from the owner of ${HOME}) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH (polkitd also at /usr/lib/polkit-1/polkitd, /usr/libexec/polkitd, /usr/lib/policykit-1/polkitd; sshd's units ssh.socket, sshd.socket, ssh.service, sshd.service in /etc/systemd/system, /run/systemd/system, /usr/lib/systemd/system, /lib/systemd/system).`,
+        become: `  This login can become Realm's service user (realm, read from the owner of ${HOME}) without a password being asked: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH (polkitd also at /usr/lib/polkit-1/polkitd, /usr/libexec/polkitd, /usr/lib/policykit-1/polkitd; sshd's units ssh.socket, sshd.socket, ssh.service, sshd.service in /etc/systemd/system, /run/systemd/system, /usr/lib/systemd/system, /lib/systemd/system).`,
       },
       // #819 (C3): a store this login owns is within its reach, whatever its mode — the same login.
       ownedNo: {
@@ -346,7 +346,7 @@ describe('#627 W — the separation check (cell 26)', () => {
           "  This login can write Realm's store or open its files: yes (measured) — this login owns the store, so it can change who may open it.",
         become:
           // #819 follow-up 2 re-pin (walk --check wording): no way is read — was "unknown (…; observed now)"
-          "  This login can become Realm's service user without a password: not measured (there is no separate service user: the store belongs to this login).",
+          "  This login can become Realm's service user without a password being asked: not measured (there is no separate service user: the store belongs to this login).",
       },
     });
   });
@@ -580,10 +580,10 @@ describe('#627 W correction 2 — the separation check says what it measured (pa
     }).toEqual({
       rootNamed: false,
       // #819 follow-up 2 re-pin (walk --check wording): no way is read — was "unknown (…; observed now)"
-      rootBecome: `  This login can become Realm's service user without a password: not measured (the store's owner could not be read: ${STORE} cannot be opened).`,
+      rootBecome: `  This login can become Realm's service user without a password being asked: not measured (the store's owner could not be read: ${STORE} cannot be opened).`,
       mineOwns: false,
-      mineBecome: `  This login can become Realm's service user without a password: not measured (the store's owner could not be read: ${STORE} cannot be opened).`,
-      strangerBecome: `This login can become Realm's service user (realm, read from the owner of ${HOME}) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH (polkitd also at /usr/lib/polkit-1/polkitd, /usr/libexec/polkitd, /usr/lib/policykit-1/polkitd; sshd's units ssh.socket, sshd.socket, ssh.service, sshd.service in /etc/systemd/system, /run/systemd/system, /usr/lib/systemd/system, /lib/systemd/system).`,
+      mineBecome: `  This login can become Realm's service user without a password being asked: not measured (the store's owner could not be read: ${STORE} cannot be opened).`,
+      strangerBecome: `This login can become Realm's service user (realm, read from the owner of ${HOME}) without a password being asked: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH (polkitd also at /usr/lib/polkit-1/polkitd, /usr/libexec/polkitd, /usr/lib/policykit-1/polkitd; sshd's units ssh.socket, sshd.socket, ssh.service, sshd.service in /etc/systemd/system, /run/systemd/system, /usr/lib/systemd/system, /lib/systemd/system).`,
     });
   });
 
@@ -931,7 +931,7 @@ describe('#819 follow-up 2 — the walk’s --check wording: each line says only
       otherHost:
         'Another Realm server or CLI that takes answers uses this store: not measured (another Realm server or CLI could use this store, and one look cannot rule it out).',
       become:
-        "This login can become Realm's service user without a password: not measured (there is no service user to name: no store was found).",
+        "This login can become Realm's service user without a password being asked: not measured (there is no service user to name: no store was found).",
       economics: `${ECONOMICS}: not measured (no realm.yaml was given to read: pass --project with the deployment root).`,
       store: `This login can write Realm's store or open its files: unknown (Realm's store was not found at ${STORE}; observed now).`,
     });
@@ -1303,7 +1303,7 @@ describe('#819 Unit B: the words', () => {
         head(sepUnknown),
         lineOf(
           sepUnknown,
-          "This login can become Realm's service user (realm) without a password:",
+          "This login can become Realm's service user (realm) without a password being asked:",
         ),
       ],
     }).toEqual({
@@ -1313,7 +1313,7 @@ describe('#819 Unit B: the words', () => {
       ],
       sepUnknown: [
         'Separation: separate user — ',
-        `  This login can become Realm's service user (realm) without a password: unknown (${SUDO_UNSPLIT.cause}; observed now).`,
+        `  This login can become Realm's service user (realm) without a password being asked: unknown (${SUDO_UNSPLIT.cause}; observed now).`,
       ],
     });
   });

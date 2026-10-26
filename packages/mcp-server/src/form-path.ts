@@ -62,7 +62,13 @@ export interface FormCall {
 /** What sending a form needs: the door, its send function, the stores and the answer's facts. */
 export interface FormDeps {
   door: McpDoor;
-  elicit: ElicitFn;
+  /** Sends the form; #729 PR-3 correction 2 (G2): with the run it asks about, so the masking's set
+   *  is that run's project's (D-11). */
+  elicit: (
+    params: Parameters<ElicitFn>[0],
+    options: Parameters<ElicitFn>[1],
+    run: RunRecord,
+  ) => ReturnType<ElicitFn>;
   runStore: RunStore;
   definition: WorkflowDefinition;
   registry?: ExtensionRegistry;
@@ -246,6 +252,7 @@ export async function sendQuestionForm(
           timeout: timeout + SDK_TIMEOUT_MARGIN_MS,
           ...(call.requestId !== undefined ? { relatedRequestId: call.requestId } : {}),
         },
+        snap.record,
       );
     } catch (err) {
       stopWatching();

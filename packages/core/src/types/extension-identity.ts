@@ -63,16 +63,54 @@ export interface ExtensionIdentityEntry {
    * (placeholders included — an edited binding IS drift; a rotated secret VALUE is not).
    * The manifest file never contributes a sweep root — only this content hash.
    */
-  manifest?: { path: string; content_hash: string };
+  manifest?: {
+    path: string;
+    content_hash: string;
+    /**
+     * #729 PR-3 (D-12): sha256 of the canonical `secrets` block (its JSON with sorted keys) — what,
+     * with the referenced secret names, decides the run's declared values. Absent on entries written
+     * before this build (R28): those are judged by their recorded `secret_names` alone.
+     */
+    secrets_block_hash?: string;
+  };
   /**
-   * Secret NAMES referenced by the manifest at load time. Recorded, never compared —
-   * and never values or value hashes.
+   * Secret NAMES referenced by the manifest at load time — never values or value hashes. A read
+   * compares them (D-12): the run's declared part has changed when one is no longer referenced.
    */
   secret_names?: string[];
   /** Present when --extensions-module replaced the declared modules — omitting it would lie. */
   override_active?: true;
   /** Present when capture (or the extension load itself) failed — the failure is itself a record. */
   error?: string;
+  /**
+   * #729 PR-3 correction 5 (J-5, R48): `'start'` on the entry a program that loaded a project writes
+   * when it CREATES the run, so a run that never executes a step still names its manifest. Absent
+   * on every other entry — those an execution appends, and every entry written before this build.
+   * Drift is judged from the other entries only.
+   */
+  origin?: 'start';
+}
+
+/**
+ * #729 PR-3 correction 5 (J-5): the entry a creator writes at the run's creation — its loaded
+ * registry's identity, marked `origin: 'start'` — or `undefined` when it loaded no project (S5:
+ * none is made up). `captured_at` stays the load-time capture.
+ */
+export function startIdentityEntry(
+  registry: { readonly identity?: ExtensionIdentityEntry | undefined } | undefined,
+): ExtensionIdentityEntry | undefined {
+  const identity = registry?.identity;
+  return identity === undefined ? undefined : { ...identity, origin: 'start' };
+}
+
+/** J-5: the newest entry drift is judged from — the newest one that is not a start entry. */
+export function lastExecutionIdentity(
+  history: readonly ExtensionIdentityEntry[] | undefined,
+): ExtensionIdentityEntry | undefined {
+  if (history === undefined) return undefined;
+  for (let i = history.length - 1; i >= 0; i--)
+    if (history[i]!.origin !== 'start') return history[i];
+  return undefined;
 }
 
 /**

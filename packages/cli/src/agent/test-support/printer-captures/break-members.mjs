@@ -1,6 +1,7 @@
 // break-members.mjs — P2's break script (GHSA-gxfq correction). It removes ONE member, or one
-// structural part (E1, E2, LINES, D), at a time from `redaction-variants.ts`, rebuilds the CLI, runs
-// `redaction-printers.test.ts`, records the red rows, then restores the file with
+// structural part (E1, E2, LINES, D), at a time from `redaction-variants.ts` (in core since #729 PR-3),
+// rebuilds core and the CLI, runs `redaction-printers.test.ts` and core's P2 (`redaction-variants.test.ts`,
+// with `--tests`), records the red rows, then restores the file with
 // `git checkout HEAD -- <file>`. It also runs E1 and E2 together, and the trim dropped from B1 and
 // B2 together. Its log goes to stdout.
 //
@@ -18,7 +19,7 @@ import { join } from 'node:path';
 const here = new URL('.', import.meta.url).pathname;
 const cli = join(here, '..', '..', '..', '..');
 const root = join(cli, '..', '..');
-const FILE = 'packages/cli/src/agent/providers/redaction-variants.ts';
+const FILE = 'packages/core/src/utils/redaction-variants.ts';
 const PRINTERS = 'src/agent/providers/redaction-printers.test.ts';
 
 const args = process.argv.slice(2);

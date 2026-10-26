@@ -10,7 +10,12 @@
 // break turns red is a preservation guard; it names the P2 rows (`redaction-printers.test.ts`)
 // where each of those members is discriminated.
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { variantsOf } from './redaction-variants.js';
+import { disclose, type DisclosureSet } from './redaction.js';
+// The printer captures and the independent oracle stay in the CLI's test support (RECORD 05, amended
+// at the prompt audit); P2 reads them from there.
+import { leakedForms } from '../../../cli/src/agent/test-support/redaction-oracle.js';
 
 /** (b) prints which pin failed and `false`; never the list. */
 function lists(value: string, form: string, pin: string): void {
@@ -96,5 +101,116 @@ describe('variantsOf — one pin per kind (GHSA-gxfq cell 19)', () => {
     //     the value alone is floored after its padding is stripped (`cGFzcw` leaves). (b) prints
     //     the list of this fixed fake value — never a redaction set.
     expect(variantsOf('pass')).toEqual(['pass', 'cGFzcw==', 'cGFzcw', '70617373']);
+  });
+});
+
+// ── P2, moved from the CLI's `redaction-printers.test.ts` (#729 PR-3; prompt 01 C-1 Rails) ───────
+// P2 needs the list's internal `omit` seam, which core does not export, so it lives beside the list.
+// Each separating row is hidden through `disclose` with the list built by `variantsOf` (with or
+// without one member), as a declared value's set.
+
+interface Row {
+  printer: string;
+  case: string;
+  value: string;
+  output: string;
+  source: string;
+  runtime: string;
+  anchors: string[];
+  lines?: string[];
+  member?: string;
+}
+
+const ROWS = (
+  JSON.parse(
+    readFileSync(
+      new URL(
+        '../../../cli/src/agent/test-support/printer-captures/printer-captures.json',
+        import.meta.url,
+      ),
+      'utf8',
+    ),
+  ) as { rows: Row[] }
+).rows;
+
+/** A declared value's set over the forms `variantsOf` lists, with `omit` left out. */
+function setOf(value: string, omit?: string): DisclosureSet {
+  const forms = variantsOf(value, { parts: true, ...(omit !== undefined ? { omit } : {}) })
+    .filter((form) => form !== '')
+    .sort((a, b) => b.length - a.length)
+    .map((form) => ({ form, kind: 3 as const, member: 0 }));
+  return {
+    audience: 'agent',
+    declared: 'resolved',
+    environment: 'not_swept',
+    forms,
+    sources: ['declared:ROW'],
+    unmaskable: 0,
+  };
+}
+
+/** What a row's check prints: where it stands, whether the marker is there, the oracle's pairs. */
+function verdict(row: Row, omit?: string) {
+  const out = disclose(row.output, setOf(row.value, omit), 'declared').text;
+  const checks: Array<[string, string]> = [
+    ...row.anchors.map((x, i): [string, string] => [`anchor ${i + 1}`, x]),
+    ...(row.lines ?? []).map((x, i): [string, string] => [`line ${i + 1}`, x]),
+  ];
+  return {
+    printer: row.printer,
+    case: row.case,
+    marker: out.includes('[REDACTED]'),
+    leaks: checks.flatMap(([check, x]) => leakedForms(out, x).map((hit) => ({ check, ...hit }))),
+  };
+}
+const hiddenVerdict = (row: Row) => ({
+  printer: row.printer,
+  case: row.case,
+  marker: true,
+  leaks: [],
+});
+
+describe('P2 — each member and layer of the list separates (moved from the CLI)', () => {
+  // The member ids, read from `MEMBERS` in the source with break-members.mjs's own pattern, and the
+  // layers outside it: E1, E2, LINES and D.
+  const SOURCE = readFileSync(new URL('./redaction-variants.ts', import.meta.url), 'utf8');
+  const MEMBERS_BLOCK = SOURCE.slice(
+    SOURCE.indexOf('const MEMBERS'),
+    SOURCE.indexOf('};', SOURCE.indexOf('const MEMBERS')),
+  );
+  const MEMBER_IDS = [
+    ...[...MEMBERS_BLOCK.matchAll(/^ {2}(\w+): \w+,$/gm)].map((m) => m[1]!),
+    ...['E1', 'E2', 'LINES', 'D'],
+  ];
+  const SEPARATING_ROWS = ROWS.filter((r) => r.member !== undefined);
+
+  it('P2 — one separating row per member and per layer, the members read from MEMBERS', () => {
+    const rowMembers = SEPARATING_ROWS.map((r) => r.member!);
+    // (a) red when a member is added to MEMBERS (or a layer here) without a separating row, when a
+    //     row names a member that is no longer there, or when a member has two rows or a row that is
+    //     not executed. (b) prints the sorted id lists and the members without exactly one row.
+    expect({
+      members: [...MEMBER_IDS].sort(),
+      rows: [...new Set(rowMembers)].sort(),
+      notOne: MEMBER_IDS.filter(
+        (m) =>
+          SEPARATING_ROWS.filter((r) => r.member === m && r.source === 'executed').length !== 1,
+      ),
+    }).toEqual({ members: [...MEMBER_IDS].sort(), rows: [...MEMBER_IDS].sort(), notOne: [] });
+  });
+
+  // Each separating row is hidden with the whole list, and NOT hidden once its own member (or layer)
+  // is left out (the `omit` seam). A member that makes another redundant turns its row red here.
+  // (a) red when another member, a layer or a part starts writing the left-out member's form on its
+  //     separating value. (b) prints the member, the printer and whether it separates.
+  it.each(SEPARATING_ROWS)('P2 — $member separates: $printer x $case', (row) => {
+    const whole = JSON.stringify(verdict(row)) === JSON.stringify(hiddenVerdict(row));
+    const without =
+      JSON.stringify(verdict(row, row.member!)) === JSON.stringify(hiddenVerdict(row));
+    expect({ member: row.member, hiddenWhole: whole, separates: !without }).toEqual({
+      member: row.member,
+      hiddenWhole: true,
+      separates: true,
+    });
   });
 });

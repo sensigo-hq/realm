@@ -84,6 +84,10 @@ export class InMemoryStore implements RunStore {
       ...(options.parentRunId !== undefined ? { parent_run_id: options.parentRunId } : {}),
       ...(options.idempotencyKey !== undefined ? { idempotency_key: options.idempotencyKey } : {}),
       ...(supersededId !== undefined ? { rerun_of: supersededId } : {}),
+      // #729 PR-3 correction 5 (J-5): the creator's start entry, written with the record.
+      ...(options.extensionIdentity !== undefined && options.extensionIdentity.length > 0
+        ? { extension_identity: options.extensionIdentity }
+        : {}),
       completed_steps: [],
       in_progress_steps: [],
       failed_steps: [],

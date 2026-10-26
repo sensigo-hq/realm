@@ -33,6 +33,12 @@ vi.mock('node:readline/promises', () => ({
 
 import { createInterface } from 'node:readline/promises';
 import { runCommand, renderDetachMap } from './run.js';
+import { writerTestSeams } from '../output/writer.js';
+
+// #729 PR-3: `runCommand.parseAsync` installs the CLI writer in this process (the hook every command
+// carries), so a spied console call holds the composed text, span marks included; a reader sees what
+// the writer shows of it.
+const shown = (arg: unknown): string => writerTestSeams.visible(String(arg));
 
 /** A minimal non-terminal record; overrides shape each fork. */
 function record(over: Partial<RunRecord> = {}): RunRecord {
@@ -381,7 +387,7 @@ steps:
     vi.restoreAllMocks();
   });
 
-  const stderr = (): string => errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+  const stderr = (): string => errSpy.mock.calls.map((c: unknown[]) => shown(c[0])).join('\n');
   const runsDir = (): string => join(home, '.realm', 'runs');
 
   it('c POSITIVE — the map is composed from a FRESH read, and names the real step', async () => {
@@ -513,8 +519,8 @@ steps:
   // exit spy — are scoped to this describe. A sibling would run against the REAL ~/.realm with a
   // REAL process.exit in the worker (mechanics lane, #459).
   describe('exit codes that tell the truth (issue #468)', () => {
-    const errLines = (): string[] => errSpy.mock.calls.map((c: unknown[]) => String(c[0]));
-    const logged = (): string => logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    const errLines = (): string[] => errSpy.mock.calls.map((c: unknown[]) => shown(c[0]));
+    const logged = (): string => logSpy.mock.calls.map((c: unknown[]) => shown(c[0])).join('\n');
     /** The persisted record, read the way c POSITIVE's mock reads it (the #285 idiom: the store
      *  is constructed AFTER the scratch HOME is live). */
     const readRecord = async (): Promise<RunRecord> => {
@@ -821,7 +827,7 @@ steps:
         // #625 PR-2a, decision C170: the way out is true for the kind of ending (here completed).
         'is terminal (completed); cannot submit a gate response — it completed, and nothing is owed.',
       );
-      expect(logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')).toContain(
+      expect(logSpy.mock.calls.map((c: unknown[]) => shown(c[0])).join('\n')).toContain(
         'Run complete. Phase: completed',
       );
       expect(exitSpy).not.toHaveBeenCalled();
@@ -832,8 +838,8 @@ steps:
   // exit spy — are scoped to this describe. A sibling would run against the REAL ~/.realm with a
   // REAL process.exit in the worker (mechanics lane, #459).
   describe('re-prompt on bad answers (issue #459)', () => {
-    const errLines = (): string[] => errSpy.mock.calls.map((c: unknown[]) => String(c[0]));
-    const logged = (): string => logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    const errLines = (): string[] => errSpy.mock.calls.map((c: unknown[]) => shown(c[0]));
+    const logged = (): string => logSpy.mock.calls.map((c: unknown[]) => shown(c[0])).join('\n');
     const reprompts = (): string[] =>
       errLines().filter((l) => l.includes('Not valid JSON:') || l.includes('Not a JSON object'));
     /** The persisted record, read the way c POSITIVE's mock reads it (the #285 idiom: the store is

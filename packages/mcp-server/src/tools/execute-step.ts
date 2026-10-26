@@ -16,6 +16,8 @@ import {
   type StepDispatcher,
   type EngineReply,
   type AgentTraceEntry,
+  markersIn,
+  inboundMarkerWarning,
 } from '@sensigo/realm';
 import {
   formCallOf,
@@ -27,14 +29,19 @@ import {
 import { withQuestionForm, type FormCall } from '../form-path.js';
 import { toolMeta } from '../tool-annotations.js';
 import {
+  disclosureOfTool,
   mcpReplyOf,
   withHintTail,
   renderReply,
+  safeTool,
   toolContentOf,
+  MCP_ENVELOPE_TABLE,
   type McpEnvelope,
+  type WithDoorDisclosure,
   type WithPersonBlock,
+  replySubject,
+  setForSubject,
 } from '../render-reply.js';
-import { sseJsonStringify } from '../sse-json.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
 import {
   assertRegistryLine,
@@ -208,12 +215,11 @@ export const traceEntrySchema = z.object({
   data: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
 });
 
-// For agent steps, the agent's params represent their work output. The dispatcher
-// passes them through as the step output recorded in evidence.
-const makeParamsDispatcher =
-  (params: Record<string, unknown>): StepDispatcher =>
-  async () =>
-    params;
+// For agent steps, the agent's params represent their work output. The dispatcher returns the
+// input the ENGINE passes it — the params with `_debug` stripped (it is recorded apart, as
+// `debug_output`) — never the call's own params, so `output_summary` holds only the answer's keys
+// (#729 PR-3, M-4; RECORD 01 #15).
+const paramsDispatcher: StepDispatcher = async (_command, input) => input;
 
 /**
  * Business logic for the execute_step tool.
@@ -305,7 +311,7 @@ export async function handleExecuteStep(
     // decision C151: an expiry this call carries out names the tool.
     caller: 'execute_step',
     input: params,
-    dispatcher: makeParamsDispatcher(params),
+    dispatcher: paramsDispatcher,
     ...(registry !== undefined ? { registry } : {}),
     // trace is a top-level execute_step field — never embedded in params.
     ...(args.trace !== undefined ? { trace: args.trace } : {}),
@@ -367,39 +373,67 @@ export async function handleExecuteStepTool(
     trace?: AgentTraceEntry[] | undefined;
     writer_nonce?: string | undefined;
   },
-  stores?: HandleRunStores,
+  stores?: HandleRunStores & WithDoorDisclosure,
   call?: FormCall,
 ): Promise<ReturnType<typeof toolContentOf>> {
-  assertToolStores(stores, 'handleExecuteStepTool');
-  try {
-    const result = await handleExecuteStep(args, stores, call);
-    return toolContentOf({ ...result, data: {}, evidence: [] }, sseJsonStringify);
-  } catch (err) {
-    const workflowErr =
-      err instanceof WorkflowError
-        ? err
-        : new WorkflowError(err instanceof Error ? err.message : String(err), {
-            code: 'ENGINE_INTERNAL',
-            category: 'ENGINE',
-            agentAction: 'stop',
-            retryable: false,
-          });
-    const contextHint =
-      workflowErr.code === 'STATE_WORKFLOW_NOT_FOUND'
-        ? `Workflow definition for run '${args.run_id}' not found.`
-        : workflowErr.code === 'STATE_RUN_NOT_FOUND'
-          ? `Run '${args.run_id}' not found.`
-          : `An error occurred before step '${args.command}' could begin.`;
-    const rendered = renderReply(
-      buildPreExecutionErrorEnvelope(args.command, args.run_id, 0, workflowErr, contextHint),
-      mcpHostOf(stores),
-    );
-    return toolContentOf(mcpReplyOf(rendered), sseJsonStringify);
-  }
+  const door = disclosureOfTool(stores);
+  return safeTool(
+    async () => {
+      // F34: inside safeTool, so a store misconfiguration is a reply, never a raw throw to the SDK.
+      assertToolStores(stores, 'handleExecuteStepTool');
+      const result = await handleExecuteStep(args, stores, call);
+      // #729 PR-3 (D1 D5): an answer that sends a marker back is recorded as sent — and said so.
+      const markers = markersIn(args.params ?? {});
+      return toolContentOf(
+        {
+          ...result,
+          data: {},
+          evidence: [],
+          ...(markers.length > 0
+            ? { warnings: [...result.warnings, inboundMarkerWarning(markers)] }
+            : {}),
+        },
+        {
+          set: await setForSubject(door, await replySubject(stores, { runId: args.run_id })),
+          audience: 'agent',
+          table: MCP_ENVELOPE_TABLE,
+        },
+      );
+    },
+    async (err) => {
+      const workflowErr =
+        err instanceof WorkflowError
+          ? err
+          : new WorkflowError(err instanceof Error ? err.message : String(err), {
+              code: 'ENGINE_INTERNAL',
+              category: 'ENGINE',
+              agentAction: 'stop',
+              retryable: false,
+            });
+      const contextHint =
+        workflowErr.code === 'STATE_WORKFLOW_NOT_FOUND'
+          ? `Workflow definition for run '${args.run_id}' not found.`
+          : workflowErr.code === 'STATE_RUN_NOT_FOUND'
+            ? `Run '${args.run_id}' not found.`
+            : `An error occurred before step '${args.command}' could begin.`;
+      const rendered = renderReply(
+        buildPreExecutionErrorEnvelope(args.command, args.run_id, 0, workflowErr, contextHint),
+        mcpHostOf(stores),
+      );
+      return toolContentOf(mcpReplyOf(rendered), {
+        set: await setForSubject(door, await replySubject(stores, { runId: args.run_id })),
+        audience: 'agent',
+        table: MCP_ENVELOPE_TABLE,
+      });
+    },
+  )();
 }
 
 /** Registers the execute_step MCP tool on the server. */
-export function registerExecuteStep(server: McpServer, opts?: HandleRunStores): void {
+export function registerExecuteStep(
+  server: McpServer,
+  opts?: HandleRunStores & WithDoorDisclosure,
+): void {
   markServedByTool(opts);
   server.registerTool(
     'execute_step',

@@ -48,6 +48,8 @@ const DOOR: Record<
     extras: {
       '--verbose': 'how much of the record to show (a view option)',
       '--check-drift': 'a view option: re-hash the recorded extension against the disk',
+      '--accept-partial-disclosure':
+        "a view option: print the run's values when its declared secrets cannot all be read (#729 PR-3 correction 3, H-7'')",
     },
   },
   abandon: {

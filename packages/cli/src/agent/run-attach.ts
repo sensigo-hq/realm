@@ -15,6 +15,7 @@ import {
   getWorkflowForRun,
   deriveRunPhase,
   escapedBoundedValue,
+  lastExecutionIdentity,
 } from '@sensigo/realm';
 import type {
   LoaderWarning,
@@ -28,9 +29,26 @@ import {
   type LoadedProjectExtensions,
 } from '../extensions/load-project-extensions.js';
 import { identityDiffers, errorExtensionIdentityEntry } from '../extensions/extension-identity.js';
+// #729 PR-3 (L-2): this message is thrown, not printed, so its command takes the PLAIN context.
+import { PLAIN, RUN_PHASE_WORDS, type RenderCtx } from '../output/writer.js';
 
 /** Terminal reason written when extension loading fails before a run has started executing. */
 export const EXTENSIONS_LOAD_FAILED = 'extensions_load_failed';
+
+/**
+ * Whether an ended run is re-attached (its extensions failed to load before it executed anything)
+ * rather than refused. issue #367 (part 3): key on the recorded ARM, with the prose literal as the
+ * fallback for records written before the arm existed. `||` and not `??` on purpose — the left side
+ * is always a boolean, so `??` would never fire and the legacy fallback would be dead code. The
+ * literal leaves for good once the corpus is swept. #729 PR-3 correction 4 (I-11): one predicate,
+ * read by `resolveRunAttach` and by `realm agent`'s manifest read before the refusal.
+ */
+export function reattachable(run: RunRecord): boolean {
+  return (
+    run.sealed_by?.arm === 'extensions_load_failure' ||
+    run.terminal_reason === EXTENSIONS_LOAD_FAILED
+  );
+}
 
 /**
  * Who ended a run, from its record (#729 PR-0, E1 (d)): an operator (`abandoned`), a guard (its seal
@@ -64,18 +82,26 @@ function endedBy(run: RunRecord): string {
  * issue #279 (increment 1, PR-B), design record §6: a run that still carries an undelivered
  * finalizer is pointed at the recovery verb.
  */
-export function terminalRunRefusal(runId: string, run: RunRecord): Error {
+export function terminalRunRefusal(runId: string, run: RunRecord, ctx: RenderCtx = PLAIN): Error {
   const phase = deriveRunPhase(run);
-  const lines = [`Run ${runId} has already ended (${phase})${endedBy(run)}.`];
+  // #729 PR-3 correction 3 (H-8): the phase is realm's own word. `ctx` is the CLI's writer context
+  // on the pre-attach carrier, so it prints whole; the library carrier (`runAgent`) passes none and
+  // its message carries no span mark (I13).
+  const lines = [
+    `Run ${runId} has already ended (${ctx.word(phase, RUN_PHASE_WORDS)})${endedBy(run)}.`,
+  ];
   if (run.terminal_reason !== undefined && phase !== 'completed') {
-    lines.push(`Reason: ${escapedBoundedValue(run.terminal_reason)}`);
+    // Correction 4 (I-11): the stored reason is a value — its shape while the run's declared values
+    // are withheld (the CLI read its manifest first); PLAIN leaves it as written.
+    lines.push(`Reason: ${ctx.escaped(escapedBoundedValue(run.terminal_reason))}`);
   }
   const pendingFinalizerCount = Object.values(run.finalizer_ledger ?? {}).filter(
     (e) => e.status === 'pending',
   ).length;
   if (pendingFinalizerCount > 0) {
     lines.push(
-      `${pendingFinalizerCount} cleanup ${pendingFinalizerCount === 1 ? 'step is' : 'steps are'} not yet delivered — to deliver ${pendingFinalizerCount === 1 ? 'it' : 'them'}: realm run drain ${runId}`,
+      // eslint-disable-next-line no-restricted-syntax -- an Error's message, returned to a caller that may keep it (runAgent is a library API), so it carries no span mark; the writer masks the line it is printed on (#729 PR-3, F26).
+      `${pendingFinalizerCount} cleanup ${pendingFinalizerCount === 1 ? 'step is' : 'steps are'} not yet delivered — to deliver ${pendingFinalizerCount === 1 ? 'it' : 'them'}: ${PLAIN.cmd(`realm run drain ${runId}`)}`,
     );
   }
   return new Error(lines.join('\n'));
@@ -84,6 +110,8 @@ export function terminalRunRefusal(runId: string, run: RunRecord): Error {
 export interface ResolveRunAttachDeps {
   store: RunStore;
   workflowStore: Pick<WorkflowRegistrar, 'get'>;
+  /** The CLI's writer context, for the ended-run refusal's spans (#729 PR-3 correction 3, H-8). */
+  ctx?: RenderCtx;
   /** DI seam for tests — defaults to the real loader. */
   loadExtensions?: typeof loadProjectExtensions;
 }
@@ -107,14 +135,8 @@ export async function resolveRunAttach(
   let run = await deps.store.get(runId);
 
   if (run.terminal_state) {
-    // issue #367 (part 3): key on the recorded ARM, with the prose literal as the fallback for
-    // records written before the arm existed. `||` and not `??` on purpose — the left side is
-    // always a boolean, so `??` would never fire and the legacy fallback would be dead code. The
-    // literal leaves for good once the corpus is swept.
-    if (
-      run.sealed_by?.arm === 'extensions_load_failure' ||
-      run.terminal_reason === EXTENSIONS_LOAD_FAILED
-    ) {
+    // issue #367 (part 3): the recorded arm, or the legacy literal ({@link reattachable}).
+    if (reattachable(run)) {
       // Pure retry: nothing executed pre-failure. Clear exactly this marker and proceed.
       // issue #367: `sealed_by` joins the strip — this is a resume-class write (terminal → live),
       // so the seal fact leaves in the SAME write that flips terminal_state:false.
@@ -123,7 +145,7 @@ export async function resolveRunAttach(
       run = await deps.store.get(runId);
     } else {
       // Same refusal (and message) the agent loop raises — thrown BEFORE any extension code loads.
-      throw terminalRunRefusal(runId, run);
+      throw terminalRunRefusal(runId, run, deps.ctx);
     }
   }
 
@@ -160,7 +182,8 @@ export async function resolveRunAttach(
     // append-on-change site after this attacher claims a step.
     const freshIdentity = registry.identity;
     const history = run.extension_identity ?? [];
-    const lastIdentity = history[history.length - 1];
+    // #729 PR-3 correction 5 (J-5): drift is judged from execution entries; a start entry is not one.
+    const lastIdentity = lastExecutionIdentity(history);
     if (
       freshIdentity !== undefined &&
       lastIdentity !== undefined &&

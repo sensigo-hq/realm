@@ -405,7 +405,7 @@ describe('THE CLI AFTER — `realm run respond --by`, and `realm run inspect` re
     );
     expect(inspected.stdout).toContain(
       // #627 W (W-i1): the route its door declared, the program that recorded it, the token.
-      "Answer: approve · answered by alice (as stated) · through a terminal (realm run respond) (as its door declared), recorded by respond, running as cli-row (from REALM_OPERATOR) · token: none passed (a token is passed only by Realm's MCP answer tool, from the conversation that opened the question, or by a program that calls the library with it)",
+      "Answer: approve · answered by alice (as stated) · through a terminal (realm run respond) (as its door declared), recorded by respond, running as cli-row (from REALM_OPERATOR) · no claim token passed (a token is passed only by Realm's MCP answer tool, from the conversation that opened the question, or by a program that calls the library with it)",
     );
     expect(inspected.stdout.indexOf('Question opened through')).toBeLessThan(
       inspected.stdout.indexOf('Answer: approve'),
@@ -427,7 +427,7 @@ describe('THE CLI AFTER — `realm run respond --by`, and `realm run inspect` re
     expect(answered.code).toBe(0);
     const inspected = await cli(['run', 'inspect', runId], {});
     expect(inspected.stdout).toContain(
-      'Answer: reject · answered by (not stated) · through a terminal (realm run respond) (as its door declared), recorded by respond, running as cli-row (from REALM_OPERATOR) · token: none passed',
+      'Answer: reject · answered by (not stated) · through a terminal (realm run respond) (as its door declared), recorded by respond, running as cli-row (from REALM_OPERATOR) · no claim token passed',
     );
     expect(inspected.stdout).not.toContain('answered by cli-row');
   }, 60_000);
@@ -448,7 +448,7 @@ describe('THE CLI AFTER — `realm run respond --by`, and `realm run inspect` re
     }
     const inspected = await cli(['run', 'inspect', runId], {});
     expect(inspected.stdout).toContain(
-      "token: none passed (a token is passed only by Realm's MCP answer tool, from the conversation that opened the question, or by a program that calls the library with it)",
+      "no claim token passed (a token is passed only by Realm's MCP answer tool, from the conversation that opened the question, or by a program that calls the library with it)",
     );
   }, 60_000);
 

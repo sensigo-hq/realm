@@ -29,6 +29,10 @@ import {
   classifyStop,
   isRaceStop,
   type NotRecordedKind,
+  markersIn,
+  inboundMarkerWarning,
+  persistsField,
+  startIdentityEntry,
 } from '@sensigo/realm';
 import {
   recordedAnswer,
@@ -58,7 +62,7 @@ import type {
 import type { EngineReply, StepDispatcher, PendingView, WayOf } from '@sensigo/realm';
 import {
   CLI_COMMANDS,
-  NO_DRIVE_FLAGS,
+  writerHost,
   cannotGoOnLines,
   owedItems,
   owedRunsWords,
@@ -67,6 +71,14 @@ import { loadProjectExtensions } from '../extensions/load-project-extensions.js'
 import { buildReattachFlags } from './agent.js';
 import { attendingLine } from './run-advance.js';
 import { scheduleGateExpiryTimer } from '../agent/gate/gate-expiry-timer.js';
+import {
+  PLAIN,
+  RUN_PHASE_WORDS,
+  digestSpan,
+  questionSpan,
+  writerCtx,
+  type RenderCtx,
+} from '../output/writer.js';
 
 /**
  * Dormant strict posture (issue #197 PR-2, design §6 — the #169→#170 template): read PER CALL,
@@ -172,15 +184,15 @@ export function renderDetachMap(
   // word would be a false statement about what just happened.
   const headline = opts?.headline ?? 'Prompt cancelled';
   const lines = [
-    `${headline} — detached from run '${record.id}' at step '${step}' (phase: ${phase}). The run is saved.`,
+    `${headline} — detached from run '${record.id}' at step '${step}' (phase: ${writerCtx().word(phase, RUN_PHASE_WORDS)}). The run is saved.`,
   ];
   // #729 PR-0 (A-10, A-11: the detach map once per verb family): the PR-0 ways' commands are the CLI
   // renderer's — inspect, advance, abandon, the answer.
-  const inspectLine = `  Inspect:   ${CLI_COMMANDS.inspect({ verb: 'inspect', conditions: [], run_id: record.id }, undefined, NO_DRIVE_FLAGS)}`;
+  const inspectLine = `  Inspect:   ${CLI_COMMANDS.inspect({ verb: 'inspect', conditions: [], run_id: record.id }, undefined, writerHost())}`;
 
   if (record.terminal_state) {
     // decisions C202, C205: the way on from a failed step `realm run resume` takes.
-    const resume = resumeLine(record, ways.workflow);
+    const resume = resumeLine(record, ways.workflow, writerCtx());
     if (resume !== undefined) lines.push(resume);
     // decision C211: cleanup steps the ending left pending — the command that runs them.
     const cleanup = pendingCleanupLine(record, new Date());
@@ -199,7 +211,7 @@ export function renderDetachMap(
     run_id: record.id,
     owed: pending.owed,
   };
-  const advanceLine = `  Advance:   ${CLI_COMMANDS.advance(owedWay, undefined, NO_DRIVE_FLAGS)} — for what the engine owes (${owedItems(owedWay).join(', ')}), with no model${owedRunsWords(owedWay)}`;
+  const advanceLine = `  Advance:   ${CLI_COMMANDS.advance(owedWay, undefined, writerHost())} — for what the engine owes (${owedItems(owedWay).join(', ')}), with no model${owedRunsWords(owedWay)}`;
   if (gate !== undefined) {
     // decision C202: a question whose time is up and that declares `on_expiry` can no longer be
     // answered — the owed call carries its expiry out.
@@ -208,7 +220,7 @@ export function renderDetachMap(
         ? advanceLine
         : // decision C206: the one answer command (`--choice <one of: a, b>`), never `a|b` — a
           // shell runs that as a pipe, and records the first choice.
-          `  Respond:   ${CLI_COMMANDS.respond(respondWayOfGate(record.id, gate), undefined, NO_DRIVE_FLAGS)}`,
+          `  Respond:   ${CLI_COMMANDS.respond(respondWayOfGate(record.id, gate), undefined, writerHost())}`,
     );
     lines.push(inspectLine);
     return lines.join('\n');
@@ -234,7 +246,9 @@ export function renderDetachMap(
     // decision C202: the run cannot go on from here — core's lines: each step that cannot run, then
     // the way out (which ends with `realm run abandon`).
     const composed = composeWaysAt(record, new Date(), { definition: ways.workflow });
-    lines.push(...cannotGoOnLines(composed, record.id, phase).map((line) => `  ${line}`));
+    lines.push(
+      ...cannotGoOnLines(composed, record.id, phase, writerCtx()).map((line) => `  ${line}`),
+    );
     lines.push(inspectLine);
     return lines.join('\n');
   } else {
@@ -247,7 +261,7 @@ export function renderDetachMap(
           CLI_COMMANDS.advance(
             { verb: 'advance', conditions: [], run_id: record.id, owed: [] },
             undefined,
-            NO_DRIVE_FLAGS,
+            writerHost(),
           )!,
         ),
       );
@@ -257,7 +271,7 @@ export function renderDetachMap(
   }
   lines.push(inspectLine);
   lines.push(
-    `  Discard:   ${CLI_COMMANDS.abandon({ verb: 'abandon', conditions: [], run_id: record.id }, undefined, NO_DRIVE_FLAGS)}`,
+    `  Discard:   ${CLI_COMMANDS.abandon({ verb: 'abandon', conditions: [], run_id: record.id }, undefined, writerHost())}`,
   );
   return lines.join('\n');
 }
@@ -279,17 +293,17 @@ export function renderInFlightHandBack(record: RunRecord, held: readonly string[
   const names = held.map((s) => `'${s}'`).join(', ');
   const steps = held.length === 1 ? `step ${names}` : `steps ${names}`;
   return [
-    `Stopped waiting — detached from run '${record.id}' at ${steps} (phase: ${deriveRunPhase(record)}). The run is saved.`,
+    `Stopped waiting — detached from run '${record.id}' at ${steps} (phase: ${writerCtx().word(deriveRunPhase(record), RUN_PHASE_WORDS)}). The run is saved.`,
     // #729 PR-0 (F.2): the commands come from the CLI door's renderer, never a literal here.
     goOnLine(
       held,
       CLI_COMMANDS.advance(
         { verb: 'advance', conditions: [], run_id: record.id, owed: [] },
         undefined,
-        NO_DRIVE_FLAGS,
+        writerHost(),
       )!,
     ),
-    `  Inspect:   ${CLI_COMMANDS.inspect({ verb: 'inspect', conditions: [], run_id: record.id }, undefined, NO_DRIVE_FLAGS)}`,
+    `  Inspect:   ${CLI_COMMANDS.inspect({ verb: 'inspect', conditions: [], run_id: record.id }, undefined, writerHost())}`,
   ].join('\n');
 }
 
@@ -400,12 +414,12 @@ function watchRun(
  * answer the record holds for the step, as `realm run inspect` prints it (`Answer: <choice> · …`),
  * or — when no answer was recorded (an `on_expiry: abort`, an abandoned run) — the run's phase.
  */
-export function questionClosedLine(run: RunRecord, step: string): string {
+export function questionClosedLine(run: RunRecord, step: string, ctx: RenderCtx = PLAIN): string {
   const last = recordedAnswer(run, step);
   const what =
     last !== undefined
-      ? renderAnswerLine(last, recordedArrival(run, step))
-      : `no answer was recorded; the run is '${deriveRunPhase(run)}'`;
+      ? renderAnswerLine(last, recordedArrival(run, step), ctx)
+      : `no answer was recorded; the run is '${ctx.word(deriveRunPhase(run), RUN_PHASE_WORDS)}'`;
   return `This prompt is closed: the question on '${step}' is no longer open — ${what}.`;
 }
 
@@ -421,12 +435,13 @@ function elsewherePhrase(
   step: string,
   storeKeepsClaims: boolean,
   ownClaimToken?: string,
+  ctx: RenderCtx = PLAIN,
 ): string | undefined {
   const claim = run.claims?.[step];
   if (claim !== undefined && (ownClaimToken === undefined || claim.token !== ownClaimToken)) {
-    return `was ${takenPhrase(describeClaimHolder(claim, storeKeepsClaims))}`;
+    return `was ${takenPhrase(describeClaimHolder(claim, storeKeepsClaims), ctx)}`;
   }
-  const ran = ranElsewherePhrase(run, step);
+  const ran = ranElsewherePhrase(run, step, ctx);
   return ran !== undefined ? `was ${ran}` : undefined;
 }
 
@@ -445,8 +460,9 @@ export function stepClosedLine(
   step: string,
   storeKeepsClaims: boolean,
   ownClaimToken?: string,
+  ctx: RenderCtx = PLAIN,
 ): string {
-  const elsewhere = elsewherePhrase(run, step, storeKeepsClaims, ownClaimToken);
+  const elsewhere = elsewherePhrase(run, step, storeKeepsClaims, ownClaimToken, ctx);
   if (elsewhere !== undefined) {
     return `This prompt is closed: step '${step}' ${elsewhere}; not run here.`;
   }
@@ -456,7 +472,7 @@ export function stepClosedLine(
   if (!run.terminal_state && run.pending_gate !== undefined) {
     return `This prompt is closed: a question is open on '${run.pending_gate.step_name}', and '${step}' waits for its answer.`;
   }
-  return `This prompt is closed: step '${step}' no longer waits for an answer — the run is '${deriveRunPhase(run)}'.`;
+  return `This prompt is closed: step '${step}' no longer waits for an answer — the run is '${ctx.word(deriveRunPhase(run), RUN_PHASE_WORDS)}'.`;
 }
 
 /**
@@ -468,8 +484,9 @@ export function answerNotRunLine(
   run: RunRecord,
   step: string,
   storeKeepsClaims: boolean,
+  ctx: RenderCtx = PLAIN,
 ): string | undefined {
-  const elsewhere = elsewherePhrase(run, step, storeKeepsClaims);
+  const elsewhere = elsewherePhrase(run, step, storeKeepsClaims, undefined, ctx);
   return elsewhere === undefined
     ? undefined
     : `Not run here: step '${step}' ${elsewhere}; the answer typed here was not recorded.`;
@@ -558,6 +575,9 @@ async function askJsonObject(
       );
       continue;
     }
+    // #729 PR-3 (D1 D5): an answer that sends a marker back is recorded as sent — and said so.
+    const markers = markersIn(parsed);
+    if (markers.length > 0) console.warn(`  ${inboundMarkerWarning(markers)}`);
     return parsed as Record<string, unknown>;
   }
 }
@@ -565,6 +585,10 @@ async function askJsonObject(
 export const runCommand = new Command('run')
   .argument('<path>', 'Path to workflow directory or workflow.yaml file')
   .option('--params <json>', 'Initial run parameters as JSON string', '{}')
+  .option(
+    '--params-from-run <run-id>',
+    "Start with the params of an earlier run of this workflow, read from that run's record as given (not as any output showed them)",
+  )
   .option(
     '--extensions-module <path>',
     "CODE override: module that REPLACES the workflow's declared 'extensions' modules (repair tool)",
@@ -585,10 +609,12 @@ export const runCommand = new Command('run')
       inputPath: string,
       options: {
         params: string;
+        paramsFromRun?: string;
         extensionsModule?: string;
         project?: string;
         mintWriterNonce?: boolean;
       },
+      command: Command,
     ) => {
       // issue #625 (holder slice): this program's name, made once, before any other output. A name
       // that cannot be used prints one line and exits 1 here; nothing has been started.
@@ -644,11 +670,40 @@ export const runCommand = new Command('run')
 
       // 2. Parse params
       let params: Record<string, unknown>;
-      try {
-        params = JSON.parse(options.params) as Record<string, unknown>;
-      } catch {
-        console.error('Error: --params is not valid JSON');
-        process.exit(1);
+      if (options.paramsFromRun !== undefined) {
+        // #729 PR-3 (RECORD 01 #17): the params as the earlier run's record holds them — raw, never
+        // as a masked output printed them (I1).
+        // F31: an explicit --params is refused whatever its value (`--params '{}'` included), by
+        // where Commander took the value from — never by comparing it with the default.
+        if (command.getOptionValueSource('params') !== 'default') {
+          console.error('Error: give --params or --params-from-run, not both.');
+          process.exit(1);
+        }
+        try {
+          const earlier = await new JsonFileStore().get(options.paramsFromRun);
+          if (earlier.workflow_id !== definition.id) {
+            console.error(
+              `Error: run '${options.paramsFromRun}' is a run of workflow '${earlier.workflow_id}', not '${definition.id}'; its params are not this workflow's.`,
+            );
+            process.exit(1);
+          }
+          params = earlier.params;
+        } catch (err) {
+          console.error(
+            `Error: --params-from-run: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          process.exit(1);
+        }
+      } else {
+        try {
+          params = JSON.parse(options.params) as Record<string, unknown>;
+        } catch {
+          console.error('Error: --params is not valid JSON');
+          process.exit(1);
+        }
+        // #729 PR-3 (D1 D5): params typed with a marker in them were copied from masked output.
+        const markers = markersIn(params);
+        if (markers.length > 0) console.warn(`Warning: ${inboundMarkerWarning(markers)}`);
       }
 
       // issue #426 — dev mode is interactive BY DESIGN: every step kind and every gate prompts
@@ -704,6 +759,11 @@ export const runCommand = new Command('run')
         workflowId: definition.id,
         workflowVersion: definition.version,
         params,
+        // #729 PR-3 correction 5 (J-5): the run is born with this program's identity, the manifest
+        // reference included (a never-executed run still names its manifest).
+        ...(startIdentityEntry(registry) !== undefined && persistsField(store, 'extension_identity')
+          ? { extensionIdentity: [startIdentityEntry(registry)!] }
+          : {}),
       });
       const runId = initialRecord.id;
 
@@ -764,7 +824,8 @@ export const runCommand = new Command('run')
             // gate's text comes from — each line as written.
             const question = pendingGateQuestion(definition, run);
             if (question !== undefined) {
-              for (const line of questionLines(question)) console.log(line);
+              // #729 PR-3 (P-9; R2): the question at the declared tier on every stream.
+              for (const line of questionLines(question)) console.log(questionSpan(line));
             }
             console.log(`  Preview: ${JSON.stringify(g.preview, null, 2)}`);
             // issue #291 (Deliverable 4e, Amendment 4): the ATTENDING-PROCESS enactment timer.
@@ -801,7 +862,7 @@ export const runCommand = new Command('run')
               if (!settledElsewhere.signal.aborted) throw err;
               run = await store.get(runId);
               // readline ends the prompt's line when the question is closed.
-              console.log(`  ${questionClosedLine(run, g.step_name)}`);
+              console.log(`  ${questionClosedLine(run, g.step_name, writerCtx())}`);
               continue;
             } finally {
               clearExpiryTimer();
@@ -849,10 +910,10 @@ export const runCommand = new Command('run')
                 // The call succeeded and the answer was NOT recorded (this process's own timer
                 // enacted the expiry first, with the same choice): never `✓ →`.
                 console.log(
-                  `  ✗ not recorded — gate settled by timeout with choice '${late.choice}' → ${late.phase}\n`,
+                  `  ✗ not recorded — gate settled by timeout with choice '${late.choice}' → ${writerCtx().word(late.phase, RUN_PHASE_WORDS)}\n`,
                 );
               } else {
-                console.log(`  ✓ → ${run.run_phase}\n`);
+                console.log(`  ✓ → ${writerCtx().word(run.run_phase, RUN_PHASE_WORDS)}\n`);
               }
             } else {
               // issue #468 — a FRESH read, not a break: most of this arm's members are a live
@@ -871,8 +932,8 @@ export const runCommand = new Command('run')
                 }
                 console.error(
                   late !== undefined
-                    ? `  ✗ not recorded — gate settled by timeout with choice '${late.choice}' → ${late.phase}\n`
-                    : `  ✗ not recorded → ${deriveRunPhase(run)}\n`,
+                    ? `  ✗ not recorded — gate settled by timeout with choice '${late.choice}' → ${writerCtx().word(late.phase, RUN_PHASE_WORDS)}\n`
+                    : `  ✗ not recorded → ${writerCtx().word(deriveRunPhase(run), RUN_PHASE_WORDS)}\n`,
                 );
               } else {
                 console.error(`  ✗ ${respondResult.errors.join(', ')}\n`);
@@ -917,7 +978,7 @@ export const runCommand = new Command('run')
               if (waitingSaid.has(key)) continue;
               waitingSaid.add(key);
               console.log(
-                `  ${waitingLine(step, describeClaimHolder(claim, store.persistsClaims === true), inFlightWatchMs)}`,
+                `  ${waitingLine(step, describeClaimHolder(claim, store.persistsClaims === true), inFlightWatchMs, writerCtx())}`,
               );
             }
             const fresh = await recordChange(store, runId, run.version, inFlightWatchMs);
@@ -942,6 +1003,7 @@ export const runCommand = new Command('run')
                   describeClaimHolder(record.claims?.[step], store.persistsClaims === true),
                   states.get(step) === 'claim_stale',
                   inFlightWatchMs,
+                  writerCtx(),
                 ),
               );
             }
@@ -963,6 +1025,7 @@ export const runCommand = new Command('run')
               }),
               record.id,
               deriveRunPhase(record),
+              writerCtx(),
             );
             if (cannotGoOn.length > 0) {
               console.error('\nWorkflow stalled: nothing else can run.');
@@ -988,7 +1051,7 @@ export const runCommand = new Command('run')
             console.error(
               owed
                 ? `\nThe engine owes ${owedItems({ verb: 'advance', conditions: [], run_id: runId, owed: pending.owed }).join(', ')}, which this command does not run.`
-                : `\nNo eligible steps in phase '${run.run_phase}'. Workflow stalled.`,
+                : `\nNo eligible steps in phase '${writerCtx().word(run.run_phase, RUN_PHASE_WORDS)}'. Workflow stalled.`,
             );
             console.error(
               renderDetachMap(
@@ -1016,10 +1079,10 @@ export const runCommand = new Command('run')
               // that made the step not ready (the run ended, a question opened) the next pass shows.
               run = await store.get(runId);
               const keeps = store.persistsClaims === true;
-              const ran = ranElsewherePhrase(run, stepName);
+              const ran = ranElsewherePhrase(run, stepName, writerCtx());
               if (run.in_progress_steps.includes(stepName)) {
                 console.log(
-                  `${takenLine(stepName, describeClaimHolder(run.claims?.[stepName], keeps))}\n`,
+                  `${takenLine(stepName, describeClaimHolder(run.claims?.[stepName], keeps), writerCtx())}\n`,
                 );
               } else if (ran !== undefined) {
                 console.log(`• Step '${stepName}' was ${ran}; not run here.\n`);
@@ -1081,7 +1144,7 @@ export const runCommand = new Command('run')
             await releaseHeldClaim();
             run = await store.get(runId);
             console.log(
-              `  ${stepClosedLine(run, stepName, store.persistsClaims === true, ownToken)}\n`,
+              `  ${stepClosedLine(run, stepName, store.persistsClaims === true, ownToken, writerCtx())}\n`,
             );
             continue;
           } finally {
@@ -1090,7 +1153,9 @@ export const runCommand = new Command('run')
           // decision C179: the answer goes to the engine, which claims the step for it.
           await releaseHeldClaim();
 
-          const dispatcher: StepDispatcher = async () => userOutput;
+          // #729 PR-3 (RECORD 01 #15): the input the ENGINE passes — `_debug` stripped (recorded
+          // apart as `debug_output`) — never the closed-over answer.
+          const dispatcher: StepDispatcher = async (_command, input) => input;
 
           const result = await executeChain(store, definition, {
             runId,
@@ -1123,8 +1188,12 @@ export const runCommand = new Command('run')
           // record names no one to say it of.
           const notRun =
             isRaceStop(stop) && stop.kind === 'held_elsewhere' && !stop.ran_here
-              ? (answerNotRunLine(replyRecord!, stepName, keeps) ??
-                takenLine(stepName, describeClaimHolder(replyRecord!.claims?.[stepName], keeps)))
+              ? (answerNotRunLine(replyRecord!, stepName, keeps, writerCtx()) ??
+                takenLine(
+                  stepName,
+                  describeClaimHolder(replyRecord!.claims?.[stepName], keeps),
+                  writerCtx(),
+                ))
               : undefined;
           if (
             result.status === 'ok' &&
@@ -1152,15 +1221,22 @@ export const runCommand = new Command('run')
             run = replyRecord!;
             if (stop.ran_here) {
               console.log(
-                `  ${outcomeNotRecordedLine(stop.kind as NotRecordedKind, run, stepName, keeps)}\n`,
+                `  ${outcomeNotRecordedLine(stop.kind as NotRecordedKind, run, stepName, keeps, writerCtx())}\n`,
               );
             }
           } else if (result.status === 'ok') {
             run = await store.get(runId);
             const ev = result.evidence[0];
-            const hash = ev !== undefined ? ev.evidence_hash.slice(0, 8) : 'n/a';
+            // #729 PR-3 correction 4 (I-9b): the hash of an output the law hid anything inside is
+            // shown as its type and size.
+            const hash =
+              ev !== undefined
+                ? digestSpan(ev.evidence_hash.slice(0, 8), ev.output_summary)
+                : 'n/a';
             const dur = ev !== undefined ? `${ev.duration_ms}ms` : 'n/a';
-            console.log(`  ✓ → ${run.run_phase} | hash: ${hash}... | ${dur}\n`);
+            console.log(
+              `  ✓ → ${writerCtx().word(run.run_phase, RUN_PHASE_WORDS)} | hash: ${hash}... | ${dur}\n`,
+            );
           } else if (result.status === 'confirm_required' && result.gate !== undefined) {
             // Gate opened as part of this step — it will be handled at loop top.
             run = await store.get(runId);
@@ -1177,9 +1253,15 @@ export const runCommand = new Command('run')
             // ran that step after this one, so this one settled — no record is read to guess it.
             run = await store.get(runId);
             const ev = [...run.evidence].reverse().find((e) => e.step_id === stepName);
-            const hash = ev !== undefined ? ev.evidence_hash.slice(0, 8) : 'n/a';
+            // I-9b, as above.
+            const hash =
+              ev !== undefined
+                ? digestSpan(ev.evidence_hash.slice(0, 8), ev.output_summary)
+                : 'n/a';
             const dur = ev !== undefined ? `${ev.duration_ms}ms` : 'n/a';
-            console.log(`  ✓ → ${run.run_phase} | hash: ${hash}... | ${dur}\n`);
+            console.log(
+              `  ✓ → ${writerCtx().word(run.run_phase, RUN_PHASE_WORDS)} | hash: ${hash}... | ${dur}\n`,
+            );
           } else {
             console.error(`${renderStepFailureLine(result, stepName)}\n`);
             // issue #468 — a FRESH read, not a break: below the validation-exhaustion threshold
@@ -1246,7 +1328,7 @@ export const runCommand = new Command('run')
             console.error(
               // #729 PR-0 (E1 (j)): the command ends its line (no stop after it); the stored error
               // text is printed after its label, as written, with no stop added.
-              `Prompt cancelled — detached from run '${runId}'; its record could not be re-read. To read it: ${CLI_COMMANDS.inspect({ verb: 'inspect', conditions: [], run_id: runId }, undefined, NO_DRIVE_FLAGS)}\n  Error: ${message}`,
+              `Prompt cancelled — detached from run '${runId}'; its record could not be re-read. To read it: ${CLI_COMMANDS.inspect({ verb: 'inspect', conditions: [], run_id: runId }, undefined, writerHost())}\n  Error: ${message}`,
             );
             rl.close();
             process.exit(1);
@@ -1284,7 +1366,7 @@ export const runCommand = new Command('run')
       // that runs them, under the last line.
       const cleanup = pendingCleanupLine(run, new Date());
       if (deriveRunPhase(run) === 'completed') {
-        console.log(`Run complete. Phase: ${run.run_phase}`);
+        console.log(`Run complete. Phase: ${writerCtx().word(run.run_phase, RUN_PHASE_WORDS)}`);
         if (cleanup !== undefined) console.log(cleanup);
         // NATURAL RETURN — never process.exit(0): three declared controls (run-detach.test.ts's
         // R1/R2/R3) pin the completed path as an unwrapped, un-exited resolution.
@@ -1293,10 +1375,10 @@ export const runCommand = new Command('run')
         // terminal_reason are the disclosure channel, not this exit code.
         return;
       }
-      console.log(`Run complete. Phase: ${run.run_phase}`);
+      console.log(`Run complete. Phase: ${writerCtx().word(run.run_phase, RUN_PHASE_WORDS)}`);
       // decision C205 (round 27 finding 3): a run that ended with a failed step `realm run resume`
       // takes gets the way back in, as the detach map gives it.
-      const resume = resumeLine(run, definition);
+      const resume = resumeLine(run, definition, writerCtx());
       if (resume !== undefined) console.log(resume);
       if (cleanup !== undefined) console.log(cleanup);
       process.exit(1);

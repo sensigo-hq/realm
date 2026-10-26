@@ -3,17 +3,20 @@
 // by that folder's `generate.mjs`) holds each printer's real output on each FAKE case, run here or in a
 // container pinned by digest, plus one SEPARATING row per member and structural part.
 //
-// Each row's output is hidden with the row's value expanded as a declared secret (`parts: true`), and
-// the independent oracle (`leakedForms`, which imports no production code) then searches the hidden
-// output, decoded, for each of the row's anchors and hand-written lines. P1 runs a second time
-// without parts (an environment value), on every row but the part printers'.
+// Each row's output is hidden through core's PUBLIC law (#729 PR-3: `compileDisclosure`/`disclose`;
+// the list of forms moved into core with the law), the row's value a declared secret (its parts too)
+// at the declared tier, and the independent oracle (`leakedForms`, which imports no production code)
+// then searches the hidden output, decoded, for each of the row's anchors and hand-written lines. P1
+// runs a second time without parts (an environment value, every tier), on every row but the part
+// printers' whose value is at or above the environment floor. P2 — the separating rows, which need
+// the list's internal `omit` seam — lives beside the list, in core's `redaction-variants.test.ts`.
 //
 // A failure prints the printer, the case, the source, the runtime and the oracle's `{ path, decoders }`
 // pairs per anchor or line — never a value, an anchor's text or a redaction set. Each cell names (a)
 // the change that turns it red and (b) what it prints.
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { redactWith, variantsOf } from './redaction-variants.js';
+import { compileDisclosure, disclose, DISCLOSURE_FLOORS, type DisclosureSet } from '@sensigo/realm';
 import { leakedForms } from '../test-support/redaction-oracle.js';
 
 interface Row {
@@ -36,23 +39,27 @@ const FIXTURE = JSON.parse(
 ) as { rows: Row[] };
 const ROWS = FIXTURE.rows;
 
-/** How a row's value is expanded: as a declared secret (`parts`), and with one member or layer left out. */
+/** How a row's value is expanded: as a declared secret (its parts too), or an environment value. */
 interface Expand {
   readonly parts: boolean;
-  readonly omit?: string;
 }
 const DECLARED: Expand = { parts: true };
 
-/** Each value's list, longest-first, built once per value and expansion. */
-const SETS = new Map<string, string[]>();
+/** Each value's set, built once per value and expansion. */
+const SETS = new Map<string, DisclosureSet>();
 function hidden(row: Row, expand: Expand): string {
-  const key = JSON.stringify([row.value, expand.parts, expand.omit ?? null]);
+  const key = JSON.stringify([row.value, expand.parts]);
   let set = SETS.get(key);
   if (set === undefined) {
-    set = variantsOf(row.value, expand).sort((a, b) => b.length - a.length);
+    set = compileDisclosure(
+      [{ value: row.value, source: expand.parts ? 'declared:ROW' : 'env:ROW' }],
+      { declared: 'resolved', audience: 'agent', environment: 'swept' },
+    ).set;
     SETS.set(key, set);
   }
-  return redactWith(row.output, set);
+  // A declared value at the declared tier: the members alone, no pattern. An environment value
+  // needs every tier (`all`), so a pattern can add hiding there — never remove it.
+  return disclose(row.output, set, expand.parts ? 'declared' : 'all').text;
 }
 
 /** What a row's check prints: where it stands, whether the marker is there, and the oracle's pairs. */
@@ -79,9 +86,6 @@ const HIDDEN = (row: Row) => ({
   marker: true,
   leaks: [],
 });
-/** Whether a verdict is the hidden one. */
-const equalsHidden = (v: ReturnType<typeof verdict>, row: Row): boolean =>
-  JSON.stringify(v) === JSON.stringify(HIDDEN(row));
 
 describe('the printer captures (GHSA-gxfq correction)', () => {
   it('the fixture: every row executed, one row per printer and case', () => {
@@ -123,9 +127,14 @@ describe('the printer captures (GHSA-gxfq correction)', () => {
   //     of that member's separating value goes red; see break-members.mjs), or take the shorter
   //     list of an earlier build of this fix. (b) prints the printer, the case, the source, the
   //     runtime and the oracle's pairs.
-  it.each(ROWS)('P1 — $printer x $case ($runtime)', (row) => {
-    expect(verdict(row)).toEqual(HIDDEN(row));
-  });
+  // #729 PR-3: a declared value under the declared floor (4 characters) is `unmaskable` by design —
+  // reported at load (I8), never hidden — so its rows (`boollike`'s `yes`) leave this cell.
+  it.each(ROWS.filter((r) => r.value.length >= DISCLOSURE_FLOORS.declared))(
+    'P1 — $printer x $case ($runtime)',
+    (row) => {
+      expect(verdict(row)).toEqual(HIDDEN(row));
+    },
+  );
 
   // P1 without parts — the same rows, each value expanded as an ENVIRONMENT value (no parts), but the
   // part printers' rows: they write a part, which only a declared secret's list holds.
@@ -141,51 +150,14 @@ describe('the printer captures (GHSA-gxfq correction)', () => {
     'jenkins.Bash.all',
     'jenkins.Batch',
   ]);
-  it.each(ROWS.filter((r) => !PART_PRINTERS.has(r.printer)))(
-    'P1 without parts — $printer x $case ($runtime)',
-    (row) => {
-      expect(verdict(row, { parts: false })).toEqual(HIDDEN(row));
-    },
-  );
-
-  // The member ids, read from `MEMBERS` in the source with break-members.mjs's own pattern, and the
-  // layers outside it: E1, E2, LINES and D.
-  const SOURCE = readFileSync(new URL('./redaction-variants.ts', import.meta.url), 'utf8');
-  const MEMBERS_BLOCK = SOURCE.slice(
-    SOURCE.indexOf('const MEMBERS'),
-    SOURCE.indexOf('};', SOURCE.indexOf('const MEMBERS')),
-  );
-  const MEMBER_IDS = [
-    ...[...MEMBERS_BLOCK.matchAll(/^ {2}(\w+): \w+,$/gm)].map((m) => m[1]!),
-    ...['E1', 'E2', 'LINES', 'D'],
-  ];
-  const SEPARATING_ROWS = ROWS.filter((r) => r.member !== undefined);
-
-  it('P2 — one separating row per member and per layer, the members read from MEMBERS', () => {
-    const rowMembers = SEPARATING_ROWS.map((r) => r.member!);
-    // (a) red when a member is added to MEMBERS (or a layer here) without a separating row, when a
-    //     row names a member that is no longer there, or when a member has two rows or a row that is
-    //     not executed. (b) prints the sorted id lists and the members without exactly one row.
-    expect({
-      members: [...MEMBER_IDS].sort(),
-      rows: [...new Set(rowMembers)].sort(),
-      notOne: MEMBER_IDS.filter(
-        (m) =>
-          SEPARATING_ROWS.filter((r) => r.member === m && r.source === 'executed').length !== 1,
-      ),
-    }).toEqual({ members: [...MEMBER_IDS].sort(), rows: [...MEMBER_IDS].sort(), notOne: [] });
-  });
-
-  // P2's property in CI: each separating row is NOT hidden once its own member (or layer) is left out
-  // of the list (the `omit` seam). A member that makes another redundant turns its row red here.
-  // (a) red when another member, a layer or a part starts writing the left-out member's form on its
-  //     separating value. (b) prints the member, the printer and the verdict without the member.
-  it.each(SEPARATING_ROWS)('P2 — $member separates: $printer x $case', (row) => {
-    const without = verdict(row, { parts: true, omit: row.member! });
-    expect({ member: row.member, separates: !equalsHidden(without, row) }).toEqual({
-      member: row.member,
-      separates: true,
-    });
+  // #729 PR-3: an environment value under the floor (8 characters, the owner's Q2) is not swept at
+  // all, so its rows leave this cell; the declared P1 above keeps every row.
+  it.each(
+    ROWS.filter(
+      (r) => !PART_PRINTERS.has(r.printer) && r.value.length >= DISCLOSURE_FLOORS.environment,
+    ),
+  )('P1 without parts — $printer x $case ($runtime)', (row) => {
+    expect(verdict(row, { parts: false })).toEqual(HIDDEN(row));
   });
 
   it('P3 — the JSON layers: Python repr inside JSON, and JSON inside JSON', () => {

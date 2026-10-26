@@ -145,6 +145,7 @@ function reasonText(promptCache: ResolvedPromptCache): string {
   const v = promptCache.value;
   const listen = promptCache.by === 'realm listen';
   if (v !== 'auto') {
+    // eslint-disable-next-line no-restricted-syntax -- prose naming the setting's source, not a command to copy (#729 PR-3, L-2).
     return listen ? `set by realm listen --prompt-cache ${v}` : `set by --prompt-cache ${v}`;
   }
   const evidence = `auto: ${autoEvidence(promptCache.auto ?? { basis: 'no_measurement' })}; `;
@@ -202,7 +203,8 @@ export function promptCacheStartLine(input: {
   if (asked === undefined) {
     const notice =
       promptCache?.by === 'realm listen' && promptCache.source === 'stated'
-        ? ` realm listen --prompt-cache ${promptCache.value} applies only to Anthropic.`
+        ? // eslint-disable-next-line no-restricted-syntax -- prose naming the setting, not a command to copy (#729 PR-3, L-2).
+          ` realm listen --prompt-cache ${promptCache.value} applies only to Anthropic.`
         : '';
     return `Caching: Realm asks ${providerName(caps, 'this provider')} for no caching; any caching it does is its own.${notice}`;
   }

@@ -490,7 +490,11 @@ describe(
         none: [WORDS],
         late: [WORDS],
         lateExit: 1,
-        inTime: [expect.stringMatching(/^Answer: ship · answered by alice .* · token: /)],
+        inTime: [
+          expect.stringMatching(
+            /^Answer: ship · answered by alice .* · (no claim token|the claim token)/,
+          ),
+        ],
       });
     });
   },
@@ -1027,13 +1031,20 @@ describe(
       ];
       await run(lines);
       await run(lines);
-      // (a) red when the command gains an option that names a run, or a second call joins the first
-      //     call's run; (b) prints the options and the runs.
+      // (a) red when the command gains another option that names a run, or a second call joins the
+      //     first call's run; (b) prints the options and the runs. #729 PR-3: `--params-from-run`
+      //     names a run only to read its params; each call still starts a new run.
       expect({
         options: runCommand.options.map((o) => o.long),
         runs: runIds().length,
       }).toEqual({
-        options: ['--params', '--extensions-module', '--project', '--mint-writer-nonce'],
+        options: [
+          '--params',
+          '--params-from-run',
+          '--extensions-module',
+          '--project',
+          '--mint-writer-nonce',
+        ],
         runs: 2,
       });
     });

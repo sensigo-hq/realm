@@ -686,13 +686,19 @@ describe('repairActFor — the act is keyed on the CLASS, minted once (review fo
     const RM_ALT =
       'if it was never registered from a source, remove the file (rm /p/w.json) instead';
     expect(acts.missing).toBeUndefined(); // self-remedied in its own sentence
-    expect(acts.unreadable).toEqual({ act: 'make /p/w.json readable (chmod u+r /p/w.json)' });
+    // #729 PR-3 correction 2 (G7): each act that names a shell command carries it alone.
+    expect(acts.unreadable).toEqual({
+      act: 'make /p/w.json readable (chmod u+r /p/w.json)',
+      command: 'chmod u+r /p/w.json',
+    });
     expect(acts.not_a_file).toEqual({
       act: 'remove the directory at /p/w.json (rm -r /p/w.json), then ' + RR_ACT,
+      command: 'rm -r /p/w.json',
     });
-    expect(acts.empty).toEqual({ act: RR_ACT, alternative: RM_ALT });
+    expect(acts.empty).toEqual({ act: RR_ACT, alternative: RM_ALT, command: 'rm /p/w.json' });
     expect(acts.registry_broken).toEqual({
       act: 'make the registry directory /p/w.json readable and searchable (chmod u+rx /p/w.json)',
+      command: 'chmod u+rx /p/w.json',
     });
     // A non-permission errno names the requirement and the errno, never a chmod that cannot help.
     expect(
@@ -713,12 +719,14 @@ describe('repairActFor — the act is keyed on the CLASS, minted once (review fo
     expect(repairActFor(parseFailureError('/p/w.json', { kind: 'not_json' }))).toEqual({
       act: RR_ACT,
       alternative: RM_ALT,
+      command: 'rm /p/w.json',
     });
     expect(
       repairActFor(parseFailureError('/p/w.json', { kind: 'not_object', shape: 'null' })),
     ).toEqual({
       act: RR_ACT,
       alternative: RM_ALT,
+      command: 'rm /p/w.json',
     });
     expect(
       probeClassOf(parseFailureError('/p/w.json', { kind: 'not_object', shape: 'null' })),

@@ -27,6 +27,7 @@ import type {
   NotRecordedKind,
   RunRecord,
 } from '@sensigo/realm';
+import { PLAIN, RUN_PHASE_WORDS, type RenderCtx } from '../output/writer.js';
 
 /**
  * The one phrase for a recorded name that cannot be printed — a control character in it, or a value
@@ -56,8 +57,10 @@ export const ABSENCE_WORDS: Record<ClaimHolderAbsentCause, string> = {
 };
 
 /** `mihai@host (from the OS user, via mcp-stdio)` — the program, how its name is known, the door. */
-export function describeProgram(a: Attributed): string {
-  return `${a.by} (${BY_SOURCE_WORDS[a.by_source]}, via ${a.channel})`;
+export function describeProgram(a: Attributed, ctx: RenderCtx = PLAIN): string {
+  // #729 PR-3 correction 2 (C1, DQ 1): the holder label is a fact (R17) on every surface, as the
+  // record table and the MCP door class it: printed whole, as a verified span.
+  return ctx.cmd(`${a.by} (${BY_SOURCE_WORDS[a.by_source]}, via ${a.channel})`);
 }
 
 /**
@@ -69,8 +72,9 @@ export function takenPhrase(
   described:
     | { holder: Attributed; since?: string }
     | { by: null; absent_cause: ClaimHolderAbsentCause; since?: string },
+  ctx: RenderCtx = PLAIN,
 ): string {
-  if ('holder' in described) return `taken by ${describeProgram(described.holder)}`;
+  if ('holder' in described) return `taken by ${describeProgram(described.holder, ctx)}`;
   switch (described.absent_cause) {
     case 'holder_not_recorded':
       return 'taken by a program whose name was not recorded';
@@ -92,9 +96,13 @@ export function takenPhrase(
  * `• Step '<s>' was <taken phrase> at <since>; not run here.` (no ` at <since>` when the claim has
  * none). The same line for an agent step and an engine step.
  */
-export function takenLine(step: string, described: Parameters<typeof takenPhrase>[0]): string {
+export function takenLine(
+  step: string,
+  described: Parameters<typeof takenPhrase>[0],
+  ctx: RenderCtx = PLAIN,
+): string {
   const at = described.since !== undefined ? ` at ${described.since}` : '';
-  return `• Step '${step}' was ${takenPhrase(described)}${at}; not run here.`;
+  return `• Step '${step}' was ${takenPhrase(described, ctx)}${at}; not run here.`;
 }
 
 /**
@@ -108,12 +116,13 @@ export function inFlightLine(
   described: Parameters<typeof takenPhrase>[0],
   stale: boolean,
   watchMs: number,
+  ctx: RenderCtx = PLAIN,
 ): string {
   const since = described.since ?? 'an unrecorded time';
   return (
-    `• Step '${step}' has been in flight since ${since}, ${takenPhrase(described)}; the record has not changed for ${Math.round(watchMs / 1000)}s.` +
+    `• Step '${step}' has been in flight since ${since}, ${takenPhrase(described, ctx)}; the record has not changed for ${Math.round(watchMs / 1000)}s.` +
     (stale ? ' Its claim is past its deadline (its runner likely died).' : '') +
-    ` If the program that took it is gone: realm run reclaim ${runId} --step ${shellWord(step)} --force`
+    ` If the program that took it is gone: ${ctx.cmd(`realm run reclaim ${runId} --step ${shellWord(step)} --force`)}`
   );
 }
 
@@ -128,11 +137,13 @@ export function inFlightLine(
 export function resumeLine(
   run: Parameters<typeof resumeWay>[0],
   workflow: Parameters<typeof resumeWay>[1],
+  ctx: RenderCtx = PLAIN,
 ): string | undefined {
   const operator = operatorEndingSentence(run);
   if (operator !== undefined) return `  Ended:     ${operator}`;
   const resume = offeredResumeWay(run, workflow);
-  return resume === undefined ? undefined : `  Resume:    ${resume.command}`;
+  // #729 PR-3 (L-2): `resumeWay`'s command, marked as one.
+  return resume === undefined ? undefined : `  Resume:    ${ctx.cmd(resume.command)}`;
 }
 
 /**
@@ -157,9 +168,10 @@ export function waitingLine(
   step: string,
   described: Parameters<typeof takenPhrase>[0],
   watchMs: number,
+  ctx: RenderCtx = PLAIN,
 ): string {
   const since = described.since !== undefined ? ` since ${described.since}` : '';
-  return `• Step '${step}' is in flight, ${takenPhrase(described)}${since}: waiting up to ${Math.round(watchMs / 1000)}s for the run's record to change.`;
+  return `• Step '${step}' is in flight, ${takenPhrase(described, ctx)}${since}: waiting up to ${Math.round(watchMs / 1000)}s for the run's record to change.`;
 }
 
 /**
@@ -168,7 +180,11 @@ export function waitingLine(
  * (`driven_by`), since its claim is gone once it settled. `undefined` while the step has not
  * settled.
  */
-export function ranElsewherePhrase(run: RunRecord, step: string): string | undefined {
+export function ranElsewherePhrase(
+  run: RunRecord,
+  step: string,
+  ctx: RenderCtx = PLAIN,
+): string | undefined {
   const done = run.completed_steps.includes(step)
     ? 'completed'
     : run.failed_steps.includes(step)
@@ -180,9 +196,10 @@ export function ranElsewherePhrase(run: RunRecord, step: string): string | undef
     .find((e) => e.step_id === step && e.kind !== 'gate_response');
   const by =
     ev?.driven_by !== undefined
-      ? takenPhrase({ holder: ev.driven_by })
+      ? takenPhrase({ holder: ev.driven_by }, ctx)
       : takenPhrase({ by: null, absent_cause: 'no_claim' });
-  return `${by}, and ${done}`;
+  // #729 PR-3 correction 6 (C6-7): the step's status (`completed` or `failed`) is realm's word.
+  return `${by}, and ${ctx.word(done, RUN_PHASE_WORDS)}`;
 }
 
 /**
@@ -201,20 +218,21 @@ export function answerNotRecordedLine(
   step: string,
   keepsClaims: boolean,
   kind?: NotRecordedKind,
+  ctx: RenderCtx = PLAIN,
 ): string | undefined {
   const notRecorded = "this drive's answer was not recorded";
   const takenArm = (): string => {
     const described = describeClaimHolder(run.claims?.[step], keepsClaims);
     const at = described.since !== undefined ? ` at ${described.since}` : '';
-    return `• Step '${step}' was ${takenPhrase(described)}${at}; ${notRecorded}.`;
+    return `• Step '${step}' was ${takenPhrase(described, ctx)}${at}; ${notRecorded}.`;
   };
-  const endedArm = `• Step '${step}' was not run: the run ended (${deriveRunPhase(run)}) before this drive's answer reached it; the answer was not recorded.`;
+  const endedArm = `• Step '${step}' was not run: the run ended (${ctx.word(deriveRunPhase(run), RUN_PHASE_WORDS)}) before this drive's answer reached it; the answer was not recorded.`;
   if (kind !== undefined) {
     switch (kind) {
       case 'held_elsewhere':
         return takenArm();
       case 'step_settled':
-        return `• Step '${step}' was ${ranElsewherePhrase(run, step) ?? takenPhrase({ by: null, absent_cause: 'no_claim' })}; ${notRecorded}.`;
+        return `• Step '${step}' was ${ranElsewherePhrase(run, step, ctx) ?? takenPhrase({ by: null, absent_cause: 'no_claim' })}; ${notRecorded}.`;
       case 'run_ended':
         return endedArm;
       case 'claim_removed':
@@ -222,7 +240,7 @@ export function answerNotRecordedLine(
     }
   }
   if (run.in_progress_steps.includes(step)) return takenArm();
-  const ran = ranElsewherePhrase(run, step);
+  const ran = ranElsewherePhrase(run, step, ctx);
   if (ran !== undefined) return `• Step '${step}' was ${ran}; ${notRecorded}.`;
   if (run.terminal_state === true) return endedArm;
   return undefined;
@@ -246,6 +264,7 @@ export function outcomeNotRecordedLine(
   run: RunRecord,
   step: string,
   keepsClaims: boolean,
+  ctx: RenderCtx = PLAIN,
 ): string {
   const notRecorded = "this program's outcome for it was not recorded";
   // F7: the arm is core's classifier's kind, never read again here. Decision C199: on a run that has
@@ -256,12 +275,12 @@ export function outcomeNotRecordedLine(
     case 'held_elsewhere': {
       const described = describeClaimHolder(run.claims?.[step], keepsClaims);
       const at = described.since !== undefined ? ` at ${described.since}` : '';
-      return `• Step '${step}' was ${takenPhrase(described)}${at}; ${notRecorded}.`;
+      return `• Step '${step}' was ${takenPhrase(described, ctx)}${at}; ${notRecorded}.`;
     }
     case 'step_settled':
-      return `• Step '${step}' was ${ranElsewherePhrase(run, step) ?? takenPhrase({ by: null, absent_cause: 'no_claim' })}; ${notRecorded}.`;
+      return `• Step '${step}' was ${ranElsewherePhrase(run, step, ctx) ?? takenPhrase({ by: null, absent_cause: 'no_claim' })}; ${notRecorded}.`;
     case 'run_ended':
-      return `• Step '${step}': the run ended (${deriveRunPhase(run)}) before this program's outcome for it was recorded.`;
+      return `• Step '${step}': the run ended (${ctx.word(deriveRunPhase(run), RUN_PHASE_WORDS)}) before this program's outcome for it was recorded.`;
     case 'claim_removed':
       return `• Step '${step}': another process removed the claim this program held on it; ${notRecorded}.`;
   }
@@ -269,19 +288,19 @@ export function outcomeNotRecordedLine(
 
 /** The proof part of an answer line, in words — never a code. */
 export const PROOF_WORDS = {
-  matched: 'matched the claim_token of the reply that opened this question',
+  matched: 'the claim token matched the reply that opened this question',
   // #627 W (W-i4).
   absent:
-    "none passed (a token is passed only by Realm's MCP answer tool, from the conversation that opened the question, or by a program that calls the library with it)",
-  mismatch: "the claim_token passed is not this question's",
+    "no claim token passed (a token is passed only by Realm's MCP answer tool, from the conversation that opened the question, or by a program that calls the library with it)",
+  mismatch: "the claim token passed is not this question's",
   unverifiable: {
-    no_claim: 'could not be checked — no claim on this record',
-    claim_has_no_token: 'could not be checked — the claim has no token',
-    store_keeps_no_claims: 'could not be checked — this store keeps no claims',
+    no_claim: 'the claim token could not be checked — no claim on this record',
+    claim_has_no_token: 'the claim token could not be checked — the claim has no token',
+    store_keeps_no_claims: 'the claim token could not be checked — this store keeps no claims',
   },
   spent: {
-    answered: 'could not be checked — already settled by an earlier answer',
-    expired: 'could not be checked — already settled by its expiry',
+    answered: 'the claim token could not be checked — already settled by an earlier answer',
+    expired: 'the claim token could not be checked — already settled by its expiry',
   },
 } as const;
 
@@ -293,8 +312,8 @@ export const PROOF_ABSENT_WORDS: Record<
   Exclude<ClaimProofAbsentCause, 'settled_by_expiry'>,
   string
 > = {
-  proof_not_recorded: 'none recorded',
-  proof_unreadable: 'the recorded proof cannot be read',
+  proof_not_recorded: 'no claim token recorded',
+  proof_unreadable: 'the claim token proof recorded cannot be read',
 };
 
 /**
@@ -365,9 +384,11 @@ const RECORDED_BY_SOURCE_WORDS: Record<BySourceClass, string> = {
 function recordedByPhrase(
   recordedBy: AnswerArrival['recorded_by'],
   lead: 'recorded by' | 'as recorded by',
+  ctx: RenderCtx,
 ): string {
   if (recordedBy.by !== null) {
-    return `${lead} ${recordedBy.channel}, running as ${recordedBy.by} (${RECORDED_BY_SOURCE_WORDS[recordedBy.by_source]})`;
+    // C1 (DQ 1): the recording program's label is a fact, printed whole.
+    return `${lead} ${recordedBy.channel}, running as ${ctx.cmd(`${recordedBy.by} (${RECORDED_BY_SOURCE_WORDS[recordedBy.by_source]})`)}`;
   }
   if (recordedBy.absent_cause === 'name_unreadable') return `${lead} ${UNSHOWABLE_NAME}`;
   return 'as recorded by a program that did not name itself';
@@ -378,13 +399,13 @@ function recordedByPhrase(
  * never an arrival (W-i1); a route its program did not declare (W-i7); no route recorded (W-i3,
  * which claims nothing about when the entry was written; the program part is omitted).
  */
-function arrivalPhrase(arrival: AnswerArrival): string {
+function arrivalPhrase(arrival: AnswerArrival, ctx: RenderCtx): string {
   const via = arrival.via;
   if (typeof via === 'string') {
-    return `through ${routePhraseOf(via)} (as its door declared), ${recordedByPhrase(arrival.recorded_by, 'recorded by')}`;
+    return `through ${routePhraseOf(via)} (as its door declared), ${recordedByPhrase(arrival.recorded_by, 'recorded by', ctx)}`;
   }
   if (via.absent === 'route_not_declared') {
-    return `through a route its program did not declare, ${recordedByPhrase(arrival.recorded_by, 'as recorded by')}`;
+    return `through a route its program did not declare, ${recordedByPhrase(arrival.recorded_by, 'as recorded by', ctx)}`;
   }
   return 'how it arrived was not recorded';
 }
@@ -431,13 +452,17 @@ const CLIENT_PROMPT_WORDS =
 /**
  * One answer, one line (#627 W, W-i1): `Answer: <choice> · answered by <name> (as stated) · through
  * <route> (as its door declared), recorded by <program>, running as <name> (<source>) · <principal> ·
- * <client prompt> · token: <words>`. The answerer is the caller-STATED name — or `(not stated)` — or,
+ * <client prompt> · <claim-token words>`. The answerer is the caller-STATED name — or `(not stated)` — or,
  * with no parentheses around it so nothing nests, the one unshowable phrase ({@link answererPhrase}).
  * An answer the gate's expiry wrote reads `Answer: <choice> · settled by the gate's expiry (no
  * answer in time)` (W-i6): no answerer, route or token part, since each would repeat the same fact.
  * `arrival` is the answer entry's own facts (`answerArrivalOf`), read beside its view.
  */
-export function renderAnswerLine(answer: AnswerView, arrival: AnswerArrival): string {
+export function renderAnswerLine(
+  answer: AnswerView,
+  arrival: AnswerArrival,
+  ctx: RenderCtx = PLAIN,
+): string {
   const by = answer.answered_by;
   const choice = answer.choice ?? '(no choice recorded)';
   const absent = answer.claim_proof_absent;
@@ -451,10 +476,12 @@ export function renderAnswerLine(answer: AnswerView, arrival: AnswerArrival): st
   return [
     `Answer: ${choice}`,
     `answered by ${answererPhrase(by, 'as stated')}`,
-    arrivalPhrase(arrival),
+    arrivalPhrase(arrival, ctx),
     ...(principal !== undefined ? [principal] : []),
     ...(arrival.client_prompt_requested ? [CLIENT_PROMPT_WORDS] : []),
-    `token: ${describeProof(answer.claim_proof, absent)}`,
+    // D-14: realm's own text never puts a credential name before `:` or `=` (the name rule would hide
+    // the word after it); the clause names the claim token in words.
+    describeProof(answer.claim_proof, absent),
   ].join(' · ');
 }
 

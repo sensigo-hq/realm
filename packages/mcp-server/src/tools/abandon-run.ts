@@ -7,12 +7,21 @@ import {
   WorkflowError,
   abandonRun,
   buildPreExecutionErrorEnvelope,
+  type DisclosureClass,
   type RunPhase,
   type RunStore,
 } from '@sensigo/realm';
-import { sseJsonStringify } from '../sse-json.js';
+import {
+  disclosureOfTool,
+  renderReply,
+  safeTool,
+  toolContentOf,
+  MCP_ENVELOPE_TABLE,
+  type WithDoorDisclosure,
+  replySubject,
+  setForSubject,
+} from '../render-reply.js';
 import { toolMeta } from '../tool-annotations.js';
-import { renderReply, toolContentOf } from '../render-reply.js';
 import { mcpHostOf } from './start-run.js';
 import type { McpDoor } from '../door.js';
 import { assertToolStores } from './assert-tool-stores.js';
@@ -53,6 +62,15 @@ export interface AbandonRunSummary {
    */
   note: string;
 }
+
+/** #729 PR-3 (M-1): the summary's class table. The terminal reason is a diagnostic copy. */
+export const ABANDON_RUN_TABLE = {
+  run_id: 'fact',
+  run_phase: 'fact',
+  terminal_state: 'fact',
+  terminal_reason: 'bounded',
+  note: 'fact',
+} as const satisfies Record<keyof AbandonRunSummary, DisclosureClass>;
 
 /** issue #558 PR-C: ONE mint, homed in core (`ABANDON_KILL_ADVISORY`) and shared byte-identically
  *  with `realm run abandon`'s third line — both packages depend on `@sensigo/realm`, so the two
@@ -105,8 +123,9 @@ export async function handleAbandonRun(
  */
 export function registerAbandonRun(
   server: McpServer,
-  opts?: HandleAbandonRunStores,
+  opts?: HandleAbandonRunStores & WithDoorDisclosure,
 ): RegisteredTool {
+  const door = disclosureOfTool(opts);
   return server.registerTool(
     'abandon_run',
     {
@@ -114,11 +133,13 @@ export function registerAbandonRun(
       description: ABANDON_RUN_DESCRIPTION,
       inputSchema: { run_id: z.string(), reason: z.string().optional() },
     },
-    async (args) => {
-      try {
+    safeTool(
+      async (args) => {
         const result = await handleAbandonRun(args, opts);
-        return { content: [{ type: 'text' as const, text: sseJsonStringify(result) }] };
-      } catch (err) {
+        const set = await setForSubject(door, await replySubject(opts, { runId: args.run_id }));
+        return toolContentOf({ ...result }, { set, audience: 'agent', table: ABANDON_RUN_TABLE });
+      },
+      async (err, args) => {
         const workflowErr =
           err instanceof WorkflowError
             ? err
@@ -165,9 +186,13 @@ export function registerAbandonRun(
               ? { error_details: details }
               : {}),
           },
-          sseJsonStringify,
+          {
+            set: await setForSubject(door, await replySubject(opts, { runId: args.run_id })),
+            audience: 'agent',
+            table: MCP_ENVELOPE_TABLE,
+          },
         );
-      }
-    },
+      },
+    ),
   );
 }

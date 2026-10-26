@@ -36,7 +36,7 @@ describe('renderAnswerLine — an answer with no choice on the record', () => {
     };
     // #627 W: an entry with no answer facts reads W-i3; the label is `token:`.
     expect(renderAnswerLine(answer, answerArrivalOf(undefined))).toBe(
-      'Answer: (no choice recorded) · answered by (not stated) · how it arrived was not recorded · token: none recorded',
+      'Answer: (no choice recorded) · answered by (not stated) · how it arrived was not recorded · no claim token recorded',
     );
   });
 });

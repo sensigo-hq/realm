@@ -16,14 +16,19 @@ import {
 import { formCallOf, formDepsOf, mcpHostOf, type HandleRunStores } from './start-run.js';
 import { withQuestionForm, type FormCall } from '../form-path.js';
 import { toolMeta } from '../tool-annotations.js';
-import { sseJsonStringify } from '../sse-json.js';
 import {
+  disclosureOfTool,
   mcpReplyOf,
   withHintTail,
   renderReply,
+  safeTool,
   toolContentOf,
+  MCP_ENVELOPE_TABLE,
   type McpEnvelope,
+  type WithDoorDisclosure,
   type WithPersonBlock,
+  replySubject,
+  setForSubject,
 } from '../render-reply.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
 import {
@@ -119,8 +124,12 @@ export async function handleAdvanceRun(
 }
 
 /** Registers the advance_run MCP tool on the server. */
-export function registerAdvanceRun(server: McpServer, opts?: HandleRunStores): void {
+export function registerAdvanceRun(
+  server: McpServer,
+  opts?: HandleRunStores & WithDoorDisclosure,
+): void {
   markServedByTool(opts);
+  const door = disclosureOfTool(opts);
   server.registerTool(
     'advance_run',
     {
@@ -129,9 +138,9 @@ export function registerAdvanceRun(server: McpServer, opts?: HandleRunStores): v
         "Run what a run owes the engine — an expired question's declared on_expiry, then its guards and automatic steps — in this server's environment. Call it when next_actions names it.",
       inputSchema: advanceRunArgsSchema,
     },
-    async (rawArgs, extra) => {
-      const args = rawArgs as z.infer<typeof advanceRunArgsSchema>;
-      try {
+    safeTool(
+      async (rawArgs, extra) => {
+        const args = rawArgs as z.infer<typeof advanceRunArgsSchema>;
         const result = await handleAdvanceRun(args, opts, formCallOf(opts, extra));
         const unknown = advanceRunUnknownKeyWarnings(args as Record<string, unknown>);
         // decision C119: `data` and `evidence` are empty in MCP replies, as `execute_step`'s — the
@@ -143,9 +152,15 @@ export function registerAdvanceRun(server: McpServer, opts?: HandleRunStores): v
             evidence: [],
             ...(unknown.length > 0 ? { warnings: [...unknown, ...result.warnings] } : {}),
           },
-          sseJsonStringify,
+          {
+            set: await setForSubject(door, await replySubject(opts, { runId: args.run_id })),
+            audience: 'agent',
+            table: MCP_ENVELOPE_TABLE,
+          },
         );
-      } catch (err) {
+      },
+      async (err, rawArgs) => {
+        const args = rawArgs as z.infer<typeof advanceRunArgsSchema>;
         const workflowErr =
           err instanceof WorkflowError
             ? err
@@ -165,8 +180,12 @@ export function registerAdvanceRun(server: McpServer, opts?: HandleRunStores): v
           buildPreExecutionErrorEnvelope('advance_run', args.run_id, 0, workflowErr, contextHint),
           mcpHostOf(opts),
         );
-        return toolContentOf(mcpReplyOf(envelope), sseJsonStringify);
-      }
-    },
+        return toolContentOf(mcpReplyOf(envelope), {
+          set: await setForSubject(door, await replySubject(opts, { runId: args.run_id })),
+          audience: 'agent',
+          table: MCP_ENVELOPE_TABLE,
+        });
+      },
+    ),
   );
 }

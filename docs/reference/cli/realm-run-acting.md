@@ -283,11 +283,15 @@ realm run abandon 00b33778-f504-4d65-93ca-6300441f41e7 --reason "upstream still 
 
 ```text
 Run '00b33778-f504-4d65-93ca-6300441f41e7' abandoned (phase: 'abandoned'). Reason: upstream still down.
-To run the same work again: realm workflow run /srv/shop/sync --params '{"fail":true}' (the directory it was registered from) — a fresh run; this run's evidence stays at realm run inspect 00b33778-f504-4d65-93ca-6300441f41e7.
+To run the same work again, start a fresh run:
+  realm workflow run /srv/shop/sync --params-from-run 00b33778-f504-4d65-93ca-6300441f41e7
+  That is the directory it was registered from. This run's evidence stays at realm run inspect 00b33778-f504-4d65-93ca-6300441f41e7.
 abandon is a kill — declared finalizers (if any) did NOT run and will not for this run. The graceful path is the workflow's own guard step (abort_unless), which runs them; there is no operator abort command.
 ```
 
-The second line gives a command that starts a new run of the same workflow with the same parameters.
+The reason is stored text: it is masked like the record's values, and shown as its type and size while the run's declared secrets cannot all be read (`realm run inspect <id> --accept-partial-disclosure` reads it). Added after version 0.47.1.
+
+The third line, a line of its own so it copies cleanly, is a command that starts a new run of the same workflow with the same parameters, read from this run's record: the parameters themselves are not printed. Version 0.47.1 prints them, as `--params '<json>'`.
 
 Abandoning a run that is already abandoned changes nothing, and the first line says so: `… Already abandoned (no change this call). …`
 

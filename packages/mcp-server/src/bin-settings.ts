@@ -149,6 +149,10 @@ export const DEV_MODE_ANSWER_WARNING =
   "Warning: dev mode — authentication is disabled: any process on this machine can call this server's tools, the gate answer tool included.";
 
 /** W-s6: `--check`'s value line. */
-export function checkValueLine(setting: GateAnswersSetting): string {
-  return `Gate answers over MCP: ${setting.value} (${fromClause(setting)}) — as read from this shell's environment and flags. A server started another way (your MCP client's config, launchd, systemd, or a program that embeds Realm) reads its own environment: run --check with that same environment, or read that server's start line or its embedder's log of effectiveGateAnswers(). Nothing was started.`;
+export function checkValueLine(
+  setting: GateAnswersSetting,
+  word: (value: string) => string = (value) => value,
+): string {
+  // #729 PR-3 correction 2 (C1): the value stands alone; a printer may show it as realm's own word.
+  return `Gate answers over MCP: ${word(setting.value)} (${fromClause(setting)}) — as read from this shell's environment and flags. A server started another way (your MCP client's config, launchd, systemd, or a program that embeds Realm) reads its own environment: run --check with that same environment, or read that server's start line or its embedder's log of effectiveGateAnswers(). Nothing was started.`;
 }

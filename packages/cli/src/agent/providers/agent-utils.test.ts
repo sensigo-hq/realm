@@ -4,18 +4,34 @@ import {
   classBError,
   CLASS_B_NO_TEXT_MARKER,
   buildSystemPrompt,
-  redactionSet,
+  discloseForAgent,
   sanitizeError,
-  sanitizeText,
   serializeToolResult,
   setAdditionalRedactionValues,
   extractJsonObject,
   renderSubmissionProblems,
 } from './agent-utils.js';
 import { createHash } from 'node:crypto';
-import * as variants from './redaction-variants.js';
 import { leakedForms, type LeakedForm } from '../test-support/redaction-oracle.js';
-import { validateAgentSubmission } from '@sensigo/realm';
+import { compileDisclosure, disclose, validateAgentSubmission } from '@sensigo/realm';
+
+// #729 PR-3: the composer moved into core's law (`disclose`). These cells drive it with the members
+// they name, as declared values (every form, its parts too), with no environment swept.
+const sanitizeText = (text: string, members: readonly string[]): string =>
+  disclose(
+    text,
+    compileDisclosure(
+      members.map((value, i) => ({ value, source: `declared:M${i}` as const })),
+      { declared: 'resolved', audience: 'agent', environment: 'not_swept' },
+    ).set,
+    'all',
+  ).text;
+
+// #729 PR-3: the vitest setup pins every inherited environment variable as not secret (so no other
+// test's text depends on the machine); this file's cells sweep the environment on purpose.
+beforeEach(() => {
+  vi.stubEnv('REALM_NOT_SECRET', '');
+});
 
 describe('buildSystemPrompt', () => {
   it('returns base prompt when no schema given', () => {
@@ -213,11 +229,18 @@ describe('sanitizeError — the redaction boundary (issue #407)', () => {
 
   it('BOUNDARY — a bare integer stays redacted (a PIN is not a version)', () => {
     // The shape is deliberately narrow: `\d+(\.\d+)*` would have admitted numeric PINs and
-    // account ids, which are exactly the kind of value the sweep exists for.
-    vi.stubEnv('AGENT_UTILS_TEST_PIN', '483921');
-    const out = sanitizeError(new Error('pin 483921 rejected'));
+    // account ids, which are exactly the kind of value the sweep exists for. #729 PR-3: the
+    // environment floor is 8 characters (the owner's Q2), so the PIN here has 8 digits.
+    vi.stubEnv('AGENT_UTILS_TEST_PIN', '48392177');
+    const out = sanitizeError(new Error('pin 48392177 rejected'));
     expect(out).toContain('[REDACTED]');
-    expect(out).not.toContain('483921');
+    expect(out).not.toContain('48392177');
+  });
+
+  it('#729 PR-3 — FLOOR — an environment value under 8 characters is not swept', () => {
+    // (a) red when the floor drops back below 8; (b) prints the text, a fake 6-digit number.
+    vi.stubEnv('AGENT_UTILS_TEST_SHORT_PIN', '483921');
+    expect(sanitizeError(new Error('pin 483921 rejected'))).toBe('pin 483921 rejected');
   });
 
   it('BOUNDARY — a dotted quad stays redacted (an IPv4 is not a version)', () => {
@@ -238,13 +261,14 @@ describe('sanitizeError — the redaction boundary (issue #407)', () => {
   // Rule 1c — the under-HOME value rule
   // ---------------------------------------------------------------------------------------
 
-  it('a path under HOME keeps its tail; the home prefix is stripped', () => {
-    // The informative half of a require stack is the tail. Redacting the whole path told an
-    // operator nothing; stripping only the home prefix keeps the file and loses the username.
+  it('#729 PR-3 — a value under HOME is hidden whole on the agent audience', () => {
+    // RECORD 05 "HOME prefix": values under HOME are exempt only on private and file surfaces; what
+    // a model and the run record are given hides them. (a) red when the under-HOME rule exempts
+    // them here; (b) prints the text, fake paths only.
     vi.stubEnv('HOME', '/home/testuser');
     vi.stubEnv('INIT_CWD', '/home/testuser/proj');
     const out = sanitizeError(new Error('Require stack: /home/testuser/proj/x.js'));
-    expect(out).toBe('Require stack: [REDACTED]/proj/x.js');
+    expect(out).toBe('Require stack: [REDACTED]/x.js');
   });
 
   it('SHADOW CLOSURE — a second key carrying the SAME value cannot reopen the leak', () => {
@@ -254,8 +278,12 @@ describe('sanitizeError — the redaction boundary (issue #407)', () => {
     vi.stubEnv('HOME', '/home/testuser');
     vi.stubEnv('INIT_CWD', '/home/testuser/proj');
     vi.stubEnv('npm_config_local_prefix', '/home/testuser/proj');
+    // #729 PR-3: one key is named not secret; the other, unlisted, holds the same value, so the
+    // value stays hidden (whole, on the agent audience). (a) red when a value an exempt name holds
+    // is skipped although an unlisted variable holds it too; (b) prints the text (fake path).
+    vi.stubEnv('REALM_NOT_SECRET', 'INIT_CWD');
     expect(sanitizeError(new Error('Require stack: /home/testuser/proj/x.js'))).toBe(
-      'Require stack: [REDACTED]/proj/x.js',
+      'Require stack: [REDACTED]/x.js',
     );
   });
 
@@ -263,7 +291,9 @@ describe('sanitizeError — the redaction boundary (issue #407)', () => {
     // The WSL shape: `/mnt/c/Users/<Name>` carries the username in the tail, so the home-prefix
     // strip cannot help. Full redaction is the right answer there, and stays.
     vi.stubEnv('HOME', '/home/testuser');
-    vi.stubEnv('PWD', '/mnt/c/Users/Test User/proj');
+    // #729 PR-3 correction 1 (D-6): PWD is the shell's metadata, excluded by name; a project
+    // directory held in an ordinary variable is the environment value this cell sweeps.
+    vi.stubEnv('AGENT_UTILS_PROJECT_DIR', '/mnt/c/Users/Test User/proj');
     const out = sanitizeError(new Error('cwd /mnt/c/Users/Test User/proj missing'));
     expect(out).toContain('[REDACTED]');
     expect(out).not.toContain('Test User');
@@ -298,14 +328,14 @@ describe('sanitizeError — the redaction boundary (issue #407)', () => {
     expect(sanitizeError(new Error('read /opt/home/testuser/thing'))).toBe('read [REDACTED]');
   });
 
-  it('npm_package_json under HOME keeps its tail', () => {
+  it('npm_package_json under HOME is hidden whole on the agent audience (#729 PR-3)', () => {
     // Path-valued on every launcher that sets it, so it belongs to the value-level rule rather
     // than the exact-key set — keeping it key-excluded would ship a non-HOME checkout's full
     // path, which is the very privacy trade rule 1c exists to make.
     vi.stubEnv('HOME', '/home/testuser');
     vi.stubEnv('npm_package_json', '/home/testuser/proj/package.json');
     expect(sanitizeError(new Error('read /home/testuser/proj/package.json'))).toBe(
-      'read [REDACTED]/proj/package.json',
+      'read [REDACTED]',
     );
   });
 
@@ -739,11 +769,12 @@ describe('hide before encoding (GHSA-gxfq)', () => {
         { type: 'text', text: 'Authorization: Bearer fakeTok.abc-123 and ?token=fakeQ1 end' },
       ],
     });
-    // (a) red when the walk's `Bearer` / `token=` rules (its strings through `sanitizeText`) AND the
-    //     last `sanitizeText` pass are both removed from the object branch: either one alone hides
-    //     both tokens. (b) prints which of the four facts fails.
+    // (a) red when the walk's name and token rules AND the last pass over the encoded output are
+    //     both removed from the object branch: either one alone hides both tokens. (b) prints
+    //     which of the four facts fails. #729 PR-3 (RECORD 05 "the name rule"): `Authorization`
+    //     hides its scheme word and the credential together.
     expect({
-      bearerMarked: out.includes('Bearer [REDACTED]'),
+      bearerMarked: out.includes('Authorization: [REDACTED] and'),
       tokenMarked: out.includes('token=[REDACTED]'),
       bearerGone: !out.includes('fakeTok.abc-123'),
       tokenGone: !out.includes('fakeQ1'),
@@ -774,21 +805,6 @@ describe('hide before encoding (GHSA-gxfq)', () => {
     expect(serializeToolResult(undefined)).toBe('undefined');
   });
 
-  it('18. the set is built once per call: a 1-row and a 1,000-row result cost the same', () => {
-    declare(STD);
-    const spy = vi.spyOn(variants, 'variantsOf');
-    const rows = (n: number) => ({
-      rows: Array.from({ length: n }, (_, i) => ({ id: i, s: `v${i}` })),
-    });
-    serializeToolResult(rows(1));
-    const one = spy.mock.calls.length;
-    spy.mockClear();
-    serializeToolResult(rows(1000));
-    const thousand = spy.mock.calls.length;
-    // (a) red when the set is built per leaf inside the walk. (b) prints the two counts.
-    expect({ one, thousand }).toEqual({ one, thousand: one });
-  });
-
   it('20. (preservation) a result with no secrets is byte-identical to its JSON', () => {
     isolateEnv();
     declare(STD);
@@ -797,7 +813,7 @@ describe('hide before encoding (GHSA-gxfq)', () => {
     expect(serializeToolResult(result)).toBe(JSON.stringify(result));
   });
 
-  it('21. (preservation) a kubeconfig-shaped secret leaves config lines and a PEM boundary line alone', () => {
+  it('21. (preservation) a kubeconfig-shaped secret leaves config lines and a PEM armour line alone', () => {
     isolateEnv();
     declare(
       'apiVersion: v1\nkind: Config\nusers:\n- name: default\n  user:\n    token: fakeKubeTokenABCDEFGH\n    insecure: false,',
@@ -805,9 +821,15 @@ describe('hide before encoding (GHSA-gxfq)', () => {
     const other = {
       t: 'apiVersion: v1 name: default false, -----BEGIN FAKE KEY----- users:',
     };
-    // (a) red when a line shorter than 8 characters, or one holding a space, is hidden on its own.
-    //     (b) prints the output.
-    expect(serializeToolResult(other)).toBe(JSON.stringify(other));
+    // #729 PR-3 correction 1 (D-5): what follows a BEGIN armour line with no END, to the end of its
+    // string, is a PEM body and hidden; the armour line itself, the config lines and the JSON stay.
+    // (a) red when a line shorter than 8 characters, or one holding a space, is hidden on its own,
+    //     or the PEM body runs past its string's closing quote; (b) prints the output.
+    expect(serializeToolResult(other)).toBe(
+      JSON.stringify({
+        t: 'apiVersion: v1 name: default false, -----BEGIN FAKE KEY----- [REDACTED]',
+      }),
+    );
   });
 
   it('22. (preservation) a 4-character secret leaves 200 SHA-1 strings and 200 UUIDs byte-identical', () => {
@@ -851,9 +873,13 @@ describe('the release correction (GHSA-gxfq): one cell per fix', () => {
     vi.restoreAllMocks();
   });
 
-  it('A1. a 1,000-row tool result with 80 environment values is hidden in under 480 ms', () => {
-    // The bound is the geometric mean of the two medians measured on this machine: about 82 ms with
-    // `redactWith` skipping a form the text does not hold, about 2,835 ms without (1,678 forms).
+  it('A1. a 1,000-row tool result with 80 environment values is hidden within 12× the time it takes with none', () => {
+    // A budget cell (#729 PR-3 correction 2, C7): it measures `serializeToolResult`, which hides
+    // values through core's `disclose`, on a 1,000-row result — once with no environment values (the
+    // baseline, measured in this same process) and once with 80 (1,678 forms) — and bounds the
+    // ratio, never a number of milliseconds, so a loaded machine slows both alike. Measured here: the
+    // ratio is about 6× (39 ms and 245 ms); the CLI's earlier pass, which split and joined every form
+    // whatever the text held, took about 35× its fast form's time on this input.
     const fake = (i: number): string =>
       i % 4 === 0
         ? `/opt/fake/proj${i}/sub dir/file.txt`
@@ -862,7 +888,6 @@ describe('the release correction (GHSA-gxfq): one cell per fix', () => {
           : i % 4 === 2
             ? `https://fake.example/api?k=${i}&t=fake token`
             : `fakeword${i}`;
-    for (let i = 0; i < 80; i++) vi.stubEnv(`GHSA_A1_FAKE_${i}`, fake(i));
     const result = {
       rows: Array.from({ length: 1000 }, (_, i) => ({
         id: i,
@@ -872,17 +897,22 @@ describe('the release correction (GHSA-gxfq): one cell per fix', () => {
         tag: 'plain',
       })),
     };
-    serializeToolResult(result);
-    const times: number[] = [];
-    for (let run = 0; run < 3; run++) {
-      const t0 = performance.now();
+    const median = (): number => {
       serializeToolResult(result);
-      times.push(performance.now() - t0);
-    }
-    const median = times.sort((a, b) => a - b)[1]!;
-    // (a) red when `redactWith` splits and joins every form whatever the text holds (the `includes`
-    //     test removed). (b) prints whether the median is under the bound.
-    expect({ medianUnder480ms: median < 480 }).toEqual({ medianUnder480ms: true });
+      const times: number[] = [];
+      for (let run = 0; run < 3; run++) {
+        const t0 = performance.now();
+        serializeToolResult(result);
+        times.push(performance.now() - t0);
+      }
+      return times.sort((a, b) => a - b)[1]!;
+    };
+    const baseline = median();
+    for (let i = 0; i < 80; i++) vi.stubEnv(`GHSA_A1_FAKE_${i}`, fake(i));
+    const loaded = median();
+    // (a) red when hiding costs more than 12× the baseline (every form split and joined whatever the
+    //     text holds); (b) prints whether the ratio is under the bound.
+    expect({ under12x: loaded < 12 * Math.max(baseline, 1) }).toEqual({ under12x: true });
   });
 
   it('A2. a value holding token= and a Bearer token carrying a value are hidden whole', () => {
@@ -898,7 +928,10 @@ describe('the release correction (GHSA-gxfq): one cell per fix', () => {
       'FAKEsig' + 'TAILzz9',
     ].join('.');
     const AUTH = 'Authorization: ' + 'Bearer ' + JWT;
-    const text = `connect failed: ${DSN}; ${AUTH} end`;
+    // The same token under no credential name: only the `Bearer` rule hides it (under
+    // `Authorization:` the name rule hides it too).
+    const BARE = 'sent ' + 'Bearer ' + JWT;
+    const text = `connect failed: ${DSN}; ${AUTH}; ${BARE} end`;
     const whole = (out: string) => ({
       dsnGone:
         !out.includes('FAKEpass9xyz') && !out.includes('sslmode') && !out.includes('fakeuser'),
@@ -908,8 +941,8 @@ describe('the release correction (GHSA-gxfq): one cell per fix', () => {
       error: whole(sanitizeError(new Error(text))),
       stringResult: whole(serializeToolResult(text)),
       // The prompt is hidden by this call, once (run-agent.ts, `promptForAttempt`).
-      prompt: whole(sanitizeText(text, redactionSet().forms)),
-      objectResult: whole(serializeToolResult({ dsn: DSN, auth: AUTH })),
+      prompt: whole(discloseForAgent(text)),
+      objectResult: whole(serializeToolResult({ dsn: DSN, auth: AUTH, bare: BARE })),
     });
     vi.stubEnv('GHSA_A2_DSN', DSN);
     vi.stubEnv('GHSA_A2_CLIENT', CLIENT);
@@ -1079,7 +1112,7 @@ describe("the release build's correction (GHSA-gxfq): read the token rules off t
       ...bothSources(value, () => ({
         error: shows(sanitizeError(new Error(text)), tail),
         stringResult: shows(serializeToolResult(text), tail),
-        prompt: shows(sanitizeText(text, redactionSet().forms), tail),
+        prompt: shows(discloseForAgent(text), tail),
         classB: shows(classBError({ isError: true, content: [{ type: 'text', text }] })!, tail),
       })),
     }));
@@ -1124,7 +1157,9 @@ describe("the release build's correction (GHSA-gxfq): read the token rules off t
   it('A1. a plain Bearer token keeps its anchor word: Bearer [REDACTED]', () => {
     // (a) red when the anchor word is marked together with its run (`[REDACTED]` alone); (b)
     //     prints the output.
-    expect(sanitizeText('auth: ' + 'Bearer ' + 'abc.def', [])).toBe('auth: Bearer [REDACTED]');
+    // #729 PR-3 correction 1 (D-4): the anchor fires before a token-shaped run (8+ characters with
+    // a digit, a capital, `+`, `/` or `=`).
+    expect(sanitizeText('auth: ' + 'Bearer ' + 'abc.def9X', [])).toBe('auth: Bearer [REDACTED]');
   });
 
   it('A1. (preservation) a JWT carrying a value in base64url is hidden whole after Bearer', () => {
@@ -1178,7 +1213,7 @@ describe("the release build's correction (GHSA-gxfq): read the token rules off t
     };
     const result = bothSources(VALUE, () => ({
       error: attempt(() => sanitizeError(new Error(TEXT)) === HIDDEN),
-      prompt: attempt(() => sanitizeText(TEXT, redactionSet().forms) === HIDDEN),
+      prompt: attempt(() => discloseForAgent(TEXT) === HIDDEN),
       object: attempt(() => serializeToolResult({ a: TEXT }) === JSON.stringify({ a: HIDDEN })),
     }));
     // (a) red when `decodedReadings` spreads a segment's bytes into `push` (each result
@@ -1195,6 +1230,17 @@ describe("the release build's correction (GHSA-gxfq): read the token rules off t
 // over the verdict's capped rows — the schema's own allowed values for `enum`/`const`, never a
 // submitted value — and ends with `and N more` from the verdict's carried total. A failure prints
 // the trailer: key names, rules and the schema's values only.
+describe('#729 PR-3 correction 1 (F26) — the provider edge', () => {
+  afterEach(() => vi.unstubAllEnvs());
+  it('removes span marks before the law reads the text', () => {
+    vi.stubEnv('REALM_NOT_SECRET', '');
+    vi.stubEnv('AGENT_FAKE_ENV_729', 'FAKE-AGENT-ENV-0729');
+    // (a) red when the marks are removed after masking (the mark parts the value, so the law
+    //     misses it); (b) prints the text given to the model (fake values).
+    expect(discloseForAgent('key FAKE-AGENT\uE001-ENV-0729 end')).toBe('key [REDACTED] end');
+  });
+});
+
 describe('issue #759 — renderSubmissionProblems (the providers’ trailer)', () => {
   const fields = Array.from({ length: 13 }, (_, i) => `f${String(i + 1).padStart(2, '0')}`);
 

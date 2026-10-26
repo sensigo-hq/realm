@@ -26,8 +26,27 @@ import type {
   FailedAttemptRecord,
   TraceBufferStore,
   SealedArtifact,
+  DisclosureReceipt,
+  DisclosureSet,
+  ClassTable,
 } from '@sensigo/realm';
-import { WorkflowError, FsIoError } from '@sensigo/realm';
+import {
+  WorkflowError,
+  FsIoError,
+  RUN_RECORD_TABLE,
+  buildDisclosureSet,
+  discloseByTable,
+  disclosureReceipt,
+  emptyDisclosureSet,
+} from '@sensigo/realm';
+import { readRunManifest, type RunManifest } from '../lib/read-run-manifest.js';
+import {
+  QUESTION_DECLARED_ONLY_WORDS,
+  RUN_PHASE_WORDS,
+  warnManifestNotSecretUnset,
+  withoutMarks,
+  writerCtx,
+} from '../output/writer.js';
 
 /** Fixed redaction marker (issue #197 PR-2, design §6) — replaces every `nonce` value belonging
  *  to a step currently in `in_progress_steps` on a NON-terminal export (the claimant-nonce
@@ -54,9 +73,18 @@ export interface ExportBundle {
    * states it explicitly via `complete`. Bumped 2 → 3 (issue #197 PR-2): adds `sealed`. Bumped
    * 3 → 4 (issue #367): the run record now carries `sealed_by`, and its ABSENCE from a v3 bundle
    * is three-way ambiguous — the run predates #367, or the exporter predates it, or the seal was
-   * genuinely never stamped. The version is what disambiguates.
+   * genuinely never stamped. The version is what disambiguates. Bumped 4 → 5 (#729 PR-3): the
+   * bundle is masked by default (the file audience: every tier but the operator's own home folder
+   * and user name) and carries its `disclosure` receipt; no reader of an older bundle exists.
    */
-  realm_export_version: 4;
+  realm_export_version: 5;
+  /**
+   * #729 PR-3 (RECORD 01 #7, #17): what the masking knew and hid — the declared secrets' state and
+   * its cause (`resolved`, `partial` with `manifest_changed`, `unknown` with `load_failed` or
+   * `no_manifest`), the environment's sweep, and what was hidden by kind. Derived when the bundle
+   * is written; the run's file keeps its values raw.
+   */
+  disclosure: DisclosureReceipt;
   /** ISO-8601, stamped by the CLI at assembly time. */
   exported_at: string;
   /** The full RunRecord — steps, evidence, skip_details, claims, etc. */
@@ -107,6 +135,23 @@ export interface ExportRunResult {
    */
   warning: string | undefined;
 }
+
+/**
+ * #729 PR-3 (RECORD 01 #6): the bundle's class table. The run is walked by core's record table; the
+ * failed-attempt records and their errors are diagnostic copies; the trace lines are values.
+ */
+export const EXPORT_BUNDLE_TABLE: ClassTable = {
+  realm_export_version: 'fact',
+  exported_at: 'fact',
+  run: { nested: RUN_RECORD_TABLE },
+  attempts: 'bounded',
+  attempts_capped: 'fact',
+  wal: 'value',
+  sealed: 'value',
+  complete: 'fact',
+  artifact_errors: 'bounded',
+  disclosure: 'fact',
+};
 
 export interface ExportStores {
   runStore: Pick<RunStore, 'get'>;
@@ -207,6 +252,9 @@ export async function buildExportBundle(
   runId: string,
   stores: ExportStores,
   now: Date = new Date(),
+  /** #729 PR-3: the set the bundle is masked with (the file audience). Absent: an empty set — the
+   *  patterns still apply, and the receipt says nothing was known. */
+  set: DisclosureSet = emptyDisclosureSet('file', 'unknown', 'embedder_none'),
 ): Promise<ExportRunResult> {
   const run = await stores.runStore.get(runId);
 
@@ -275,8 +323,10 @@ export async function buildExportBundle(
     ? redactLiveClaimNonces(wal, sealed, run.in_progress_steps)
     : { wal, sealed };
 
-  const bundle: ExportBundle = {
-    realm_export_version: 4,
+  // #729 PR-3: the bundle as the file audience is shown it, walked by its table; the receipt from
+  // the same walk. The records the stores hold are not changed.
+  const raw = {
+    realm_export_version: 5 as const,
     exported_at: now.toISOString(),
     run,
     attempts,
@@ -285,6 +335,12 @@ export async function buildExportBundle(
     sealed: finalSealed,
     complete: artifactErrors.length === 0,
     artifact_errors: artifactErrors,
+  };
+  // F26: every span mark goes before the walk, so none reaches the file or parts a name from its value.
+  const walked = discloseByTable(withoutMarks(raw), EXPORT_BUNDLE_TABLE, set, 'file');
+  const bundle: ExportBundle = {
+    ...(walked.value as Omit<ExportBundle, 'disclosure'>),
+    disclosure: disclosureReceipt(set, walked.tally),
   };
 
   // issue #279 (increment 1, PR-B), design record §6: a pending-drain warning mirroring the
@@ -295,10 +351,10 @@ export async function buildExportBundle(
     (e) => e.status === 'pending',
   ).length;
   const warning = nonTerminal
-    ? `best-effort snapshot: run '${runId}' is still ${run.run_phase}; its artifacts are read at ` +
+    ? `best-effort snapshot: run '${runId}' is still ${writerCtx().word(run.run_phase, RUN_PHASE_WORDS)}; its artifacts are read at ` +
       `slightly different instants and may be mid-flight`
     : pendingFinalizerCount > 0
-      ? `${pendingFinalizerCount} finalizer(s) not yet delivered — realm run drain ${runId}`
+      ? `${pendingFinalizerCount} finalizer(s) not yet delivered — ${writerCtx().cmd(`realm run drain ${runId}`)}`
       : undefined;
 
   return { bundle, warning };
@@ -362,6 +418,60 @@ export function resolveExportPath(opts: ResolveExportPathOptions): string {
   return resolvedTarget;
 }
 
+/**
+ * #729 PR-3 (RECORD 01 #17; owner Q4): why an export refuses — the run's declared secrets are not
+ * all known — in the four clauses, or `undefined` when they are.
+ */
+export function exportDisclosureRefusal(runId: string, manifest: RunManifest): string | undefined {
+  if (manifest.declaredState === 'resolved') return undefined;
+  const why =
+    manifest.declaredCause === 'manifest_changed'
+      ? 'its deployment manifest changed since the run recorded it, or is gone'
+      : manifest.declaredCause === 'no_manifest'
+        ? 'the run has no project (its workflow copy records no deployment root)'
+        : 'its deployment manifest or a secret it names could not be read';
+  return (
+    `Refusing to export run '${runId}': Realm does not know all of its declared secrets — ${why}` +
+    `${manifest.detail !== undefined && manifest.declaredCause !== 'no_manifest' ? ` (${manifest.detail})` : ''}. ` +
+    'A bundle written now could hold a secret the masking cannot recognise. ' +
+    // F33: a run with no project has no manifest to restore.
+    (manifest.declaredCause === 'no_manifest'
+      ? 'The run has no manifest to restore, so pass --accept-partial-disclosure to write it masked with what is known; '
+      : // Correction 4 (I-8): a run whose copy cannot be read and whose record names no manifest has
+        // none to restore — its copy is what to repair.
+        manifest.copy_unread === true
+        ? `Repair the run's workflow copy first (realm run inspect ${runId} names the command), or pass --accept-partial-disclosure to write it masked with what is known; `
+        : 'Restore the manifest the run used, or pass --accept-partial-disclosure to write it masked with what is known; ') +
+    'the last line it prints then names the state.'
+  );
+}
+
+/**
+ * #729 PR-3: the export's header line — the declared state, what was hidden by kind, how many
+ * declared values are too short to hide (F14), and whether a question was written masked at the
+ * declared tier only (F16). Correction 4 (I-6): `accepted` (`--accept-partial-disclosure` given)
+ * adds that the bundle was written on the flag where the values would otherwise be refused.
+ */
+export function exportDisclosureLine(receipt: DisclosureReceipt, accepted = false): string {
+  const declared = `${receipt.declared}${receipt.declared_cause !== undefined ? ` (${receipt.declared_cause.replace('_', ' ')})` : ''}`;
+  const shownOnFlag =
+    accepted &&
+    (receipt.declared_cause === 'load_failed' || receipt.declared_cause === 'manifest_changed');
+  // #729 PR-3 correction 5 (J-6): on the flag, a shown question was masked with what is known — the
+  // clause `realm run inspect` prints (the writer's `questionReceiptWords`). The bundle's header
+  // keeps the record's `question: declared_only`.
+  const question = shownOnFlag
+    ? 'question: shown with what is known (--accept-partial-disclosure)'
+    : QUESTION_DECLARED_ONLY_WORDS;
+  return (
+    `masked: declared secrets ${declared}; environment ${receipt.environment === 'swept' ? 'swept' : 'not swept'}; ` +
+    `hidden ${receipt.hidden.declared} declared, ${receipt.hidden.environment} environment, ${receipt.hidden.pattern} by pattern; ` +
+    `${receipt.unmaskable} too short to hide` +
+    (receipt.question === 'declared_only' ? `; ${question}` : '') +
+    (shownOnFlag ? '; shown on --accept-partial-disclosure' : '')
+  );
+}
+
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
@@ -374,7 +484,11 @@ export const exportCommand = new Command('export')
   )
   .argument('<run-id>', 'ID of the run to export')
   .option('--out <path>', 'Output file or directory (default: ./<run-id>.realm.json)')
-  .action(async (runId: string, opts: { out?: string }) => {
+  .option(
+    '--accept-partial-disclosure',
+    "Write the bundle even when the run's declared secrets are not all known (its manifest changed, could not be read, or the run has no project): it is masked with what is known, and its header says so",
+  )
+  .action(async (runId: string, opts: { out?: string; acceptPartialDisclosure?: boolean }) => {
     const { JsonFileStore, FailedAttemptStore } = await import('@sensigo/realm');
     const { JsonTraceBufferStore } = await import('@sensigo/realm-mcp');
     const runStore = new JsonFileStore();
@@ -383,11 +497,36 @@ export const exportCommand = new Command('export')
     const traceBufferStore = new JsonTraceBufferStore(runsDir, runStore);
 
     try {
-      const { bundle, warning } = await buildExportBundle(runId, {
-        runStore,
-        failedAttemptStore,
-        traceBufferStore,
-      });
+      // #729 PR-3 (RECORD 01 #17; owner Q4): the run's declared secrets, read without the loader.
+      const { JsonWorkflowStore, getWorkflowForRun } = await import('@sensigo/realm');
+      const record = await runStore.get(runId);
+      const definition = await getWorkflowForRun(new JsonWorkflowStore(), record, {
+        retryVerb: 'export again',
+        verb: 'export',
+        terminalOk: true,
+      }).catch(() => undefined);
+      const manifest = await readRunManifest(definition, record);
+      warnManifestNotSecretUnset(manifest.path, manifest.notSecret);
+      const refusal = exportDisclosureRefusal(runId, manifest);
+      if (refusal !== undefined && opts.acceptPartialDisclosure !== true) {
+        console.error(refusal);
+        process.exit(1);
+        return;
+      }
+      const set = buildDisclosureSet({
+        env: process.env,
+        declared: manifest.declared,
+        declaredState: manifest.declaredState,
+        ...(manifest.declaredCause !== undefined ? { declaredCause: manifest.declaredCause } : {}),
+        audience: 'file',
+        ...(manifest.notSecret !== undefined ? { notSecret: manifest.notSecret } : {}),
+      }).set;
+      const { bundle, warning } = await buildExportBundle(
+        runId,
+        { runStore, failedAttemptStore, traceBufferStore },
+        new Date(),
+        set,
+      );
 
       if (warning !== undefined) {
         console.warn(`⚠ ${warning}`);
@@ -428,7 +567,8 @@ export const exportCommand = new Command('export')
           : `${Object.values(bundle.sealed).reduce((n, arr) => n + arr.length, 0)}`;
       console.log(
         `Exported run '${runId}' to '${target}' (${formatBytes(Buffer.byteLength(json))}).\n` +
-          `  phase: ${bundle.run.run_phase}, attempts: ${bundle.attempts.length}, WAL steps: ${walStepCount}, sealed artifacts: ${sealedSummary}`,
+          `  phase: ${writerCtx().word(bundle.run.run_phase, RUN_PHASE_WORDS)}, attempts: ${bundle.attempts.length}, WAL steps: ${walStepCount}, sealed artifacts: ${sealedSummary}\n` +
+          `  ${exportDisclosureLine(bundle.disclosure, opts.acceptPartialDisclosure === true)}`,
       );
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));

@@ -8,6 +8,7 @@
 // doc). issue #281 rides here too: applyResume strips `abandoned_at` alongside `terminal_reason`.
 import { Command } from 'commander';
 import type { RunStore, WorkflowRegistrar, ApplyResumeVoidedFinalizer } from '@sensigo/realm';
+import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
 
 // issue #279 (increment 1, PR-B): NO top-level VALUE import from `@sensigo/realm` — JsonFileStore's
 // default runsDir is computed at module-load time (`homedir()`), so a top-level value import here
@@ -85,7 +86,7 @@ export async function resumeRun(
   // TRUE (derived) phase, not whatever was last persisted.
   if (!RESUMABLE_PHASES.has(deriveRunPhase(run))) {
     throw new WorkflowError(
-      `Run ${runId} is in phase '${run.run_phase}', which is not resumable.`,
+      `Run ${runId} is in phase '${writerCtx().word(run.run_phase, RUN_PHASE_WORDS)}', which is not resumable.`,
       {
         code: 'STATE_TRANSITION_DENIED',
         category: 'STATE',
@@ -263,6 +264,7 @@ export const resumeCommand = new Command('resume')
             composeWaysAt(resumed, resumedAt, { definition: wf }),
             runId,
             deriveRunPhase(resumed),
+            writerCtx(),
           ),
         };
       } catch {
@@ -274,7 +276,7 @@ export const resumeCommand = new Command('resume')
       // the owed call's (below), which needs no model. With no view, the drive as before.
       const noDrive = view !== undefined && (view.stuck || !view.agentReady);
       console.log(
-        `Resumed run '${runId}': step '${opts.from}' re-enabled and run reset to 'running'.` +
+        `Resumed run '${runId}': step '${opts.from}' re-enabled and run reset to '${writerCtx().word('running', RUN_PHASE_WORDS)}'.` +
           (noDrive
             ? ''
             : `\nDrive it with: realm agent --run-id ${runId} --provider <provider> --model <model>\n` +

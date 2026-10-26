@@ -66,8 +66,9 @@ describe('realm run abandon (CLI command)', () => {
     expect(logged).toContain(ADVISORY);
     // issue #558 PR-C: line 2 names a CLI verb (`start_run` is an MCP tool an operator cannot run)
     // and line 3 no longer names a nonexistent `abort` command.
+    // #729 PR-3 correction 2: the command stands alone on its line (it copies cleanly).
     expect(logged).toContain(
-      `To run the same work again: realm workflow run <the workflow.yaml you registered '${run.workflow_id}' from> — a fresh run; this run's evidence stays at realm run inspect ${run.id}.`,
+      `To run the same work again, start a fresh run:\n  realm workflow run <the workflow.yaml you registered '${run.workflow_id}' from>\n  This run's evidence stays at realm run inspect ${run.id}.`,
     );
     expect(logged).not.toContain('use start_run');
     expect(logged).not.toContain("'abort' is the graceful path");
@@ -143,9 +144,11 @@ describe('realm run abandon (CLI command)', () => {
 
     const logged = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(logged).toContain(
-      // walk 3: the printed command must start a run AS PRINTED — the workflow's params ride along,
-      // shell-quoted (a single quote inside them survives the quoting).
-      `To run the same work again: realm workflow run /tmp/prc-src-dir --params '{"path":"/tmp/it'\\''s","n":1}' (the directory it was registered from) — a fresh run; this run's evidence stays at realm run inspect ${run.id}.`,
+      // walk 3: the printed command must start a run AS PRINTED. #729 PR-3 (D1 D5): it refers to this
+      // run's params (`--params-from-run`), read raw from its record — never the values, which output
+      // masks.
+      // #729 PR-3 correction 2: the command alone on its line, its note on the next.
+      `To run the same work again, start a fresh run:\n  realm workflow run /tmp/prc-src-dir --params-from-run ${run.id}\n  That is the directory it was registered from. This run's evidence stays at realm run inspect ${run.id}.`,
     );
     expect(logged).not.toContain('<the workflow.yaml you registered');
   });

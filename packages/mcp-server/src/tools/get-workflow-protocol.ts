@@ -1,8 +1,22 @@
 // get-workflow-protocol tool — returns the agent protocol for a workflow.
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { JsonWorkflowStore, WorkflowError, answersRowOf, AUTHOR_RULES_LABEL } from '@sensigo/realm';
-import { sseJsonStringify } from '../sse-json.js';
+import {
+  JsonWorkflowStore,
+  WorkflowError,
+  answersRowOf,
+  AUTHOR_RULES_LABEL,
+  type DisclosureClass,
+} from '@sensigo/realm';
+import {
+  disclosureOfTool,
+  safeTool,
+  toolContentOf,
+  type WithDoorDisclosure,
+  replySubject,
+  setForSubject,
+  SAFE_TOOL_CONSTANT_RUNLESS,
+} from '../render-reply.js';
 import { toolMeta } from '../tool-annotations.js';
 import {
   generateProtocol,
@@ -94,11 +108,25 @@ export async function handleGetWorkflowProtocol(
   };
 }
 
+/** #729 PR-3 (M-1): the protocol is the definition's author text and realm's rules: facts. */
+export const WORKFLOW_PROTOCOL_TABLE = {
+  workflow_id: 'fact',
+  name: 'fact',
+  description: 'fact',
+  params_schema: 'fact',
+  steps: 'fact',
+  agent_steps_summary: 'fact',
+  rules: 'fact',
+  error_handling: 'fact',
+  quick_start: 'fact',
+} as const satisfies Record<keyof WorkflowProtocol, DisclosureClass>;
+
 /** Registers the get_workflow_protocol MCP tool on the server. */
 export function registerGetWorkflowProtocol(
   server: McpServer,
-  opts?: HandleStores & { door?: McpDoor },
+  opts?: HandleStores & { door?: McpDoor } & WithDoorDisclosure,
 ): void {
+  const door = disclosureOfTool(opts);
   server.registerTool(
     'get_workflow_protocol',
     {
@@ -106,17 +134,37 @@ export function registerGetWorkflowProtocol(
       description: 'Get the full agent protocol briefing for a registered workflow.',
       inputSchema: { workflow_id: z.string() },
     },
-    async (args) => {
-      try {
+    safeTool(
+      async (args) => {
         const result = await handleGetWorkflowProtocol(args, opts);
-        return { content: [{ type: 'text' as const, text: sseJsonStringify(result) }] };
-      } catch (err) {
+        return toolContentOf(
+          { ...result },
+          {
+            set: await setForSubject(
+              door,
+              await replySubject(opts, { workflowId: args.workflow_id }),
+            ),
+            audience: 'agent',
+            table: WORKFLOW_PROTOCOL_TABLE,
+          },
+        );
+      },
+      async (err, args) => {
+        // The error's text goes through the door too: masked with every tier (M-2).
         const message = err instanceof WorkflowError ? err.message : String(err);
         return {
-          content: [{ type: 'text' as const, text: `Error: ${message}` }],
+          ...toolContentOf(`Error: ${message}`, {
+            set: await setForSubject(
+              door,
+              await replySubject(opts, { workflowId: args.workflow_id }),
+            ),
+            audience: 'agent',
+            table: WORKFLOW_PROTOCOL_TABLE,
+          }),
           isError: true,
         };
-      }
-    },
+      },
+      SAFE_TOOL_CONSTANT_RUNLESS,
+    ),
   );
 }

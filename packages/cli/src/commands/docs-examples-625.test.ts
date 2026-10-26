@@ -267,6 +267,11 @@ describe(
       PATH: `${bin}:${dirname(process.execPath)}:${process.env['PATH'] ?? ''}`,
       HOME: home,
       NO_COLOR: '1',
+      // #729 PR-3: a child's piped output is a log, where environment values (8+ characters) and
+      // paths under HOME are hidden; the pages show an operator's terminal, so HOME is named not
+      // secret (the operator's opt-out). Correction 1 (D-6): the paths bash sets (PWD, OLDPWD, `_`)
+      // are excluded by name, and naming one that is not set would draw F32's warning.
+      REALM_NOT_SECRET: 'HOME',
       ...extra,
     });
 

@@ -15,7 +15,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { executeStep, executeChain } from './execution-loop.js';
-import { renderFailCause } from './settlement.js';
+import { GUARD_INPUT, renderFailCause } from './settlement.js';
 import { applyResume } from './apply-resume.js';
 import { captureEvidence } from '../evidence/snapshot.js';
 import { JsonFileStore } from '../store/json-file-store.js';
@@ -326,18 +326,112 @@ describe('#373 — messages', () => {
     );
   });
 
-  it('(6) an overflowing sentence is capped at 1024, ends with "...", and still leads with the true count', () => {
+  // #729 PR-3 B0 + F24: both caps keep their numbers (256 per message, 1024 per sentence). A message
+  // is kept whole or replaced by its marker; an over-cap sentence keeps whole entries while the next
+  // would still fit, then counts the rest — never a cut entry (I4). (a) red when a cut returns, the
+  // count is lost (the whole-sentence marker), or a cap moves; (b) prints the sentence, made of step
+  // names, `x`/`y` runs and markers.
+  it('(6) an overflowing sentence keeps whole entries and counts the rest; an over-cap message is replaced by its marker (B0, F24)', () => {
     const steps = Array.from({ length: 30 }, (_, i) => `step_${String(i).padStart(2, '0')}`);
     // Genuine overflow: every message is longer than the 256 per-message cap, and 30 of them
-    // blow past the sentence cap even after each is trimmed.
+    // blow past the sentence cap even after each is replaced by its marker.
     const messages = new Map(steps.map((s) => [s, 'x'.repeat(400)]));
     const sentence = renderFailCause(steps, messages);
-    expect(sentence.length).toBe(1024);
-    expect(sentence.endsWith('...')).toBe(true);
-    expect(sentence.startsWith('30 steps failed: ')).toBe(true);
-    // Per-message cap fires independently of the sentence cap.
+    // Whole: 17 ("30 steps failed: ") + 30 × 38 (`step_NN ("‹400 characters, not kept›")`) + 29 × 2 + 1
+    // = 1216, over 1024. Kept: 24 entries, 17 + 24 × 38 + 23 × 2 + 15 (", and 6 more.") = 988; 25
+    // would be 1028.
+    expect(sentence).toBe(
+      `30 steps failed: ${steps
+        .slice(0, 24)
+        .map((s) => `${s} ("‹400 characters, not kept›")`)
+        .join(', ')}, and 6 more.`,
+    );
+    // The per-message bound fires independently of the sentence's.
     const perMessage = renderFailCause(['a', 'b'], new Map([['a', 'y'.repeat(300)]]));
-    expect(perMessage).toBe(`2 steps failed: a ("${'y'.repeat(256)}..."), b.`);
+    expect(perMessage).toBe(`2 steps failed: a ("‹300 characters, not kept›"), b.`);
+    // A message at the cap and a sentence at 1024 or under are kept whole.
+    expect(renderFailCause(['a', 'b'], new Map([['a', 'y'.repeat(256)]]))).toBe(
+      `2 steps failed: a ("${'y'.repeat(256)}"), b.`,
+    );
+  });
+
+  it('(6c) five failed steps with 220-character messages keep four whole entries and count the fifth (F24)', () => {
+    const steps = Array.from({ length: 5 }, (_, i) => `s${i}`);
+    const messages = new Map(steps.map((s) => [s, 'z'.repeat(220)]));
+    // Whole: 16 ("5 steps failed: ") + 5 × 227 (`sN ("z…z")`) + 4 × 2 + 1 = 1160, over 1024. Kept: 4
+    // entries, 16 + 4 × 227 + 3 × 2 + 14 (", and 1 more.") = 944; every entry is under the 256 cap.
+    // (a) red when the sentence is replaced whole by its marker (the old cut), an entry is cut, or
+    //     N is wrong; (b) prints the sentence (step names and `z` runs).
+    expect(renderFailCause(steps, messages)).toBe(
+      `5 steps failed: ${steps
+        .slice(0, 4)
+        .map((s) => `${s} ("${'z'.repeat(220)}")`)
+        .join(', ')}, and 1 more.`,
+    );
+  });
+
+  // #729 PR-3 correction 2 (F24 linear, R2-L1-12): the over-cap sentence is found in one forward
+  // pass. (a) red when each shortened sentence is built and measured again (quadratic: seconds at
+  // 4,000 steps); (b) prints a boolean.
+  it('(6e) the over-cap sentence is linear: 4,000 failed steps take under 3× the time of 2,000', () => {
+    const time = (n: number): number => {
+      const steps = Array.from({ length: n }, (_, i) => `step_${i}`);
+      const messages = new Map(steps.map((s) => [s, 'm'.repeat(40)]));
+      const runs: number[] = [];
+      for (let i = 0; i < 3; i++) {
+        const t0 = performance.now();
+        renderFailCause(steps, messages);
+        runs.push(performance.now() - t0);
+      }
+      return runs.sort((a, b) => a - b)[1]!;
+    };
+    time(2_000);
+    // A floor on the baseline: the linear pass takes about a millisecond, where a bare ratio is
+    // noise.
+    const small = Math.max(time(2_000), 5);
+    const large = time(4_000);
+    expect({ under3x: large < 3 * small }).toEqual({ under3x: true });
+  });
+
+  // (a) red when an entry alone over the cap falls back to the whole-sentence marker, or the count
+  // reads in the plural for one; (b) prints the sentences (step names are `s` runs).
+  it('(6f) when not even one entry fits, the sentence is the count alone: "N steps failed." / "1 step failed."', () => {
+    // Step ids long enough that the first, in sorted order, alone passes the 1024 cap.
+    const long = 's'.repeat(1100);
+    expect([
+      renderFailCause([long, `t${long}`], new Map()),
+      renderFailCause([long], new Map()),
+    ]).toEqual(['2 steps failed.', '1 step failed.']);
+  });
+
+  it("(F30) a guard's shared empty input is frozen: writing to it throws", () => {
+    // (a) red when the freeze is removed (every guard's evidence shares the object, so a write would
+    //     reach them all); (b) prints the error's type and the keys.
+    expect(() => {
+      (GUARD_INPUT as Record<string, unknown>)['x'] = 1;
+    }).toThrow(TypeError);
+    expect(Object.keys(GUARD_INPUT)).toEqual([]);
+  });
+
+  // #729 PR-3 (D3/08 S2): (a) red when either cap cuts (the fake secret's start would be kept);
+  // (b) prints booleans.
+  it('(6d) a secret across the 256 and the 1024 cut points leaves no fragment', () => {
+    const acrossMessage = `${'o'.repeat(246)}FAKE-ACROSS-CUT-0001`;
+    const one = renderFailCause(['a', 'b'], new Map([['a', acrossMessage]]));
+    const steps = Array.from({ length: 5 }, (_, i) => `s${i}`);
+    const acrossSentence = renderFailCause(
+      steps,
+      new Map(
+        steps.map((s, i) => [
+          s,
+          i === 4 ? `${'o'.repeat(200)}FAKE-ACROSS-CUT-0002` : 'o'.repeat(200),
+        ]),
+      ),
+    );
+    expect({ message: one.includes('FAKE'), sentence: acrossSentence.includes('FAKE') }).toEqual({
+      message: false,
+      sentence: false,
+    });
   });
 
   it('(6b) the LONGEST message in the real corpus (254 chars) travels untruncated', () => {
@@ -351,15 +445,15 @@ describe('#373 — messages', () => {
   });
 });
 
-it('(6c) a message longer than the cap keeps its DIAGNOSTIC — order beats size', async () => {
-  // The boundary the enrichment opened: the per-message cap slices from the HEAD, so whichever
-  // half of the guard message comes last is the half that disappears. With the path appended
-  // last, a long enough condition pushed it off the tail and the diagnostic was gone again —
-  // the same lossiness class, alive at the cap boundary. The path leads now.
+it('(6c) a guard message longer than the cap is replaced whole by its marker (B0, #729 PR-3)', async () => {
+  // Before #729 PR-3 the per-message cap sliced from the HEAD, so the path led the message to
+  // survive the cut. B0 replaces the cut: a message over the cap is replaced whole by its marker, so
+  // no start of the condition's literal reaches the terminal reason (I4), and the path goes with it
+  // (the design's residual (g): an over-cap diagnostic shows its shape). The path still leads the
+  // message, which is what a message at or under the cap shows.
   //
-  // Deliberately a SHORT path with a LONG condition (a big right-hand literal): that isolates
-  // ORDER as the mechanism. A pathological long PATH still truncates itself — an accepted bound,
-  // and head-first truncation keeps its orienting prefix.
+  // (a) red when the cut returns (the literal's start would show) or the bound stops firing; (b)
+  //     prints booleans and the marker's length.
   const condition = `$.nope.field == "${'y'.repeat(260)}"`;
   const definition: WorkflowDefinition = {
     id: 'guard-cap-wf',
@@ -409,14 +503,13 @@ it('(6c) a message longer than the cap keeps its DIAGNOSTIC — order beats size
     .filter((e) => e.step_id === 'g' && e.error !== undefined)
     .at(-1)!.error!;
   // Non-vacuity: without a message genuinely over the cap this cell would pass for the wrong
-  // reason — nothing would be truncated at all.
+  // reason — nothing would be bounded at all.
   expect(guardError.length).toBeGreaterThan(256);
 
   const entry = record.terminal_reason!.slice(record.terminal_reason!.indexOf('g ('));
   expect(record.terminal_reason).toContain('3 steps failed:'); // post-drain, re-rendered
-  expect(entry).toContain('...'); // truncation really fired
-  expect(entry.endsWith('...").')).toBe(true); // and the wrapper survived it
-  expect(record.terminal_reason).toContain("unresolvable path '$.nope.field'"); // THE PIN
+  expect(entry).toBe(`g ("‹${guardError.length} characters, not kept›").`); // THE PIN
+  expect(record.terminal_reason!.includes('yyyy')).toBe(false); // no start of the literal
 });
 
 describe('#373 — the guard resolution_error site', () => {

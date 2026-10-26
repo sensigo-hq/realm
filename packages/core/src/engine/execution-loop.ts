@@ -37,7 +37,7 @@ import {
 } from './ways.js';
 import { loadSnapshot, writtenSnapshot } from './snapshot.js';
 import type { ToolCallRecord } from '../types/mcp-types.js';
-import { extensionIdentityDiffers } from '../types/extension-identity.js';
+import { extensionIdentityDiffers, lastExecutionIdentity } from '../types/extension-identity.js';
 import type {
   EngineReply,
   ExpiryReceipt,
@@ -3116,7 +3116,9 @@ async function executeStepBody(
       );
     }
     const identityHistory = pendingRun.extension_identity ?? [];
-    const lastIdentity = identityHistory[identityHistory.length - 1];
+    // #729 PR-3 correction 5 (J-5): drift is judged from execution entries; a start entry is the
+    // record's manifest reference, never a baseline.
+    const lastIdentity = lastExecutionIdentity(identityHistory);
     if (lastIdentity === undefined || extensionIdentityDiffers(lastIdentity, registryIdentity)) {
       // A differing RULES string means the entries are not comparable fingerprints (a
       // future sweep-rules change must never manufacture phantom drift): append the new
@@ -3137,7 +3139,7 @@ async function executeStepBody(
         try {
           const freshRun = await store.get(options.runId);
           const freshHistory = freshRun.extension_identity ?? [];
-          const freshLast = freshHistory[freshHistory.length - 1];
+          const freshLast = lastExecutionIdentity(freshHistory);
           if (freshLast === undefined || extensionIdentityDiffers(freshLast, registryIdentity)) {
             pendingRun = await store.update({
               ...freshRun,

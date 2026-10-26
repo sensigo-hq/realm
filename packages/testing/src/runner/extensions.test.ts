@@ -1,12 +1,18 @@
 // Tests for project-extension semantics in the fixture runner: real handlers execute,
 // unmocked extension adapters TRIP in both leak paths, mocked ones pass, and the tripwire
 // error enumerates unmatched fixture mock keys.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDefaultRegistry, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
-import type { WorkflowDefinition, ServiceAdapter, StepHandler } from '@sensigo/realm';
+import type {
+  ExtensionIdentityEntry,
+  WorkflowDefinition,
+  ServiceAdapter,
+  StepHandler,
+} from '@sensigo/realm';
+import { InMemoryStore } from '../store/in-memory-store.js';
 import { runFixtureTests, buildFixtureRegistries } from './test-runner.js';
 import type { TestFixture } from '../fixtures/fixture-loader.js';
 
@@ -245,6 +251,44 @@ expected:
     });
     expect(results[0]!.error).toBeUndefined();
     expect(results[0]!.passed).toBe(true);
+  });
+
+  it("#729 PR-3 correction 5 (J-5): a run of a project the CLI loader loaded is born with the project's start entry; a registry with none writes none", async () => {
+    const workflowPath = writeWorkflow(HANDLER_WORKFLOW_YAML);
+    writeFixture('handler', 'name: handler\nexpected:\n  final_state: completed\n');
+    const identity: ExtensionIdentityEntry = {
+      captured_at: '2026-10-22T00:00:00.000Z',
+      modules: [],
+      tree: {
+        roots: [],
+        rules: 'r',
+        file_count: 0,
+        total_bytes: 0,
+        tree_hash: 'x',
+        truncated: false,
+      },
+      coverage: 'dir_tree_v1',
+      manifest: { path: '/c5/realm.yaml', content_hash: 'c5' },
+    };
+    const create = vi.spyOn(InMemoryStore.prototype, 'create');
+    try {
+      const loaded = makeExtensions();
+      loaded.registry.setIdentity(identity);
+      await runFixtureTests({ workflowPath, fixturesPath: fixturesDir, extensions: loaded });
+      await runFixtureTests({
+        workflowPath,
+        fixturesPath: fixturesDir,
+        extensions: makeExtensions(),
+      });
+      // (a) red when the runner's create is given no start entry (or one without its origin), or a
+      //     registry with no identity gets one; (b) prints each create's entries.
+      expect(create.mock.calls.map(([options]) => options.extensionIdentity)).toEqual([
+        [{ ...identity, origin: 'start' }],
+        undefined,
+      ]);
+    } finally {
+      create.mockRestore();
+    }
   });
 });
 

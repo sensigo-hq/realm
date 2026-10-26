@@ -44,6 +44,53 @@ import {
   type WayRenderer,
   type WayVerb,
 } from '@sensigo/realm';
+import {
+  buildDisclosureSet,
+  disclose,
+  discloseReply,
+  weakestDeclared,
+  withDeclaredStanding,
+  EVIDENCE_TABLE,
+  GATE_INFO_TABLE,
+  type ClassTable,
+  type DisclosureClass,
+  type DisclosureSet,
+  type RunRecord,
+  type RunStore,
+  type WorkflowDefinition,
+} from '@sensigo/realm';
+import { sseJsonStringify } from './sse-json.js';
+import type {
+  DriveFailureCost,
+  EngineRunnable,
+  FactProducers,
+  Money,
+  Outcome,
+  PreconditionFacts,
+  RunHealthFinding,
+} from '@sensigo/realm';
+import type { WorkflowProtocol } from './protocol/generator.js';
+import type { ABANDON_RUN_TABLE, AbandonRunSummary } from './tools/abandon-run.js';
+import type { APPEND_TRACE_TABLE, AppendTraceOkResult } from './tools/append-trace.js';
+import type {
+  DRIVE_FAILURE_COST_TABLE,
+  ENGINE_RUNNABLE_TABLE,
+  MONEY_TABLE,
+  NOT_PRICED_TABLE,
+  PRECONDITION_FACTS_TABLE,
+  RUN_STATE_SUMMARY_TABLE,
+  RunStateSummary,
+} from './tools/get-run-state.js';
+import type { WORKFLOW_PROTOCOL_TABLE } from './tools/get-workflow-protocol.js';
+import type {
+  LIST_WORKFLOWS_TABLE,
+  ListWorkflowsResult,
+  UnreadableWorkflowEntry,
+} from './tools/list-workflows.js';
+import type { START_RUN_BATCH_TABLE, StartRunBatchResult } from './tools/start-run-batch.js';
+import type { START_RUN_TABLE, StartRunReply } from './tools/start-run.js';
+import type { ELICIT_TABLE } from './server.js';
+import type { ElicitFn } from './form-path.js';
 
 // ─── What the agent reads ────────────────────────────────────────────────────────────────────────
 
@@ -795,22 +842,15 @@ function hintOf(
     refusal !== undefined &&
     refusal.code === 'refused_before_claim' &&
     refusal.step === reply.command &&
-    (refusal.facts.check !== 'input_schema' ||
-      !refusal.remedy.some(
-        (w) =>
-          w.verb === 'run_step' &&
-          (narrowed?.ways ?? []).some(
-            (n) => n.verb === 'run_step' && n.step === w.step && forAgent(n),
-          ),
-      )) &&
     cannotGoOnWithRefusal(narrowed, ended) &&
     narrowed !== undefined
   ) {
     // C66, #688: a by-name refusal the caller cannot change ends with the person's way out. #729 Q3
     // correction 1 (the architect's ruling, Amendment 16's chain law): an input refusal's own
-    // `run_step` lever withholds it only when THIS caller may take that lever — at this door the
-    // operator's lever rides `elsewhere`, never the agent's ways, so the assistant is told the end of
-    // the chain.
+    // `run_step` lever would withhold it only when THIS caller may take that lever. At this door it
+    // never may: the operator's lever rides `elsewhere`, never the agent's ways, so no input refusal
+    // withholds the way out here and the assistant is always told the end of the chain. (#729 PR-3
+    // ride-along: the sub-clause that tested for an agent-side lever could never hold, and is gone.)
     hint += ` ${wayOutWords(narrowed)}`;
   }
   if (reply.names_next === true) {
@@ -1169,23 +1209,556 @@ export function mcpReplyOf(rendered: RenderedReply): WithPersonBlock<McpEnvelope
     : rendered.envelope;
 }
 
+// ─── The disclosure step (#729 PR-3; RECORD 01 #9, #10; D3/03) ──────────────────────────────────
+//
+// Every reply leaves through {@link toolContentOf}, which walks it by its class table with the
+// reply's disclosure set, adds the `disclosure` receipt and serializes it: the LAST transformation.
+// Every reshaping (`withHintTail`, the spreads, abandon's respread) happens before it. The library's
+// `handle*` results stay raw (D9): only this door masks.
+
+/** How a reply field reaches the agent (#729 PR-0, A-13): the envelope table's second column. */
+export type ReplyRoute =
+  | { mcp: 'published' }
+  | { mcp: 'rendered'; into: readonly string[] }
+  | { mcp: 'withheld'; reason: string };
+
+/** One row of the envelope table: the field's disclosure class, and its route where PR-0 gave one. */
+export interface EnvelopeRow {
+  readonly class: DisclosureClass;
+  readonly route?: ReplyRoute;
+}
+
+export const NEXT_ACTION_TABLE = {
+  instruction: 'fact',
+  // #627 W: an await entry's facts — the run, the gate, the step, its choices, its deadline.
+  awaiting: 'fact',
+  human_readable: 'fact',
+  orientation: 'fact',
+  input_schema: 'fact',
+  // The template-resolved step prompt carries the run's values (D1 §3.3: the brief, every tier).
+  prompt: 'value',
+} as const satisfies Record<keyof McpNextAction, DisclosureClass>;
+
+export const ALSO_TABLE = {
+  ...NEXT_ACTION_TABLE,
+  verb: 'fact',
+} as const satisfies Record<keyof McpAlsoEntry, DisclosureClass>;
+
+/** #729 PR-3 correction 2 (G4): who settled a question. A name the answerer gave is their own text,
+ *  not a word from a closed set: a diagnostic copy. */
+export const OUTCOME_BY_TABLE = {
+  kind: 'fact',
+  name: 'bounded',
+  basis: 'fact',
+  cause: 'fact',
+  step: 'fact',
+} as const satisfies Record<keyof Merged<Outcome['by']>, DisclosureClass>;
+
+/** G4: a question's outcome, field by field: realm's words, the author's choice and step, times. */
+export const OUTCOME_TABLE = {
+  choice: 'fact',
+  by: { nested: OUTCOME_BY_TABLE },
+  at: 'fact',
+  step: 'fact',
+  expiry: 'fact',
+  attempted: 'fact',
+  via: 'fact',
+} as const satisfies Record<keyof Outcome, DisclosureClass>;
+
+/** The MCP envelope's rows: what the agent reads, field by field. */
+export const MCP_ENVELOPE_ROWS = {
+  command: { class: 'fact' },
+  run_id: { class: 'fact' },
+  run_version: { class: 'fact' },
+  status: { class: 'fact' },
+  data: { class: 'value' },
+  evidence: { class: { nested: EVIDENCE_TABLE } },
+  warnings: { class: 'bounded' },
+  diagnostics: { class: 'bounded' },
+  errors: { class: 'bounded' },
+  error_code: { class: 'fact' },
+  error_details: { class: 'bounded' },
+  retry_after: { class: 'fact' },
+  // #627 W: a refusal that a retry cannot fix says so (`false`).
+  retryable: { class: 'fact' },
+  context_hint: { class: 'bounded' },
+  run_phase: { class: 'fact' },
+  basis: { class: 'fact', route: { mcp: 'published' } },
+  outcome: { class: { nested: OUTCOME_TABLE }, route: { mcp: 'published' } },
+  races: { class: 'fact', route: { mcp: 'published' } },
+  expiry: { class: 'fact', route: { mcp: 'published' } },
+  chained_auto_steps: { class: 'fact' },
+  adopted_own: { class: 'fact' },
+  adopted_anonymous: { class: 'fact' },
+  preserved_foreign: { class: 'fact' },
+  settled_by_default: { class: 'fact' },
+  defaulted_steps: { class: 'fact' },
+  guards: { class: 'fact' },
+  ended_by: { class: { nested: { arm: 'fact', step: 'fact', reason: 'bounded' } } },
+  stopped_step: { class: 'fact' },
+  answer_recorded: { class: 'fact' },
+  gate_claim: { class: 'fact' },
+  next_actions: { class: { nested: NEXT_ACTION_TABLE } },
+  agent_action: { class: 'fact' },
+  also: { class: { nested: ALSO_TABLE } },
+  elsewhere: { class: 'fact' },
+  poll_after_ms: { class: 'fact' },
+  until: { class: 'fact' },
+  // `about` published as `error.about`; the remedy worded into the hint; typed facts as error_details.
+  error: {
+    class: 'fact',
+    route: { mcp: 'rendered', into: ['error', 'context_hint', 'error_details'] },
+  },
+  blocked_reason: { class: { nested: { eligible_steps: 'fact', suggestion: 'bounded' } } },
+  gate: { class: { nested: GATE_INFO_TABLE } },
+} as const satisfies Record<keyof McpEnvelope, EnvelopeRow>;
+
+/** The class column of a rows table, its literal classes kept in the type (F5). */
+export type ClassColumn<Rows extends Record<string, EnvelopeRow>> = {
+  readonly [K in keyof Rows]: Rows[K]['class'];
+};
+
+/** A class table from rows. */
+function classColumn<Rows extends Record<string, EnvelopeRow>>(rows: Rows): ClassColumn<Rows> {
+  return Object.fromEntries(
+    Object.entries(rows).map(([key, row]) => [key, row.class]),
+  ) as ClassColumn<Rows>;
+}
+
+/** The MCP envelope's class table (RECORD 01 #6). */
+export const MCP_ENVELOPE_TABLE = classColumn(MCP_ENVELOPE_ROWS) satisfies Record<
+  keyof McpEnvelope,
+  DisclosureClass
+>;
+
+/** What the door masks a reply with. `audience` is always `agent` here (RECORD 05 "audiences"). */
+export interface ToolDisclosure {
+  set: DisclosureSet;
+  audience: 'agent';
+  table: ClassTable;
+}
+
+/** One reply's tool result. */
+export type ToolResult = {
+  content: Array<{ type: 'text'; text: string; annotations?: { audience: ['user'] } }>;
+  isError?: boolean;
+};
+
 /**
- * The MCP tool result for one reply (P-6): the reply as JSON, and — when it carries one — a second
- * content block addressed to the person (`audience: ["user"]`) with an operator's commands.
+ * The MCP tool result for one reply (P-6): the reply walked by its table for the agent, with its
+ * `disclosure` receipt, as JSON — and, when it carries one, a second content block addressed to the
+ * person (`audience: ["user"]`) with an operator's commands. The person block is read FIRST, from
+ * the reply as given, and is emitted as its own block: it holds facts (commands), never a value.
+ *
+ * A string reply (a tool's plain-text error) is disclosed with every tier and sent as text; it has
+ * no field to carry a receipt.
  */
 export function toolContentOf(
-  reply: WithPersonBlock<Record<string, unknown>> | WithPersonBlock<McpEnvelope>,
-  serialize: (value: unknown) => string,
-): {
-  content: Array<{ type: 'text'; text: string; annotations?: { audience: ['user'] } }>;
-} {
+  reply: string | WithPersonBlock<Record<string, unknown>> | WithPersonBlock<McpEnvelope>,
+  disclosure: ToolDisclosure,
+): ToolResult {
+  if (typeof reply === 'string') {
+    return {
+      content: [{ type: 'text' as const, text: disclose(reply, disclosure.set, 'all').text }],
+    };
+  }
   const person = reply[PERSON_BLOCK];
+  const shown = discloseReply(reply, disclosure.set, disclosure.audience, disclosure.table);
   return {
     content: [
-      { type: 'text' as const, text: serialize(reply) },
+      { type: 'text' as const, text: sseJsonStringify(shown) },
       ...(person !== undefined
         ? [{ type: 'text' as const, text: person, annotations: { audience: ['user'] as ['user'] } }]
         : []),
     ],
   };
 }
+
+/**
+ * The door's disclosure for a reply (M-3): the set for what the reply is about, built per reply. The
+ * door passes the definition, and the run when there is one (D-11): the provider reports that
+ * project's declared state and cause; the declared members stay the process-wide union.
+ */
+export interface DoorDisclosure {
+  setFor(definition: WorkflowDefinition | undefined, run?: RunRecord): Promise<DisclosureSet>;
+}
+
+/** The option every tool registration reads its disclosure from. */
+export interface WithDoorDisclosure {
+  doorDisclosure?: DoorDisclosure;
+}
+
+/** The environment's set for the agent, with no declared part, for `cause`. */
+export function environmentSet(
+  cause: 'embedder_none' | 'load_failed',
+  notSecret?: readonly string[],
+): DisclosureSet {
+  return buildDisclosureSet({
+    env: process.env,
+    declared: {},
+    declaredState: 'unknown',
+    declaredCause: cause,
+    audience: 'agent',
+    ...(notSecret !== undefined ? { notSecret } : {}),
+  }).set;
+}
+
+/**
+ * The door's disclosure from a host's options: its provider's set per reply; with no provider, the
+ * environment's set read per reply, cause `embedder_none`; a provider that throws gives the
+ * environment's set with cause `load_failed`, and the throw is logged through the masked stderr.
+ */
+export function doorDisclosureOf(options?: {
+  disclosureProvider?: (
+    definition: WorkflowDefinition | undefined,
+    run?: RunRecord,
+  ) => Promise<DisclosureSet>;
+  disclosure?: { notSecret?: string[] };
+}): DoorDisclosure {
+  const notSecret = options?.disclosure?.notSecret;
+  const provider = options?.disclosureProvider;
+  return {
+    async setFor(definition, run) {
+      if (provider === undefined) return environmentSet('embedder_none', notSecret);
+      try {
+        return await provider(definition, run);
+      } catch (err) {
+        logMasked(`realm-mcp: the disclosure provider failed: ${String(err)}`);
+        return environmentSet('load_failed', notSecret);
+      }
+    },
+  };
+}
+
+/** What a reply is about (D-11): its workflow, and its run when the call names one. */
+export interface ReplySubject {
+  definition?: WorkflowDefinition;
+  run?: RunRecord;
+}
+
+/**
+ * F11: reads, after the call, what its reply is about — the run the call named and its workflow, or
+ * the workflow it named. Best effort: a read that fails leaves the part out (the provider then
+ * reports what it can), and never changes the reply.
+ */
+export async function replySubject(
+  stores:
+    | { runStore?: RunStore; workflowStore?: { get(id: string): Promise<WorkflowDefinition> } }
+    | undefined,
+  ids: { runId?: string | undefined; workflowId?: string | undefined },
+): Promise<ReplySubject> {
+  let run: RunRecord | undefined;
+  if (ids.runId !== undefined && stores?.runStore !== undefined) {
+    run = await stores.runStore.get(ids.runId).catch(() => undefined);
+  }
+  const workflowId = ids.workflowId ?? run?.workflow_id;
+  let definition: WorkflowDefinition | undefined;
+  if (workflowId !== undefined && stores?.workflowStore !== undefined) {
+    definition = await stores.workflowStore.get(workflowId).catch(() => undefined);
+  }
+  return {
+    ...(definition !== undefined ? { definition } : {}),
+    ...(run !== undefined ? { run } : {}),
+  };
+}
+
+/** The set for a subject. */
+export async function setForSubject(
+  door: DoorDisclosure,
+  subject: ReplySubject,
+): Promise<DisclosureSet> {
+  return door.setFor(subject.definition, subject.run);
+}
+
+/**
+ * F11 (D-11): the set for a reply covering several workflows (`list_workflows`): the members of the
+ * set for no one workflow (the process-wide union), with the weakest declared standing of the
+ * workflows' own (core's `weakestDeclared`).
+ */
+export async function setForWorkflows(
+  door: DoorDisclosure,
+  definitions: readonly WorkflowDefinition[],
+): Promise<DisclosureSet> {
+  // The workflows' own reads first: each may add its manifest's declared values to the union, and
+  // the base is taken after them, so a fresh process's first list hides what they added (G5).
+  const sets = await Promise.all(definitions.map((d) => door.setFor(d)));
+  const base = await door.setFor(undefined);
+  if (definitions.length === 0) return base;
+  return withDeclaredStanding(
+    base,
+    weakestDeclared(
+      sets.map((set) => ({
+        declared: set.declared,
+        ...(set.declaredCause !== undefined ? { declaredCause: set.declaredCause } : {}),
+      })),
+    ),
+  );
+}
+
+/** The disclosure a tool registration uses: its host's, or the default. */
+export function disclosureOfTool(opts: WithDoorDisclosure | undefined): DoorDisclosure {
+  return opts?.doorDisclosure ?? doorDisclosureOf();
+}
+
+/** Writes one line to stderr, masked with the environment's set for a log (never a raw error). */
+export function logMasked(text: string): void {
+  try {
+    const set = buildDisclosureSet({
+      env: process.env,
+      declared: {},
+      declaredState: 'unknown',
+      declaredCause: 'embedder_none',
+      audience: 'log',
+    }).set;
+    process.stderr.write(`${disclose(text, set, 'all').text}\n`);
+  } catch {
+    process.stderr.write('realm-mcp: an error could not be logged.\n');
+  }
+}
+
+/** The reply when a tool's own error path throws (M-2). It names no value. Worded per tool (F34): a
+ *  tool that names a run points at `get_run_state`; a runless tool and `get_run_state` itself do not. */
+export const SAFE_TOOL_CONSTANT =
+  'Realm could not compose a reply to this call. The error was logged on the server; call get_run_state to read the run.';
+/** The constant for a tool with no run, and for `get_run_state`. */
+export const SAFE_TOOL_CONSTANT_RUNLESS =
+  'Realm could not compose a reply to this call. The error was logged on the server; try the call again.';
+
+/**
+ * Every tool's handler (M-2): the body, then on a throw its `onError`; when `onError` throws too,
+ * a constant text, and the error is logged through the masked stderr. No raw error text escapes.
+ */
+export function safeTool<A extends unknown[]>(
+  body: (...args: A) => Promise<ToolResult>,
+  onError: (err: unknown, ...args: A) => Promise<ToolResult> | ToolResult,
+  constant: string = SAFE_TOOL_CONSTANT,
+): (...args: A) => Promise<ToolResult> {
+  return async (...args: A) => {
+    try {
+      return await body(...args);
+    } catch (err) {
+      try {
+        return await onError(err, ...args);
+      } catch (inner) {
+        // F34: the error's text is read inside its own guard — an error whose text cannot be read
+        // must not escape to the SDK, which would send its raw message to the client.
+        let described: string;
+        try {
+          described = String(inner);
+        } catch {
+          described = 'an error whose text could not be read';
+        }
+        logMasked(`realm-mcp: a tool's error path failed: ${described}`);
+        return { content: [{ type: 'text' as const, text: constant }], isError: true };
+      }
+    }
+  };
+}
+
+// ── F5 (the door's half): what produces each `fact` row that can hold a string ─────────────────
+// Compile-forced beside the tables, under core's `FactProducers`: a `fact` row over text with no
+// producer here fails the compile, and so does an entry for a row that is not such a row. Keyed on
+// `MCP_ENVELOPE_ROWS`, and covering every table in `tools/` (imported for their types only).
+
+/** The keys of every member of a union, each with the union of its types. */
+type Merged<U> = {
+  [K in U extends unknown ? keyof U : never]: U extends unknown
+    ? K extends keyof U
+      ? U[K]
+      : never
+    : never;
+};
+
+export const DOOR_FACTS = {
+  envelope: {
+    command: 'author_literal',
+    run_id: 'id',
+    status: 'enum',
+    error_code: 'enum',
+    run_phase: 'enum',
+    basis: 'enum',
+    races: 'enum',
+    expiry: 'enum',
+    chained_auto_steps: 'author_literal',
+    defaulted_steps: 'author_literal',
+    guards: 'author_literal',
+    stopped_step: 'author_literal',
+    gate_claim: 'id',
+    agent_action: 'enum',
+    elsewhere: 'enum',
+    until: 'time',
+    error: 'enum',
+  } satisfies FactProducers<typeof MCP_ENVELOPE_TABLE, McpEnvelope>,
+  // #729 PR-3 correction 2 (G4): start_run's reply is the envelope plus the run it reran.
+  start_run: {
+    command: 'author_literal',
+    run_id: 'id',
+    status: 'enum',
+    error_code: 'enum',
+    run_phase: 'enum',
+    basis: 'enum',
+    races: 'enum',
+    expiry: 'enum',
+    chained_auto_steps: 'author_literal',
+    defaulted_steps: 'author_literal',
+    guards: 'author_literal',
+    stopped_step: 'author_literal',
+    gate_claim: 'id',
+    agent_action: 'enum',
+    elsewhere: 'enum',
+    until: 'time',
+    error: 'enum',
+    rerun_of: 'id',
+  } satisfies FactProducers<typeof START_RUN_TABLE, StartRunReply>,
+  outcome: {
+    choice: 'author_literal',
+    at: 'time',
+    step: 'author_literal',
+    expiry: 'time',
+    via: 'enum',
+  } satisfies FactProducers<typeof OUTCOME_TABLE, Outcome>,
+  outcome_by: {
+    kind: 'enum',
+    basis: 'enum',
+    cause: 'enum',
+    step: 'author_literal',
+  } satisfies FactProducers<typeof OUTCOME_BY_TABLE, Merged<Outcome['by']>>,
+  next_action: {
+    instruction: 'command_span',
+    awaiting: 'id',
+    human_readable: 'author_literal',
+    orientation: 'author_literal',
+    input_schema: 'author_literal',
+  } satisfies FactProducers<typeof NEXT_ACTION_TABLE, McpNextAction>,
+  also: {
+    instruction: 'command_span',
+    awaiting: 'id',
+    human_readable: 'author_literal',
+    orientation: 'author_literal',
+    input_schema: 'author_literal',
+    verb: 'enum',
+  } satisfies FactProducers<typeof ALSO_TABLE, McpAlsoEntry>,
+  ended_by: { arm: 'enum', step: 'author_literal' } satisfies FactProducers<
+    (typeof MCP_ENVELOPE_ROWS)['ended_by']['class']['nested'],
+    NonNullable<McpEnvelope['ended_by']>
+  >,
+  blocked_reason: { eligible_steps: 'author_literal' } satisfies FactProducers<
+    (typeof MCP_ENVELOPE_ROWS)['blocked_reason']['class']['nested'],
+    NonNullable<McpEnvelope['blocked_reason']>
+  >,
+  abandon_run: {
+    run_id: 'id',
+    run_phase: 'enum',
+    note: 'enum',
+  } satisfies FactProducers<typeof ABANDON_RUN_TABLE, AbandonRunSummary>,
+  append_trace: { status: 'enum' } satisfies FactProducers<
+    typeof APPEND_TRACE_TABLE,
+    AppendTraceOkResult
+  >,
+  run_state: {
+    run_id: 'id',
+    workflow_id: 'author_literal',
+    run_phase: 'enum',
+    rerun_of: 'id',
+    sealed_by_arm: 'enum',
+    sealed_by_step: 'author_literal',
+    completed_steps: 'author_literal',
+    in_progress_steps: 'author_literal',
+    failed_steps: 'author_literal',
+    skipped_steps: 'author_literal',
+    last_step: 'author_literal',
+    created_at: 'time',
+    updated_at: 'time',
+    next_actions_status: 'enum',
+    agent_action: 'enum',
+    until: 'time',
+    elsewhere: 'enum',
+    basis: 'enum',
+    stuck_claims: 'author_literal',
+    step_claims: 'author_literal',
+    capability_blocks: 'author_literal',
+    defaulted_steps: 'author_literal',
+    pending_guards: 'author_literal',
+    resumable: 'command_span',
+    cleanup_pending: 'command_span',
+    waiting_on_answer: 'author_literal',
+  } satisfies FactProducers<typeof RUN_STATE_SUMMARY_TABLE, RunStateSummary>,
+  run_health: {
+    kind: 'enum',
+    step: 'author_literal',
+    since: 'time',
+  } satisfies FactProducers<
+    (typeof RUN_STATE_SUMMARY_TABLE)['run_health']['nested'],
+    RunHealthFinding
+  >,
+  sealed_by_adjudicated: { by: 'id', at: 'time', previous_arm: 'enum' } satisfies FactProducers<
+    (typeof RUN_STATE_SUMMARY_TABLE)['sealed_by_adjudicated']['nested'],
+    NonNullable<RunStateSummary['sealed_by_adjudicated']>
+  >,
+  engine_runnable: {
+    step: 'author_literal',
+    runnable_here: 'enum',
+    refused_by: 'enum',
+    basis: 'enum',
+  } satisfies FactProducers<typeof ENGINE_RUNNABLE_TABLE, EngineRunnable>,
+  precondition: { expression: 'author_literal' } satisfies FactProducers<
+    typeof PRECONDITION_FACTS_TABLE,
+    PreconditionFacts
+  >,
+  money: {
+    sources: 'path_fact',
+    source_totals: 'path_fact',
+  } satisfies FactProducers<typeof MONEY_TABLE, Money>,
+  not_priced: { cause: 'enum' } satisfies FactProducers<
+    typeof NOT_PRICED_TABLE,
+    NonNullable<Money['not_priced']>[number]
+  >,
+  drive_failure_cost: {
+    at: 'time',
+    step: 'author_literal',
+    error_class: 'enum',
+  } satisfies FactProducers<typeof DRIVE_FAILURE_COST_TABLE, DriveFailureCost>,
+  workflow_protocol: {
+    workflow_id: 'author_literal',
+    name: 'author_literal',
+    description: 'author_literal',
+    params_schema: 'author_literal',
+    steps: 'author_literal',
+    agent_steps_summary: 'author_literal',
+    rules: 'enum',
+    error_handling: 'enum',
+    quick_start: 'command_span',
+  } satisfies FactProducers<typeof WORKFLOW_PROTOCOL_TABLE, WorkflowProtocol>,
+  list_workflows: {
+    status: 'enum',
+    workflows: 'author_literal',
+    hint: 'enum',
+    error_code: 'enum',
+    error_details: 'path_fact',
+    agent_action: 'enum',
+  } satisfies FactProducers<typeof LIST_WORKFLOWS_TABLE, Merged<ListWorkflowsResult>>,
+  list_workflows_unreadable: {
+    file: 'path_fact',
+    class: 'enum',
+    errno: 'enum',
+    repair: 'command_span',
+  } satisfies FactProducers<
+    (typeof LIST_WORKFLOWS_TABLE)['unreadable']['nested'],
+    UnreadableWorkflowEntry
+  >,
+  start_run_batch_started: {
+    run_id: 'id',
+    run_phase: 'enum',
+  } satisfies FactProducers<
+    (typeof START_RUN_BATCH_TABLE)['started']['nested'],
+    StartRunBatchResult['started'][number]
+  >,
+  start_run_batch_failed: { error_code: 'enum' } satisfies FactProducers<
+    (typeof START_RUN_BATCH_TABLE)['failed']['nested'],
+    StartRunBatchResult['failed'][number]
+  >,
+  elicit: { mode: 'enum', requestedSchema: 'author_literal' } satisfies FactProducers<
+    typeof ELICIT_TABLE,
+    Parameters<ElicitFn>[0]
+  >,
+} as const;

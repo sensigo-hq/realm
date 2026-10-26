@@ -96,7 +96,7 @@ describe('#627 W — the CLI door records its route (cell 5, CLI half)', () => {
       answer: { route: 'cli' },
       principal: { absent: 'not_a_server_door' },
       driver: { by: 'ops', by_source: 'ambient', channel: 'respond' },
-      line: "Answer: approve · answered by alice (as stated) · through a terminal (realm run respond) (as its door declared), recorded by respond, running as ops (from REALM_OPERATOR) · token: none passed (a token is passed only by Realm's MCP answer tool, from the conversation that opened the question, or by a program that calls the library with it)",
+      line: "Answer: approve · answered by alice (as stated) · through a terminal (realm run respond) (as its door declared), recorded by respond, running as ops (from REALM_OPERATOR) · no claim token passed (a token is passed only by Realm's MCP answer tool, from the conversation that opened the question, or by a program that calls the library with it)",
     });
   }, 60_000);
 });
@@ -124,13 +124,13 @@ describe('#627 W — inspect’s answer line (W-i1…W-i8, W-i10)', () => {
       slack: line({ answer: { route: 'slack' }, driven_by: DRIVER }),
       unknown: line({ answer: { route: 'pager' }, driven_by: DRIVER }),
     }).toEqual({
-      form: "Answer: approve · answered by (not stated) · through the user's app, as a form (as its door declared), recorded by mcp-stdio, running as host (from the OS user) · token: none recorded",
-      mcp: "Answer: approve · answered by (not stated) · through Realm's MCP answer tool (as its door declared), recorded by mcp-stdio, running as host (from the OS user) · token: none recorded",
-      cli: 'Answer: approve · answered by (not stated) · through a terminal (realm run respond) (as its door declared), recorded by mcp-stdio, running as host (from the OS user) · token: none recorded',
+      form: "Answer: approve · answered by (not stated) · through the user's app, as a form (as its door declared), recorded by mcp-stdio, running as host (from the OS user) · no claim token recorded",
+      mcp: "Answer: approve · answered by (not stated) · through Realm's MCP answer tool (as its door declared), recorded by mcp-stdio, running as host (from the OS user) · no claim token recorded",
+      cli: 'Answer: approve · answered by (not stated) · through a terminal (realm run respond) (as its door declared), recorded by mcp-stdio, running as host (from the OS user) · no claim token recorded',
       slack:
-        'Answer: approve · answered by (not stated) · through a Slack thread (as its door declared), recorded by mcp-stdio, running as host (from the OS user) · token: none recorded',
+        'Answer: approve · answered by (not stated) · through a Slack thread (as its door declared), recorded by mcp-stdio, running as host (from the OS user) · no claim token recorded',
       unknown:
-        'Answer: approve · answered by (not stated) · through route "pager" (as its door declared), recorded by mcp-stdio, running as host (from the OS user) · token: none recorded',
+        'Answer: approve · answered by (not stated) · through route "pager" (as its door declared), recorded by mcp-stdio, running as host (from the OS user) · no claim token recorded',
     });
   });
 
@@ -161,11 +161,11 @@ describe('#627 W — inspect’s answer line (W-i1…W-i8, W-i10)', () => {
       }),
     }).toEqual({
       noDriver:
-        "Answer: approve · answered by (not stated) · through Realm's MCP answer tool (as its door declared), as recorded by a program that did not name itself · token: none recorded",
+        "Answer: approve · answered by (not stated) · through Realm's MCP answer tool (as its door declared), as recorded by a program that did not name itself · no claim token recorded",
       noRoute:
-        'Answer: approve · answered by (not stated) · how it arrived was not recorded · token: none recorded',
+        'Answer: approve · answered by (not stated) · how it arrived was not recorded · no claim token recorded',
       undeclared:
-        'Answer: approve · answered by (not stated) · through a route its program did not declare, as recorded by lib, running as embedder (named by the program that runs Realm) · token: none recorded',
+        'Answer: approve · answered by (not stated) · through a route its program did not declare, as recorded by lib, running as embedder (named by the program that runs Realm) · no claim token recorded',
     });
   });
 

@@ -20,6 +20,9 @@ import {
   JsonFileStore,
   JsonWorkflowStore,
   createDefaultRegistry,
+  buildDisclosureSet,
+  compileDisclosure,
+  disclose,
   type RunRecord,
   type WorkflowDefinition,
 } from '@sensigo/realm';
@@ -28,7 +31,7 @@ import { runAgent } from '../run-agent.js';
 import { AnthropicProvider } from './anthropic-provider.js';
 import { LlmProvider } from './llm-provider.js';
 import { sanitizeError, serializeToolResult, setAdditionalRedactionValues } from './agent-utils.js';
-import { redactSecretValues, resolveManifestSecrets } from '../../extensions/manifest-secrets.js';
+import { resolveManifestSecrets } from '../../extensions/manifest-secrets.js';
 import {
   clearProjectExtensionsCache,
   loadProjectExtensions,
@@ -37,6 +40,21 @@ import { startAnthropicStub } from '../test-support/anthropic-stub.js';
 import { makeJourneyHome } from '../test-support/composed-journey.js';
 import { resolveMcpServerEntry } from '../test-support/mcp-server-entry.js';
 import { leakedForms } from '../test-support/redaction-oracle.js';
+
+/**
+ * #729 PR-3 (L-5): `redactSecretValues` is gone; the loader masks a builder's error at source with
+ * core's law over the values it just resolved — this exact call (`load-project-extensions.ts`,
+ * `maskDeclared`): the values as declared members, the declared tier, no environment.
+ */
+const redactSecretValues = (message: string, values: readonly string[]): string =>
+  disclose(
+    message,
+    compileDisclosure(
+      values.map((value, i) => ({ value, source: `declared:S${i}` as const })),
+      { declared: 'resolved', audience: 'log', environment: 'not_swept' },
+    ).set,
+    'declared',
+  ).text;
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../../../../..');
@@ -206,10 +224,44 @@ describe(`${TOOLS_PAGE} — what realm agent replaces (GHSA-gxfq)`, () => {
     });
   });
 
-  it("a run's params are kept as given, in the run's file and in realm run export", async () => {
+  it("the home folder: the example's error, hidden from the agent and a log at 8 or more characters, shown in the export (correction 1)", () => {
+    claim(TOOLS_PAGE, "Here it replaced the home folder's path.");
     claim(
       TOOLS_PAGE,
-      "A run's params are kept as given, in the run's file and in `realm run export`.",
+      '`realm run export` writes them masked too, except that the export file shows your home folder and user name, which the agent and a log hide when they are 8 or more characters long.',
+    );
+    const shownTo = (audience: 'agent' | 'log' | 'file', home: string, text: string) =>
+      disclose(
+        text,
+        buildDisclosureSet({
+          env: { HOME: home, USER: home.split('/').at(-1) ?? '' },
+          declared: {},
+          declaredState: 'resolved',
+          audience,
+        }).set,
+        'all',
+      ).text;
+    const HOME = '/home/fake-docs-user';
+    const error = `ENOENT: no such file or directory, scandir '${HOME}/notes/notes'`;
+    // (a) red when the agent or a log stops hiding a home folder of 8 or more characters, the
+    //     export starts hiding it, or a shorter one is hidden; (b) prints the shown texts (fake).
+    expect({
+      agent: shownTo('agent', HOME, error),
+      log: shownTo('log', HOME, `at ${HOME}/x by fake-docs-user`),
+      file: shownTo('file', HOME, `at ${HOME}/x by fake-docs-user`),
+      short: shownTo('agent', '/h/u', 'at /h/u/x'),
+    }).toEqual({
+      agent: "ENOENT: no such file or directory, scandir '[REDACTED]/notes/notes'",
+      log: 'at [REDACTED]/x by [REDACTED]',
+      file: 'at /home/fake-docs-user/x by fake-docs-user',
+      short: 'at /h/u/x',
+    });
+  });
+
+  it("a run's params are kept as given in the run's file; realm run export masks them", async () => {
+    claim(
+      TOOLS_PAGE,
+      "A run's params are kept as given in the run's file; `realm run export` writes them masked too, except that the export file shows your home folder and user name, which the agent and a log hide when they are 8 or more characters long.",
     );
     claim(
       MANIFEST_PAGE,
@@ -286,23 +338,35 @@ describe(`${TOOLS_PAGE} — what realm agent replaces (GHSA-gxfq)`, () => {
         .join(' ');
       const runFile = JSON.parse(readFileSync(join(runsDir, `${runId}.json`), 'utf8')) as RunRecord;
       const out = join(home, 'bundle.json');
-      const exported = spawnSync(process.execPath, [CLI, 'run', 'export', runId, '--out', out], {
-        cwd: home,
-        env: { PATH: process.env['PATH'] ?? '', HOME: home, NO_COLOR: '1' },
-        encoding: 'utf8',
-        timeout: 60_000,
-      });
+      // #729 PR-3: export masks with what it knows; the value is in its environment here, and the
+      // run has no project (so its declared secrets are unknown, which the flag accepts).
+      const exported = spawnSync(
+        process.execPath,
+        [CLI, 'run', 'export', runId, '--out', out, '--accept-partial-disclosure'],
+        {
+          cwd: home,
+          env: {
+            PATH: process.env['PATH'] ?? '',
+            HOME: home,
+            NO_COLOR: '1',
+            DOCS_PARAM_ENV: SECRET,
+            REALM_NOT_SECRET: 'HOME',
+          },
+          encoding: 'utf8',
+          timeout: 60_000,
+        },
+      );
       const bundle = JSON.parse(readFileSync(out, 'utf8')) as { run: RunRecord };
       const calls = runFile.evidence.flatMap((snap) => snap.tool_calls ?? []);
       const recorded = calls.map((c) => `${c.result ?? ''} ${c.error ?? ''}`).join(' ');
-      // (a) red when the params are redacted in the record or the export (the param is no longer
-      //     whole), when the prompt keeps the secret (the wrap at the prompt's assignment removed),
+      // (a) red when the params are redacted in the record, or kept in the export (#729 PR-3), when
+      //     the prompt keeps the secret (the wrap at the prompt's assignment removed),
       //     or when the recorded tool result keeps it. (b) prints the facts, never the secret.
       expect({
         result,
         exportCode: exported.status,
         paramInRunFile: runFile.params['key'] === SECRET,
-        paramInExport: bundle.run.params['key'] === SECRET,
+        paramMaskedInExport: bundle.run.params['key'] === '[REDACTED]',
         promptHidesIt: !JSON.stringify(stub.requests[0] ?? {}).includes(SECRET),
         oneToolCall: calls.length,
         recordedResultMarked: recorded.includes('[REDACTED]'),
@@ -313,7 +377,7 @@ describe(`${TOOLS_PAGE} — what realm agent replaces (GHSA-gxfq)`, () => {
         result: 'completed',
         exportCode: 0,
         paramInRunFile: true,
-        paramInExport: true,
+        paramMaskedInExport: true,
         promptHidesIt: true,
         oneToolCall: 1,
         recordedResultMarked: true,
@@ -334,7 +398,7 @@ describe(`${TOOLS_PAGE} — what realm agent replaces (GHSA-gxfq)`, () => {
   it('the forms these programs print them in: one executed printer row per family', () => {
     claim(
       TOOLS_PAGE,
-      "Here it replaced the path of the working folder. A run's params are kept as given, in the run's file and in `realm run export`. It also replaces each value in the forms these programs print it in:",
+      "Here it replaced the home folder's path. A run's params are kept as given in the run's file; `realm run export` writes them masked too, except that the export file shows your home folder and user name, which the agent and a log hide when they are 8 or more characters long. It also replaces each value in the forms these programs print it in:",
     );
     for (const bullet of FORMS_BULLETS) claim(TOOLS_PAGE, bullet);
     isolateEnv();
@@ -546,12 +610,14 @@ describe(`${TOOLS_PAGE} — what realm agent replaces (GHSA-gxfq)`, () => {
     });
   });
 
-  it('leaves alone an environment value of 4 characters or fewer, and a declared secret of 3 or fewer', async () => {
+  it('leaves alone an environment value of 7 characters or fewer, and a declared secret of 3 or fewer, and says so of the secret', async () => {
     claim(
       TOOLS_PAGE,
-      '- an environment value of four characters or fewer, and a declared secret of three or fewer;',
+      '- an environment value of seven characters or fewer, and a declared secret of three or fewer (`realm agent` says so when it loads such a secret);',
     );
-    vi.stubEnv('DOCS_REDACTION_SHORT_ENV', 'q7z2');
+    // #729 PR-3: the environment floor is 8 characters (the owner's Q2).
+    vi.stubEnv('DOCS_REDACTION_SHORT_ENV', 'q7z2x8w');
+    const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
     // The declared values come through the real loader of a deployment manifest, whose filter keeps
     // values of 4 characters or more — the feed `realm agent` hands the redaction set.
     clearProjectExtensionsCache();
@@ -582,15 +648,27 @@ describe(`${TOOLS_PAGE} — what realm agent replaces (GHSA-gxfq)`, () => {
       } as WorkflowDefinition;
       const loaded = await loadProjectExtensions(definition);
       setAdditionalRedactionValues(loaded.secretValues ?? []);
-      const out = serializeToolResult({ t: 'q7z2 k9w m3x8' });
-      // (a) red when a 4-character environment value or a 3-character declared value enters the
-      //     set (the first two), or a 4-character declared value leaves it (the third). (b) prints
-      //     the three facts.
+      const out = serializeToolResult({ t: 'q7z2x8w k9w m3x8' });
+      const warnings = warned.mock.calls.map((c) => String(c[0]));
+      // (a) red when a 7-character environment value or a 3-character declared value enters the
+      //     set (the first two), a 4-character declared value leaves it (the third), or the load
+      //     stops saying so of the short secret (I8; the fourth). (b) prints the four facts.
       expect({
-        shortEnvKept: out.includes('q7z2'),
+        shortEnvKept: out.includes('q7z2x8w'),
         threeCharDeclaredKept: out.includes('k9w'),
         fourCharDeclaredHidden: !out.includes('m3x8'),
-      }).toEqual({ shortEnvKept: true, threeCharDeclaredKept: true, fourCharDeclaredHidden: true });
+        // #729 PR-3 correction 1 (F37): the warning names the manifest and the key that refers to it.
+        saidOfTheShortSecret: warnings.some((w) =>
+          w.includes(
+            `Secret 'TINY' (in ${join(root, 'realm.yaml')}, at handlers.h1.config.a) is shorter than 4`,
+          ),
+        ),
+      }).toEqual({
+        shortEnvKept: true,
+        threeCharDeclaredKept: true,
+        fourCharDeclaredHidden: true,
+        saidOfTheShortSecret: true,
+      });
     } finally {
       rmSync(root, { recursive: true, force: true });
       clearProjectExtensionsCache();
@@ -678,7 +756,6 @@ describe(`${TOOLS_PAGE} — what realm agent replaces (GHSA-gxfq)`, () => {
     );
     for (const bullet of [
       '- an environment value that is the word `false`, or two or three numbers joined by dots, such as the version number `11.8.0` (a declared secret with that value is hidden);',
-      "- in an environment value, the rest of a path under your home folder: only the home folder's part is replaced;",
       "- HTML references the named escapers do not write, such as Mustache.js's `&#x2F;` and `&#x3D;`, Handlebars' `&#x3D;` and `&#x60;`, a hex `&#x22;`, decimal `&#47;`, or PHP `htmlentities`' `&eacute;` and `&nbsp;`;",
       '- percent-encoding with lower-case hex, such as `%2f`;',
       "- bash's `$'…'` quoting in a C or POSIX locale, which writes non-ASCII bytes as `\\NNN`, and bash 5.2's `\\~`;",
@@ -686,7 +763,7 @@ describe(`${TOOLS_PAGE} — what realm agent replaces (GHSA-gxfq)`, () => {
       "- colour codes (ANSI escape sequences) between a value's characters;",
       "- PHP's `var_export` of a value holding a NUL character, which it writes as `'…' . \"\\0\" . '…'`, and Perl's `Data::Dumper` of a value that holds both a control character (a tab, ESC or DEL, for example) and a non-ASCII character, which it writes with the control character as it is and the non-ASCII character as `\\x{…}`;",
       "- a character newer than the Unicode tables of the program that printed it, or of the Node.js that runs Realm, in a value that also holds another non-ASCII character (Python 3.12 to 3.14, older Go, Ruby and Rust; Node 22's tables are older than Node 24's);",
-      '- in a URL, its password, `user:password` or token on its own, its Basic-auth base64, and the URL without its query string: the whole URL is hidden, and for a declared secret the parts around `&`;',
+      '- in a URL, its password, `user:password` or token printed on its own, its Basic-auth base64 printed on its own, and the URL without its query string apart from its password: the whole URL is hidden, and for a declared secret the parts around `&`;',
       '- other parts of a value than those named above, such as the password in a connection string written `Password=…` or the token in a value written `Bearer …`;',
       '- other escapings than those named above, or a value mixing several;',
     ]) {
@@ -719,12 +796,13 @@ describe(`${TOOLS_PAGE} — what realm agent replaces (GHSA-gxfq)`, () => {
         vi.stubEnv('DOCS_REDACTION_DOTTED_C', '10.20.30.40');
         return !kept([], 'at 10.20.30.40');
       })(),
-      // bullet 4: an environment value under HOME keeps its tail.
-      homeTailKept: (() => {
+      // #729 PR-3: "Your home folder, and every other environment value under it, is hidden whole."
+      homeValueHiddenWhole: (() => {
         vi.stubEnv('DOCS_REDACTION_UNDER_HOME', '/home/fake-docs-user/projects/notes.md');
         setAdditionalRedactionValues([]);
-        return serializeToolResult({ t: '/home/fake-docs-user/projects/notes.md' }).includes(
-          '/projects/notes.md',
+        return (
+          serializeToolResult({ t: '/home/fake-docs-user/projects/notes.md' }) ===
+          JSON.stringify({ t: '[REDACTED]' })
         );
       })(),
       // HTML numeric references: Mustache.js writes `/` as `&#x2F;` and `=` as `&#x3D;`.
@@ -776,14 +854,20 @@ describe(`${TOOLS_PAGE} — what realm agent replaces (GHSA-gxfq)`, () => {
       ),
       // The URL without its query string is shown; for a declared secret, the part after `&` is
       // hidden.
-      urlWithoutQueryKept: kept(
-        [
+      // #729 PR-3: the URL without its query is shown apart from its password, which the URL's
+      // user-part anchor always hides.
+      urlWithoutQueryKept: (() => {
+        setAdditionalRedactionValues([
           ['https', '://', 'fakeuser:FAKEpw12xyz9', '@db.fake.example/x?a=fakeQ1&b=fakeQ2'].join(
             '',
           ),
-        ],
-        ['https', '://', 'fakeuser:FAKEpw12xyz9', '@db.fake.example/x'].join(''),
-      ),
+        ]);
+        const printed = ['https', '://', 'fakeuser:FAKEpw12xyz9', '@db.fake.example/x'].join('');
+        return (
+          serializeToolResult({ t: printed }) ===
+          JSON.stringify({ t: 'https://fakeuser:[REDACTED]@db.fake.example/x' })
+        );
+      })(),
       urlAmpPartHidden: !kept(
         [
           ['https', '://', 'fakeuser:FAKEpw12xyz9', '@db.fake.example/x?a=fakeQ1&b=fakeQ2'].join(
@@ -806,7 +890,7 @@ describe(`${TOOLS_PAGE} — what realm agent replaces (GHSA-gxfq)`, () => {
       declaredFalseHidden: true,
       envDottedNumbersKept: true,
       envFourNumbersHidden: true,
-      homeTailKept: true,
+      homeValueHiddenWhole: true,
       mustacheKept: true,
       decimalKept: true,
       handlebarsBacktickKept: true,
@@ -894,10 +978,10 @@ describe(`${ENV_PAGE} — what realm agent reads its environment for (GHSA-gxfq)
 });
 
 describe(`${MANIFEST_PAGE} — secret values in a builder's error (GHSA-gxfq)`, () => {
-  it('replaces a secret, the forms these programs print it in and its lines with [redacted]', () => {
+  it('replaces a secret, the forms these programs print it in and its lines with [REDACTED]', () => {
     claim(
       MANIFEST_PAGE,
-      'When a function that builds an entry throws, Realm replaces every secret value of 4 or more characters in the message with `[redacted]`, and also the forms these programs print it in:',
+      'When a function that builds an entry throws, Realm replaces every secret value of 4 or more characters in the message with `[REDACTED]`, and also the forms these programs print it in:',
     );
     for (const bullet of FORMS_BULLETS) claim(MANIFEST_PAGE, bullet);
     claim(
@@ -907,7 +991,7 @@ describe(`${MANIFEST_PAGE} — secret values in a builder's error (GHSA-gxfq)`, 
     // Each row's output is the whole message, as a builder's error carries it.
     const verdicts = FAMILIES.map(([family, printer, kase]) => {
       const row = captured(printer, kase);
-      return familyVerdict(family, row, redactSecretValues(row.output, [row.value]), '[redacted]');
+      return familyVerdict(family, row, redactSecretValues(row.output, [row.value]), '[REDACTED]');
     });
     const LINES_SECRET = 'fkFirstLine01\nline-of-the-key-0001';
     const lineOut = redactSecretValues('failed: line-of-the-key-0001', [LINES_SECRET]);
@@ -917,7 +1001,7 @@ describe(`${MANIFEST_PAGE} — secret values in a builder's error (GHSA-gxfq)`, 
     expect({
       verdicts,
       lineHidden: leakedForms(lineOut, LINES_SECRET, ['line-of-the-key-0001']).length === 0,
-      lineMarked: lineOut.includes('[redacted]'),
+      lineMarked: lineOut.includes('[REDACTED]'),
     }).toEqual({ verdicts: HIDDEN_FAMILIES, lineHidden: true, lineMarked: true });
   });
 
@@ -929,7 +1013,7 @@ describe(`${MANIFEST_PAGE} — secret values in a builder's error (GHSA-gxfq)`, 
     const out = redactSecretValues('bad token fkB2y9 in the config', ['fkA1x&fkB2y9']);
     // (a) red when `redactSecretValues` drops `parts: true` (or G3 is removed). (b) prints a
     //     boolean.
-    expect(out === 'bad token [redacted] in the config').toBe(true);
+    expect(out === 'bad token [REDACTED] in the config').toBe(true);
   });
 
   it('leaves a value of 6 bytes or fewer in base64 and base64url when other text was encoded with it', () => {
@@ -978,7 +1062,7 @@ describe(`${MANIFEST_PAGE} — secret values in a builder's error (GHSA-gxfq)`, 
     //     which the tools page lists as left alone, starts being hidden (`lowerPercentKept`).
     //     (b) prints two booleans.
     expect({
-      readHidden: !read.includes(BODY) && read.includes('[redacted]'),
+      readHidden: !read.includes(BODY) && read.includes('[REDACTED]'),
       lowerPercentKept: kept === 'bad token FAKEhd7Q%2fZ9tlFAKE',
     }).toEqual({ readHidden: true, lowerPercentKept: true });
   });
@@ -1028,7 +1112,7 @@ describe(`${MANIFEST_PAGE} — secret values in a builder's error (GHSA-gxfq)`, 
       expect(
         inspected.map((t) => ({
           cause: t.includes('[cause]'),
-          marked: t.includes('[redacted]'),
+          marked: t.includes('[REDACTED]'),
           noSecret: !t.includes(SECRET),
         })),
       ).toEqual([

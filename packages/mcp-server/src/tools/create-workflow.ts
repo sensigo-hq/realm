@@ -24,9 +24,18 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
 } from '@sensigo/realm';
 // #729 PR-0 (Amendment 12): the MCP wire's reply type (the core reply is `EngineReply`).
-import type { McpEnvelope } from '../render-reply.js';
+import {
+  disclosureOfTool,
+  safeTool,
+  toolContentOf,
+  MCP_ENVELOPE_TABLE,
+  type McpEnvelope,
+  type WithDoorDisclosure,
+  replySubject,
+  setForSubject,
+  SAFE_TOOL_CONSTANT_RUNLESS,
+} from '../render-reply.js';
 import { handleStartRun, type HandleRunStores } from './start-run.js';
-import { sseJsonStringify } from '../sse-json.js';
 import { toolMeta } from '../tool-annotations.js';
 import { assertToolStores } from './assert-tool-stores.js';
 
@@ -562,7 +571,11 @@ export async function handleCreateWorkflow(
 }
 
 /** Registers the create_workflow MCP tool on the server. */
-export function registerCreateWorkflow(server: McpServer, opts?: HandleRunStores): void {
+export function registerCreateWorkflow(
+  server: McpServer,
+  opts?: HandleRunStores & WithDoorDisclosure,
+): void {
+  const door = disclosureOfTool(opts);
   // issue #419 — this was the repo's FIRST `registerTool` user (#627 W moved every other tool to it,
   // for their annotations); the deviation was forced rather than stylistic. `server.tool()` accepts a
   // raw shape only: handed a full `z.object` it throws ("expected a Zod schema or
@@ -582,42 +595,47 @@ export function registerCreateWorkflow(server: McpServer, opts?: HandleRunStores
         'Create a dynamic Realm workflow at runtime and immediately start a run. Use this when you have a multi-step task and want to track your own execution plan. Returns next_action pointing at your first step — proceed with execute_step as normal. Top-level fields: steps, metadata, and extensions (extensions is register-time, operator-only, and rejected here); any other field is dropped and returned as a warning.',
       inputSchema: createWorkflowArgsSchema,
     },
-    async (args) => {
-      try {
+    safeTool(
+      async (args) => {
         const result = await handleCreateWorkflow(args as CreateWorkflowArgs, opts);
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: sseJsonStringify({ ...result, command: 'create_workflow' }),
-            },
-          ],
-        };
-      } catch (err) {
+        return toolContentOf(
+          { ...result, command: 'create_workflow' },
+          {
+            set: await setForSubject(
+              door,
+              await replySubject(opts, { runId: result.run_id === '' ? undefined : result.run_id }),
+            ),
+            audience: 'agent',
+            table: MCP_ENVELOPE_TABLE,
+          },
+        );
+      },
+      async (err) => {
         const agentAction =
           err instanceof WorkflowError ? resolvePreExecutionAgentAction(err) : 'report_to_user';
         const message = err instanceof Error ? err.message : String(err);
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: sseJsonStringify({
-                command: 'create_workflow',
-                run_id: '',
-                status: 'error',
-                data: {},
-                evidence: [],
-                warnings: [],
-                errors: [message],
-                agent_action: agentAction,
-                context_hint:
-                  'An error occurred before the workflow could be registered or the run could be started.',
-                next_actions: [],
-              }),
-            },
-          ],
-        };
-      }
-    },
+        return toolContentOf(
+          {
+            command: 'create_workflow',
+            run_id: '',
+            status: 'error',
+            data: {},
+            evidence: [],
+            warnings: [],
+            errors: [message],
+            agent_action: agentAction,
+            context_hint:
+              'An error occurred before the workflow could be registered or the run could be started.',
+            next_actions: [],
+          },
+          {
+            set: await setForSubject(door, await replySubject(opts, {})),
+            audience: 'agent',
+            table: MCP_ENVELOPE_TABLE,
+          },
+        );
+      },
+      SAFE_TOOL_CONSTANT_RUNLESS,
+    ),
   );
 }

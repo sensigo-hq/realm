@@ -193,12 +193,17 @@ realm workflow run <path> [flags]
 
 Runs the workflow in the terminal, one step at a time, asking you for each step's answer and for each gate's choice. It is meant for trying a workflow while you write it. The workflow does not have to be registered.
 
-| Flag                         | Default            | What it does                                                                      |
-| ---------------------------- | ------------------ | --------------------------------------------------------------------------------- |
-| `--params <json>`            | `{}`               | The run's parameters.                                                             |
-| `--extensions-module <path>` | None               | Loads this code file in place of the files named by the workflow's `extensions`.  |
-| `--project <dir>`            | The current folder | The project whose `realm.yaml` applies if the workflow has no project of its own. |
-| `--mint-writer-nonce`        | Off                | Marks each attempt's trace entries with a fresh identifier.                       |
+| Flag                         | Default            | What it does                                                                                                                                                                                               |
+| ---------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--params <json>`            | `{}`               | The run's parameters.                                                                                                                                                                                      |
+| `--params-from-run <run-id>` | None               | Starts with the parameters of an earlier run of this workflow, read from that run's record as they were given, not as any output showed them. Cannot be given with `--params`. Added after version 0.47.1. |
+| `--extensions-module <path>` | None               | Loads this code file in place of the files named by the workflow's `extensions`.                                                                                                                           |
+| `--project <dir>`            | The current folder | The project whose `realm.yaml` applies if the workflow has no project of its own.                                                                                                                          |
+| `--mint-writer-nonce`        | Off                | Marks each attempt's trace entries with a fresh identifier.                                                                                                                                                |
+
+`--params-from-run` refuses a run of another workflow (`Error: run '<run-id>' is a run of workflow '<other>', not '<this>'; its params are not this workflow's.`) and refuses to be given with `--params` (`Error: give --params or --params-from-run, not both.`). `realm run abandon` prints a command that uses it.
+
+Parameters given with `--params`, and an answer typed at a step's prompt, are recorded as given. When they hold a mark Realm prints in place of a hidden value, such as `[REDACTED]`, a warning says so: `Warning: This answer holds '[REDACTED]': a value Realm hid when it showed it, sent back. Realm records what was sent, the marker included, so the run now holds the marker, not the value. Send the value itself, or leave the field out. An answer with no marker is recorded as sent.` For an answer typed at a step's prompt, the same sentence is printed indented under the prompt, without `Warning:`. Added after version 0.47.1.
 
 It needs a terminal. Started without one, it creates no run:
 

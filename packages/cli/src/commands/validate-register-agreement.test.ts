@@ -146,7 +146,7 @@ describe('cell 2 — the manifest pass runs on validate exactly as on register',
     expect(r.code).toBe(0);
     const vLines = v.stderr.split('\n');
     const rLines = r.stderr.split('\n');
-    expect(vLines[0]).toBe('⚠ Deployment manifest secrets: 1 unresolved secret reference(s):');
+    expect(vLines[0]).toBe('⚠ Deployment manifest: 1 secret(s) unresolved:');
     expect(vLines[0]).toBe(rLines[0]);
     // Real-then-sentinel: the message names the dotenv source it READ before degrading.
     expect(v.stderr).toContain(`dotenv (${join(dir, '.env')})`);

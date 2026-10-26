@@ -1,6 +1,16 @@
 // Unit tests for the trace normalizer — deterministic canonicalization of agent trace entries.
 import { describe, it, expect } from 'vitest';
-import { normalizeTrace } from './trace-normalizer.js';
+import { normalizeEntryForBuffer, normalizeTrace } from './trace-normalizer.js';
+import { InMemoryTraceBufferStore } from '../store/trace-buffer-store.js';
+import type { FenceRunReader } from '../store/fence-predicate.js';
+import { declared } from '../test-support/declared.js';
+
+/** A run reader the plain append never consults. */
+const NEVER_READ: FenceRunReader = declared({
+  async get(): Promise<never> {
+    throw new Error('fence unexpectedly evaluated');
+  },
+});
 
 describe('normalizeTrace', () => {
   // ─── basic operation ──────────────────────────────────────────────────────
@@ -322,5 +332,56 @@ describe('normalizeTrace', () => {
     // Fewer entries should be stored when measured by UTF-8 bytes vs JS length.
     // With UTF-8, 800+ bytes per entry, max is ~62 entries before 50KB is hit.
     expect(summary.stored_entries).toBeLessThan(80);
+  });
+});
+
+// #729 PR-3 (RECORD 05 "deleted"; D3/08 trace rail): ONE per-entry normaliser for the evidence path
+// (`normalizeTrace`) and the buffer path (every trace buffer's append). v1's cut is kept exactly —
+// the named exception R14 to I4 — and pinned by LITERAL expectations on both paths, never by
+// comparing the two to each other. (a) red when either path cuts differently (a cap moves, the
+// buffer keeps its own copy with another rule); (b) prints lengths, key lists and event text.
+describe('#729 PR-3 — v1 cut, pinned on both paths', () => {
+  const ENTRY = {
+    event: `  ${'e'.repeat(150)}  `,
+    timestamp: '2026-10-17T00:00:00Z',
+    data: {
+      ...Object.fromEntries(
+        Array.from({ length: 25 }, (_, i) => [`k${String(i).padStart(2, '0')}`, i]),
+      ),
+      k00: 's'.repeat(600),
+      k01: { nested: true } as unknown as string,
+    },
+  };
+  const shape = (e: {
+    event: string;
+    timestamp?: string | undefined;
+    data?: Record<string, unknown> | undefined;
+  }) => ({
+    event: e.event,
+    timestamp: e.timestamp,
+    keys: Object.keys(e.data ?? {}),
+    k00: (e.data?.['k00'] as string | undefined)?.length,
+  });
+  const EXPECTED = {
+    event: 'e'.repeat(100),
+    timestamp: '2026-10-17T00:00:00Z',
+    // The first 20 keys, the object value at k01 dropped.
+    keys: Array.from({ length: 20 }, (_, i) => `k${String(i).padStart(2, '0')}`).filter(
+      (k) => k !== 'k01',
+    ),
+    k00: 500,
+  };
+
+  it('the evidence path', () => {
+    const { entries } = normalizeTrace([ENTRY, { event: ' trace.internal ' }]);
+    expect(entries.map(shape)).toEqual([EXPECTED]);
+  });
+
+  it('the buffer path (core in-memory store; mcp and realm-cloud import the same function)', async () => {
+    const store = new InMemoryTraceBufferStore(NEVER_READ);
+    await store.append('run-1', 'step-1', [ENTRY, { event: ' trace.internal ' }]);
+    const stored = await store.read('run-1', 'step-1');
+    expect(stored.map(shape)).toEqual([EXPECTED]);
+    expect(normalizeEntryForBuffer({ event: '   ' })).toEqual({ event: 'unknown_event' });
   });
 });

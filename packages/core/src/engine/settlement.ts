@@ -23,7 +23,7 @@
 // packages/core/src/engine (outside this file) or packages/mcp-server calls `applySettlement` or
 // a store's `settleStep`. PR-B migrates the three legacy seal sites to construct `SettlementDelta`
 // values and call `store.settleStep` instead of `store.update` directly.
-import type { RunRecord, SealArm, EvidenceSnapshot } from '../types/run-record.js';
+import type { RunRecord, SealArm, EvidenceSnapshot, StepDiagnostics } from '../types/run-record.js';
 import type { WorkflowDefinition, FinalizerTrigger } from '../types/workflow-definition.js';
 import type {
   SettlementDelta,
@@ -55,7 +55,8 @@ import { omitClaim } from './claim-liveness.js';
 import { judgeGateProof, type GateClaimVerdict } from './holder.js';
 import { DRAIN_LEASE_MAX } from './lifecycle.js';
 import { isPastDeadline } from './instants.js';
-import { evaluateGuardConditions } from './precondition.js';
+import { evaluateGuardConditions, type GuardConditionResult } from './precondition.js';
+import { boundWhole } from '../utils/redaction.js';
 
 /** Projects the per-step settled-map entry shape directly off `RunRecord` — avoids a second,
  *  independently-maintained type that could drift from the field it describes. */
@@ -487,18 +488,15 @@ function applyAbortEdge(
 // The run's one-line fail cause (issue #373)
 // ---------------------------------------------------------------------------
 
-/** Per-message cap before the truncation marker — sized from a real-corpus measurement
+/** Per-message cap: a longer message is replaced whole by its marker (B0) — sized from a real-corpus measurement
  *  (2026-08-20, n=31 evidence error messages from a live runsDir: p50=21, p95=248, max=254 — 19%
  *  of real messages were truncated at the previous unanchored 120; 256 keeps the whole observed
  *  distribution verbatim). Re-measure before changing; the 1024 sentence cap remains the global
  *  bound. */
 const FAIL_CAUSE_MESSAGE_CAP = 256;
-/** Hard cap on the WHOLE sentence, marker included — the returned string is never longer than
- *  this. (Tekton caps its joined validation detail at 1024 + `"..."`, i.e. 1027 out; realm's cap
- *  is inclusive, so an overflowing sentence lands at exactly 1024.) */
+/** Cap on the WHOLE sentence: over it, the sentence keeps whole entries while the next would still
+ *  fit, then says how many more failed (F24); no entry is cut (I4). Never longer than this. */
 const FAIL_CAUSE_SENTENCE_CAP = 1024;
-/** ASCII, not `…` — the marker travels through logs, terminals and a Postgres text column. */
-const FAIL_CAUSE_TRUNCATION = '...';
 
 /**
  * Renders the run-level cause for a run with MORE THAN ONE distinct failed step (issue #373).
@@ -529,20 +527,29 @@ export function renderFailCause(
   const rendered = distinct.map((step) => {
     const message = messages.get(step);
     if (message === undefined) return step;
-    const capped =
-      message.length > FAIL_CAUSE_MESSAGE_CAP
-        ? message.slice(0, FAIL_CAUSE_MESSAGE_CAP) + FAIL_CAUSE_TRUNCATION
-        : message;
-    return `${step} ("${capped}")`;
+    // B0 (#729 PR-3): a message is kept whole or replaced by its marker, never cut.
+    return `${step} ("${boundWhole(message, FAIL_CAUSE_MESSAGE_CAP)}")`;
   });
   // Grammatical across the WHOLE input domain, not just the domain the call sites use — a public
   // export that can emit "1 steps failed" is wrong output, precondition or no precondition
   // (ninja's own discipline: "subcommand failed" / "subcommands failed").
-  const sentence = `${distinct.length} step${distinct.length === 1 ? '' : 's'} failed: ${rendered.join(', ')}.`;
-  return sentence.length > FAIL_CAUSE_SENTENCE_CAP
-    ? sentence.slice(0, FAIL_CAUSE_SENTENCE_CAP - FAIL_CAUSE_TRUNCATION.length) +
-        FAIL_CAUSE_TRUNCATION
-    : sentence;
+  const head = `${distinct.length} step${distinct.length === 1 ? '' : 's'} failed: `;
+  const sentence = `${head}${rendered.join(', ')}.`;
+  if (sentence.length <= FAIL_CAUSE_SENTENCE_CAP) return sentence;
+  // F24 (#729 PR-3): the most whole entries that fit, then the count of the rest, so the cause keeps
+  // its count and names what it can; no entry is cut (I4). One forward pass over the lengths (the
+  // sentence for `kept` entries is measured, never built); when not even one entry fits, the count
+  // alone.
+  let best = 0;
+  let prefix = 0;
+  for (let kept = 1; kept < rendered.length; kept++) {
+    prefix += rendered[kept - 1]!.length + (kept > 1 ? 2 : 0);
+    const tail = `, and ${rendered.length - kept} more.`.length;
+    if (head.length + prefix + tail <= FAIL_CAUSE_SENTENCE_CAP) best = kept;
+  }
+  if (best >= 1)
+    return `${head}${rendered.slice(0, best).join(', ')}, and ${rendered.length - best} more.`;
+  return `${distinct.length} step${distinct.length === 1 ? '' : 's'} failed.`;
 }
 
 /**
@@ -1570,6 +1577,24 @@ const CASCADING_KINDS: ReadonlySet<SettlementDelta['kind']> = new Set<Settlement
   'settle_guard',
 ]);
 
+/** A guard step's input: it has none. Frozen (F30): every guard's evidence shares this object.
+ *  Exported for its cell only (not part of the package's index). */
+export const GUARD_INPUT: Record<string, unknown> = Object.freeze({}) as Record<string, unknown>;
+
+/**
+ * #729 PR-3 (RECORD 01 #17): a guard's evaluated conditions live in its step's diagnostics, not in
+ * its `output_summary`, which keeps `{aborted, abort_message}`. A condition's resolved value is a
+ * step output's value, and diagnostics are read only by the record views, which disclose by table.
+ * The estimate is the guard's empty input's, as every step's is computed.
+ */
+function guardDiagnostics(conditions: GuardConditionResult[]): StepDiagnostics {
+  return {
+    input_token_estimate: Math.ceil(JSON.stringify(GUARD_INPUT).length / 4),
+    precondition_trace: [],
+    guard_conditions: conditions,
+  };
+}
+
 /**
  * issue #625: a guard's evaluation — its `abort_unless` conditions over the record's evidence, and
  * ONE evidence entry stamped with the caller's `now`. Pure: no await, no registry, no store.
@@ -1613,12 +1638,9 @@ export function buildGuardDelta(
         // rebuilds the cause from evidence alone, replaced it with the generic condition text.
         // Carrying it here makes every downstream read of this failure lossless.
         //
-        // The path goes FIRST because the per-message cap slices from the head: with the path last,
-        // a long enough condition pushed it off the tail and the diagnostic vanished again. Honest
-        // bound: a pathological PATH over ~230 chars still truncates itself, which is accepted —
-        // head-first truncation keeps its prefix, and the prefix is the orienting part. ASCII
-        // parenthetical, not an em dash, for the same reason the truncation marker is ASCII (logs,
-        // terminals, a Postgres text column) — and a cut-off parenthetical reads as obviously partial.
+        // The path goes FIRST, the orienting part. A message over the per-message cap is replaced
+        // whole by its marker (#729 PR-3 B0: no start of the condition's literal is kept), and the
+        // path goes with it: an over-cap diagnostic shows its shape (the design's residual (g)).
         error: `Guard resolution error: unresolvable path '${outcome.unresolvable_path}' (condition: ${outcome.condition})`,
       }),
       resolutionError: {
@@ -1639,8 +1661,9 @@ export function buildGuardDelta(
         stepId: stepName,
         startedAt: now,
         completedAt: now,
-        input: {},
-        output: { conditions: outcome.conditions, aborted: false },
+        input: GUARD_INPUT,
+        output: { aborted: false },
+        diagnostics: guardDiagnostics(outcome.conditions),
       }),
       evaluatedAtVersion,
     };
@@ -1655,13 +1678,13 @@ export function buildGuardDelta(
       stepId: stepName,
       startedAt: now,
       completedAt: now,
-      input: {},
+      input: GUARD_INPUT,
       output: {
-        conditions: outcome.conditions,
         aborted: true,
         ...(stepDef.abort_message !== undefined ? { abort_message: stepDef.abort_message } : {}),
       },
       error: stepDef.abort_message ?? `Guard step '${stepName}' aborted the run.`,
+      diagnostics: guardDiagnostics(outcome.conditions),
     }),
     abort: {
       conditions: outcome.conditions,

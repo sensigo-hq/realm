@@ -33,7 +33,7 @@ import {
 } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
 import { answererPhrase, recordedAnswer } from '../lib/holder-render.js';
-import { CLI_COMMANDS, NO_DRIVE_FLAGS, cannotGoOnLines, owedItems } from './ways-renderer.js';
+import { CLI_COMMANDS, cannotGoOnLines, owedItems, writerHost } from './ways-renderer.js';
 import {
   agentReadyReason,
   attendingLine,
@@ -44,13 +44,14 @@ import {
   PROJECT_OPTION_HELP,
   type ProjectLoad,
 } from './run-advance.js';
+import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
 
 /**
  * issue #625: the last line for an answer the gate's expiry beat — never `Responded:`. The choice
  * and the phase come from the run record (`lateAnswerOutcome`), never from the reply's text.
  */
 function notRecordedLine(runId: string, late: { choice: string; phase: string }): string {
-  return `Not recorded: ${runId} | gate settled by timeout with choice '${late.choice}' | state '${late.phase}'`;
+  return `Not recorded: ${runId} | gate settled by timeout with choice '${late.choice}' | state '${writerCtx().word(late.phase, RUN_PHASE_WORDS)}'`;
 }
 
 /**
@@ -74,7 +75,7 @@ function nextLines(
   const ways = composeWaysAt(run, now, { definition: workflow, registry });
   // decisions C62, C64: when the answer leaves nothing that can run from here, each engine step
   // that cannot run and the way out — the renderer's lines, never a copy.
-  const cannotGoOn = cannotGoOnLines(ways, runId, derivePhase(run));
+  const cannotGoOn = cannotGoOnLines(ways, runId, derivePhase(run), writerCtx());
   const ready = agentReadyReason(runId, pending.agent_steps);
   const advance = ways.ways.find((w) => w.verb === 'advance');
   const commands = [
@@ -85,7 +86,7 @@ function nextLines(
           const one = items.length === 1;
           const until = one ? '' : ' until a step opens a question, fails or ends the run';
           return [
-            `Owed to the engine: ${items.join(', ')} — ${CLI_COMMANDS.advance(advance, undefined, NO_DRIVE_FLAGS)} runs ${one ? 'it' : 'them'}${until}, with ${laterAdvanceCodeWhere(workflow, hasCode)}, in the environment of the shell it runs in.`,
+            `Owed to the engine: ${items.join(', ')} — ${CLI_COMMANDS.advance(advance, undefined, writerHost())} runs ${one ? 'it' : 'them'}${until}, with ${laterAdvanceCodeWhere(workflow, hasCode)}, in the environment of the shell it runs in.`,
           ];
         })()
       : []),
@@ -145,17 +146,17 @@ function gateMismatchLines(result: EngineReply): string[] {
   return (result.error?.remedy ?? []).flatMap((way) => {
     if (way.verb === 'respond') {
       return [
-        `The open question is on step '${way.step}' — answer it: ${CLI_COMMANDS.respond(way, undefined, NO_DRIVE_FLAGS)}`,
+        `The open question is on step '${way.step}' — answer it: ${CLI_COMMANDS.respond(way, undefined, writerHost())}`,
       ];
     }
     if (way.verb === 'advance' && open !== undefined) {
       return [
-        `The open question on step '${open.step}' can no longer be answered: its time is up — to carry out its expiry: ${CLI_COMMANDS.advance(way, undefined, NO_DRIVE_FLAGS)}`,
+        `The open question on step '${open.step}' can no longer be answered: its time is up — to carry out its expiry: ${CLI_COMMANDS.advance(way, undefined, writerHost())}`,
       ];
     }
     if (way.verb === 'inspect' && open === undefined) {
       return [
-        `No question is open on this run — to read it: ${CLI_COMMANDS.inspect(way, undefined, NO_DRIVE_FLAGS)}`,
+        `No question is open on this run — to read it: ${CLI_COMMANDS.inspect(way, undefined, writerHost())}`,
       ];
     }
     return [];
@@ -367,7 +368,7 @@ export async function respondToGate(
     recorded: true,
     lines,
     lastLine: [
-      `Responded: ${runId} | choice '${options.choice}'${answeredBy} | new state '${phase}'`,
+      `Responded: ${runId} | choice '${options.choice}'${answeredBy} | new state '${writerCtx().word(phase, RUN_PHASE_WORDS)}'`,
       ...nextLines(runId, workflow, updatedRun, effectiveRegistry, hasCode),
     ].join('\n'),
   };

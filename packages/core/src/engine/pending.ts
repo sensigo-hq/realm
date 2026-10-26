@@ -9,7 +9,7 @@ import { classifyStepTrust, buildTrustRefusal } from '../types/workflow-definiti
 import type { RunRecord, PendingGate } from '../types/run-record.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
 import type { ExtensionIdentityEntry } from '../types/extension-identity.js';
-import { extensionIdentityDiffers } from '../types/extension-identity.js';
+import { extensionIdentityDiffers, lastExecutionIdentity } from '../types/extension-identity.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import {
   findEligibleSteps,
@@ -20,7 +20,7 @@ import {
 import { RESUMABLE_PHASES } from './lifecycle.js';
 import { escapedBoundedValue } from '../utils/redaction.js';
 import { shellWord } from '../utils/shell-word.js';
-import { checkPreconditions } from './precondition.js';
+import { checkPreconditions, preconditionHint, preconditionRefusal } from './precondition.js';
 import { validateInputSchema } from '../validation/input-schema.js';
 import {
   describeValidationProblems,
@@ -149,14 +149,14 @@ export function checkPreClaim(args: {
       if (stepDef?.preconditions !== undefined && stepDef.preconditions.length > 0) {
         const failed = checkPreconditions(stepDef.preconditions, buildEvidenceByStep(run));
         if (failed !== null) {
-          const hint = `Precondition failed for step '${step}'.`;
+          const hint = preconditionHint(step);
           // F5 (review A2-3): the view's `refusal` reaches `realm run inspect`, `realm run advance`,
           // `realm agent`, every reply hint, `get_run_state` and the `realm listen` log, so the value a
           // step's output gave is rendered through the escaped, bounded value renderer — one line, no
           // terminal escape, never a line that reads as one of the screen's own. #729 PR-0 (E1 (b)):
           // the reply's suggestion too — the byte-identical raw form ends here.
           const value = escapedBoundedValue(failed.resolved_value);
-          const refusal = `${hint} Precondition failed: '${failed.expression}'. Resolved value: ${value}.`;
+          const refusal = preconditionRefusal(hint, failed.expression, value);
           return {
             refused_by: 'precondition',
             refusal,
@@ -435,8 +435,17 @@ const quoteList = (names: readonly string[]): string => names.map((n) => `'${n}'
  * that closes a literal Realm quoted (`must match pattern "^https?"`, which needs its stop), so a
  * sentence that ends inside a quote or bracket gets a second mark.
  */
+/**
+ * #729 PR-3: the text as a reader sees it. The CLI writer marks a command a reader copies as a span
+ * (U+E000, a kind and a tag, U+E001, the text, U+E002) and prints only the text; the sentence rules
+ * below read through those marks, so a line that ends with a marked command still ends with it.
+ */
+function visibleText(text: string): string {
+  return text.replace(/\uE000[^\uE001\uE002]*\uE001|\uE002/g, '');
+}
+
 export function withFullStop(text: string): string {
-  return /[\p{Sentence_Terminal}…]$/u.test(text) ? text : `${text}.`;
+  return /[\p{Sentence_Terminal}…]$/u.test(visibleText(text)) ? text : `${text}.`;
 }
 
 /**
@@ -445,7 +454,8 @@ export function withFullStop(text: string): string {
  * argument, `--flags`, a flag's value and `<placeholders>` (`<one of: a, b>` is one). A command
  * followed by words (`realm run advance <id> runs them …`) does not end the text.
  */
-export function endsWithCommand(text: string): boolean {
+export function endsWithCommand(marked: string): boolean {
+  const text = visibleText(marked);
   const start = text.lastIndexOf('realm ');
   if (start < 0 || (start > 0 && text[start - 1] !== ' ')) return false;
   // F6: a token is a POSIX word — quoted with '…' (as `shellWord` writes it), with backslash escapes —
@@ -873,7 +883,8 @@ export function judgeProgramFit(
   run: RunRecord,
   registryIdentity: ExtensionIdentityEntry | undefined,
 ): ProgramFit {
-  const recorded = run.extension_identity?.at(-1);
+  // #729 PR-3 correction 5 (J-5): the last EXECUTION entry; a start entry is not a baseline.
+  const recorded = lastExecutionIdentity(run.extension_identity);
   if (recorded === undefined && registryIdentity === undefined) return 'none';
   if (recorded === undefined || registryIdentity === undefined) return 'not_comparable';
   if (recorded.error !== undefined || registryIdentity.error !== undefined) return 'not_comparable';

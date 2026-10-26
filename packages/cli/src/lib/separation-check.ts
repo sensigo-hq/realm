@@ -21,6 +21,7 @@ import { osLogin } from './program-identity.js';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  GATE_ANSWERS_VALUES,
   separationGaps,
   separationModeOf,
   separationPrevents,
@@ -38,6 +39,7 @@ import {
   switchClausesOf,
   switchPathsCondition,
 } from '@sensigo/realm';
+import { PLAIN, type RenderCtx } from '../output/writer.js';
 import {
   lookups,
   measureSwitchPaths,
@@ -698,8 +700,10 @@ const CONDITION_WORDS: Record<
   (e: SeparationEvidence & { service_user_from?: string }) => string
 > = {
   store_reach: () => "This login can write Realm's store or open its files",
+  // Correction 3 (H-9, D-14): no credential word right before the line's colon, so the reading
+  // after it prints whole.
   become_service_user: (e) =>
-    `This login can become Realm's service user${e.service_user !== undefined ? ` (${serviceUserWords(e)})` : ''} without a password`,
+    `This login can become Realm's service user${e.service_user !== undefined ? ` (${serviceUserWords(e)})` : ''} without a password being asked`,
   root_engine: () => 'This login can reach an engine that runs as root',
   // Correction 2 (5.6): what it measured — the Node binary and Realm package this check runs from.
   trust_root_writable: () =>
@@ -739,12 +743,14 @@ export function conditionLine(
 }
 
 /** The value condition's line (F36): measured only when given on this command line. */
-export function valueLine(e: CheckEvidence): string {
+export function valueLine(e: CheckEvidence, ctx: RenderCtx = PLAIN): string {
   const v = e.value;
   if (v.value === 'withheld') {
+    // Correction 3 (H-8): the value stands alone before its parenthesis or comma, so it prints whole.
+    const word = ctx.word(v.value, GATE_ANSWERS_VALUES);
     return valueMeasuredWithheld(e)
-      ? 'The gate-answers value: withheld (given on this command line).'
-      : `The gate-answers value: withheld, configured, not enforced by Realm — from ${v.source.ref}; the running server's value is not read.`;
+      ? `The gate-answers value: ${word} (given on this command line).`
+      : `The gate-answers value: ${word}, configured, not enforced by Realm — from ${v.source.ref}; the running server's value is not read.`;
   }
   // Correction 1 (D5): under `asked` the answer way depends on the door — `realm mcp` sends forms to
   // apps that show them; `realm serve` sends none.
@@ -754,7 +760,8 @@ export function valueLine(e: CheckEvidence): string {
       : e.door === 'serve'
         ? 'every client keeps an answer way (this server sends no forms)'
         : 'the agent keeps an answer way in apps without forms';
-  return `The gate-answers value: ${v.value} (from ${v.source.ref}) — ${keeps}.`;
+  // C1: the value stands alone here (the `withheld` sentences above hold it inside prose: R33).
+  return `The gate-answers value: ${ctx.word(v.value, GATE_ANSWERS_VALUES)} (from ${v.source.ref}) — ${keeps}.`;
 }
 
 const MODE_WORDS: Record<SeparationMode, string> = {
@@ -898,7 +905,7 @@ export function separationClaim(
 }
 
 /** The whole check's lines: W-x1, the login measured, each W-x2 line, the value line. */
-export function renderSeparation(e: CheckEvidence): string[] {
+export function renderSeparation(e: CheckEvidence, ctx: RenderCtx = PLAIN): string[] {
   const lines = [
     `Separation: ${MODE_WORDS[separationModeOf(e)]} — ${separationClaim(e)}`,
     // Correction 2 (8.5): a store that was not found is not one the check measured against.
@@ -926,7 +933,7 @@ export function renderSeparation(e: CheckEvidence): string[] {
         'economics_writable',
       ] as const
     ).map((c) => `  ${conditionLine(c, e)}`),
-    `  ${valueLine(e)}`,
+    `  ${valueLine(e, ctx)}`,
   ];
   return lines;
 }

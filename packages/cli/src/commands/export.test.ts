@@ -104,7 +104,8 @@ describe('buildExportBundle', () => {
       );
 
       expect(warning).toBeUndefined(); // terminal — no best-effort warning
-      expect(bundle.realm_export_version).toBe(4);
+      // #729 PR-3: v5 — masked by default, with its receipt.
+      expect(bundle.realm_export_version).toBe(5);
       expect(bundle.exported_at).toBe(now.toISOString());
       expect(bundle.run).toEqual(run);
       // issue #220 (R-EXTRAS): the export bundle round-trips validation_rejections.
@@ -146,7 +147,8 @@ describe('buildExportBundle', () => {
       expect(warning).toContain('1 finalizer(s) not yet delivered');
       expect(warning).toContain(`realm run drain ${run.id}`);
       // No bundle-version bump — run rides the export verbatim either way.
-      expect(bundle.realm_export_version).toBe(4);
+      // #729 PR-3: v5 — masked by default, with its receipt.
+      expect(bundle.realm_export_version).toBe(5);
       expect(bundle.run.finalizer_ledger).toEqual(run.finalizer_ledger);
     } finally {
       await rm(dir, { recursive: true, force: true });

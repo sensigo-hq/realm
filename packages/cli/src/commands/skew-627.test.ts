@@ -115,7 +115,7 @@ describe.skipIf(!ready)(
         //     the exit and the line.
         expect({ code: answered.code, line: line?.trim() }).toEqual({
           code: 0,
-          line: "Answer: approve · answered by (not stated) · how it arrived was not recorded · token: none passed (a token is passed only by Realm's MCP answer tool, from the conversation that opened the question, or by a program that calls the library with it)",
+          line: "Answer: approve · answered by (not stated) · how it arrived was not recorded · no claim token passed (a token is passed only by Realm's MCP answer tool, from the conversation that opened the question, or by a program that calls the library with it)",
         });
       },
       120_000,

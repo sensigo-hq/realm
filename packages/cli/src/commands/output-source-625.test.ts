@@ -170,7 +170,7 @@ describe(
     it('realm run export writes the record as stored; a reader derives the source, or why there is none, with core’s outputSourceOf', async () => {
       claim(
         'docs/reference/run-record-and-export.md',
-        '`realm run export` writes the record as stored, so a reader of an export derives the absence with that same read.',
+        "`realm run export` writes the record's facts as stored (it masks values only), so a reader of an export derives the absence with that same read.",
       );
       claim(
         'docs/reference/run-record-and-export.md',
@@ -178,7 +178,9 @@ describe(
       );
       const id = await ranAll();
       const out = join(home, 'bundle.json');
-      const r = realm('run', 'export', id, '--out', out);
+      // #729 PR-3: this run has no project, so its declared secrets are unknown; export writes it only
+      // when that is accepted.
+      const r = realm('run', 'export', id, '--out', out, '--accept-partial-disclosure');
       expect(r.code, r.err.join('\n')).toBe(0);
       const bundle = JSON.parse(readFileSync(out, 'utf8')) as {
         run: { evidence: EvidenceSnapshot[] };

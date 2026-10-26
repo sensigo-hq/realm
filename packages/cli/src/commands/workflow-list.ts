@@ -10,6 +10,8 @@
 import { Command } from 'commander';
 import { JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
+import { printJsonByTable } from '../output/writer.js';
+import type { ClassTable } from '@sensigo/realm';
 
 /**
  * Alphabetical by id — the documented order, and the only one an operator can predict.
@@ -38,6 +40,16 @@ function pad(value: string, width: number): string {
   return value.length >= width ? value : value + ' '.repeat(width - value.length);
 }
 
+/** #729 PR-3 (L-5): the listing's class table — ids, names, versions and paths are facts; a read
+ *  failure's reason is a diagnostic copy. */
+const WORKFLOW_LIST_JSON_TABLE: ClassTable = {
+  workflows: 'fact',
+  unreadable: {
+    nested: { reason: 'bounded', file: 'fact', class: 'fact', errno: 'fact', repair: 'fact' },
+  },
+  mismatched: 'fact',
+};
+
 export const workflowListCommand = new Command('list')
   .description('List registered workflow definitions (sorted by id)')
   .option('--json', 'Emit the listing as JSON on stdout, and nothing else')
@@ -47,23 +59,21 @@ export const workflowListCommand = new Command('list')
     const sorted = sortedById(workflows);
 
     if (opts.json === true) {
-      console.log(
-        JSON.stringify(
-          {
-            workflows: sorted.map((w) => ({
-              id: w.id,
-              name: w.name,
-              version: w.version,
-              origin: w.origin ?? null,
-              schema_version: w.schema_version ?? null,
-              current: w.schema_version === CURRENT_WORKFLOW_SCHEMA_VERSION,
-            })),
-            unreadable,
-            mismatched,
-          },
-          null,
-          2,
-        ),
+      // #729 PR-3 (L-5): built by table, printed as one data span.
+      printJsonByTable(
+        {
+          workflows: sorted.map((w) => ({
+            id: w.id,
+            name: w.name,
+            version: w.version,
+            origin: w.origin ?? null,
+            schema_version: w.schema_version ?? null,
+            current: w.schema_version === CURRENT_WORKFLOW_SCHEMA_VERSION,
+          })),
+          unreadable,
+          mismatched,
+        },
+        WORKFLOW_LIST_JSON_TABLE,
       );
       return;
     }

@@ -3,6 +3,7 @@ import type { RunRecord, SealedBy } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { SettlementDelta, SettlementResult } from '../types/settlement.js';
 import type { Attributed } from '../engine/holder.js';
+import type { ExtensionIdentityEntry } from '../types/extension-identity.js';
 
 /**
  * The load-bearing `RunRecord` fields the engine treats specially enough that a store must
@@ -82,6 +83,13 @@ export interface CreateRunOptions {
    * - `fail` — throw `STATE_RUN_ALREADY_ACTIVE`.
    */
   onLiveMatch?: 'use_existing' | 'fail';
+  /**
+   * #729 PR-3 correction 5 (J-5, R48): the run's first `extension_identity` entries, written with
+   * the new record (the creator's start entry, `origin: 'start'`). A run the call does not create
+   * (an idempotent reuse) is not changed. A store that does not persist `extension_identity`
+   * leaves them out.
+   */
+  extensionIdentity?: ExtensionIdentityEntry[];
 }
 
 export interface RunStore {

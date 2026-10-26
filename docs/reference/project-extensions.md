@@ -279,7 +279,7 @@ The run goes on. The warning does not stop it.
 `realm run inspect <run-id> --check-drift` hashes the files on disk again and compares them with the last entry:
 
 ```text
-Drift check (pure recompute of the last entry under its recorded rules):
+Drift check (pure recompute of the last execution entry under its recorded rules):
   module /srv/shop/ext/a.mjs: same
   tree: same
 ```

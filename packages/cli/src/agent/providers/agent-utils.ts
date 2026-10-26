@@ -1,7 +1,8 @@
 // agent-utils.ts — Shared utility functions for LLM provider agentic loops.
 import type { AgentSubmissionValidation, UsageRecord } from '@sensigo/realm';
 import { describeValidationProblems, renderProblemsLines } from '@sensigo/realm';
-import { redactWith, variantsOf } from './redaction-variants.js';
+import { buildDisclosureSet, disclose, discloseValue, type DisclosureSet } from '@sensigo/realm';
+import { stripMarks, writerSetFor } from '../../output/writer.js';
 
 const SYSTEM_PROMPT_BASE =
   'You are an AI agent executing a step in a structured workflow.\n' +
@@ -39,106 +40,51 @@ export function buildSystemPrompt(
 }
 
 /**
- * Additional literal values to redact on the provider-loop surfaces — manifest-resolved
- * secret VALUES (dotenv-sourced values are absent from process.env, so without this they
- * would pass unredacted). Values only, module-level, never persisted anywhere; set once
- * per agent run by runAgent from the loaded extensions result.
+ * #729 PR-3 (RECORD 01 #19; prompt 03 L-5): what a model is given and what the run record keeps of a
+ * drive are disclosed by core's law, for the agent audience: the declared values of the drive's
+ * manifest, the environment (core's one filter: 8 characters and over, the #407 rules, HOME and
+ * values under it), the credential names and the anchors — every form of every value
+ * (`variantsOf`), marked on the original text and replaced once. The set builder is core's
+ * (`buildDisclosureSet`); this module keeps only the drive's declared values.
  */
-let additionalRedactionValues: readonly string[] = [];
+let driveDeclared: Readonly<Record<string, string>> = {};
 
-/** Sets the manifest-secret values redacted alongside process.env values. */
+/**
+ * The declared secret VALUES of this drive's manifest (dotenv-sourced values are absent from the
+ * environment, so without this they would pass). Values only, module-level, never persisted; set
+ * once per agent run by `runAgent` from the loaded extensions result.
+ */
 export function setAdditionalRedactionValues(values: readonly string[]): void {
-  additionalRedactionValues = values;
+  driveDeclared = Object.fromEntries(values.map((value, i) => [`manifest#${i + 1}`, value]));
 }
 
 /**
- * The THREE launcher keys whose values are public by name, not by prefix (issue #407).
- *
- * Exact keys, deliberately — the prefix form they replace was a secret channel. Yarn classic
- * flattens the ENTIRE package.json into `npm_package_*`, so `npm_package_deploy_apiKey` was
- * excluded from redaction under that launcher. With a closed set of three, everything a launcher
- * invents is swept by default: `npm_package_config_*`, `npm_config_*`, every yarn1-flattened
- * field, and `npm_lifecycle_script` — whose value is author-written script text that can carry an
- * inline token, and whose whole line is echoed by a spawn failure.
- *
- * `npm_package_json` is NOT here: it is path-valued on every launcher that sets it, so it belongs
- * to the under-HOME value rule below — a checkout under home keeps its tail, one outside home is
- * redacted whole, which is the same privacy trade every other path value gets.
- *
- * Case-sensitive on purpose: a hostile `NPM_PACKAGE_NAME` is not one of these and stays swept.
+ * The set for what a model and the run record are given. Under the CLI's writer, its agent set —
+ * every manifest this process loaded, and the manifests' not-secret lists; a library caller with no
+ * writer gets the environment's set and the drive's declared values, built by core per call.
  */
-const EXCLUDED_LAUNCHER_METADATA = new Set([
-  'npm_package_name',
-  'npm_package_version',
-  'npm_lifecycle_event',
-]);
+export function agentDisclosureSet(): DisclosureSet {
+  return (
+    writerSetFor('agent') ??
+    buildDisclosureSet({
+      env: process.env,
+      declared: driveDeclared,
+      declaredState: 'resolved',
+      audience: 'agent',
+    }).set
+  );
+}
+
+/** Text as a model and the run record are given it: every tier, and no span mark (D3/07 R3-4) —
+ *  the marks removed BEFORE the law reads it (F26), so none can part a name from its value. */
+export function discloseForAgent(text: string): string {
+  return disclose(stripMarks(text), agentDisclosureSet(), 'all').text;
+}
 
 /**
- * Values that are public by SHAPE: booleans, and 2-or-3-segment dotted version numbers.
- *
- * Launchers inject these constantly — pnpm's `pnpm_config_verify_deps_before_run=false`, yarn1's
- * `YARN_WRAP_OUTPUT=false`, npm's `npm_config_npm_version=11.8.0` — so the word "false" and any
- * matching version string were being cut out of every message and every recorded tool result.
- *
- * The bound is narrow on purpose. A looser `\d+(\.\d+)*` would admit bare integers (numeric
- * PINs, account ids) and IPv4 addresses — values the sweep exists for. Two or three segments,
- * each dotted, and nothing else: `1.0.0-beta` and four-segment strings stay swept.
- *
- * Case-sensitive: `FALSE` stays swept. The `true` alternative is dead today — four characters,
- * already below the length filter — and is kept as defense should that filter ever change.
- */
-const PUBLIC_VALUE_SHAPE = /^(true|false|\d+\.\d+(\.\d+)?)$/;
-
-/**
- * Converts an error value to a string and strips sensitive values ({@link sanitizeText}): every
- * form in {@link redactionSet} — process.env values longer than 4 characters and the additional
- * (manifest-secret) values, each with its listed encoded forms and lines ({@link variantsOf}) — and
- * every `Bearer` token and query-string `token=` value. All of them are marked on the ORIGINAL
- * text, and each run of marked characters is replaced once, so a short value inside a longer one,
- * two values side by side, or a value that is itself the word `Bearer` or `token` leaves no
- * fragment of the other behind.
- *
- * THE BOUNDARY (issue #407). The default is fail-closed — every env value over four characters
- * is redacted — with three bounded exceptions, and everything else swept. Where the field bounds
- * redaction by key semantics or by registered values, realm keeps the closed default and names
- * its exceptions.
- *
- * Why it exists at all: under npm, `npm_package_name` is `"realm"`, so realm redacted its own
- * name out of its own error messages. Console-only that was cosmetic; issue #401 persists those
- * messages in the run record, which made the mangling durable evidence.
- *
- * The first fix excluded `npm_package_*` BY PREFIX — and that was itself a secret channel. Yarn
- * classic flattens the whole package.json into that namespace, so `npm_package_deploy_apiKey`
- * and `npm_package_scripts_ship` (a script line with an inline token) were excluded from
- * redaction. The premise "npm_package_* is public metadata" is true of npm, pnpm, bun and berry,
- * and FALSE of yarn 1.x. Exact keys cannot be flattened into.
- *
- * The three rules, applied to the ENV SWEEP ONLY:
- *
- *  1. EXACT KEYS — {@link EXCLUDED_LAUNCHER_METADATA}, three of them, none path-valued.
- *  2. PUBLIC SHAPE — {@link PUBLIC_VALUE_SHAPE}: booleans and dotted versions, which launchers
- *     inject everywhere and which mangled ordinary prose ("received false") and version numbers.
- *  3. UNDER HOME — a value starting with `HOME + '/'` leaves the sweep, so a require stack
- *     renders `[REDACTED]/code/realm/…`: the tail is the informative half, the username is not.
- *     HOME ITSELF stays swept, which is what strips the prefix.
- *
- * Rule 3 is CONDITIONAL PRIVACY, and the condition is the point: a path outside home — the WSL
- * `/mnt/c/Users/<Name>` shape — cannot have its username stripped by a home-prefix rule, so it
- * stays redacted whole. Accepted bound: a path INTO home (`SECRET_PATH=/home/x/secrets/key.pem`)
- * reveals its tail. A path to a secret is not the secret — file content never transits env — but
- * the tail can disclose directory structure. The remedy for a sensitive path is to declare it a
- * manifest secret: the exemption below redacts declared values even under home.
- *
- * THE EXEMPTION, load-bearing: rules 2 and 3 filter the ENV sweep only. `additionalRedactionValues`
- * — values an author DECLARED secret — are never filtered, however public-shaped they look or
- * wherever they live; each is expanded through {@link variantsOf} like every swept value.
- *
- * BLAST RADIUS: the same set, built by {@link redactionSet}, also hides tool results
- * ({@link serializeToolResult}) and the agent step's prompt (`run-agent.ts`), so persisted tool
- * results heal with it — going forward. Records written by earlier releases keep the mangled form.
- * A swept value's encoded forms and lines are hidden too. Every form encodes the whole value,
- * except a shifted or trimmed base64 form and a line, which are at least 8 characters — so an
- * ordinary hash, UUID or config line is not mangled by a fragment of a short value.
+ * Converts an error value to a string and hides what the law hides for the agent audience
+ * ({@link discloseForAgent}). The messages it returns are stored (`drive_failures`, a tool call's
+ * error) and printed, so every tier applies before any cut.
  */
 export function sanitizeError(err: unknown): string {
   let text: string;
@@ -149,155 +95,48 @@ export function sanitizeError(err: unknown): string {
   } else {
     text = String(err);
   }
-  return sanitizeText(text, redactionSet().forms);
+  return discloseForAgent(text);
 }
 
-/** The characters a `Bearer` or `token=` run takes, beside positions a member already covers. */
-const TOKEN_RUN_CHAR = /[A-Za-z0-9._-]/;
-/** The anchors whose following run is hidden whatever its value. */
-const TOKEN_ANCHORS = ['Bearer ', 'token='] as const;
-
 /**
- * Strips sensitive values from `text`, reading everything off the ORIGINAL text, then replacing:
- *  1. every position covered by any occurrence of any member of `set` is marked;
- *  2. after each `Bearer ` and each `token=` (case as written), the run that follows is marked:
- *     each next character that is in `[A-Za-z0-9._-]` or already marked by step 1;
- *  3. each maximal run of marked characters is written as ONE `[REDACTED]`.
- * So a value holding `token=` (a connection string) is hidden whole; a listed form inside a token
- * does not leave the rest of the token shown; and a value equal to the anchor word itself (an OAuth
- * `token_type` of `Bearer`, a parameter named `token`) cannot hide the anchor before the token
- * after it is found. `Bearer abc` reads `Bearer [REDACTED]`, as before.
+ * #729 PR-3 (D3/08 S2): a provider's snippet of what it was sent back — escaped (a newline, an
+ * escape character or any other control is its JSON escape; the C1 controls and the line
+ * separators too), then disclosed with every tier, then cut at `cap` with `…`. The cut comes last,
+ * so no start of a secret is kept (I4); a long ordinary text shows its first `cap` characters.
  */
-export function sanitizeText(text: string, set: readonly string[]): string {
-  const marked = new Uint8Array(text.length);
-  let any = false;
-  for (const member of set) {
-    if (member === '') continue;
-    for (let i = text.indexOf(member); i !== -1; i = text.indexOf(member, i + 1)) {
-      marked.fill(1, i, i + member.length);
-      any = true;
-    }
-  }
-  for (const anchor of TOKEN_ANCHORS) {
-    for (let i = text.indexOf(anchor); i !== -1; i = text.indexOf(anchor, i + 1)) {
-      const start = i + anchor.length;
-      let end = start;
-      while (end < text.length && (marked[end] === 1 || TOKEN_RUN_CHAR.test(text.charAt(end)))) {
-        end++;
-      }
-      if (end > start) {
-        marked.fill(1, start, end);
-        any = true;
-      }
-    }
-  }
-  if (!any) return text;
-  let out = '';
-  let k = 0;
-  while (k < text.length) {
-    const from = k;
-    if (marked[k] === 1) {
-      while (k < text.length && marked[k] === 1) k++;
-      out += '[REDACTED]';
-    } else {
-      while (k < text.length && marked[k] !== 1) k++;
-      out += text.slice(from, k);
-    }
-  }
-  return out;
+export function passedSnippet(value: unknown, cap = 200): string {
+  const text =
+    value instanceof Error ? value.message : typeof value === 'string' ? value : String(value);
+  const escaped = JSON.stringify(text)
+    .slice(1, -1)
+    .replace(
+      /[\u007f-\u009f\u2028\u2029]/g,
+      (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
+    );
+  const passed = discloseForAgent(escaped);
+  return passed.length > cap ? `${passed.slice(0, cap)}…` : passed;
 }
 
 /**
- * The redaction set, built PER CALL. `values` is the value list: every `process.env` value the
- * sweep keeps (issue #407's boundary at {@link sanitizeError}: longer than four characters, minus
- * its three exceptions) plus the declared {@link additionalRedactionValues}, deduplicated. `forms`
- * is each of those values expanded through {@link variantsOf} — the value, every form the listed
- * printers write it in (JSON at one and two levels, quoted and escaped, shell-quoted, as entities,
- * URL-encoded, base64, base64url and hex) and each of its lines — deduplicated. A DECLARED secret is
- * expanded with `parts`, so the parts GitHub's runner masks of a registered secret (the value
- * without its surrounding double quotes, the sections around `&`, the value with its escapes read)
- * are hidden too; an environment value is expanded without them, because a part is hidden on its
- * own, everywhere (on the sweep it would hide the last query parameter of every URL in the
- * environment). A value that is both is expanded with `parts`. Both lists are sorted LONGEST-FIRST.
+ * Serializes an MCP tool result to a string, disclosed for the agent audience ONCE (L-5): a string
+ * result through the law; any other result normalised through JSON and walked as a value (core's
+ * `discloseValue`) BEFORE it is encoded — every key and string read DECODED, so a value JSON-escaped
+ * by the result's encoding is raw again there, and a value under a credential name is hidden whole.
+ * A number or boolean whose JSON text holds a member becomes `"[REDACTED]"`, so the output parses.
+ * Then one pass over the encoded output with the same set (idempotent): it hides a value only the
+ * encoded text spells — one ending in a lone `\`, which the walk cannot read — as the serializer did
+ * before.
  *
- * It stays in the CLI: it reads the environment, and core stays I/O-free.
- */
-export function redactionSet(): { values: string[]; forms: string[] } {
-  // Read PER CALL, never captured at module scope: a module-scope read is the issue-#285 class
-  // and would make every `vi.stubEnv('HOME', …)` cell test the process's real home instead.
-  //
-  // Keyed on `process.env.HOME`, deliberately NOT `os.homedir()`, and the listen.ts #332
-  // precedent that brands bare HOME reads house-inconsistent does not apply here: the filter key
-  // MUST be the same string the sweep can still redact. With homedir() and HOME unset or
-  // different, under-home values would leave the sweep while nothing redacted their prefix, and
-  // the full path would ship bare. The coupling is the mechanism.
-  //
-  // The length guard is not cosmetic: a HOME of four characters or fewer is itself outside the
-  // sweep, so nothing would redact the prefix it strips. No normalization either — a trailing
-  // slash makes `HOME + '/'` never match, the rule no-ops, and the value stays redacted.
-  //
-  // win32 is a stated non-goal rather than an oversight (realm has live win32 branches
-  // elsewhere): HOME is typically undefined there, so the rule no-ops into today's fail-closed
-  // full redaction, and `USERPROFILE` is deliberately unhandled — its value stays swept.
-  const home = process.env['HOME'];
-  const homePrefix = home !== undefined && home.length > 4 ? `${home}/` : undefined;
-  const envValues = Object.entries(process.env)
-    .filter(([key]) => !EXCLUDED_LAUNCHER_METADATA.has(key))
-    .map(([, val]) => val)
-    .filter((val): val is string => val !== undefined && val.length > 4)
-    .filter((val) => !PUBLIC_VALUE_SHAPE.test(val))
-    .filter((val) => homePrefix === undefined || !val.startsWith(homePrefix));
-  const longestFirst = (a: string, b: string): number => b.length - a.length;
-  const values = [...new Set([...envValues, ...additionalRedactionValues])].sort(longestFirst);
-  const declared = new Set(additionalRedactionValues);
-  const forms = [
-    ...new Set(values.flatMap((value) => variantsOf(value, { parts: declared.has(value) }))),
-  ].sort(longestFirst);
-  return { values, forms };
-}
-
-/**
- * Serializes an MCP tool result to a string, with every listed form of every value in
- * {@link redactionSet} hidden, and the `Bearer` / `token=` rules applied — the set built ONCE per
- * call.
- *
- * HIDE BEFORE ENCODING. A string result is sanitized as it is ({@link sanitizeText}). Any other
- * result is normalised through JSON and walked BEFORE it is encoded: every key and every string
- * goes through {@link sanitizeText} with the forms (so the `Bearer` / `token=` rules apply there
- * too), arrays element by element, and a number, boolean or null whose JSON text holds a form
- * becomes the string `"[REDACTED]"` (so the output still parses). The walk exists because it reads
- * each string DECODED: there a value JSON-escaped by the result's encoding is raw again, and Go's,
- * PHP's and Python's escapes and nested JSON text appear one level down, where the forms match
- * them; the encoded output would need one more level of escaping for each. New objects are built
- * with `Object.fromEntries`, which keeps a `"__proto__"` key and its subtree (an assignment copy
- * drops both). Two keys that redact to the same text collapse into one, the later winning — two
- * keys that differ only in the value after `token=` or `Bearer ` included.
- *
- * Then a last pass runs over the whole encoded output ({@link sanitizeText}), with the plain values
- * (never the forms): it hides a value only the encoded text spells (a value that ends in a lone
- * `\`, for one, which the walk cannot read), applies the `Bearer` / `token=` rules once more over
- * the whole JSON text, and keeps every hiding the single pass before the fix did.
- *
- * A result `JSON.stringify` cannot encode (`undefined`, a function, a symbol) reads `undefined`,
- * as before; one it throws on (a cycle, a BigInt) throws, as before.
+ * A result `JSON.stringify` cannot encode (`undefined`, a function, a symbol) reads `undefined`, as
+ * before; one it throws on (a cycle, a BigInt) throws, as before.
  */
 export function serializeToolResult(result: unknown): string {
-  const { values, forms } = redactionSet();
-  if (typeof result === 'string') return sanitizeText(result, forms);
+  const set = agentDisclosureSet();
+  if (typeof result === 'string') return stripMarks(disclose(result, set, 'all').text);
   const encoded = JSON.stringify(result) as string | undefined;
-  if (encoded === undefined) return sanitizeText('undefined', forms);
-  const hide = (node: unknown): unknown => {
-    if (typeof node === 'string') return sanitizeText(node, forms);
-    if (Array.isArray(node)) return node.map(hide);
-    if (node !== null && typeof node === 'object') {
-      return Object.fromEntries(
-        Object.entries(node).map(([key, child]) => [sanitizeText(key, forms), hide(child)]),
-      );
-    }
-    const text = JSON.stringify(node);
-    return redactWith(text, forms) !== text ? '[REDACTED]' : node;
-  };
-  return sanitizeText(JSON.stringify(hide(JSON.parse(encoded) as unknown)), values);
+  if (encoded === undefined) return 'undefined';
+  const shown = discloseValue(JSON.parse(encoded) as unknown, set, 'agent').value;
+  return stripMarks(disclose(JSON.stringify(shown), set, 'all').text);
 }
 
 /** The `error` text for a Class-B result whose content carries no readable text at all. */

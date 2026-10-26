@@ -41,32 +41,45 @@ import {
   type LoadErrorCode,
   escapedBoundedValue,
   type SkipDetail,
+  type ClassTable,
+  type DisclosureClass,
+  RUN_RECORD_TABLE,
   type RunStore,
   type WorkflowDefinition,
   type RunHealthFinding,
   type StepView,
   type DriveFailureCost,
+  type Money,
+  type PreconditionFacts,
   type PriceSource,
   type RunCost,
   type Attributed,
   type ActorAbsent,
   runReadError,
 } from '@sensigo/realm';
-import { sseJsonStringify } from '../sse-json.js';
 import { mcpHostOf } from './start-run.js';
 import type { McpDoor } from '../door.js';
 import { toolMeta } from '../tool-annotations.js';
 import {
+  ALSO_TABLE,
+  MCP_ENVELOPE_TABLE,
   MCP_POLL_AFTER_MS,
+  NEXT_ACTION_TABLE,
   PERSON_BLOCK,
+  disclosureOfTool,
   renderReply,
   renderWaysOf,
+  safeTool,
   toolContentOf,
+  type WithDoorDisclosure,
   type McpAlsoEntry,
   type McpElsewhereEntry,
   type McpNextAction,
   type OperatorRoute,
   type WithPersonBlock,
+  replySubject,
+  setForSubject,
+  SAFE_TOOL_CONSTANT_RUNLESS,
 } from '../render-reply.js';
 import {
   assertToolStores,
@@ -192,6 +205,148 @@ export type NextActionsStatus =
   | 'claim_stale'
   | 'claim_unknown_age'
   | 'blocked_on_capability';
+
+/** F18: the failed expression is the author's text (a fact); the value it read is a value. */
+export const PRECONDITION_FACTS_TABLE = {
+  expression: 'fact',
+  value: 'value',
+} as const satisfies Record<keyof PreconditionFacts, DisclosureClass>;
+
+/** A table that reads every key of `node` (an object, or an array of objects) as a value, except
+ *  the rows given. */
+function valueRowsBut(node: unknown, rows: ClassTable): ClassTable {
+  const keys = new Set<string>();
+  for (const item of Array.isArray(node) ? node : [node]) {
+    if (item !== null && typeof item === 'object') for (const k of Object.keys(item)) keys.add(k);
+  }
+  return Object.fromEntries([...keys].map((k) => [k, Object.hasOwn(rows, k) ? rows[k]! : 'value']));
+}
+
+/**
+ * #729 PR-3 correction 2 (G3, DQ 2): a run-health finding's evidence. Its `refused` entries (each
+ * refused step's facts, `cannot_go_on`) read their precondition as `engine_runnable` does — the
+ * expression shown, the value it read masked — so one reply never shows one text two ways. Every
+ * other part of the evidence is a value.
+ */
+export const RUN_HEALTH_EVIDENCE_TABLE = (evidence: unknown): ClassTable =>
+  valueRowsBut(evidence, {
+    refused: {
+      nested: (refused: unknown) =>
+        valueRowsBut(refused, { precondition: { nested: PRECONDITION_FACTS_TABLE } }),
+    },
+  });
+
+export const ENGINE_RUNNABLE_TABLE = {
+  step: 'fact',
+  runnable_here: 'fact',
+  refused_by: 'fact',
+  refusal: 'bounded',
+  basis: 'fact',
+  precondition: { nested: PRECONDITION_FACTS_TABLE },
+} as const satisfies Record<keyof EngineRunnable, DisclosureClass>;
+
+/** F4: a not-priced cause, with its `detail`, which can be a project load error's text or a configured
+ *  name (`load-project-extensions.ts`'s price provider, `price-source.ts`): a diagnostic copy. */
+export const NOT_PRICED_TABLE = {
+  cause: 'fact',
+  count: 'fact',
+  detail: 'bounded',
+} as const satisfies Record<keyof NonNullable<Money['not_priced']>[number], DisclosureClass>;
+
+/** F4: money, with its not-priced entries. Its sources name a price list or an economics file. */
+export const MONEY_TABLE = {
+  total: 'fact',
+  uncached_counterfactual: 'fact',
+  net: 'fact',
+  priced: 'fact',
+  of: 'fact',
+  dated: 'fact',
+  sources: 'fact',
+  source_totals: 'fact',
+  not_priced: { nested: NOT_PRICED_TABLE },
+} as const satisfies Record<keyof Money, DisclosureClass>;
+
+/** F4: what a run cost. */
+export const RUN_COST_TABLE = {
+  total: { nested: MONEY_TABLE },
+  failed_drives_not_on_record: 'fact',
+  failed_drives_without_usage: 'fact',
+  unmeasured: 'fact',
+} as const satisfies Record<keyof RunCost, DisclosureClass>;
+
+/** F4 (the same money, per failed drive): its cost view is a diagnostic copy. */
+export const DRIVE_FAILURE_COST_TABLE = {
+  at: 'fact',
+  step: 'fact',
+  error_class: 'fact',
+  cost: 'bounded',
+} as const satisfies Record<keyof DriveFailureCost, DisclosureClass>;
+
+/**
+ * #729 PR-3 (M-1): the run's summary, field by field. Params and the open question's preview are
+ * values; the question is the declared tier; reasons and refusals are diagnostic copies; ids, step
+ * sets, times, ways and costs are facts. A step's attempts are walked whole as diagnostics.
+ */
+export const RUN_STATE_SUMMARY_TABLE = {
+  run_id: 'fact',
+  workflow_id: 'fact',
+  run_phase: 'fact',
+  terminal_state: 'fact',
+  // E-11'': one row for one text — the record table's, chosen by the value.
+  terminal_reason: RUN_RECORD_TABLE.terminal_reason,
+  rerun_of: 'fact',
+  sealed_by_arm: 'fact',
+  sealed_by_adjudicated: {
+    nested: { by: 'fact', at: 'fact', previous_arm: 'fact', reason: 'bounded' },
+  },
+  sealed_by_classified: 'fact',
+  sealed_by_step: 'fact',
+  drive_failures: RUN_RECORD_TABLE.drive_failures,
+  completed_steps: 'fact',
+  in_progress_steps: 'fact',
+  failed_steps: 'fact',
+  skipped_steps: 'fact',
+  pending_gate: RUN_RECORD_TABLE.pending_gate,
+  evidence_count: 'fact',
+  last_step: 'fact',
+  created_at: 'fact',
+  updated_at: 'fact',
+  params: 'value',
+  abort_context: RUN_RECORD_TABLE.aborted_at,
+  next_actions: { nested: NEXT_ACTION_TABLE },
+  next_actions_status: 'fact',
+  agent_action: 'fact',
+  poll_after_ms: 'fact',
+  until: 'fact',
+  also: { nested: ALSO_TABLE },
+  elsewhere: 'fact',
+  basis: 'fact',
+  stuck_claims: 'fact',
+  step_claims: 'fact',
+  capability_blocks: 'fact',
+  skip_details: RUN_RECORD_TABLE.skip_details,
+  run_health: {
+    nested: {
+      kind: 'fact',
+      step: 'fact',
+      reason: 'bounded',
+      since: 'fact',
+      idle_ms: 'fact',
+      evidence: { nested: RUN_HEALTH_EVIDENCE_TABLE },
+    } satisfies Record<keyof RunHealthFinding, DisclosureClass>,
+  },
+  defaulted_steps: 'fact',
+  warnings: 'bounded',
+  steps: 'bounded',
+  drive_failure_costs: { nested: DRIVE_FAILURE_COST_TABLE },
+  run_cost: { nested: RUN_COST_TABLE },
+  pending_guards: 'fact',
+  engine_runnable: { nested: ENGINE_RUNNABLE_TABLE },
+  agent_refused: { nested: ENGINE_RUNNABLE_TABLE },
+  resumable: 'fact',
+  cleanup_pending: 'fact',
+  waiting_on_answer: 'fact',
+} as const satisfies Record<keyof RunStateSummary, DisclosureClass>;
 
 export interface RunStateSummary {
   run_id: string;
@@ -886,8 +1041,12 @@ export async function handleGetRunState(
 }
 
 /** Registers the get_run_state MCP tool on the server. */
-export function registerGetRunState(server: McpServer, opts?: HandleRunStateStores): void {
+export function registerGetRunState(
+  server: McpServer,
+  opts?: HandleRunStateStores & WithDoorDisclosure,
+): void {
   markServedByTool(opts);
+  const door = disclosureOfTool(opts);
   server.registerTool(
     'get_run_state',
     {
@@ -897,11 +1056,19 @@ export function registerGetRunState(server: McpServer, opts?: HandleRunStateStor
         "step's model-call cost per attempt.",
       inputSchema: { run_id: z.string(), include_steps: z.boolean().optional() },
     },
-    async (args) => {
-      try {
+    safeTool(
+      async (args) => {
         const result = await handleGetRunState(args, opts);
-        return toolContentOf(result as unknown as Record<string, unknown>, sseJsonStringify);
-      } catch (err) {
+        return toolContentOf(
+          { ...result },
+          {
+            set: await setForSubject(door, await replySubject(opts, { runId: args.run_id })),
+            audience: 'agent',
+            table: RUN_STATE_SUMMARY_TABLE,
+          },
+        );
+      },
+      async (err, args) => {
         const workflowErr =
           err instanceof WorkflowError
             ? err
@@ -931,9 +1098,14 @@ export function registerGetRunState(server: McpServer, opts?: HandleRunStateStor
             ...envelope,
             ...(err instanceof WorkflowError ? { error_code: err.code } : {}),
           },
-          sseJsonStringify,
+          {
+            set: await setForSubject(door, await replySubject(opts, { runId: args.run_id })),
+            audience: 'agent',
+            table: MCP_ENVELOPE_TABLE,
+          },
         );
-      }
-    },
+      },
+      SAFE_TOOL_CONSTANT_RUNLESS,
+    ),
   );
 }

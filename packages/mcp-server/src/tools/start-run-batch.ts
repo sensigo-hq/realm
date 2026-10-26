@@ -14,16 +14,26 @@ import {
   createDefaultRegistry,
   deriveRunPhase,
   type RunPhase,
+  type DisclosureClass,
+  persistsField,
+  startIdentityEntry,
 } from '@sensigo/realm';
 import { composeToolWays, handBackHint, mcpHostOf, type HandleRunStores } from './start-run.js';
 import {
   mcpReplyOf,
   renderReply,
   renderWaysOf,
+  safeTool,
   toolContentOf,
+  disclosureOfTool,
+  MCP_ENVELOPE_TABLE,
+  NEXT_ACTION_TABLE,
   type McpNextAction,
+  type WithDoorDisclosure,
+  replySubject,
+  setForSubject,
+  SAFE_TOOL_CONSTANT_RUNLESS,
 } from '../render-reply.js';
-import { sseJsonStringify } from '../sse-json.js';
 import { toolMeta } from '../tool-annotations.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
 import { assertRegistryLine, ExtensionRegistry as RealmExtensionRegistry } from '@sensigo/realm';
@@ -71,6 +81,39 @@ export interface StartRunBatchResult {
     error_code?: string;
   }>;
 }
+
+type Started = StartRunBatchResult['started'][number];
+type Failed = StartRunBatchResult['failed'][number];
+
+/**
+ * #729 PR-3 (M-1): the batch's class table. Each run's params are values; a matched run's stored
+ * params come back to the caller that holds its key, at the agent tier (the premise: the same key
+ * means the same caller, RECORD 01 #15).
+ */
+export const START_RUN_BATCH_TABLE = {
+  started: {
+    nested: {
+      run_id: 'fact',
+      idempotency_key: 'value',
+      params: 'value',
+      deduped: 'fact',
+      run_phase: 'fact',
+      terminal_reason: 'bounded',
+      warnings: 'bounded',
+      next_actions: { nested: NEXT_ACTION_TABLE },
+      context_hint: 'bounded',
+    } satisfies Record<keyof Started, DisclosureClass>,
+  },
+  failed: {
+    nested: {
+      index: 'fact',
+      idempotency_key: 'value',
+      params: 'value',
+      error: 'bounded',
+      error_code: 'fact',
+    } satisfies Record<keyof Failed, DisclosureClass>,
+  },
+} as const satisfies Record<keyof StartRunBatchResult, DisclosureClass>;
 
 export async function handleStartRunBatch(
   args: {
@@ -178,6 +221,11 @@ export async function handleStartRunBatch(
           ? { onTerminalMatch: args.on_terminal_match }
           : {}),
         ...(args.on_live_match !== undefined ? { onLiveMatch: args.on_live_match } : {}),
+        // #729 PR-3 correction 5 (J-5): each run is born with the serving program's identity.
+        ...(startIdentityEntry(registry) !== undefined &&
+        persistsField(runStore, 'extension_identity')
+          ? { extensionIdentity: [startIdentityEntry(registry)!] }
+          : {}),
       }));
     } catch (err) {
       // A policy rejection (`reject` / `fail`) must NOT sink the batch — record and continue.
@@ -245,8 +293,12 @@ export async function handleStartRunBatch(
   return { started, failed };
 }
 
-export function registerStartRunBatch(server: McpServer, opts?: HandleRunStores): void {
+export function registerStartRunBatch(
+  server: McpServer,
+  opts?: HandleRunStores & WithDoorDisclosure,
+): void {
   markServedByTool(opts);
+  const door = disclosureOfTool(opts);
   server.registerTool(
     'start_run_batch',
     {
@@ -267,11 +319,22 @@ export function registerStartRunBatch(server: McpServer, opts?: HandleRunStores)
         on_live_match: z.enum(['use_existing', 'fail']).optional(),
       },
     },
-    async (args) => {
-      try {
+    safeTool(
+      async (args) => {
         const result = await handleStartRunBatch(args, opts);
-        return toolContentOf(result as unknown as Record<string, unknown>, sseJsonStringify);
-      } catch (err) {
+        return toolContentOf(
+          { ...result },
+          {
+            set: await setForSubject(
+              door,
+              await replySubject(opts, { workflowId: args.workflow_id }),
+            ),
+            audience: 'agent',
+            table: START_RUN_BATCH_TABLE,
+          },
+        );
+      },
+      async (err, args) => {
         const workflowErr =
           err instanceof WorkflowError
             ? err
@@ -293,8 +356,16 @@ export function registerStartRunBatch(server: McpServer, opts?: HandleRunStores)
           buildPreExecutionErrorEnvelope('start_run_batch', '', 0, workflowErr, contextHint),
           mcpHostOf(opts),
         );
-        return toolContentOf(mcpReplyOf(rendered), sseJsonStringify);
-      }
-    },
+        return toolContentOf(mcpReplyOf(rendered), {
+          set: await setForSubject(
+            door,
+            await replySubject(opts, { workflowId: args.workflow_id }),
+          ),
+          audience: 'agent',
+          table: MCP_ENVELOPE_TABLE,
+        });
+      },
+      SAFE_TOOL_CONSTANT_RUNLESS,
+    ),
   );
 }

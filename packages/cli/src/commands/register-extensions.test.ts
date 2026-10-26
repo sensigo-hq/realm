@@ -255,9 +255,7 @@ handlers:
     expect(exitSpy).toHaveBeenCalledWith(1);
     const warnCalls = warnSpy.mock.calls.map((c: unknown[]) => String(c[0]));
     expect(warnCalls).toHaveLength(3);
-    expect(warnCalls[0]).toContain(
-      '⚠ Deployment manifest secrets: 1 unresolved secret reference(s):',
-    );
+    expect(warnCalls[0]).toContain('⚠ Deployment manifest: 1 secret(s) unresolved:');
     expect(warnCalls[1]).toBe(
       '⚠ Registering with SENTINEL credentials — execution paths still require real secret resolution.',
     );
@@ -294,7 +292,7 @@ handlers:
     expect(exitSpy).not.toHaveBeenCalled();
     expect(errSpy).not.toHaveBeenCalled();
     const warned = joined(warnSpy);
-    expect(warned).toContain('⚠ Deployment manifest secrets: 1 unresolved secret reference(s):');
+    expect(warned).toContain('⚠ Deployment manifest: 1 secret(s) unresolved:');
     expect(warned).toContain('handlers.h1.config.token → ${secret:ABSENT_TOKEN}');
     expect(warned).toContain(
       '⚠ Registering with SENTINEL credentials — execution paths still require real secret resolution.',

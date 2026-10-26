@@ -16,6 +16,7 @@ import {
   type TraceBufferStore,
   type AgentTraceEntry,
   type RunStore,
+  type DisclosureClass,
 } from '@sensigo/realm';
 import {
   traceEntrySchema,
@@ -23,10 +24,20 @@ import {
   isWriterNonceRequired,
   writerNonceRequiredError,
 } from './execute-step.js';
-import { mcpReplyOf, renderReply, toolContentOf, type OperatorRoute } from '../render-reply.js';
+import {
+  disclosureOfTool,
+  mcpReplyOf,
+  renderReply,
+  safeTool,
+  toolContentOf,
+  MCP_ENVELOPE_TABLE,
+  type OperatorRoute,
+  type WithDoorDisclosure,
+  replySubject,
+  setForSubject,
+} from '../render-reply.js';
 import type { McpDoor } from '../door.js';
 import { mcpHostOf } from './start-run.js';
-import { sseJsonStringify } from '../sse-json.js';
 import { toolMeta } from '../tool-annotations.js';
 import { assertToolStores } from './assert-tool-stores.js';
 
@@ -44,6 +55,23 @@ export interface HandleAppendTraceStores {
   /** The operator's route, as every other tool's host carries it. */
   operatorRoute?: OperatorRoute;
 }
+
+/** #729 PR-3 (M-1): the append result's class table — counts and limits, and the advisories. */
+export const APPEND_TRACE_TABLE = {
+  status: 'fact',
+  buffer_count: 'fact',
+  buffer_bytes: 'fact',
+  limit_count: 'fact',
+  limit_bytes: 'fact',
+  final_limit_entries: 'fact',
+  final_limit_bytes: 'fact',
+  file_count: 'fact',
+  file_limit_count: 'fact',
+  file_bytes: 'fact',
+  file_limit_bytes: 'fact',
+  warnings: 'bounded',
+  writer_nonce_applied: 'fact',
+} as const satisfies Record<keyof AppendTraceOkResult, DisclosureClass>;
 
 export type AppendTraceOkResult = { status: 'ok' } & AppendResult & {
     /**
@@ -385,7 +413,11 @@ export async function handleAppendTrace(
 }
 
 /** Registers the append_trace MCP tool on the server. */
-export function registerAppendTrace(server: McpServer, opts?: HandleAppendTraceStores): void {
+export function registerAppendTrace(
+  server: McpServer,
+  opts?: HandleAppendTraceStores & WithDoorDisclosure,
+): void {
+  const door = disclosureOfTool(opts);
   server.registerTool(
     'append_trace',
     {
@@ -412,13 +444,19 @@ export function registerAppendTrace(server: McpServer, opts?: HandleAppendTraceS
         writer_nonce: z.string().optional(),
       },
     },
-    async (args) => {
-      try {
+    safeTool(
+      async (args) => {
         const result = await handleAppendTrace(args, opts);
-        return {
-          content: [{ type: 'text' as const, text: sseJsonStringify(result) }],
-        };
-      } catch (err) {
+        return toolContentOf(
+          { ...result },
+          {
+            set: await setForSubject(door, await replySubject(opts, { runId: args.run_id })),
+            audience: 'agent',
+            table: APPEND_TRACE_TABLE,
+          },
+        );
+      },
+      async (err, args) => {
         const workflowErr =
           err instanceof WorkflowError
             ? err
@@ -452,8 +490,12 @@ export function registerAppendTrace(server: McpServer, opts?: HandleAppendTraceS
           ),
           mcpHostOf(opts),
         );
-        return toolContentOf(mcpReplyOf(rendered), sseJsonStringify);
-      }
-    },
+        return toolContentOf(mcpReplyOf(rendered), {
+          set: await setForSubject(door, await replySubject(opts, { runId: args.run_id })),
+          audience: 'agent',
+          table: MCP_ENVELOPE_TABLE,
+        });
+      },
+    ),
   );
 }

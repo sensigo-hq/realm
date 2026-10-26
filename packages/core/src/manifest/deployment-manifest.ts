@@ -8,7 +8,9 @@
 import { Ajv } from 'ajv';
 import type { ErrorObject } from 'ajv';
 import { load } from 'js-yaml';
+import { createHash } from 'node:crypto';
 import { findSecretRefSites } from './secret-refs.js';
+import { canonicalJson } from '../store/params-hash.js';
 
 /** One adapter/handler/processor entry, keyed by REGISTRATION name in the manifest maps. */
 export interface ManifestEntry {
@@ -60,6 +62,12 @@ export interface DeploymentManifest {
    * this manifest's folder, or absolute. No `${secret:…}`.
    */
   runner?: { cache?: { economics?: string } };
+  /**
+   * #729 PR-3 (the owner's Q1) — what realm's disclosure law may show. `not_secret`: environment
+   * variable NAMES whose values are shown on every surface. A name is exempt only when every loaded
+   * manifest lists it, and only while no other, unlisted variable holds the same value.
+   */
+  disclosure?: { not_secret?: string[] };
 }
 
 /**
@@ -149,6 +157,17 @@ export const DEPLOYMENT_MANIFEST_JSON_SCHEMA = {
         },
       },
     },
+    disclosure: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        not_secret: {
+          type: 'array',
+          uniqueItems: true,
+          items: { type: 'string', pattern: '^[A-Za-z_][A-Za-z0-9_]*$' },
+        },
+      },
+    },
   },
 };
 
@@ -226,13 +245,15 @@ function checkSecretRefPlacement(manifest: DeploymentManifest): string[] {
           );
         }
         for (const bad of scan.malformed) {
-          errors.push(`${bad.path}: malformed secret reference '${bad.fragment}'.`);
+          errors.push(`malformed secret reference '${bad.fragment}' at ${bad.path}.`);
         }
       }
       const scan = findSecretRefSites(entry.config, `${section}.${name}.config`);
+      // #729 PR-3 correction 3 (H-9): the key path goes AFTER realm's words — before a colon, a
+      // credential-named last key made the whole sentence read as that key's value (PR3-C3AUD-05).
       for (const bad of scan.malformed) {
         errors.push(
-          `${bad.path}: malformed secret reference '${bad.fragment}' — the form is \${secret:NAME} with NAME = [A-Z0-9_]+.`,
+          `malformed secret reference '${bad.fragment}' at ${bad.path} — the form is \${secret:NAME} with NAME = [A-Z0-9_]+.`,
         );
       }
     }
@@ -246,7 +267,7 @@ function checkSecretRefPlacement(manifest: DeploymentManifest): string[] {
     const scan = findSecretRefSites(slackConfig, 'notifiers.slack_gate.config');
     for (const bad of scan.malformed) {
       errors.push(
-        `${bad.path}: malformed secret reference '${bad.fragment}' — the form is \${secret:NAME} with NAME = [A-Z0-9_]+.`,
+        `malformed secret reference '${bad.fragment}' at ${bad.path} — the form is \${secret:NAME} with NAME = [A-Z0-9_]+.`,
       );
     }
   }
@@ -275,6 +296,17 @@ function checkSecretRefPlacement(manifest: DeploymentManifest): string[] {
 }
 
 /** Collects every well-formed secret reference site across all config trees. */
+/**
+ * #729 PR-3 (D-12): sha256 of the manifest's canonical `secrets` block (its JSON with sorted keys; no
+ * block hashes as `null`). With the referenced secret names, it decides a run's declared values: a run
+ * recorded with it keeps its declared part across any other edit to `realm.yaml`.
+ */
+export function manifestSecretsBlockHash(manifest: DeploymentManifest): string {
+  return createHash('sha256')
+    .update(canonicalJson(manifest.secrets ?? null))
+    .digest('hex');
+}
+
 export function collectManifestSecretRefs(
   manifest: DeploymentManifest,
 ): Array<{ name: string; path: string }> {

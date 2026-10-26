@@ -32,6 +32,12 @@ import {
   type WorkflowDefinition,
   type StepDefinition,
   type PendingGate,
+  type EvidenceSnapshot,
+  discloseByTable,
+  PENDING_GATE_TABLE,
+  markersIn,
+  inboundMarkerWarning,
+  discloseValue,
   type ExtensionRegistry,
   type McpServerConfig,
   type ToolCallRecord,
@@ -40,6 +46,8 @@ import {
   moreOf,
   renderProblemsLines,
   validationListOf,
+  persistsField,
+  startIdentityEntry,
 } from '@sensigo/realm';
 import type {
   RunRecord,
@@ -53,8 +61,7 @@ import type {
 import type { LlmProvider } from './providers/llm-provider.js';
 import {
   sanitizeError,
-  sanitizeText,
-  redactionSet,
+  discloseForAgent,
   setAdditionalRedactionValues,
   deriveLlmClock,
   safeErrorText,
@@ -73,7 +80,16 @@ import {
   cliCommandOf,
   respondLines,
   stopReasons,
+  writerHost,
 } from '../commands/ways-renderer.js';
+import {
+  RUN_PHASE_WORDS,
+  questionSpan,
+  recordWalk,
+  writerCtx,
+  writerMode,
+  writerSetFor,
+} from '../output/writer.js';
 import {
   recordDriveFailure,
   buildEntry,
@@ -286,6 +302,74 @@ export interface AgentRunOptions {
  * Syntax: {{ field }} or {{ nested.field }} — plain dot-path interpolation, no filters.
  * Missing paths render as empty string.
  */
+/** The `{{ path }}` expressions of a display template, as `renderDisplay` reads them. */
+const DISPLAY_EXPRESSION = /\{\{\s*([^}]+?)\s*\}\}/g;
+
+/**
+ * #729 PR-3 correction 3 (C3): the preview's fields a display template renders — each `{{ path }}`'s
+ * value at its path, in fresh objects (the stored preview is never written). A path under another
+ * rendered path is that path's already.
+ */
+function displayedFields(
+  template: string,
+  preview: Record<string, unknown>,
+): Record<string, unknown> {
+  const paths = [...template.matchAll(DISPLAY_EXPRESSION)].map((m) => m[1]!.trim().split('.'));
+  const covered = (path: string[]): boolean =>
+    paths.some((other) => other.length < path.length && other.every((part, i) => part === path[i]));
+  const out: Record<string, unknown> = {};
+  for (const path of paths) {
+    if (covered(path)) continue;
+    let value: unknown = preview;
+    for (const part of path) {
+      value =
+        typeof value === 'object' && value !== null && Object.hasOwn(value, part)
+          ? (value as Record<string, unknown>)[part]
+          : undefined;
+    }
+    if (value === undefined) continue;
+    let at = out;
+    for (const part of path.slice(0, -1)) {
+      const next = Object.hasOwn(at, part) ? at[part] : undefined;
+      if (typeof next !== 'object' || next === null) {
+        const fresh: Record<string, unknown> = {};
+        Object.defineProperty(at, part, { value: fresh, enumerable: true, writable: true });
+        at = fresh;
+      } else at = next as Record<string, unknown>;
+    }
+    Object.defineProperty(at, path.at(-1)!, { value, enumerable: true, writable: true });
+  }
+  return out;
+}
+
+/** #729 PR-3: a gate as a log-mode drive shows it (a broadcast); as it is otherwise. */
+function shownForLog(gate: PendingGate, display?: string): PendingGate {
+  const set = writerMode() === 'broadcast' ? writerSetFor('broadcast') : undefined;
+  if (set === undefined) return gate;
+  // F10: the walk's hides and shapes join the drive's `Disclosure:` line. #729 PR-3 correction 2
+  // (C3): only what the print shows is walked and counted — the question when the gate has one,
+  // else the preview; never a preview it leaves out. Correction 3: with a display template, only
+  // the fields the template renders.
+  const printed =
+    gate.resolved_message !== undefined
+      ? { resolved_message: gate.resolved_message }
+      : {
+          preview: display !== undefined ? displayedFields(display, gate.preview) : gate.preview,
+        };
+  const walked = discloseByTable(printed, PENDING_GATE_TABLE, set, 'broadcast');
+  recordWalk(walked.tally);
+  return { ...gate, ...(walked.value as Partial<PendingGate>) };
+}
+
+/** #729 PR-3: a step's output as a log-mode drive shows it (its shapes); as it is otherwise. */
+function outputForLog(output: Record<string, unknown>): Record<string, unknown> {
+  const set = writerMode() === 'broadcast' ? writerSetFor('broadcast') : undefined;
+  if (set === undefined) return output;
+  const walked = discloseValue(output, set, 'broadcast');
+  recordWalk(walked.tally);
+  return walked.value as Record<string, unknown>;
+}
+
 function renderDisplay(template: string, vars: Record<string, unknown>): string {
   return template.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, expr: string) => {
     const parts = expr.trim().split('.');
@@ -473,6 +557,12 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
       workflowId: definition.id,
       workflowVersion: definition.version,
       params: options.params,
+      // #729 PR-3 correction 5 (J-5): the run is born with this program's identity, the manifest
+      // reference included (a never-executed run still names its manifest).
+      ...(startIdentityEntry(deps.registry) !== undefined &&
+      persistsField(deps.store, 'extension_identity')
+        ? { extensionIdentity: [startIdentityEntry(deps.registry)!] }
+        : {}),
     });
     runId = initialRecord.id;
   }
@@ -527,8 +617,10 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   // that runs them.
   const printResumeLine = async (): Promise<void> => {
     const ended = await deps.store.get(runId).catch(() => undefined);
-    const line = ended === undefined ? undefined : resumeLine(ended, definition);
-    if (line !== undefined) console.error(line);
+    // #729 PR-3 (L-2): the writer's context only inside the print call.
+    if (ended !== undefined && resumeLine(ended, definition) !== undefined) {
+      console.error(resumeLine(ended, definition, writerCtx()));
+    }
     const cleanup = ended === undefined ? undefined : pendingCleanupLine(ended, new Date());
     if (cleanup !== undefined) console.error(cleanup);
   };
@@ -615,16 +707,27 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
 
           console.log(`\n⏸  Gate: ${gate.step_name} | ID: ${gate.gate_id}`);
           const gateStepDef = definition.steps[gate.step_name];
-          const gateText =
-            gate.resolved_message ??
-            (gateStepDef?.display !== undefined
-              ? renderDisplay(gateStepDef.display, gate.preview)
-              : formatOutputForTerminal(gate.preview));
-          const indented = gateText
-            .trimEnd()
-            .split('\n')
-            .map((l) => `   ${l}`)
-            .join('\n');
+          // #729 PR-3 (RECORD 05 "shaped sites"): in log mode the gate is shown as `discloseGate`
+          // shows a broadcast — the question at the declared tier, the preview fallback as its
+          // shapes. A question span wraps only the question, never the preview fallback.
+          // (The shown gate is bound to `gate` inside: the step-key registry's `display × auto`
+          // witness reads this render site by its spelling.)
+          const indent = (text: string): string =>
+            text
+              .trimEnd()
+              .split('\n')
+              .map((l) => `   ${l}`)
+              .join('\n');
+          const indented = ((gate: PendingGate): string => {
+            const gateText =
+              gate.resolved_message ??
+              (gateStepDef?.display !== undefined
+                ? renderDisplay(gateStepDef.display, gate.preview)
+                : formatOutputForTerminal(gate.preview));
+            return gate.resolved_message !== undefined
+              ? questionSpan(indent(gateText))
+              : indent(gateText);
+          })(shownForLog(gate, gateStepDef?.display));
           console.log('\n' + indented + '\n');
 
           if (deps.gateHandler !== undefined) {
@@ -632,10 +735,12 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           } else {
             // Terminal fallback: print each choice as a command and poll. #729 PR-0 (Part C): the
             // answer commands are the CLI renderer's, from the gate's `respond` way.
-            for (const { choice, command } of respondLines(respondWayOfGate(runId, gate))) {
+            // #729 PR-3 (L-2): the writer's context only inside the print call.
+            const answerWay = respondWayOfGate(runId, gate);
+            respondLines(answerWay).forEach(({ choice }, i) => {
               const label = choice.charAt(0).toUpperCase() + choice.slice(1);
-              console.log(`   ${label}: ${command}`);
-            }
+              console.log(`   ${label}: ${respondLines(answerWay, writerCtx())[i]!.command}`);
+            });
             // issue #291 (Deliverable 4e, Amendment 4): the ATTENDING-PROCESS enactment timer —
             // this IS "the non-Slack agent poll loop" the design names as its own timer host. A
             // no-op for a finding-only/non-expiring gate.
@@ -680,7 +785,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             : {}),
           ...(deps.driver !== undefined ? { driver: deps.driver } : {}),
           onStep: (step) => {
-            if (startedNotDone !== undefined) console.log('  ✓ → running');
+            // #729 PR-3 correction 6 (C6-2): the phase is realm's word, printed through the span.
+            if (startedNotDone !== undefined)
+              console.log(`  ✓ → ${writerCtx().word('running', RUN_PHASE_WORDS)}`);
             startedNotDone = step;
             console.log(`→ [auto] ${step}`);
             // issue #401: a throw from here on mints with this engine step's name, and its
@@ -693,14 +800,16 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           // step; `advanceRun` re-reads and continues.
           onTaken: (step, record) => {
             startedNotDone = undefined;
-            console.log(takenLine(step, describeClaimHolder(record.claims?.[step], keepsClaims)));
+            console.log(
+              takenLine(step, describeClaimHolder(record.claims?.[step], keepsClaims), writerCtx()),
+            );
           },
           // F7: an engine step this call ran whose outcome another program's act kept from being
           // recorded — the race is core's to name, and its loop goes on; the line is the one
           // `realm run advance` prints, never `✓` and never `✗ … failed`.
           onNotRecorded: (step, kind, record) => {
             startedNotDone = undefined;
-            console.log(outcomeNotRecordedLine(kind, record, step, keepsClaims));
+            console.log(outcomeNotRecordedLine(kind, record, step, keepsClaims, writerCtx()));
           },
         });
         if (advanced.status === 'confirm_required') {
@@ -732,7 +841,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         if (engineReply === undefined) {
           currentRun = await deps.store.get(runId);
           if (advanced.status === 'ok' && startedNotDone !== undefined) {
-            console.log(`  ✓ → ${currentRun.run_phase}`);
+            console.log(`  ✓ → ${writerCtx().word(currentRun.run_phase, RUN_PHASE_WORDS)}`);
           }
           if (currentRun.terminal_state) break;
           if (currentRun.pending_gate !== undefined) continue;
@@ -750,7 +859,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             const step = e.step ?? '';
             if (!reportedRefusals.has(step)) {
               reportedRefusals.add(step);
-              console.log(`• Step ${cannotRunClause(e)}`);
+              console.log(`• Step ${cannotRunClause(e, writerCtx())}`);
             }
           }
         }
@@ -788,6 +897,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                     }),
                     runId,
                     derivePhaseOf(currentRun),
+                    writerCtx(),
                   ),
               );
               return 'failed';
@@ -824,7 +934,11 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             if (isRaceStop(exitStop)) {
               if (exitStop.kind === 'held_elsewhere' && !exitStop.ran_here) {
                 console.log(
-                  takenLine(first, describeClaimHolder(currentRun.claims?.[first], keepsClaims)),
+                  takenLine(
+                    first,
+                    describeClaimHolder(currentRun.claims?.[first], keepsClaims),
+                    writerCtx(),
+                  ),
                 );
               } else if (exitStop.ran_here) {
                 console.log(
@@ -833,6 +947,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                     currentRun,
                     first,
                     keepsClaims,
+                    writerCtx(),
                   ),
                 );
               }
@@ -876,6 +991,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                     }),
                     runId,
                     derivePhaseOf(currentRun),
+                    writerCtx(),
                   ),
               );
               return 'failed';
@@ -905,7 +1021,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               const key = `${step}\u0000${claim?.token ?? claim?.since ?? ''}`;
               if (waitingSaid.has(key)) continue;
               waitingSaid.add(key);
-              console.log(waitingLine(step, describeClaimHolder(claim, keepsClaims), watchMs));
+              console.log(
+                waitingLine(step, describeClaimHolder(claim, keepsClaims), watchMs, writerCtx()),
+              );
             }
             const startVersion = currentRun.version;
             const watchStarted = Date.now();
@@ -926,7 +1044,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             for (const step of inFlight) {
               const described = describeClaimHolder(currentRun.claims?.[step], keepsClaims);
               const stale = states.get(step) === 'claim_stale';
-              console.log(inFlightLine(runId, step, described, stale, watchMs));
+              console.log(inFlightLine(runId, step, described, stale, watchMs, writerCtx()));
             }
             // decision C195: the way on once the program holding the step is done with it — this
             // drive again, with the flags it was started with (`realm workflow run`'s hand-back,
@@ -934,7 +1052,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             console.log(
               goOnLine(
                 inFlight,
-                `realm agent --run-id ${runId} ${deps.reattachFlags ?? '--provider <provider> --model <model>'}`,
+                writerCtx().cmd(
+                  `realm agent --run-id ${runId} ${deps.reattachFlags ?? '--provider <provider> --model <model>'}`,
+                ),
               ),
             );
             // decision C179: the drive stops on the step another process holds; the run did not end,
@@ -1044,13 +1164,13 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             // plus at most the LATEST rejection's feedback — never accumulated, never stale.
             const prompt = nextAction?.prompt ?? stepDef.description;
             // The prompt is the step's template filled with run params and stored step results,
-            // plus any rejection feedback: every listed form of every redacted value is hidden here,
-            // once, before any of the three provider calls below sends it.
-            const promptForAttempt = sanitizeText(
+            // plus any rejection feedback. #729 PR-3 (L-5): the provider edge — core's law for the
+            // agent audience, once, before any of the three provider calls below sends it; no span
+            // mark leaves with it.
+            const promptForAttempt = discloseForAgent(
               lastRejection !== undefined
                 ? `${prompt}\n\nYour previous output was rejected by the ${lastRejection.kind} schema validator:\n${lastRejection.summary}\nEmit corrected JSON only, matching the schema exactly.`
                 : prompt,
-              redactionSet().forms,
             );
             // #robust-anthropic-provider Part 1: route the schema the ENGINE validates output against
             // (output_schema, execution-loop.ts validateOutputSchema) ahead of the execute_step-param
@@ -1643,13 +1763,19 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             };
           }
 
+          // #729 PR-3 (D1 D5): the model was shown masked text; an answer that sends a marker back is
+          // recorded as sent — and said so.
+          const sentBack = markersIn(stepInput);
+          if (sentBack.length > 0) console.warn(`  ⚠ ${inboundMarkerWarning(sentBack)}`);
           result = await executeChain(deps.store, definition, {
             runId,
             command: stepName,
             // decision C151: an expiry this call carries out names `realm agent`.
             caller: 'agent',
             input: stepInput,
-            dispatcher: async () => stepInput,
+            // #729 PR-3 (RECORD 01 #15): the input the ENGINE passes — `_debug` stripped (recorded
+            // apart as `debug_output`) — never the closed-over one (same key = same caller).
+            dispatcher: async (_command, input) => input,
             registry: deps.registry,
             ...(deps.traceBufferStore !== undefined
               ? { traceBufferStore: deps.traceBufferStore }
@@ -1818,7 +1944,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         ) {
           heldCapabilityReplies.set(result.stopped_step, result);
           currentRun = await deps.store.get(runId);
-          console.log(`  ✓ → ${currentRun.run_phase}`);
+          console.log(`  ✓ → ${writerCtx().word(currentRun.run_phase, RUN_PHASE_WORDS)}`);
           continue;
         }
 
@@ -1842,6 +1968,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 stepName,
                 keepsClaims,
                 resultStop.kind as NotRecordedKind,
+                writerCtx(),
               ),
             );
           }
@@ -1885,7 +2012,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   : 'the missing adapter';
             console.error(
               `\n⚠ Step '${stoppedStep}'${ranAfter} is blocked: ${need} is not registered in this runner. ` +
-                `The run is NOT failed — add ${need} and re-attach (\`realm agent --run-id ${runId} ${deps.reattachFlags ?? '--provider <provider> --model <model>'}\`).`,
+                `The run is NOT ${writerCtx().word('failed', RUN_PHASE_WORDS)} — add ${need} and re-attach (\`${writerCtx().cmd(`realm agent --run-id ${runId} ${deps.reattachFlags ?? '--provider <provider> --model <model>'}`)}\`).`,
             );
           } else {
             console.error(
@@ -1951,8 +2078,10 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           result.intrinsic_action === 'stop' &&
           result.evidence.length === 0
         ) {
-          const line = answerNotRecordedLine(currentRun, stepName, keepsClaims);
-          if (line !== undefined) console.log(line);
+          if (answerNotRecordedLine(currentRun, stepName, keepsClaims) !== undefined)
+            console.log(
+              answerNotRecordedLine(currentRun, stepName, keepsClaims, undefined, writerCtx()),
+            );
           continue;
         }
         if (result.status === 'blocked') {
@@ -1970,14 +2099,22 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             // the program that ran the step once it settled.
             console.log(
               engineReply === undefined && blockedStep === stepName
-                ? (answerNotRecordedLine(currentRun, blockedStep, keepsClaims) ??
+                ? (answerNotRecordedLine(
+                    currentRun,
+                    blockedStep,
+                    keepsClaims,
+                    undefined,
+                    writerCtx(),
+                  ) ??
                     takenLine(
                       blockedStep,
                       describeClaimHolder(currentRun.claims?.[blockedStep], keepsClaims),
+                      writerCtx(),
                     ))
                 : takenLine(
                     blockedStep,
                     describeClaimHolder(currentRun.claims?.[blockedStep], keepsClaims),
+                    writerCtx(),
                   ),
             );
             continue;
@@ -1993,8 +2130,10 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               blockedStep === stepName &&
               currentRun.terminal_state
             ) {
-              const line = answerNotRecordedLine(currentRun, stepName, keepsClaims);
-              if (line !== undefined) console.log(line);
+              if (answerNotRecordedLine(currentRun, stepName, keepsClaims) !== undefined)
+                console.log(
+                  answerNotRecordedLine(currentRun, stepName, keepsClaims, undefined, writerCtx()),
+                );
             }
             continue;
           }
@@ -2007,7 +2146,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           await printResumeLine();
           return 'failed';
         }
-        console.log(`  ✓ → ${currentRun.run_phase}`);
+        console.log(`  ✓ → ${writerCtx().word(currentRun.run_phase, RUN_PHASE_WORDS)}`);
       }
     } finally {
       if (mcpClient) {
@@ -2071,15 +2210,26 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
       );
     if (lastAgentEvidence !== undefined) {
       // decision C179: an answer this drive did not give is said to be another program's.
-      const givenElsewhere = answeredHere.has(lastAgentEvidence.step_id)
-        ? ''
-        : ` — given by ${lastAgentEvidence.driven_by !== undefined ? describeProgram(lastAgentEvidence.driven_by) : 'another process'}, not by this drive`;
-      console.log(`\nResult (${lastAgentEvidence.step_id})${givenElsewhere}:`);
+      const drivenBy = lastAgentEvidence.driven_by;
+      const elsewhere = !answeredHere.has(lastAgentEvidence.step_id);
+      console.log(
+        `\nResult (${lastAgentEvidence.step_id})${
+          elsewhere
+            ? ` — given by ${drivenBy !== undefined ? describeProgram(drivenBy, writerCtx()) : 'another process'}, not by this drive`
+            : ''
+        }:`,
+      );
       const stepDef = definition.steps[lastAgentEvidence.step_id];
-      const formatted =
+      // #729 PR-3 (RECORD 05 "shaped sites"): in log mode, the step's output as its shapes. (The
+      // shown entry is bound to `lastAgentEvidence` inside: the step-key registry's
+      // `display × agent` witness reads this render site by its spelling.)
+      const formatted = ((lastAgentEvidence: EvidenceSnapshot): string =>
         stepDef?.display !== undefined
           ? renderDisplay(stepDef.display, lastAgentEvidence.output_summary)
-          : formatOutputForTerminal(lastAgentEvidence.output_summary);
+          : formatOutputForTerminal(lastAgentEvidence.output_summary))({
+        ...lastAgentEvidence,
+        output_summary: outputForLog(lastAgentEvidence.output_summary),
+      });
       console.log(formatted);
     }
 
@@ -2098,18 +2248,24 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
       registry: deps.registry,
       persistsClaims: deps.store.persistsClaims === true,
     });
-    const reasons = stopReasons(stopWays, runId, derivePhaseOf(currentRun));
     const inspectWay = stopWays.ways.find((w) => w.verb === 'inspect');
     const abandonWay = stopWays.ways.find((w) => w.verb === 'abandon');
+    // #729 PR-3 (L-2): the writer's context only inside the print call.
     console.error(
-      `\n✗ The drive stops — run ${runId} stays open (phase '${currentRun.run_phase}'):\n` +
-        reasons.map((reason) => `  ${sentenceEnd(reason)}`).join('\n') +
-        (inspectWay !== undefined ? `\n  To read it: ${cliCommandOf(inspectWay)}` : '') +
-        (abandonWay !== undefined ? `\n  To end it: ${cliCommandOf(abandonWay)}` : ''),
+      `\n✗ The drive stops — run ${runId} stays open (phase '${writerCtx().word(currentRun.run_phase, RUN_PHASE_WORDS)}'):\n` +
+        stopReasons(stopWays, runId, derivePhaseOf(currentRun), writerCtx())
+          .map((reason) => `  ${sentenceEnd(reason)}`)
+          .join('\n') +
+        (inspectWay !== undefined
+          ? `\n  To read it: ${cliCommandOf(inspectWay, undefined, writerHost())}`
+          : '') +
+        (abandonWay !== undefined
+          ? `\n  To end it: ${cliCommandOf(abandonWay, undefined, writerHost())}`
+          : ''),
     );
     return 'failed';
   }
-  console.error(`\nRun ended in phase: ${currentRun.run_phase}`);
+  console.error(`\nRun ended in phase: ${writerCtx().word(currentRun.run_phase, RUN_PHASE_WORDS)}`);
   await printResumeLine();
   return 'failed';
 }

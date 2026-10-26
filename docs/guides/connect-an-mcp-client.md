@@ -80,9 +80,19 @@ Ask the assistant to list the Realm workflows. With one workflow registered, `li
   "workflows": [{ "id": "article", "name": "Write a short article", "version": 1 }],
   "unreadable": [],
   "warnings": [],
-  "hint": "Call get_workflow_protocol with a workflow_id before calling start_run. If no workflow matches your task, use create_workflow to define and start your own plan."
+  "hint": "Call get_workflow_protocol with a workflow_id before calling start_run. If no workflow matches your task, use create_workflow to define and start your own plan.",
+  "disclosure": {
+    "declared": "resolved",
+    "environment": "swept",
+    "hidden": { "declared": 0, "environment": 0, "pattern": 0 },
+    "unchecked": 0,
+    "unmaskable": 0,
+    "too_deep": 0
+  }
 }
 ```
+
+Every reply in JSON ends with `disclosure`: what Realm hid from the reply before the assistant read it. `declared` says whether Realm knew the secrets declared by the deployment manifest of the project the reply is about: `resolved`, as here, where the workflow's project has no `realm.yaml` and so declares none; `partial`, with `declared_cause: manifest_changed`, when the run's manifest no longer refers to a secret the run recorded, or its `secrets` block changed since the run recorded it; or `unknown`, with `declared_cause: load_failed` when the manifest or a secret it names could not be read, or `no_manifest` when the workflow has no project. A reply about several workflows, such as `list_workflows`, gives the weakest of theirs. `environment: swept` says the server's environment variables were checked; `hidden` counts what was replaced with `[REDACTED]`, by kind; `too_deep` counts the values shown as their type and size because they lie more than 64 levels deep. When a reply shows a gate's question, `question: declared_only` says the question hides only the declared secrets. When Realm cannot read the declared secrets, because the manifest cannot be read (`load_failed`) or changed since the run recorded it (`manifest_changed`), the reply shows its values as their type and size and its question as `withheld (…)`, and says `values: withheld` and `question: withheld`.
 
 Notice that only registered workflows appear. If yours is missing, run `realm workflow register` on it.
 

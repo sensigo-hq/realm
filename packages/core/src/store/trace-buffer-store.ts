@@ -13,6 +13,8 @@ import {
 } from './fence-predicate.js';
 import { brandClass, REALM_BRAND } from '../brand.js';
 import { assertReleaseLine } from '../release-line.js';
+// Per-entry normalisation at append time: the ONE normaliser (#729 PR-3), shared with normalizeTrace.
+import { normalizeEntryForBuffer } from '../engine/trace-normalizer.js';
 
 /**
  * The store-layer capability ladder (issue #197 PR-1, design record `plans/issue-197-design.md`
@@ -363,49 +365,6 @@ export const BUFFER_BACKSTOP_BYTES = 2 * BUFFER_LIMIT_BYTES;
  *  (`deleteFenced`), bounded and loud, rather than silently evicting an existing sealed artifact
  *  to make room. */
 export const SEALED_ARTIFACTS_LIMIT_PER_STEP = 8;
-
-const MAX_EVENT_LENGTH = 100;
-const RESERVED_PREFIX = 'trace.';
-const MAX_DATA_KEYS = 20;
-const MAX_STRING_VALUE = 500;
-
-/**
- * Per-entry normalization run at append time (not at finalization).
- * Mirrors the normalization in normalizeTrace for the parts that don't need seq or byte-budget context.
- * Returns null if the entry should be dropped (reserved prefix).
- */
-export function normalizeEntryForBuffer(entry: AgentTraceEntry): AgentTraceEntry | null {
-  // Normalize event: trim, replace empty with 'unknown_event', cap to MAX_EVENT_LENGTH.
-  let event = (entry.event ?? '').trim();
-  if (event.length === 0) event = 'unknown_event';
-  if (event.length > MAX_EVENT_LENGTH) event = event.slice(0, MAX_EVENT_LENGTH);
-
-  // Drop if event starts with reserved prefix.
-  if (event.startsWith(RESERVED_PREFIX)) return null;
-
-  // Normalize data: keep first 20 keys, cap string values to 500 chars, drop non-primitive values.
-  let data: Record<string, string | number | boolean | null> | undefined;
-  if (entry.data !== undefined) {
-    const keys = Object.keys(entry.data).slice(0, MAX_DATA_KEYS);
-    const normalized: Record<string, string | number | boolean | null> = {};
-    for (const key of keys) {
-      const val = entry.data[key];
-      if (val === null || typeof val === 'boolean' || typeof val === 'number') {
-        normalized[key] = val;
-      } else if (typeof val === 'string') {
-        normalized[key] = val.length > MAX_STRING_VALUE ? val.slice(0, MAX_STRING_VALUE) : val;
-      }
-      // Drop non-primitive values (objects, arrays, undefined).
-    }
-    data = Object.keys(normalized).length > 0 ? normalized : undefined;
-  }
-
-  return {
-    event,
-    ...(entry.timestamp !== undefined ? { timestamp: entry.timestamp } : {}),
-    ...(data !== undefined ? { data } : {}),
-  };
-}
 
 // ---------------------------------------------------------------------------------------------
 // Capability-ladder predicates (issue #197 PR-1, design §3) — the ONLY authoritative way to check

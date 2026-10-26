@@ -300,60 +300,61 @@ describe('the answer line — the choice, the answerer, the proof in words', () 
     [
       'matched',
       { claim_proof: { proof: 'matched' } },
-      'matched the claim_token of the reply that opened this question',
+      'the claim token matched the reply that opened this question',
     ],
     [
       'absent (door-neutral)',
       { claim_proof: { proof: 'absent' } },
-      "none passed (a token is passed only by Realm's MCP answer tool, from the conversation that opened the question, or by a program that calls the library with it)",
+      "no claim token passed (a token is passed only by Realm's MCP answer tool, from the conversation that opened the question, or by a program that calls the library with it)",
     ],
     [
       'mismatch',
       { claim_proof: { proof: 'mismatch' } },
-      "the claim_token passed is not this question's",
+      "the claim token passed is not this question's",
     ],
     [
       'unverifiable / no_claim',
       { claim_proof: { proof: 'unverifiable', cause: 'no_claim' } },
-      'could not be checked — no claim on this record',
+      'the claim token could not be checked — no claim on this record',
     ],
     [
       'unverifiable / claim_has_no_token',
       { claim_proof: { proof: 'unverifiable', cause: 'claim_has_no_token' } },
-      'could not be checked — the claim has no token',
+      'the claim token could not be checked — the claim has no token',
     ],
     [
       'unverifiable / store_keeps_no_claims',
       { claim_proof: { proof: 'unverifiable', cause: 'store_keeps_no_claims' } },
-      'could not be checked — this store keeps no claims',
+      'the claim token could not be checked — this store keeps no claims',
     ],
     [
       'spent / answered',
       { claim_proof: { proof: 'spent', cause: 'answered' } },
-      'could not be checked — already settled by an earlier answer',
+      'the claim token could not be checked — already settled by an earlier answer',
     ],
     [
       'spent / expired',
       { claim_proof: { proof: 'spent', cause: 'expired' } },
-      'could not be checked — already settled by its expiry',
+      'the claim token could not be checked — already settled by its expiry',
     ],
-    ['no verdict recorded', {}, 'none recorded'],
+    ['no verdict recorded', {}, 'no claim token recorded'],
     // (The expiry's answer line has no proof part since the review correction C2 — see below.)
     [
       'an unreadable verdict',
       { claim_proof: { proof: 'not-a-verdict' } },
-      'the recorded proof cannot be read',
+      'the claim token proof recorded cannot be read',
     ],
   ])('token: %s', async (_label, extra, phrase) => {
     const line = answerLine(await render(withAnswer(extra)));
-    // (a) red when the phrase changes, or the verdict word leaks instead of words; (b) prints it.
-    expect(line.endsWith(`token: ${phrase}`)).toBe(true);
+    // (a) red when the phrase changes, or the verdict word leaks instead of words, or `token:` comes
+    //     back before it (#729 PR-3 correction 1, D-14); (b) prints it.
+    expect(line.endsWith(` · ${phrase}`)).toBe(true);
     expect(line).not.toMatch(/\bunverifiable\b|\bmismatch\b|\bspent\b/);
   });
 
   it('the answerer: a stated name is labelled "as stated, not verified"', async () => {
     expect(answerLine(await render(withAnswer({ responded_by: 'alice' })))).toContain(
-      'Answer: approve · answered by alice (as stated) · how it arrived was not recorded · token:',
+      'Answer: approve · answered by alice (as stated) · how it arrived was not recorded · no claim token recorded',
     );
   });
 
@@ -361,7 +362,7 @@ describe('the answer line — the choice, the answerer, the proof in words', () 
     for (const responded_by of [undefined, '', '   ']) {
       const extra = responded_by === undefined ? {} : { responded_by };
       expect(answerLine(await render(withAnswer(extra)))).toContain(
-        'answered by (not stated) · how it arrived was not recorded · token:',
+        'answered by (not stated) · how it arrived was not recorded · no claim token recorded',
       );
     }
   });
@@ -369,7 +370,7 @@ describe('the answer line — the choice, the answerer, the proof in words', () 
   it('the answerer: an escape sequence prints the ONE phrase with NO outer parentheses, and no byte of the value', async () => {
     const out = await render(withAnswer({ responded_by: `${ESC}[2Jevil` }));
     expect(answerLine(out)).toContain(
-      `answered by ${PHRASE_UNSHOWABLE} · how it arrived was not recorded · token:`,
+      `answered by ${PHRASE_UNSHOWABLE} · how it arrived was not recorded · no claim token recorded`,
     );
     expect(out).not.toContain(ESC);
     expect(out).not.toContain('evil');
@@ -443,9 +444,9 @@ describe('review correction C1 — each answer is printed ONCE, whatever the lay
   const answerLines = (out: string): string[] =>
     out.split('\n').filter((l) => /^\s*Answer: /.test(l));
   const LINE =
-    '     Answer: approve · answered by (not stated) · how it arrived was not recorded · token: none recorded';
+    '     Answer: approve · answered by (not stated) · how it arrived was not recorded · no claim token recorded';
   const LINE_BOB =
-    '     Answer: approve · answered by bob (as stated) · how it arrived was not recorded · token: none recorded';
+    '     Answer: approve · answered by bob (as stated) · how it arrived was not recorded · no claim token recorded';
   const layout = (evidence: Record<string, unknown>[]): RunRecord =>
     baseRun({ completed_steps: ['confirm'], evidence });
 
@@ -556,7 +557,7 @@ describe('review correction C2 — an answer the gate’s expiry wrote reads as 
     expect(lines.slice(from).filter((l) => /^ {5}(Choice|Answer|Output|Message):/.test(l))).toEqual(
       [
         '     Output: {}',
-        '     Answer: reject · answered by bob (as stated) · how it arrived was not recorded · token: none recorded',
+        '     Answer: reject · answered by bob (as stated) · how it arrived was not recorded · no claim token recorded',
       ],
     );
   });
@@ -565,7 +566,7 @@ describe('review correction C2 — an answer the gate’s expiry wrote reads as 
     const out = await render(expiryRun({ responded_by: 'timeout' }));
     // (a) red when the reading keys on the literal `timeout` instead of `resolution`; (b) prints it.
     expect(answerLine(out)).toBe(
-      '     Answer: approve · answered by timeout (as stated) · how it arrived was not recorded · token: none recorded',
+      '     Answer: approve · answered by timeout (as stated) · how it arrived was not recorded · no claim token recorded',
     );
   });
 });
@@ -645,7 +646,7 @@ describe('review correction C7 — "Question opened through" only under the atte
 
 describe("walk 2 — every layout: the question, then the answer; the step's output once; an abort expiry prints nothing", () => {
   const LINE =
-    '     Answer: approve · answered by (not stated) · how it arrived was not recorded · token: none recorded';
+    '     Answer: approve · answered by (not stated) · how it arrived was not recorded · no claim token recorded';
   const ASKED = '     Message:  "Ship it?"';
   // Every gate entry here carries the question's text, so a `Message:` line has something to print.
   const ans = (extra: Record<string, unknown> = {}) =>
@@ -705,7 +706,7 @@ describe("walk 2 — every layout: the question, then the answer; the step's out
         '     Output: {}',
         ASKED,
         LINE,
-        '     Answer: approve · answered by bob (as stated) · how it arrived was not recorded · token: none recorded',
+        '     Answer: approve · answered by bob (as stated) · how it arrived was not recorded · no claim token recorded',
       ],
     ],
   ])('%s', async (_label, evidence, expected) => {

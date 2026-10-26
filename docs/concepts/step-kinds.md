@@ -88,10 +88,11 @@ A guard is never handed to the agent. The engine evaluates it in the same call t
 Guard step 'only_low_risk' aborted the run.
 ```
 
-The record keeps each condition with the value it was checked against:
+`realm run inspect` shows the guard's step with its `Output:`, and each condition on its `Diagnostics:` line — whether it passed, and the value it was checked against:
 
 ```text
-Output: {"conditions":[{"condition":"assess.risk == 'low'","resolved_value":"low","passed":true}],"aborted":false}
+Output: {"aborted":true,"abort_message":"High-risk refunds are not automated."}
+Diagnostics: ~1 tokens (estimate, step input) | no preconditions | guard: assess.risk == 'low' → failed ("high")
 ```
 
 Use a guard, not a prompt instruction, for a rule the agent must not be able to talk its way past.

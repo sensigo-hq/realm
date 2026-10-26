@@ -26,21 +26,31 @@ import {
   type Principal,
   type RunRecord,
   type WorkflowDefinition,
+  type DisclosureClass,
+  persistsField,
+  startIdentityEntry,
 } from '@sensigo/realm';
 import type { McpDoor } from '../door.js';
-import { withQuestionForm, type ElicitFn, type FormCall, type FormDeps } from '../form-path.js';
-import { sseJsonStringify } from '../sse-json.js';
+import { withQuestionForm, type FormCall, type FormDeps } from '../form-path.js';
+import type { DisclosedElicit } from '../server.js';
 import { toolMeta } from '../tool-annotations.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
 import {
+  disclosureOfTool,
   mcpReplyOf,
   withHintTail,
   renderReply,
+  safeTool,
   toolContentOf,
+  MCP_ENVELOPE_TABLE,
+  type WithDoorDisclosure,
   type McpEnvelope,
   type McpHost,
   type OperatorRoute,
   type WithPersonBlock,
+  replySubject,
+  setForSubject,
+  SAFE_TOOL_CONSTANT_RUNLESS,
 } from '../render-reply.js';
 
 /**
@@ -99,9 +109,10 @@ export function formDepsOf(
   if (stores?.door === undefined || stores.elicit === undefined || !stores.door.sendsForms) {
     return undefined;
   }
+  const elicit = stores.elicit;
   return {
     door: stores.door,
-    elicit: stores.elicit,
+    elicit: (params, options, run) => elicit(params, options, { definition, run }),
     runStore,
     definition,
     ...(registry !== undefined ? { registry } : {}),
@@ -208,8 +219,9 @@ export interface HandleRunStores {
    * tools narrow as PR-0 did.
    */
   door?: McpDoor;
-  /** #627 W: how this server sends a form (its `elicitInput`), when it can. */
-  elicit?: ElicitFn;
+  /** #627 W: how this server sends a form (its `elicitInput`), when it can. #729 PR-3 (M-5): the
+   *  send is `elicitDisclosedWith`'s, so a form's text is walked with the question's workflow's set. */
+  elicit?: DisclosedElicit;
   /**
    * #627 W (§5.8): the principal of this server's transport, stamped on every answer it records —
    * `realm serve`'s shared token, a door's typed absence, or an embedder's API key. Absent ⇒
@@ -267,6 +279,11 @@ export async function handleStartRun(
     ...(args.idempotency_key !== undefined ? { idempotencyKey: args.idempotency_key } : {}),
     ...(args.on_terminal_match !== undefined ? { onTerminalMatch: args.on_terminal_match } : {}),
     ...(args.on_live_match !== undefined ? { onLiveMatch: args.on_live_match } : {}),
+    // #729 PR-3 correction 5 (J-5): the run is born with the serving program's identity, the
+    // manifest reference included; a registry with no identity (a bare server) writes none.
+    ...(startIdentityEntry(registry) !== undefined && persistsField(runStore, 'extension_identity')
+      ? { extensionIdentity: [startIdentityEntry(registry)!] }
+      : {}),
   });
   // The store reports `created`; the tool surfaces its inverse, `deduped`.
   const deduped = !created;
@@ -437,9 +454,24 @@ export async function handleStartRun(
   return { ...mcpReplyOf(renderReply(handBack, mcpHostOf(stores))), deduped };
 }
 
+/** start_run's reply: the envelope, whether the call matched a run, and which run it reran. */
+export type StartRunReply = McpEnvelope & { deduped: boolean; rerun_of?: string };
+
+/** #729 PR-3 (M-1): start_run's reply is the envelope plus whether the call matched a run, and
+ *  which run it reran. */
+export const START_RUN_TABLE = {
+  ...MCP_ENVELOPE_TABLE,
+  deduped: 'fact',
+  rerun_of: 'fact',
+} as const satisfies Record<keyof StartRunReply, DisclosureClass>;
+
 /** Registers the start_run MCP tool on the server. */
-export function registerStartRun(server: McpServer, opts?: HandleRunStores): void {
+export function registerStartRun(
+  server: McpServer,
+  opts?: HandleRunStores & WithDoorDisclosure,
+): void {
   markServedByTool(opts);
+  const door = disclosureOfTool(opts);
   server.registerTool(
     'start_run',
     {
@@ -453,14 +485,25 @@ export function registerStartRun(server: McpServer, opts?: HandleRunStores): voi
         on_live_match: z.enum(['use_existing', 'fail']).optional(),
       },
     },
-    async (args, extra) => {
-      try {
+    safeTool(
+      async (args, extra) => {
         const result = await handleStartRun(args, opts, formCallOf(opts, extra));
         // Override command to 'start_run': MCP callers invoked start_run, not the first auto step
         // executeChain may have run. The step a non-ok reply belongs to stays named in
         // `stopped_step` (issue #676 review).
-        return toolContentOf({ ...result, command: 'start_run' }, sseJsonStringify);
-      } catch (err) {
+        return toolContentOf(
+          { ...result, command: 'start_run' },
+          {
+            set: await setForSubject(
+              door,
+              await replySubject(opts, { runId: result.run_id, workflowId: args.workflow_id }),
+            ),
+            audience: 'agent',
+            table: START_RUN_TABLE,
+          },
+        );
+      },
+      async (err, args) => {
         const workflowErr =
           err instanceof WorkflowError
             ? err
@@ -478,8 +521,16 @@ export function registerStartRun(server: McpServer, opts?: HandleRunStores): voi
           buildPreExecutionErrorEnvelope('start_run', '', 0, workflowErr, contextHint),
           mcpHostOf(opts),
         );
-        return toolContentOf(mcpReplyOf(rendered), sseJsonStringify);
-      }
-    },
+        return toolContentOf(mcpReplyOf(rendered), {
+          set: await setForSubject(
+            door,
+            await replySubject(opts, { workflowId: args.workflow_id }),
+          ),
+          audience: 'agent',
+          table: MCP_ENVELOPE_TABLE,
+        });
+      },
+      SAFE_TOOL_CONSTANT_RUNLESS,
+    ),
   );
 }

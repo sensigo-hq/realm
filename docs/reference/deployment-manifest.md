@@ -2,7 +2,7 @@
 
 <!-- description: Reference for realm.yaml, a project's settings file: its top-level keys and their rules, where Realm looks for the file, and what a run records about it. -->
 
-`realm.yaml` holds a project's settings: how each adapter, handler and processor is built, where secrets come from, and how gates are posted to Slack. This page lists its 7 top-level keys, the rules for each, where Realm looks for the file, and what a run records about it. Every message shown came from a run of `realm` against a project at `/srv/shop`.
+`realm.yaml` holds a project's settings: how each adapter, handler and processor is built, where secrets come from, and how gates are posted to Slack. This page lists its 8 top-level keys, the rules for each, where Realm looks for the file, and what a run records about it. Every message shown came from a run of `realm` against a project at `/srv/shop`.
 
 For a walk through a first `realm.yaml`, see [Deploy a project](../guides/deploy.md).
 
@@ -61,15 +61,16 @@ runner:
     economics: config/economics.yaml
 ```
 
-| Key          | Required | Holds                                                   |
-| ------------ | -------- | ------------------------------------------------------- |
-| `version`    | Yes      | `1`.                                                    |
-| `secrets`    | No       | Where secret values come from.                          |
-| `adapters`   | No       | The adapters to build, by name.                         |
-| `handlers`   | No       | The handlers to build, by name.                         |
-| `processors` | No       | The processors to build, by name.                       |
-| `notifiers`  | No       | One notifier, `slack_gate`, which posts gates to Slack. |
-| `runner`     | No       | The prices the runner pays. Added after version 0.47.0. |
+| Key          | Required | Holds                                                                           |
+| ------------ | -------- | ------------------------------------------------------------------------------- |
+| `version`    | Yes      | `1`.                                                                            |
+| `secrets`    | No       | Where secret values come from.                                                  |
+| `adapters`   | No       | The adapters to build, by name.                                                 |
+| `handlers`   | No       | The handlers to build, by name.                                                 |
+| `processors` | No       | The processors to build, by name.                                               |
+| `notifiers`  | No       | One notifier, `slack_gate`, which posts gates to Slack.                         |
+| `runner`     | No       | The prices the runner pays. Added after version 0.47.0.                         |
+| `disclosure` | No       | The environment variables whose values Realm shows. Added after version 0.47.1. |
 
 Any other key is refused, at every level except inside a `config` block:
 
@@ -144,7 +145,7 @@ Realm registers a processor under its name. No workflow field uses one.
 | Names an export that is not a function                | `handlers.show — './handlers.mjs#notAFunction' must export a FACTORY (ctx: { id, config }) => instance; got object.`                                                                                                                                    |
 | Builds a thing without the function its kind needs    | `Extension processor 'clean' in '/srv/shop/realm.yaml#processors.clean': missing callable 'process' — processors must implement 'process' per the @sensigo/realm Processor interface.`                                                                  |
 | Has a name that a workflow's code file also registers | `Extension handler 'order_total' is declared by both '../reg.mjs' and the deployment manifest '/srv/shop/realm.yaml' — manifest entries and code-module exports share one namespace; names must be unique.`                                             |
-| Is built by a function that throws                    | `constructing handlers.show (use: ./handlers.mjs#makeStrict) failed: bad token [redacted]`                                                                                                                                                              |
+| Is built by a function that throws                    | `constructing handlers.show (use: ./handlers.mjs#makeStrict) failed: bad token [REDACTED]`                                                                                                                                                              |
 
 Each message follows `Error loading extensions: Deployment manifest '/srv/shop/realm.yaml':` or stands on its own after `Error loading extensions:`.
 
@@ -176,8 +177,8 @@ A reference is allowed only in a string under `config`: in an adapter, handler o
 | Is in `use`                    | `handlers.show.use: '${secret:FILE}' is not allowed here — secret references are legal only inside string values under 'config'.`   |
 | Is in `secrets.dotenv`         | `secrets.dotenv: '${secret:WHERE}' is not allowed here — secret references are legal only inside string values under 'config'.`     |
 | Is in `runner.cache.economics` | `runner.cache.economics: '${secret:X}' is not allowed here — secret references are legal only inside string values under 'config'.` |
-| Has a name in small letters    | `handlers.show.config.a: malformed secret reference '${secret:lower}' — the form is ${secret:NAME} with NAME = [A-Z0-9_]+.`         |
-| Is not closed                  | `handlers.show.config.b: malformed secret reference '${secret:OPEN' — the form is ${secret:NAME} with NAME = [A-Z0-9_]+.`           |
+| Has a name in small letters    | `malformed secret reference '${secret:lower}' at handlers.show.config.a — the form is ${secret:NAME} with NAME = [A-Z0-9_]+.`       |
+| Is not closed                  | `malformed secret reference '${secret:OPEN' at handlers.show.config.b — the form is ${secret:NAME} with NAME = [A-Z0-9_]+.`         |
 
 ## `secrets`
 
@@ -203,11 +204,11 @@ The first source that has the name gives the value. With `SHOP_TOKEN=tok_from_do
 
 The `realm` command also loads a file named `.env` in the folder it is started in into its own environment, or the file `DOTENV_CONFIG_PATH` names; a variable that is already set keeps its value, unless `DOTENV_CONFIG_OVERRIDE` is set in the environment it starts with (a line in that `.env` does not count; see [Environment and files](environment-and-files.md#the-env-file-in-the-current-folder)). So with `sources: [env]`, a secret in that file is found when `realm` loads that file; otherwise it is found only if its environment already holds it — for a `realm agent` that `realm listen` starts, that is listen's environment, which includes the keys listen loaded at start (from the `.env` of the folder it was started in, or the file `DOTENV_CONFIG_PATH` names).
 
-| Case                                      | Message                                                                                                                                                             |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sources` is empty                        | `manifest/secrets/sources: must NOT have fewer than 1 items`                                                                                                        |
-| `sources` has another word                | `manifest/secrets/sources/0: must be equal to one of the allowed values`                                                                                            |
-| The file named by `dotenv` cannot be read | `Deployment manifest secrets: declared dotenv file '/srv/shop/config/prod.env' cannot be read: ENOENT: no such file or directory, open '/srv/shop/config/prod.env'` |
+| Case                                      | Message                                                                                                                                                         |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sources` is empty                        | `manifest/secrets/sources: must NOT have fewer than 1 items`                                                                                                    |
+| `sources` has another word                | `manifest/secrets/sources/0: must be equal to one of the allowed values`                                                                                        |
+| The file named by `dotenv` cannot be read | `Deployment manifest: its declared dotenv file '/srv/shop/config/prod.env' cannot be read: ENOENT: no such file or directory, open '/srv/shop/config/prod.env'` |
 
 Without a `dotenv` key, a missing `.env` is not an error: it is a source with nothing in it.
 
@@ -216,7 +217,7 @@ Without a `dotenv` key, a missing `.env` is not an error: it is a source with no
 A command that runs steps refuses to start:
 
 ```text
-Error loading extensions: Deployment manifest secrets: 1 unresolved secret reference(s):
+Error loading extensions: Deployment manifest: 1 secret(s) unresolved:
   handlers.show.config.token → ${secret:SHOP_TOKEN}
   handlers.show.config.header → ${secret:SHOP_TOKEN}
   handlers.show.config.nested.list[0] → ${secret:SHOP_TOKEN}
@@ -234,14 +235,14 @@ Valid: show v1 (1 step)
 `register` prints `Registering` in place of `Validating`. If a function refuses the stand-in value, its entry is skipped, with a warning:
 
 ```text
-⚠ Deployment manifest '/srv/shop/realm.yaml': constructing handlers.show (use: ./handlers.mjs#makeStrict) failed: bad token [redacted] (sentinel mode — entry skipped)
+⚠ Deployment manifest '/srv/shop/realm.yaml': constructing handlers.show (use: ./handlers.mjs#makeStrict) failed: bad token [REDACTED] (sentinel mode — entry skipped)
 ```
 
 `realm workflow test` always uses stand-in values and never reads the sources.
 
 ### Secret values in messages
 
-When a function that builds an entry throws, Realm replaces every secret value of 4 or more characters in the message with `[redacted]`, and also the forms these programs print it in:
+When a function that builds an entry throws, Realm replaces every secret value of 4 or more characters in the message with `[REDACTED]`, and also the forms these programs print it in:
 
 - JSON-escaped, as JavaScript's `JSON.stringify`, Python's `json.dumps` (every non-ASCII character as `\uXXXX`), Go's `json.Marshal`, PHP's `json_encode` (without its `JSON_HEX_…` flags), Perl's `JSON::PP`, jq's `tojson`, Newtonsoft.Json, Gson, System.Text.Json and Jackson write it, and inside another JSON string;
 - in quotes with backslash escapes, as Python's `repr()`, `ascii()`, `unicode_escape` and `repr()` of bytes, Node's `util.inspect` (`console.log` of an object), PHP's `var_export` and `addslashes`, Perl's `Data::Dumper`, Go's `%q`, `%#v` and `%+q`, Rust's `{:?}` and `escape_default()`, Ruby's `inspect`, PyYAML's and js-yaml's double-quoted strings, Windows argument quoting (Python's `subprocess.list2cmdline`) and bash's `declare -p` write it, and with each `"` written `\"`;
@@ -253,7 +254,15 @@ When a function that builds an entry throws, Realm replaces every secret value o
 It also replaces each line of a multi-line value that has 8 or more characters and no spaces or other blank characters. For every value, it also hides, in the same forms, the value with these escapes read, when that has 8 or more characters: `\n`, `\r`, `\t`, `\b`, `\f`, `\/`, `\\`, `\"`, `\uXXXX` and `\xHH` (a value that ends in a lone `\` has no such reading); and each line of that which has 8 or more characters and no spaces or other blank characters. It also hides a secret's parts, as [Give an agent step tools](../guides/agent-tools.md#4-read-what-was-recorded) lists them. In base64 and base64url, a value of 6 bytes or fewer that was encoded together with other text is hidden at some positions and not at others. It leaves alone what that page lists as left alone. With `SHOP_TOKEN=secret-value-123` and a function that throws `bad token ${config.token}`:
 
 ```text
-Error loading extensions: Deployment manifest '/srv/shop/realm.yaml': constructing handlers.show (use: ./handlers.mjs#makeStrict) failed: bad token [redacted]
+Error loading extensions: Deployment manifest '/srv/shop/realm.yaml': constructing handlers.show (use: ./handlers.mjs#makeStrict) failed: bad token [REDACTED]
+```
+
+Such a message also hides the values of the environment, the value after a credential's name and a token after `Bearer ` or `Basic `, as a log does (added after version 0.47.1).
+
+A declared secret of 1 to 3 characters cannot be hidden: Realm cannot tell it apart from ordinary text. When it reads the file, Realm says so on stderr, naming the file and each `config` key that refers to the secret, and goes on (added after version 0.47.1):
+
+```text
+[realm] Secret 'SHOP_PIN' (in /srv/shop/realm.yaml, at handlers.show.config.pin) is shorter than 4 characters, so realm cannot recognise it in printed text without hiding ordinary words. It shows wherever it appears outside a credential's name: in replies, logs, exports and Slack posts (after a name such as password=, a surface that hides every kind still hides it). Fix: give it a value of at least 4 characters. It is hidden again from the next load at which it is that long.
 ```
 
 ## `notifiers`
@@ -298,6 +307,21 @@ A block with `bot_token` and no `channel_id`, and a block with an empty `config`
 
 Upgrade every realm that reads this folder before adding `runner:`. Older realms refuse the key.
 
+## `disclosure`
+
+`disclosure` has one key, `not_secret`: the names of environment variables whose values Realm shows. Realm replaces every other environment value of 8 or more characters with `[REDACTED]` in what an agent, a log, a broadcast or an export is shown. A name counts when every manifest a program has loaded lists it, and only while no other variable that is not listed holds the same value. `REALM_NOT_SECRET` names more, for a program with no manifest. Added after version 0.47.1.
+
+```yaml
+disclosure:
+  not_secret: [APP_REGION, LOG_LEVEL]
+```
+
+| The block       | Message                                   |
+| --------------- | ----------------------------------------- |
+| Has another key | `manifest/disclosure: unknown key 'show'` |
+
+Upgrade every realm that reads this folder before adding `disclosure:`. Older realms refuse the key.
+
 ## When changes take effect
 
 Realm reads `realm.yaml` and the `dotenv` file each time a run starts. In one `realm mcp` process, with 3 runs of one workflow:
@@ -333,7 +357,11 @@ Each run records the path of the `realm.yaml` it used, a hash of the file's byte
 }
 ```
 
-These are in the run's record under `extension_identity`, and in its export. `realm run inspect` does not print them. `realm run inspect <run-id> --check-drift` compares the hash with the file on disk:
+A run made after version 0.47.1 also records `secrets_block_hash`, a hash of the file's `secrets` block alone. For the file at the top of this page it is `f57efad2e80ef275ec3bbaf1b1b50421d8bb3273ca2a8cf47005e4166c701a07`.
+
+These are in the run's record under `extension_identity`, and in its export. `realm run inspect` does not print them.
+
+`realm run export` and `realm run inspect` read a run's declared secrets from the `realm.yaml` it recorded. They treat the file as unchanged for the run while it still refers to every secret the run recorded and, when the run recorded `secrets_block_hash`, its `secrets` block is the same. Adding `disclosure:`, a handler with a secret of its own, or any other edit keeps earlier runs exportable. Removing a secret a run referred to, or changing the `secrets` block, makes them read `partial`, and `realm run export` then refuses them unless it is given `--accept-partial-disclosure`. A run made by version 0.47.1 or earlier recorded no `secrets_block_hash`, so for it only the names are compared: a change to the `secrets` block alone is not noticed. Added after version 0.47.1. `realm run inspect <run-id> --check-drift` compares the hash with the file on disk:
 
 | Changed since the run      | `--check-drift` prints                                                           |
 | -------------------------- | -------------------------------------------------------------------------------- |

@@ -43,8 +43,8 @@ export interface ComputeIdentityOptions {
   /** Injected for tests; defaults to `process.pid`. */
   pid?: number;
   /** Deployment-manifest identity (path + raw-bytes sha256) — recorded AND compared. */
-  manifest?: { path: string; content_hash: string };
-  /** Secret NAMES referenced by the manifest — recorded, never compared, never values. */
+  manifest?: { path: string; content_hash: string; secrets_block_hash?: string };
+  /** Secret NAMES referenced by the manifest — never values; a read compares them (D-12). */
   secretNames?: string[];
 }
 

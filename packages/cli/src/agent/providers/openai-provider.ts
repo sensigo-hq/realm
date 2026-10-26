@@ -36,6 +36,7 @@ import {
   type LlmClock,
   type WireCounters,
   attachBilledUsage,
+  passedSnippet,
 } from './agent-utils.js';
 
 /**
@@ -302,9 +303,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     // retry) preceded this throw — attaching them here is the only way that money is ever
     // recorded; without it a drive that throws is indistinguishable from one that spent nothing.
     const err = new Error(
-      sanitizeError(
-        `OpenAI returned non-JSON content after retry: ${sanitizeError(retry).slice(0, 200)}`,
-      ),
+      sanitizeError(`OpenAI returned non-JSON content after retry: ${passedSnippet(retry)}`),
     );
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (err as any).driveCall = { usage: requests };
@@ -477,15 +476,13 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
         if (typeof refusal === 'string' && refusal.length > 0) {
           // A refusal is a well-formed API response, not a transport failure: surface it the same
           // way a non-JSON answer surfaces, so the existing validation/reask layer handles it.
-          throw new Error(
-            sanitizeError(`OpenAI refused the request: ${sanitizeError(refusal).slice(0, 200)}`),
-          );
+          throw new Error(sanitizeError(`OpenAI refused the request: ${passedSnippet(refusal)}`));
         }
         const parsed = extractJsonObject(message?.content ?? '');
         if (parsed !== null) return parsed;
         throw new Error(
           sanitizeError(
-            `OpenAI returned non-JSON content under strict decoding: ${sanitizeError(message?.content ?? '').slice(0, 200)}`,
+            `OpenAI returned non-JSON content under strict decoding: ${passedSnippet(message?.content ?? '')}`,
           ),
         );
       };

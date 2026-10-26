@@ -19,6 +19,7 @@ import {
   unbrandedClause,
   shellWord,
   getWorkflowForRun,
+  deriveRunPhase,
 } from '@sensigo/realm';
 import { renderLoadFailure } from '../lib/loader-warnings.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
@@ -43,7 +44,7 @@ import {
   providerName,
   resolvePromptCache,
 } from '../agent/prompt-cache.js';
-import { resolveRunAttach } from '../agent/run-attach.js';
+import { reattachable, resolveRunAttach } from '../agent/run-attach.js';
 import {
   loadProjectExtensions,
   collectReleaseLineWarnings,
@@ -51,6 +52,16 @@ import {
 } from '../extensions/load-project-extensions.js';
 import { createSlackGateHandler } from '../agent/gate/slack-gate-notifier.js';
 import type { SlackGateHandlerConfig } from '../agent/gate/slack-gate-notifier.js';
+import {
+  errorWithCommand,
+  noteRunManifest,
+  valuesWithheldFor,
+  valuesWithheldLine,
+  withholdUnlessAccepted,
+  writerCtx,
+  writerMode,
+  writerReceiptLine,
+} from '../output/writer.js';
 
 /**
  * Builds the Slack gate handler from the deployment manifest's `notifiers.slack_gate`
@@ -200,6 +211,18 @@ export function buildReattachFlags(opts: {
   return words.join(' ');
 }
 
+/**
+ * #729 PR-3 (RECORD 05 "shaped sites"; F10): in log mode, one line per run says what was hidden and
+ * shaped — the walks' counts included — and it is printed however the drive ends (correction 2, C4:
+ * an early exit prints it too).
+ */
+function printDriveReceipt(): void {
+  if (writerMode() === 'broadcast') {
+    const receipt = writerReceiptLine();
+    if (receipt !== undefined) console.error(receipt);
+  }
+}
+
 export const agentCommand = new Command('agent')
   .description('Run a workflow autonomously using an LLM provider')
   .option('--workflow <path>', 'Path to workflow directory or workflow.yaml file')
@@ -284,6 +307,14 @@ export const agentCommand = new Command('agent')
   // lifetime), its runner is recorded as `realm listen`, and a setting it cannot apply is disclosed,
   // not refused.
   .addOption(new Option('--spawned-by-listen').hideHelp())
+  // #729 PR-3 (L-1): this drive's output is a shared log — the broadcast audience, as under
+  // listen: a run's values print as their shapes, secrets are hidden as on a log (a gate's
+  // question at the declared tier), and one disclosure line is printed per run. Not repeated by the
+  // re-attach command (an output choice, not the drive's).
+  .option(
+    '--log-mode',
+    "Print as a shared log, as realm listen's drives do: a run's values print as their type and size, and one line per run counts what was hidden",
+  )
   // issue #600 (the lifetime unit): listen's own too — the gaps between the recent triggers of the
   // child's workflow, in whole seconds. No argParser: a refusal there would exit a listen child after
   // listen already answered `202`, leaving the run undriven; `resolvePromptCache` reads it and never
@@ -307,6 +338,7 @@ export const agentCommand = new Command('agent')
       llmTimeout: number;
       promptCache?: PromptCacheSetting;
       spawnedByListen?: boolean;
+      logMode?: boolean;
       cacheGaps?: string;
       releaseLineAdvisory: boolean;
     }) => {
@@ -359,6 +391,7 @@ export const agentCommand = new Command('agent')
         );
         process.exit(1);
       };
+      let exitCode: number;
       try {
         const workflowStore = new JsonWorkflowStore();
         const store = new JsonFileStore();
@@ -505,12 +538,40 @@ export const agentCommand = new Command('agent')
               .catch(() => undefined);
             if (stated !== undefined) refuseInertPromptCache(stated);
           }
+          // #729 PR-3 correction 4 (I-11): an ended run is refused below with its stored reason, so
+          // its manifest is read first, as `attempts` reads it — the reason is masked with the run's
+          // declared values, and shown as its type and size while they cannot all be read (no flag
+          // here: the line names the command that takes it). A run re-attached, or one that cannot
+          // be read, is left to resolveRunAttach.
+          const ended = await store.get(opts.runId).catch(() => undefined);
+          if (ended !== undefined && ended.terminal_state && !reattachable(ended)) {
+            const endedDefinition = await getWorkflowForRun(workflowStore, ended, {
+              retryVerb: 're-attach',
+              verb: 're-attach',
+              terminalOk: true,
+            }).catch(() => undefined);
+            await noteRunManifest(endedDefinition, ended);
+            withholdUnlessAccepted(false);
+            const withheld = valuesWithheldFor();
+            if (
+              withheld !== undefined &&
+              ended.terminal_reason !== undefined &&
+              deriveRunPhase(ended) !== 'completed'
+            )
+              console.error(
+                valuesWithheldLine(
+                  withheld,
+                  writerCtx().cmd(`realm run inspect ${opts.runId} --accept-partial-disclosure`),
+                ),
+              );
+          }
           // --run-id path: attach to existing run, load definition from store.
           // resolveRunAttach loads project extensions + manifest BEFORE the run is claimed
           // and carries the extensions_load_failed write / re-attach semantics.
           const { definition, ...loaded } = await resolveRunAttach(
             opts.runId,
-            { store, workflowStore },
+            // eslint-disable-next-line no-restricted-syntax -- #729 PR-3 correction 3 (H-8''): the ended-run refusal this context marks is thrown before the run is claimed and printed only by this command's own catch below; nothing keeps it.
+            { store, workflowStore, ctx: writerCtx() },
             extensionOpts,
           );
 
@@ -585,6 +646,9 @@ export const agentCommand = new Command('agent')
             console.error(
               `Error loading extensions: ${err instanceof Error ? err.message : String(err)}`,
             );
+            // #729 PR-3 correction 2 (C4): this exit skips the `finally` below, so the drive's
+            // `Disclosure:` line is printed here.
+            printDriveReceipt();
             process.exit(1);
           }
 
@@ -627,7 +691,7 @@ export const agentCommand = new Command('agent')
           );
         }
 
-        process.exit(result === 'completed' ? 0 : 1);
+        exitCode = result === 'completed' ? 0 : 1;
       } catch (err) {
         // issue #425 — THE FAMILY SPLIT. An `Invalid workflow:` message announces itself, so it
         // renders verbatim through the shared helper (which also lists a multi-error throw one per
@@ -640,9 +704,12 @@ export const agentCommand = new Command('agent')
         if (err instanceof WorkflowError && err.message.startsWith('Invalid workflow:')) {
           console.error(renderLoadFailure(err));
         } else {
-          console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+          console.error(`Error: ${errorWithCommand(err, writerCtx())}`);
         }
-        process.exit(1);
+        exitCode = 1;
+      } finally {
+        printDriveReceipt();
       }
+      process.exit(exitCode);
     },
   );

@@ -4,13 +4,14 @@
 // per-definition via the registryProvider (process-lifetime cache — restart to pick up
 // module content changes).
 import { Command } from 'commander';
-import { JsonWorkflowStore } from '@sensigo/realm';
+import { GATE_ANSWERS_VALUES, JsonWorkflowStore } from '@sensigo/realm';
 import { createRealmMcpServer } from '@sensigo/realm-mcp';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { makeProjectProviders } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
 import { hostRefusalLine } from '../lib/host-refusal-line.js';
 import { cliOperatorRoute } from './ways-renderer.js';
+import { channelStdout, cliDisclosureProvider, writerCtx } from '../output/writer.js';
 import {
   checkValueLine,
   gateAnswersStartLine,
@@ -67,7 +68,9 @@ export const mcpCommand = new Command('mcp')
       }
       if (options.check === true) {
         // W-s6 and the separation check (Part K): nothing is started.
-        console.log(checkValueLine(settings.answers));
+        console.log(
+          checkValueLine(settings.answers, (v) => writerCtx().word(v, GATE_ANSWERS_VALUES)),
+        );
         const evidence = await measureSeparation({
           probes: systemProbes(),
           value: { value: settings.answers.value, source: settings.answers.source },
@@ -76,7 +79,7 @@ export const mcpCommand = new Command('mcp')
           extensionsModule: options.extensionsModule,
           door: 'mcp',
         });
-        for (const line of renderSeparation(evidence)) console.log(line);
+        console.log(renderSeparation(evidence, writerCtx()).join('\n'));
         process.exit(0);
       }
       // issue #625 (holder slice): this program's name, made once, before the transport opens. A name
@@ -112,6 +115,8 @@ export const mcpCommand = new Command('mcp')
             ? { formWaitSecondsFlag: options.formWaitSeconds }
             : {}),
           principal: { absent: 'door_authenticates_no_principal' },
+          // #729 PR-3 (M-3): every reply is masked with this process's set, declared part included.
+          disclosureProvider: cliDisclosureProvider,
         });
       } catch (err) {
         console.error(hostRefusalLine('mcp', err));
@@ -119,7 +124,9 @@ export const mcpCommand = new Command('mcp')
       }
       // #627 W: the start line — stderr, since stdout carries the protocol.
       console.error(gateAnswersStartLine(settings.answers, false));
-      const transport = new StdioServerTransport();
+      // #729 PR-3 (L-1): the channel is built on the ORIGINAL stdout write; every other stdout write
+      // in this process goes to the masked stderr.
+      const transport = new StdioServerTransport(process.stdin, channelStdout());
       await server.connect(transport);
     },
   );

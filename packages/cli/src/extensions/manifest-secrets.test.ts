@@ -5,12 +5,23 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { leakedForms } from '../agent/test-support/redaction-oracle.js';
-import {
-  resolveManifestSecrets,
-  redactSecretValues,
-  sentinelValue,
-  ManifestSecretsError,
-} from './manifest-secrets.js';
+import { compileDisclosure, disclose } from '@sensigo/realm';
+import { resolveManifestSecrets, sentinelValue, ManifestSecretsError } from './manifest-secrets.js';
+
+/**
+ * #729 PR-3 (L-5): `redactSecretValues` is gone; the loader masks its failure messages at source with
+ * core's law over the values it just resolved — this exact call (`load-project-extensions.ts`,
+ * `maskDeclared`): the values as declared members, the declared tier, no environment.
+ */
+const redactSecretValues = (message: string, values: readonly string[]): string =>
+  disclose(
+    message,
+    compileDisclosure(
+      values.map((value, i) => ({ value, source: `declared:S${i}` as const })),
+      { declared: 'resolved', audience: 'log', environment: 'not_swept' },
+    ).set,
+    'declared',
+  ).text;
 
 let dir: string;
 
@@ -82,7 +93,8 @@ describe('resolveManifestSecrets — loud failures', () => {
       error = err as Error;
     }
     expect(error).toBeInstanceOf(ManifestSecretsError);
-    expect(error!.message).toContain('2 unresolved secret reference(s)');
+    // #729 PR-3 correction 1 (D-14): realm's own words put no credential name before `:`.
+    expect(error!.message).toContain('Deployment manifest: 2 secret(s) unresolved:');
     expect(error!.message).toContain('adapters.github.config.auth.token → ${secret:GITHUB_TOKEN}');
     expect(error!.message).toContain(
       'handlers.record_offer.config.api_key → ${secret:AIRTABLE_PAT}',
@@ -99,7 +111,7 @@ describe('resolveManifestSecrets — loud failures', () => {
 
   it('undeclared default .env absent → misses aggregate (not a file error)', () => {
     expect(() => resolveManifestSecrets(refs('A'), undefined, dir, 'real')).toThrow(
-      /unresolved secret reference/,
+      /secret\(s\) unresolved/,
     );
   });
 });
@@ -114,7 +126,7 @@ describe('sentinel mode', () => {
 });
 
 describe('redactSecretValues — a value in its encoded form (GHSA-gxfq cell 16)', () => {
-  it("hides a declared value written JSON-escaped in a manifest error line, with the marker '[redacted]'", () => {
+  it("hides a declared value written JSON-escaped in a manifest error line, with the marker '[REDACTED]'", () => {
     // A FAKE secret written here: a `"`, a `\` and a newline, so its JSON text differs from it.
     const secret = 'fk"1\\2\n3z';
     const line = `Deployment manifest '/srv/app/realm.yaml': constructing handlers.notify (use: ./notify.js) failed: bad config ${JSON.stringify({ token: secret })}`;
@@ -128,7 +140,7 @@ describe('redactSecretValues — a value in its encoded form (GHSA-gxfq cell 16)
     expect({
       found: leakedForms(out, secret),
       escapedGone: !out.includes(escaped),
-      marked: out.includes('[redacted]'),
+      marked: out.includes('[REDACTED]'),
     }).toEqual({ found: [], escapedGone: true, marked: true });
   });
 
@@ -141,7 +153,7 @@ describe('redactSecretValues — a value in its encoded form (GHSA-gxfq cell 16)
     const TEXT = `see ${VALUE} and ${READ} here`;
     let result: boolean | string;
     try {
-      result = redactSecretValues(TEXT, [VALUE]) === 'see [redacted] and [redacted] here';
+      result = redactSecretValues(TEXT, [VALUE]) === 'see [REDACTED] and [REDACTED] here';
     } catch (e) {
       result = 'THROW ' + (e instanceof Error ? e.constructor.name : typeof e);
     }
@@ -155,16 +167,16 @@ describe('redactSecretValues', () => {
   it('replaces every resolved value, longest first (multi-secret message)', () => {
     const message = 'auth failed for token=super-secret-long and key=short-one';
     const out = redactSecretValues(message, ['short-one', 'super-secret-long']);
-    expect(out).toBe('auth failed for token=[redacted] and key=[redacted]');
+    expect(out).toBe('auth failed for token=[REDACTED] and key=[REDACTED]');
     expect(out).not.toContain('super-secret-long');
   });
 
   it('longest-first prevents partial reveals when one value contains another', () => {
     const out = redactSecretValues('x=abcdef123456', ['abcdef', 'abcdef123456']);
-    expect(out).toBe('x=[redacted]');
+    expect(out).toBe('x=[REDACTED]');
   });
 
-  it('skips values shorter than 4 chars (over-redaction guard)', () => {
+  it('skips values shorter than 4 chars (the declared floor; the load warns of them, I8)', () => {
     const out = redactSecretValues('the answer is 42 and t0k3n-value', ['42', 't0k3n-value']);
     expect(out).toContain('42');
     expect(out).not.toContain('t0k3n-value');

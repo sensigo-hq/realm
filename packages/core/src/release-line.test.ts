@@ -184,7 +184,9 @@ describe('releaseLineError', () => {
       `Handler 'lookup' threw a WorkflowError from realm 9.9.9 (/tmp/other-realm); this engine runs realm ${REALM_BRAND.version} (${LOCAL_PATH}). Realm objects do not cross versions, so its code 'SERVICE_RATE_LIMITED' and its retry setting were not used. Install @sensigo/realm@${REALM_BRAND.version} (and every other @sensigo package the project has, at ${REALM_BRAND.version}) in the project your code imports it from, or, when you run the realm command, run version 9.9.9 there: 'npm install --save-dev @sensigo/realm-cli@9.9.9', then 'npx realm'.`,
     );
   });
-  it('cuts the foreign code at 500 characters and replaces control characters', () => {
+  // #729 PR-3 B0 (inherited through `capText`, no edit to release-line.ts): (a) red when the cut
+  // returns; (b) prints the stored code, `A` runs or the marker.
+  it('bounds the foreign code at 500 characters whole (B0) and replaces control characters', () => {
     const d = describeUnrecognised(foreignWorkflowError(), WorkflowError);
     if (d.kind === 'not_realm') throw new Error('setup');
     const long = releaseLineError(d, {
@@ -194,7 +196,7 @@ describe('releaseLineError', () => {
       foreignCode: 'A'.repeat(600),
     });
     expect((long.details['unrecognised'] as { foreign_code: string }).foreign_code).toBe(
-      `${'A'.repeat(500)}…[truncated]`,
+      '‹600 characters, not kept›',
     );
     const ctl = releaseLineError(d, {
       role: 'r',

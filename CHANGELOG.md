@@ -8,6 +8,90 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- **What Realm shows is masked for who reads it.** A run's file keeps every value as it was
+  given, except the error of a project that failed to load, which is masked where it is caught;
+  what Realm prints, replies or writes out is masked at the point it leaves. Your terminal
+  hides the secrets a deployment manifest declares. Output sent to a file or a pipe (a CI log, for
+  one), an agent (every MCP reply, and what `realm agent` sends the model), `realm listen`'s log,
+  `realm agent --log-mode`, Slack and the file `realm run export` writes also hide every
+  environment value of 8 or more characters and the value after a credential's name
+  (`password=…`, `"client_secret": "…"`, `Authorization: Bearer …`), a token after `Bearer ` or
+  `Basic `, the text after `token=`, and a URL's password (one holding `/` or a `"` is not read). A
+  gate's question hides only the declared secrets, wherever it is shown. Realm's own words — a run's
+  phase and the gate-answers value where they stand alone, a completed run's reason, a printed
+  command, the `user@host` label that names who took a step — are shown whole. That covers
+  `inspect`'s `Cause:`, `abandon`'s `Reason:`, the default reason `abandon_run` writes, `run list`'s
+  phase column, `advance`'s last line, `--check`'s value line and the sentence
+  `realm agent --run-id` prints for a run that has ended. `abandon`'s own echo now reads the reason
+  with the whole line's quote state, as `inspect` does; a line the writer cannot read whole is
+  hidden first. A run's phase prints whole on every
+  command, also where a variable or a declared value holds the same word. A credential's name is
+  also read after a backslash (`C:\app\token: …`), and a value in escaped quotes (`password=\'…\'`)
+  is hidden to its closing quote, and so is what is glued to that quote unless it is only closing brackets or quotes before a blank, `&`, `;` or `,` (or the text ends there). A quoted value whose
+  closing quote stands on the next line is
+  hidden through the line break (a line that a backslash continues before its break counts as the same line); one with no closing quote on its line or the next is hidden to
+  its line's end, and the lines after it show. A quote met inside a value written without quotes
+  (`password=ab'cd`) ends the value only when a quote of the same kind was left open before the
+  name (a `'` between two letters, as in it's, never opens one) and the quote closes — what follows
+  it, after any closing brackets or quotes (`}` `]` `)` `"` `'`), is a blank, `&`, `;` or `,`, or
+  the text ends there; otherwise it is part of the value, which is hidden whole. The quote that
+  closes a quoted value on the line after it opened is read as that closing quote, so a value later
+  on that line is read as if no quote were open. A message about the text of your own deployment
+  manifest, such as a malformed `${secret:…}` reference, is masked wherever it is printed, so on
+  your own terminal it shows as you typed it; its key path now follows Realm's words (`malformed
+secret reference '…' at <path>`). See "What the output hides" in `docs/guides/operate-runs.md`.
+- **Values withheld when Realm cannot read a run's declared secrets.** When the deployment manifest
+  a run's record names cannot be read, or changed or is gone since the run recorded it,
+  `realm run inspect`, `realm run attempts` and every MCP reply about the run print each stored
+  value as its type and size, and the question as `withheld (declared values could not be read)` or
+  `withheld (declared values changed)`. A hash of a value the masking hid, or shaped, is shown as
+  its type and size with it (a short value's digest would confirm a guess); where values print
+  whole, so do their hashes. When a program that loaded a project creates a run, the run records
+  that project's manifest, or that it has none (a creator with no loaded project, or a store that
+  does not keep the record, writes nothing), so a run that never ran a step is withheld too.
+  `realm run diff` reads each run's declared secrets the same way and takes the same flag. Ids, step
+  names, phases and the commands Realm prints still show. `inspect` and `attempts` take
+  `--accept-partial-disclosure` to print the values masked with what is known, as `realm run export`
+  does; an MCP reply's `disclosure` then says `values: withheld` and `question: withheld`. A run
+  whose workflow names no manifest, and a server given no `disclosureProvider`, are not withheld.
+  When a run's workflow copy cannot be read, Realm reads the manifest the run's record names.
+- **The `disclosure` receipt.** Every MCP reply that is a JSON object ends with `disclosure`: whether
+  Realm knew the declared secrets (`resolved`, `partial` or `unknown`, with `declared_cause`),
+  whether the environment was checked, and how many values were hidden, by kind. The export file
+  carries it, and `realm run inspect` prints it as one `Disclosure:` line after the record.
+- **`REALM_NOT_SECRET`, and the manifest key `disclosure.not_secret`.** Each names environment
+  variables whose values are not treated as secrets. A manifest's list counts when every manifest a
+  program has loaded lists the name; a listed value is still hidden while another, unlisted variable
+  holds it. A listed name that is not set draws a warning that names where it is listed. Realm's own
+  settings are not treated as secrets. A path under your home folder is hidden in a log, except
+  inside a command Realm prints.
+  Older realms refuse the manifest key: upgrade every realm that reads the folder first.
+- **`realm agent --log-mode`.** Prints as a shared log, as the drives `realm listen` starts do: a
+  run's values print as their type and size (`‹string, 42 characters›`), and one `Disclosure:` line
+  per run counts what was hidden. The re-attach command does not repeat it.
+- **`realm workflow run --params-from-run <run-id>`.** Starts with the parameters of an earlier run
+  of the same workflow, read from that run's record as given. It refuses `--params` beside it, and a
+  run of another workflow.
+- **`realm run export --accept-partial-disclosure`.** Writes the file when Realm does not know all
+  of the run's declared secrets, masked with what is known; its last line names the state.
+- **A warning when an answer sends a mark back.** Parameters given with `--params`, an answer typed
+  at a `realm workflow run` prompt, and an `execute_step` answer that hold a mark Realm prints in
+  place of a hidden value (`[REDACTED]`, for one) are recorded as sent, and a warning says the run
+  now holds the mark, not the value.
+- **`createRealmMcpServer({ disclosureProvider, disclosure })`.** `disclosureProvider(definition, run?)`
+  returns the set a reply about that workflow, and that run when the call names one, is masked with
+  (the host's declared secrets); without
+  one, or when it throws, replies are masked with the environment and say `declared: unknown`;
+  when it throws, a reply's values also print as their type and size and its question is withheld.
+  `disclosure.notSecret` names environment variables the host shows. Core exports the masking it
+  uses: `buildDisclosureSet`, `compileDisclosure`, `disclose`, `discloseGate`, `discloseRecord`,
+  `discloseReply`, `environmentEntries`, `notSecretIntersection`, `DISCLOSURE_FLOORS`, `tierFor`,
+  `shapeOf`, `markersIn`, `inboundMarkerWarning`, and the types `DisclosureSet`,
+  `DisclosureAudience` and `DisclosureReceipt`.
+
+- **`repairActFor(err).command`.** The shell command a repair act names (`rm <path>`, `chmod u+r
+<path>`), alone, beside the act's words; the error a run's damaged workflow copy raises carries
+  it as `details.repair_command`, and the CLI prints it whole.
 - **`check_quotes`: a built-in handler that checks each extracted value's quote against the source
   document (issue #760).** It records, per value, how the quote was found — `exact`,
   `reformatted`, `stitched`, `stitched_out_of_order`, `not_found` or `unquoted` — with offsets into
@@ -299,6 +383,45 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
 
 ### Changed
 
+- **The environment floor is 8 characters, up from 5.** An environment value of 5 to 7 characters
+  is no longer hidden from what `realm agent` sends the model. Declare such a secret in the
+  deployment manifest to keep it hidden (a declared secret of 4 or more characters is hidden, and
+  one shorter is reported when it is loaded). **Upgrading:** a host that keeps its credentials only
+  in the environment, with no manifest, should list its ordinary variables in `REALM_NOT_SECRET`
+  before upgrading: values of 8 or more characters equal to an environment value are now masked in
+  what the agent sees. `PWD`, `OLDPWD` and `_`, which the shell sets to paths, are not treated as
+  secrets, and neither are Realm's own settings, such as `REALM_OPERATOR` and
+  `REALM_MCP_GATE_ANSWERS`; a value another, unlisted variable also holds is still hidden.
+- **The home folder and user name, per surface.** What an agent, a log or a broadcast is shown hides
+  the home folder and the user name when they are 8 or more characters long, and every other
+  environment value under the home folder, whole; earlier, only the home folder's part of a path was
+  replaced. Your terminal and the export file show them.
+- **`realm run export` writes version 5, masked.** It refuses, writing nothing, when Realm does not
+  know all of the run's declared secrets (the run's manifest changed or is gone, could not be read,
+  or the run has no project), unless it is given `--accept-partial-disclosure`. Its output gains a
+  third line, `masked: …`.
+- **`realm run abandon`'s rerun refers to the run.** It prints
+  `realm workflow run <dir> --params-from-run <run-id>`, never the run's parameters.
+- **A guard's conditions are in its diagnostics.** A guard step's entry keeps `aborted` and
+  `abort_message` in `output_summary`; the conditions it checked move to
+  `diagnostics.guard_conditions`. Its `evidence_hash` therefore differs from an entry written by
+  0.47.1 or earlier, and `realm run diff` between such runs shows the guard step as changed. A
+  later step that reads `<guard>.conditions`, in a `when:` for one, finds nothing there.
+- **A value too long to keep is replaced whole.** Where Realm cut a long value at its start and
+  added `…[truncated]` (a precondition's `resolved_value`, `skip_details`, a `terminal_reason`, and
+  so `realm run inspect` and `get_run_state`), it now writes `‹N characters, not kept›`.
+- **The manifest's builder errors write `[REDACTED]`, not `[redacted]`,** and also hide the
+  environment's values, the value after a credential's name, a token after `Bearer ` or `Basic `,
+  and the text after `token=`.
+- **A step's recorded output no longer repeats `_debug`.** The dispatchers of `execute_step`,
+  `realm agent` and `realm workflow run` return the input the engine passes them, so `_debug` is kept
+  in `debug_output` only.
+- **A broadcast prints a run's values as their type and size.** `realm listen`'s log,
+  `realm agent --log-mode` and Slack show a value field as `‹string, N characters›` (and `‹number›`,
+  `‹array, N items›`, `‹object, N keys›`); errors and hints stay readable, masked. Slack's preview of
+  a gate with no message is shown this way.
+- **`realm mcp` keeps its stdout for the protocol.** Anything else the process writes to stdout goes
+  to stderr, masked.
 - **`ValidateVerbatimQuotesHandler`, never registered or exported, is removed (issue #760);** the
   handlers reference points to `check_quotes`.
 

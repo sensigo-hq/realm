@@ -1,7 +1,15 @@
 // abandon command — explicitly abandons a non-terminal run via the shared core primitive.
 import { Command } from 'commander';
 import type { RunRecord } from '@sensigo/realm';
-import { cliCommandOf } from './ways-renderer.js';
+import { cliCommandOf, writerHost } from './ways-renderer.js';
+import {
+  RUN_PHASE_WORDS,
+  noteRunManifest,
+  valuesWithheldFor,
+  valuesWithheldLine,
+  withholdUnlessAccepted,
+  writerCtx,
+} from '../output/writer.js';
 
 /**
  * #819 correction 1 (02 C2): an empty or blank `--reason` is refused. #819 follow-up 2 (R1, the
@@ -47,6 +55,7 @@ export const abandonCommand = new Command('abandon')
       ABANDON_KILL_ADVISORY,
       shellWord,
       withFullStop,
+      FIXED_TERMINAL_REASONS,
     } = await import('@sensigo/realm');
     if (opts.reason !== undefined && opts.reason.trim() === '') {
       console.error(emptyReasonRefusal());
@@ -60,6 +69,18 @@ export const abandonCommand = new Command('abandon')
       // abandoning an already-abandoned run is an idempotent no-op and used to print exactly the
       // same line as a real kill.
       before = await runStore.get(runId);
+      // #729 PR-3 correction 4 (I-11): the reason printed below is stored text, so the run's
+      // manifest is read first, as `attempts` reads it — the reason is masked with the run's
+      // declared values, and shown as its type and size while they cannot all be read (this command
+      // takes no flag; the line names the one that does).
+      const { getWorkflowForRun } = await import('@sensigo/realm');
+      const definition = await getWorkflowForRun(new JsonWorkflowStore(), before, {
+        retryVerb: 'abandon again',
+        verb: 'abandon',
+        terminalOk: true,
+      }).catch(() => undefined);
+      await noteRunManifest(definition, before);
+      withholdUnlessAccepted(false);
       const alreadyAbandoned = before.abandoned_at !== undefined;
       // issue #558 PR-C: the reason names THIS surface's verb. Core's neutral default
       // ('Abandoned') would leave a CLI kill unattributed; the MCP tool supplies its own.
@@ -74,33 +95,51 @@ export const abandonCommand = new Command('abandon')
       // the copy (PR-T's point) — and fall back to the honest blank when the copy is absent,
       // unreadable, or predates the stamp.
       // walk 3: `realm workflow run` never prompts for params (`--params` defaults to `{}`), so a
-      // workflow that requires them refuses the printed command. The record carries this run's
-      // params verbatim — print them, shell-quoted, so the command starts a run AS PRINTED.
+      // workflow that requires them refuses the printed command. #729 PR-3 (D1 D5; RECORD 01 #17):
+      // the command REFERS to this run's params (`--params-from-run`), read raw from its record —
+      // never the values themselves, which the output masks (I1, I9).
       const paramsClause =
-        Object.keys(run.params).length > 0
-          ? ` --params ${shellWord(JSON.stringify(run.params))}`
-          : '';
-      let runAgain = `realm workflow run <the workflow.yaml you registered '${run.workflow_id}' from>${paramsClause}`;
+        Object.keys(run.params).length > 0 ? ` --params-from-run ${shellWord(runId)}` : '';
+      const ctx = writerCtx();
+      let runAgain = `${ctx.cmd(`realm workflow run <the workflow.yaml you registered '${run.workflow_id}' from>${paramsClause}`)}`;
+      let fromNote = '';
       try {
         const copy = await new JsonWorkflowStore().get(run.workflow_id);
         if (copy.source_dir !== undefined) {
-          runAgain = `realm workflow run ${shellWord(copy.source_dir)}${paramsClause} (the directory it was registered from)`;
+          runAgain = `${ctx.cmd(`realm workflow run ${shellWord(copy.source_dir)}${paramsClause}`)}`;
+          fromNote = 'That is the directory it was registered from. ';
         }
       } catch {
         // the blank form above is the honest sentence for a copy realm cannot read
       }
+      const reason = run.terminal_reason;
+      const fixedReason = reason !== undefined && FIXED_TERMINAL_REASONS.includes(reason);
+      const withheld = valuesWithheldFor();
+      if (withheld !== undefined && reason !== undefined && !fixedReason)
+        console.error(
+          valuesWithheldLine(
+            withheld,
+            ctx.cmd(`realm run inspect ${runId} --accept-partial-disclosure`),
+          ),
+        );
       console.log(
-        `Run '${runId}' abandoned (phase: '${run.run_phase}').` +
+        `Run '${runId}' ${ctx.word('abandoned', RUN_PHASE_WORDS)} (phase: '${ctx.word(run.run_phase, RUN_PHASE_WORDS)}').` +
           (alreadyAbandoned ? ' Already abandoned (no change this call).' : '') +
           // E1 (decision C37): one mark after the reason; no clause when the record carries none,
           // as `realm run inspect` prints `Cause:` only then.
-          (run.terminal_reason !== undefined
-            ? ` Reason: ${withFullStop(run.terminal_reason)}`
+          // #729 PR-3 correction 3 (H-8): a fixed sentence is realm's own words, printed whole.
+          // Correction 4 (I-11): any other reason is a value (its shape while withheld).
+          (reason !== undefined
+            ? ` Reason: ${withFullStop(fixedReason ? ctx.word(reason, FIXED_TERMINAL_REASONS) : ctx.value(reason))}`
             : '') +
           '\n' +
           // issue #558 PR-C: the rerun path a CLI operator can actually execute. `start_run` is an
           // MCP tool — naming it here handed a CLI operator a command that does not exist.
-          `To run the same work again: ${runAgain} — a fresh run; this run's evidence stays at realm run inspect ${runId}.\n` +
+          // #729 PR-3 correction 2: the command stands alone on its line, so it copies cleanly; its
+          // note is the next line.
+          `To run the same work again, start a fresh run:\n` +
+          `  ${runAgain}\n` +
+          `  ${fromNote}This run's evidence stays at ${ctx.cmd(`realm run inspect ${runId}`)}.\n` +
           // issue #222 — the documented/advised abandon contract, minted ONCE in core
           // (`ABANDON_KILL_ADVISORY`) and shared byte-identically with the abandon_run MCP tool's
           // `note`. There is no operator `abort` verb (issue #558 PR-C).
@@ -121,7 +160,7 @@ export const abandonCommand = new Command('abandon')
           console.error(
             repair !== undefined
               ? `${err.message} ${repair}`
-              : `${err.message} Answer it: ${cliCommandOf(answer)}`,
+              : `${err.message} Answer it: ${cliCommandOf(answer, undefined, writerHost())}`,
           );
           process.exit(1);
           return;
