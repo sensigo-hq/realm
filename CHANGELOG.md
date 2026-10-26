@@ -4,7 +4,7 @@ All notable changes to this project are documented here.
 
 ---
 
-## [Unreleased]
+## [0.48.0] — 2026-10-26
 
 ### Added
 
@@ -381,6 +381,12 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
   detector. The finding is `cannot_go_on`;
   `realm run list --stuck` labels it `<step>=cannot_go_on(<check>) (realm run inspect <run-id>)`.
 
+- **Named here, shipped in 0.47.1 (issue #817):** `isAsyncSchemaRefusal` (whether an error is the
+  refusal of a schema whose root carries a truthy `$async`) and `asyncSchemaValidity` (that
+  refusal's reason, in words), both exported from `@sensigo/realm`; and the exported
+  `compileSchema` refuses such a schema with that typed error, since Realm checks data
+  synchronously.
+
 ### Changed
 
 - **The environment floor is 8 characters, up from 5.** An environment value of 5 to 7 characters
@@ -640,7 +646,7 @@ already ended (<phase>)`, who ended it when the record says, and the recorded re
   step could run out of tries before the answer was right. A refused step answer, a refused
   `start_run`'s params and an input an `input_map` builds now name every problem, up to 10, with the
   total; `realm agent`'s repair message, `realm run attempts` and the trace-schema warning carry the
-  same list in the same order, with `and N more` when there are more.
+  same list in the same order, with `and N more` when there are more. The exported `compileSchema` builds its validators the same way: each collects every error of a check, not only the first.
 
 - **A dispatcher's call no longer leaves its step's timer running (issue #719).** A dispatcher that
   threw synchronously, or was not a function, left a `STEP_TIMEOUT` timer that rejected unhandled up
@@ -699,9 +705,7 @@ already ended (<phase>)`, who ended it when the record says, and the recorded re
   most 256 schemas, weighed by their text, their values and the compiled code they keep, up to
   about 30 MB at its bound in the heaviest case measured; a schema heavier than the whole bound is
   compiled each time and not kept; a kept schema keeps no error rows between checks. A schema
-  holding a date, an infinite number or binary data is compiled each time, as before. A schema
-  with a `$ref` into another schema (such as the JSON-Schema meta-schema) whose target holds a
-  `$ref` of its own is compiled fresh on every call, as before. On one machine, in one session with
+  holding a date, an infinite number or binary data is compiled each time, as before. A schema with a `$ref` whose target Ajv compiles as a function of another schema (such as the JSON-Schema meta-schema) is compiled fresh on every call, as before. On one machine, in one session with
   the two builds run in turn, `realm run list --stuck` over 50 stuck runs took 2.2–2.8 s before
   this change and 0.6–0.7 s after. The exported `compileSchema` is unchanged: it compiles a fresh
   validator on every call.
@@ -713,6 +717,10 @@ already ended (<phase>)`, who ended it when the record says, and the recorded re
   found; a word cut from inside another word, after a combining mark, no longer reads found.
 
 ### Security
+
+- **`@sensigo/realm-cli`, `@sensigo/realm-mcp` and `@sensigo/realm` `< 0.48.0`** — one advisory,
+  [GHSA-4928-fv4v-hjq9](https://github.com/sensigo-hq/realm/security/advisories/GHSA-4928-fv4v-hjq9).
+  Upgrade to 0.48.0; the advisory gives the details.
 
 - **`zod` 3.25.76 → 4.6.7 in `@sensigo/realm-mcp` — BREAKING for MCP clients.** HIGH
   [GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5) / CVE-2023-54404: zod
