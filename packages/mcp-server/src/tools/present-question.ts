@@ -43,6 +43,7 @@ import {
 } from '../render-reply.js';
 import { toolMeta } from '../tool-annotations.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
+import { boundedRefusal } from './refusal-format.js';
 
 /** The tool's input: exactly `ARGS[present]` (`{ run_id, gate_id }`; the door-schema witness). */
 export const presentQuestionArgsShape = { run_id: z.string(), gate_id: z.string() };
@@ -243,7 +244,7 @@ export function registerPresentQuestion(
     {
       ...toolMeta('present_question'),
       description: PRESENT_QUESTION_DESCRIPTION,
-      inputSchema: presentQuestionArgsShape,
+      inputSchema: boundedRefusal(z.object(presentQuestionArgsShape)),
     },
     // #729 PR-3: inside safeTool, and every reply leaves through the door's walk with the set for
     // the run it names (M-1, F11).

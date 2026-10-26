@@ -143,10 +143,22 @@ export function markersIn(value: unknown): string[] {
   return [...found];
 }
 
-/** The warning for an inbound value that carries a named marker (four clauses; no value). */
+/**
+ * The warning for an inbound value that carries a named marker (four clauses; no value). The zod 4
+ * unit's reply bounds (M6): it names the first ten markers, then the count, so an answer holding
+ * 40,000 distinct markers is not answered with one sentence of 789 KB.
+ */
 export function inboundMarkerWarning(markers: readonly string[]): string {
+  const rest = markers.length - 10;
+  const more =
+    rest > 0
+      ? `, and ${rest} more ${rest === 1 ? 'marker' : 'markers'} (${markers.length} in all)`
+      : '';
   return (
-    `This answer holds ${markers.map((m) => `'${m}'`).join(', ')}: a value Realm hid when it showed it, sent back. ` +
+    `This answer holds ${markers
+      .slice(0, 10)
+      .map((m) => `'${m}'`)
+      .join(', ')}${more}: a value Realm hid when it showed it, sent back. ` +
     'Realm records what was sent, the marker included, so the run now holds the marker, not the value. ' +
     'Send the value itself, or leave the field out. ' +
     'An answer with no marker is recorded as sent.'

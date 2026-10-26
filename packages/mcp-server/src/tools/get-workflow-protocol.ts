@@ -26,6 +26,7 @@ import {
 import type { HandleStores } from './list-workflows.js';
 import type { McpDoor } from '../door.js';
 import { assertToolStores } from './assert-tool-stores.js';
+import { boundedRefusal } from './refusal-format.js';
 
 /**
  * Issue #197 PR-2 (design §6): one brief affordance line teaching cooperating agents to mint
@@ -132,7 +133,7 @@ export function registerGetWorkflowProtocol(
     {
       ...toolMeta('get_workflow_protocol'),
       description: 'Get the full agent protocol briefing for a registered workflow.',
-      inputSchema: { workflow_id: z.string() },
+      inputSchema: boundedRefusal(z.object({ workflow_id: z.string() })),
     },
     safeTool(
       async (args) => {

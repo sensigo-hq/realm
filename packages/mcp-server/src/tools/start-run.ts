@@ -34,6 +34,7 @@ import type { McpDoor } from '../door.js';
 import { withQuestionForm, type FormCall, type FormDeps } from '../form-path.js';
 import type { DisclosedElicit } from '../server.js';
 import { toolMeta } from '../tool-annotations.js';
+import { ArgsNumbersRefusal, argsNumbersEnvelope, checkArgsNumbersJoined } from './args-numbers.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
 import {
   disclosureOfTool,
@@ -134,7 +135,12 @@ export function formCallOf(
     ...(extra?.requestId !== undefined ? { requestId: extra.requestId } : {}),
   };
 }
-import { assertRegistryLine, ExtensionRegistry as RealmExtensionRegistry } from '@sensigo/realm';
+import {
+  assertRegistryLine,
+  ExtensionRegistry as RealmExtensionRegistry,
+  type Requirement,
+} from '@sensigo/realm';
+import { boundedLines, boundedRefusal, moreUnmetSteps } from './refusal-format.js';
 
 /**
  * The hint of a reply that hands back a run on which this call ran nothing (decisions C45, C57, C64,
@@ -257,6 +263,10 @@ export async function handleStartRun(
   if (definition.params_schema !== undefined) {
     validateRunParams(params, definition.params_schema, definition.id);
   }
+  // The zod 4 unit, R2 (O2): before the run is created — a non-finite number in params is refused
+  // (ArgsNumbersRefusal, answered in the door's own refusal shape); an integer beyond 2^53−1 draws
+  // a warning.
+  const numberWarnings = checkArgsNumbersJoined([['params', params]]);
 
   // Resolve the effective registry BEFORE run creation — a throwing registryProvider must
   // fail this tool call with NO run created. Provider wins over construction-time registry.
@@ -297,16 +307,21 @@ export async function handleStartRun(
   // The `?? createDefaultRegistry()` fallback is a HARD invariant — it mirrors the dispatch sites, so a
   // filesystem-only workflow with no supplied registry does not false-warn.
   const unmet = unmetCapabilities(definition, registry ?? createDefaultRegistry());
-  const warnings: string[] = unmet.map(capabilityWarning);
+  // The zod 4 unit's reply bounds (M4): the requirements are kept apart from the other warnings and
+  // shown as one bounded list — ten named, then the count — at every site that composes the reply
+  // (the ran path, the block path after its blocked step is dropped, the rest).
+  const shownUnmet = (requirements: readonly Requirement[]): string[] =>
+    boundedLines(requirements, capabilityWarning, moreUnmetSteps);
+  const otherWarnings: string[] = [...numberWarnings];
   if (deduped) {
     // Observational only — a legitimate same-caller retry also hits an active run. Keyed on
     // terminal_state, never the persisted run_phase.
     if (!run.terminal_state) {
-      warnings.push(`Idempotency key matched a run still in phase '${derivedPhase}'.`);
+      otherWarnings.push(`Idempotency key matched a run still in phase '${derivedPhase}'.`);
     }
     // PR 1 warns on a key↔payload mismatch; PR 2 may make this policy.
     if (args.idempotency_key !== undefined && hashParams(params) !== hashParams(run.params)) {
-      warnings.push(
+      otherWarnings.push(
         `Idempotency key matched an existing run created with different params; the original run is returned unchanged (params not updated).`,
       );
     }
@@ -318,7 +333,7 @@ export async function handleStartRun(
       (e) => e.status === 'pending',
     ).length;
     if (run.terminal_state && pendingFinalizerCount > 0) {
-      warnings.push(
+      otherWarnings.push(
         `completion recorded; ${pendingFinalizerCount} finalizer(s) not yet delivered — realm run drain ${run.id}`,
       );
     }
@@ -329,6 +344,7 @@ export async function handleStartRun(
       run_phase: derivedPhase,
     });
   }
+  const warnings: string[] = [...shownUnmet(unmet), ...otherWarnings];
 
   // issue #625 PR-2a (decision C1): ONLY the creating call runs work. A deduped match runs nothing
   // — an idempotent create has no side effect on a match — and its reply names what the run owes
@@ -420,9 +436,6 @@ export async function handleStartRun(
             (step) => run.capability_blocks?.[step] === undefined,
           ),
         );
-  const droppedPreflight = new Set(
-    unmet.filter((requirement) => blockedHere.has(requirement.step)).map(capabilityWarning),
-  );
   const handBack: EngineReply = {
     command: 'start_run',
     run_id: run.id,
@@ -433,7 +446,11 @@ export async function handleStartRun(
     evidence: [],
     warnings:
       capabilityBlock !== undefined
-        ? [...warnings.filter((w) => !droppedPreflight.has(w)), capabilityBlock.context_hint]
+        ? [
+            ...shownUnmet(unmet.filter((requirement) => !blockedHere.has(requirement.step))),
+            ...otherWarnings,
+            capabilityBlock.context_hint,
+          ]
         : warnings,
     errors: [],
     ...(capabilityBlock?.chained_auto_steps !== undefined
@@ -477,13 +494,15 @@ export function registerStartRun(
     {
       ...toolMeta('start_run'),
       description: 'Create a new workflow run and run its first automatic steps.',
-      inputSchema: {
-        workflow_id: z.string(),
-        params: z.record(z.unknown()).optional().default({}),
-        idempotency_key: z.string().optional(),
-        on_terminal_match: z.enum(['reuse', 'reject', 'rerun_if_failed', 'rerun']).optional(),
-        on_live_match: z.enum(['use_existing', 'fail']).optional(),
-      },
+      inputSchema: boundedRefusal(
+        z.object({
+          workflow_id: z.string(),
+          params: z.record(z.string(), z.unknown()).optional().default({}),
+          idempotency_key: z.string().optional(),
+          on_terminal_match: z.enum(['reuse', 'reject', 'rerun_if_failed', 'rerun']).optional(),
+          on_live_match: z.enum(['use_existing', 'fail']).optional(),
+        }),
+      ),
     },
     safeTool(
       async (args, extra) => {
@@ -504,6 +523,16 @@ export function registerStartRun(
         );
       },
       async (err, args) => {
+        // The zod 4 unit, R2 (O2): a non-finite number in params, in the door's own refusal shape.
+        if (err instanceof ArgsNumbersRefusal)
+          return toolContentOf(argsNumbersEnvelope('start_run', err), {
+            set: await setForSubject(
+              door,
+              await replySubject(opts, { workflowId: args.workflow_id }),
+            ),
+            audience: 'agent',
+            table: MCP_ENVELOPE_TABLE,
+          });
         const workflowErr =
           err instanceof WorkflowError
             ? err

@@ -37,6 +37,7 @@ import {
   ExtensionRegistry as RealmExtensionRegistry,
   runReadError,
 } from '@sensigo/realm';
+import { boundedLines, boundedRefusal, moreUnknownKeys } from './refusal-format.js';
 
 /** The answer tool's description where the agent keeps it under `offered`. */
 export const SUBMIT_HUMAN_RESPONSE_DESCRIPTION =
@@ -72,14 +73,22 @@ const NEAR_MISSES: Readonly<Record<string, (typeof KNOWN_ARGS)[number]>> = {
  * `claimToken` used to vanish without a word and the answer read as "no claim_token passed".
  */
 export function unknownKeyWarnings(args: Record<string, unknown>): string[] {
-  return Object.keys(args)
-    .filter((key) => !(KNOWN_ARGS as readonly string[]).includes(key))
-    .map((key) => {
+  const unknown = Object.keys(args).filter(
+    (key) => !(KNOWN_ARGS as readonly string[]).includes(key),
+  );
+  // The zod 4 unit's reply bounds (M3): the near misses first — the line that names `claim_token`
+  // must survive the bound — then the rest in the order sent; the first ten, then the count.
+  const isNear = (key: string): boolean => Object.hasOwn(NEAR_MISSES, key);
+  return boundedLines(
+    [...unknown.filter(isNear), ...unknown.filter((key) => !isNear(key))],
+    (key) => {
       const near = NEAR_MISSES[key];
       return near !== undefined
         ? `submit_human_response: unknown argument '${key}' was ignored — did you mean '${near}'?`
         : `submit_human_response: unknown argument '${key}' was ignored.`;
-    });
+    },
+    moreUnknownKeys,
+  );
 }
 
 /**
@@ -109,7 +118,7 @@ export const submitHumanResponseArgsSchema = z
         'The claim_token in the answer instruction of the reply that opened this question (its next_actions entry). Pass it back unchanged; it shows this answer comes from the conversation that opened the question. Never required.',
       ),
   })
-  .passthrough();
+  .loose();
 
 /**
  * Business logic for the submit_human_response tool.
@@ -251,7 +260,7 @@ export function registerSubmitHumanResponse(
         config === 'fallback'
           ? SUBMIT_HUMAN_RESPONSE_FALLBACK_DESCRIPTION
           : SUBMIT_HUMAN_RESPONSE_DESCRIPTION,
-      inputSchema: submitHumanResponseArgsSchema,
+      inputSchema: boundedRefusal(submitHumanResponseArgsSchema),
       ...(config === 'fallback' ? { _meta: { ...REQUIRES_USER_INTERACTION_META } } : {}),
     },
     safeTool(

@@ -187,6 +187,21 @@ export interface RealmMcpServerOptions {
  * person is asked (the declared tier); the mode and the schema — the choices — are facts: the
  * choices are acts, never masked.
  */
+/**
+ * Z3 (the zod 4 unit): the most array elements and object members, counted together and at every
+ * depth, that one `tools/call`'s arguments may hold. The MCP SDK counts them over the raw arguments
+ * BEFORE any schema runs and refuses a larger call with its own text (`maxToolInputElements`), so no
+ * schema can forget the bound.
+ *
+ * Which zod validates what: every tool's arguments are parsed by the zod that built its schema — the
+ * SDK reads `_zod` and, for zod 4 schemas (all of realm's), runs `zod/v4-mini`'s `safeParseAsync`,
+ * the fixed code of zod 4.6.6+ (GHSA-mrhx-c7xc-m3w5). The five arrays carry a leading `.max`, so an
+ * over-long one is refused before its elements are parsed; a record has no size check of its own,
+ * and this cap is its bound. The legacy `zod/v3` entry zod 4 still ships is unfixed, and the lint
+ * rule refuses importing it. The SDK's own protocol envelope is validated by its `zod/v4` types.
+ */
+export const MAX_TOOL_INPUT_ELEMENTS = 50_000;
+
 export const ELICIT_TABLE = {
   mode: 'fact',
   message: 'question',
@@ -300,6 +315,8 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
       version: VERSION,
     },
     {
+      // Z3 (the zod 4 unit): the whole-call element cap, counted before any schema runs.
+      maxToolInputElements: MAX_TOOL_INPUT_ELEMENTS,
       // #627 W (§5.5): the client can read the value this server runs with, and where it was set
       // (the kind only — never a variable's name or value).
       capabilities: {

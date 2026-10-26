@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
+  BUFFER_LIMIT_COUNT,
   JsonWorkflowStore,
   JsonFileStore,
   WorkflowError,
@@ -39,7 +40,9 @@ import {
 import type { McpDoor } from '../door.js';
 import { mcpHostOf } from './start-run.js';
 import { toolMeta } from '../tool-annotations.js';
+import { ArgsNumbersRefusal, argsNumbersEnvelope, checkArgsNumbersJoined } from './args-numbers.js';
 import { assertToolStores } from './assert-tool-stores.js';
+import { boundedRefusal } from './refusal-format.js';
 
 export interface HandleAppendTraceStores {
   /** Any `RunStore` implementation (issue #188, PR-1 — was `JsonFileStore`-only). */
@@ -434,21 +437,32 @@ export function registerAppendTrace(
         'is worse than omitting one (it lets residue be adopted with no caveat, or silently folds a',
         'crashed attempt into this one).',
       ].join(' '),
-      inputSchema: {
-        run_id: z.string(),
-        step_id: z.string(),
-        entries: z.array(traceEntrySchema),
-        // issue #197 PR-2 (design §6): UNBOUNDED at the zod layer — every shape violation
-        // (empty/whitespace/too-long) routes through validateWriterNonceShape to ONE typed realm
-        // envelope refusal, never a bare zod/SDK error.
-        writer_nonce: z.string().optional(),
-      },
+      inputSchema: boundedRefusal(
+        z.object({
+          run_id: z.string(),
+          step_id: z.string(),
+          // Z3 (the zod 4 unit): at most the trace buffer's own `limit_count` entries in one call, the
+          // size check FIRST (zod 4.6.6+ then refuses before parsing an entry)
+          entries: z.array(traceEntrySchema).max(BUFFER_LIMIT_COUNT),
+          // issue #197 PR-2 (design §6): UNBOUNDED at the zod layer — every shape violation
+          // (empty/whitespace/too-long) routes through validateWriterNonceShape to ONE typed realm
+          // envelope refusal, never a bare zod/SDK error.
+          writer_nonce: z.string().optional(),
+        }),
+      ),
     },
     safeTool(
       async (args) => {
+        // The zod 4 unit, R2 (O2): before the append — an integer beyond 2^53−1 in an entry's data
+        // draws a warning (a non-finite value never gets here: the data union refuses it).
+        const numberWarnings = checkArgsNumbersJoined(
+          args.entries.map((entry, i) => [`entries[${i}].data`, entry.data] as const),
+        );
         const result = await handleAppendTrace(args, opts);
         return toolContentOf(
-          { ...result },
+          numberWarnings.length > 0
+            ? { ...result, warnings: [...(result.warnings ?? []), ...numberWarnings] }
+            : { ...result },
           {
             set: await setForSubject(door, await replySubject(opts, { runId: args.run_id })),
             audience: 'agent',
@@ -457,6 +471,12 @@ export function registerAppendTrace(
         );
       },
       async (err, args) => {
+        if (err instanceof ArgsNumbersRefusal)
+          return toolContentOf(argsNumbersEnvelope('append_trace', err, args.run_id), {
+            set: await setForSubject(door, await replySubject(opts, { runId: args.run_id })),
+            audience: 'agent',
+            table: MCP_ENVELOPE_TABLE,
+          });
         const workflowErr =
           err instanceof WorkflowError
             ? err

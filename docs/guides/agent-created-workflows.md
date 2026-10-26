@@ -68,7 +68,7 @@ A step can have these fields and no others:
 | --------------------- | --------------------------------------------------------------------------------------------------- |
 | `id`                  | The step's name. Required.                                                                          |
 | `description`         | What the step is for. Required.                                                                     |
-| `depends_on`          | Steps that must finish first. Each must be earlier in the list.                                     |
+| `depends_on`          | The step that must finish first: the step just before this one.                                     |
 | `input_schema`        | The shape the step's answer must have.                                                              |
 | `structured_output`   | `strict`, to have the model provider hold answers to that shape when `realm agent` drives the step. |
 | `llm_timeout_seconds` | The longest one model request for this step may take under `realm agent`.                           |
@@ -165,17 +165,21 @@ If a task needs your approval part-way, write the workflow yourself. See [Add a 
 
 ## What Realm refuses
 
-In each of these cases nothing is created. Except for the first, the reply has `agent_action: provide_input`, which tells the assistant to correct the plan and send it again.
+In each of these cases nothing is created. Except where the MCP layer refuses the call — no steps, more than 200 steps, more than one `depends_on` — the reply has `agent_action: provide_input`, which tells the assistant to correct the plan and send it again.
 
-| The plan has                                            | The reply says                                                                                                            |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| No steps                                                | `Array must contain at least 1 element(s) at steps`                                                                       |
-| Two steps with one `id`                                 | `Duplicate step id: 'a'`                                                                                                  |
-| A `depends_on` naming no step                           | `Step 'a': depends_on references unknown step 'zzz'`                                                                      |
-| A `depends_on` naming a later step                      | `Step 'a': depends_on must reference a step that appears earlier in the list`                                             |
-| An `input_schema` that is not valid JSON Schema         | `Step 'a': 'input_schema' is not a valid JSON Schema — 'type' must be one of array, boolean, integer, …`                  |
-| `structured_output: strict` with a schema it cannot use | `Step 'a': 'structured_output: strict' is not eligible for this step's schema — add 'additionalProperties: false' …`      |
-| `extensions`                                            | `extensions is not supported on dynamically-created workflows. Project extensions are register-time and operator-only: …` |
+| The plan has                                            | The reply says                                                                                                                                             |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No steps                                                | `Too small: expected array to have >=1 items at steps`                                                                                                     |
+| More than 200 steps                                     | `Too big: expected array to have <=200 items at steps`                                                                                                     |
+| Two steps with one `id`                                 | `Duplicate step id: 'a'`                                                                                                                                   |
+| More than one `depends_on`                              | `depends_on lists more than one step; create_workflow takes at most one — the step just before this one (steps run in list order) at steps[2].depends_on`  |
+| A `depends_on` that is not the step just before         | `Step 'c': depends_on names 'a', but steps run in list order, so 'c' runs right after 'b'. Name 'b', leave depends_on out, or move 'c' to just below 'a'.` |
+| A `depends_on` on the first step                        | `Step 'a' is the first step; nothing runs before it — leave depends_on out.`                                                                               |
+| A `depends_on` naming no step                           | `Step 'b': depends_on references unknown step 'zzz'`                                                                                                       |
+| A `depends_on` naming a later step                      | `Step 'b': depends_on must reference a step that appears earlier in the list`                                                                              |
+| An `input_schema` that is not valid JSON Schema         | `Step 'a': 'input_schema' is not a valid JSON Schema — 'type' must be one of array, boolean, integer, …`                                                   |
+| `structured_output: strict` with a schema it cannot use | `Step 'a': 'structured_output: strict' is not eligible for this step's schema — add 'additionalProperties: false' …`                                       |
+| `extensions`                                            | `extensions is not supported on dynamically-created workflows. Project extensions are register-time and operator-only: …`                                  |
 
 ## What Realm leaves out, with a warning
 

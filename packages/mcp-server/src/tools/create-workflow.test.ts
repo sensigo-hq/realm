@@ -202,7 +202,12 @@ describe('handleCreateWorkflow', () => {
   it('validation — depends_on unknown reference returns error', async () => {
     const result = await handleCreateWorkflow(
       {
-        steps: [{ id: 'step-a', description: 'Step A', depends_on: ['unknown-step'] }],
+        // the final pass (R3): the first step naming anything reads its own refusal, so the unknown
+        // name stands on the second step
+        steps: [
+          { id: 'step-a', description: 'Step A' },
+          { id: 'step-b', description: 'Step B', depends_on: ['unknown-step'] },
+        ],
       },
       stores,
     );
