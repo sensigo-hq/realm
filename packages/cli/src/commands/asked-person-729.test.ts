@@ -11,9 +11,10 @@
 // so a renderer composing over the raw gate shows the fake there. Every value is a fake. Each
 // assertion names (a) the change that turns it red and (b) what it prints when it fails.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const mocks = vi.hoisted(() => ({ question: vi.fn(), close: vi.fn() }));
 vi.mock('node:readline/promises', () => ({
@@ -44,6 +45,7 @@ import {
   writerTestSeams,
 } from '../output/writer.js';
 
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 const FAKE = 'FAKE-DECLARED-PR4-0729';
 const QUESTION = 'Approve {{ run.params.token }}?';
 const MASKED = 'Approve [REDACTED]?';
@@ -271,10 +273,18 @@ describe('#729 PR-4 — the surfaces on one source', () => {
     await workflowRun(yamlOf(QUESTION, 'Summary: {{ summary }}', 'agent'), { token: FAKE }, output);
     const runPrint = logged();
     const slack = slackView(gate!, 'Summary: {{ summary }}');
+    // The page (realm-agent.md's Gate row; its last clause — the respond commands — is the
+    // no-handler print, shared with the Slack fallback through `terminalRespondLines`).
+    expect(
+      readFileSync(join(ROOT, 'docs/reference/cli/realm-agent.md'), 'utf8').replace(/\s+/g, ' '),
+    ).toContain(
+      "The gate's question, then the step's output (through its `display` when it has one; the output alone when the gate has no `message`), then one `realm run respond` command for each choice.",
+    );
     // (a) red per renderer when it composes its own preview again (the chain's JSON shows, the
     //     `other` field with it) or over the raw gate (the fake shows); (b) prints booleans.
     expect({
       agentDisplay: agentPrint.includes('Summary: [REDACTED]'),
+      agentOrder: agentPrint.indexOf(MASKED) < agentPrint.indexOf('Summary: [REDACTED]'),
       agentQuestion: agentPrint.includes(MASKED),
       agentRaw: agentPrint.includes(FAKE) || agentPrint.includes('unshown'),
       runPreview: runPrint.includes('  Preview: Summary: [REDACTED]'),
@@ -283,6 +293,7 @@ describe('#729 PR-4 — the surfaces on one source', () => {
       slack: [slack.question_text, slack.preview_text],
     }).toEqual({
       agentDisplay: true,
+      agentOrder: true,
       agentQuestion: true,
       agentRaw: false,
       runPreview: true,

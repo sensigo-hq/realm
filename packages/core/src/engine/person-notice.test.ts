@@ -156,10 +156,11 @@ describe('#729 PR-4 — composePersonNotice, per kind', () => {
       respond,
       now,
     });
+    const { on_expiry: _declared, ...noExpiry } = gate;
     const none = composePersonNotice({
       kind: 'expiry_reminder',
       run_id: 'r-1',
-      gate: { ...gate, on_expiry: undefined },
+      gate: noExpiry,
       view,
       respond,
       now,
