@@ -326,6 +326,118 @@ describe('#729 PR-3 — the environment filter (one filter, RECORD 01 #5)', () =
   });
 });
 
+describe('F2 — the working directory is never a member (option B)', () => {
+  // Fakes only: no real home, no real project. The three names are the class's members: npm's two
+  // and one invented launcher name — the rule is by VALUE, so every name holding the cwd is skipped.
+  const HOME_DIR = '/home/fakeuser-f2';
+  const CWD = '/srv/fake-project-0001';
+  const SIBLING = '/srv/fake-project-0002';
+  const NAMES = ['INIT_CWD', 'npm_config_local_prefix', 'FAKE_LAUNCHER_CWD'] as const;
+  const holding = (value: string): Record<string, string> => ({
+    HOME: HOME_DIR,
+    API: 'FAKE-API-VALUE-F2-01',
+    ...Object.fromEntries(NAMES.map((n) => [n, value])),
+  });
+  const names = (
+    env: Record<string, string>,
+    audience: 'agent' | 'broadcast' | 'log' | 'private' | 'file',
+    cwd?: string,
+  ) =>
+    environmentEntries(env, { audience, ...(cwd !== undefined ? { cwd } : {}) }).map(
+      (e) => e.source,
+    );
+
+  for (const audience of ['log', 'agent', 'broadcast'] as const) {
+    it(`F2-1 (${audience}): a variable whose value is the cwd is not a member, whatever its name`, () => {
+      // (a) red when the value rule is removed (the three names are members again); (b) prints the
+      //     member names (no value).
+      expect(names(holding(CWD), audience, CWD)).toEqual(['env:HOME', 'env:API']);
+    });
+  }
+
+  it('F2-2: the same names holding a SIBLING folder stay members (the rule is by value, not name)', () => {
+    // (a) red when a name list replaces the value rule (the sibling is exempted by name); (b) prints
+    //     the member names.
+    expect(names(holding(SIBLING), 'log', CWD)).toEqual([
+      'env:HOME',
+      'env:API',
+      'env:INIT_CWD',
+      'env:npm_config_local_prefix',
+      'env:FAKE_LAUNCHER_CWD',
+    ]);
+  });
+
+  it('F2-3a: the cwd spelled with a trailing slash is the cwd', () => {
+    // (a) red when one trailing slash is no longer removed before comparing; (b) prints names.
+    expect(names({ HOME: HOME_DIR, INIT_CWD: `${CWD}/` }, 'log', CWD)).toEqual(['env:HOME']);
+  });
+
+  it('F2-3b: a folder under the cwd is not the cwd', () => {
+    // (a) red when the rule matches by prefix instead of the folder itself; (b) prints names.
+    expect(names({ HOME: HOME_DIR, INIT_CWD: `${CWD}/sub` }, 'log', CWD)).toEqual([
+      'env:HOME',
+      'env:INIT_CWD',
+    ]);
+  });
+
+  it('F2-4: the home folder as the cwd stays a member on a log, and exempt on private (D-7)', () => {
+    // (a) red when the HOME-value guard is dropped (HOME exempted on a log because it is the cwd);
+    //     (b) prints the member names per audience.
+    expect({
+      log: names({ HOME: HOME_DIR }, 'log', HOME_DIR),
+      private: names({ HOME: HOME_DIR }, 'private', HOME_DIR),
+    }).toEqual({ log: ['env:HOME'], private: [] });
+  });
+
+  it("F2-5: INIT_CWD holding the home folder, which is the cwd, stays a member (HOME's shadow; a control)", () => {
+    // (a) red when the guard compares anything but HOME's value; (b) prints the member names.
+    expect(names({ HOME: HOME_DIR, INIT_CWD: HOME_DIR }, 'log', HOME_DIR)).toEqual([
+      'env:HOME',
+      'env:INIT_CWD',
+    ]);
+  });
+
+  it("F2-6: the cwd UNDER the home folder — INIT_CWD skipped, HOME still a member (the walker's case)", () => {
+    const cwd = `${HOME_DIR}/code/x`;
+    // (a) red when the guard is the `personal` predicate instead of HOME's value (every folder under
+    //     home would stay a member); (b) prints the member names.
+    expect(names({ HOME: HOME_DIR, INIT_CWD: cwd }, 'log', cwd)).toEqual(['env:HOME']);
+    // What a log shows of a path in that folder: only the home folder's part.
+    const set = buildDisclosureSet({
+      env: { HOME: HOME_DIR, INIT_CWD: cwd },
+      declared: {},
+      declaredState: 'resolved',
+      audience: 'log',
+      cwd,
+    }).set;
+    // (a) red when INIT_CWD is a member again (the whole folder hidden); (b) prints the fake text.
+    expect(disclose(`${cwd}/realm.yaml`, set, 'all').text).toBe('[REDACTED]/code/x/realm.yaml');
+  });
+
+  it('F2-7: a DECLARED secret equal to the cwd is still hidden (declared members are not environment entries; a control)', () => {
+    const set = buildDisclosureSet({
+      env: holding(CWD),
+      declared: { PROJECT_PATH_SECRET: CWD },
+      declaredState: 'resolved',
+      audience: 'log',
+      cwd: CWD,
+    }).set;
+    // (a) red when the cwd rule reaches declared values; (b) prints the fake text.
+    expect(disclose(`${CWD}/realm.yaml`, set, 'all').text).toBe('[REDACTED]/realm.yaml');
+  });
+
+  it('F2-8: no cwd passed — the members are exactly as before (an embedder; a control)', () => {
+    // (a) red when the rule applies without a cwd; (b) prints the member names.
+    expect(names(holding(CWD), 'log')).toEqual([
+      'env:HOME',
+      'env:API',
+      'env:INIT_CWD',
+      'env:npm_config_local_prefix',
+      'env:FAKE_LAUNCHER_CWD',
+    ]);
+  });
+});
+
 describe('#729 PR-3 — the credential-name rule, both readers (D3/04; D3/07 R3-1; D3/08 S3)', () => {
   const positives = [
     'clientSecret',

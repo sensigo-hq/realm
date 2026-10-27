@@ -68,6 +68,7 @@ export function agentDisclosureSet(): DisclosureSet {
     writerSetFor('agent') ??
     buildDisclosureSet({
       env: process.env,
+      cwd: process.cwd(),
       declared: driveDeclared,
       declaredState: 'resolved',
       audience: 'agent',

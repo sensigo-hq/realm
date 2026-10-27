@@ -107,3 +107,23 @@ describe('#729 PR-3 — Slack', () => {
     expect(bodies.map((b) => MARKS.test(b))).toEqual([false, false, false]);
   });
 });
+
+// F2 (B2): Slack's own set (no writer installed) passes the working directory.
+describe('F2 — the working directory (B2, slack-gate-notifier slackSet)', () => {
+  const F2_CWD = '/srv/fake-f2-project-01';
+  it('a thread reply shows a path under the working directory whole', async () => {
+    const bodies = capture();
+    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(F2_CWD);
+    try {
+      vi.stubEnv('INIT_CWD', F2_CWD);
+      vi.stubEnv('npm_config_local_prefix', F2_CWD);
+      await postSlackReply('xoxb-fake', 'C1', '1.0', `ended; the record is under ${F2_CWD}/runs`);
+      // (a) red when slackSet builds its set without `cwd`; (b) prints the posted fake text.
+      expect((JSON.parse(bodies[0]!) as { text: string }).text).toBe(
+        `ended; the record is under ${F2_CWD}/runs`,
+      );
+    } finally {
+      cwdSpy.mockRestore();
+    }
+  });
+});

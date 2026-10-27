@@ -365,7 +365,8 @@ export function emptyDisclosureSet(
 
 /** Launcher keys whose values are public by name (issue #407; exact, case-sensitive), and the
  *  shell's own path metadata (D-6): the shell sets `PWD`, `OLDPWD` and `_` to paths, and a secret is
- *  never only such a path. A value another variable also holds stays a member (the shadow rule). */
+ *  never only such a path. A value another variable also holds stays a member (the shadow rule),
+ *  except a value that names the working directory, which no variable makes a member (F2). */
 const EXCLUDED_LAUNCHER_METADATA = new Set([
   'npm_package_name',
   'npm_package_version',
@@ -412,17 +413,34 @@ export function notSecretNames(env: Readonly<Record<string, string | undefined>>
 }
 
 /**
+ * F2: whether two paths name the same folder for the working-directory rule — string equality
+ * after removing ONE trailing `/` from each side that is longer than `/`. No `node:path`, no
+ * realpath, no case folding, no symlink resolution (core reads no file system): a differently
+ * spelled path to the same folder is NOT the working directory for this rule.
+ */
+function samePath(a: string, b: string | undefined): boolean {
+  if (b === undefined) return false;
+  const trimmed = (p: string): string => (p.length > 1 && p.endsWith('/') ? p.slice(0, -1) : p);
+  return trimmed(a) === trimmed(b);
+}
+
+/**
  * The environment's members for an audience. A variable is swept when its value is at least
  * {@link DISCLOSURE_FLOORS}.environment characters, is not public by shape, and its name is neither
  * launcher metadata nor exempt. Exempt names = `REALM_NOT_SECRET` ∪ `notSecret` (the caller's
  * intersection of the loaded manifests' `disclosure.not_secret` lists, or a host's list); a value an
- * exempt variable holds is still hidden when another, non-exempt variable holds it too. HOME, USER,
- * LOGNAME and USERNAME, and values at or under HOME, are members on agent, broadcast and log
- * audiences, and exempt on private and file audiences (the operator's own terminal and record; D-7).
+ * exempt variable holds is still hidden when another, non-exempt variable holds it too, except a
+ * value that names the working directory, which no variable makes a member. F2: a variable whose
+ * value is `options.cwd` (the host's working directory — core never reads it) is skipped whatever
+ * its name (npm's `INIT_CWD` and `npm_config_local_prefix`, a CI runner's workspace variable), unless
+ * that value is HOME's: the home folder stays a member on a log even when it is the working
+ * directory. Paths compare by {@link samePath}. HOME, USER, LOGNAME and USERNAME, and values at or
+ * under HOME, are members on agent, broadcast and log audiences, and exempt on private and file
+ * audiences (the operator's own terminal and record; D-7).
  */
 export function environmentEntries(
   env: Readonly<Record<string, string | undefined>>,
-  options: { audience: DisclosureAudience; notSecret?: readonly string[] },
+  options: { audience: DisclosureAudience; notSecret?: readonly string[]; cwd?: string },
 ): DisclosureEntry[] {
   const exempt = new Set([NOT_SECRET_ENV, ...notSecretNames(env), ...(options.notSecret ?? [])]);
   const ownSurface = options.audience === 'private' || options.audience === 'file';
@@ -436,6 +454,9 @@ export function environmentEntries(
       EXCLUDED_LAUNCHER_METADATA.has(name) ||
       REALM_SETTING_VARIABLES.has(name)
     )
+      continue;
+    // F2: the working directory is never a secret, whatever variable holds it — HOME's value aside.
+    if (options.cwd !== undefined && samePath(value, options.cwd) && !samePath(value, home))
       continue;
     if (value.length < DISCLOSURE_FLOORS.environment || PUBLIC_VALUE_SHAPE.test(value)) continue;
     const personal =
@@ -472,6 +493,8 @@ export function buildDisclosureSet(input: {
   declaredCause?: DeclaredCause;
   audience: DisclosureAudience;
   notSecret?: readonly string[];
+  /** F2: the host's working directory (`process.cwd()`); a variable holding it is never a member. */
+  cwd?: string;
 }): { set: DisclosureSet; unmaskable: string[] } {
   const envEntries =
     input.env === undefined
@@ -479,6 +502,7 @@ export function buildDisclosureSet(input: {
       : environmentEntries(input.env, {
           audience: input.audience,
           ...(input.notSecret !== undefined ? { notSecret: input.notSecret } : {}),
+          ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
         });
   const declaredEntries: DisclosureEntry[] = Object.entries(input.declared).map(
     ([name, value]) => ({ value, source: `declared:${name}` }),

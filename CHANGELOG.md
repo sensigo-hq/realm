@@ -17,6 +17,9 @@ All notable changes to this project are documented here.
   install, any git repository — it writes four files, leaving out `realm.yaml` and `.env.example`,
   and names the project's top folder, where Realm reads `realm.yaml`. Before, the first
   `realm workflow validate` there failed.
+- Under `npx realm`, a log no longer hides the project folder: a variable whose value is the
+  working directory (npm's `INIT_CWD` and `npm_config_local_prefix`, a CI runner's workspace
+  variable) is not treated as a secret. The home folder stays hidden in a log.
 
 ## [0.48.0] — 2026-10-26
 

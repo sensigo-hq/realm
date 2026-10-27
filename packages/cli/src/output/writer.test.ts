@@ -573,3 +573,20 @@ describe('#729 PR-3 — the abandon echo: the text between spans is masked as on
     });
   });
 });
+
+// F2 (B2): the writer's set passes the working directory — a variable holding it is never a
+// member, so a path under it prints whole on a log. Fakes only (a folder that does not exist).
+describe('F2 — the working directory (B2, writer.ts setFor)', () => {
+  const F2_CWD = '/srv/fake-f2-project-01';
+  it("a log shows a path under the working directory whole although INIT_CWD and npm's prefix hold it", () => {
+    vi.spyOn(process, 'cwd').mockReturnValue(F2_CWD);
+    vi.stubEnv('REALM_NOT_SECRET', '');
+    vi.stubEnv('INIT_CWD', F2_CWD);
+    vi.stubEnv('npm_config_local_prefix', F2_CWD);
+    captured();
+    const line = `Move it to '${F2_CWD}/realm.yaml'.`;
+    // (a) red when the writer's set is built without `cwd` (the folder reads [REDACTED]); (b)
+    //     prints the fake line.
+    expect(pass(line, 'log')).toBe(line);
+  });
+});

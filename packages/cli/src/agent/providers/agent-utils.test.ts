@@ -1282,3 +1282,17 @@ describe('issue #759 — renderSubmissionProblems (the providers’ trailer)', (
     });
   });
 });
+
+// F2 (B2): the agent set a library caller gets (no writer) passes the working directory.
+describe('F2 — the working directory (B2, agent-utils agentDisclosureSet)', () => {
+  const F2_CWD = '/srv/fake-f2-project-01';
+  it('what a model is given shows a path under the working directory whole', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue(F2_CWD);
+    vi.stubEnv('REALM_NOT_SECRET', '');
+    vi.stubEnv('INIT_CWD', F2_CWD);
+    vi.stubEnv('npm_config_local_prefix', F2_CWD);
+    const text = `read ${F2_CWD}/notes.md`;
+    // (a) red when agentDisclosureSet builds its set without `cwd`; (b) prints the fake text.
+    expect(discloseForAgent(text)).toBe(text);
+  });
+});
