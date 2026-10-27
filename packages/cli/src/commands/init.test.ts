@@ -278,4 +278,80 @@ describe('inside a project (#878)', { timeout: 60_000 }, () => {
       });
     }
   });
+
+  it('7: the pages say what the command does', () => {
+    const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
+    const page = (rel: string): string => readFileSync(join(ROOT, rel), 'utf8');
+    /** Whitespace collapsed: a sentence the page wraps across lines still reads word for word. */
+    const flat = (text: string): string => text.replace(/\s+/g, ' ');
+    /** The first ```text block after `marker` on the page. */
+    const blockAfter = (text: string, marker: string): string => {
+      const at = text.indexOf(marker);
+      const open = text.indexOf('```text\n', at === -1 ? text.length : at);
+      return at === -1 || open === -1
+        ? `<no block after ${marker}>`
+        : text.slice(open + 8, text.indexOf('\n```', open + 8));
+    };
+    const WF = page('docs/reference/cli/realm-workflow.md');
+    const sentences: Array<[string, string]> = [
+      [
+        'docs/reference/cli/realm-workflow.md',
+        "Creates a folder called `<name>` with six files. Inside a project — when a folder above it holds a `package.json` or a `.git` — it writes four: Realm reads `realm.yaml` only from the project's top folder ([Deployment manifest](../deployment-manifest.md#where-realm-looks-for-it)), so `init` leaves `realm.yaml` and `.env.example` out of the new folder and names the project's folder.",
+      ],
+      [
+        'docs/reference/environment-and-files.md',
+        'A folder `<name>` with `workflow.yaml`, `schema.json`, `.env.example`, `README.md`, `registry.sample.js` and `realm.yaml`; inside a project, without `.env.example` and `realm.yaml`.',
+      ],
+      [
+        'README.md',
+        "Inside an existing project (a folder above it holds a `package.json` or a `.git`) it leaves out `realm.yaml` and `.env.example`, which belong in the project's top folder.",
+      ],
+      [
+        'docs/start/install-and-first-run.md',
+        "Inside an existing project — a folder above it holds a `package.json` or a `.git` — it creates four files, leaves out `realm.yaml` and `.env.example`, and names the project's top folder, where Realm reads `realm.yaml`.",
+      ],
+      [
+        'CHANGELOG.md',
+        "- **`realm workflow init` inside a project no longer writes a `realm.yaml` Realm refuses (issue #878).** When a folder above the new one holds a `package.json` or a `.git` — a local install, any git repository — it writes four files, leaving out `realm.yaml` and `.env.example`, and names the project's top folder, where Realm reads `realm.yaml`. Before, the first `realm workflow validate` there failed.",
+      ],
+    ];
+    // (a) red when a page's sentence about init's files parts from the agreed words; (b) prints the
+    //     page and whether each sentence is there.
+    expect(sentences.map(([rel, s]) => [rel, flat(page(rel)).includes(flat(s))])).toEqual(
+      sentences.map(([rel]) => [rel, true]),
+    );
+
+    const printed = (setup: (base: string) => void): string => {
+      const base = newBase();
+      const home = newHome();
+      setup(base);
+      const r = realm(['workflow', 'init', 'invoice-check'], base, env(home));
+      return scrub(r.stdout, base, home).replace(/\n$/, '');
+    };
+    const plain = printed((base) => ownProject(base));
+    const inProject = printed((base) => writeFileSync(join(base, 'package.json'), '{}'));
+    const withManifest = printed((base) => {
+      mkdirSync(join(base, '.git'));
+      writeFileSync(join(base, 'realm.yaml'), '# the project manifest\n');
+    });
+    const lastOf = (text: string, marker: string): string => {
+      const at = text.indexOf(marker);
+      return at === -1 ? `<no "${marker}">` : (text.slice(at + marker.length).split('`')[1] ?? '');
+    };
+    // (a) red when a block on the page parts from what `realm workflow init invoice-check` prints
+    //     (the plain case, inside a project at /srv/shop, and the line for a project with a
+    //     realm.yaml); (b) prints both texts of each.
+    expect({
+      sixFiles: blockAfter(WF, '```bash\nrealm workflow init invoice-check\n```'),
+      insideProject: blockAfter(
+        WF,
+        'Inside the project `/srv/shop`, which holds a `package.json`:',
+      ),
+      lastLine: lastOf(WF, 'the last of those lines reads '),
+    }).toEqual({
+      sixFiles: plain,
+      insideProject: inProject.split('<base>').join('/srv/shop'),
+      lastLine: withManifest.split('\n').find((l) => l.startsWith('The project')),
+    });
+  });
 });

@@ -4,6 +4,16 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **`realm workflow init` inside a project no longer writes a `realm.yaml` Realm refuses
+  (issue #878).** When a folder above the new one holds a `package.json` or a `.git` — a local
+  install, any git repository — it writes four files, leaving out `realm.yaml` and `.env.example`,
+  and names the project's top folder, where Realm reads `realm.yaml`. Before, the first
+  `realm workflow validate` there failed.
+
 ## [0.48.0] — 2026-10-26
 
 ### Added
