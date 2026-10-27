@@ -75,6 +75,8 @@ The office is closed this Friday.
 
 Show the thing being approved itself, not a description of it. The person should not have to look anywhere else to decide.
 
+The message is rendered once, when the gate opens. Every surface shows it with the step's output below it, through the step's `display` when it has one. When the two together pass 600 characters, they are cut to fit, and a sentence at the end of the message says so; approving still lets the step's whole output go ahead. See [`message`](../reference/workflow/gates.md#message).
+
 `gate.resolution_messages` gives one line per choice. When a gate is answered from Slack, Realm posts that line in the thread to confirm what happened.
 
 ## 4. Act on the answer
@@ -211,7 +213,7 @@ Skipped: send
 ## If you see something else
 
 - **`'gate.on_expiry: settle_default' requires 'gate.default_choice'`** You asked for a default answer without naming it. Add `default_choice`, with one of the gate's choices.
-- **At the `realm workflow run` prompt, the gate shows `Preview:` but no `Question:` line.** The gate has no `message` and its step has no `prompt`, so there is no question to show. Add a `message`. Up to version 0.46.0 the hand-run prompt showed no question for any gate.
+- **At the `realm workflow run` prompt, the gate shows `Preview:` but no `Question:` line.** The gate has no `message`, so there is no question to show: the step's `prompt` is never shown as the question. Add a `message`. Up to version 0.46.0 the hand-run prompt showed no question for any gate.
 
 ## See also
 

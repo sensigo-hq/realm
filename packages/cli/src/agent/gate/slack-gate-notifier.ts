@@ -672,6 +672,9 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
             (after !== undefined
               ? outcomeOf(after, gate.step_name, gate.expires_at, true)
               : undefined);
+          // Set before the post: a reply still in flight when the poll ends must not be joined by
+          // a closed line (the drain is bounded; a hung Slack would otherwise post both).
+          personTold = true;
           if (outcome !== undefined) {
             await tellThread(
               composePersonNotice({
@@ -684,7 +687,6 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
               }),
             );
           }
-          personTold = true;
           abortController.abort();
         } else if (result.status === 'error') {
           await postSubmitError(
@@ -716,6 +718,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
             }
             for (const line of endingLines) console.log(line);
           }
+          personTold = true;
           await tellThread(
             composePersonNotice({
               kind: 'answer_recorded',
@@ -725,7 +728,6 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
               ended: result.ended_by !== undefined,
             }),
           );
-          personTold = true;
           abortController.abort();
         }
       } catch (err) {
@@ -837,10 +839,17 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
     // calls submitHumanResponse OR when the terminal command is used.
     await pollUntilGateResolved(store, runId, gate.gate_id, pollIntervalMs, abortController.signal);
     // #729 PR-4 (02): the question closed without a Slack answer this thread was told about — the
-    // thread is told how (its time ran out, the run stopped, it was answered elsewhere).
+    // thread is told how (its time ran out, the run stopped, it was answered elsewhere). Best effort,
+    // and drained within the same bound as a candidate's reply below.
     if (!personTold) {
       const closed = await closedNotice(store, runId, gate);
-      if (closed !== undefined) await tellThread(closed);
+      if (closed !== undefined) {
+        track(
+          tellThread(closed).catch((err) => {
+            console.warn(`Slack reply failed: ${err instanceof Error ? err.message : String(err)}`);
+          }),
+        );
+      }
     }
   } finally {
     abortController.abort();
@@ -873,14 +882,18 @@ async function closedNotice(
   runId: string,
   gate: PendingGate,
 ): Promise<PersonNotice | undefined> {
-  const run = await store.get(runId).catch(() => undefined);
-  if (run === undefined) return undefined;
-  return composePersonNotice({
-    kind: 'question_closed',
-    run_id: runId,
-    gate,
-    outcome: outcomeOf(run, gate.step_name, gate.expires_at, false),
-  });
+  try {
+    const run = await store.get(runId);
+    return composePersonNotice({
+      kind: 'question_closed',
+      run_id: runId,
+      gate,
+      outcome: outcomeOf(run, gate.step_name, gate.expires_at, false),
+    });
+  } catch {
+    // A notice is never the attendant's failure: a record that cannot be read tells nothing.
+    return undefined;
+  }
 }
 
 /** Polls the store until the gate is resolved or the run reaches a terminal state. */
@@ -990,18 +1003,27 @@ export function createSlackGateHandler(
       // channel is told how, walked at every tier as a thread reply is.
       const closed = await closedNotice(config.store, runId, gate);
       if (closed !== undefined) {
+        // Best effort, bounded as the bot path's drain is: a hung Slack never holds the run.
+        let bound: ReturnType<typeof setTimeout> | undefined;
         try {
-          await sendToSlack(config.webhookUrl, {
-            text: disclose(
-              stripMarks(renderSlack(closed, { mode: 'webhook' }).text),
-              slackSet(),
-              'all',
-            ).text,
-          });
+          await Promise.race([
+            sendToSlack(config.webhookUrl, {
+              text: disclose(
+                stripMarks(renderSlack(closed, { mode: 'webhook' }).text),
+                slackSet(),
+                'all',
+              ).text,
+            }),
+            new Promise<void>((resolve) => {
+              bound = setTimeout(resolve, DRAIN_TIMEOUT_MS);
+            }),
+          ]);
         } catch (err) {
           console.warn(
             `  ⚠  Slack notification failed: ${err instanceof Error ? err.message : String(err)}`,
           );
+        } finally {
+          clearTimeout(bound);
         }
       }
     }

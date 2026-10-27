@@ -21,7 +21,7 @@ import { TEMPLATE_PLACEHOLDER } from './render-template.js';
  */
 export const VIEW_BUDGET = 600;
 
-const SPAN_MARKS = /[-]/g;
+const SPAN_MARKS = /[\uE000-\uE002]/g;
 
 /**
  * The span marks (U+E000–E002) removed, each character singly — from a text, or from every string

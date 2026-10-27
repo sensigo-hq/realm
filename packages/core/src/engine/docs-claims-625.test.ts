@@ -594,8 +594,9 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
         .reverse()
         .find((e) => e.step_id === 'draft' && e.kind !== 'gate_response');
       // (a) red when the gate-open write leaves the step's evidence off the record (the record then
-      //     cannot give the step's output), when that entry's output is not the preview, or when the
-      //     question differs from the reply's display; (b) prints all three.
+      //     cannot give the step's output), when that entry's output is not the preview, or — #729
+      //     PR-4 (f), re-pinned — when the reply carries a display for a gate with no message (the
+      //     prompt's question is `inspect`'s labelled fallback only); (b) prints all three.
       expect({
         status: opened.status,
         entryIsPreview:
@@ -606,7 +607,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
         status: 'confirm_required',
         entryIsPreview: true,
         question: 'Send "Office closed" (3 lines)?',
-        display: 'Send "Office closed" (3 lines)?',
+        display: undefined,
       });
     },
   );

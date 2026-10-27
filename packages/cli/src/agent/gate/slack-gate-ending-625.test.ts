@@ -6,6 +6,10 @@
 // answer did not end the run; when it did, the post is the ending — the guard's sentence, its
 // reason, each cleanup step's outcome.
 //
+// #729 PR-4 (02), re-pinned: the thread gets the person's `answer_recorded` line — with the authored
+// resolution message only when the run goes on — and, when the answer ended the run, the ending's
+// lines go to the console where `realm agent` runs, never to the person's thread (G9).
+//
 // A real store and the real engine: the gate is opened by `executeStep`, the Slack reply reaches
 // the notifier through the captured event callback, and the post is read off the stubbed `fetch`.
 //
@@ -102,6 +106,10 @@ describe('issue #625 — the Slack notifier after an answer whose write settled 
     return { runId: run.id, gate: (await store.get(run.id)).pending_gate! };
   }
 
+  /** #729 PR-4: the lines printed on the console (the operator's). */
+  const consoleLines = (): string[] =>
+    vi.mocked(console.log).mock.calls.flatMap((args) => String(args[0]).split('\n'));
+
   /** Answers the gate from the Slack thread and returns the text of every thread reply posted. */
   async function answerInThread(
     def: WorkflowDefinition,
@@ -151,15 +159,13 @@ describe('issue #625 — the Slack notifier after an answer whose write settled 
 
     const posts = await answerInThread(def, runId, gate, 'reject');
 
-    // (a) red when the notifier posts the authored resolution message (or "run continuing")
-    //     over a run the answer's guard aborted; (b) prints every thread reply posted.
-    expect(posts).toEqual([
-      [
-        'Gate resolved: `reject`.',
-        "Guard step 'check' aborted the run.",
-        `Reason: ${NOT_APPROVED}`,
-      ].join('\n'),
-    ]);
+    // (a) red when the notifier posts the authored resolution message over a run the answer's guard
+    //     aborted, or posts the ending's operator lines to the thread; (b) prints every thread reply
+    //     posted and the console's lines.
+    expect(posts).toEqual(['✅ Gate resolved: `reject`. The run has ended.']);
+    expect(consoleLines()).toEqual(
+      expect.arrayContaining(["Guard step 'check' aborted the run.", `Reason: ${NOT_APPROVED}`]),
+    );
     // (a) red when the answer's write did not settle the guard; (b) prints the derived phase.
     expect(deriveRunPhase(await store.get(runId))).toBe('aborted');
   });
@@ -171,10 +177,11 @@ describe('issue #625 — the Slack notifier after an answer whose write settled 
     const posts = await answerInThread(def, runId, gate, 'approve');
 
     // (a) red when the authored "the run continues" is posted for a run the answer completed, or
-    //     a Reason line is invented for a completing pass; (b) prints every thread reply posted.
-    expect(posts).toEqual([
-      ['Gate resolved: `approve`.', "Guard step 'check' passed and completed the run."].join('\n'),
-    ]);
+    //     the ending's lines leave the console; (b) prints every thread reply posted.
+    expect(posts).toEqual(['✅ Gate resolved: `approve`. The run has ended.']);
+    expect(consoleLines()).toEqual(
+      expect.arrayContaining(["Guard step 'check' passed and completed the run."]),
+    );
     expect(deriveRunPhase(await store.get(runId))).toBe('completed');
   });
 
@@ -186,9 +193,9 @@ describe('issue #625 — the Slack notifier after an answer whose write settled 
 
     const posts = await answerInThread(def, runId, gate, 'approve');
 
-    // The control. (a) red when a guard that merely passed changes the Slack post;
-    //     (b) prints every thread reply posted.
-    expect(posts).toEqual([AUTHORED.approve]);
+    // The control. (a) red when a guard that merely passed changes the Slack post (the authored
+    //     resolution message under the recorded line); (b) prints every thread reply posted.
+    expect(posts).toEqual([`✅ Gate resolved: \`approve\`\n${AUTHORED.approve}`]);
     // (a) red when the guard was not settled by the answer's write; (b) prints the completed
     //     steps.
     expect((await store.get(runId)).completed_steps).toEqual(['confirm', 'check']);

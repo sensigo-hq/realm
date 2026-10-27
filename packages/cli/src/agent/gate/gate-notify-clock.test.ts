@@ -1,6 +1,11 @@
 // gate-notify-clock.test.ts — issue #291, Deliverable 6: the authored notify clock — repeating
 // reminders, record-keyed precedence, the final-occurrence wording switch, and the
-// dead-notification advisory.
+// dead-notification advisory. #729 PR-4, re-pinned: the posts are the person's notices — a reminder
+// reads `… has been open for <span>. Please respond.`, the final one `… expired <span> ago — <what
+// happens>.`, and no command reaches the thread (G9: `realm run drain --expired` is printed on the
+// console).
+/** #729 PR-4: a plain reminder's post (never the expiry's). */
+const isReminder = (c: string): boolean => c.includes('Please respond.') && !c.includes('expired');
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { startGateReminderTimers, checkDeadNotificationAdvisory } from './slack-gate-notifier.js';
 import type { PendingGate } from '@sensigo/realm';
@@ -54,13 +59,14 @@ describe('startGateReminderTimers — the authored notify clock (issue #291)', (
     await vi.advanceTimersByTimeAsync(1000); // would be occurrence 4 — must NOT fire
     clear();
 
-    const reminderCalls = calls.filter((c) => c.includes('Reminder'));
+    const reminderCalls = calls.filter(isReminder);
     expect(reminderCalls.length).toBe(3);
   });
 
   it('the FINAL occurrence (landing at/after expires_at) switches to the enforcement wording — settle_default', async () => {
     vi.useFakeTimers();
     const calls = stubFetch();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     const gate = makeGate({
       reminder_seconds: 1,
       reminder_max: 10,
@@ -84,10 +90,17 @@ describe('startGateReminderTimers — the authored notify clock (issue #291)', (
     await vi.advanceTimersByTimeAsync(5000); // nothing further should fire (cycle stopped at final)
     clear();
 
-    expect(calls.filter((c) => c.includes('Reminder') && !c.includes('will enact')).length).toBe(1);
-    const finalCalls = calls.filter((c) => c.includes('will enact settle_default'));
+    // (a) red when the final occurrence reads as a plain reminder, or the operator's command is
+    //     posted to the person's thread (G9); (b) prints the counts and booleans.
+    expect(calls.filter(isReminder).length).toBe(1);
+    const finalCalls = calls.filter((c) => c.includes('its default choice will be recorded'));
     expect(finalCalls.length).toBe(1);
-    expect(finalCalls[0]).toContain('realm run drain --expired');
+    expect(finalCalls[0]).toMatch(/^⏰ gate `review_step` expired \d+s ago — /);
+    expect(calls.some((c) => c.includes('realm run drain'))).toBe(false);
+    expect(
+      log.mock.calls.some((args) => String(args[0]).includes('realm run drain --expired')),
+    ).toBe(true);
+    log.mockRestore();
   });
 
   it('the FINAL occurrence for an abort disposition names "will enact abort"', async () => {
@@ -109,7 +122,9 @@ describe('startGateReminderTimers — the authored notify clock (issue #291)', (
     );
     await vi.advanceTimersByTimeAsync(1000); // first (and only) occurrence is already >= expiry
     clear();
-    expect(calls.some((c) => c.includes('will enact abort'))).toBe(true);
+    expect(calls.some((c) => c.includes('expired') && c.includes('the run will be stopped'))).toBe(
+      true,
+    );
   });
 
   it('finding-only (no on_expiry) FINAL occurrence never claims "will enact"', async () => {
@@ -131,8 +146,10 @@ describe('startGateReminderTimers — the authored notify clock (issue #291)', (
     );
     await vi.advanceTimersByTimeAsync(1000);
     clear();
-    expect(calls.some((c) => c.includes('will enact'))).toBe(false);
-    expect(calls.some((c) => c.includes('finding-only'))).toBe(true);
+    expect(calls.some((c) => c.includes('will be recorded') || c.includes('will be stopped'))).toBe(
+      false,
+    );
+    expect(calls.some((c) => c.includes('nothing will be done automatically'))).toBe(true);
   });
 
   it('a PURE-notify gate (reminder_seconds, no expires_at) repeats plainly, bounded ONLY by reminder_max', async () => {
@@ -151,8 +168,8 @@ describe('startGateReminderTimers — the authored notify clock (issue #291)', (
     await vi.advanceTimersByTimeAsync(1000);
     await vi.advanceTimersByTimeAsync(1000); // would be 3rd — must not fire
     clear();
-    expect(calls.filter((c) => c.includes('Reminder')).length).toBe(2);
-    expect(calls.some((c) => c.includes('will enact') || c.includes('finding-only'))).toBe(false);
+    expect(calls.filter(isReminder).length).toBe(2);
+    expect(calls.some((c) => c.includes('expired'))).toBe(false);
   });
 
   it('NO authored reminder_seconds: the operator fallback stays SINGLE-SHOT — unchanged from pre-#291 [F-A2-3]', async () => {
@@ -163,7 +180,7 @@ describe('startGateReminderTimers — the authored notify clock (issue #291)', (
     await vi.advanceTimersByTimeAsync(600);
     await vi.advanceTimersByTimeAsync(600); // would be a 2nd occurrence under the old bug — must not fire
     clear();
-    expect(calls.filter((c) => c.includes('Reminder')).length).toBe(1);
+    expect(calls.filter(isReminder).length).toBe(1);
   });
 
   it('cancelling via the returned function stops the repeat cycle mid-flight', async () => {
@@ -181,7 +198,7 @@ describe('startGateReminderTimers — the authored notify clock (issue #291)', (
     await vi.advanceTimersByTimeAsync(1000);
     clear();
     await vi.advanceTimersByTimeAsync(10_000);
-    expect(calls.filter((c) => c.includes('Reminder')).length).toBe(1);
+    expect(calls.filter(isReminder).length).toBe(1);
   });
 });
 

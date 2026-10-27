@@ -47,8 +47,9 @@ const PROMPT_CLOSES =
 const IN_FLIGHT_WAIT =
   "While another process holds a step and nothing else is ready, it waits for that process, as `realm agent` does, and says so: `• Step '<step>' is in flight, taken by <program> since <time>: waiting up to 60s for the run's record to change.` When the record changes it runs what is ready; when the record has not changed for 60 seconds it prints `• Step '<step>' has been in flight since <time>, taken by <program>; the record has not changed for 60s. If the program that took it is gone: realm run reclaim <run> --step <step> --force` and hands the run back at that step, with the ways on that fit a step another program is still running: `realm run advance`, once the step is no longer in flight, runs what the engine then owes and names an agent step or a question that is ready.";
 /** C167, C175, C176: the question on the gate's prompt (realm-workflow.md). */
+// #729 PR-4 (f), re-pinned: the prompt was the question's second source; now no surface invents one.
 const QUESTION_LINES =
-  "The gate's prompt shows the question before its choices: the gate's `message`, or the step's `prompt` when the gate has no `message`, rendered as the reply that opened the gate renders it. Each of its lines is printed as written, with any other control character written as the escape `realm run inspect` writes in its `Message:` line (a tab as `\\t`, an escape character as `\\u001b`): `Question: Ship it?` for one line, and for more, `Question:` with each line indented below it.";
+  "The gate's prompt shows the question before its choices: the gate's `message` as it was stored when the gate opened; a gate with no `message` shows none, since the step's `prompt` is never shown as the question. Below it, `Preview:` shows the step's output, through the step's `display` when it has one. Each of its lines is printed as written, with any other control character written as the escape `realm run inspect` writes in its `Message:` line (a tab as `\\t`, an escape character as `\\u001b`): `Question: Ship it?` for one line, and for more, `Question:` with each line indented below it.";
 /** C176: (a) red when the human-gates guide no longer holds the sentence; (b) prints it. */
 function claimGuidePage(sentence: string): void {
   const page = readFileSync(
@@ -792,7 +793,8 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       //     terminal), or after the choices; (b) prints stdout.
       expect(out.slice(at + 1, at + 3)).toEqual([
         '  Question: Ship it?\\u001b[31m',
-        '  Preview: {}',
+        // #729 PR-4, re-pinned: the preview is the composer's body — `{}` reads `(no output)`.
+        '  Preview: (no output)',
       ]);
     }, 30_000);
   });
@@ -915,15 +917,17 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
         '    Subject: OFFICE CLOSED',
         '    The office is closed.',
         '    Say "approve" to send it.',
-        '  Preview: {}',
+        // #729 PR-4, re-pinned: the preview is the composer's body — `{}` reads `(no output)`.
+        '  Preview: (no output)',
       ]);
     }, 30_000);
 
     it.each([
+      // #729 PR-4 (f), re-pinned: a prompt-only gate showed its prompt as the question; now none.
       [
         'the step’s `prompt` (the gate has no `message`)',
         '    prompt: "Approve order {{ context.resources.confirm.n }}?"\n',
-        ['  Question: Approve order 7?'],
+        [],
       ],
       ['neither (no `message`, no `prompt`)', '', []],
     ] as const)(
@@ -931,7 +935,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       async (_source, promptLine, question) => {
         claimWorkflowPage(QUESTION_LINES);
         claimGuidePage(
-          '**At the `realm workflow run` prompt, the gate shows `Preview:` but no `Question:` line.** The gate has no `message` and its step has no `prompt`, so there is no question to show. Add a `message`. Up to version 0.46.0 the hand-run prompt showed no question for any gate.',
+          "**At the `realm workflow run` prompt, the gate shows `Preview:` but no `Question:` line.** The gate has no `message`, so there is no question to show: the step's `prompt` is never shown as the question. Add a `message`. Up to version 0.46.0 the hand-run prompt showed no question for any gate.",
         );
         mocks.question.mockImplementation(async (prompt: string) => {
           if (prompt.startsWith('  Choice ')) return 'approve';
@@ -946,8 +950,8 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
         const out = logged();
         const at = out.findIndex((l) => l.startsWith('  ⏸  Gate: confirm'));
         const preview = out.findIndex((l) => l.startsWith('  Preview:'));
-        // (a) red when a prompt-sourced question is not shown, or a line is shown with neither
-        //     source; (b) prints stdout.
+        // (a) red when a question line is shown for a gate with no `message` — from its step's prompt
+        //     or from nothing (#729 PR-4 (f)); (b) prints stdout.
         expect(out.slice(at + 1, preview)).toEqual([...question]);
       },
       30_000,

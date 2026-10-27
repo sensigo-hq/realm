@@ -111,13 +111,17 @@ Caching: no step is cached; this workflow has no agent step.
 
    Realm docs test. Reply in this thread with one word: send or discard.
 
+   (no output)
+
    Waiting for approval...
   ℹ  Socket Mode connected.
 ```
 
 The `Caching:` line says that no request asks to be cached: this workflow has no agent step (the line was added after version 0.47.0; see [`realm agent`](../reference/cli/realm-agent.md#what-it-prints)).
 
-Notice `Socket Mode connected`. Realm is now listening. In Slack, the channel shows a message headed "Workflow gate waiting for approval", with the gate's name, your gate message, and the choices.
+Under the question, the terminal shows the step's output; `review` has none, so it says `(no output)`.
+
+Notice `Socket Mode connected`. Realm is now listening. In Slack, the channel shows a message headed "Workflow gate waiting for approval". It has four parts: the gate's name (and its `owner`, when set); your gate message, with the step's output below it; how to answer; and, when the message was cut to fit, the command that shows the step's whole output. With a bot token, how to answer is `Reply in this thread with` and the choices. With only `webhook_url`, it is one `realm run respond` command.
 
 ## 5. Answer in the thread
 
@@ -127,11 +131,14 @@ In Slack, open the message's thread and reply with one of the choices:
 send
 ```
 
-Realm replies in the thread with the line you set in `resolution_messages`:
+Realm replies in the thread that the choice is recorded, with the line you set in `resolution_messages` below it:
 
 ```text
+✅ Gate resolved: `send`
 Recorded: send.
 ```
+
+When the answer ends the run, the reply says ``✅ Gate resolved: `send`. The run has ended.`` instead, and the run's ending is printed where `realm agent` runs.
 
 In the terminal, the run carries on:
 
@@ -162,9 +169,13 @@ escalation_threshold_ms: 900000
 
 These timers live in the `realm agent` process. If that process stops, the reminders stop.
 
+A reminder reads ``⏰ gate `review` has been open for 12m. Please respond.``; the escalation is the same line with the gate's `owner` first. When the gate has a time limit, the last reminder says the question expired and what happens next, such as ``⏰ gate `review` expired 42s ago — its default choice will be recorded.`` Durations read like `1h 5m`, `12m` or `42s`. When the question closes without an answer in the thread, Realm says so there: `This question is closed: its time ran out.`, `This question is closed: the run stopped.` or ``This question is closed: it was answered elsewhere as `send`.``
+
+No message in the thread names a command. The command that carries out an expired question's `on_expiry`, `realm run drain --expired`, is printed where `realm agent` runs.
+
 ## The command line still works
 
-Every Slack gate can also be answered with `realm run respond`. The Slack message includes the command for each choice. `realm agent` notices the answer and carries on, whichever way it arrived.
+Every Slack gate can also be answered with `realm run respond`. `realm agent` notices the answer and carries on, whichever way it arrived.
 
 ## Other ways to connect
 

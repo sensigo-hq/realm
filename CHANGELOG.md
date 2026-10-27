@@ -4,6 +4,44 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **One composer for a gate's question, on every surface (issue #729 PR-4).** `realm run`,
+  `realm run inspect`, `realm agent`, Slack, and the MCP replies and form now show a gate's question
+  through core's one composer (`composeQuestionView`), over the gate disclosed for who reads it.
+  `display` shapes the step's output wherever a gate shows it, also when the gate has a `message`.
+  Closes #722.
+- **The asked person's notices (issue #729 PR-4).** Core composes what a person is told about their
+  question — opened, reminded, expired, recorded, late, refused, closed — as data (`PersonNotice`,
+  `composePersonNotice`), and `realm agent`'s Slack posts render it. The post has four parts: the
+  gate, the question with the step's output below it, how to answer, and — when it was cut — the
+  command that shows the whole output. With only a webhook, how to answer is one `realm run respond`
+  command, not one per choice. When the question closes without an answer in the thread, the thread
+  says so.
+- **`WorkflowCopyFault` is exported from `@sensigo/realm`.**
+
+### Changed
+
+- **BREAKING — a gate's question is cut to the view budget when it opens (issue #729 PR-4).** A
+  gate's question longer than the view budget is cut when it opens, with a line saying so; the
+  step's whole output still goes ahead on approval. The budget is 600 characters for the message and
+  the step's output together: each value in the message is cut to its share first, then the output,
+  then the message. Values the project declares secret are masked before anything is cut, so a cut
+  never leaves a part of one. The stored `resolved_message` is the question as shown.
+- **BREAKING — a gate with no `message` shows no question (issue #729 PR-4).** Its step's `prompt` is
+  no longer rendered as the question: `gate.display` is absent from the MCP replies, and every
+  surface shows the step's output as the gate's body.
+- **BREAKING — Slack threads name no operator command (issue #729 PR-4).** A refused answer, a late
+  answer, an expired question and a run an answer ended are told in the person's words; the
+  commands (`realm run drain --expired`, the run's ending) are printed where `realm agent` runs.
+- **The Slack reminder and expiry durations read `1h 5m`, `12m` or `42s` (issue #729 PR-4)**, the
+  forms `realm run drain` uses, instead of whole minutes.
+- **The engine takes the host's disclosure set (`disclosure`) on `executeStep`, `executeChain`,
+  `advanceRun` and `executeEngineStep` (issue #729 PR-4).** Realm's own commands and MCP server pass
+  theirs; without it, a gate's question is stored as rendered and never cut.
+
 ## [0.48.0] — 2026-10-26
 
 ### Added

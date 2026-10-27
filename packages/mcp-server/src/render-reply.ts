@@ -19,6 +19,7 @@ import {
   raceClausesOf,
   withFullStop,
   answersRowOf,
+  endsWithCutSentence,
   AUTHOR_TEXT_LABEL,
   DOOR_SERVES,
   PROGRESS_VERBS,
@@ -32,6 +33,7 @@ import {
   type EngineReply,
   type ForWay,
   type GateInfo,
+  type InspectWay,
   type Narrowed,
   type ProgressVerb,
   type RegisterWay,
@@ -1004,8 +1006,27 @@ export function renderReply(reply: EngineReply, hostIn: McpHost): RenderedReply 
     ...(gate !== undefined ? { gate: withAuthorLabel(gate) } : {}),
   };
   if (tokenStrayed(envelope, narrowed)) return heldBackReply(reply, host);
-  const person = personBlockOf(elsewhereEntries, reply.basis, host);
-  return { envelope, ...(person !== undefined ? { person } : {}) };
+  const person = [personBlockOf(elsewhereEntries, reply.basis, host), cutWayOf(reply, host)]
+    .filter((part): part is string => part !== undefined)
+    .join('\n');
+  return { envelope, ...(person !== '' ? { person } : {}) };
+}
+
+/**
+ * #729 PR-4 (C6 (d)): when the reply's question was cut when it opened (its stored text ends with the
+ * cut sentence), the way to the step's whole output — the `inspect` way through the injected operator
+ * route — for the block addressed to the person only, never the agent's text. None without a route.
+ */
+function cutWayOf(reply: EngineReply, host: McpHost): string | undefined {
+  const display = reply.gate?.display;
+  if (host.operatorRoute === undefined || display === undefined || !endsWithCutSentence(display)) {
+    return undefined;
+  }
+  const way: InspectWay = { verb: 'inspect', conditions: [], run_id: reply.run_id };
+  const command = host.operatorRoute.render(way, reply.basis);
+  return command === null
+    ? undefined
+    : `This question was cut when it opened. The step's whole output, the operator's command: ${command}`;
 }
 
 /**
