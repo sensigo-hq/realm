@@ -441,7 +441,7 @@ describe(`${RECORD_PAGE} — the export file and the guard's conditions`, () => 
   it("the example's header line and its disclosure block are what the code writes", async () => {
     claim(
       RECORD_PAGE,
-      'masked: declared secrets unknown (load failed); environment swept; hidden 0 declared, 1 environment, 0 by pattern; 0 too short to hide',
+      'masked in the file: declared secrets unknown (load failed); environment swept; hidden 0 declared, 1 environment, 0 by pattern; 0 too short to hide',
     );
     const receipt = (over: Partial<DisclosureReceipt>): DisclosureReceipt => ({
       declared: 'resolved',
@@ -543,11 +543,16 @@ describe(`${READING_PAGE} — export`, () => {
   it('the third line, the refusal per state, and its start and end', () => {
     claim(
       READING_PAGE,
-      'masked: declared secrets resolved; environment swept; hidden 0 declared, 0 environment, 0 by pattern; 0 too short to hide',
+      'masked in the file: declared secrets resolved; environment swept; hidden 0 declared, 0 environment, 0 by pattern; 0 too short to hide',
+    );
+    // #879 (C2): the page's first and third sentences of the export paragraph
+    claim(
+      READING_PAGE,
+      'The third line is about the file: what its masking knew, how many values it hid, by kind, and how many declared secrets are too short to hide (under 4 characters).',
     );
     claim(
       READING_PAGE,
-      "The third line says what the masking knew, how many values it hid, by kind, and how many declared secrets are too short to hide (under 4 characters). When the file holds a gate's question, it ends `; question: declared tier only`: a question hides only the declared secrets.",
+      "When the file holds a gate's question, the third line says `question: declared tier only`: a question hides only the declared secrets.",
     );
     claim(
       READING_PAGE,
@@ -2389,9 +2394,10 @@ describe('#729 PR-3 correction 4 — the pages this correction changes', () => {
       READING_PAGE,
       "Under `--accept-partial-disclosure`, where the values would have been withheld, `inspect` prints `Values shown on --accept-partial-disclosure (…)` first and, when the record shows a gate's question, the line ends `; question: shown with what is known (--accept-partial-disclosure)`.",
     );
+    // #879 (C2): the export paragraph's fourth sentence
     claim(
       READING_PAGE,
-      "Written with `--accept-partial-disclosure` where the run's manifest changed or could not be read, the question's clause reads `question: shown with what is known (--accept-partial-disclosure)` instead, and the line ends `; shown on --accept-partial-disclosure`; the file's own `disclosure` keeps `question: declared_only`.",
+      "When `--accept-partial-disclosure` wrote a run that `export` refuses without it, the line ends `; written on --accept-partial-disclosure (refused without it)`; where the run's manifest changed or could not be read, the question's clause before it reads `question: shown with what is known` instead, and the file's own `disclosure` keeps `question: declared_only`.",
     );
     claim(
       OPERATE_PAGE,
@@ -2455,6 +2461,29 @@ describe('#729 PR-3 correction 4 — the pages this correction changes', () => {
       line.split('--accept-partial-disclosure').length - 1;
 
     it('on the flag, the branches no other cell pins: a run with no question, and a run with no project, which export refuses without the flag', async () => {
+      // #879 (C2): (a) red when the CHANGELOG bullet or the page's version sentence loses its words;
+      //     (b) prints the sentence. This cell runs the opening and the last clause; the J-6 cell
+      //     above runs the question clause without the flag's name.
+      claim(
+        CHANGELOG,
+        "- **`realm run export`'s third line says what it counts, and names `--accept-partial-disclosure` once (issue #879).**",
+      );
+      claim(
+        CHANGELOG,
+        'It opens `masked in the file:` (it was `masked:`): its counts are what the file hides, not what the lines printed above it hide.',
+      );
+      claim(
+        CHANGELOG,
+        'When the flag wrote a run that export refuses without it, the line ends `; written on --accept-partial-disclosure (refused without it)`; it ended `; shown on --accept-partial-disclosure`, and a run with no project said nothing of the flag.',
+      );
+      claim(
+        CHANGELOG,
+        "Where the run's manifest changed or could not be read, a question's clause before it reads `question: shown with what is known`; it named the flag too.",
+      );
+      claim(
+        READING_PAGE,
+        'It was added after version 0.47.1; its opening and its last clause changed after version 0.48.0.',
+      );
       const ended = await c4Ended(base, 'gone', 'Held.');
       const live = cli(ended.home, [
         'run',
@@ -2512,6 +2541,11 @@ describe('#729 PR-3 correction 4 — the pages this correction changes', () => {
     }, 120_000);
 
     it('"in the file": piped, the first line is masked as any printed line is and can hide a value the third line does not count', async () => {
+      // #879 (C2): (a) red when the page drops the sentence this cell runs; (b) prints it.
+      claim(
+        READING_PAGE,
+        'Piped or redirected, the first line is masked as any printed line is, so it can hide a value the third line does not count.',
+      );
       const run = await c3Run(base, 'intact');
       // not `base` (no path the run recorded holds it) and not the cwd (MA 1's F2 design would
       // exempt a variable equal to the working directory)

@@ -4,6 +4,12 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **`realm run export`'s third line says what it counts, and names `--accept-partial-disclosure` once (issue #879).** It opens `masked in the file:` (it was `masked:`): its counts are what the file hides, not what the lines printed above it hide. When the flag wrote a run that export refuses without it, the line ends `; written on --accept-partial-disclosure (refused without it)`; it ended `; shown on --accept-partial-disclosure`, and a run with no project said nothing of the flag. Where the run's manifest changed or could not be read, a question's clause before it reads `question: shown with what is known`; it named the flag too.
+
 ## [0.48.0] — 2026-10-26
 
 ### Added
