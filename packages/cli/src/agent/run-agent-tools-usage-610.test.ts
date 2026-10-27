@@ -36,6 +36,10 @@ function providerOf(turns: Turn[]) {
       return { jsonMode: false };
     }
     callStep = vi.fn();
+    /** A step with no tools (V4's `summarize`): one billed request of its own. */
+    async callStepWithMeta() {
+      return { output: { summary: 'ok' }, usage: [rec(5, 500)] } as never;
+    }
     callStepWithTools = vi.fn(async (): Promise<StepWithToolsResult> => {
       const t = turns[Math.min(call, turns.length - 1)]!;
       call += 1;
@@ -210,7 +214,7 @@ describe('#610 — realm agent records a tool-using step’s requests', () => {
     }).toEqual({ errorClass: 'validation_rejected', indexes: [0, 1], line: true });
   });
 
-  it('D5: no double count — the #220 default-settle snapshot carries the step’s requests, and the wedge a later step’s input refusal causes does not carry them again', async () => {
+  it('D5: no double count — the #220 default-settle snapshot carries the step’s requests, and the wedge a later step’s input refusal leaves does not carry them again', async () => {
     const def = workflow(
       {
         validation_exhaustion: {
@@ -224,8 +228,9 @@ describe('#610 — realm agent records a tool-using step’s requests', () => {
           description: 'After',
           execution: 'auto',
           depends_on: ['classify'],
-          // Refused on its input inside the same chain: the rejection belongs to a step
-          // executeChain ran AFTER the driven one, which had already saved with its calls.
+          // Refused on its input after the driven step saved with its calls. Since #625 PR-2a
+          // (decision C31) the drive's exit records this wedge, before its claim, with no usage;
+          // chokepoint 4's `callsAlreadyRecorded` is not on this path.
           input_schema: {
             type: 'object',
             required: ['done'],
@@ -239,8 +244,8 @@ describe('#610 — realm agent records a tool-using step’s requests', () => {
     ]);
     const onEvidence = run.evidence.flatMap((e) => e.diagnostics?.cache?.requests ?? []).length;
     const onFailures = (run.drive_failures?.entries ?? []).flatMap((e) => e.usage ?? []).length;
-    // (a) red when the wedge skips `callsAlreadyRecorded` (each request counted twice); (b) prints
-    //     the counts on the evidence and on the failure records.
+    // (a) red when the exit-path wedge carries the driven step's calls (each request counted
+    //     twice); (b) prints the counts on the evidence and on the failure records.
     expect({ onEvidence, onFailures, wedges: run.drive_failures?.entries.length ?? 0 }).toEqual({
       onEvidence: 2,
       onFailures: 0,
@@ -267,7 +272,13 @@ describe('#610 — the readers show the record a drive wrote', () => {
   });
 
   it('V4: a priced run — the run’s `Cost:` line counts the tools step’s requests and does not call it not measured', async () => {
-    const { run, store, workflowStore } = await drive(workflow(), [
+    // A second agent step without tools prices a request of its own, so the run has a `Cost:`
+    // line whether or not the tools step's requests are on the record: each half below can fail.
+    const def = workflow(
+      {},
+      { summarize: { description: 'Summarize', execution: 'agent', depends_on: ['classify'] } },
+    );
+    const { run, store, workflowStore } = await drive(def, [
       { output: { category: 'billing' }, toolCalls: 1, usage: [rec(0, 100), rec(1, 200)] },
     ]);
     const prices: PriceSource = {
@@ -283,11 +294,11 @@ describe('#610 — the readers show the record a drive wrote', () => {
     };
     const out = await inspectRun(run.id, store, workflowStore as never, { priceSource: prices });
     const costLine = out.split('\n').find((l) => l.trimStart().startsWith('Cost: ')) ?? '(none)';
-    // (a) red when the drive's records lose the step's usage (the line then says the attempt was
-    //     not measured, or prices none); (b) prints the `Cost:` line.
+    // (a) red when the drive's records lose the tools step's usage (the line then prices 1 of 1
+    //     and says 1 tool-calling attempt was not measured); (b) prints the `Cost:` line.
     expect(
       {
-        counted: costLine.includes('2 of 2 requests priced'),
+        counted: costLine.includes('3 of 3 requests priced'),
         notMeasured: costLine.includes('not measured'),
       },
       costLine,
