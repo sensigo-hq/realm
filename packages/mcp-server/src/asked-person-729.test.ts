@@ -6,6 +6,8 @@
 // change that turns it red and (b) what it prints: stored questions (fakes), counts, booleans.
 import { describe, it, expect } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -14,6 +16,7 @@ import {
   JsonWorkflowStore,
   buildDisclosureSet,
   endsWithCutSentence,
+  VIEW_BUDGET,
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -155,5 +158,82 @@ describe('#729 PR-4 — the cut line’s way, in the person’s block only (C6 (
       person: person?.includes(`realm run inspect ${runId}`) ?? false,
       agent: agent.includes(`realm run inspect ${runId}`),
     }).toEqual({ cut: true, person: true, agent: false });
+  });
+});
+
+const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..');
+const flat = (t: string): string => t.replace(/\s+/g, ' ');
+/** (a) red when the page no longer holds the sentence word for word; (b) prints the sentence. */
+function claim(page: string, sentence: string): void {
+  expect(
+    flat(readFileSync(join(ROOT, page), 'utf8')),
+    `${page} no longer says: ${sentence}`,
+  ).toContain(flat(sentence));
+}
+
+describe('#729 PR-4 — a gate with no message, whose prompt changed after it opened (f)', () => {
+  it('the fresh open carries no `display`; after the prompt changes, a second call is refused while the question is open — the prompt, old or new, is never the question', async () => {
+    const door = await connect();
+    const step = (prompt: string) => ({
+      ask: {
+        description: 'Ask.',
+        execution: 'agent',
+        prompt,
+        trust: 'human_confirmed',
+        depends_on: [],
+        gate: { choices: ['approve', 'reject'] },
+      },
+    });
+    await door.workflowStore.register(def('f729', step('PROMPT-ONE-0729')));
+    const runId = (await door.call('start_run', { workflow_id: 'f729', params: {} }))[
+      'run_id'
+    ] as string;
+    const fresh = await door.call('execute_step', {
+      run_id: runId,
+      command: 'ask',
+      params: { body: 'B' },
+    });
+    await door.workflowStore.register(def('f729', step('PROMPT-TWO-0729')));
+    const again = await door.call('execute_step', {
+      run_id: runId,
+      command: 'ask',
+      params: { body: 'B' },
+    });
+    claim(
+      'docs/reference/workflow/gates.md',
+      "An assistant receives the rendered message as `gate.display`. Without `message`, `gate.display` is absent: no question is made from the step's `prompt`, and every surface shows the step's output as the gate's body.",
+    );
+    claim(
+      'docs/reference/mcp/tools.md',
+      "`display` is the gate's `message` as it was stored when the gate opened, cut to the view budget when longer; a gate with no `message` has none.",
+    );
+    // (a) red when the fresh open renders the prompt as `display`, or the second call re-renders
+    //     it from the current definition; (b) prints the display, the statuses and a boolean. (The
+    //     engine's `already_open` arm — a second caller's own gate-open — is w-627.test.ts's cell.)
+    expect({
+      fresh: (fresh['gate'] as { display?: string } | undefined)?.display,
+      statuses: [fresh['status'], again['status']],
+      prompt: JSON.stringify([fresh, again]).includes('PROMPT-'),
+    }).toEqual({ fresh: undefined, statuses: ['confirm_required', 'blocked'], prompt: false });
+  });
+
+  it('a gate with a message: `display` is the stored question, cut to the view budget when longer', async () => {
+    const door = await connect();
+    await door.workflowStore.register(def('m729', autoGate('Q'.repeat(700))));
+    const started = await door.call('start_run', { workflow_id: 'm729', params: {} });
+    const stored = (await door.runStore.get(started['run_id'] as string)).pending_gate
+      ?.resolved_message;
+    const display = (started['gate'] as { display: string }).display;
+    // (a) red when `display` is re-rendered rather than the stored text, or the cut is lost; (b)
+    //     prints booleans and the length.
+    expect({
+      same: display === stored,
+      cut: endsWithCutSentence(display),
+      within: display.length <= VIEW_BUDGET,
+    }).toEqual({
+      same: true,
+      cut: true,
+      within: true,
+    });
   });
 });

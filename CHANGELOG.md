@@ -19,7 +19,8 @@ All notable changes to this project are documented here.
   gate, the question with the step's output below it, how to answer, and — when it was cut — the
   command that shows the whole output. With only a webhook, how to answer is one `realm run respond`
   command, not one per choice. When the question closes without an answer in the thread, the thread
-  says so.
+  says so. Text from the workflow and the agent is shown as written in Slack (`<`, `>` and `&` are
+  escaped); an `owner` written as a Slack mention still pings.
 - **`WorkflowCopyFault` is exported from `@sensigo/realm`.**
 
 ### Changed
@@ -27,9 +28,11 @@ All notable changes to this project are documented here.
 - **BREAKING — a gate's question is cut to the view budget when it opens (issue #729 PR-4).** A
   gate's question longer than the view budget is cut when it opens, with a line saying so; the
   step's whole output still goes ahead on approval. The budget is 600 characters for the message and
-  the step's output together: each value in the message is cut to its share first, then the output,
-  then the message. Values the project declares secret are masked before anything is cut, so a cut
-  never leaves a part of one. The stored `resolved_message` is the question as shown.
+  the step's output together. When the message alone is longer, its long values are cut first,
+  sharing the room so that short values stay whole; then the output, then the message. Values the
+  project declares secret are masked before anything is cut, and when one appears anywhere in the
+  message the values are not cut one by one, so a cut never leaves a part of one. The stored
+  `resolved_message` is the question as shown.
 - **BREAKING — a gate with no `message` shows no question (issue #729 PR-4).** Its step's `prompt` is
   no longer rendered as the question: `gate.display` is absent from the MCP replies, and every
   surface shows the step's output as the gate's body.
@@ -41,6 +44,14 @@ All notable changes to this project are documented here.
 - **The engine takes the host's disclosure set (`disclosure`) on `executeStep`, `executeChain`,
   `advanceRun` and `executeEngineStep` (issue #729 PR-4).** Realm's own commands and MCP server pass
   theirs; without it, a gate's question is stored as rendered and never cut.
+
+### Fixed
+
+- **A Slack post that is refused or does not answer within 30 s is reported, and the person's
+  terminal way is printed (issue #729 PR-4).** `realm agent` names the cause
+  (`Slack did not answer within 30 s`, `Slack refused the post: …`) and prints one
+  `realm run respond` command per choice. Before, the person was never asked and the terminal said
+  to use a command that was never shown. A rate limit within 30 s is retried once.
 
 ## [0.48.0] — 2026-10-26
 
