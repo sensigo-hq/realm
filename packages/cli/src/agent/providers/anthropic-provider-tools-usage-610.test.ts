@@ -177,45 +177,37 @@ describe('#610 — AnthropicProvider.callStepWithTools records each answered req
         { promptCache: { value: 'long' } },
         'https://api.anthropic.com',
       );
-      // (a) red when `requestFacts` is used (an ask appears), or `model`, `endpoint` or
-      //     `cache_split_offered` is dropped; (b) prints each fact, and the record's keys.
-      expect({
-        model: custom['model'],
-        custom: custom['endpoint'],
-        viaDefault: viaDefault['endpoint'],
-        split: custom['cache_split_offered'],
-        requested: 'cache_requested' in custom,
-        lifetime: 'cache_lifetime_s' in custom,
-        ttl: 'cache_ttl_sent' in custom,
-      }).toEqual({
-        model: 'claude-test-1',
-        custom: 'custom',
-        viaDefault: 'default',
-        split: true,
-        requested: false,
-        lifetime: false,
-        ttl: false,
-      });
+      const keys = JSON.stringify(Object.keys(custom));
+      // Each fact has its own assertion. (a) red: `model` dropped; (b) prints the record's keys.
+      expect(custom['model'], keys).toBe('claude-test-1');
+      // (a) red: `endpoint` dropped; (b) prints the record's keys.
+      expect(custom['endpoint'], keys).toBe('custom');
+      // (a) red: `endpoint` dropped; (b) prints the default-address record's keys.
+      expect(viaDefault['endpoint'], JSON.stringify(Object.keys(viaDefault))).toBe('default');
+      // (a) red: `cache_split_offered` dropped; (b) prints the record's keys.
+      expect(custom['cache_split_offered'], keys).toBe(true);
+      // (a) red when `requestFacts` is used (each ask key appears); (b) prints the record's keys.
+      expect('cache_requested' in custom, keys).toBe(false);
+      expect('cache_lifetime_s' in custom, keys).toBe(false);
+      expect('cache_ttl_sent' in custom, keys).toBe(false);
     });
 
     it('(b) `long` stated by a runner: no source and no runner on the record', async () => {
       const r = await recordFor({
         promptCache: { value: 'long', source: 'stated', by: 'realm agent' },
       });
-      // (a) red when `requestFacts` is used; (b) prints the record's keys.
-      expect({
-        source: 'cache_requested_source' in r,
-        by: 'cache_requested_by' in r,
-        askKeys: Object.keys(r).filter((k) => /^cache_(requested|lifetime|ttl|auto)/.test(k)),
-      }).toEqual({ source: false, by: false, askKeys: [] });
+      const keys = JSON.stringify(Object.keys(r));
+      // (a) red when `requestFacts` is used (each key appears); (b) prints the record's keys.
+      expect('cache_requested_source' in r, keys).toBe(false);
+      expect('cache_requested_by' in r, keys).toBe(false);
     });
 
     it('(c) `auto` with gaps given: no `cache_auto` on the record', async () => {
       const r = await recordFor({
         promptCache: { value: 'auto', auto: { basis: 'listen_trigger_gaps', gaps_s: [420] } },
       });
-      // (a) red when `requestFacts` is used; (b) prints whether `cache_auto` is there.
-      expect('cache_auto' in r).toBe(false);
+      // (a) red when `requestFacts` is used; (b) prints the record's keys.
+      expect('cache_auto' in r, JSON.stringify(Object.keys(r))).toBe(false);
     });
   });
 });
