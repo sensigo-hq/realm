@@ -474,7 +474,7 @@ describe(`${RECORD_PAGE} — the export file and the guard's conditions`, () => 
       keys: Object.keys(json.disclosure),
     }).toEqual({
       header:
-        'masked: declared secrets unknown (load failed); environment swept; hidden 0 declared, 1 environment, 0 by pattern; 0 too short to hide',
+        'masked in the file: declared secrets unknown (load failed); environment swept; hidden 0 declared, 1 environment, 0 by pattern; 0 too short to hide',
       version: bundle.realm_export_version,
       keys: Object.keys(bundle.disclosure),
     });
@@ -566,8 +566,8 @@ describe(`${READING_PAGE} — export`, () => {
     // (a) red when the third line's words, its too-short count or its question clause change; (b)
     //     prints the lines.
     expect([line({}), line({ unmaskable: 2, question: 'declared_only' })]).toEqual([
-      'masked: declared secrets resolved; environment swept; hidden 0 declared, 0 environment, 0 by pattern; 0 too short to hide',
-      'masked: declared secrets resolved; environment swept; hidden 0 declared, 0 environment, 0 by pattern; 2 too short to hide; question: declared tier only',
+      'masked in the file: declared secrets resolved; environment swept; hidden 0 declared, 0 environment, 0 by pattern; 0 too short to hide',
+      'masked in the file: declared secrets resolved; environment swept; hidden 0 declared, 0 environment, 0 by pattern; 2 too short to hide; question: declared tier only',
     ]);
     const start =
       "Refusing to export run '<run-id>': Realm does not know all of its declared secrets";
@@ -2415,13 +2415,18 @@ describe('#729 PR-3 correction 4 — the pages this correction changes', () => {
     const plain = cli(bare.home, ['run', 'inspect', bare.live, '--accept-partial-disclosure']);
     const receipt = plain.stdout.split('\n').find((l) => l.startsWith('Disclosure:')) ?? '';
     // (a) red when the words are not swapped under the flag, no first line names it, export's last
-    //     line keeps `declared tier only` beside the flag, the file's header changes, or a receipt
-    //     with no question names the flag or a question; (b) prints the first lines' heads, the last
-    //     clauses (realm's words), the header and booleans.
+    //     line keeps `declared tier only` beside the flag, names the flag twice or does not say the
+    //     run was refused without it (#879), the file's header changes, or a receipt with no
+    //     question names the flag or a question; (b) prints the first lines' heads, the last clauses
+    //     (realm's words), the flag's count in export's line, the header and booleans.
     expect({
       first: first(inspected.stdout),
       receipt: lastClause(inspected.stdout),
       exported: exported.stdout.trim().split('\n').at(-1)?.split('; ').slice(-2),
+      // #879: the export line names the flag once
+      exportedFlags:
+        (exported.stdout.trim().split('\n').at(-1) ?? '').split('--accept-partial-disclosure')
+          .length - 1,
       header,
       bareFirst: first(plain.stdout),
       bareReceipt: {
@@ -2432,14 +2437,118 @@ describe('#729 PR-3 correction 4 — the pages this correction changes', () => {
       first: 'Values shown on --accept-partial-disclosure (declared values changed)',
       receipt: 'question: shown with what is known (--accept-partial-disclosure).',
       exported: [
-        'question: shown with what is known (--accept-partial-disclosure)',
-        'shown on --accept-partial-disclosure',
+        'question: shown with what is known',
+        'written on --accept-partial-disclosure (refused without it)',
       ],
+      exportedFlags: 1,
       header: 'declared_only',
       bareFirst: 'Values shown on --accept-partial-disclosure (declared values changed)',
       bareReceipt: { flag: false, question: false },
     });
   }, 120_000);
+
+  describe("#879: the export's third line", () => {
+    /** Export's third line: its last printed line, without the two spaces before it. */
+    const thirdLine = (text: string): string => text.trim().split('\n').at(-1)?.trim() ?? '';
+    /** How many times the line names the flag (the issue's acceptance: once). */
+    const flagCount = (line: string): number =>
+      line.split('--accept-partial-disclosure').length - 1;
+
+    it('on the flag, the branches no other cell pins: a run with no question, and a run with no project, which export refuses without the flag', async () => {
+      const ended = await c4Ended(base, 'gone', 'Held.');
+      const live = cli(ended.home, [
+        'run',
+        'export',
+        ended.live,
+        '--out',
+        join(base, '879-live.json'),
+        '--accept-partial-disclosure',
+      ]);
+      const none = await c3Run(base, 'none');
+      const noneOut = join(base, '879-none.json');
+      const refused = cli(none.home, ['run', 'export', none.runId, '--out', noneOut]);
+      const refusedWritten = existsSync(noneOut);
+      const accepted = cli(none.home, [
+        'run',
+        'export',
+        none.runId,
+        '--out',
+        noneOut,
+        '--accept-partial-disclosure',
+      ]);
+      // (a) red when a run the flag wrote does not end its line saying it was refused without it
+      //     (keyed on the cause, a run with no project loses the clause), names the flag twice, or
+      //     opens without `in the file`; a run with no project is not refused without the flag; or
+      //     a question-less run's line holds a question; (b) prints exit codes, whether the refused
+      //     export wrote a file, whether the refusal names the missing project, each third line
+      //     (realm's words and counts) and the flag's count in it.
+      expect({
+        live: [live.status, thirdLine(live.stdout), flagCount(thirdLine(live.stdout))],
+        noneRefused: [
+          refused.status,
+          refusedWritten,
+          refused.stderr.includes(
+            '— the run has no project (its workflow copy records no deployment root).',
+          ),
+        ],
+        noneAccepted: [
+          accepted.status,
+          thirdLine(accepted.stdout),
+          flagCount(thirdLine(accepted.stdout)),
+        ],
+      }).toEqual({
+        live: [
+          0,
+          'masked in the file: declared secrets partial (manifest changed); environment swept; hidden 0 declared, 0 environment, 0 by pattern; 0 too short to hide; written on --accept-partial-disclosure (refused without it)',
+          1,
+        ],
+        noneRefused: [1, false, true],
+        noneAccepted: [
+          0,
+          'masked in the file: declared secrets unknown (no manifest); environment swept; hidden 0 declared, 0 environment, 0 by pattern; 0 too short to hide; question: declared tier only; written on --accept-partial-disclosure (refused without it)',
+          1,
+        ],
+      });
+    }, 120_000);
+
+    it('"in the file": piped, the first line is masked as any printed line is and can hide a value the third line does not count', async () => {
+      const run = await c3Run(base, 'intact');
+      // not `base` (no path the run recorded holds it) and not the cwd (MA 1's F2 design would
+      // exempt a variable equal to the working directory)
+      const folder = mkdtempSync(join(tmpdir(), 'realm-879-out-'));
+      try {
+        const exported = pipedCli(
+          ['run', 'export', run.runId, '--out', folder],
+          { HOME: run.home, REALM_NOT_SECRET: 'HOME', REALM_TEST_879_DIR: folder },
+          base,
+        );
+        const lines = exported.stdout.trim().split('\n');
+        const text = readFileSync(join(folder, `${run.runId}.realm.json`), 'utf8');
+        const file = JSON.parse(text) as { disclosure: { hidden: { environment: number } } };
+        // (a) red when the opening loses `in the file`, the first line prints the folder's path
+        //     whole, or the file counts or holds the path; (b) prints the exit code, booleans (the
+        //     first line masked, the path in the file), the third line and the file's count —
+        //     never the path.
+        expect({
+          code: exported.status,
+          firstMasked:
+            (lines[0] ?? '').includes('[REDACTED]') && !(lines[0] ?? '').includes(folder),
+          third: thirdLine(exported.stdout),
+          fileEnvironment: file.disclosure.hidden.environment,
+          pathInFile: text.includes(folder),
+        }).toEqual({
+          code: 0,
+          firstMasked: true,
+          third:
+            'masked in the file: declared secrets resolved; environment swept; hidden 6 declared, 0 environment, 0 by pattern; 0 too short to hide; question: declared tier only',
+          fileEnvironment: 0,
+          pathInFile: false,
+        });
+      } finally {
+        rmSync(folder, { recursive: true, force: true });
+      }
+    }, 120_000);
+  });
 
   it('a hash of a value the masking hid, or shaped, is shown as its type and size with it; where values print whole, so do their hashes (realm-run-reading.md, run-record-and-export.md, tools.md, the CHANGELOG); `(none to show)`', async () => {
     // #729 PR-3 correction 5 (J-6): `shown as its type and size`, never `hidden` (the marker).
