@@ -6,6 +6,9 @@
 // turns it red and (b) what it prints when it fails: texts, lengths, counts and booleans.
 import { describe, it, expect } from 'vitest';
 import { createHash } from 'node:crypto';
+import { readdirSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   composeQuestionView,
   mintQuestionView,
@@ -385,7 +388,9 @@ describe("#729 PR-4 — the mint under PR-3's law (Q7)", () => {
   it('masked before cut: a declared value in a substitution past its share is stored as `[REDACTED]`, never its prefix', () => {
     const m = mint(
       'Approve {{ run.params.token }} for release {{ run.params.pad }}',
-      { token: FAKE, pad: 'p'.repeat(5000) },
+      // The value straddles its cap's cut point (about 156 characters shown): masked first it shows
+      // whole as `[REDACTED]` at 140; cut first, its first characters would stand in clear.
+      { token: `${'y'.repeat(140)}${FAKE}${'y'.repeat(3000)}`, pad: 'p'.repeat(3000) },
       { summary: 's' },
     );
     // (a) red when the hook cuts before it masks (a prefix of the value stored); (b) prints
@@ -540,10 +545,25 @@ describe('#729 PR-4 — the digest', () => {
   it('the frozen view only: the mint digests its `private` view; the broadcast view of the same gate digests differently', () => {
     const m = mint(undefined, {}, { note: 'visible-value-xyz' });
     const shaped = read(gate({ preview: { note: 'visible-value-xyz' } }), undefined, 'broadcast');
-    // (a) red when the mint digests a shaped view (the two digests equal); (b) prints booleans.
+    // The source: `viewDigest(` is called in the mint's return only (and in tests) — no surface
+    // digests the view it composed for its own audience.
+    const packages = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+    const callers = ['core', 'cli', 'mcp-server', 'testing'].flatMap((pkg) =>
+      (readdirSync(join(packages, pkg, 'src'), { recursive: true }) as string[])
+        .filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts'))
+        .filter((f) =>
+          readFileSync(join(packages, pkg, 'src', f), 'utf8')
+            .split('\n')
+            .some((line) => /viewDigest\(/.test(line) && !/function viewDigest\(/.test(line)),
+        )
+        .map((f) => `${pkg}/${f}`),
+    );
+    // (a) red when the mint digests a shaped view (the two digests equal), or another surface
+    //     digests its own view; (b) prints booleans and the calling files.
     expect({
       frozen: m.digest === viewDigest({ run_id: 'r-1', gate_id: 'g-1', step: 'review' }, m.view),
       differs: viewDigest({ run_id: 'r-1', gate_id: 'g-1', step: 'review' }, shaped) !== m.digest,
-    }).toEqual({ frozen: true, differs: true });
+      callers,
+    }).toEqual({ frozen: true, differs: true, callers: ['core/engine/question-view.ts'] });
   });
 });

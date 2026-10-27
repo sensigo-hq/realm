@@ -5807,7 +5807,9 @@ describe('#729 PR-4 — the mint takes the host’s disclosure set', () => {
     const { run } = await store.create({
       workflowId: d.id,
       workflowVersion: 1,
-      params: { token: `see ${FAKE} ${'y'.repeat(3000)}`, pad: 'z'.repeat(3000) },
+      // The value straddles its cap's cut point (about 156 characters shown): masked first it
+      // shows whole as `[REDACTED]` at 140; cut first, its first characters would stand in clear.
+      params: { token: `${'y'.repeat(140)}${FAKE}${'y'.repeat(3000)}`, pad: 'z'.repeat(3000) },
     });
     await executeStep(store, d, {
       runId: run.id,
