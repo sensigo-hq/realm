@@ -108,7 +108,7 @@ describe('inside a project (#878)', { timeout: 60_000 }, () => {
   };
   /** One run of the built `realm` in `cwd`, its output piped (the log audience). */
   const realm = (args: string[], cwd: string, env: Record<string, string>) =>
-    spawnSync(process.execPath, [BIN, ...args], { cwd, env, encoding: 'utf8' });
+    spawnSync(process.execPath, [BIN, ...args], { cwd, env, encoding: 'utf8', timeout: 60_000 });
   const env = (home: string): Record<string, string> => ({
     PATH: process.env['PATH'] ?? '',
     HOME: home,
@@ -279,6 +279,68 @@ describe('inside a project (#878)', { timeout: 60_000 }, () => {
     }
   });
 
+  it('8a: the nearest marker wins, two levels up — a package inside a git repository', async () => {
+    const base = newBase();
+    mkdirSync(join(base, '.git'));
+    mkdirSync(join(base, 'pkg', 'a', 'b'), { recursive: true });
+    writeFileSync(join(base, 'pkg', 'package.json'), '{}');
+    // A realm.yaml at the farther marker's folder must be ignored: the nearest (pkg) has none.
+    writeFileSync(join(base, 'realm.yaml'), '# the repository manifest\n');
+    const result = await initWorkflow('wf', join(base, 'pkg', 'a', 'b', 'wf'));
+    // (a) red when the lookup checks only the new folder's parent (six files, no project) or keeps
+    //     the farthest marker (root <base>, hasManifest true); (b) prints the result with <base>.
+    expect(JSON.parse(scrub(JSON.stringify(result ?? null), base, '\0'))).toEqual({
+      files: FOUR,
+      project: { root: '<base>/pkg', hasManifest: false },
+    });
+    // (a) red when realm.yaml or .env.example is written at depth; (b) prints the names.
+    expect(readdirSync(join(base, 'pkg', 'a', 'b', 'wf')).sort()).toEqual([...FOUR].sort());
+  });
+
+  it('8b: the only marker far above, with a realm.yaml there — read, never touched', async () => {
+    const base = newBase();
+    writeFileSync(join(base, 'package.json'), '{}');
+    const manifest = '# the project manifest\n';
+    writeFileSync(join(base, 'realm.yaml'), manifest);
+    const result = await initWorkflow('wf', join(base, 'a', 'b', 'wf'));
+    // (a) red when the lookup stops at the parent (six files, no project); (b) prints the result.
+    expect(JSON.parse(scrub(JSON.stringify(result ?? null), base, '\0'))).toEqual({
+      files: FOUR,
+      project: { root: '<base>', hasManifest: true },
+    });
+    // (a) red when init changes the project's realm.yaml; (b) prints its text.
+    expect(readFileSync(join(base, 'realm.yaml'), 'utf8')).toBe(manifest);
+    // (a) red when init writes anything at the project's folder; (b) prints the names.
+    expect(readdirSync(base).sort()).toEqual(['a', 'package.json', 'realm.yaml']);
+  });
+
+  it('8c: the acceptance at depth two — init then validate from <base>/a/b passes', () => {
+    const base = newBase();
+    const home = newHome();
+    writeFileSync(join(base, 'package.json'), '{}');
+    const cwd = join(base, 'a', 'b');
+    mkdirSync(cwd, { recursive: true });
+    const init = realm(['workflow', 'init', 'wf'], cwd, env(home));
+    const validate = realm(['workflow', 'validate', './wf/'], cwd, env(home));
+    // (a) red when the lookup stops at the parent (init writes a realm.yaml the loader refuses,
+    //     validate exits 1) or names another folder; (b) prints both exit codes, init's project
+    //     line, validate's first stdout line and stderr (<base>, <home>).
+    expect({
+      init: init.status,
+      validate: validate.status,
+      projectLine: scrub(init.stdout, base, home)
+        .split('\n')
+        .find((l) => l.startsWith('wf/ is inside')),
+      first: scrub(validate.stdout, base, home).split('\n')[0],
+      stderr: scrub(validate.stderr, base, home),
+    }).toMatchObject({
+      init: 0,
+      validate: 0,
+      projectLine: "wf/ is inside the project '<base>', which holds a package.json or a .git.",
+      first: expect.stringMatching(/^Valid: wf v1/),
+    });
+  });
+
   it('7: the pages say what the command does', () => {
     const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
     const page = (rel: string): string => readFileSync(join(ROOT, rel), 'utf8');
@@ -309,6 +371,14 @@ describe('inside a project (#878)', { timeout: 60_000 }, () => {
       [
         'docs/start/install-and-first-run.md',
         "Inside an existing project — a folder above it holds a `package.json` or a `.git` — it creates four files, leaves out `realm.yaml` and `.env.example`, and names the project's top folder, where Realm reads `realm.yaml`.",
+      ],
+      [
+        'docs/guides/slack-gates.md',
+        "Put them in a file named `.env` in your project's top folder: the nearest folder at or above your workflow that holds a `package.json` or a `.git`. A workflow with neither above it is its own project, so there `.env` goes beside it. Keep this file out of version control.",
+      ],
+      [
+        'docs/guides/slack-gates.md',
+        'Create `realm.yaml` in that same folder, or add this block to it:',
       ],
       [
         'CHANGELOG.md',

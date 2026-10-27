@@ -36,7 +36,7 @@ Then install the app to the workspace, and add it to the channel where gates sho
 - An **app-level token**, from Basic Information → App-Level Tokens. Socket Mode uses it to open the connection. It starts with `xapp-`.
 - The **channel ID**, from the channel's details in Slack. It looks like `C08V0S1ABCD`.
 
-Put them in a file named `.env` beside your workflow. Keep this file out of version control.
+Put them in a file named `.env` in your project's top folder: the nearest folder at or above your workflow that holds a `package.json` or a `.git`. A workflow with neither above it is its own project, so there `.env` goes beside it. Keep this file out of version control.
 
 ```text
 SLACK_BOT_TOKEN=xoxb-your-bot-token
@@ -46,7 +46,7 @@ SLACK_CHANNEL_ID=C08V0S1ABCD
 
 ## 3. Tell Realm about Slack
 
-Create `realm.yaml` beside your workflow, or add this block to it:
+Create `realm.yaml` in that same folder, or add this block to it:
 
 ```yaml
 version: 1
