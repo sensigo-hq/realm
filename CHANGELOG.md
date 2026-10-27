@@ -10,6 +10,14 @@ All notable changes to this project are documented here.
 
 - **`realm run export`'s third line says what it counts, and names `--accept-partial-disclosure` once (issue #879).** It opens `masked in the file:` (it was `masked:`): its counts are what the file hides, not what the lines printed above it hide. When the flag wrote a run that export refuses without it, the line ends `; written on --accept-partial-disclosure (refused without it)`; it ended `; shown on --accept-partial-disclosure`, and a run with no project said nothing of the flag. Where the run's manifest changed or could not be read, a question's clause before it reads `question: shown with what is known`; it named the flag too.
 
+### Fixed
+
+- **`realm workflow init` inside a project no longer writes a `realm.yaml` Realm refuses
+  (issue #878).** When a folder above the new one holds a `package.json` or a `.git` — a local
+  install, any git repository — it writes four files, leaving out `realm.yaml` and `.env.example`,
+  and names the project's top folder, where Realm reads `realm.yaml`. Before, the first
+  `realm workflow validate` there failed.
+
 ## [0.48.0] — 2026-10-26
 
 ### Added

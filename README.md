@@ -65,7 +65,7 @@ npm install --save-dev @sensigo/realm-testing
 realm workflow init my-workflow
 ```
 
-This creates `my-workflow/` with six files: `workflow.yaml`, `schema.json`, `realm.yaml`, `registry.sample.js`, `.env.example` and a `README.md`.
+This creates `my-workflow/` with six files: `workflow.yaml`, `schema.json`, `realm.yaml`, `registry.sample.js`, `.env.example` and a `README.md`. Inside an existing project (a folder above it holds a `package.json` or a `.git`) it leaves out `realm.yaml` and `.env.example`, which belong in the project's top folder.
 
 ### 2. Edit `my-workflow/workflow.yaml`
 

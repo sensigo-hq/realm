@@ -51,6 +51,8 @@ Created: my-first/
 Next: realm workflow validate ./my-first/
 ```
 
+Inside an existing project — a folder above it holds a `package.json` or a `.git` — it creates four files, leaves out `realm.yaml` and `.env.example`, and names the project's top folder, where Realm reads `realm.yaml`.
+
 Notice `workflow.yaml`. It is the only file this page uses. It describes two steps:
 
 <!-- prettier-ignore -->
