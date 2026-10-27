@@ -364,7 +364,7 @@ describe('#729 PR-3 — no canary leaves any door', () => {
         undefined,
       );
       const run = await new JsonFileStore(join(home, '.realm', 'runs')).get(gateRun);
-      await postGateViaApi('xoxb-fake', 'C1', run.pending_gate!, gateRun);
+      await postGateViaApi('xoxb-fake', 'C1', run.pending_gate!, gateRun, true);
       // (a) red when the post composes from the raw gate; (b) prints the labels.
       expect({
         door: 'slack',

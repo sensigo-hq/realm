@@ -77,7 +77,7 @@ const gate = (over: Partial<PendingGate> = {}): PendingGate => ({
   ...over,
 });
 const notice = (event: Parameters<typeof composePersonNotice>[0]): string =>
-  renderSlack(composePersonNotice(event), { mode: 'bot' }).text;
+  renderSlack(composePersonNotice(event), { mode: 'bot', listens: true }).text;
 const base = (g: PendingGate) => ({
   run_id: 'r1',
   gate: g,
@@ -150,21 +150,26 @@ describe(`${SLACK} — the post, the thread, the transport`, () => {
     );
     const cut = gate({ owner: '@ana', resolved_message: `Q\n\n${CUT_SENTENCE(1, 900)}` });
     const opening = (g: PendingGate, mode: 'bot' | 'webhook') =>
-      renderSlack(composePersonNotice({ kind: 'question_opened', ...base(g) }), { mode });
+      renderSlack(composePersonNotice({ kind: 'question_opened', ...base(g) }), {
+        mode,
+        listens: mode === 'bot',
+      });
     const bot = opening(cut, 'bot');
     const hook = opening(gate(), 'webhook');
     const texts = (blocks: unknown[]) =>
       (blocks as Array<{ text?: { text: string }; elements?: Array<{ text: string }> }>).map(
         (b) => b.text?.text ?? b.elements?.[0]?.text ?? '',
       );
-    // (a) red when a part is dropped, the owner is not in the header, the bot's route changes or
-    //     the webhook renders one command per choice; (b) prints the parts and counts.
+    // (a) red when a part is dropped, the owner is not in the header, the bot's route changes, the
+    //     bot post (listener-attended, correction A1) carries no command, or the webhook renders
+    //     one command per choice; (b) prints the parts and counts.
     expect({
       heading: bot.text,
       parts: bot.blocks.length,
       owner: texts(bot.blocks)[0],
       botRoute: texts(bot.blocks)[2]!.startsWith('Reply in this thread with `send` or `discard`'),
       cutWay: texts(bot.blocks)[3]!.startsWith("The step's whole output: realm run inspect"),
+      botCommands: (texts(bot.blocks)[2]!.match(/realm run respond/g) ?? []).length,
       webhookCommands: (texts(hook.blocks)[2]!.match(/realm run respond/g) ?? []).length,
     }).toEqual({
       heading: '⏸ Workflow gate waiting for approval',
@@ -172,6 +177,7 @@ describe(`${SLACK} — the post, the thread, the transport`, () => {
       owner: '*Gate:* `review`\n*Owner:* @ana',
       botRoute: true,
       cutWay: true,
+      botCommands: 1,
       webhookCommands: 1,
     });
   });

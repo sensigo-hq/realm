@@ -83,15 +83,11 @@ describe('the gate post’s view block (the composer’s preview, rendered)', ()
         gate_id: 'g0',
         step: 's',
         view: slackView(gate),
-        respond: {
-          verb: 'respond',
-          conditions: [],
-          run_id: 'r1',
-          gate_id: 'g0',
-          oneOf: ['approve'],
-        } as never,
+        // #729 PR-4 correction (A1): every route now renders the one respond command, so the
+        // notice carries the real way (a hand-built object had no `args` to render).
+        respond: respondWayOfGate('r1', gate),
       },
-      { mode: 'bot' },
+      { mode: 'bot', listens: true },
     );
     return (blocks[1] as { text: { text: string } }).text.text;
   };
@@ -273,7 +269,7 @@ describe('postGateViaApi — resolved_message', () => {
       opened_at: new Date().toISOString(),
       resolved_message: 'Approve this draft?',
     };
-    await postGateViaApi('xoxb-test', 'C123', gate, 'r1');
+    await postGateViaApi('xoxb-test', 'C123', gate, 'r1', true);
 
     const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
     const bodyStr = init.body as string;
@@ -295,7 +291,7 @@ describe('postGateViaApi — resolved_message', () => {
       opened_at: new Date().toISOString(),
       // no resolved_message
     };
-    await postGateViaApi('xoxb-test', 'C123', gate, 'r1');
+    await postGateViaApi('xoxb-test', 'C123', gate, 'r1', true);
 
     const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
     const bodyStr = init.body as string;
@@ -1351,7 +1347,7 @@ describe('#729 PR-4 — the asked person in Slack: the opening post', () => {
     const gate = pr4Gate({ preview: { note: PR4_DECLARED } });
     const bot = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true, ts: '1.0' } }));
     vi.stubGlobal('fetch', bot);
-    await postGateViaApi('xoxb-fake', 'C1', gate, 'r4');
+    await postGateViaApi('xoxb-fake', 'C1', gate, 'r4', true);
     const hook = vi.fn().mockResolvedValue(slackResponse({ text: 'ok' }));
     vi.stubGlobal('fetch', hook);
     await postGateNotificationToSlack('https://hooks.slack.com/fake', gate, 'r4');
@@ -1360,10 +1356,12 @@ describe('#729 PR-4 — the asked person in Slack: the opening post', () => {
     const raw = JSON.stringify([botBody, hookBody]);
     const view = '```\n{\n  "note": "‹string, 20 characters›"\n}\n```';
     // (a) red when the composer is handed the raw gate (the fake in the block), the route is
-    //     dropped, one command per choice is rendered, or an operator command is added (G9); (b)
-    //     prints the block texts and booleans.
+    //     dropped, one command per choice is rendered, the bot post (listener-attended:
+    //     `listens: true`) carries no command (correction A1), or an operator command is added
+    //     (G9); (b) prints the block texts, the commands' counts and booleans.
     expect({
       bot: texts(botBody!.blocks!),
+      botCommands: texts(botBody!.blocks!)[2]!.match(/realm run respond/g)?.length ?? 0,
       webhookBlocks: texts(hookBody!.blocks!).slice(0, 2),
       webhookCommands: texts(hookBody!.blocks!)[2]!.match(/realm run respond/g)?.length ?? 0,
       fake: raw.includes(PR4_DECLARED),
@@ -1374,8 +1372,9 @@ describe('#729 PR-4 — the asked person in Slack: the opening post', () => {
       bot: [
         '*Gate:* `review`',
         `Approve the release?\n\n${view}`,
-        'Reply in this thread with `approve` or `reject`',
+        'Reply in this thread with `approve` or `reject`, or from a terminal:\n```realm run respond r4 --gate g4 --choice &lt;one of: approve, reject&gt;```',
       ],
+      botCommands: 1,
       webhookBlocks: ['*Gate:* `review`', `Approve the release?\n\n${view}`],
       webhookCommands: 1,
       fake: false,
@@ -1428,13 +1427,14 @@ describe('#729 PR-4 — the asked person in Slack: the opening post', () => {
       resolved_message: 'a & b < c > d ```x``` ‮e ​f',
       preview: { k: 'v' },
     });
-    const bot = texts(renderSlack(openedNotice(gate), { mode: 'bot' }).blocks);
+    const bot = texts(renderSlack(openedNotice(gate), { mode: 'bot', listens: true }).blocks);
     // (a) red when one character is left unescaped, or the markup (`*`, backticks, the fence) is
     //     escaped; (b) prints the three block texts.
     expect(bot).toEqual([
       '*Gate:* `st&lt;ep`',
       'a &amp; b &lt; c &gt; d ` ` `x` ` ` �e �f\n\n```\n{\n  "k": "‹string, 1 character›"\n}\n```',
-      'Reply in this thread with `a&lt;b` or `ok`',
+      // correction A1: the listener-attended route, the thread sentence first, then the command.
+      "Reply in this thread with `a&lt;b` or `ok`, or from a terminal:\n```realm run respond r4 --gate g4 --choice &lt;one of: 'a&lt;b', ok&gt;```",
     ]);
   });
 
@@ -1449,7 +1449,9 @@ describe('#729 PR-4 — the asked person in Slack: the opening post', () => {
       '@ana',
     ];
     const header = (owner: string) =>
-      texts(renderSlack(openedNotice(pr4Gate({ owner })), { mode: 'bot' }).blocks)[0];
+      texts(
+        renderSlack(openedNotice(pr4Gate({ owner })), { mode: 'bot', listens: true }).blocks,
+      )[0];
     const escalation = (owner: string) =>
       renderSlack(
         composePersonNotice({
@@ -1463,7 +1465,7 @@ describe('#729 PR-4 — the asked person in Slack: the opening post', () => {
           escalation: true,
           now: new Date('2026-10-27T10:30:00.000Z'),
         }),
-        { mode: 'bot' },
+        { mode: 'bot', listens: true },
       ).text.split(' — ')[0];
     const shown = [
       '<@U024BE7LH>',
@@ -1491,7 +1493,7 @@ describe('#729 PR-4 — the asked person in Slack: the opening post', () => {
     // A question cut when it opened (its stored text ends with the sentence) is read as cut.
     const cut = pr4Gate({ resolved_message: `Approve?\n\n${CUT_SENTENCE(8, 900)}` });
     const notice = openedNotice(cut, 'run with space');
-    const blocks = renderSlack(notice, { mode: 'bot' }).blocks as Block[];
+    const blocks = renderSlack(notice, { mode: 'bot', listens: true }).blocks as Block[];
     const source = readFileSync(
       join(dirname(fileURLToPath(import.meta.url)), 'slack-gate-notifier.ts'),
       'utf8',
@@ -1570,7 +1572,7 @@ describe('#729 PR-4 — the asked person in Slack: the opening post', () => {
       return (await store.get(run.id)).pending_gate!;
     };
     const blockOf = (gate: PendingGate) =>
-      texts(renderSlack(openedNotice(gate), { mode: 'bot' }).blocks);
+      texts(renderSlack(openedNotice(gate), { mode: 'bot', listens: true }).blocks);
     const results = [];
     for (const x of ['<'.repeat(3000), 'y'.repeat(50_000)]) {
       const gate = await minted(x);
@@ -1585,6 +1587,8 @@ describe('#729 PR-4 — the asked person in Slack: the opening post', () => {
       results.push({
         within: blocks[1]!.length <= SLACK_SECTION_TEXT_LIMIT,
         same: blocks[1] === expected,
+        // the fixture renders the listener-attended bot post (`listens: true`, correction A1):
+        // its route still opens with the thread sentence.
         separate: blocks[0] === '*Gate:* `review`' && blocks[2]!.startsWith('Reply in this thread'),
       });
     }
@@ -1633,7 +1637,7 @@ describe('#729 PR-4 — the asked person in Slack: the thread', () => {
         escalation: false,
         now,
       }),
-      { mode: 'bot' },
+      { mode: 'bot', listens: true },
     ).text;
     const expiry = renderSlack(
       composePersonNotice({
@@ -1644,7 +1648,7 @@ describe('#729 PR-4 — the asked person in Slack: the thread', () => {
         respond,
         now,
       }),
-      { mode: 'bot' },
+      { mode: 'bot', listens: true },
     ).text;
     // (a) red when an unreadable stamp or a deadline ahead is formatted (`NaN…`, `0s ago`); (b)
     //     prints the two texts.
@@ -1663,7 +1667,7 @@ describe('#729 PR-4 — the asked person in Slack: the thread', () => {
         choice: 'approve',
         ended: false,
       }),
-      { mode: 'bot' },
+      { mode: 'bot', listens: true },
     ).text;
     // (a) red when the confirmation loses its choice or invents a message; (b) prints the text.
     expect(text).toBe('✅ Gate resolved: `approve` — run continuing.');
@@ -1683,7 +1687,7 @@ describe('#729 PR-4 — the asked person in Slack: the thread', () => {
           outcome,
           ended,
         }),
-        { mode: 'bot' },
+        { mode: 'bot', listens: true },
       ).text;
     const words = [
       late(
@@ -1709,7 +1713,7 @@ describe('#729 PR-4 — the asked person in Slack: the thread', () => {
           choice: 'approve',
           code: 'STATE_RUN_TERMINAL',
         }),
-        { mode: 'bot' },
+        { mode: 'bot', listens: true },
       ).text,
     ];
     // (a) red when a kind's words change or an operator command enters the thread; (b) prints the
@@ -1765,7 +1769,7 @@ describe('#729 PR-4 — the asked person in Slack: the thread', () => {
           } as never,
           ended: false,
         }),
-        { mode: 'bot' },
+        { mode: 'bot', listens: true },
       ).text,
     );
     const replies = bodiesOf(posts).map((b) => b.text ?? '');
@@ -1802,11 +1806,12 @@ describe('#729 PR-4 — the asked person in Slack: the thread', () => {
     });
     await handler('run1', closedGate);
     const bodies = bodiesOf(posts);
-    // (a) red when the webhook loop posts nothing at its end, or `how` is mapped wrong; (b)
-    //     prints the posts' count and the closed text.
+    // (a) red when the webhook loop posts nothing at its end, `how` is mapped wrong, or the
+    //     channel's post (no thread) does not name its gate and run (correction C1); (b) prints
+    //     the posts' count and the closed text.
     expect({ posts: bodies.length, closed: bodies[1]?.text }).toEqual({
       posts: 2,
-      closed: `This question is closed: ${how}.`,
+      closed: `This question (gate \`review\`, run run1) is closed: ${how}.`,
     });
   });
 
@@ -2048,5 +2053,102 @@ describe('#729 PR-4 — the Slack transport (02 §Transport): deadline, verdict,
     // (a) red when one inline Response literal is restored, or a file stops using the helper; (b)
     //     prints each file's counts.
     expect(count).toEqual(files.map((file) => ({ file, literals: 0, helper: true })));
+  });
+});
+
+// #729 PR-4 correction (A1, A2): the person's route is keyed on whether Realm LISTENS in the thread,
+// never on the transport, and a bot post always carries the one respond command. Fakes only: the
+// tokens are `xoxb-fake`/`xapp-fake`; nothing prints an environment or a key.
+describe('#729 PR-4 correction (A1, A2): the route keyed on whether Realm listens in the thread', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+  /** The opening post's route block (block 3), posted by a bot with or without a listener. */
+  const routeOf = async (listens: boolean): Promise<string> => {
+    const posts = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true, ts: '1.0' } }));
+    vi.stubGlobal('fetch', posts);
+    await postGateViaApi('xoxb-fake', 'C1', pr4Gate(), 'r4', listens);
+    return texts(bodiesOf(posts)[0]!.blocks!)[2]!;
+  };
+  const commands = (text: string): number => text.match(/realm run respond/g)?.length ?? 0;
+  const TERMINAL = '*Gate requires a terminal response — open a terminal and run:*';
+
+  // (i) Break: the route keyed on the transport again (`host.mode === 'bot'`). (a) red when a bot
+  //     post nobody listens to says "Reply in this thread", or carries no command or two; (b)
+  //     prints the route's first line, the command count and a boolean.
+  it('(i) a bot post nobody listens to: the terminal route, with the one respond command', async () => {
+    const route = await routeOf(false);
+    expect({
+      opens: route.split('\n')[0],
+      commands: commands(route),
+      thread: route.includes('Reply in this thread'),
+    }).toEqual({ opens: TERMINAL, commands: 1, thread: false });
+  });
+
+  // (ii) Break: the command left out of the listener-attended route. (a) red when the thread
+  //      sentence is not first, or the command is missing or doubled; (b) prints a boolean and
+  //      the count.
+  it('(ii) a bot post a listener attends: the thread sentence first, then the one respond command', async () => {
+    const route = await routeOf(true);
+    expect({
+      opens: route.startsWith('Reply in this thread with'),
+      commands: commands(route),
+    }).toEqual({ opens: true, commands: 1 });
+  });
+
+  // (iii) Break: the no-listener branch prints its old words and no command. (a) red when the
+  //       console does not say no listener is configured, prints no respond line per choice, or
+  //       still says "Using terminal command fallback"; (b) prints the matching lines' count, the
+  //       respond lines (realm's own, fake ids) and a boolean.
+  it("(iii) a thread nobody listens in: the console says so and prints the person's terminal way", async () => {
+    const logs = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } })));
+    await handleBidirectionalGate(
+      makeGateParams({ slackSigningSecret: undefined, store: storeReading(closedRecord({})) }),
+    );
+    const said = logs.mock.calls.map((c) => c.map(String).join(' '));
+    expect({
+      info: said.filter((l) =>
+        l.startsWith('  ℹ  Gate notification posted; no listener is configured'),
+      ).length,
+      respond: said.filter((l) => / realm run respond run1 --gate g1 --choice /.test(l)),
+      fallback: said.some((l) => l.includes('Using terminal command fallback')),
+    }).toEqual({
+      info: 1,
+      respond: [
+        '   Approve: realm run respond run1 --gate g1 --choice approve',
+        '   Reject: realm run respond run1 --gate g1 --choice reject',
+      ],
+      fallback: false,
+    });
+  });
+
+  // (iv) Break: the handler passes the transport instead of the derived flag (`true` always).
+  //      (a) red when a bot token with no listener key posts the thread sentence, or `app_token`
+  //      does not; (b) prints the first route line and a boolean.
+  it('(iv) the handler derives the flag: no listener key — the terminal route; app_token — the thread', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const routeVia = async (appToken?: string): Promise<string> => {
+      const posts = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true, ts: '1.0' } }));
+      vi.stubGlobal('fetch', posts);
+      const handler = createSlackGateHandler({
+        store: storeReading(closedRecord({})),
+        definition: makeMinimalDefinition(),
+        provider: {} as never,
+        botToken: 'xoxb-fake',
+        channelId: 'C1',
+        pollIntervalMs: 0,
+        ...(appToken !== undefined ? { appToken } : {}),
+      });
+      await handler('run1', closedGate);
+      return texts(bodiesOf(posts)[0]!.blocks!)[2]!;
+    };
+    const without = await routeVia();
+    const withApp = await routeVia('xapp-fake');
+    expect([without.split('\n')[0], withApp.startsWith('Reply in this thread with')]).toEqual([
+      TERMINAL,
+      true,
+    ]);
   });
 });

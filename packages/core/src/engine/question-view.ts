@@ -381,17 +381,24 @@ export function mintQuestionView(input: {
           subs.lengths,
           VIEW_BUDGET - sentenceRoom(r1.length + previewText.length) - subs.fixed,
         );
-        const r2 = input.rerender((rendered) => {
-          const masked = disclose(stripSpanMarks(rendered), set, 'declared').text;
-          const out = cutTo(masked, cap, mintMarker);
-          if (out.cut) {
-            b.count += 1;
-            b.hidden += masked.length - out.shown;
-            b.markers += out.text.length - out.shown;
-          }
-          return out.text;
-        });
-        question = disclose(stripSpanMarks(r2), set, 'declared').text;
+        // #729 PR-4 correction (B1): a value cut to nothing left no trace (PR4-MA1-REV-18). So the
+        // values are cut one by one only when each keeps at least one character beside its marker
+        // (the marker at its widest for this message's values; + 1 keeps a surrogate pair whole);
+        // otherwise the message is cut as a whole below, with its sentence.
+        const longest = subs.lengths.length > 0 ? Math.max(...subs.lengths) : 0;
+        if (subs.lengths.length > 0 && cap > mintMarker(longest, longest).length + 1) {
+          const r2 = input.rerender((rendered) => {
+            const masked = disclose(stripSpanMarks(rendered), set, 'declared').text;
+            const out = cutTo(masked, cap, mintMarker);
+            if (out.cut) {
+              b.count += 1;
+              b.hidden += masked.length - out.shown;
+              b.markers += out.text.length - out.shown;
+            }
+            return out.text;
+          });
+          question = disclose(stripSpanMarks(r2), set, 'declared').text;
+        }
       }
       question = cutAtMint(question, previewText, b);
     }

@@ -396,6 +396,34 @@ describe('#729 PR-4 — the budget (the mint)', () => {
       ).toBe(2);
     });
   });
+
+  // #729 PR-4 correction (B3): a long fixed text leaves a value no room beside its marker, so the
+  // values are not cut one by one: the message is cut as a whole, with its sentence, and the value
+  // keeps what fits (before, a value cut to nothing left no trace: PR4-MA1-REV-18). The control
+  // keeps the per-value cut where the marker fits. (a) red when the per-value cut runs with no room
+  // for a character beside its marker (0 of the value shown, no marker), or is skipped where it
+  // fits; (b) prints the stored length, the value's characters shown, a boolean and the sentence's
+  // two counts.
+  it('(b) needs room for one character beside its marker: 380 fixed characters and a 5,000-character value are cut as a whole; at 300 the value is cut with its marker', () => {
+    const at = (fixed: number) => {
+      const q = mint(
+        'p'.repeat(fixed) + '{{ run.params.v }}',
+        { v: 'V'.repeat(5000) },
+        { ok: true },
+      ).resolved_message!;
+      const sentence = /the first (\d+) of (\d+) characters/.exec(q);
+      return {
+        stored: q.length,
+        shown: (q.match(/V/g) ?? []).length,
+        marker: /…\[cut at mint: \d+ of \d+ characters\]/.test(q),
+        first: sentence !== null ? [Number(sentence[1]), Number(sentence[2])] : undefined,
+      };
+    };
+    expect([at(380), at(300)]).toEqual([
+      { stored: 599, shown: 32, marker: false, first: [412, 5396] },
+      { stored: 597, shown: 73, marker: true, first: [373, 5316] },
+    ]);
+  });
 });
 
 describe("#729 PR-4 — the mint under PR-3's law (Q7)", () => {

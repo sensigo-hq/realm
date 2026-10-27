@@ -246,9 +246,12 @@ const ON_EXPIRY_WORDS: Readonly<Record<'settle_default' | 'abort' | 'none', stri
   none: 'nothing will be done automatically; it is still waiting for a response',
 };
 
-/** How a slack host shows the person's route: in a thread (bot) or from a terminal (webhook). */
+/** How a slack host reaches the person: `mode` is the transport (a thread reply, or a channel post);
+ *  `listens` says whether a listener attends the thread (#729 PR-4 correction, A1) — required, so no
+ *  host claims a thread by leaving it out. A webhook post never has one. */
 export interface SlackHost {
   mode: 'webhook' | 'bot';
+  listens: boolean;
 }
 
 type SlackBlock = Record<string, unknown>;
@@ -285,10 +288,12 @@ export function renderSlack(
     case 'question_opened': {
       const owner = notice.owner !== undefined ? `\n*Owner:* ${slackOwner(notice.owner)}` : '';
       const choices = notice.view.choices.map((c) => `\`${slackEscape(c)}\``).join(' or ');
-      const route =
-        host.mode === 'bot'
-          ? `Reply in this thread with ${choices}`
-          : `*Gate requires a terminal response — open a terminal and run:*\n\`\`\`${slackEscape(cliCommandOf(notice.respond as RespondWay)!)}\`\`\``;
+      // #729 PR-4 correction (A1): the route is keyed on whether Realm LISTENS in the thread, never
+      // on the transport; the one respond command is always there (the ids a terminal answer needs).
+      const command = slackEscape(cliCommandOf(notice.respond as RespondWay)!);
+      const route = host.listens
+        ? `Reply in this thread with ${choices}, or from a terminal:\n\`\`\`${command}\`\`\``
+        : `*Gate requires a terminal response — open a terminal and run:*\n\`\`\`${command}\`\`\``;
       const section = (text: string): SlackBlock => ({
         type: 'section',
         text: { type: 'mrkdwn', text },
@@ -352,7 +357,14 @@ export function renderSlack(
           : notice.how === 'superseded'
             ? `it was answered elsewhere${notice.choice !== undefined ? ` as \`${slackEscape(notice.choice)}\`` : ''}`
             : 'the run stopped';
-      return { blocks: [], text: `This question is closed: ${how}.` };
+      // #729 PR-4 correction (C1): a channel post has no thread, so it names its gate and run.
+      return {
+        blocks: [],
+        text:
+          host.mode === 'webhook'
+            ? `This question (gate ${step}, run ${notice.run_id}) is closed: ${how}.`
+            : `This question is closed: ${how}.`,
+      };
     }
   }
 }
@@ -380,7 +392,10 @@ export async function postGateNotificationToSlack(
   display?: string,
 ): Promise<boolean> {
   // #729 PR-4 (02): the `question_opened` notice, rendered for a webhook (the route from a terminal).
-  const body = renderSlack(openingNotice(gate, runId, display), { mode: 'webhook' });
+  const body = renderSlack(openingNotice(gate, runId, display), {
+    mode: 'webhook',
+    listens: false,
+  });
   const verdict = await sendToSlack(webhookUrl, body);
   if (verdict.ok) return true;
   console.warn(
@@ -405,10 +420,15 @@ export async function postGateViaApi(
   channelId: string,
   gate: PendingGate,
   runId: string,
+  listens: boolean,
   display?: string,
 ): Promise<string | undefined> {
-  // #729 PR-4 (02): the `question_opened` notice, rendered for a bot (the route is the thread).
-  const { text, blocks } = renderSlack(openingNotice(gate, runId, display), { mode: 'bot' });
+  // #729 PR-4 (02): the `question_opened` notice, rendered for a bot; the route says the thread only
+  // when a listener attends it (correction A1).
+  const { text, blocks } = renderSlack(openingNotice(gate, runId, display), {
+    mode: 'bot',
+    listens,
+  });
   const verdict = await sendToSlack(
     'https://slack.com/api/chat.postMessage',
     { channel: channelId, text, blocks },
@@ -463,6 +483,7 @@ function reminderFiring(
   isFinal: boolean,
   count: number,
   scheduledAt: Date,
+  listens: boolean,
 ): string {
   const now = new Date();
   const base = {
@@ -486,7 +507,7 @@ function reminderFiring(
         escalation: false,
         now,
       });
-  return renderSlack(notice, { mode: 'bot' }).text;
+  return renderSlack(notice, { mode: 'bot', listens }).text;
 }
 
 /**
@@ -515,6 +536,7 @@ export function startGateReminderTimers(
   escalationThresholdMs: number,
   runId = '',
   display?: string,
+  listens = true,
 ): () => void {
   const authored = gate.reminder_seconds !== undefined;
   const effectiveReminderMs = authored ? gate.reminder_seconds! * 1000 : reminderIntervalMs;
@@ -539,7 +561,7 @@ export function startGateReminderTimers(
         botToken,
         channelId,
         threadTs,
-        reminderFiring(gate, runId, display, isFinal, occurrence, scheduledAt),
+        reminderFiring(gate, runId, display, isFinal, occurrence, scheduledAt, listens),
       ).catch((err) => {
         console.warn(`Reminder post failed: ${err instanceof Error ? err.message : String(err)}`);
       });
@@ -563,7 +585,7 @@ export function startGateReminderTimers(
         escalation: true,
         now: new Date(),
       }),
-      { mode: 'bot' },
+      { mode: 'bot', listens },
     ).text;
     postSlackReply(botToken, channelId, threadTs, text).catch((err) => {
       console.warn(`Escalation post failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -685,6 +707,8 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
   // closes, the thread is told it closed (`question_closed`).
   let personTold = false;
   const abortController = new AbortController();
+  // #729 PR-4 correction (A1): a listener attends the thread — the two intake branches below.
+  const listens = slackAppToken !== undefined || slackSigningSecret !== undefined;
   // #729 PR-4: one notice, as the thread shows it — through `postSlackReply`, walked at every tier.
   const tellThread = async (notice: PersonNotice): Promise<void> => {
     if (gateThreadTs === undefined) return;
@@ -692,7 +716,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
       slackBotToken,
       slackChannelId,
       gateThreadTs,
-      renderSlack(notice, { mode: 'bot' }).text,
+      renderSlack(notice, { mode: 'bot', listens }).text,
     );
   };
 
@@ -900,9 +924,13 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
       },
     });
   } else if (gateThreadTs !== undefined) {
-    // Gate notification posted but no listener configured.
+    // Gate notification posted but no listener configured: nobody reads the thread, so the
+    // person's way to answer is the terminal's (#729 PR-4 correction, A2).
     console.log(
-      '  ℹ  Gate notification posted. Configure app_token (Socket Mode) or signing_secret + events_port (Events API) under notifiers.slack_gate in realm.yaml to resolve via Slack. Using terminal command fallback.',
+      '  ℹ  Gate notification posted; no listener is configured (app_token for Socket Mode, or signing_secret + events_port for the Events API under notifiers.slack_gate in realm.yaml), so the answer comes from the terminal:',
+    );
+    terminalRespondLines(runId, gate).forEach((_, i) =>
+      console.log(terminalRespondLines(runId, gate, writerCtx())[i]),
     );
   }
 
@@ -927,6 +955,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
           gateEscalationThresholdMs,
           runId,
           definition.steps[gate.step_name]?.display,
+          listens,
         )
       : (): void => {};
 
@@ -1087,6 +1116,7 @@ export function createSlackGateHandler(
         config.channelId,
         gate,
         runId,
+        config.appToken !== undefined || config.signingSecret !== undefined,
         display,
       );
       await handleBidirectionalGate({
@@ -1140,7 +1170,7 @@ export function createSlackGateHandler(
           const sent = await Promise.race([
             sendToSlack(config.webhookUrl, {
               text: disclose(
-                stripMarks(renderSlack(closed, { mode: 'webhook' }).text),
+                stripMarks(renderSlack(closed, { mode: 'webhook', listens: false }).text),
                 slackSet(),
                 'all',
               ).text,
