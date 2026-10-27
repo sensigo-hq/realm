@@ -45,7 +45,10 @@ export function stripSpanMarks(value: unknown): unknown {
  * not a string, as its JSON.
  */
 export function renderDisplay(template: string, vars: Record<string, unknown>): string {
-  return template.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, expr: string) => {
+  // One quantifier between the braces (the trim is the code's): `\s*([^}]+?)\s*` let the three
+  // match the same spaces, and a template like `{{{{` + spaces took cubic time (CodeQL
+  // js/polynomial-redos) — a display is author text, and an agent can author a workflow.
+  return template.replace(/\{\{([^}]+)\}\}/g, (_, expr: string) => {
     const parts = expr.trim().split('.');
     let val: unknown = vars;
     for (const part of parts) {

@@ -120,6 +120,18 @@ describe('#729 PR-4 — the composer (read)', () => {
     ]).toEqual(['[deep]', '[]', '[3|{"k":1}]']);
   });
 
+  it('renderDisplay is linear: a template of `{{{{` and 4,000 spaces renders at once, left as it is', () => {
+    const template = `{{{{${' '.repeat(4000)}`;
+    const started = performance.now();
+    const out = renderDisplay(template, {});
+    // (a) red when the placeholder pattern lets two quantifiers match the same spaces again (about
+    //     22 s here: the cell's timeout); (b) prints the length and the time bound's boolean.
+    expect({ same: out === template, fast: performance.now() - started < 1000 }).toEqual({
+      same: true,
+      fast: true,
+    });
+  });
+
   it('an old gate (control): a stored question past the budget with no sentence is shown as stored; `cut` from the preview fit only', () => {
     const long = 'Q'.repeat(VIEW_BUDGET + 50);
     const preview = { summary: 'x'.repeat(40) };
