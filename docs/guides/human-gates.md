@@ -75,7 +75,7 @@ The office is closed this Friday.
 
 Show the thing being approved itself, not a description of it. The person should not have to look anywhere else to decide.
 
-The message is rendered once, when the gate opens. Every surface shows it with the step's output below it, through the step's `display` when it has one. When the two together pass 600 characters, they are cut to fit, and a sentence at the end of the message says so; approving still lets the step's whole output go ahead. See [`message`](../reference/workflow/gates.md#message).
+The message is rendered once, when the gate opens. Every surface shows it with the step's output below it when the budget leaves room for it, through the step's `display` when it has one. When the two together pass 600 characters, they are cut to fit, and a sentence at the end of the message says so; approving still lets the step's whole output go ahead. See [`message`](../reference/workflow/gates.md#message).
 
 `gate.resolution_messages` gives one line per choice. When a gate is answered from Slack, Realm posts that line in the thread to confirm what happened.
 

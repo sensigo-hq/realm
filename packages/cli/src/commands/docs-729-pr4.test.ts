@@ -146,7 +146,7 @@ describe(`${SLACK} — the post, the thread, the transport`, () => {
   it('the post has four parts; a bot answers in the thread, a webhook with one `realm run respond`', () => {
     claim(
       SLACK,
-      "It has four parts: the gate's name (and its `owner`, when set); your gate message, with the step's output below it; how to answer; and, when the message was cut to fit, the command that shows the step's whole output. With a bot token, how to answer is `Reply in this thread with` and the choices. With only `webhook_url`, it is one `realm run respond` command.",
+      "It has four parts: the gate's name (and its `owner`, when set); your gate message, with the step's output below it when room is left; how to answer; and, when the message was cut to fit, the command that shows the step's whole output. How to answer is one `realm run respond` command; when Realm listens in the thread (`app_token`, or `signing_secret` and `events_port`), the post says `Reply in this thread with` and the choices first.",
     );
     const cut = gate({ owner: '@ana', resolved_message: `Q\n\n${CUT_SENTENCE(1, 900)}` });
     const opening = (g: PendingGate, mode: 'bot' | 'webhook') =>
@@ -286,10 +286,33 @@ describe(`${SLACK} — the post, the thread, the transport`, () => {
     });
   });
 
+  it('#729 PR-4 correction (C1): with only `webhook_url`, the closed post names the gate and the run', () => {
+    claim(
+      SLACK,
+      'With only `webhook_url`, the post names the gate and the run first, since there is no thread.',
+    );
+    const closed = (mode: 'bot' | 'webhook') =>
+      renderSlack(
+        composePersonNotice({
+          kind: 'question_closed',
+          run_id: 'r1',
+          gate: gate(),
+          outcome: { step: 'review', attempted: false, by: { kind: 'timeout' } } as never,
+        }),
+        { mode, listens: mode === 'bot' },
+      ).text;
+    // (a) red when the webhook's closed post drops the gate or the run (fe15d31d: the thread's
+    //     words), or the thread's line gains them; (b) prints the two lines.
+    expect({ webhook: closed('webhook'), thread: closed('bot') }).toEqual({
+      webhook: 'This question (gate `review`, run r1) is closed: its time ran out.',
+      thread: 'This question is closed: its time ran out.',
+    });
+  });
+
   it('no thread message names a command; the drain command is the console’s', () => {
     claim(
       SLACK,
-      "No message in the thread names a command. The command that carries out an expired question's `on_expiry`, `realm run drain --expired`, is printed where `realm agent` runs.",
+      "No message in the thread names a command. The command that carries out an expired question's `on_expiry`, `realm run drain --expired`, is printed where `realm agent` runs when it attends the thread with a bot token; with only `webhook_url`, nothing in `realm agent` carries the expiry out or prints it (#882).",
     );
     const g = gate({ expires_at: '2026-10-27T10:00:01.000Z', on_expiry: 'settle_default' });
     const now = new Date('2026-10-27T10:30:00.000Z');
@@ -337,6 +360,36 @@ describe(`${SLACK} — the post, the thread, the transport`, () => {
     );
   });
 
+  it('#729 PR-4 correction (A1, A3): Post only — the post carries the `realm run respond` command', () => {
+    claim(
+      SLACK,
+      '- **Post only.** Leave out `app_token`. Realm posts the gate to Slack with the `realm run respond` command, prints that no listener is configured and the same command on its terminal: the answer has to come from `realm run respond`. With only `webhook_url` set, Realm posts through a Slack incoming webhook in the same one-way manner.',
+    );
+    const route = (mode: 'bot' | 'webhook') =>
+      (
+        renderSlack(composePersonNotice({ kind: 'question_opened', ...base(gate()) }), {
+          mode,
+          listens: false,
+        }).blocks[2] as { text: { text: string } }
+      ).text.text;
+    // (a) red when a post nobody listens to offers the thread (fe15d31d: a bot post says "Reply in
+    //     this thread" and names no command) or loses the command; (b) prints the route texts.
+    //     (The terminal's no-listener line and commands: slack-gate-notifier.test.ts, the
+    //     correction's A4 (iii) cell.)
+    const routes = [route('bot'), route('webhook')];
+    expect(
+      routes.map((r) => ({
+        terminal: r.startsWith('*Gate requires a terminal response — open a terminal and run:*'),
+        thread: r.includes('Reply in this thread'),
+        commands: (r.match(/realm run respond r1 --gate g1 /g) ?? []).length,
+      })),
+      routes.join('\n---\n'),
+    ).toEqual([
+      { terminal: true, thread: false, commands: 1 },
+      { terminal: true, thread: false, commands: 1 },
+    ]);
+  });
+
   it('the transport’s lines: the deadline and the refusal name their cause; a rate limit is retried once; a thread post outliving the drain is said', () => {
     claim(
       SLACK,
@@ -370,11 +423,11 @@ describe(`${GATES}, ${GUIDE} — the question is minted once, masked, and cut to
   it('the message is stored as shown: a declared value masked first; past 600 characters, cut with a sentence that names what is shown', async () => {
     claim(
       GATES,
-      "The message is rendered once, when the gate opens, and stored as it is shown. A value the project declares secret is replaced by `[REDACTED]` first. Then, when the message and the step's output together are longer than the view budget of 600 characters, they are cut. When the message alone is longer, its long values are cut first, sharing the room so that short values stay whole, unless a declared value appears anywhere in the message: then the message is cut only as a whole, so no part of that value is left. After that the step's output is cut, then the message itself. The message then ends with a sentence that says what is shown: `[Cut when this question opened: the first N of M characters are shown. Your answer is checked against what is shown here only, but approving lets the step's whole output go ahead.]`",
+      "The message is rendered once, when the gate opens, and stored as it is shown. A value the project declares secret is replaced by `[REDACTED]` first. Then, when the message and the step's output together are longer than the view budget of 600 characters, they are cut. When the message alone is longer, its long values are cut first, sharing the room so that short values stay whole, unless a declared value appears anywhere in the message, or the room beside the message's own words is too small to show any of a value: then the message is cut only as a whole, so no part of that value is left and no value disappears without a trace. After that the step's output is cut, then the message itself. The message then ends with a sentence that says what is shown: `[Cut when this question opened: the first N of M characters are shown. Your answer is checked against what is shown here only, but approving lets the step's whole output go ahead.]`",
     );
     claim(
       GUIDE,
-      "The message is rendered once, when the gate opens. Every surface shows it with the step's output below it, through the step's `display` when it has one. When the two together pass 600 characters, they are cut to fit, and a sentence at the end of the message says so; approving still lets the step's whole output go ahead.",
+      "The message is rendered once, when the gate opens. Every surface shows it with the step's output below it when the budget leaves room for it, through the step's `display` when it has one. When the two together pass 600 characters, they are cut to fit, and a sentence at the end of the message says so; approving still lets the step's whole output go ahead.",
     );
     const set = setOf({ X: FAKE });
     const masked = await opened('Send {{ run.params.x }}?', FAKE, set);
@@ -517,6 +570,36 @@ describe('CHANGELOG.md — this unit’s entries (#871’s form: the section tha
       durations: '1h 5m',
       transport: 'Slack did not answer within 30 s',
     });
+  });
+  it('#729 PR-4 correction (A3, B2): the amended lines, and the behaviour each states', async () => {
+    for (const sentence of [
+      'How to answer is one `realm run respond` command, not one per choice; when Realm listens in the thread, the post says so first.',
+      "When the message alone is longer, its long values are cut first, sharing the room so that short values stay whole — unless a declared value appears anywhere in the message, or the room left is too small to show any of a value: then the message is cut only as a whole, so no part of a declared value is left and no value disappears without a trace. After that the step's output is cut, then the message. Values the project declares secret are masked before anything is cut.",
+      "**BREAKING — `display` shapes the step's output wherever a gate shows it (issue #729 PR-4)**, also when the gate has a `message`; before, only `realm agent`'s terminal read it, and only for a gate with no message.",
+    ]) {
+      claimChangelog(sentence);
+    }
+    const route = (listens: boolean) =>
+      (
+        renderSlack(composePersonNotice({ kind: 'question_opened', ...base(gate()) }), {
+          mode: 'bot',
+          listens,
+        }).blocks[2] as { text: { text: string } }
+      ).text.text;
+    // A message whose fixed words leave a value no room beside its marker is cut as a whole.
+    const long = await opened(`${'p'.repeat(380)}{{ run.params.x }}`, 'V'.repeat(5000), setOf({}));
+    // (a) red when the listened post does not say "Reply in this thread" first, a post carries
+    //     other than one command, or the long fixed text erases the value (fe15d31d: none of it
+    //     shown, no trace); (b) prints booleans and counts. (`display` with a message: the
+    //     `display` pages' cell above.)
+    expect({
+      listenedFirst: route(true).startsWith('Reply in this thread with `send` or `discard`'),
+      commands: [route(true), route(false)].map(
+        (r) => (r.match(/realm run respond/g) ?? []).length,
+      ),
+      valueShown: long.resolved_message!.startsWith(`${'p'.repeat(380)}V`),
+      cut: endsWithCutSentence(long.resolved_message!),
+    }).toEqual({ listenedFirst: true, commands: [1, 1], valueShown: true, cut: true });
   });
 });
 

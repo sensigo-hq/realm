@@ -278,7 +278,7 @@ describe('#729 PR-4 — the surfaces on one source', () => {
     expect(
       readFileSync(join(ROOT, 'docs/reference/cli/realm-agent.md'), 'utf8').replace(/\s+/g, ' '),
     ).toContain(
-      "The gate's question, then the step's output (through its `display` when it has one; the output alone when the gate has no `message`), then one `realm run respond` command for each choice.",
+      "The gate's question, then the step's output (through its `display` when it has one; the output alone when the gate has no `message`), then, when no Slack notifier attends the gate, one `realm run respond` command for each choice (with a notifier, the post carries the way to answer and the terminal prints `Waiting for approval...`).",
     );
     // (a) red per renderer when it composes its own preview again (the chain's JSON shows, the
     //     `other` field with it) or over the raw gate (the fake shows); (b) prints booleans.

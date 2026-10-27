@@ -11,16 +11,16 @@ All notable changes to this project are documented here.
 - **One composer for a gate's question, on every surface (issue #729 PR-4).** `realm run`,
   `realm run inspect`, `realm agent`, Slack, and the MCP replies and form now show a gate's question
   through core's one composer (`composeQuestionView`), over the gate disclosed for who reads it.
-  `display` shapes the step's output wherever a gate shows it, also when the gate has a `message`.
   Closes #722.
 - **The asked person's notices (issue #729 PR-4).** Core composes what a person is told about their
   question — opened, reminded, expired, recorded, late, refused, closed — as data (`PersonNotice`,
   `composePersonNotice`), and `realm agent`'s Slack posts render it. The post has four parts: the
   gate, the question with the step's output below it, how to answer, and — when it was cut — the
-  command that shows the whole output. With only a webhook, how to answer is one `realm run respond`
-  command, not one per choice. When the question closes without an answer in the thread, the thread
-  says so. Text from the workflow and the agent is shown as written in Slack (`<`, `>` and `&` are
-  escaped); an `owner` written as a Slack mention still pings.
+  command that shows the whole output. How to answer is one `realm run respond` command, not one per
+  choice; when Realm listens in the thread, the post says so first. When the question closes
+  without an answer in the thread, the thread says so. Text from the workflow and the agent is shown
+  as written in Slack (`<`, `>` and `&` are escaped); an `owner` written as a Slack mention still
+  pings.
 - **`WorkflowCopyFault` is exported from `@sensigo/realm`.**
 
 ### Changed
@@ -29,10 +29,14 @@ All notable changes to this project are documented here.
   gate's question longer than the view budget is cut when it opens, with a line saying so; the
   step's whole output still goes ahead on approval. The budget is 600 characters for the message and
   the step's output together. When the message alone is longer, its long values are cut first,
-  sharing the room so that short values stay whole; then the output, then the message. Values the
-  project declares secret are masked before anything is cut, and when one appears anywhere in the
-  message the values are not cut one by one, so a cut never leaves a part of one. The stored
-  `resolved_message` is the question as shown.
+  sharing the room so that short values stay whole — unless a declared value appears anywhere in the
+  message, or the room left is too small to show any of a value: then the message is cut only as a
+  whole, so no part of a declared value is left and no value disappears without a trace. After that
+  the step's output is cut, then the message. Values the project declares secret are masked before
+  anything is cut. The stored `resolved_message` is the question as shown.
+- **BREAKING — `display` shapes the step's output wherever a gate shows it (issue #729 PR-4)**, also
+  when the gate has a `message`; before, only `realm agent`'s terminal read it, and only for a gate
+  with no message.
 - **BREAKING — a gate with no `message` shows no question (issue #729 PR-4).** Its step's `prompt` is
   no longer rendered as the question: `gate.display` is absent from the MCP replies, and every
   surface shows the step's output as the gate's body.
