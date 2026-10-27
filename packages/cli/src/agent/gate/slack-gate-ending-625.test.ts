@@ -29,6 +29,7 @@ import { handleBidirectionalGate } from './slack-gate-notifier.js';
 import { startSlackGateServer } from './slack-gate-server.js';
 import type { SlackGateEvent } from './slack-gate-server.js';
 import { LlmProvider } from '../providers/llm-provider.js';
+import { slackResponse } from '../test-support/slack-response.js';
 
 vi.mock('./slack-gate-server.js', () => ({
   startSlackGateServer: vi.fn().mockReturnValue({ close: vi.fn() }),
@@ -78,7 +79,7 @@ describe('issue #625 — the Slack notifier after an answer whose write settled 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'realm-625-slack-'));
     store = new JsonFileStore(dir);
-    fetchSpy = vi.fn().mockResolvedValue({ ok: true });
+    fetchSpy = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } }));
     vi.stubGlobal('fetch', fetchSpy);
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});

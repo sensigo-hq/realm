@@ -1,9 +1,10 @@
-// slack-gate-notifier.test.ts — Tests for formatGatePreviewForSlack, owner Slack notification,
+// slack-gate-notifier.test.ts — Tests for the gate post's view block, owner Slack notification,
 // startGateReminderTimers, postSlackReply, postGateViaApi, and bidirectional gate handling.
 import { declared } from '../../test-support/declared.js';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
-  formatGatePreviewForSlack,
+  renderSlack,
+  slackView,
   postGateNotificationToSlack,
   postGateViaApi,
   startGateReminderTimers,
@@ -38,6 +39,7 @@ import { LlmProvider } from '../providers/llm-provider.js';
 import { startSlackGateServer } from './slack-gate-server.js';
 import type { SlackGateEvent } from './slack-gate-server.js';
 import { connectSocketMode } from './slack-socket-client.js';
+import { slackResponse } from '../test-support/slack-response.js';
 
 // Module-level mocks are hoisted by vitest — slack-gate-notifier.ts will receive these stubs for
 // its internal imports of slack-gate-server and slack-socket-client.
@@ -48,37 +50,64 @@ vi.mock('./slack-socket-client.js', () => ({
   connectSocketMode: vi.fn().mockReturnValue({ close: vi.fn() }),
 }));
 
-describe('formatGatePreviewForSlack', () => {
-  it('renders headline and message as formatted mrkdwn', () => {
-    const preview = { headline: 'Deploy failed', message: 'The pipeline failed at step 3.' };
-    const result = formatGatePreviewForSlack(preview);
-    expect(result).toBe('*Deploy failed*\n\nThe pipeline failed at step 3.');
+// #729 PR-4 (02; re-pinned from `formatGatePreviewForSlack`, which composed its own preview): the
+// view block shows core's composed view — for a message-less gate on this broadcast surface, the
+// output body as its shapes, through the composer's chain; Slack only escapes and fences it.
+describe('the gate post’s view block (the composer’s preview, rendered)', () => {
+  const viewBlock = (preview: Record<string, unknown>): string => {
+    const gate: PendingGate = {
+      gate_id: 'g0',
+      step_name: 's',
+      preview,
+      choices: ['approve'],
+      opened_at: new Date().toISOString(),
+    };
+    const { blocks } = renderSlack(
+      {
+        kind: 'question_opened',
+        run_id: 'r1',
+        gate_id: 'g0',
+        step: 's',
+        view: slackView(gate),
+        respond: {
+          verb: 'respond',
+          conditions: [],
+          run_id: 'r1',
+          gate_id: 'g0',
+          oneOf: ['approve'],
+        } as never,
+      },
+      { mode: 'bot' },
+    );
+    return (blocks[1] as { text: { text: string } }).text.text;
+  };
+
+  it('headline and message: joined by a blank line (their shapes, on broadcast)', () => {
+    // (a) red when the composer's join is replaced (the old bold headline); (b) prints the text.
+    expect(
+      viewBlock({ headline: 'Deploy failed', message: 'The pipeline failed at step 3.' }),
+    ).toBe('‹string, 13 characters›\n\n‹string, 30 characters›');
   });
 
-  it('renders only headline when message is absent', () => {
-    const preview = { headline: 'Deploy failed' };
-    const result = formatGatePreviewForSlack(preview);
-    expect(result).toBe('*Deploy failed*');
-    expect(result).not.toContain('undefined');
+  it('headline alone: the headline, never "undefined"', () => {
+    // (a) red when an absent message renders as text; (b) prints the text.
+    expect(viewBlock({ headline: 'Deploy failed' })).toBe('‹string, 13 characters›');
   });
 
-  it('falls back to formatted multi-line JSON when neither headline nor message is present', () => {
-    const preview = { risk: 'high', title: 'Add feature' };
-    const result = formatGatePreviewForSlack(preview);
-    // Multi-line formatted JSON — not a single-line stringify
-    expect(result).toContain('\n');
-    expect(result).toContain('risk');
-    expect(result).not.toBe(JSON.stringify(preview));
+  it('any other output: its JSON, in a code fence', () => {
+    // (a) red when the fence or the JSON's indentation is lost; (b) prints the text.
+    expect(viewBlock({ risk: 'high' })).toBe('```\n{\n  "risk": "‹string, 4 characters›"\n}\n```');
   });
 
-  it('handles empty preview without throwing', () => {
-    expect(() => formatGatePreviewForSlack({})).not.toThrow();
+  it('an empty output: `(no output)`', () => {
+    // (a) red when an empty body posts nothing or throws; (b) prints the text.
+    expect(viewBlock({})).toBe('(no output)');
   });
 });
 
 describe('postGateNotificationToSlack — owner field', () => {
   it('uses resolved_message when present instead of formatGatePreviewForSlack fallback', async () => {
-    const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+    const mockFetch = vi.fn().mockResolvedValue(slackResponse({ text: 'ok' }));
     vi.stubGlobal('fetch', mockFetch);
 
     const gate: PendingGate = {
@@ -100,8 +129,8 @@ describe('postGateNotificationToSlack — owner field', () => {
     vi.unstubAllGlobals();
   });
 
-  it('falls back to formatGatePreviewForSlack when resolved_message is absent', async () => {
-    const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+  it('a message-less gate: the view block is the output body, as its shapes', async () => {
+    const mockFetch = vi.fn().mockResolvedValue(slackResponse({ text: 'ok' }));
     vi.stubGlobal('fetch', mockFetch);
 
     const gate: PendingGate = {
@@ -116,13 +145,12 @@ describe('postGateNotificationToSlack — owner field', () => {
 
     const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
     const bodyStr = init.body as string;
-    // #729 PR-3 (owner Q6; RECORD 05 "Slack"): a message-less gate's preview is posted as its
-    // shapes on this broadcast surface — formatGatePreviewForSlack over the shaped preview, so the
-    // headline line holds the headline's shape, never its text. (a) red when the raw preview is
-    // posted; (b) prints booleans.
+    // #729 PR-3 (owner Q6; RECORD 05 "Slack"); #729 PR-4 ((f), re-pinned: the composer's chain, no
+    // bold headline): a message-less gate's body is posted as its shapes on this broadcast surface,
+    // never its text. (a) red when the raw preview is posted; (b) prints booleans.
     expect({
-      shapedHeadline: bodyStr.includes('*‹string, 5 characters›*'),
-      rawHeadline: bodyStr.includes('*Draft*'),
+      shapedHeadline: bodyStr.includes('‹string, 5 characters›'),
+      rawHeadline: bodyStr.includes('Draft'),
     }).toEqual({ shapedHeadline: true, rawHeadline: false });
     expect(bodyStr).not.toContain('undefined');
 
@@ -130,7 +158,7 @@ describe('postGateNotificationToSlack — owner field', () => {
   });
 
   it('includes *Owner:* line when gate.owner is set', async () => {
-    const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+    const mockFetch = vi.fn().mockResolvedValue(slackResponse({ text: 'ok' }));
     vi.stubGlobal('fetch', mockFetch);
 
     const gate: PendingGate = {
@@ -152,7 +180,7 @@ describe('postGateNotificationToSlack — owner field', () => {
   });
 
   it('omits *Owner:* line when gate.owner is absent', async () => {
-    const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+    const mockFetch = vi.fn().mockResolvedValue(slackResponse({ text: 'ok' }));
     vi.stubGlobal('fetch', mockFetch);
 
     const gate: PendingGate = {
@@ -172,7 +200,7 @@ describe('postGateNotificationToSlack — owner field', () => {
   });
 
   it('posts the correct request body to the webhook URL', async () => {
-    const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+    const mockFetch = vi.fn().mockResolvedValue(slackResponse({ text: 'ok' }));
     vi.stubGlobal('fetch', mockFetch);
 
     const gate: PendingGate = {
@@ -205,9 +233,10 @@ describe('postGateNotificationToSlack — owner field', () => {
       choices: ['approve'],
       opened_at: new Date().toISOString(),
     };
+    // #729 PR-4 (re-pinned): the post reports whether it stood — `false` here, never a throw.
     await expect(
       postGateNotificationToSlack('https://hooks.slack.com/test', gate, 'run-id'),
-    ).resolves.toBeUndefined();
+    ).resolves.toBe(false);
 
     vi.unstubAllGlobals();
   });
@@ -217,10 +246,9 @@ describe('postGateViaApi — resolved_message', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('uses resolved_message when present instead of formatGatePreviewForSlack fallback', async () => {
-    const mockFetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ ok: true, ts: '1234567890.000' }),
-    });
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValue(slackResponse({ json: { ok: true, ts: '1234567890.000' } }));
     vi.stubGlobal('fetch', mockFetch);
 
     const gate: PendingGate = {
@@ -239,11 +267,10 @@ describe('postGateViaApi — resolved_message', () => {
     expect(bodyStr).not.toContain('*Draft headline*');
   });
 
-  it('falls back to formatGatePreviewForSlack when resolved_message is absent', async () => {
-    const mockFetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ ok: true, ts: '1234567890.001' }),
-    });
+  it('a message-less gate: the view block is the output body, as its shapes', async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValue(slackResponse({ json: { ok: true, ts: '1234567890.001' } }));
     vi.stubGlobal('fetch', mockFetch);
 
     const gate: PendingGate = {
@@ -258,10 +285,10 @@ describe('postGateViaApi — resolved_message', () => {
 
     const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
     const bodyStr = init.body as string;
-    // #729 PR-3 (owner Q6): the message-less preview as its shapes. (a) red when the raw preview is
-    // posted; (b) prints booleans.
+    // #729 PR-3 (owner Q6); #729 PR-4 ((f), re-pinned: no bold headline): the message-less body as
+    // its shapes. (a) red when the raw preview is posted; (b) prints booleans.
     expect({
-      shapedHeadline: bodyStr.includes('*‹string, 14 characters›*'),
+      shapedHeadline: bodyStr.includes('‹string, 14 characters›'),
       rawHeadline: bodyStr.includes('Draft headline'),
     }).toEqual({ shapedHeadline: true, rawHeadline: false });
     expect(bodyStr).not.toContain('undefined');
@@ -301,7 +328,7 @@ describe('startGateReminderTimers', () => {
       vi.fn().mockImplementation((_url: string, init: RequestInit) => {
         const body = JSON.parse(init.body as string) as { text: string };
         calls.push(body.text);
-        return Promise.resolve({ json: async () => ({ ok: true }) });
+        return Promise.resolve(slackResponse({ json: { ok: true } }));
       }),
     );
 
@@ -318,7 +345,9 @@ describe('startGateReminderTimers', () => {
     await vi.advanceTimersByTimeAsync(600);
     clearTimers();
 
-    expect(calls.some((t) => t.includes('review_step') && t.includes('Reminder'))).toBe(true);
+    // #729 PR-4 (re-pinned: the `reminder` notice's words). (a) red when the plain firing loses its
+    // words; (b) prints the posted texts.
+    expect(calls).toEqual(['⏰ gate `review_step` has been open for 0s. Please respond.']);
   });
 
   it('includes owner mention in escalation message when gate.owner is set', async () => {
@@ -329,7 +358,7 @@ describe('startGateReminderTimers', () => {
       vi.fn().mockImplementation((_url: string, init: RequestInit) => {
         const body = JSON.parse(init.body as string) as { text: string };
         calls.push(body.text);
-        return Promise.resolve({ json: async () => ({ ok: true }) });
+        return Promise.resolve(slackResponse({ json: { ok: true } }));
       }),
     );
 
@@ -346,9 +375,11 @@ describe('startGateReminderTimers', () => {
     await vi.advanceTimersByTimeAsync(50);
     clearTimers();
 
-    const escalationMsg = calls.find((t) => t.includes('review_step') && t.includes('minutes'));
-    expect(escalationMsg).toBeDefined();
-    expect(escalationMsg).toContain('@prod-oncall');
+    // #729 PR-4 (re-pinned: the escalation is the `reminder` notice with its owner named first).
+    // (a) red when the mention is dropped; (b) prints the posted texts.
+    expect(
+      calls.filter((t) => t.startsWith('@prod-oncall — ⏰ gate `review_step` has been open for')),
+    ).toHaveLength(1);
   });
 
   it('posts generic escalation message (no @ mention) when gate.owner is absent', async () => {
@@ -359,7 +390,7 @@ describe('startGateReminderTimers', () => {
       vi.fn().mockImplementation((_url: string, init: RequestInit) => {
         const body = JSON.parse(init.body as string) as { text: string };
         calls.push(body.text);
-        return Promise.resolve({ json: async () => ({ ok: true }) });
+        return Promise.resolve(slackResponse({ json: { ok: true } }));
       }),
     );
 
@@ -376,15 +407,17 @@ describe('startGateReminderTimers', () => {
     await vi.advanceTimersByTimeAsync(50);
     clearTimers();
 
-    const escalationMsg = calls.find((t) => t.includes('review_step') && t.includes('minutes'));
-    expect(escalationMsg).toBeDefined();
-    // No @ mention without owner
-    expect(escalationMsg).not.toContain('@');
+    // #729 PR-4 (re-pinned): the plain reminder and the escalation both post; with no owner,
+    // neither names anyone. (a) red when a mention is invented; (b) prints the posted texts.
+    expect({
+      posts: calls.filter((t) => t.startsWith('⏰ gate `review_step` has been open for')).length,
+      mention: calls.some((t) => t.includes('@')),
+    }).toEqual({ posts: 2, mention: false });
   });
 
   it('does not fire after clearTimers() is called', async () => {
     vi.useFakeTimers();
-    const mockFetch = vi.fn().mockResolvedValue({ json: async () => ({ ok: true }) });
+    const mockFetch = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } }));
     vi.stubGlobal('fetch', mockFetch);
 
     const gate = makeGate();
@@ -560,19 +593,26 @@ describe('handleBidirectionalGate', () => {
     expect(startSlackGateServer).not.toHaveBeenCalled();
   });
 
-  it('emits fallback notice when gateThreadTs is undefined', async () => {
+  it('no thread anchor (the opening post failed): the person’s respond lines are printed, never "shown above"', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     await handleBidirectionalGate(makeGateParams({ gateThreadTs: undefined }));
 
     const output = logSpy.mock.calls.flat().join('\n');
-    expect(output).toContain('Bidirectional Slack resolution unavailable');
+    // #729 PR-4 (02 §Transport (3), re-pinned): the terminal's way, one command per choice, as
+    // `realm agent` prints it with no handler. (a) red when the false "shown above" line returns or
+    // the respond lines are not printed; (b) prints the output's lines (fakes).
+    expect({
+      approve: output.includes('   Approve: realm run respond run1 --gate g1 --choice approve'),
+      reject: output.includes('   Reject: realm run respond run1 --gate g1 --choice reject'),
+      shownAbove: output.includes('shown above'),
+    }).toEqual({ approve: true, reject: true, shownAbove: false });
 
     logSpy.mockRestore();
   });
 
   it('duplicate event_id triggers only one candidate processing attempt', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } })));
 
     let capturedOnEvent: ((event: SlackGateEvent) => void) | undefined;
     vi.mocked(startSlackGateServer).mockImplementationOnce((opts) => {
@@ -581,7 +621,7 @@ describe('handleBidirectionalGate', () => {
     });
 
     // Use a fetch spy to count how many clarification replies are sent.
-    const fetchSpy = vi.fn().mockResolvedValue({ ok: true });
+    const fetchSpy = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } }));
     vi.stubGlobal('fetch', fetchSpy);
 
     const promise = handleBidirectionalGate(makeGateParams());
@@ -611,7 +651,7 @@ describe('handleBidirectionalGate', () => {
   });
 
   it('selects Socket Mode (connectSocketMode) when slackAppToken is set and slackSigningSecret is absent', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } })));
 
     await handleBidirectionalGate(
       makeGateParams({ slackSigningSecret: undefined, slackAppToken: 'xapp-test' }),
@@ -622,7 +662,7 @@ describe('handleBidirectionalGate', () => {
   });
 
   it('selects Socket Mode over Events API when both slackAppToken and slackSigningSecret are set', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } })));
 
     await handleBidirectionalGate(
       makeGateParams({ slackSigningSecret: 'secret', slackAppToken: 'xapp-test' }),
@@ -640,7 +680,7 @@ describe('handleBidirectionalGate', () => {
       choices: ['approve', 'request_changes'],
       opened_at: new Date().toISOString(),
     };
-    const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+    const mockFetch = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } }));
     vi.stubGlobal('fetch', mockFetch);
 
     let capturedOnEvent: ((event: SlackGateEvent) => void) | undefined;
@@ -693,7 +733,7 @@ describe('handleBidirectionalGate', () => {
       choices: ['approve', 'request_changes'],
       opened_at: new Date().toISOString(),
     };
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } })));
     let onEvent: ((event: SlackGateEvent) => void) | undefined;
     vi.mocked(startSlackGateServer).mockImplementationOnce((opts) => {
       onEvent = opts.onEvent;
@@ -744,7 +784,7 @@ describe('handleBidirectionalGate', () => {
       choices: ['approve', 'request_changes'],
       opened_at: new Date().toISOString(),
     };
-    const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+    const mockFetch = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } }));
     vi.stubGlobal('fetch', mockFetch);
 
     let capturedOnEvent: ((event: SlackGateEvent) => void) | undefined;
@@ -792,7 +832,7 @@ describe('handleBidirectionalGate', () => {
       choices: ['approve', 'request_changes'],
       opened_at: new Date().toISOString(),
     };
-    const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+    const mockFetch = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } }));
     vi.stubGlobal('fetch', mockFetch);
 
     let capturedOnEvent: ((event: SlackGateEvent) => void) | undefined;
@@ -910,7 +950,7 @@ describe('handleBidirectionalGate', () => {
       choices: ['approve', 'request_changes'],
       opened_at: new Date().toISOString(),
     };
-    const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+    const mockFetch = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } }));
     vi.stubGlobal('fetch', mockFetch);
 
     // Our gate g1 is open until update is attempted, which throws (submit fails) → submitHumanResponse
@@ -968,15 +1008,24 @@ describe('handleBidirectionalGate', () => {
 
     await promise;
 
-    const replyCalls = mockFetch.mock.calls.filter(([url]) =>
-      (url as string).includes('postMessage'),
-    );
-    expect(replyCalls).toHaveLength(1); // exactly one error reply — never posts twice
-    const body = JSON.parse(replyCalls[0]![1].body as string) as { text: string };
-    expect(body.text).toContain("Couldn't record your response");
-    // Not a confirmation → the success branch (confirmation + abort) did NOT run; gate not resolved.
-    expect(body.text).not.toContain('run continuing');
-    expect(body.text).not.toContain('Gate resolved');
+    const texts = mockFetch.mock.calls
+      .filter(([url]) => (url as string).includes('postMessage'))
+      .map(
+        ([, init]) => (JSON.parse((init as RequestInit).body as string) as { text: string }).text,
+      );
+    // #729 PR-4 (re-pinned): exactly ONE refusal reply (the at-most-once guard), then — the run
+    // having ended with the question unanswered — the closed line; never a confirmation. (a) red
+    // when the refusal posts twice, a confirmation posts, or the closed line is missing; (b) prints
+    // the posted texts (fakes).
+    expect({
+      refusals: texts.filter((t) => t.includes("Couldn't record your response")).length,
+      confirmed: texts.some((t) => t.includes('run continuing') || t.includes('Gate resolved')),
+      closed: texts.at(-1),
+    }).toEqual({
+      refusals: 1,
+      confirmed: false,
+      closed: 'This question is closed: the run stopped.',
+    });
   });
 });
 
@@ -1044,7 +1093,7 @@ describe('handleBidirectionalGate — threads the registry so gate-completed run
     const registry = new ExtensionRegistry();
     registry.register('handler', 'record_outcome', handler);
 
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } })));
     let capturedOnEvent: ((event: SlackGateEvent) => void) | undefined;
     vi.mocked(startSlackGateServer).mockImplementationOnce((opts) => {
       capturedOnEvent = opts.onEvent;
@@ -1131,7 +1180,7 @@ describe('issue #719 C5 — the two-way notifier’s thread post on a run file t
     const warns = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       await writeFile(join(runsDir, 'run1.json'), '{"params":{"token": ghp_FAKE719}}');
-      const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+      const mockFetch = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } }));
       vi.stubGlobal('fetch', mockFetch);
       let capturedOnEvent: ((event: SlackGateEvent) => void) | undefined;
       vi.mocked(startSlackGateServer).mockImplementationOnce((opts) => {
@@ -1153,14 +1202,22 @@ describe('issue #719 C5 — the two-way notifier’s thread post on a run file t
       const posted = mockFetch.mock.calls
         .filter(([url]) => String(url).includes('postMessage'))
         .map(([, init]) => String((init as { body?: unknown }).body));
-      // (a) red when the parser's text reaches the thread; (b) prints booleans only — whether the
-      //     submit-error post was made, whether it names the file's fault, and whether any posted
-      //     text holds the token.
+      const consoleText = warns.mock.calls.flat().map(String).join('\n');
+      // (a) red when the parser's text reaches the thread or the console; #729 PR-4 (re-pinned):
+      //     the thread gets the code (G9), the fault's detail goes to this console. (b) prints
+      //     booleans only — whether the refusal was posted, where the fault is named, and whether
+      //     any text holds the token.
       expect({
         postedTheError: posted.some((b) => b.includes("Couldn't record your response")),
-        namesTheFault: posted.some((b) => b.includes('is not JSON')),
-        leaked: posted.some((b) => b.includes('ghp_FAKE7')),
-      }).toEqual({ postedTheError: true, namesTheFault: true, leaked: false });
+        threadNamesTheFault: posted.some((b) => b.includes('is not JSON')),
+        consoleNamesTheFault: consoleText.includes('is not JSON'),
+        leaked: posted.some((b) => b.includes('ghp_FAKE7')) || consoleText.includes('ghp_FAKE7'),
+      }).toEqual({
+        postedTheError: true,
+        threadNamesTheFault: false,
+        consoleNamesTheFault: true,
+        leaked: false,
+      });
     } finally {
       warns.mockRestore();
       await rm(runsDir, { recursive: true, force: true });

@@ -26,6 +26,7 @@ import type { SlackGateEvent } from './slack-gate-server.js';
 import { scheduleGateExpiryTimer } from './gate-expiry-timer.js';
 import { LlmProvider } from '../providers/llm-provider.js';
 import { lagless } from '../../test-support/lag.js';
+import { slackResponse } from '../test-support/slack-response.js';
 
 /** C163: (a) red when gates.md no longer holds the sentence these cells pin, word for word; (b) prints it. */
 // #729 PR-4 (02), re-pinned: the line is printed where `realm agent` runs; the thread gets the person's words.
@@ -91,7 +92,7 @@ describe('#625 PR-2a, C146 — a late Slack answer that carried out the expiry s
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'realm-625-slack-late-'));
     store = new JsonFileStore(dir);
-    fetchSpy = vi.fn().mockResolvedValue({ ok: true });
+    fetchSpy = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } }));
     vi.stubGlobal('fetch', fetchSpy);
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});

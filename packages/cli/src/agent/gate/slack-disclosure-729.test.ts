@@ -9,6 +9,7 @@ import {
   postSlackReply,
 } from './slack-gate-notifier.js';
 import { addDeclaredValues, installWriter, writerTestSeams } from '../../output/writer.js';
+import { slackResponse } from '../test-support/slack-response.js';
 
 const ENV_NAME = 'SLACK_FAKE_ENV_729';
 const ENV_VALUE = 'FAKE-SLACK-ENV-0729';
@@ -29,7 +30,7 @@ function capture() {
     'fetch',
     vi.fn(async (_url: string, init: RequestInit) => {
       bodies.push(String(init.body));
-      return { ok: true, json: async () => ({ ok: true, ts: '1.0' }) };
+      return slackResponse({ json: { ok: true, ts: '1.0' } });
     }),
   );
   return bodies;

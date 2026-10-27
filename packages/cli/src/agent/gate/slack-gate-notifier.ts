@@ -199,6 +199,23 @@ export function slackEscape(text: string): string {
   return text.replace(SLACK_ESCAPE_PATTERN, (match) => SLACK_ESCAPES[match]!);
 }
 
+/**
+ * #729 PR-4 (02 (g), rev 8): an owner written in Slack's mention syntax keeps pinging — a user
+ * (`<@U…>`, an enterprise-grid `<@W…>`), a user group (`<!subteam^S…>`) or a special mention
+ * (`<!here>`, `<!channel>`, `<!everyone>`), the WHOLE string and nothing else; any other owner is
+ * escaped by the one table.
+ */
+const SLACK_MENTION = [
+  /^<@[UW][A-Z0-9]+>$/,
+  /^<!subteam\^S[A-Z0-9]+>$/,
+  /^<!(here|channel|everyone)>$/,
+] as const;
+
+/** The owner as Slack shows it: a mention passes through whole, anything else escaped. */
+export function slackOwner(owner: string): string {
+  return SLACK_MENTION.some((form) => form.test(owner)) ? owner : slackEscape(owner);
+}
+
 /** The view a gate post shows: core's composer over the gate disclosed for a broadcast (F26: the
  *  marks go before the law reads the gate). */
 export function slackView(gate: PendingGate, display?: string): QuestionView {
@@ -266,7 +283,7 @@ export function renderSlack(
   const step = `\`${slackEscape(notice.step)}\``;
   switch (notice.kind) {
     case 'question_opened': {
-      const owner = notice.owner !== undefined ? `\n*Owner:* ${slackEscape(notice.owner)}` : '';
+      const owner = notice.owner !== undefined ? `\n*Owner:* ${slackOwner(notice.owner)}` : '';
       const choices = notice.view.choices.map((c) => `\`${slackEscape(c)}\``).join(' or ');
       const route =
         host.mode === 'bot'
@@ -295,7 +312,7 @@ export function renderSlack(
     }
     case 'reminder': {
       const mention =
-        notice.escalation && notice.owner !== undefined ? `${slackEscape(notice.owner)} — ` : '';
+        notice.escalation && notice.owner !== undefined ? `${slackOwner(notice.owner)} — ` : '';
       const open =
         notice.elapsed !== undefined ? `has been open for ${notice.elapsed}` : 'is still open';
       return { blocks: [], text: `${mention}⏰ gate ${step} ${open}. Please respond.` };
@@ -936,18 +953,21 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
     // calls submitHumanResponse OR when the terminal command is used.
     await pollUntilGateResolved(store, runId, gate.gate_id, pollIntervalMs, abortController.signal);
     // #729 PR-4 (02): the question closed without a Slack answer this thread was told about — the
-    // thread is told how (its time ran out, the run stopped, it was answered elsewhere). Best effort,
-    // and drained within the same bound as a candidate's reply below.
-    if (!personTold) {
-      const closed = await closedNotice(store, runId, gate);
-      if (closed !== undefined) {
-        track(
-          tellThread(closed).catch((err) => {
-            console.warn(`Slack reply failed: ${err instanceof Error ? err.message : String(err)}`);
-          }),
-        );
-      }
-    }
+    // thread is told how (its time ran out, the run stopped, it was answered elsewhere). A Slack
+    // answer still in flight when the poll ended (its write is what ended the poll) decides first, so
+    // the closed line never follows the person's own answer. Best effort, tracked into the drain
+    // below, so the whole of it is bounded.
+    const answersInFlight = [...inFlight];
+    track(
+      (async (): Promise<void> => {
+        await Promise.allSettled(answersInFlight);
+        if (personTold) return;
+        const closed = await closedNotice(store, runId, gate);
+        if (closed !== undefined) await tellThread(closed);
+      })().catch((err) => {
+        console.warn(`Slack reply failed: ${err instanceof Error ? err.message : String(err)}`);
+      }),
+    );
   } finally {
     abortController.abort();
     clearTimers();
