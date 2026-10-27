@@ -57,7 +57,13 @@ describe('realm workflow validate — golden (extension-free byte-identical)', (
     expect(stderr).toBe('');
     expect(stdout).toBe(
       'Valid: ticket-classifier v1 (4 steps)\n' +
-        "ℹ 2 steps ready for structured_output: strict (2 with caveats) — run 'realm workflow validate --explain' for detail (REALM_NO_NUDGE=1 to silence).\n",
+        "ℹ 2 steps ready for structured_output: strict (2 with caveats) — run 'realm workflow validate --explain' for detail (REALM_NO_NUDGE=1 to silence).\n" +
+        // issue #600 caching PR 5: the two agent steps' cache lines and the once-lines (add-only).
+        "cache: identify_ticket — anthropic 1,150 chars ≈ 450–990 tokens, with Anthropic's tool text · openai 585 chars ≈ 117–234 tokens (estimates: 2.5–5 chars/token, with margin) — anthropic: shares its first 178 chars with classify_ticket: the schemas differ · openai: shares its first 254 chars with classify_ticket: the schemas differ\n" +
+        "cache: classify_ticket — anthropic 1,020 chars ≈ 424–938 tokens, with Anthropic's tool text · openai 520 chars ≈ 104–208 tokens (estimates: 2.5–5 chars/token, with margin) — anthropic: shares its first 178 chars with identify_ticket: the schemas differ · openai: shares its first 254 chars with identify_ticket: the schemas differ\n" +
+        "anthropic: on steps without tools, realm marks the fixed part for caching unless the drive's --prompt-cache turns it off; a fixed part below the model's minimum is sent uncached, silently\n" +
+        "openai: realm sends no cache marker; the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)\n" +
+        "anthropic: the cache is kept per workspace (per organization on Bedrock and Google Cloud), as Anthropic's page said on 2026-10-09: drives from different workspaces each pay the write\n",
     );
     expect(code).toBe(0);
   }, 20_000);
