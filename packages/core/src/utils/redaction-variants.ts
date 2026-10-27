@@ -32,7 +32,11 @@
 // D, the value with its JSON- and JavaScript-style escapes read ({@link decodedReadings}): a value
 // holding a backslash (a key written on one line with `\n`, say) is also read the way a program reads
 // it before printing it, and each reading is expanded as the value is, lines included. D is a layer,
-// like E1 and E2, applied once per value: never to its own output or to a line.
+// like E1 and E2, applied once per value, never to a line. D2 (F2): one reading, the JSON family
+// over D's all-code-point reading — `\n`, `\r`, `\t`, `\b`, `\f`, `\/`, `\\`, `\"` and `\uXXXX`
+// read once more over the reading in which every two-meaning `\xHH` took its code point, a `\xHH`
+// there kept as written (the MCP door's one re-escape is JSON, which has no `\xHH`); never a third
+// level.
 //
 // `variantsOf` is pure for a value and its options, so its lists are kept in a least-recently-used
 // map.
@@ -943,13 +947,44 @@ function decodedReadings(value: string): string[] {
   return [...readings];
 }
 
+/**
+ * D2's reader (F2): `s` with the JSON family read — `\n`, `\r`, `\t`, `\b`, `\f`, `\/`, `\\`, `\"`
+ * and `\uXXXX` — and each `\xHH` read as its code point (`xhh`, D's all-code-point reading) or kept
+ * as written (the second level: JSON has no `\xHH`). Any other backslash escape is kept as written;
+ * a trailing lone backslash gives no reading, as in {@link decodedReadings}.
+ */
+function jsonFamilyReading(s: string, xhh: boolean): string | undefined {
+  let out = '';
+  for (let i = 0; i < s.length; i++) {
+    const ch = s.charAt(i);
+    if (ch !== BACKSLASH) {
+      out += ch;
+      continue;
+    }
+    if (i + 1 >= s.length) return undefined;
+    const next = s.charAt(i + 1);
+    const named = D_NAMED[next];
+    if (named !== undefined) {
+      out += named;
+      i++;
+    } else if (next === 'u' && HEX4.test(s.slice(i + 2, i + 6))) {
+      out += String.fromCharCode(parseInt(s.slice(i + 2, i + 6), 16));
+      i += 5;
+    } else if (xhh && next === 'x' && HEX2.test(s.slice(i + 2, i + 4))) {
+      out += String.fromCharCode(parseInt(s.slice(i + 2, i + 4), 16));
+      i += 3;
+    } else out += ch;
+  }
+  return out;
+}
+
 /** The options of {@link variantsOf}. */
 interface VariantsOptions {
   /** Add the PART members ({@link PART_MEMBERS}): for a declared secret, never an environment value. */
   readonly parts?: boolean;
   /**
-   * Test seam: leave out one member (its id), or the layer `D`, `E1`, `E2` or `LINES`. This module is
-   * internal to the CLI and not exported from the package.
+   * Test seam: leave out one member (its id), or the layer `D`, `D2`, `E1`, `E2` or `LINES`. This
+   * module is internal to the CLI and not exported from the package.
    */
   readonly omit?: string;
 }
@@ -962,9 +997,10 @@ const VARIANTS_MEMO = new Map<string, readonly string[]>();
  * Every listed form of `value`, deduplicated: E0–E2 over the value, then E0–E2 over each line of it
  * ({@link linesOf}: split at CR LF, CR, LF, NEL, LS and PS, and at CR LF, CR and LF alone, trimmed;
  * 8 characters or more with no whitespace), as GitHub's runner registers each line of a secret as a
- * secret of its own; then the same over each reading of D ({@link decodedReadings}). The line floor
- * keeps every PEM body line and never a PEM boundary line (it holds spaces) or a short config line
- * (`apiVersion: v1`, `false,`).
+ * secret of its own; then the same over each reading of D ({@link decodedReadings}), and over D2:
+ * one reading, the JSON family over D's all-code-point reading ({@link jsonFamilyReading}; F2). The
+ * line floor keeps every PEM body line and never a PEM boundary line (it holds spaces) or a short
+ * config line (`apiVersion: v1`, `false,`).
  *
  * E0 is the string and each member's form of it ({@link MEMBERS}); a form is added when it is not
  * empty and differs from the string. E1 is one JSON level over every E0 form, E2 two JSON levels over
@@ -1019,6 +1055,26 @@ function buildVariants(value: string, parts: boolean, omit: string | undefined):
     if (omit !== 'LINES') linesOf(s).forEach(level); // LINES: each qualifying line, as the value
   };
   withLines(value);
-  if (omit !== 'D') decodedReadings(value).forEach(withLines); // D: the value's escapes read
+  if (omit !== 'D') {
+    const once = decodedReadings(value);
+    once.forEach(withLines); // D: the value's escapes read
+    // D2 (F2): one reading — the JSON family read over D's all-code-point reading, what a program
+    // prints after reading a JSON string out of a JSON string: the spelling the MCP door's one
+    // re-escape (JSON) already reaches. Expanded as a D reading is, never read again.
+    if (omit !== 'D2') {
+      const first = jsonFamilyReading(value, true);
+      if (first !== undefined && once.includes(first) && first.includes(BACKSLASH)) {
+        const second = jsonFamilyReading(first, false);
+        if (
+          second !== undefined &&
+          second !== first &&
+          second !== value &&
+          second.length >= MIN_FORM_LENGTH &&
+          !once.includes(second)
+        )
+          withLines(second);
+      }
+    }
+  }
   return out;
 }

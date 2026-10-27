@@ -1296,3 +1296,19 @@ describe('F2 — the working directory (B2, agent-utils agentDisclosureSet)', ()
     expect(discloseForAgent(text)).toBe(text);
   });
 });
+
+// F2 (D2, commit 2): what `realm agent` gives a model hides a declared secret in the spelling a
+// program prints after reading its escapes twice — the spelling the MCP door already hid.
+describe('F2 — realm agent hides a declared secret in the spellings the door hid (D2)', () => {
+  it('a declared value stored with `\\\\n` is hidden on the agent path in its twice-read spelling', () => {
+    const BS = '\\';
+    const declared = `pa${BS}${BS}nss-word1`; // fake; two literal backslashes
+    setAdditionalRedactionValues([declared]);
+    try {
+      // (a) red when D2 is removed (the newline spelling reaches the model); (b) prints the text.
+      expect(discloseForAgent('key pa\nss-word1 end')).toBe('key [REDACTED] end');
+    } finally {
+      setAdditionalRedactionValues([]);
+    }
+  });
+});

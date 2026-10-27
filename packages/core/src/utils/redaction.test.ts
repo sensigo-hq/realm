@@ -26,6 +26,7 @@ import {
   type DisclosureEntry,
 } from './redaction.js';
 import { discloseByTable } from './disclosure-walk.js';
+import { discloseGate } from './disclosure-tables.js';
 import * as round1 from '../test-support/disclosure-law/round-1/redaction.js';
 
 describe('scrubEmail', () => {
@@ -2049,5 +2050,82 @@ describe('#729 PR-3 correction 7 — the quote closer, E-2’s terminator and th
       i11: [true],
       parses: true,
     });
+  });
+});
+
+describe('F2 — the second decoded reading (D2, commit 2): disclose reaches what the door reached', () => {
+  const BS = '\\';
+  const DECLARED = `pa${BS}${BS}nss-word1`; // 13 characters, two literal backslashes (probe3's; fake)
+  const ONCE = JSON.parse(`"${DECLARED}"`) as string; // one backslash
+  const TWICE = JSON.parse(`"${ONCE}"`) as string; // a newline
+  const CONTROL = 'pa\nss-OTHER9'; // twice-shaped, not declared
+  const setOf = (value: string) =>
+    buildDisclosureSet({
+      env: {},
+      declared: { FAKE_SECRET: value },
+      declaredState: 'resolved',
+      audience: 'agent',
+    }).set;
+  const text = (t: string) => `before ${t} after`;
+  const gate = (v: string) =>
+    ({
+      gate_id: 'g1',
+      step: 's1',
+      choices: ['yes', 'no'],
+      resolved_message: 'q',
+      opened_at: '2026-10-27T10:00:00.000Z',
+      preview: { v },
+    }) as never;
+  it('D2-4: the twice-decoded spelling of a declared value is hidden by disclose, at `all` and at `declared`', () => {
+    const set = setOf(DECLARED);
+    // (a) red when D2 is removed (the newline spelling passes disclose); (b) prints the fake texts.
+    expect({
+      all: disclose(text(TWICE), set, 'all').text,
+      declared: disclose(text(TWICE), set, 'declared').text,
+    }).toEqual({ all: 'before [REDACTED] after', declared: 'before [REDACTED] after' });
+  });
+  it('D2-5 (control): the declared and once-decoded spellings stay hidden; a non-declared twice-shaped text stays shown', () => {
+    const set = setOf(DECLARED);
+    // (b) prints the fake texts.
+    expect([DECLARED, ONCE, CONTROL].map((t) => disclose(text(t), set, 'all').text)).toEqual([
+      'before [REDACTED] after',
+      'before [REDACTED] after',
+      text(CONTROL),
+    ]);
+  });
+  it('D2-6: the bound — four backslashes: the thrice-decoded spelling is shown by disclose (recorded) and hidden by the walk', () => {
+    const four = `pa${BS}${BS}${BS}${BS}nss-word1`;
+    const thrice = JSON.parse(
+      `"${JSON.parse(`"${JSON.parse(`"${four}"`) as string}"`) as string}"`,
+    ) as string;
+    const set = setOf(four);
+    const walked = (discloseGate(gate(text(thrice)), set, 'agent') as { preview: { v: string } })
+      .preview.v;
+    // (a) red when disclose reaches a third level (the recorded bound moved), or the walk's one
+    //     re-escape stops reaching D2; (b) prints the fake texts.
+    expect({
+      disclose: disclose(text(thrice), set, 'all').text,
+      walkHides: walked.includes('[REDACTED]'),
+    }).toEqual({
+      disclose: text(thrice),
+      walkHides: true,
+    });
+  });
+  it("D2-7: the walk over probe3's four leaves — the twice-read leaf is now hidden in place, as the others are", () => {
+    const set = setOf(DECLARED);
+    const walk = (t: string) =>
+      (discloseGate(gate(text(t)), set, 'agent') as { preview: { v: string } }).preview.v;
+    // Before D2 the twice-read leaf was hidden WHOLE ('[REDACTED]'): only the escaped-spelling rule
+    // reached it. With D2 the leaf's own pass finds the spelling, so it is hidden where it stands, as
+    // the declared and once-read leaves are; the secret is hidden either way (pinned as the code does
+    // it — the prompt expected the walk byte-identical; a numbered divergence in the report).
+    // (a) red when D2 is removed (the leaf reads '[REDACTED]' again) or the walk stops hiding a
+    //     spelling; (b) prints the four walked texts (fake).
+    expect([DECLARED, ONCE, TWICE, CONTROL].map(walk)).toEqual([
+      'before [REDACTED] after',
+      'before [REDACTED] after',
+      'before [REDACTED] after',
+      text(CONTROL),
+    ]);
   });
 });

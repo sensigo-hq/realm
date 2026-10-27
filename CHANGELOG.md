@@ -20,6 +20,7 @@ All notable changes to this project are documented here.
 - Under `npx realm`, a log no longer hides the project folder: a variable whose value is the
   working directory (npm's `INIT_CWD` and `npm_config_local_prefix`, a CI runner's workspace
   variable) is not treated as a secret. The home folder stays hidden in a log.
+- Hardening: `realm agent` now hides a declared secret in the spellings the MCP door already hid.
 
 ## [0.48.0] — 2026-10-26
 
