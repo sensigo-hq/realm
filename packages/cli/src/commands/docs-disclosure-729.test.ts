@@ -108,6 +108,7 @@ function setFor(
   extra: Record<string, string> = {},
   notSecret?: string[],
   declared: Record<string, string> = { S: DECLARED },
+  cwd?: string,
 ) {
   return buildDisclosureSet({
     env: {
@@ -121,6 +122,7 @@ function setFor(
     declaredState: 'resolved',
     audience,
     ...(notSecret !== undefined ? { notSecret } : {}),
+    ...(cwd !== undefined ? { cwd } : {}),
   }).set;
 }
 
@@ -1001,11 +1003,17 @@ describe(`${OPERATE_PAGE} — what the output hides`, () => {
     );
     claim(
       OPERATE_PAGE,
-      'Output that is piped or redirected reads as a log, so to see the full values, run the command on a terminal. In CI, the working folder is often an environment variable too (`GITHUB_WORKSPACE`, `CI_PROJECT_DIR`), so paths under it read `[REDACTED]/…` in the log and in the export file, until you name the variable in `REALM_NOT_SECRET`.',
+      "Output that is piped or redirected reads as a log, so to see the full values, run the command on a terminal. A variable whose value is the working folder is not treated as a secret: npm's `INIT_CWD` and `npm_config_local_prefix` under `npx`, and a CI runner's workspace variable (`GITHUB_WORKSPACE`, `CI_PROJECT_DIR`) when the job runs in that folder. A variable that names a different folder still is, so paths under it read `[REDACTED]/…` in the log and in the export file until you name the variable in `REALM_NOT_SECRET`. The home folder stays hidden in a log, so a path under it reads `[REDACTED]/…` for the home folder's part only.",
     );
     claim(
       OPERATE_PAGE,
       "For a `realm mcp` that an MCP client starts, set `REALM_NOT_SECRET` in that client's settings for the server (its `env` block): the client starts the server with its own environment.",
+    );
+    // F2: the CHANGELOG's line, executed by the workspace runs below and by the six message sites
+    // (`source-canary-729.test.ts`, "F2 — the project folder prints whole under npx").
+    claim(
+      'CHANGELOG.md',
+      "Under `npx realm`, a log no longer hides the project folder: a variable whose value is the working directory (npm's `INIT_CWD` and `npm_config_local_prefix`, a CI runner's workspace variable) is not treated as a secret. The home folder stays hidden in a log.",
     );
     claim(
       OPERATE_PAGE,
@@ -1112,6 +1120,23 @@ describe(`${OPERATE_PAGE} — what the output hides`, () => {
             'file',
             setFor('file', { GITHUB_WORKSPACE: WS, REALM_NOT_SECRET: 'GITHUB_WORKSPACE' }),
           ),
+          // F2: the job runs IN the workspace — its variable holds the working folder, never a
+          // secret, on a log and in the file; run elsewhere, it still names another folder.
+          shown(
+            `${WS}/src`,
+            'log',
+            setFor('log', { GITHUB_WORKSPACE: WS }, undefined, undefined, WS),
+          ),
+          shown(
+            `${WS}/src`,
+            'file',
+            setFor('file', { GITHUB_WORKSPACE: WS }, undefined, undefined, WS),
+          ),
+          shown(
+            `${WS}/src`,
+            'log',
+            setFor('log', { GITHUB_WORKSPACE: WS }, undefined, undefined, '/ci/other-folder'),
+          ),
         ],
         clientPassesIt: 'REALM_NOT_SECRET' in clientEnv,
       }).toEqual({
@@ -1120,7 +1145,15 @@ describe(`${OPERATE_PAGE} — what the output hides`, () => {
         pipedIsLog: true,
         labelInLog: true,
         labelInMcpAndExport: ['fakeuser9x@box-0729', 'fakeuser9x@box-0729'],
-        workspace: ['[REDACTED]/src', `${WS}/src`, '[REDACTED]/src', `${WS}/src`],
+        workspace: [
+          '[REDACTED]/src',
+          `${WS}/src`,
+          '[REDACTED]/src',
+          `${WS}/src`,
+          `${WS}/src`,
+          `${WS}/src`,
+          '[REDACTED]/src',
+        ],
         clientPassesIt: false,
       });
     } finally {

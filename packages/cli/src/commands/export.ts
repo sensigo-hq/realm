@@ -520,6 +520,7 @@ export const exportCommand = new Command('export')
       }
       const set = buildDisclosureSet({
         env: process.env,
+        cwd: process.cwd(),
         declared: manifest.declared,
         declaredState: manifest.declaredState,
         ...(manifest.declaredCause !== undefined ? { declaredCause: manifest.declaredCause } : {}),

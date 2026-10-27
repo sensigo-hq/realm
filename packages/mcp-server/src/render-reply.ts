@@ -1395,6 +1395,7 @@ export function environmentSet(
 ): DisclosureSet {
   return buildDisclosureSet({
     env: process.env,
+    cwd: process.cwd(),
     declared: {},
     declaredState: 'unknown',
     declaredCause: cause,
@@ -1505,6 +1506,7 @@ export function logMasked(text: string): void {
   try {
     const set = buildDisclosureSet({
       env: process.env,
+      cwd: process.cwd(),
       declared: {},
       declaredState: 'unknown',
       declaredCause: 'embedder_none',

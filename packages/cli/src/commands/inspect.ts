@@ -2001,6 +2001,7 @@ export const inspectCommand = new Command('inspect')
         if (audience !== undefined && before !== undefined && after !== undefined) {
           const set = buildDisclosureSet({
             env: process.env,
+            cwd: process.cwd(),
             declared: manifest.declared,
             declaredState: manifest.declaredState,
             ...(manifest.declaredCause !== undefined
