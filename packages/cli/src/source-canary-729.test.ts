@@ -12,7 +12,15 @@
 // (tier/field), never a canary.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -1087,3 +1095,229 @@ describe('#729 PR-3 — no canary leaves any door', () => {
     }
   }, 90_000);
 });
+
+// F2 — the working directory is never a secret: under `npx realm`, npm sets INIT_CWD and
+// npm_config_local_prefix to the project folder. Each message site the walkers saw hidden is driven
+// on the built CLI, its output piped (a log), in two placements of the test's own temp HOME: HOME
+// elsewhere (the path prints whole) and HOME an ancestor of the project (only HOME's part hidden).
+// Fakes only: every folder is under the test's temp folder; no real home is ever printed or pinned.
+describe(
+  'F2 — the project folder prints whole under npx (the message sites, by execution)',
+  { timeout: 120_000 },
+  () => {
+    type Placement = 'home-elsewhere' | 'home-above';
+    const PLACEMENTS: readonly Placement[] = ['home-elsewhere', 'home-above'];
+    const made: string[] = [];
+    afterAll(() => {
+      for (const d of made) rmSync(d, { recursive: true, force: true });
+    });
+    function project(placement: Placement) {
+      const base = realpathSync(mkdtempSync(join(tmpdir(), 'realm-f2-')));
+      made.push(base);
+      const home = join(base, 'home');
+      const cwd = placement === 'home-above' ? join(home, 'code', 'x') : join(base, 'proj');
+      mkdirSync(home, { recursive: true });
+      mkdirSync(cwd, { recursive: true });
+      writeFileSync(join(cwd, 'package.json'), '{}', 'utf8');
+      const env = {
+        PATH: process.env['PATH'] ?? '',
+        HOME: home,
+        NO_COLOR: '1',
+        INIT_CWD: cwd,
+        npm_config_local_prefix: cwd,
+      };
+      const realm = (args: string[]) =>
+        spawnSync(process.execPath, [CLI_ENTRY, ...args], {
+          cwd,
+          env,
+          encoding: 'utf8',
+          timeout: 60_000,
+        });
+      /** A path under the project as a log shows it: whole, or with only HOME's part hidden. */
+      const logged = (rel: string): string =>
+        placement === 'home-above' ? `[REDACTED]/code/x/${rel}` : `${cwd}/${rel}`;
+      return { home, cwd, realm, logged };
+    }
+    const MANIFEST =
+      'version: 1\nsecrets:\n  sources: [dotenv]\n  dotenv: .env\nadapters:\n  svc:\n    use: github\n    config: { token: "${secret:SVC_TOKEN}" }\n';
+
+    it("init's `Directory already exists` names the folder", () => {
+      const got = PLACEMENTS.map((placement) => {
+        const p = project(placement);
+        mkdirSync(join(p.cwd, 'wf'));
+        const r = p.realm(['workflow', 'init', 'wf']);
+        return {
+          placement,
+          status: r.status,
+          line: r.stderr.trim(),
+          want: `Directory already exists: ${p.logged('wf')}`,
+        };
+      });
+      // (a) red when INIT_CWD/npm's prefix hide the project folder again ([REDACTED]/wf); (b) prints
+      //     the line per placement (paths under the test's temp folder).
+      expect(got.map((g) => [g.placement, g.status, g.line])).toEqual(
+        got.map((g) => [g.placement, 1, g.want]),
+      );
+    });
+
+    it("the manifest-placement refusal's remedy `Move it to '…/realm.yaml'` names the project's manifest path", () => {
+      const got = PLACEMENTS.map((placement) => {
+        const p = project(placement);
+        const init = p.realm(['workflow', 'init', 'a']);
+        writeFileSync(join(p.cwd, 'a', 'realm.yaml'), 'version: 1\n', 'utf8');
+        const r = p.realm(['workflow', 'validate', './a/']);
+        return {
+          placement,
+          init: init.status,
+          says: (r.stdout + r.stderr).includes(`Move it to '${p.logged('realm.yaml')}'`),
+        };
+      });
+      // (a) red when the project folder reads [REDACTED] in the remedy; (b) prints booleans.
+      expect(got).toEqual(PLACEMENTS.map((placement) => ({ placement, init: 0, says: true })));
+    });
+
+    it("the manifest-invalid line `Deployment manifest '…' is invalid` names the manifest path", () => {
+      const got = PLACEMENTS.map((placement) => {
+        const p = project(placement);
+        const init = p.realm(['workflow', 'init', 'wf']);
+        writeFileSync(join(p.cwd, 'realm.yaml'), 'version: 1\nnot_a_manifest_key: 1\n', 'utf8');
+        const r = p.realm(['workflow', 'validate', './wf/']);
+        return {
+          placement,
+          init: init.status,
+          says: (r.stdout + r.stderr).includes(
+            `Deployment manifest '${p.logged('realm.yaml')}' is invalid`,
+          ),
+        };
+      });
+      // (a) red when the manifest path reads [REDACTED]/realm.yaml; (b) prints booleans.
+      expect(got).toEqual(PLACEMENTS.map((placement) => ({ placement, init: 0, says: true })));
+    });
+
+    it("the export refusal's `'…/realm.yaml' changed since the run recorded it` names the manifest path", async () => {
+      const got = [];
+      for (const placement of PLACEMENTS) {
+        const p = project(placement);
+        const init = p.realm(['workflow', 'init', 'wf']);
+        writeFileSync(join(p.cwd, 'realm.yaml'), MANIFEST, 'utf8');
+        writeFileSync(join(p.cwd, '.env'), 'SVC_TOKEN=FAKE-F2-TOKEN-0001\n', 'utf8');
+        const registered = p.realm(['workflow', 'register', 'wf/workflow.yaml']);
+        const runs = new JsonFileStore(join(p.home, '.realm', 'runs'));
+        const { run } = await runs.create({ workflowId: 'wf', workflowVersion: 1, params: {} });
+        // A run that recorded a secret the manifest no longer names: its declared part changed.
+        await runs.update({
+          ...(await runs.get(run.id)),
+          extension_identity: [
+            {
+              manifest: { path: join(p.cwd, 'realm.yaml'), content_hash: 'recorded-before' },
+              secret_names: ['SVC_TOKEN', 'GONE_TOKEN'],
+            },
+          ],
+        } as never);
+        const r = p.realm(['run', 'export', run.id, '--out', join(p.cwd, 'out.json')]);
+        got.push({
+          placement,
+          setup: [init.status, registered.status],
+          status: r.status,
+          says: r.stderr.includes(`'${p.logged('realm.yaml')}' changed since the run recorded it`),
+        });
+      }
+      // (a) red when the manifest path reads [REDACTED]/realm.yaml in the refusal; (b) prints the
+      //     exit codes and booleans.
+      expect(got).toEqual(
+        PLACEMENTS.map((placement) => ({ placement, setup: [0, 0], status: 1, says: true })),
+      );
+    });
+
+    it("export: the confirmation line names the out file, and the file keeps a path under the project whole (B2, export.ts's set)", async () => {
+      const got = [];
+      for (const placement of PLACEMENTS) {
+        const p = project(placement);
+        const runs = new JsonFileStore(join(p.home, '.realm', 'runs'));
+        const { run } = await runs.create({
+          workflowId: 'not-registered-f2',
+          workflowVersion: 1,
+          params: { note: `${p.cwd}/notes.txt` },
+        });
+        const out = join(p.cwd, 'out.json');
+        const r = p.realm(['run', 'export', run.id, '--out', out, '--accept-partial-disclosure']);
+        const note = (
+          JSON.parse(readFileSync(out, 'utf8')) as { run: { params: { note: string } } }
+        ).run.params.note;
+        got.push({
+          placement,
+          status: r.status,
+          confirmation: r.stdout.includes(`to '${p.logged('out.json')}'`),
+          // The file is the operator's own record: a path under HOME is shown there (D-7).
+          fileNote: note === `${p.cwd}/notes.txt`,
+        });
+      }
+      // (a) red when the out path reads [REDACTED] in the confirmation, or the export's file set is
+      //     built without `cwd` (the note reads [REDACTED]/notes.txt with HOME elsewhere); (b) prints
+      //     the exit codes and booleans.
+      expect(got).toEqual(
+        PLACEMENTS.map((placement) => ({
+          placement,
+          status: 0,
+          confirmation: true,
+          fileNote: true,
+        })),
+      );
+    });
+
+    it('every caller of buildDisclosureSet passes the working directory — the list is derived from the source (B2)', () => {
+      const root = fileURLToPath(new URL('../../../', import.meta.url));
+      const files: string[] = [];
+      const walk = (dir: string): void => {
+        for (const e of readdirSync(dir, { withFileTypes: true })) {
+          const at = join(dir, e.name);
+          if (e.isDirectory()) {
+            if (e.name !== 'node_modules' && e.name !== 'dist' && e.name !== 'test-support')
+              walk(at);
+          } else if (e.name.endsWith('.ts') && !e.name.endsWith('.test.ts')) files.push(at);
+        }
+      };
+      for (const pkg of readdirSync(join(root, 'packages')))
+        walk(join(root, 'packages', pkg, 'src'));
+      const calls: string[] = [];
+      const withCwd: string[] = [];
+      for (const file of files) {
+        const lines = readFileSync(file, 'utf8').split('\n');
+        lines.forEach((line, i) => {
+          if (!line.includes('buildDisclosureSet(') || line.includes('export function')) return;
+          if (line.trim().startsWith('*') || line.trim().startsWith('//')) return;
+          const at = `${file.slice(root.length)}`;
+          calls.push(at);
+          if (lines.slice(i, i + 4).some((l) => l.includes('cwd: process.cwd(),')))
+            withCwd.push(at);
+        });
+      }
+      // (a) red when a tenth caller appears, a caller moves, or one stops passing `cwd`; (b) prints
+      //     the callers' file names (repository paths).
+      expect({ calls: calls.sort(), withCwd: withCwd.sort() }).toEqual({
+        calls: [
+          'packages/cli/src/agent/gate/slack-gate-notifier.ts',
+          'packages/cli/src/agent/providers/agent-utils.ts',
+          'packages/cli/src/commands/export.ts',
+          'packages/cli/src/commands/inspect.ts',
+          'packages/cli/src/extensions/load-project-extensions.ts',
+          'packages/cli/src/extensions/load-project-extensions.ts',
+          'packages/cli/src/output/writer.ts',
+          'packages/mcp-server/src/render-reply.ts',
+          'packages/mcp-server/src/render-reply.ts',
+        ],
+        withCwd: [
+          'packages/cli/src/agent/gate/slack-gate-notifier.ts',
+          'packages/cli/src/agent/providers/agent-utils.ts',
+          'packages/cli/src/commands/export.ts',
+          'packages/cli/src/commands/inspect.ts',
+          'packages/cli/src/extensions/load-project-extensions.ts',
+          'packages/cli/src/extensions/load-project-extensions.ts',
+          'packages/cli/src/output/writer.ts',
+          'packages/mcp-server/src/render-reply.ts',
+          'packages/mcp-server/src/render-reply.ts',
+        ],
+      });
+    });
+  },
+);

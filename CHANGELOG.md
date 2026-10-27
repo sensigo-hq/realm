@@ -17,6 +17,10 @@ All notable changes to this project are documented here.
   install, any git repository — it writes four files, leaving out `realm.yaml` and `.env.example`,
   and names the project's top folder, where Realm reads `realm.yaml`. Before, the first
   `realm workflow validate` there failed.
+- Under `npx realm`, a log no longer hides the project folder: a variable whose value is the
+  working directory (npm's `INIT_CWD` and `npm_config_local_prefix`, a CI runner's workspace
+  variable) is not treated as a secret. The home folder stays hidden in a log.
+- Hardening: `realm agent` now hides a declared secret in the spellings the MCP door already hid.
 - **A step that uses tools records what its model requests cost (issue #610).** Each request such a
   step makes that gets an answer — every turn, the retry after a refused strict tool list, and the
   final answer — is kept on the step's record in the order sent, as for every other agent step,

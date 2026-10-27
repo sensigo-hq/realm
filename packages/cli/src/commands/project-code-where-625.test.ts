@@ -80,9 +80,9 @@ describe('#625 PR-2a, C98 and C95 — where the code comes from; advance carries
     for (const d of [home, proj, elsewhere]) rmSync(d, { recursive: true, force: true });
   });
 
-  function realm(cwd: string, args: string[]) {
+  function realm(cwd: string, args: string[], env?: Record<string, string>) {
     const r = spawnSync(process.execPath, [CLI_ENTRY, ...args], {
-      env: { ...process.env, HOME: home, REALM_OPERATOR: 'tester' },
+      env: env ?? { ...process.env, HOME: home, REALM_OPERATOR: 'tester' },
       cwd,
       encoding: 'utf8',
     });
@@ -165,6 +165,51 @@ describe('#625 PR-2a, C98 and C95 — where the code comes from; advance carries
     const entry = (await runs.get(runId)).evidence.find((e) => e.step_id === 'after');
     expect(entry?.output_summary).toEqual({ from: 'the project' });
   }, 60_000);
+
+  it("F2: under npx (INIT_CWD and npm's prefix = the project), the advance line names the project folder — whole, or only HOME's part when HOME is above it", async () => {
+    const extra: string[] = [];
+    const got: Array<[string, string]> = [];
+    try {
+      for (const placement of ['home-elsewhere', 'home-above'] as const) {
+        if (placement === 'home-above') {
+          // The walker's case: the project under the home folder.
+          home = realpathSync(mkdtempSync(join(tmpdir(), 'realm-pcw-f2-home-')));
+          extra.push(home);
+          proj = join(home, 'code', 'x');
+          mkdirSync(proj, { recursive: true });
+        }
+        const { runId, gateId } = await atGate('none', false);
+        const responded = realm(proj, [
+          'run',
+          'respond',
+          runId,
+          '--gate',
+          gateId,
+          '--choice',
+          'approve',
+        ]);
+        if (responded.status !== 0) throw new Error(`fixture: respond failed: ${responded.stderr}`);
+        const advanced = realm(proj, ['run', 'advance', runId], {
+          PATH: process.env['PATH'] ?? '',
+          HOME: home,
+          NO_COLOR: '1',
+          REALM_OPERATOR: 'tester',
+          INIT_CWD: proj,
+          npm_config_local_prefix: proj,
+        });
+        const where = placement === 'home-above' ? '[REDACTED]/code/x' : proj;
+        got.push([
+          advanced.stdout.split('\n')[0]!,
+          `Advancing run ${runId} (workflow 'pcw-none') with the project code under ${where}, in this shell's environment.`,
+        ]);
+      }
+    } finally {
+      for (const d of extra) rmSync(d, { recursive: true, force: true });
+    }
+    // (a) red when INIT_CWD/npm's prefix hide the project folder again (the header reads
+    //     `under [REDACTED]`); (b) prints both headers per placement (paths under the temp folder).
+    expect(got.map(([line]) => line)).toEqual(got.map(([, want]) => want));
+  }, 120_000);
 
   it('C95: realm run advance carries out an expired settle_default — the owed step runs; the expiry is said', async () => {
     const { runs, runId, gateId } = await atGate('settle_default', true);

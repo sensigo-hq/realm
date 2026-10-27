@@ -611,3 +611,31 @@ describe('#729 PR-3 correction 1 (F3, D-9) — a builder failure is masked at ev
     }).toEqual({ failed: true, env: false, bearer: false });
   });
 });
+
+// F2 (B2): the loader's own failure messages are masked with a set that passes the working
+// directory, so the manifest's path under it prints whole.
+describe('F2 — the working directory (B2, load-project-extensions :648, the loader messages)', () => {
+  it("a constructor's failure names the manifest's path whole", async () => {
+    vi.spyOn(process, 'cwd').mockReturnValue(root);
+    try {
+      vi.stubEnv('REALM_NOT_SECRET', '');
+      vi.stubEnv('INIT_CWD', root);
+      vi.stubEnv('npm_config_local_prefix', root);
+      const mod = writeFactoryModule();
+      writeManifest(`version: 1\nadapters:\n  boom:\n    use: ${mod}#throwingFactory\n`);
+      let message = '';
+      try {
+        await loadProjectExtensions(anchoredDefinition());
+      } catch (err) {
+        message = (err as Error).message;
+      }
+      // (a) red when the loader's set is built without `cwd` (the path reads [REDACTED]/realm.yaml);
+      //     (b) prints the message's start (paths under the test's temp folder).
+      expect(message.slice(0, message.indexOf(': constructing'))).toBe(
+        `Deployment manifest '${join(root, 'realm.yaml')}'`,
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});

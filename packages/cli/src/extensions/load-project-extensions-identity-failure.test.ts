@@ -115,3 +115,42 @@ describe('#729 PR-3 correction 1 (F3, D-9) — the failure is masked at its sour
     });
   });
 });
+
+// F2 (B2): the identity-capture failure is masked with a set that passes the working directory.
+describe('F2 — the working directory (B2, load-project-extensions :540, identity capture)', () => {
+  it('the stored error shows a path under the working directory whole', async () => {
+    vi.spyOn(process, 'cwd').mockReturnValue(root);
+    try {
+      vi.stubEnv('REALM_NOT_SECRET', '');
+      vi.stubEnv('INIT_CWD', root);
+      vi.stubEnv('npm_config_local_prefix', root);
+      vi.mocked(computeExtensionIdentity).mockImplementationOnce(() => {
+        throw new Error(`cannot read ${root}/dist/registry.js`);
+      });
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      writeFileSync(
+        join(root, 'dist', 'registry.js'),
+        `export default { handlers: { h1: { id: 'h1', execute: async () => ({ data: {} }) } } };`,
+        'utf8',
+      );
+      const { registry } = await loadProjectExtensions({
+        id: 'ident-fail-f2',
+        name: 'Identity Fail F2',
+        version: 1,
+        schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+        steps: { s1: { description: 'step', execution: 'agent' } },
+        origin: 'human',
+        extensions: ['../../dist/registry.js'],
+        source_dir: workflowDir,
+        trust_root: root,
+      });
+      // (a) red when the identity-failure set is built without `cwd` (the path reads
+      //     [REDACTED]/dist/registry.js); (b) prints the stored error (paths under the temp folder).
+      expect(registry.identity!.error).toBe(
+        `identity capture failed: cannot read ${root}/dist/registry.js`,
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
