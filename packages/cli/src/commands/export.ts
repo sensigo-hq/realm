@@ -447,28 +447,33 @@ export function exportDisclosureRefusal(runId: string, manifest: RunManifest): s
 }
 
 /**
- * #729 PR-3: the export's header line — the declared state, what was hidden by kind, how many
+ * #729 PR-3: the export's header line — what the file's masking knew, what it hid by kind, how many
  * declared values are too short to hide (F14), and whether a question was written masked at the
- * declared tier only (F16). Correction 4 (I-6): `accepted` (`--accept-partial-disclosure` given)
- * adds that the bundle was written on the flag where the values would otherwise be refused.
+ * declared tier only (F16). #879: it opens `masked in the file:` because its counts are what the
+ * file hides; the lines printed above it are masked as any printed line is, and can hide a value
+ * these counts do not hold. `writtenOnFlag` is true when `--accept-partial-disclosure` wrote a run
+ * that export refuses without it (the action passes the flag and the refusal it computed), and the
+ * line then ends by saying so, once. The file itself is untouched.
  */
-export function exportDisclosureLine(receipt: DisclosureReceipt, accepted = false): string {
+export function exportDisclosureLine(receipt: DisclosureReceipt, writtenOnFlag = false): string {
   const declared = `${receipt.declared}${receipt.declared_cause !== undefined ? ` (${receipt.declared_cause.replace('_', ' ')})` : ''}`;
   const shownOnFlag =
-    accepted &&
+    writtenOnFlag &&
     (receipt.declared_cause === 'load_failed' || receipt.declared_cause === 'manifest_changed');
-  // #729 PR-3 correction 5 (J-6): on the flag, a shown question was masked with what is known — the
-  // clause `realm run inspect` prints (the writer's `questionReceiptWords`). The bundle's header
+  // #729 PR-3 correction 5 (J-6): on the flag, a question shown where the values would have been
+  // withheld was masked with what is known. #879: the clause no longer names the flag, because the
+  // line's last clause does; `realm run inspect`'s receipt (the writer's `questionReceiptWords`)
+  // keeps the parenthetical, since no other clause of its line names the flag. The bundle's header
   // keeps the record's `question: declared_only`.
   const question = shownOnFlag
-    ? 'question: shown with what is known (--accept-partial-disclosure)'
+    ? 'question: shown with what is known'
     : QUESTION_DECLARED_ONLY_WORDS;
   return (
-    `masked: declared secrets ${declared}; environment ${receipt.environment === 'swept' ? 'swept' : 'not swept'}; ` +
+    `masked in the file: declared secrets ${declared}; environment ${receipt.environment === 'swept' ? 'swept' : 'not swept'}; ` +
     `hidden ${receipt.hidden.declared} declared, ${receipt.hidden.environment} environment, ${receipt.hidden.pattern} by pattern; ` +
     `${receipt.unmaskable} too short to hide` +
     (receipt.question === 'declared_only' ? `; ${question}` : '') +
-    (shownOnFlag ? '; shown on --accept-partial-disclosure' : '')
+    (writtenOnFlag ? '; written on --accept-partial-disclosure (refused without it)' : '')
   );
 }
 
@@ -515,6 +520,7 @@ export const exportCommand = new Command('export')
       }
       const set = buildDisclosureSet({
         env: process.env,
+        cwd: process.cwd(),
         declared: manifest.declared,
         declaredState: manifest.declaredState,
         ...(manifest.declaredCause !== undefined ? { declaredCause: manifest.declaredCause } : {}),
@@ -568,7 +574,7 @@ export const exportCommand = new Command('export')
       console.log(
         `Exported run '${runId}' to '${target}' (${formatBytes(Buffer.byteLength(json))}).\n` +
           `  phase: ${writerCtx().word(bundle.run.run_phase, RUN_PHASE_WORDS)}, attempts: ${bundle.attempts.length}, WAL steps: ${walStepCount}, sealed artifacts: ${sealedSummary}\n` +
-          `  ${exportDisclosureLine(bundle.disclosure, opts.acceptPartialDisclosure === true)}`,
+          `  ${exportDisclosureLine(bundle.disclosure, opts.acceptPartialDisclosure === true && refusal !== undefined)}`,
       );
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));

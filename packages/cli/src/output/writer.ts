@@ -389,6 +389,7 @@ function setFor(audience: DisclosureAudience): DisclosureSet {
     const standing = processStanding(s);
     set = buildDisclosureSet({
       env: process.env,
+      cwd: process.cwd(),
       declared: Object.fromEntries(s.declared),
       declaredState: standing.declared,
       ...(standing.declaredCause !== undefined ? { declaredCause: standing.declaredCause } : {}),

@@ -143,7 +143,7 @@ describe(`${SLACK} — the post, the thread, the transport`, () => {
     expect(view.preview_text).toBe('(no output)');
   });
 
-  it('the post has four parts; a bot answers in the thread, a webhook with one `realm run respond`', () => {
+  it('the post has four parts; every post carries one `realm run respond`, the thread sentence first when Realm listens', () => {
     claim(
       SLACK,
       "It has four parts: the gate's name (and its `owner`, when set); your gate message, with the step's output below it when room is left; how to answer; and, when the message was cut to fit, the command that shows the step's whole output. How to answer is one `realm run respond` command; when Realm listens in the thread (`app_token`, or `signing_secret` and `events_port`), the post says `Reply in this thread with` and the choices first.",

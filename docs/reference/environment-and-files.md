@@ -117,10 +117,10 @@ Realm reads these, and writes none of them:
 
 Realm writes into a project in two cases:
 
-| Command                      | Writes                                                                                                                     |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `realm workflow init <name>` | A folder `<name>` with `workflow.yaml`, `schema.json`, `.env.example`, `README.md`, `registry.sample.js` and `realm.yaml`. |
-| `realm run export <run-id>`  | `<run-id>.realm.json` in the current folder, or the file given with `--out`.                                               |
+| Command                      | Writes                                                                                                                                                                                |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `realm workflow init <name>` | A folder `<name>` with `workflow.yaml`, `schema.json`, `.env.example`, `README.md`, `registry.sample.js` and `realm.yaml`; inside a project, without `.env.example` and `realm.yaml`. |
+| `realm run export <run-id>`  | `<run-id>.realm.json` in the current folder, or the file given with `--out`.                                                                                                          |
 
 ## A store other than files
 

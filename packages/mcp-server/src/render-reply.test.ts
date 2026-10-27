@@ -3,7 +3,7 @@
 // instructions, `cannotRunWayOutTools`, `refusalSuggestion`) are this door's now: the cells that
 // pinned them in core (`pending-625.test.ts` and its siblings) are kept here, on the same fixtures,
 // read through the renderer — the words unchanged unless a §Table row of the prompt says otherwise.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,6 +13,7 @@ import {
   advanceRun,
   composeWaysAt,
   composeWaysOn,
+  disclose,
   writtenSnapshot,
   executeStep,
   submitHumanResponse,
@@ -23,7 +24,7 @@ import {
   type StepDispatcher,
   type WorkflowDefinition,
 } from '@sensigo/realm';
-import { renderReply, renderWaysOf } from './render-reply.js';
+import { environmentSet, logMasked, renderReply, renderWaysOf } from './render-reply.js';
 
 const echo: StepDispatcher = async (_name, input) => ({ ...input });
 
@@ -750,5 +751,46 @@ describe('#729 PR-0 — Amendment 16: the words name a way only where the agent 
         'its time is up — call advance_run to carry out its declared settle_default.',
       );
     });
+  });
+});
+
+// F2 (B2): the door's environment set and its stderr log line pass the working directory.
+describe('F2 — the working directory (B2, render-reply environmentSet :1396 and logMasked :1506)', () => {
+  const F2_CWD = '/srv/fake-f2-project-01';
+  const stubs = (): (() => void) => {
+    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(F2_CWD);
+    vi.stubEnv('REALM_NOT_SECRET', '');
+    vi.stubEnv('INIT_CWD', F2_CWD);
+    vi.stubEnv('npm_config_local_prefix', F2_CWD);
+    return () => {
+      cwdSpy.mockRestore();
+      vi.unstubAllEnvs();
+    };
+  };
+  it('environmentSet: an agent is shown a path under the working directory whole', () => {
+    const restore = stubs();
+    try {
+      const text = `the workflow lives at ${F2_CWD}/wf`;
+      // (a) red when environmentSet builds its set without `cwd`; (b) prints the fake text.
+      expect(disclose(text, environmentSet('embedder_none'), 'all').text).toBe(text);
+    } finally {
+      restore();
+    }
+  });
+  it('logMasked: the stderr line shows a path under the working directory whole', () => {
+    const restore = stubs();
+    const writes: string[] = [];
+    const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation(((chunk: unknown) => {
+      writes.push(String(chunk));
+      return true;
+    }) as never);
+    try {
+      logMasked(`could not read ${F2_CWD}/realm.yaml`);
+      // (a) red when logMasked builds its set without `cwd`; (b) prints the fake line.
+      expect(writes).toEqual([`could not read ${F2_CWD}/realm.yaml\n`]);
+    } finally {
+      errSpy.mockRestore();
+      restore();
+    }
   });
 });

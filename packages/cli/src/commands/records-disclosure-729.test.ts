@@ -252,8 +252,8 @@ describe('#729 PR-3 — export v5', () => {
       exportDisclosureLine(bundle.disclosure),
       exportDisclosureLine({ ...bundle.disclosure, question: 'declared_only' }),
     ]).toEqual([
-      'masked: declared secrets resolved; environment swept; hidden 1 declared, 0 environment, 0 by pattern; 1 too short to hide',
-      'masked: declared secrets resolved; environment swept; hidden 1 declared, 0 environment, 0 by pattern; 1 too short to hide; question: declared tier only',
+      'masked in the file: declared secrets resolved; environment swept; hidden 1 declared, 0 environment, 0 by pattern; 1 too short to hide',
+      'masked in the file: declared secrets resolved; environment swept; hidden 1 declared, 0 environment, 0 by pattern; 1 too short to hide; question: declared tier only',
     ]);
   });
 
@@ -326,7 +326,9 @@ describe('#729 PR-3 — export v5', () => {
       refusedCode: refused.status,
       refusedWritten: existsSync(join(root, 'a.json')),
       acceptedCode: accepted.status,
-      header: accepted.stdout.includes('masked: declared secrets unknown (load failed)'),
+      header: accepted.stdout.includes(
+        'masked in the file: declared secrets unknown (load failed)',
+      ),
       state: bundle?.disclosure.declared,
     }).toEqual({
       refusedCode: 1,
@@ -2029,8 +2031,9 @@ describe('#729 PR-3 correction 4 — the read commands and the two un-read surfa
       };
     };
     // (a) red when the words are not swapped under the flag (`declared tier only` beside a shown
-    //     question), no first line names the flag, or export's last line does not; (b) prints the
-    //     first lines (realm's words), booleans and the receipts' last clauses.
+    //     question), no first line names the flag, or export's last line does not say the flag
+    //     wrote a run export refuses without it (#879); (b) prints the first lines (realm's words),
+    //     booleans and the receipts' last clauses.
     expect({ gone: await shown('gone'), unreadable: await shown('unreadable') }).toEqual({
       gone: {
         first:
@@ -2039,7 +2042,7 @@ describe('#729 PR-3 correction 4 — the read commands and the two un-read surfa
         receipt: 'question: shown with what is known (--accept-partial-disclosure).',
         declaredOnly: false,
         attemptsFirst: 'Values shown on --accept-partial-disclosure (declared values changed)',
-        exportEnd: 'shown on --accept-partial-disclosure',
+        exportEnd: 'written on --accept-partial-disclosure (refused without it)',
         bundleSaysFlag: false,
       },
       unreadable: {
@@ -2050,7 +2053,7 @@ describe('#729 PR-3 correction 4 — the read commands and the two un-read surfa
         declaredOnly: false,
         attemptsFirst:
           'Values shown on --accept-partial-disclosure (declared values could not be read)',
-        exportEnd: 'shown on --accept-partial-disclosure',
+        exportEnd: 'written on --accept-partial-disclosure (refused without it)',
         bundleSaysFlag: false,
       },
     });

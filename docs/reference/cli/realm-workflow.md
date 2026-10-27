@@ -23,7 +23,7 @@ Wherever a subcommand takes a `<path>`, it is the folder that holds `workflow.ya
 realm workflow init <name>
 ```
 
-Creates a folder called `<name>` with six files.
+Creates a folder called `<name>` with six files. Inside a project — when a folder above it holds a `package.json` or a `.git` — it writes four: Realm reads `realm.yaml` only from the project's top folder ([Deployment manifest](../deployment-manifest.md#where-realm-looks-for-it)), so `init` leaves `realm.yaml` and `.env.example` out of the new folder and names the project's folder.
 
 ```bash
 realm workflow init invoice-check
@@ -40,6 +40,24 @@ Created: invoice-check/
 
 Next: realm workflow validate ./invoice-check/
 ```
+
+Inside the project `/srv/shop`, which holds a `package.json`:
+
+```text
+Created: invoice-check/
+  workflow.yaml
+  schema.json
+  README.md
+  registry.sample.js
+
+invoice-check/ is inside the project '/srv/shop', which holds a package.json or a .git.
+Realm reads realm.yaml only from that folder, so it and .env.example were not written here.
+The project has no realm.yaml yet: add one there when a workflow needs settings — how an adapter, handler or processor is built, its secrets, or a gate notifier.
+
+Next: realm workflow validate ./invoice-check/
+```
+
+When the project already has a `realm.yaml`, the last of those lines reads `The project's realm.yaml applies to this workflow.`
 
 **Exit code:** 0, or 1 if the folder already exists: `Directory already exists: …/invoice-check`.
 

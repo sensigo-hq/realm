@@ -180,9 +180,24 @@ describe('P2 — each member and layer of the list separates (moved from the CLI
   );
   const MEMBER_IDS = [
     ...[...MEMBERS_BLOCK.matchAll(/^ {2}(\w+): \w+,$/gm)].map((m) => m[1]!),
-    ...['E1', 'E2', 'LINES', 'D'],
+    ...['E1', 'E2', 'LINES', 'D', 'D2'],
   ];
-  const SEPARATING_ROWS = ROWS.filter((r) => r.member !== undefined);
+  // D2 (F2): a value written with `\\n` and `\\/` (two backslashes each), printed after a program
+  // reads its escapes TWICE (a JSON string read out of a JSON string): `JSON.parse` twice IS this
+  // layer's printer, executed here by node itself.
+  // The D2 row is computed at test time, not captured: a regeneration of printer-captures.json does not produce it.
+  const D2_VALUE = 'FAKEhd7Q' + '\\\\n\\\\/' + 'Z9tlFAKE';
+  const D2_ROW: Row = {
+    printer: 'node.JSON.parse_str_twice',
+    case: 'sep_D2',
+    value: D2_VALUE,
+    output: JSON.parse('"' + (JSON.parse('"' + D2_VALUE + '"') as string) + '"') as string,
+    source: 'executed',
+    runtime: `node ${process.version}`,
+    anchors: ['FAKEhd7Q', 'Z9tlFAKE'],
+    member: 'D2',
+  };
+  const SEPARATING_ROWS = [...ROWS.filter((r) => r.member !== undefined), D2_ROW];
 
   it('P2 — one separating row per member and per layer, the members read from MEMBERS', () => {
     const rowMembers = SEPARATING_ROWS.map((r) => r.member!);
@@ -212,5 +227,67 @@ describe('P2 — each member and layer of the list separates (moved from the CLI
       hiddenWhole: true,
       separates: true,
     });
+  });
+});
+
+describe('F2 — D2: the second decoded reading in the forms list (commit 2)', () => {
+  const BS = '\\';
+  // pa\\nss-word1: 13 characters, TWO literal backslashes before `n` (probe3's value; fake).
+  const TWO = `pa${BS}${BS}nss-word1`;
+  const ONE = `pa${BS}nss-word1`;
+  const NEWLINE = `pa\nss-word1`;
+  it('D2-1: a value holding `\\\\n` lists its once-read spelling (D) and its twice-read one (D2, a newline)', () => {
+    const forms = variantsOf(TWO, { parts: true });
+    // (a) red when D2 is removed (the newline spelling is not listed); (b) prints two booleans.
+    expect({ once: forms.includes(ONE), twice: forms.includes(NEWLINE) }).toEqual({
+      once: true,
+      twice: true,
+    });
+  });
+  it('D2-2: the bound — FOUR backslashes lists the two-backslash (D) and one-backslash (D2) readings, never the newline (no third level)', () => {
+    const forms = variantsOf(`pa${BS}${BS}${BS}${BS}nss-word1`, { parts: true });
+    // (a) red when D2 is applied to its own output (a third level: the newline is listed); (b)
+    //     prints three booleans.
+    expect({
+      d: forms.includes(TWO),
+      d2: forms.includes(ONE),
+      third: forms.includes(NEWLINE),
+    }).toEqual({
+      d: true,
+      d2: true,
+      third: false,
+    });
+  });
+  it("D2-8: a `\\xHH` at the second level is kept as written — JSON has no `\\xHH` (the door's reach)", () => {
+    const value = `k${BS}${BS}x41-secret9`; // D reads `\\` → `\`: the reading holds `\x41`, kept
+    const forms = variantsOf(value, { parts: true });
+    // (a) red when D2 reads `\xHH` too (the `kA-secret9` spelling is listed); (b) prints booleans.
+    expect({
+      d: forms.includes(`k${BS}x41-secret9`),
+      readAtLevel2: forms.includes('kA-secret9'),
+      noD2:
+        JSON.stringify(forms) === JSON.stringify(variantsOf(value, { parts: true, omit: 'D2' })),
+    }).toEqual({ d: true, readAtLevel2: false, noD2: true });
+  });
+  it("D2-9: ONE reading — D2 reads D's all-code-point reading, never a byte reading", () => {
+    // `\xc3\xa9` has two D readings (code points: Ã©; bytes: é); `\\n` stays `\n` in both.
+    const value = `k${BS}xc3${BS}xa9${BS}${BS}n-word99`;
+    const forms = variantsOf(value, { parts: true });
+    // (a) red when D2 reads every D reading (the byte reading's newline spelling is listed too); (b)
+    //     prints booleans.
+    expect({
+      fromCodePoints: forms.includes(`kÃ©\n-word99`),
+      fromBytes: forms.includes(`ké\n-word99`),
+    }).toEqual({ fromCodePoints: true, fromBytes: false });
+  });
+  it('D2-3 (control): ONE backslash — its D reading (the newline), and no D2 reading at all', () => {
+    // A D reading without a backslash gives D2 nothing by construction: the lists with and without
+    // D2 are equal. (b) prints the two booleans.
+    expect({
+      d: variantsOf(ONE, { parts: true }).includes(NEWLINE),
+      noD2:
+        JSON.stringify(variantsOf(ONE, { parts: true })) ===
+        JSON.stringify(variantsOf(ONE, { parts: true, omit: 'D2' })),
+    }).toEqual({ d: true, noD2: true });
   });
 });

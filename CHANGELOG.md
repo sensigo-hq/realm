@@ -48,6 +48,7 @@ All notable changes to this project are documented here.
 - **The engine takes the host's disclosure set (`disclosure`) on `executeStep`, `executeChain`,
   `advanceRun` and `executeEngineStep` (issue #729 PR-4).** Realm's own commands and MCP server pass
   theirs; without it, a gate's question is stored as rendered and never cut.
+- **`realm run export`'s third line says what it counts, and names `--accept-partial-disclosure` once (issue #879).** It opens `masked in the file:` (it was `masked:`): its counts are what the file hides, not what the lines printed above it hide. When the flag wrote a run that export refuses without it, the line ends `; written on --accept-partial-disclosure (refused without it)`; it ended `; shown on --accept-partial-disclosure`, and a run with no project said nothing of the flag. Where the run's manifest changed or could not be read, a question's clause before it reads `question: shown with what is known`; it named the flag too.
 
 ### Fixed
 
@@ -56,6 +57,15 @@ All notable changes to this project are documented here.
   (`Slack did not answer within 30 s`, `Slack refused the post: …`) and prints one
   `realm run respond` command per choice. Before, the person was never asked and the terminal said
   to use a command that was never shown. A rate limit within 30 s is retried once.
+- **`realm workflow init` inside a project no longer writes a `realm.yaml` Realm refuses
+  (issue #878).** When a folder above the new one holds a `package.json` or a `.git` — a local
+  install, any git repository — it writes four files, leaving out `realm.yaml` and `.env.example`,
+  and names the project's top folder, where Realm reads `realm.yaml`. Before, the first
+  `realm workflow validate` there failed.
+- Under `npx realm`, a log no longer hides the project folder: a variable whose value is the
+  working directory (npm's `INIT_CWD` and `npm_config_local_prefix`, a CI runner's workspace
+  variable) is not treated as a secret. The home folder stays hidden in a log.
+- Hardening: `realm agent` now hides a declared secret in the spellings the MCP door already hid.
 
 ## [0.48.0] — 2026-10-26
 

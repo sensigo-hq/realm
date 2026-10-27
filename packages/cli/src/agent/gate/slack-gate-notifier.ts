@@ -46,6 +46,7 @@ function slackSet(): DisclosureSet {
     writerSetFor('broadcast') ??
     buildDisclosureSet({
       env: process.env,
+      cwd: process.cwd(),
       declared: {},
       declaredState: 'unknown',
       declaredCause: 'embedder_none',

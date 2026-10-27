@@ -721,6 +721,136 @@
           "label": "DOCS"
         }
       }
+    },
+    {
+      "id": "cache-record",
+      "title": "Keeps what the prompt cache did on each model call",
+      "ask": "Does a run's record keep, for each model call, how much of the prompt the provider read from its cache and how much it wrote to it? Realm's answer is for 0.46.0, the version in its column head. The other tools' answers to this question were read from each tool's code on 2026-10-09, at its default branch and not at the version in its column head; each source names the commit.",
+      "verdict": {
+        "kind": "level",
+        "text": "Level with LangGraph, whose checkpoints save each model message whole, cache counts included. Mastra, Microsoft Agent Framework, Temporal, Inngest and CrewAI keep part of it: per step, summed, or without the 5-minute/1-hour split. n8n and Dify keep no cache counts in a stored run. Realm keeps one entry per model call, and a count the provider did not report is left out, never written as 0."
+      },
+      "cells": {
+        "realm": {
+          "value": "Yes",
+          "note": "For each model call realm agent makes for a step, the step's record holds one entry: the whole prompt size, the part read from the cache, the part written to it (with the 5-minute/1-hour split of the writes where the provider gives it) and the output tokens. A schema-repair call is an entry of its own. A figure the provider did not report is absent, never counted as 0.",
+          "source": "run-record.ts:329, :375; run-record-and-export.md:120-122; CHANGELOG 0.46.0 (all at v0.46.0)",
+          "label": "CODE + DOCS"
+        },
+        "langgraph": {
+          "value": "Yes",
+          "note": "A model message kept in the graph's state is saved whole in the checkpoint, so the cache counts the provider put on it are saved with it. This follows from how checkpoints store messages; it is not a cache feature.",
+          "source": "libs/checkpoint/langgraph/checkpoint/serde/jsonplus.py:322-337 @ langgraph 26356227, read 2026-10-09",
+          "label": "CODE"
+        },
+        "crewai": {
+          "value": "Partial",
+          "note": "Counts of cached prompt tokens and of tokens written to the cache are summed per run, with the cached tokens folded into the prompt-token count. There is no entry per model call; whether a stored record keeps the sums was not read.",
+          "source": "types/usage_metrics.py; docs edge/en/concepts/flows.mdx:270-295 @ crewAI 140bfcb8, read 2026-10-09",
+          "label": "CODE + DOCS"
+        },
+        "mastra": {
+          "value": "Partial",
+          "note": "The durable agent keeps each iteration's usage and a running total of cached-input and cache-creation tokens in its saved iteration state. Only the durable agent was read, not Mastra's other workflows.",
+          "source": "packages/core/src/agent/durable/workflows/shared/iteration-state.ts @ mastra 9fa4ce5a, read 2026-10-09",
+          "label": "CODE"
+        },
+        "maf": {
+          "value": "Partial",
+          "note": "Its usage details hold the tokens read from and written to a provider cache, with no 5-minute/1-hour split. Whether a saved run keeps them for each model call was not read.",
+          "source": "python/packages/core/_types.py:486-496 @ agent-framework fd52de71, read 2026-10-09",
+          "label": "CODE"
+        },
+        "temporal": {
+          "value": "Partial",
+          "note": "No cache feature of its own. In the TypeScript AI SDK integration each model call runs as an activity whose result carries the cache read and write counts, so the event history should hold them; the stored payload was not read.",
+          "source": "contrib/ai-sdk/src/activities.ts:236-243, :262-275 @ sdk-typescript f2b6b0fe, read 2026-10-09",
+          "label": "CODE + INFERRED"
+        },
+        "inngest": {
+          "value": "Partial",
+          "note": "Telemetry attributes set inside a step are summed into the step's metadata, cache reads and writes included: one sum per step, not one entry per model call. For writes it reads only the deprecated attribute name.",
+          "source": "packages/inngest/src/components/execution/otel/aiExtractor.ts:245-263 @ inngest-js a00d53fe, read 2026-10-09",
+          "label": "CODE"
+        },
+        "n8n": {
+          "value": "No",
+          "note": "A workflow run's token usage holds input and output tokens only, and the Anthropic node adds cache reads and writes into the input count. The Agents product keeps tokens and a cost per run, with no cache columns. Instance AI's per-step cache view sits in an in-memory debug buffer, not in a stored record.",
+          "source": "metadata-utils.ts:26-37; message.operation.ts:386-394; CreateAgentExecutionTables.ts:44-64; run-debug-buffer.ts:187-195 @ n8n 9ff8d4fc, read 2026-10-09",
+          "label": "CODE"
+        },
+        "dify": {
+          "value": "No",
+          "note": "The run record's usage object has no cache field. The Anthropic plugin folds cache reads and writes into a price-weighted prompt-token count instead, so the counts are not in the record.",
+          "source": "graphon/model_runtime/entities/llm_entities.py:90-105 @ graphon 0.7.0; llm.py:130-170 @ dify-official-plugins 7584b133, read 2026-10-09",
+          "label": "CODE"
+        }
+      }
+    },
+    {
+      "id": "cache-cost",
+      "title": "Prices cache reads and writes in a run's cost",
+      "ask": "Does a run's cost price the tokens read from the prompt cache and the tokens written to it at their own rates, not as plain input? Realm's answer is for 0.48.0, which is newer than the 0.46.0 in its column head; the other Realm answers on this page are for 0.46.0. The other tools' answers to this question were read from each tool's code on 2026-10-09, at its default branch and not at the version in its column head; each source names the commit.",
+      "verdict": {
+        "kind": "level",
+        "text": "Level with Mastra, which prices cache reads and each write size at their own rates. n8n's Agents product and Dify's Anthropic plugin price them too, each in a narrower way. CrewAI, LangGraph, Temporal, Microsoft Agent Framework and Inngest price nothing that we found. In Realm 0.48.0 the figure is worked out when a run is read, names its price source, and says what caching saved or cost against no caching; we found no other tool among these eight that works out that last figure."
+      },
+      "cells": {
+        "realm": {
+          "value": "Yes",
+          "note": "In 0.48.0, not the 0.46.0 of this column. When a run is read, each model call is priced at its own cache read and write rates, from your economics file or an installed price list; Realm ships no prices. The figure names its price source, says call-date or current price, and says what caching saved or cost against no caching. A call it cannot price is counted out and the figure starts with ≥. We found no other of these eight that works out that net (searched 2026-10-09).",
+          "source": "step-view.ts:769; price-source.ts:30, :163; cache-economics.ts:186, :244; inspect.ts:799-805; cache-economics.md:129-131; CHANGELOG 0.48.0 (all at v0.48.0)",
+          "label": "CODE + DOCS + INFERRED"
+        },
+        "langgraph": {
+          "value": "No",
+          "note": "We found no price calculation in LangGraph's own code: a search for price and cost terms came back empty. Cost tracking in LangChain's own packages was not read.",
+          "source": "grep for price and cost terms in langgraph and langgraphjs, read 2026-10-09",
+          "label": "INFERRED"
+        },
+        "crewai": {
+          "value": "No",
+          "note": "Cache token counts are kept, but we found no price calculated from them: the two hits for price and cost terms were read and are not cost calculation.",
+          "source": "types/usage_metrics.py; grep for price and cost terms in crewAI @ 140bfcb8, read 2026-10-09",
+          "label": "CODE + INFERRED"
+        },
+        "mastra": {
+          "value": "Yes",
+          "note": "Mastra's observability prices at ingest from an embedded price snapshot, with separate meters for cache reads, 5-minute writes and 1-hour writes. A failed price lookup is recorded as a costing error. It does not say what caching saved.",
+          "source": "observability/mastra: estimator.ts:40-100, usage.ts:186-214 @ mastra 9fa4ce5a, read 2026-10-09",
+          "label": "CODE + INFERRED"
+        },
+        "maf": {
+          "value": "No",
+          "note": "Cache counts are kept, but we found no price calculated from them: the hits for price and cost terms were read and are not LLM cost calculation.",
+          "source": "grep for price and cost terms in agent-framework @ fd52de71, read 2026-10-09",
+          "label": "INFERRED"
+        },
+        "temporal": {
+          "value": "No",
+          "note": "We found no price calculation in the SDKs or the AI integrations: a search for price and cost terms came back empty.",
+          "source": "grep for price and cost terms in sdk-typescript, sdk-python, ai-integrations, read 2026-10-09",
+          "label": "INFERRED"
+        },
+        "inngest": {
+          "value": "No",
+          "note": "We found no price calculation: the two hits for price and cost terms in inngest-js were read and are not cost calculation; agent-kit had none.",
+          "source": "grep for price and cost terms in inngest-js @ a00d53fe and agent-kit, read 2026-10-09",
+          "label": "INFERRED"
+        },
+        "n8n": {
+          "value": "Partial",
+          "note": "The Agents product prices a call at the time it is made, from a price catalog it fetches live, with cache reads and writes at their own rates and a 1-hour write scaled when 1 hour was asked. It stores one cost per run. The workflow nodes keep only input and output tokens, with the cache folded into the input count.",
+          "source": "agents catalog.ts:295-351; CreateAgentExecutionTables.ts:44-64; metadata-utils.ts:26-37 @ n8n 9ff8d4fc, read 2026-10-09",
+          "label": "CODE"
+        },
+        "dify": {
+          "value": "Partial",
+          "note": "The Anthropic plugin turns cache reads and writes into a price-weighted prompt-token count, with multipliers written in its code, and prices that count at the time of the call from its bundled price file. The counts themselves are not kept.",
+          "source": "llm.py:130-170 @ dify-official-plugins 7584b133; graphon/model_runtime/entities/llm_entities.py:90-105 @ graphon 0.7.0, read 2026-10-09",
+          "label": "CODE"
+        }
+      }
     }
   ],
   "facts": [

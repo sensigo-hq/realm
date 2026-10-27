@@ -108,6 +108,7 @@ function setFor(
   extra: Record<string, string> = {},
   notSecret?: string[],
   declared: Record<string, string> = { S: DECLARED },
+  cwd?: string,
 ) {
   return buildDisclosureSet({
     env: {
@@ -121,6 +122,7 @@ function setFor(
     declaredState: 'resolved',
     audience,
     ...(notSecret !== undefined ? { notSecret } : {}),
+    ...(cwd !== undefined ? { cwd } : {}),
   }).set;
 }
 
@@ -441,7 +443,7 @@ describe(`${RECORD_PAGE} — the export file and the guard's conditions`, () => 
   it("the example's header line and its disclosure block are what the code writes", async () => {
     claim(
       RECORD_PAGE,
-      'masked: declared secrets unknown (load failed); environment swept; hidden 0 declared, 1 environment, 0 by pattern; 0 too short to hide',
+      'masked in the file: declared secrets unknown (load failed); environment swept; hidden 0 declared, 1 environment, 0 by pattern; 0 too short to hide; written on --accept-partial-disclosure (refused without it)',
     );
     const receipt = (over: Partial<DisclosureReceipt>): DisclosureReceipt => ({
       declared: 'resolved',
@@ -460,8 +462,9 @@ describe(`${RECORD_PAGE} — the export file and the guard's conditions`, () => 
       disclosure: DisclosureReceipt;
     };
     const bundle = await bundleOf({});
-    // (a) red when the header's words change, or the example's version or receipt keys part from
-    //     what export writes; (b) prints the line, the version and the key lists.
+    // (a) red when the header's words change, the example's last clause parts from what the flag
+    //     writes for a refused state (#886 correction), or the example's version or receipt keys
+    //     part from what export writes; (b) prints the line, the version and the key lists.
     expect({
       header: exportDisclosureLine(
         receipt({
@@ -469,12 +472,15 @@ describe(`${RECORD_PAGE} — the export file and the guard's conditions`, () => 
           declared_cause: 'load_failed',
           hidden: { declared: 0, environment: 1, pattern: 0 },
         }),
+        // #886 correction (K1): `unknown (load failed)` is refused, so it is only ever written on
+        // `--accept-partial-disclosure`; the action then passes `true`
+        true,
       ),
       version: json.realm_export_version,
       keys: Object.keys(json.disclosure),
     }).toEqual({
       header:
-        'masked: declared secrets unknown (load failed); environment swept; hidden 0 declared, 1 environment, 0 by pattern; 0 too short to hide',
+        'masked in the file: declared secrets unknown (load failed); environment swept; hidden 0 declared, 1 environment, 0 by pattern; 0 too short to hide; written on --accept-partial-disclosure (refused without it)',
       version: bundle.realm_export_version,
       keys: Object.keys(bundle.disclosure),
     });
@@ -543,11 +549,16 @@ describe(`${READING_PAGE} — export`, () => {
   it('the third line, the refusal per state, and its start and end', () => {
     claim(
       READING_PAGE,
-      'masked: declared secrets resolved; environment swept; hidden 0 declared, 0 environment, 0 by pattern; 0 too short to hide',
+      'masked in the file: declared secrets resolved; environment swept; hidden 0 declared, 0 environment, 0 by pattern; 0 too short to hide',
+    );
+    // #879 (C2): the page's first and third sentences of the export paragraph
+    claim(
+      READING_PAGE,
+      'The third line is about the file: what its masking knew, how many values it hid, by kind, and how many declared secrets are too short to hide (under 4 characters).',
     );
     claim(
       READING_PAGE,
-      "The third line says what the masking knew, how many values it hid, by kind, and how many declared secrets are too short to hide (under 4 characters). When the file holds a gate's question, it ends `; question: declared tier only`: a question hides only the declared secrets.",
+      "When the file holds a gate's question, the third line says `question: declared tier only`: a question hides only the declared secrets.",
     );
     claim(
       READING_PAGE,
@@ -566,8 +577,8 @@ describe(`${READING_PAGE} — export`, () => {
     // (a) red when the third line's words, its too-short count or its question clause change; (b)
     //     prints the lines.
     expect([line({}), line({ unmaskable: 2, question: 'declared_only' })]).toEqual([
-      'masked: declared secrets resolved; environment swept; hidden 0 declared, 0 environment, 0 by pattern; 0 too short to hide',
-      'masked: declared secrets resolved; environment swept; hidden 0 declared, 0 environment, 0 by pattern; 2 too short to hide; question: declared tier only',
+      'masked in the file: declared secrets resolved; environment swept; hidden 0 declared, 0 environment, 0 by pattern; 0 too short to hide',
+      'masked in the file: declared secrets resolved; environment swept; hidden 0 declared, 0 environment, 0 by pattern; 2 too short to hide; question: declared tier only',
     ]);
     const start =
       "Refusing to export run '<run-id>': Realm does not know all of its declared secrets";
@@ -992,11 +1003,17 @@ describe(`${OPERATE_PAGE} — what the output hides`, () => {
     );
     claim(
       OPERATE_PAGE,
-      'Output that is piped or redirected reads as a log, so to see the full values, run the command on a terminal. In CI, the working folder is often an environment variable too (`GITHUB_WORKSPACE`, `CI_PROJECT_DIR`), so paths under it read `[REDACTED]/…` in the log and in the export file, until you name the variable in `REALM_NOT_SECRET`.',
+      "Output that is piped or redirected reads as a log, so to see the full values, run the command on a terminal. A variable whose value is the working folder is not treated as a secret: npm's `INIT_CWD` and `npm_config_local_prefix` under `npx`, and a CI runner's workspace variable (`GITHUB_WORKSPACE`, `CI_PROJECT_DIR`) when the job runs in that folder. A variable that names a different folder still is, so paths under it read `[REDACTED]/…` in the log, and in the export file when the folder is not under your home folder, until you name the variable in `REALM_NOT_SECRET`. The home folder stays hidden in a log, so a path under it reads `[REDACTED]/…` for the home folder's part only.",
     );
     claim(
       OPERATE_PAGE,
       "For a `realm mcp` that an MCP client starts, set `REALM_NOT_SECRET` in that client's settings for the server (its `env` block): the client starts the server with its own environment.",
+    );
+    // F2: the CHANGELOG's line, executed by the workspace runs below and by the six message sites
+    // (`source-canary-729.test.ts`, "F2 — the project folder prints whole under npx").
+    claim(
+      'CHANGELOG.md',
+      "Under `npx realm`, a log no longer hides the project folder: a variable whose value is the working directory (npm's `INIT_CWD` and `npm_config_local_prefix`, a CI runner's workspace variable) is not treated as a secret. The home folder stays hidden in a log.",
     );
     claim(
       OPERATE_PAGE,
@@ -1103,6 +1120,23 @@ describe(`${OPERATE_PAGE} — what the output hides`, () => {
             'file',
             setFor('file', { GITHUB_WORKSPACE: WS, REALM_NOT_SECRET: 'GITHUB_WORKSPACE' }),
           ),
+          // F2: the job runs IN the workspace — its variable holds the working folder, never a
+          // secret, on a log and in the file; run elsewhere, it still names another folder.
+          shown(
+            `${WS}/src`,
+            'log',
+            setFor('log', { GITHUB_WORKSPACE: WS }, undefined, undefined, WS),
+          ),
+          shown(
+            `${WS}/src`,
+            'file',
+            setFor('file', { GITHUB_WORKSPACE: WS }, undefined, undefined, WS),
+          ),
+          shown(
+            `${WS}/src`,
+            'log',
+            setFor('log', { GITHUB_WORKSPACE: WS }, undefined, undefined, '/ci/other-folder'),
+          ),
         ],
         clientPassesIt: 'REALM_NOT_SECRET' in clientEnv,
       }).toEqual({
@@ -1111,7 +1145,15 @@ describe(`${OPERATE_PAGE} — what the output hides`, () => {
         pipedIsLog: true,
         labelInLog: true,
         labelInMcpAndExport: ['fakeuser9x@box-0729', 'fakeuser9x@box-0729'],
-        workspace: ['[REDACTED]/src', `${WS}/src`, '[REDACTED]/src', `${WS}/src`],
+        workspace: [
+          '[REDACTED]/src',
+          `${WS}/src`,
+          '[REDACTED]/src',
+          `${WS}/src`,
+          `${WS}/src`,
+          `${WS}/src`,
+          '[REDACTED]/src',
+        ],
         clientPassesIt: false,
       });
     } finally {
@@ -2389,9 +2431,10 @@ describe('#729 PR-3 correction 4 — the pages this correction changes', () => {
       READING_PAGE,
       "Under `--accept-partial-disclosure`, where the values would have been withheld, `inspect` prints `Values shown on --accept-partial-disclosure (…)` first and, when the record shows a gate's question, the line ends `; question: shown with what is known (--accept-partial-disclosure)`.",
     );
+    // #879 (C2): the export paragraph's fourth sentence
     claim(
       READING_PAGE,
-      "Written with `--accept-partial-disclosure` where the run's manifest changed or could not be read, the question's clause reads `question: shown with what is known (--accept-partial-disclosure)` instead, and the line ends `; shown on --accept-partial-disclosure`; the file's own `disclosure` keeps `question: declared_only`.",
+      "When `--accept-partial-disclosure` wrote a run that `export` refuses without it, the line ends `; written on --accept-partial-disclosure (refused without it)`; where the run's manifest changed or could not be read, the question's clause before it reads `question: shown with what is known` instead, and the file's own `disclosure` keeps `question: declared_only`.",
     );
     claim(
       OPERATE_PAGE,
@@ -2415,13 +2458,18 @@ describe('#729 PR-3 correction 4 — the pages this correction changes', () => {
     const plain = cli(bare.home, ['run', 'inspect', bare.live, '--accept-partial-disclosure']);
     const receipt = plain.stdout.split('\n').find((l) => l.startsWith('Disclosure:')) ?? '';
     // (a) red when the words are not swapped under the flag, no first line names it, export's last
-    //     line keeps `declared tier only` beside the flag, the file's header changes, or a receipt
-    //     with no question names the flag or a question; (b) prints the first lines' heads, the last
-    //     clauses (realm's words), the header and booleans.
+    //     line keeps `declared tier only` beside the flag, names the flag twice or does not say the
+    //     run was refused without it (#879), the file's header changes, or a receipt with no
+    //     question names the flag or a question; (b) prints the first lines' heads, the last clauses
+    //     (realm's words), the flag's count in export's line, the header and booleans.
     expect({
       first: first(inspected.stdout),
       receipt: lastClause(inspected.stdout),
       exported: exported.stdout.trim().split('\n').at(-1)?.split('; ').slice(-2),
+      // #879: the export line names the flag once
+      exportedFlags:
+        (exported.stdout.trim().split('\n').at(-1) ?? '').split('--accept-partial-disclosure')
+          .length - 1,
       header,
       bareFirst: first(plain.stdout),
       bareReceipt: {
@@ -2432,14 +2480,188 @@ describe('#729 PR-3 correction 4 — the pages this correction changes', () => {
       first: 'Values shown on --accept-partial-disclosure (declared values changed)',
       receipt: 'question: shown with what is known (--accept-partial-disclosure).',
       exported: [
-        'question: shown with what is known (--accept-partial-disclosure)',
-        'shown on --accept-partial-disclosure',
+        'question: shown with what is known',
+        'written on --accept-partial-disclosure (refused without it)',
       ],
+      exportedFlags: 1,
       header: 'declared_only',
       bareFirst: 'Values shown on --accept-partial-disclosure (declared values changed)',
       bareReceipt: { flag: false, question: false },
     });
   }, 120_000);
+
+  describe("#879: the export's third line", () => {
+    /** Export's third line: its last printed line, without the two spaces before it. */
+    const thirdLine = (text: string): string => text.trim().split('\n').at(-1)?.trim() ?? '';
+    /** How many times the line names the flag (the issue's acceptance: once). */
+    const flagCount = (line: string): number =>
+      line.split('--accept-partial-disclosure').length - 1;
+
+    it('on the flag, the branches no other cell pins: a run with no question, and a run with no project, which export refuses without the flag', async () => {
+      // #879 (C2): (a) red when the CHANGELOG bullet or the page's version sentence loses its words;
+      //     (b) prints the sentence. This cell runs the opening and the last clause; the J-6 cell
+      //     above runs the question clause without the flag's name.
+      claim(
+        CHANGELOG,
+        "- **`realm run export`'s third line says what it counts, and names `--accept-partial-disclosure` once (issue #879).**",
+      );
+      claim(
+        CHANGELOG,
+        'It opens `masked in the file:` (it was `masked:`): its counts are what the file hides, not what the lines printed above it hide.',
+      );
+      claim(
+        CHANGELOG,
+        'When the flag wrote a run that export refuses without it, the line ends `; written on --accept-partial-disclosure (refused without it)`; it ended `; shown on --accept-partial-disclosure`, and a run with no project said nothing of the flag.',
+      );
+      claim(
+        CHANGELOG,
+        "Where the run's manifest changed or could not be read, a question's clause before it reads `question: shown with what is known`; it named the flag too.",
+      );
+      claim(
+        READING_PAGE,
+        'It was added after version 0.47.1; its opening, its question clause and its last clause changed after version 0.48.0.',
+      );
+      const ended = await c4Ended(base, 'gone', 'Held.');
+      const live = cli(ended.home, [
+        'run',
+        'export',
+        ended.live,
+        '--out',
+        join(base, '879-live.json'),
+        '--accept-partial-disclosure',
+      ]);
+      const none = await c3Run(base, 'none');
+      const noneOut = join(base, '879-none.json');
+      const refused = cli(none.home, ['run', 'export', none.runId, '--out', noneOut]);
+      const refusedWritten = existsSync(noneOut);
+      const accepted = cli(none.home, [
+        'run',
+        'export',
+        none.runId,
+        '--out',
+        noneOut,
+        '--accept-partial-disclosure',
+      ]);
+      // (a) red when a run the flag wrote does not end its line saying it was refused without it
+      //     (keyed on the cause, a run with no project loses the clause), names the flag twice, or
+      //     opens without `in the file`; a run with no project is not refused without the flag; or
+      //     a question-less run's line holds a question; (b) prints exit codes, whether the refused
+      //     export wrote a file, whether the refusal names the missing project, each third line
+      //     (realm's words and counts) and the flag's count in it.
+      expect({
+        live: [live.status, thirdLine(live.stdout), flagCount(thirdLine(live.stdout))],
+        noneRefused: [
+          refused.status,
+          refusedWritten,
+          refused.stderr.includes(
+            '— the run has no project (its workflow copy records no deployment root).',
+          ),
+        ],
+        noneAccepted: [
+          accepted.status,
+          thirdLine(accepted.stdout),
+          flagCount(thirdLine(accepted.stdout)),
+        ],
+      }).toEqual({
+        live: [
+          0,
+          'masked in the file: declared secrets partial (manifest changed); environment swept; hidden 0 declared, 0 environment, 0 by pattern; 0 too short to hide; written on --accept-partial-disclosure (refused without it)',
+          1,
+        ],
+        noneRefused: [1, false, true],
+        noneAccepted: [
+          0,
+          'masked in the file: declared secrets unknown (no manifest); environment swept; hidden 0 declared, 0 environment, 0 by pattern; 0 too short to hide; question: declared tier only; written on --accept-partial-disclosure (refused without it)',
+          1,
+        ],
+      });
+    }, 120_000);
+
+    it("on the flag, a run whose manifest could not be read: the question's clause shows what is known, and the line names the flag once", async () => {
+      const held = await c3Run(base, 'invalid');
+      const exported = cli(held.home, [
+        'run',
+        'export',
+        held.runId,
+        '--out',
+        join(base, '879-invalid.json'),
+        '--accept-partial-disclosure',
+      ]);
+      // #886 correction (K2): (a) red when `load_failed` drops out of the question clause's cause
+      //     (it then reads `question: declared tier only`), the opening or the last clause changes,
+      //     or the line names the flag more than once; (b) prints the exit code, the third line
+      //     (realm's words and counts) and the flag's count in it.
+      expect({
+        invalid: [
+          exported.status,
+          thirdLine(exported.stdout),
+          flagCount(thirdLine(exported.stdout)),
+        ],
+      }).toEqual({
+        invalid: [
+          0,
+          'masked in the file: declared secrets unknown (load failed); environment swept; hidden 0 declared, 0 environment, 0 by pattern; 0 too short to hide; question: shown with what is known; written on --accept-partial-disclosure (refused without it)',
+          1,
+        ],
+      });
+    }, 120_000);
+
+    it('"in the file": piped, the first line is masked as any printed line is and can hide a value the third line does not count', async () => {
+      // #879 (C2): (a) red when the page drops the sentence this cell runs; (b) prints it.
+      claim(
+        READING_PAGE,
+        'Piped or redirected, the first line is masked as any printed line is, so it can hide a value the third line does not count.',
+      );
+      const run = await c3Run(base, 'intact');
+      // not `base` (no path the run recorded holds it) and not the cwd (MA 1's F2 design would
+      // exempt a variable equal to the working directory)
+      const folder = mkdtempSync(join(tmpdir(), 'realm-879-out-'));
+      try {
+        const exported = pipedCli(
+          ['run', 'export', run.runId, '--out', folder],
+          { HOME: run.home, REALM_NOT_SECRET: 'HOME', REALM_TEST_879_DIR: folder },
+          base,
+        );
+        const lines = exported.stdout.trim().split('\n');
+        // #886 correction (K3): a failed export writes no file, and reading it unguarded throws a
+        // message holding the folder's path; so the cell carries whether the file was written and
+        // its count only — never the path, never a snippet of the file (-1: missing or not JSON).
+        const target = join(folder, `${run.runId}.realm.json`);
+        const written = existsSync(target);
+        const text = written ? readFileSync(target, 'utf8') : '';
+        let fileEnvironment = -1;
+        try {
+          const file = JSON.parse(text) as { disclosure: { hidden: { environment: number } } };
+          fileEnvironment = file.disclosure.hidden.environment;
+        } catch {
+          fileEnvironment = -1;
+        }
+        // (a) red when the export writes no file, the opening loses `in the file`, the first line
+        //     prints the folder's path whole, or the file counts or holds the path; (b) prints the
+        //     exit code, booleans (the file written, the first line masked, the path in the file),
+        //     the third line and the file's count — never the path.
+        expect({
+          code: exported.status,
+          written,
+          firstMasked:
+            (lines[0] ?? '').includes('[REDACTED]') && !(lines[0] ?? '').includes(folder),
+          third: thirdLine(exported.stdout),
+          fileEnvironment,
+          pathInFile: text.includes(folder),
+        }).toEqual({
+          code: 0,
+          written: true,
+          firstMasked: true,
+          third:
+            'masked in the file: declared secrets resolved; environment swept; hidden 6 declared, 0 environment, 0 by pattern; 0 too short to hide; question: declared tier only',
+          fileEnvironment: 0,
+          pathInFile: false,
+        });
+      } finally {
+        rmSync(folder, { recursive: true, force: true });
+      }
+    }, 120_000);
+  });
 
   it('a hash of a value the masking hid, or shaped, is shown as its type and size with it; where values print whole, so do their hashes (realm-run-reading.md, run-record-and-export.md, tools.md, the CHANGELOG); `(none to show)`', async () => {
     // #729 PR-3 correction 5 (J-6): `shown as its type and size`, never `hidden` (the marker).
