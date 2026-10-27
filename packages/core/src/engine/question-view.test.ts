@@ -120,16 +120,18 @@ describe('#729 PR-4 — the composer (read)', () => {
     ]).toEqual(['[deep]', '[]', '[3|{"k":1}]']);
   });
 
-  it('renderDisplay is linear: a template of `{{{{` and 4,000 spaces renders at once, left as it is', () => {
-    const template = `{{{{${' '.repeat(4000)}`;
+  it('renderDisplay is linear: `{{{{` and 4,000 spaces, and `{{{{|` 40,000 times, render at once, left as they are', () => {
+    const spaces = `{{{{${' '.repeat(4000)}`;
+    const braces = '{{{{|'.repeat(40_000);
     const started = performance.now();
-    const out = renderDisplay(template, {});
-    // (a) red when the placeholder pattern lets two quantifiers match the same spaces again (about
-    //     22 s here: the cell's timeout); (b) prints the length and the time bound's boolean.
-    expect({ same: out === template, fast: performance.now() - started < 1000 }).toEqual({
-      same: true,
-      fast: true,
-    });
+    const out = [renderDisplay(spaces, {}), renderDisplay(braces, {})];
+    // (a) red when the placeholder pattern lets quantifiers match the same spaces again (about 22 s
+    //     on the first), or admits `{` inside (quadratic: several seconds on the second); (b) prints
+    //     booleans.
+    expect({
+      same: out[0] === spaces && out[1] === braces,
+      fast: performance.now() - started < 1000,
+    }).toEqual({ same: true, fast: true });
   });
 
   it('an old gate (control): a stored question past the budget with no sentence is shown as stored; `cut` from the preview fit only', () => {
