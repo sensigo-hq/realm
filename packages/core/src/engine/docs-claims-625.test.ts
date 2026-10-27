@@ -550,7 +550,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
   });
 
   it.each(['settleStep', 'legacy update'] as const)(
-    'round 22 finding 10 (decided in round 23): the question from the step’s prompt is rendered from the record alone — the gate-open write (%s) carries the step’s evidence entry, its output equal to the gate’s preview, so the prompt’s question equals the reply’s gate.display',
+    'round 22 finding 10 (decided in round 23): the question from the step’s prompt is rendered from the record alone — the gate-open write (%s) carries the step’s evidence entry, its output equal to the gate’s preview; #729 PR-4 (f): the reply carries no gate.display for a gate with no message',
     async (path) => {
       const d: WorkflowDefinition = {
         id: `dc-f10-${path === 'settleStep' ? 'settle' : 'legacy'}`,
