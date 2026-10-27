@@ -1003,7 +1003,7 @@ describe(`${OPERATE_PAGE} — what the output hides`, () => {
     );
     claim(
       OPERATE_PAGE,
-      "Output that is piped or redirected reads as a log, so to see the full values, run the command on a terminal. A variable whose value is the working folder is not treated as a secret: npm's `INIT_CWD` and `npm_config_local_prefix` under `npx`, and a CI runner's workspace variable (`GITHUB_WORKSPACE`, `CI_PROJECT_DIR`) when the job runs in that folder. A variable that names a different folder still is, so paths under it read `[REDACTED]/…` in the log and in the export file until you name the variable in `REALM_NOT_SECRET`. The home folder stays hidden in a log, so a path under it reads `[REDACTED]/…` for the home folder's part only.",
+      "Output that is piped or redirected reads as a log, so to see the full values, run the command on a terminal. A variable whose value is the working folder is not treated as a secret: npm's `INIT_CWD` and `npm_config_local_prefix` under `npx`, and a CI runner's workspace variable (`GITHUB_WORKSPACE`, `CI_PROJECT_DIR`) when the job runs in that folder. A variable that names a different folder still is, so paths under it read `[REDACTED]/…` in the log, and in the export file when the folder is not under your home folder, until you name the variable in `REALM_NOT_SECRET`. The home folder stays hidden in a log, so a path under it reads `[REDACTED]/…` for the home folder's part only.",
     );
     claim(
       OPERATE_PAGE,
