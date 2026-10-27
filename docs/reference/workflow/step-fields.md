@@ -301,6 +301,8 @@ steps:
 ```text
 Valid: every-step-field v1 (6 steps)
 Extensions: ./registry.mjs (adapters: 0, handlers: 2, processors: 0)
+ℹ Step 'summarise': structured_output caveat — this step declares tools — strict applies to tool-call arguments here, not to the step output; tool schemas are third-party and are assessed per tool at runtime (a tool whose schema is not strict-compatible simply rides unconstrained), and this step output stays post-hoc validated by realm
+cache: summarise — uses tools: realm sends no cache marker on a tools step, and its fixed part carries each tool's schema, known only when the server answers: not judged
 ```
 
 The two advisories are about choices this example makes in order to show every field: `idempotent` beside a finalizer, and both schemas on one step.

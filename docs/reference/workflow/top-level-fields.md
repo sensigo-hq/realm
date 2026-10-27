@@ -419,11 +419,16 @@ steps:
       verdict: context.resources.review.verdict
 ```
 
-`realm workflow validate ./` prints:
+`realm workflow validate ./` prints the following. The `reviewer` profile it was run with, `personas/reviewer.md`, holds one line: `You are a reviewer.`
 
 ```text
 Valid: review-note v1 (4 steps) — 1 extension key carried, never read by realm: x-owner
   Reads a note, has it reviewed, and files the result.
 Extensions: ./registry.mjs (adapters: 0, handlers: 1, processors: 0)
 ℹ 2 steps ready for structured_output: strict — run 'realm workflow validate --explain' for detail (REALM_NO_NUDGE=1 to silence).
+cache: spelling_look — anthropic 646 chars ≈ 350–789 tokens, with Anthropic's tool text · openai 333 chars ≈ 67–133 tokens (estimates: 2.5–5 chars/token, with margin) — anthropic: shares its first 177 chars with review: the schemas differ
+cache: review — anthropic 672 chars ≈ 355–799 tokens, with Anthropic's tool text · openai 357 chars ≈ 72–143 tokens (estimates: 2.5–5 chars/token, with margin) — anthropic: shares its first 177 chars with spelling_look: the schemas differ
+anthropic: on steps without tools, realm marks the fixed part for caching unless the drive's --prompt-cache turns it off; a fixed part below the model's minimum is sent uncached, silently
+openai: realm sends no cache marker; the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)
+anthropic: the cache is kept per workspace (per organization on Bedrock and Google Cloud), as Anthropic's page said on 2026-10-09: drives from different workspaces each pay the write
 ```

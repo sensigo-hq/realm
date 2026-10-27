@@ -89,6 +89,10 @@ It prints:
 
 ```text
 Registered: my-first v1 (2 steps)
+cache: step_one — anthropic 588 chars ≈ 338–765 tokens, with Anthropic's tool text · openai 304 chars ≈ 61–122 tokens (estimates: 2.5–5 chars/token, with margin)
+anthropic: on steps without tools, realm marks the fixed part for caching unless the drive's --prompt-cache turns it off; a fixed part below the model's minimum is sent uncached, silently
+openai: realm sends no cache marker; the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)
+anthropic: the cache is kept per workspace (per organization on Bedrock and Google Cloud), as Anthropic's page said on 2026-10-09: drives from different workspaces each pay the write
 ```
 
 ## 4. Run it, and give a wrong answer
