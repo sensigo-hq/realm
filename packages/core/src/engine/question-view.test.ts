@@ -466,7 +466,9 @@ describe("#729 PR-4 — the mint under PR-3's law (Q7)", () => {
       expect({
         view: JSON.stringify(again) === JSON.stringify(m.view),
         digest: viewDigest({ run_id: 'r-1', gate_id: 'g-1', step: 'review' }, again) === m.digest,
-      }).toEqual({ view: true, digest: true });
+        // The read shows the stored question as it is: never a second sentence appended.
+        asStored: again.question_text === m.resolved_message,
+      }).toEqual({ view: true, digest: true, asStored: true });
     }
   });
 

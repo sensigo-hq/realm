@@ -1576,7 +1576,10 @@ describe('#729 PR-4 — the asked person in Slack: the opening post', () => {
       const gate = await minted(x);
       const view = slackView(gate);
       const blocks = blockOf(gate);
-      const expected = [slackEscape(view.question_text), slackEscape(view.preview_text)]
+      // Escaped independently of the renderer's table (the fixture holds no backtick or bidi).
+      const esc = (t: string) =>
+        t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const expected = [esc(view.question_text), esc(view.preview_text)]
         .filter((part) => part !== '')
         .join('\n\n');
       results.push({

@@ -93,6 +93,7 @@ async function opened(
   x: string,
   set: DisclosureSet | undefined,
   display?: string,
+  more: Record<string, unknown> = {},
 ): Promise<PendingGate> {
   const def = {
     id: 'docs729',
@@ -110,7 +111,11 @@ async function opened(
     },
   } as unknown as WorkflowDefinition;
   const store = new JsonFileStore(mkdtempSync(join(tmpdir(), 'realm-docs-729-')));
-  const { run } = await store.create({ workflowId: 'docs729', workflowVersion: 1, params: { x } });
+  const { run } = await store.create({
+    workflowId: 'docs729',
+    workflowVersion: 1,
+    params: { x, ...more },
+  });
   await executeStep(store, def, {
     runId: run.id,
     command: 'review',
@@ -389,9 +394,16 @@ describe(`${GATES}, ${GUIDE} — the question is minted once, masked, and cut to
 
   it('a declared value anywhere in the message: the values are not cut one by one, so no part of it is left', async () => {
     const set = setOf({ X: FAKE });
-    const pad = '.'.repeat(400);
+    // The value straddles the first substitution's tail and the fixed text; the second
+    // substitution makes the message overflow, so the per-value cuts would run without the check.
     const stored = (
-      await opened(`{{ run.params.x }}${FAKE.slice(-6)} and more`, pad + FAKE.slice(0, -6), set)
+      await opened(
+        `{{ run.params.x }}${FAKE.slice(-6)} and more {{ run.params.y }}`,
+        '.'.repeat(390) + FAKE.slice(0, -6),
+        set,
+        undefined,
+        { y: 'z'.repeat(300) },
+      )
     ).resolved_message!;
     // (a) red when the per-value cut runs anyway (the fixed tail of the value stands in clear); (b)
     //     prints booleans.
