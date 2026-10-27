@@ -13,7 +13,6 @@ import {
   cannotGoOnHere,
   describeClaimHolder,
   composeWaysAt,
-  respondWayOfGate,
   sentenceEnd,
   deriveRunPhase as derivePhaseOf,
   findCapabilityBlockedSteps,
@@ -82,7 +81,6 @@ import {
   cannotRunEntries,
   cannotRunWayOut,
   cliCommandOf,
-  respondLines,
   stopReasons,
   writerHost,
 } from '../commands/ways-renderer.js';
@@ -95,7 +93,7 @@ import {
   writerMode,
   writerSetFor,
 } from '../output/writer.js';
-import { cutWayLine, viewSetFor } from '../lib/holder-render.js';
+import { cutWayLine, terminalRespondLines, viewSetFor } from '../lib/holder-render.js';
 import {
   recordDriveFailure,
   buildEntry,
@@ -723,11 +721,8 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             // Terminal fallback: print each choice as a command and poll. #729 PR-0 (Part C): the
             // answer commands are the CLI renderer's, from the gate's `respond` way.
             // #729 PR-3 (L-2): the writer's context only inside the print call.
-            const answerWay = respondWayOfGate(runId, gate);
-            respondLines(answerWay).forEach(({ choice }, i) => {
-              const label = choice.charAt(0).toUpperCase() + choice.slice(1);
-              console.log(`   ${label}: ${respondLines(answerWay, writerCtx())[i]!.command}`);
-            });
+            // #729 PR-4: the lines are shared with the Slack notifier's fallback (one rendering).
+            console.log(terminalRespondLines(runId, gate, writerCtx()).join('\n'));
             // issue #291 (Deliverable 4e, Amendment 4): the ATTENDING-PROCESS enactment timer —
             // this IS "the non-Slack agent poll loop" the design names as its own timer host. A
             // no-op for a finding-only/non-expiring gate.

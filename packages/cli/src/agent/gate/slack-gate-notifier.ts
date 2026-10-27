@@ -25,10 +25,11 @@ import {
 } from '@sensigo/realm';
 import { stripMarks, withoutMarks, writerCtx, writerSetFor } from '../../output/writer.js';
 import { cliCommandOf } from '../../commands/ways-renderer.js';
-import { cutWayLine } from '../../lib/holder-render.js';
+import { cutWayLine, terminalRespondLines } from '../../lib/holder-render.js';
 import type { LlmProvider } from '../providers/llm-provider.js';
 import { startSlackGateServer } from './slack-gate-server.js';
 import { connectSocketMode } from './slack-socket-client.js';
+import { deadlineSignal, readWithin, SLACK_CALL_DEADLINE_MS } from './slack-call.js';
 import { scheduleGateExpiryTimer } from './gate-expiry-timer.js';
 
 /**
@@ -53,20 +54,110 @@ function slackSet(): DisclosureSet {
   );
 }
 
-/** The ONE send to Slack: a JSON body, with no span mark in it. */
+/**
+ * #729 PR-4 (02 §Transport (2)): what Slack said to one post — read from the HTTP status, and for the
+ * Web API from its `ok`/`error` (Slack answers a Web API refusal with HTTP 200 and `ok: false`).
+ */
+export type SlackVerdict =
+  | { readonly ok: true; readonly ts?: string }
+  | { readonly ok: false; readonly cause: 'timeout' }
+  | { readonly ok: false; readonly cause: 'refused'; readonly reason: string }
+  | { readonly ok: false; readonly cause: 'error'; readonly error: unknown };
+
+/** The operator's line for a post Slack did not take, naming the cause — `undefined` for a thrown
+ *  error, which each caller words as it always has. */
+export function slackFailureLine(verdict: SlackVerdict): string | undefined {
+  if (verdict.ok) return undefined;
+  if (verdict.cause === 'timeout') {
+    return `Slack did not answer within ${SLACK_CALL_DEADLINE_MS / 1000} s`;
+  }
+  if (verdict.cause === 'refused') return `Slack refused the post: ${verdict.reason}`;
+  return undefined;
+}
+
+type SlackCall = { readonly verdict: SlackVerdict } | { readonly retryAfterS: number | undefined };
+
+/** Seconds from a `Retry-After` header in its seconds form; `undefined` otherwise. */
+function retryAfterOf(response: Response): number | undefined {
+  const raw = response.headers?.get('retry-after') ?? null;
+  if (raw === null || !/^\d+$/.test(raw.trim())) return undefined;
+  return Number(raw.trim());
+}
+
+/** One call under its own deadline, the body read included; a rate limit is returned, not judged. */
+async function slackCall(
+  url: string,
+  body: Record<string, unknown>,
+  botToken: string | undefined,
+): Promise<SlackCall> {
+  const deadline = deadlineSignal(SLACK_CALL_DEADLINE_MS);
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(botToken !== undefined ? { Authorization: `Bearer ${botToken}` } : {}),
+      },
+      body: stripMarks(JSON.stringify(body)),
+      signal: deadline.signal,
+    });
+    if (response.status === 429) return { retryAfterS: retryAfterOf(response) };
+    if (!response.ok) {
+      const text = (await readWithin(deadline.signal, () => response.text())).trim();
+      return {
+        verdict: {
+          ok: false,
+          cause: 'refused',
+          reason: text !== '' ? text : `HTTP ${response.status}`,
+        },
+      };
+    }
+    // A webhook answers with its status alone; the Web API with `ok`.
+    if (botToken === undefined) return { verdict: { ok: true } };
+    const data = (await readWithin(deadline.signal, () => response.json())) as {
+      ok?: boolean;
+      ts?: string;
+      error?: string;
+    };
+    if (data.ok === true) {
+      return { verdict: { ok: true, ...(data.ts !== undefined ? { ts: data.ts } : {}) } };
+    }
+    if (data.error === 'ratelimited') return { retryAfterS: retryAfterOf(response) };
+    return { verdict: { ok: false, cause: 'refused', reason: data.error ?? 'unknown_error' } };
+  } catch (err) {
+    return {
+      verdict: deadline.signal.aborted
+        ? { ok: false, cause: 'timeout' }
+        : { ok: false, cause: 'error', error: err },
+    };
+  } finally {
+    deadline.clear();
+  }
+}
+
+/**
+ * The ONE send to Slack: a JSON body, with no span mark in it, under the call deadline, judged by
+ * {@link SlackVerdict}. A rate limit whose `Retry-After` is within the deadline is retried ONCE, as
+ * a second call with its own deadline; any other rate limit is a refusal (`ratelimited`). Never
+ * throws.
+ */
 async function sendToSlack(
   url: string,
   body: Record<string, unknown>,
   botToken?: string,
-): Promise<Response> {
-  return fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(botToken !== undefined ? { Authorization: `Bearer ${botToken}` } : {}),
-    },
-    body: stripMarks(JSON.stringify(body)),
-  });
+): Promise<SlackVerdict> {
+  const first = await slackCall(url, body, botToken);
+  if ('verdict' in first) return first.verdict;
+  const wait = first.retryAfterS;
+  if (wait === undefined || wait * 1000 > SLACK_CALL_DEADLINE_MS) {
+    return { ok: false, cause: 'refused', reason: 'ratelimited' };
+  }
+  console.warn(`  ⚠  Slack asked to wait ${wait} s before the post; retrying once`);
+  await new Promise<void>((resolve) => setTimeout(resolve, wait * 1000));
+  const second = await slackCall(url, body, botToken);
+  return 'verdict' in second
+    ? second.verdict
+    : { ok: false, cause: 'refused', reason: 'ratelimited' };
 }
 
 /** A Slack section block's text limit, in characters (Slack's own; the derivation cell beside this
@@ -261,25 +352,30 @@ function openingNotice(gate: PendingGate, runId: string, display?: string): Pers
 }
 
 /**
- * POSTs a gate-waiting notification to a Slack Incoming Webhook.
- * Failure is warned but does not abort the workflow run.
- * Exported for testing.
+ * POSTs a gate-waiting notification to a Slack Incoming Webhook. A post Slack did not take is
+ * reported with its cause (#729 PR-4, 02 §Transport (3)) and does not abort the workflow run.
+ * Returns whether the post stood. Exported for testing.
  */
 export async function postGateNotificationToSlack(
   webhookUrl: string,
   gate: PendingGate,
   runId: string,
   display?: string,
-): Promise<void> {
+): Promise<boolean> {
   // #729 PR-4 (02): the `question_opened` notice, rendered for a webhook (the route from a terminal).
   const body = renderSlack(openingNotice(gate, runId, display), { mode: 'webhook' });
-  try {
-    await sendToSlack(webhookUrl, body);
-  } catch (err) {
-    console.warn(
-      `  ⚠  Slack notification failed: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
+  const verdict = await sendToSlack(webhookUrl, body);
+  if (verdict.ok) return true;
+  console.warn(
+    `  ⚠  ${slackFailureLine(verdict) ?? `Slack notification failed: ${errorText(verdict)}`}`,
+  );
+  return false;
+}
+
+/** A thrown error's message, for the callers that word it themselves. */
+function errorText(verdict: SlackVerdict): string {
+  if (verdict.ok || verdict.cause !== 'error') return '';
+  return verdict.error instanceof Error ? verdict.error.message : String(verdict.error);
 }
 
 /**
@@ -296,20 +392,18 @@ export async function postGateViaApi(
 ): Promise<string | undefined> {
   // #729 PR-4 (02): the `question_opened` notice, rendered for a bot (the route is the thread).
   const { text, blocks } = renderSlack(openingNotice(gate, runId, display), { mode: 'bot' });
-  try {
-    const response = await sendToSlack(
-      'https://slack.com/api/chat.postMessage',
-      { channel: channelId, text, blocks },
-      botToken,
-    );
-    const data = (await response.json()) as { ok: boolean; ts?: string };
-    return data.ok ? data.ts : undefined;
-  } catch (err) {
-    console.warn(
-      `Gate API notification failed: ${err instanceof Error ? err.message : String(err)}`,
-    );
-    return undefined;
-  }
+  const verdict = await sendToSlack(
+    'https://slack.com/api/chat.postMessage',
+    { channel: channelId, text, blocks },
+    botToken,
+  );
+  if (verdict.ok) return verdict.ts;
+  // #729 PR-4 (02 §Transport (3)): the cause on this console; the caller prints the person's way.
+  const line = slackFailureLine(verdict);
+  console.warn(
+    line !== undefined ? `  ⚠  ${line}` : `Gate API notification failed: ${errorText(verdict)}`,
+  );
+  return undefined;
 }
 
 /**
@@ -323,20 +417,19 @@ export async function postSlackReply(
   threadTs: string,
   text: string,
 ): Promise<void> {
-  try {
-    // A thread reply is walked with every tier: it can carry an answer's words and a run's ending.
-    await sendToSlack(
-      'https://slack.com/api/chat.postMessage',
-      {
-        channel: channelId,
-        thread_ts: threadTs,
-        text: disclose(stripMarks(text), slackSet(), 'all').text,
-      },
-      botToken,
-    );
-  } catch (err) {
-    console.warn(`Slack reply failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
+  // A thread reply is walked with every tier: it can carry an answer's words and a run's ending.
+  const verdict = await sendToSlack(
+    'https://slack.com/api/chat.postMessage',
+    {
+      channel: channelId,
+      thread_ts: threadTs,
+      text: disclose(stripMarks(text), slackSet(), 'all').text,
+    },
+    botToken,
+  );
+  if (verdict.ok) return;
+  const line = slackFailureLine(verdict);
+  console.warn(line !== undefined ? `  ⚠  ${line}` : `Slack reply failed: ${errorText(verdict)}`);
 }
 
 /**
@@ -536,13 +629,17 @@ export interface BidirectionalGateParams {
  * Exported for testing.
  */
 /**
- * Bounded ceiling for the in-flight candidate drain in {@link handleBidirectionalGate}'s finally.
- * `postSlackReply`'s fetch has no signal/timeout, so an unbounded drain would stall runAgent on a
- * hung Slack. 2s comfortably covers a healthy postSlackReply flush (~100-300ms); on a hung Slack +
- * run-completing gate it exits after 2s with the same reply drop as today (the drop is unchanged,
- * only the latency ceiling is added — never a stall).
+ * Bounded ceiling for the in-flight candidate drain in {@link handleBidirectionalGate}'s finally and
+ * the webhook loop's closed post. Each Slack call has its own deadline (`SLACK_CALL_DEADLINE_MS`,
+ * 30 s), far longer than a run should wait for a thread reply. 2s comfortably covers a healthy
+ * postSlackReply flush (~100-300ms); on a hung Slack + run-completing gate it exits after 2s and the
+ * operator is told the post was not delivered (#729 PR-4) — never a stall.
  */
 const DRAIN_TIMEOUT_MS = 2000;
+
+/** #729 PR-4 (02 §Transport (4)): the operator's line when a thread post outlives the drain bound —
+ *  it claims nothing about the run (a closed gate may have ended it). */
+const THREAD_POST_UNDELIVERED = `Slack thread post not delivered within ${DRAIN_TIMEOUT_MS / 1000} s; the question is closed`;
 
 export async function handleBidirectionalGate(params: BidirectionalGateParams): Promise<void> {
   const {
@@ -792,11 +889,11 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
     );
   }
 
-  // Notify when neither Events nor polling can be used — no thread anchor available.
+  // #729 PR-4 (02 §Transport (3)): no thread anchor means the opening post failed (its cause is
+  // already on this console) — the person's way to answer on the terminal is printed, as `realm agent`
+  // prints it when no handler attends the gate; the expiry timer and the poll below still run.
   if (gateThreadTs === undefined) {
-    console.log(
-      '  ℹ  Bidirectional Slack resolution unavailable (no thread anchor). Use terminal command shown above.',
-    );
+    console.log(terminalRespondLines(runId, gate, writerCtx()).join('\n'));
   }
 
   // Start reminder/escalation timers if we have a thread anchor.
@@ -863,12 +960,17 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
     // processCandidate calls abort() only AFTER awaiting postSlackReply, so by the time the poll
     // loop breaks the reply has flushed); it waits (≤2s) only when a reply is genuinely still in
     // flight. Candidate-scoped: reminder/escalation replies stay best-effort (cleared on resolve).
+    // #729 PR-4 (02 §Transport (4)): when the bound fires, the operator is told — once.
     let drainTimer: ReturnType<typeof setTimeout>;
-    const bound = new Promise<void>((resolve) => {
-      drainTimer = setTimeout(resolve, DRAIN_TIMEOUT_MS);
+    const bound = new Promise<'bound'>((resolve) => {
+      drainTimer = setTimeout(() => resolve('bound'), DRAIN_TIMEOUT_MS);
     });
     try {
-      await Promise.race([Promise.allSettled([...inFlight]).then(() => undefined), bound]);
+      const drained = await Promise.race([
+        Promise.allSettled([...inFlight]).then(() => 'drained' as const),
+        bound,
+      ]);
+      if (drained === 'bound') console.warn(`  ⚠  ${THREAD_POST_UNDELIVERED}`);
     } finally {
       clearTimeout(drainTimer!);
     }
@@ -985,12 +1087,17 @@ export function createSlackGateHandler(
       });
     } else if (config.webhookUrl !== undefined) {
       // One-way webhook + inline poll loop (avoids circular dependency with run-agent.ts).
-      await postGateNotificationToSlack(
+      const posted = await postGateNotificationToSlack(
         config.webhookUrl,
         gate,
         runId,
         config.definition.steps[gate.step_name]?.display,
       );
+      // #729 PR-4 (02 §Transport (3)): a post Slack did not take (its cause already printed) — the
+      // person's way to answer on the terminal, as `realm agent` prints it with no handler.
+      if (!posted) {
+        console.log(terminalRespondLines(runId, gate, writerCtx()).join('\n'));
+      }
       console.log('   Waiting for approval...');
       const intervalMs = config.pollIntervalMs ?? 3000;
       for (;;) {
@@ -1000,28 +1107,31 @@ export function createSlackGateHandler(
         if (run.pending_gate === undefined || run.pending_gate.gate_id !== gate.gate_id) break;
       }
       // #729 PR-4 (02): a webhook takes no answer, so the question always closed elsewhere — the
-      // channel is told how, walked at every tier as a thread reply is.
-      const closed = await closedNotice(config.store, runId, gate);
+      // channel is told how, walked at every tier as a thread reply is (not when the channel was
+      // never asked: the opening post failed). Awaited under the drain bound, as the bot path's.
+      const closed = posted ? await closedNotice(config.store, runId, gate) : undefined;
       if (closed !== undefined) {
-        // Best effort, bounded as the bot path's drain is: a hung Slack never holds the run.
         let bound: ReturnType<typeof setTimeout> | undefined;
         try {
-          await Promise.race([
+          const sent = await Promise.race([
             sendToSlack(config.webhookUrl, {
               text: disclose(
                 stripMarks(renderSlack(closed, { mode: 'webhook' }).text),
                 slackSet(),
                 'all',
               ).text,
+            }).then((verdict) => {
+              if (!verdict.ok) {
+                const line = slackFailureLine(verdict);
+                console.warn(`  ⚠  ${line ?? `Slack notification failed: ${errorText(verdict)}`}`);
+              }
+              return 'sent' as const;
             }),
-            new Promise<void>((resolve) => {
-              bound = setTimeout(resolve, DRAIN_TIMEOUT_MS);
+            new Promise<'bound'>((resolve) => {
+              bound = setTimeout(() => resolve('bound'), DRAIN_TIMEOUT_MS);
             }),
           ]);
-        } catch (err) {
-          console.warn(
-            `  ⚠  Slack notification failed: ${err instanceof Error ? err.message : String(err)}`,
-          );
+          if (sent === 'bound') console.warn(`  ⚠  ${THREAD_POST_UNDELIVERED}`);
         } finally {
           clearTimeout(bound);
         }

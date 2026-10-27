@@ -16,6 +16,7 @@ import {
   resumeWay,
   shellWord,
   buildDisclosureSet,
+  respondWayOfGate,
   type DisclosureAudience,
   type DisclosureSet,
   type InspectWay,
@@ -29,10 +30,11 @@ import type {
   ClaimProofAbsentCause,
   GateClaimVerdict,
   NotRecordedKind,
+  PendingGate,
   RunRecord,
 } from '@sensigo/realm';
 import { PLAIN, RUN_PHASE_WORDS, writerSetFor, type RenderCtx } from '../output/writer.js';
-import { cliCommandOf } from '../commands/ways-renderer.js';
+import { cliCommandOf, respondLines } from '../commands/ways-renderer.js';
 
 /**
  * The one phrase for a recorded name that cannot be printed — a control character in it, or a value
@@ -523,6 +525,20 @@ export function viewSetFor(audience: DisclosureAudience): DisclosureSet {
 export function cutWayLine(runId: string, ctx: RenderCtx = PLAIN): string {
   const way: InspectWay = { verb: 'inspect', conditions: [], run_id: runId };
   return `The step's whole output: ${cliCommandOf(way, undefined, { driveFlags: '', ctx })!}`;
+}
+
+/**
+ * #729 PR-4 (02 §Transport (3)): the person's way to answer a gate on the terminal — one command per
+ * choice from the gate's `respond` way, as `realm agent` prints it when no handler attends the gate
+ * and when a Slack post failed. The writer's context is the caller's, passed inside its print call.
+ */
+export function terminalRespondLines(runId: string, gate: PendingGate, ctx: RenderCtx): string[] {
+  const answerWay = respondWayOfGate(runId, gate);
+  const commands = respondLines(answerWay, ctx);
+  return respondLines(answerWay).map(({ choice }, i) => {
+    const label = choice.charAt(0).toUpperCase() + choice.slice(1);
+    return `   ${label}: ${commands[i]!.command}`;
+  });
 }
 
 /**
