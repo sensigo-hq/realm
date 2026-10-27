@@ -57,22 +57,16 @@ function mint(
 ) {
   const set = 'set' in opts ? opts.set : setFor('private');
   const substitutions = template !== undefined ? mintSubstitutions(template, set) : undefined;
-  const message =
-    template !== undefined
-      ? renderTemplate(
-          template,
-          { evidenceByStep: {}, runParams: params },
-          {
-            strict: true,
-            ...(substitutions?.onSubstitution !== undefined
-              ? { onSubstitution: substitutions.onSubstitution }
-              : {}),
-          },
-        )
-      : undefined;
+  const render = (onSubstitution?: (rendered: string, path: string) => string) =>
+    renderTemplate(
+      template!,
+      { evidenceByStep: {}, runParams: params },
+      { strict: true, ...(onSubstitution !== undefined ? { onSubstitution } : {}) },
+    );
+  const message = template !== undefined ? render(substitutions?.onSubstitution) : undefined;
   return mintQuestionView({
     message,
-    ...(substitutions !== undefined ? { substitutions } : {}),
+    ...(substitutions !== undefined ? { substitutions, rerender: render } : {}),
     preview,
     choices: ['approve', 'reject'],
     ...(opts.display !== undefined ? { display: opts.display } : {}),
@@ -169,21 +163,20 @@ describe('#729 PR-4 — the budget (the mint)', () => {
     }).toEqual({ fixed: true, markers: 2, sentence: true, cut: true, within: true, stored: true });
   });
 
-  it('(b) counts a filtered placeholder: `{{ x | truncate: 5 }}` and `{{ y }}` are two, so `y` gets half the room', () => {
+  it('(b) counts a filtered placeholder: `{{ x | truncate: 5 }}` is a substitution, so the fixed text is 0 and `y` takes the room less `x`’s rendering', () => {
     const template = '{{ run.params.x | truncate: 5 }}{{ run.params.y }}';
-    const m = mint(template, { x: 'xxxxxxxx', y: 'y'.repeat(5000) }, { summary: 's' });
+    const preview = { summary: 's' };
+    const m = mint(template, { x: 'xxxxxxxx', y: 'y'.repeat(5000) }, preview);
     const shown = Number(
       /…\[cut at mint: (\d+) of 5000 characters\]/.exec(m.resolved_message!)![1],
     );
-    const reserve = 2 + CUT_SENTENCE(Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER).length;
-    const share = Math.floor((VIEW_BUDGET - reserve) / 2);
-    // (a) red when the count uses a regex that misses the filtered placeholder (n = 1: y's share
-    //     doubles); (b) prints the shown count and the share.
-    expect({ shown, under: shown < share, overHalf: shown > share - 60 }).toEqual({
-      shown,
-      under: true,
-      overHalf: true,
-    });
+    const x = 'xxxxx…'.length; // truncate keeps 5 and appends its ellipsis
+    const total = x + 5000 + JSON.stringify(preview, null, 2).length;
+    const room = VIEW_BUDGET - (2 + CUT_SENTENCE(total, total).length);
+    const expected = room - x - '…[cut at mint: 5000 of 5000 characters]'.length;
+    // (a) red when the fixed text is counted with a regex that misses the filtered placeholder (its
+    //     32 characters counted as fixed: y's cap 32 smaller); (b) prints the two counts.
+    expect({ shown, expected }).toEqual({ shown: expected, expected });
   });
 
   it('(b) leaves refusal intact: an unresolved placeholder never passes the hook', () => {
@@ -276,6 +269,104 @@ describe('#729 PR-4 — the budget (the mint)', () => {
     expect({ question: m.resolved_message, cut: m.view.cut }).toEqual({
       question: 'Ship 1.2.3?',
       cut: undefined,
+    });
+  });
+
+  describe('(b) fires only on overflow, water-filled (rev 8)', () => {
+    // 200 fixed characters around two substitutions; the preview `{}` reads `(no output)`.
+    const template =
+      'F'.repeat(100) + '{{ run.params.a }}' + 'G'.repeat(100) + '{{ run.params.b }}';
+    const marker = (total: number) => `…[cut at mint: ${total} of ${total} characters]`;
+    const capFor = (lengths: number[]) => {
+      const total = 200 + lengths[0]! + lengths[1]! + '(no output)'.length;
+      return VIEW_BUDGET - (2 + CUT_SENTENCE(total, total).length) - 200;
+    };
+
+    it('300 + 40 + 200 fixed = 540 fits: nothing cut, no marker, no sentence (a flat share of 200 would cut the 300)', () => {
+      const m = mint(template, { a: 'a'.repeat(300), b: 'b'.repeat(40) }, {});
+      // (a) red when (b) cuts a message that fits (the flat share restored); (b) prints booleans
+      //     and the cut.
+      expect({
+        whole:
+          m.resolved_message ===
+          'F'.repeat(100) + 'a'.repeat(300) + 'G'.repeat(100) + 'b'.repeat(40),
+        cut: m.view.cut,
+      }).toEqual({ whole: true, cut: undefined });
+    });
+
+    it('500 + 40 + 200 fixed = 740 overflows: the 40 kept whole, the 500 cut to the room the 40 leaves', () => {
+      const m = mint(template, { a: 'a'.repeat(500), b: 'b'.repeat(40) }, {});
+      const q = m.resolved_message!;
+      const cap = capFor([500, 40]) - 40;
+      const kept = q.slice(100, q.indexOf('G'));
+      // (a) red when the long value is cut to the even share instead (half the room: the 40 does not
+      //     show it, being under either share); (b) prints lengths and booleans.
+      expect({
+        fortyWhole: q.includes('G'.repeat(100) + 'b'.repeat(40)),
+        longLength: kept.length,
+        longMarker: kept.endsWith(marker(500).replace('500 of', `${cap - marker(500).length} of`)),
+        sentence: endsWithCutSentence(q),
+      }).toEqual({ fortyWhole: true, longLength: cap, longMarker: true, sentence: true });
+    });
+
+    it('two values of 500: each cut to the even share (the flat case)', () => {
+      const m = mint(template, { a: 'a'.repeat(500), b: 'b'.repeat(500) }, {});
+      const even = Math.floor(capFor([500, 500]) / 2);
+      const shown = [
+        ...m.resolved_message!.matchAll(/…\[cut at mint: (\d+) of 500 characters\]/g),
+      ].map((x) => Number(x[1]));
+      // (a) red when the shares are not even for two equal values; (b) prints the shown counts.
+      expect(shown).toEqual([even - marker(500).length, even - marker(500).length]);
+    });
+  });
+
+  describe('no fragment survives a cut: the uncut assembly is checked first (rev 8, item 18)', () => {
+    const pad = '.'.repeat(400);
+    const fragmentFree = (q: string) =>
+      [FAKE.slice(0, 8), FAKE.slice(-8), FAKE.slice(10, 18), FAKE.slice(18, 26)].every(
+        (part) => !q.includes(part),
+      );
+
+    it('(i) a member split between a value’s TAIL and the fixed text: (b) skipped, `[REDACTED]` at 400, no fragment, no mint marker', () => {
+      const m = mint(
+        `{{ run.params.x }}${FAKE.slice(-8)}{{ run.params.y }}`,
+        { x: pad + FAKE.slice(0, -8), y: pad },
+        {},
+      );
+      const q = m.resolved_message!;
+      // (a) red when the M1 === R1 comparison is skipped (always (b): x's tail is cut away and the
+      //     fixed 8 stand in clear); (b) prints booleans and the position.
+      expect({
+        at: q.indexOf('[REDACTED]'),
+        fragmentFree: fragmentFree(q),
+        mintMarker: q.includes('…[cut at mint:'),
+        sentence: endsWithCutSentence(q),
+      }).toEqual({ at: 400, fragmentFree: true, mintMarker: false, sentence: true });
+    });
+
+    it('(ii) a member split across two adjacent substitutions: the same', () => {
+      const m = mint(
+        '{{ run.params.a }}{{ run.params.b }}',
+        { a: pad + FAKE.slice(0, 18), b: FAKE.slice(18) + pad },
+        {},
+      );
+      const q = m.resolved_message!;
+      // (a) red when the comparison is skipped (b's leading characters of the fake stand in clear);
+      //     (b) prints booleans and the position.
+      expect({
+        at: q.indexOf('[REDACTED]'),
+        fragmentFree: fragmentFree(q),
+        mintMarker: q.includes('…[cut at mint:'),
+        sentence: endsWithCutSentence(q),
+      }).toEqual({ at: 400, fragmentFree: true, mintMarker: false, sentence: true });
+    });
+
+    it('(iii) control: no member anywhere and two long substitutions — (b) cuts as before, with its markers', () => {
+      const m = mint('{{ run.params.a }} and {{ run.params.b }}', { a: pad, b: pad }, {});
+      // (a) red when the comparison is inverted (always (a): no mint markers); (b) prints the count.
+      expect(
+        [...m.resolved_message!.matchAll(/…\[cut at mint: \d+ of 400 characters\]/g)].length,
+      ).toBe(2);
     });
   });
 });

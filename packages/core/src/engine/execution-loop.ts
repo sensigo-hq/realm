@@ -4479,8 +4479,8 @@ async function executeStepBody(
           }
         : {};
     let resolvedGateMessage: string | undefined;
-    // #729 PR-4 (01 (b)): each resolved value of the message is stripped, masked with the host's set,
-    // and cut to its share under a complete set; an unresolved placeholder never passes the hook.
+    // #729 PR-4 (01 (b)): the message's first render strips and masks each resolved value with the
+    // host's set and records its length (never cuts); an unresolved placeholder never passes the hook.
     const messageSubstitutions =
       stepDef!.gate?.message !== undefined
         ? mintSubstitutions(stepDef!.gate.message, options.disclosure)
@@ -4546,9 +4546,25 @@ async function executeStepBody(
 
     // #729 PR-4 (01): the question minted once — the masked message cut to the view budget when the
     // host's set is complete — and the frozen view beside it (V-1 stores it; PR-4 stores the text).
+    const gateMessage = stepDef!.gate?.message;
     const minted = mintQuestionView({
       message: resolvedGateMessage,
       ...(messageSubstitutions !== undefined ? { substitutions: messageSubstitutions } : {}),
+      // The second render, cutting each value to its cap (01 (b)) — the same template and context.
+      ...(gateMessage !== undefined
+        ? {
+            rerender: (onSubstitution: (rendered: string, path: string) => string) =>
+              renderTemplate(
+                gateMessage,
+                {
+                  evidenceByStep: gateEvidenceCtxEarly,
+                  runParams: run.params,
+                  ...wfCtxSpreadEarly,
+                },
+                { strict: true, onSubstitution },
+              ),
+          }
+        : {}),
       preview: output,
       choices,
       ...(stepDef!.display !== undefined ? { display: stepDef!.display } : {}),

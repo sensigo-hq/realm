@@ -231,50 +231,60 @@ export function questionViewSet(set: DisclosureSet | undefined): DisclosureSet {
   return noSet;
 }
 
-/** How the per-substitution cuts of one gate message went (the mint's (b)). */
+/** The first render of one gate message (the mint's (b), rev 8): what the caps are computed from. */
 export interface MintSubstitutions {
-  /** The renderTemplate hook; absent when the host passed no set (the message renders as before). */
+  /** The FIRST render's hook: each resolved value stripped and masked, never cut; it records the
+   *  masked length. Absent when the host passed no set (the message renders as before). */
   readonly onSubstitution?: (rendered: string, path: string) => string;
-  readonly cuts: { count: number; hidden: number; markers: number };
+  /** Each masked value's length, in the order the first render met them. */
+  readonly lengths: readonly number[];
+  /** The fixed text's length, stripped and masked — counted with renderTemplate's own placeholder
+   *  rule, so a filtered `{{ x | f }}` is a substitution, not fixed text. */
+  readonly fixed: number;
 }
 
 /**
- * (b), for one gate message: each RESOLVED value stripped of its marks, masked at the declared tier,
- * and — only under a complete set — cut to its share of the budget, with its marker inside the share.
- * The share leaves the cut sentence its room, so a message whose values were cut keeps its fixed
- * text whole. `n` and the fixed text are counted with renderTemplate's own placeholder rule.
+ * (b)'s first half, for one gate message: the hook for the UNCUT render (R1) — each RESOLVED value
+ * stripped of its marks and masked at the declared tier, its length recorded in a closure. The hook
+ * is pure in its output; the caps come from the recorded lengths, and the second render (inside
+ * {@link mintQuestionView}) applies them.
  */
 export function mintSubstitutions(
   template: string,
   set: DisclosureSet | undefined,
 ): MintSubstitutions {
-  const cuts = { count: 0, hidden: 0, markers: 0 };
-  if (set === undefined) return { cuts };
-  const complete = isComplete(set);
-  const n = [...template.matchAll(TEMPLATE_PLACEHOLDER)].length;
+  const lengths: number[] = [];
+  if (set === undefined) return { lengths, fixed: 0 };
   const fixed = disclose(
     stripSpanMarks(template.replace(TEMPLATE_PLACEHOLDER, '')),
     set,
     'declared',
   ).text.length;
-  const share =
-    n === 0
-      ? 0
-      : Math.max(0, Math.floor((VIEW_BUDGET - sentenceRoom(Number.MAX_SAFE_INTEGER) - fixed) / n));
   return {
-    cuts,
+    lengths,
+    fixed,
     onSubstitution: (rendered) => {
       const masked = disclose(stripSpanMarks(rendered), set, 'declared').text;
-      if (!complete) return masked;
-      const out = cutTo(masked, share, mintMarker);
-      if (out.cut) {
-        cuts.count += 1;
-        cuts.hidden += masked.length - out.shown;
-        cuts.markers += out.text.length - out.shown;
-      }
-      return out.text;
+      lengths.push(masked.length);
+      return masked;
     },
   };
+}
+
+/** The largest cap `c` with `Σ min(len_i, c) <= room` (water-filling): a value no longer than the
+ *  even share keeps its length, and the room it leaves goes to the longer ones. */
+function waterFill(lengths: readonly number[], room: number): number {
+  if (room <= 0) return 0;
+  const sorted = [...lengths].sort((a, b) => a - b);
+  let left = room;
+  let longer = sorted.length;
+  for (const length of sorted) {
+    const even = Math.floor(left / longer);
+    if (length > even) return even;
+    left -= length;
+    longer -= 1;
+  }
+  return Number.MAX_SAFE_INTEGER;
 }
 
 /**
@@ -308,17 +318,23 @@ function cutAtMint(
 }
 
 /**
- * At gate open (the only place a question is cut): the rendered message (through
- * {@link mintSubstitutions}'s hook) stripped and masked with the host's set, then cut under a
- * complete set — `resolved_message` is the question as shown at the declared tier, the text the
- * record stores; `view` is the frozen view (the `'private'` audience: the declared tier, unshaped)
- * and `digest` its {@link viewDigest} — computed for V-1, which stores it; PR-4 stores neither.
- * Without a set the message is stored as rendered; with a partial or withheld one it is masked but
- * never cut (a prefix a complete manifest could later match must never be stored).
+ * At gate open (the only place a question is cut). The message comes rendered once UNCUT through
+ * {@link mintSubstitutions}'s hook (R1: each value stripped and masked); one mask over the whole of
+ * it (M1) finds a declared member anywhere — in the fixed text, straddling a boundary, split across
+ * two substitutions. Under a complete set: when M1 equals R1 and the question overflows the budget,
+ * `rerender` renders it again with each value cut to its water-filled cap ((b)); when M1 differs,
+ * (b) is skipped and M1 is the message, so no fragment of a member known at mint survives a cut.
+ * Then (a) over the whole. `resolved_message` is the question as shown at the declared tier, the
+ * text the record stores; `view` is the frozen view (the `'private'` audience: the declared tier,
+ * unshaped) and `digest` its {@link viewDigest} — computed for V-1, which stores it; PR-4 stores
+ * neither. Without a set the message is stored as rendered; with a partial or withheld one it is
+ * masked but never cut (a prefix a complete manifest could later match must never be stored).
  */
 export function mintQuestionView(input: {
   message: string | undefined;
   substitutions?: MintSubstitutions;
+  /** The message rendered again with the given hook — the engine's own renderTemplate call. */
+  rerender?: (onSubstitution: (rendered: string, path: string) => string) => string;
   preview: Record<string, unknown>;
   choices: readonly string[];
   display?: string;
@@ -336,15 +352,44 @@ export function mintQuestionView(input: {
   });
   let question = input.message;
   if (question !== undefined && set !== undefined) {
-    question = disclose(stripSpanMarks(question), set, 'declared').text;
-  }
-  if (question !== undefined && isComplete(set)) {
-    const shownPreview = discloseGate(stripSpanMarks(gateWith(undefined)), set, 'private').preview;
-    question = cutAtMint(
-      question,
-      previewOf(shownPreview, input.display).text,
-      input.substitutions?.cuts ?? { count: 0, hidden: 0, markers: 0 },
-    );
+    const r1 = stripSpanMarks(question);
+    const m1 = disclose(r1, set, 'declared').text;
+    question = m1;
+    if (isComplete(set)) {
+      const shownPreview = discloseGate(
+        stripSpanMarks(gateWith(undefined)),
+        set,
+        'private',
+      ).preview;
+      const previewText = previewOf(shownPreview, input.display).text;
+      const b = { count: 0, hidden: 0, markers: 0 };
+      const subs = input.substitutions;
+      if (
+        m1 === r1 &&
+        subs !== undefined &&
+        input.rerender !== undefined &&
+        subs.fixed + subs.lengths.reduce((sum, length) => sum + length, 0) > VIEW_BUDGET
+      ) {
+        // The room leaves the cut sentence its place, sized for this view's whole, so the values'
+        // cuts keep the fixed text whole and the sentence then fits.
+        const cap = waterFill(
+          subs.lengths,
+          VIEW_BUDGET - sentenceRoom(r1.length + previewText.length) - subs.fixed,
+        );
+        const r2 = input.rerender((rendered) => {
+          const masked = disclose(stripSpanMarks(rendered), set, 'declared').text;
+          const out = cutTo(masked, cap, mintMarker);
+          if (out.cut) {
+            b.count += 1;
+            b.hidden += masked.length - out.shown;
+            b.markers += out.text.length - out.shown;
+          }
+          return out.text;
+        });
+        question = disclose(stripSpanMarks(r2), set, 'declared').text;
+      }
+      question = cutAtMint(question, previewText, b);
+    }
   }
   const view = composeQuestionView(
     discloseGate(stripSpanMarks(gateWith(question)), questionViewSet(set), 'private'),
