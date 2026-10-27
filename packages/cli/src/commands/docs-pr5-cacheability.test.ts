@@ -168,6 +168,31 @@ describe(
       ]);
       for (const r of runs) claim(WORKFLOW_PAGE, r.stderr.trim());
     });
+
+    // The watch transcript holds only what watch prints: lines that begin with `Watching ` or the time.
+    // Break: another command's output pasted into the block (76f9483b carried a generator's output
+    // there). (a) red when a line of the block is not watch's, or its cache line is not the scaffold's;
+    // (b) prints the foreign lines and both cache lines.
+    it("the watch transcript holds only watch's own lines, and its cache line is the scaffold's", () => {
+      const page = read(WORKFLOW_PAGE);
+      const at = page.indexOf(
+        'after the first `Registered` line, and again only when they change.',
+      );
+      const block = /```text\n([\s\S]*?)```/.exec(page.slice(at))![1]!;
+      const foreign = block
+        .split('\n')
+        .filter(
+          (l) =>
+            l !== '' && !l.startsWith('Watching ') && !/^\[\d{4}-\d\d-\d\dT[\d:.]+Z\] /.test(l),
+        );
+      expect(realm(['workflow', 'init', 'invoice-check']).code).toBe(0);
+      const line = cacheLines(realm(['workflow', 'register', 'invoice-check']).stdout)[0];
+      const pageLine = block
+        .split('\n')
+        .find((l) => l.includes('] cache: '))
+        ?.replace(/^\[[^\]]+\] /, '');
+      expect([foreign, pageLine]).toEqual([[], line]);
+    });
   },
 );
 
@@ -346,7 +371,7 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
   it('a step with tools; the three sharing forms; a pair that parts in a profile is not named', () => {
     claim(
       WORKFLOW_PAGE,
-      "A step that calls tools is not judged, because its fixed part holds each tool's schema:",
+      "A step that calls tools is not judged: each tool's definition comes from its MCP server when the step runs, so its request cannot be measured before a run:",
     );
     claim(
       WORKFLOW_PAGE,

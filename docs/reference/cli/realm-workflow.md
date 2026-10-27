@@ -152,10 +152,10 @@ cache: review_changes — 1,010 chars ≈ 220–290 tokens (estimate: 4 chars/to
 | `economics not checked (<reason>)`                                                        | `--registered`, and the copy records no project folder, or the one it records is gone.                            |
 | `profile unavailable (<reason>): sizes not computed`                                      | `--registered`, the step names a profile, and the copy records no workflow folder, or the one it records is gone. |
 
-A step that calls tools is not judged, because its fixed part holds each tool's schema:
+A step that calls tools is not judged: each tool's definition comes from its MCP server when the step runs, so its request cannot be measured before a run:
 
 ```text
-cache: fetch_pr — uses tools: realm sends no cache marker on a tools step, and its fixed part carries each tool's schema, known only when the server answers: not judged
+cache: fetch_pr — uses tools: each tool's definition comes from its MCP server at run time, so the request cannot be measured before a run: not judged
 ```
 
 **Steps that start the same way.** The line names the steps whose fixed part begins with the same text, and where the two part: `shares its whole fixed part with …`, `shares its first <n> chars with …: the schemas differ`, or `shares its first <n> chars with …: only structured_output: strict differs`. Two steps that part inside a profile, or inside Realm's own instructions, are not named. From example 05, with `--provider anthropic`:
@@ -245,31 +245,6 @@ Watching invoice-check/workflow.yaml — press Ctrl+C to stop
 [2026-10-27T16:56:28.472Z] Registered: invoice-check v1 (2 steps)
 [2026-10-27T16:56:30.472Z] Invalid workflow: 'version' must be a number
 [2026-10-27T16:56:32.473Z] Registered: invoice-check v2 (2 steps)
-
-##### reference/workflow/step-fields.md :302 (validate), profile editor = "You are an editor."
-$ realm workflow validate ./   (exit 0)
---- stdout
-Valid: every-step-field v1 (6 steps)
-Extensions: ./registry.mjs (adapters: 0, handlers: 2, processors: 0)
-ℹ Step 'summarise': structured_output caveat — this step declares tools — strict applies to tool-call arguments here, not to the step output; tool schemas are third-party and are assessed per tool at runtime (a tool whose schema is not strict-compatible simply rides unconstrained), and this step output stays post-hoc validated by realm
-cache: summarise — uses tools: realm sends no cache marker on a tools step, and its fixed part carries each tool's schema, known only when the server answers: not judged
---- stderr
-⚠ Step 'read_note': 'idempotent: true' cannot enable auto-reclaim in a finalizer-bearing workflow (its claim carries no deadline, so 'realm run reclaim --all' can never select it). Recover it with 'realm run reclaim <run-id> --step read_note --force'.
-⚠ Step 'summarise': declares both input_schema and output_schema; the agent's submitted output is validated against both — prefer one to avoid divergence.
-
-##### reference/workflow/top-level-fields.md :425 (validate), profile personas/reviewer = "You are a reviewer."
-$ realm workflow validate ./   (exit 0)
---- stdout
-Valid: review-note v1 (4 steps) — 1 extension key carried, never read by realm: x-owner
-  Reads a note, has it reviewed, and files the result.
-Extensions: ./registry.mjs (adapters: 0, handlers: 1, processors: 0)
-ℹ 2 steps ready for structured_output: strict — run 'realm workflow validate --explain' for detail (REALM_NO_NUDGE=1 to silence).
-cache: spelling_look — anthropic 646 chars ≈ 350–789 tokens, with Anthropic's tool text · openai 333 chars ≈ 67–133 tokens (estimates: 2.5–5 chars/token, with margin) — anthropic: shares its first 177 chars with review: the schemas differ
-cache: review — anthropic 672 chars ≈ 355–799 tokens, with Anthropic's tool text · openai 357 chars ≈ 72–143 tokens (estimates: 2.5–5 chars/token, with margin) — anthropic: shares its first 177 chars with spelling_look: the schemas differ
-anthropic: on steps without tools, realm marks the fixed part for caching unless the drive's --prompt-cache turns it off; a fixed part below the model's minimum is sent uncached, silently
-openai: realm sends no cache marker; the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)
-anthropic: the cache is kept per workspace (per organization on Bedrock and Google Cloud), as Anthropic's page said on 2026-10-09: drives from different workspaces each pay the write
---- stderr
 ```
 
 A file that is refused is reported, and the copy registered before it stays in place. `watch` keeps running.

@@ -346,8 +346,8 @@ describe('the causes, one per row of the decision table (C5)', { timeout: 60_000
     const empty = realm(['workflow', 'validate', dir, '--provider', 'anthropic']);
     expect([cacheLines(r.stdout), cacheLines(empty.stdout)]).toEqual([
       [
-        "cache: fetch_pr — uses tools: realm sends no cache marker on a tools step, and its fixed part carries each tool's schema, known only when the server answers: not judged",
-        "cache: analyze_changes — uses tools: realm sends no cache marker on a tools step, and its fixed part carries each tool's schema, known only when the server answers: not judged",
+        "cache: fetch_pr — uses tools: each tool's definition comes from its MCP server at run time, so the request cannot be measured before a run: not judged",
+        "cache: analyze_changes — uses tools: each tool's definition comes from its MCP server at run time, so the request cannot be measured before a run: not judged",
       ],
       [
         "cache: no_tools — 486 chars ≈ 318–725 tokens, with Anthropic's tool text (estimate) — the floor was not judged: no --model named",
