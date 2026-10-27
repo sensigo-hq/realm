@@ -495,6 +495,22 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
   }
 
   /**
+   * Issue #610 — what a request of the tool loop records about itself: the response's `model`, the
+   * endpoint, and that Anthropic reports a lifetime split. No cache ask: the tool loop sends no
+   * cache marker (issue #899 adds one), so any ask written here would be false. Never `provider`:
+   * `realm agent` stamps that.
+   */
+  private toolsRequestFacts(response: unknown, client: unknown): Partial<UsageRecord> {
+    const model = responseModel(response);
+    const endpoint = endpointOf(client, ANTHROPIC_DEFAULT_BASE_URL);
+    return {
+      ...(model !== undefined ? { model } : {}),
+      ...(endpoint !== undefined ? { endpoint } : {}),
+      cache_split_offered: true,
+    };
+  }
+
+  /**
    * Issue #676 — one sentence for the one error this provider explains: Anthropic answering that
    * it has no model by the name this provider was built with. The body says only `model: <id>`,
    * captured on 2026-10-04:
@@ -779,6 +795,33 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       llmClock?: LlmClock;
     },
   ): Promise<StepWithToolsResult> {
+    // issue #610: the accumulator is owned by the ENTRY POINT, as `callStep`'s is. One catch here
+    // sees every request that got an answer, whatever throws below: a wire error on a later turn,
+    // an unknown tool name, or a final answer that does not parse.
+    const requests: UsageRecord[] = [];
+    try {
+      const result = await this.callStepWithToolsInternal(
+        prompt,
+        tools,
+        executor,
+        options,
+        requests,
+      );
+      return requests.length > 0 ? { ...result, usage: requests } : result;
+    } catch (err) {
+      attachBilledUsage(err, requests);
+      throw err;
+    }
+  }
+
+  /** The tool loop. Issue #610 put it behind the entry point above, which owns `requests`. */
+  private async callStepWithToolsInternal(
+    prompt: string,
+    tools: ToolDefinition[],
+    executor: ToolExecutor,
+    options: Parameters<AnthropicProvider['callStepWithTools']>[3],
+    requests: UsageRecord[],
+  ): Promise<StepWithToolsResult> {
     const clock = options.llmClock;
     // issue #401: per-invocation, minted beside the client below (never a module global).
     const counters: WireCounters = { attempts: 0 };
@@ -819,8 +862,26 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     // direct caller of this provider gets the record, never the bound (record R-14).
     const rawCreate = (b: Rec, o: Rec): Promise<unknown> => client.messages.create(b, o);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const bounded = (body: Rec): Promise<any> =>
+    const send = (body: Rec): Promise<any> =>
       clock !== undefined ? driveCreate(rawCreate, body, clock, counters) : rawCreate(body, {});
+    // issue #610: the ONE point every request of this loop goes through, and the one place it is
+    // recorded. The record is pushed the instant the answer arrives, before any code reads it: a
+    // throw while reading must not lose what was billed. A request that fails on the wire has no
+    // record, as on the single-shot path.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const bounded = async (body: Rec): Promise<any> => {
+      const requestStart = new Date().toISOString();
+      const response = await send(body);
+      requests.push(
+        toUsageRecord(
+          requests.length,
+          requestStart,
+          readAnthropicUsage(response),
+          this.toolsRequestFacts(response, client),
+        ),
+      );
+      return response;
+    };
 
     // toolIdMap: bareName → namespaced id, used to recover routing key from LLM responses.
     // Collision guard: two MCP servers may not expose the same bare tool name in the same step.

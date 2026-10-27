@@ -1565,23 +1565,37 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 // issue #401, CHOKEPOINT (1): recorded AFTER the original line, never instead of
                 // it. Returns rather than throws, which is what makes double-minting structurally
                 // impossible — the last-resort catch below never sees this path.
-                await recordDriveFailure(
-                  deps.store,
-                  runId,
-                  buildEntry(err, stepName, providerForEvidence ?? 'unknown', attemptStartedAt),
+                // issue #610: as the single-shot catch does, the calls this step's earlier #217
+                // repair attempts already billed go in front of the throwing call's own (wire
+                // order). `err` itself is never mutated.
+                const entry = buildEntry(
+                  err,
+                  stepName,
+                  providerForEvidence ?? 'unknown',
+                  attemptStartedAt,
                 );
+                if (usageForStep !== undefined && usageForStep.length > 0) {
+                  entry.usage = appendRequests(usageForStep, entry.usage);
+                }
+                await recordDriveFailure(deps.store, runId, entry);
                 return 'failed';
               }
               stepInput = toolsResult.output;
+              // issue #610: `?? []` is load-bearing, as on the single-shot paths. A model call
+              // HAPPENED, so the record must say `unobservable`, not stay silent. A provider that
+              // reports nothing (a third-party module) would otherwise leave `cache` absent. Each
+              // #217 repair pass appends its requests, so a repaired step records every call it
+              // paid for, in wire order.
+              usageForStep = appendRequests(usageForStep, toolsResult.usage ?? []);
               toolCallsForMeta = toolsResult.toolCalls;
               // issue #332 item 6: the tools path never consumes structuredOutputPlan (there is no
-              // grammar-constrained call here — callStepWithTools has no strict concept at all), so
-              // a strict-DECLARED, tools-bearing step used to leave structuredOutputMetaForStep
-              // undefined — falling through to execution-loop.ts's synthesized `external_agent`
-              // stamp, which claims "realm made no request at all". That's a misattribution: realm's
-              // OWN agent DID drive this step, via the tools path, which structurally cannot honor
-              // strict. Mint the honest, distinct reason here instead of letting the engine
-              // synthesize the wrong one.
+              // grammar-constrained OUTPUT call here — the tools path's strict is #311's per-tool
+              // argument strict), so a strict-DECLARED, tools-bearing step used to leave
+              // structuredOutputMetaForStep undefined — falling through to execution-loop.ts's
+              // synthesized `external_agent` stamp, which claims "realm made no request at all".
+              // That's a misattribution: realm's OWN agent DID drive this step, via the tools path,
+              // which structurally cannot honor strict. Mint the honest, distinct reason here
+              // instead of letting the engine synthesize the wrong one.
               //
               // NOT a ladder outcome — deliberately does NOT touch structuredOutputSticky. Sticky
               // exists to remember a LIVE downgrade across repair-loop attempts for the SAME step
@@ -1662,7 +1676,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   // record must say `unobservable`, not stay silent. A provider that reports
                   // nothing (the base default, any third-party module) would otherwise leave
                   // `cache` absent — and absent means nothing was recorded, which a handler step
-                  // and a tool-calling step (issue #610) also produce; see StepDiagnostics.cache.
+                  // also produces; see StepDiagnostics.cache.
                   // Repair calls now accumulate: each #217 repair pass appends its requests, so a
                   // repaired step records every call it paid for, in wire order.
                   usageForStep = appendRequests(usageForStep, usage ?? []);
@@ -1718,7 +1732,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   // record must say `unobservable`, not stay silent. A provider that reports
                   // nothing (the base default, any third-party module) would otherwise leave
                   // `cache` absent — and absent means nothing was recorded, which a handler step
-                  // and a tool-calling step (issue #610) also produce; see StepDiagnostics.cache.
+                  // also produces; see StepDiagnostics.cache.
                   // Repair calls now accumulate: each #217 repair pass appends its requests, so a
                   // repaired step records every call it paid for, in wire order.
                   usageForStep = appendRequests(usageForStep, usage ?? []);

@@ -397,6 +397,11 @@ export interface DriveCallPayload {
   retry_after_observed_ms?: number;
   declared_per_attempt_ms?: number;
   derived_ceiling_ms?: number;
+  /**
+   * Issue #610: what the requests that returned before the throw billed, one entry per request in
+   * wire order (`attachBilledUsage`, or a provider's own typed throw). Absent when none returned.
+   */
+  usage?: UsageRecord[];
 }
 
 /** What one client's fetch wrapper has seen. Per-invocation, minted beside the client. */
@@ -732,9 +737,8 @@ export async function driveCreate<T>(
  * Absence is preserved deliberately, and it is narrower than it looks. Nothing is attached until a
  * request RETURNS, so `usage: undefined` covers a failure before any request left the process (a
  * pre-dispatch `sdk_missing`) AND a first request that failed on the wire (a 5xx, a timeout, a
- * dropped connection): it never proves no request was made. And the tool-calling path attaches
- * nothing at all yet — `callStepWithTools` builds no `UsageRecord` and calls this helper nowhere —
- * so a tools step's `usage` is absent whatever it billed (issue #610).
+ * dropped connection): it never proves no request was made. `callStepWithTools` attaches through
+ * this helper at its entry, like the other entry points (issue #610).
  *
  * TOTAL, like `attachDriveCall`: a frozen error, or a proxy whose traps throw, propagates intact
  * and unenriched — the recording machinery never replaces the failure it is recording.

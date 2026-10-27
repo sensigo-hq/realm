@@ -946,7 +946,9 @@ function costAbsenceSentence(
 ): string | undefined {
   if (costUnreadable === true) return 'cost: unreadable — the recorded usage is not a list';
   if (costUnrecorded === 'tool_calling_step') {
-    return 'cost: not recorded — tool-calling steps do not record usage yet';
+    // Issue #610: pinned by docs-610.test.ts (the realm-run-reading.md `cost` row) and by
+    // inspect-cost-view.test.ts / cost-view-disclosure-parity.test.ts (the printed line).
+    return 'cost: not recorded — tool-calling step with no recorded usage (realm 0.48.0 or earlier recorded none)';
   }
   if (costUnrecorded === 'not_measured_by_realm') {
     return (

@@ -161,7 +161,8 @@ export interface RunCost {
   failed_drives_not_on_record: number;
   /**
    * Failed drives on the record whose `usage` is not an array or is empty: realm has nothing to
-   * price for them, and a request may have billed (one that failed on the wire, a tools-step drive).
+   * price for them, and a request may have billed (one that failed on the wire, or a tools-step
+   * drive that Realm 0.48.0 or earlier recorded).
    */
   failed_drives_without_usage: number;
   unmeasured: { tool_calling_step: number; not_measured_by_realm: number; cost_unreadable: number };
@@ -202,8 +203,9 @@ export type CostCacheRequested =
 /**
  * The closed set of reasons a step's evidence entry carries no `cache` at all. Classification only
  * ever picks between these two — it never asserts a model call happened (see `composeStepViews`
- * rule 5): `tool_calling_step` when the entry declares `tool_calls` (the tool-calling path records
- * no usage yet, issue #610); `not_measured_by_realm` for an agent step realm has no usage figures
+ * rule 5): `tool_calling_step` when the entry declares `tool_calls` and has no `cache` (written by
+ * Realm 0.48.0 or earlier, or by a host that records tool calls without usage; issue #610);
+ * `not_measured_by_realm` for an agent step realm has no usage figures
  * for — for example, an outside agent over MCP `execute_step` made it, a person typed its answer at
  * a `realm workflow run` prompt, or realm 0.45.0 or earlier recorded it.
  */

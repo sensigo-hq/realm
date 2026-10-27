@@ -169,7 +169,7 @@ This does not catch everything, so do not rely on it to keep a secret out of a r
 - other escapings than those named above, or a value mixing several;
 - the model's own answers, and the arguments of its tool calls. Neither is checked.
 
-The record does not yet include what the model's requests cost for a step that uses tools. `realm run inspect` says so on the step's `cost` line. That line was added in 0.46.0.
+The record keeps each request a step that uses tools makes to the model, and `realm run inspect` shows what they cost, as for any agent step (added after version 0.48.0). A step that Realm 0.48.0 or earlier recorded has no usage; its `cost` line says so.
 
 ## See Realm hold the limits
 
