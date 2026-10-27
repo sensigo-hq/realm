@@ -15,6 +15,7 @@ import {
 import {
   addDeclaredDisclosure,
   addDeclaredValues,
+  CARRY_IDLE_MS,
   channelStdout,
   escapePassCut,
   installWriter,
@@ -588,5 +589,343 @@ describe('F2 — the working directory (B2, writer.ts setFor)', () => {
     // (a) red when the writer's set is built without `cwd` (the folder reads [REDACTED]); (b)
     //     prints the fake line.
     expect(pass(line, 'log')).toBe(line);
+  });
+});
+
+// U1: the writer carries across writes on a log — a value printed in pieces is hidden as one.
+// Both streams read as a log in a vitest worker (`isTTY` unset); the cells take `k` from the set at
+// run time. Every value is fake.
+describe('U1 — the writer carries across writes on a log', () => {
+  /** 29 characters, declared; a plain value with no prefix form. */
+  const V = 'CANARY-declared-u1-0000000001';
+
+  /** Installs the writer with both streams captured into one ordered list (the originals are spies
+   *  taken first), and the fake declared. */
+  function carried(mode: 'default' | 'broadcast' | 'mcp' = 'default') {
+    const all: Array<['out' | 'err', string]> = [];
+    vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: unknown) => {
+      all.push(['out', String(chunk)]);
+      return true;
+    }) as never);
+    vi.spyOn(process.stderr, 'write').mockImplementation(((chunk: unknown) => {
+      all.push(['err', String(chunk)]);
+      return true;
+    }) as never);
+    installWriter(mode);
+    addDeclaredValues({ U1_TOKEN: V });
+    const of = (stream: 'out' | 'err'): string[] =>
+      all.filter(([s]) => s === stream).map(([, t]) => t);
+    return {
+      all,
+      chunks: () => of('out'),
+      out: () => of('out').join(''),
+      err: () => of('err').join(''),
+      k: writerSetFor('log')!.maxFormLength - 1,
+    };
+  }
+
+  it('U1-1 two writes on one line: the value is hidden as one (a declared value, an environment value)', () => {
+    const c = carried();
+    process.stdout.write('split: ' + V.slice(0, 10));
+    process.stdout.write(V.slice(10) + ' end\n');
+    process.stdout.write('env: ' + ENV_VALUE.slice(0, 7));
+    process.stdout.write(ENV_VALUE.slice(7) + ' end\n');
+    // (a) red when each write is masked alone (main 772c0904: both values whole in the log); (b)
+    //     prints the captured text (fakes).
+    expect({
+      text: c.out(),
+      whole: c.out().includes(V) || c.out().includes(ENV_VALUE),
+    }).toEqual({
+      text: 'split: [REDACTED] end\nenv: [REDACTED] end\n',
+      whole: false,
+    });
+  });
+
+  it('U1-2 every cut: two writes read as the one write', () => {
+    const c = carried();
+    process.stdout.write('split: ' + V + ' end\n');
+    const oneWrite = c.out();
+    const differ: Array<{ i: number; text: string }> = [];
+    for (let i = 1; i < V.length; i++) {
+      const from = c.out().length;
+      process.stdout.write('split: ' + V.slice(0, i));
+      process.stdout.write(V.slice(i) + ' end\n');
+      const text = c.out().slice(from);
+      if (text !== oneWrite) differ.push({ i, text });
+    }
+    // (a) red when a cut at any `i` lets a piece through (main 772c0904: every `i`); (b) prints the
+    //     one-write text and each failing `i` with its captured text (the fake).
+    expect({ oneWrite, differ }).toEqual({ oneWrite: 'split: [REDACTED] end\n', differ: [] });
+  });
+
+  it('U1-3 control: one write is hidden and counted once', () => {
+    const c = carried();
+    process.stdout.write('whole: ' + V + ' end\n');
+    // (a) red when the carry counts a hide twice (the raw text passed a second time); (b) prints
+    //     the captured text and a count.
+    expect({ text: c.out(), declared: writerTally()!.declared }).toEqual({
+      text: 'whole: [REDACTED] end\n',
+      declared: 1,
+    });
+  });
+
+  it('U1-4 a write that ends with a line break holds nothing back', () => {
+    const c = carried();
+    const line = 'abc' + 'm'.repeat(c.k + 10) + 'xyz\n';
+    process.stdout.write(line);
+    // (a) red when the carry keeps the last `k` units whatever the line break; (b) prints the held
+    //     text's length and two booleans.
+    expect({
+      held: writerTestSeams.carry('stdout').length,
+      whole: c.out() === line,
+      endsWithLine: c.out().endsWith('xyz\n'),
+    }).toEqual({ held: 0, whole: true, endsWithLine: true });
+  });
+
+  it('U1-5 the interleave: a stderr line never lands inside a stdout line', () => {
+    const c = carried();
+    process.stdout.write('line one ends\n');
+    process.stderr.write('⚠ warn\n');
+    process.stdout.write('line two\n');
+    // (a) red when a line-terminated write is held (the carry keeps the last `k` units whatever the
+    //     line break); (b) prints the captured writes in order (no value).
+    expect(c.all).toEqual([
+      ['out', 'line one ends\n'],
+      ['err', '⚠ warn\n'],
+      ['out', 'line two\n'],
+    ]);
+  });
+
+  it("U1-5b a held unfinished line lets the other stream's line come first; the value is still hidden as one", () => {
+    const c = carried();
+    process.stdout.write('split: ' + V.slice(0, 10));
+    process.stderr.write('⚠ warn\n');
+    process.stdout.write(V.slice(10) + ' end\n');
+    // (a) red under the break "a write on one stream flushes the other stream's held tail first"
+    //     (in patch, before the take: flush(stream === 'stdout' ? 'stderr' : 'stdout', 'idle')): the
+    //     order becomes out-partial, err, out-rest and the value shows in pieces; U1-1 and U1-5 stay
+    //     green under it, so this cell alone carries the order; (b) prints the captured writes in
+    //     order (the fake).
+    expect(c.all).toEqual([
+      ['err', '⚠ warn\n'],
+      ['out', 'split: [REDACTED] end\n'],
+    ]);
+  });
+
+  it('U1-6 the idle flush: an unfinished line shows after CARRY_IDLE_MS, on an unref’d timer', () => {
+    vi.useFakeTimers();
+    try {
+      const timers = vi.spyOn(globalThis, 'setTimeout');
+      const c = carried();
+      process.stdout.write('Choice [yes/no]: ');
+      const call = timers.mock.calls.findIndex((args) => args[1] === CARRY_IDLE_MS);
+      const handle = timers.mock.results[call]?.value as NodeJS.Timeout | undefined;
+      const atOnce = c.out();
+      vi.advanceTimersByTime(CARRY_IDLE_MS - 1);
+      const justBefore = c.out();
+      vi.advanceTimersByTime(1);
+      // (a) red when there is no idle timer (the prompt is never emitted) or the timer is not
+      //     unref'd (it would hold the process open); (b) prints what was emitted when, and a boolean.
+      expect({
+        idleMs: CARRY_IDLE_MS,
+        atOnce,
+        justBefore,
+        atIdle: c.out(),
+        hasRef: handle?.hasRef(),
+      }).toEqual({
+        idleMs: 200,
+        atOnce: '',
+        justBefore: '',
+        atIdle: 'Choice [yes/no]: ',
+        hasRef: false,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('U1-7 the fatal and exit flushes (spawned): the held tail before the error, and at a normal exit', () => {
+    const dist = join(
+      dirname(fileURLToPath(import.meta.url)),
+      '..',
+      '..',
+      'dist',
+      'output',
+      'writer.js',
+    );
+    // A long fake environment value makes `k` at least 64 in the child.
+    const env = { PATH: process.env['PATH'] ?? '', U1_LONG_FAKE: `FAKE-u1-long-${'L'.repeat(60)}` };
+    const child = (code: string) =>
+      spawnSync(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          `const w = await import(${JSON.stringify(dist)}); w.installWriter('default'); ${code}`,
+        ],
+        { env, encoding: 'utf8' },
+      );
+    const thrown = child(
+      "process.stdout.write('out tail FAKE'); process.stderr.write('err tail FAKE'); throw new Error('boom u1');",
+    );
+    const tailAt = thrown.stderr.indexOf('err tail FAKE');
+    const errorAt = thrown.stderr.indexOf('Error: boom u1');
+    const exited = child("process.stdout.write('exit tail FAKE');");
+    // (a) red when `fatal` does not flush first (the tail after the error, or missing) or there is
+    //     no 'exit' listener (the tail lost at a normal exit); (b) prints the exit codes, the
+    //     children's captured output (fakes and paths only) and the order.
+    expect(
+      {
+        thrownCode: thrown.status,
+        thrownOut: thrown.stdout,
+        tailBeforeError: tailAt >= 0 && errorAt > tailAt,
+        exitedCode: exited.status,
+        exitedOut: exited.stdout,
+      },
+      `thrown stderr: ${thrown.stderr}`,
+    ).toEqual({
+      thrownCode: 1,
+      thrownOut: 'out tail FAKE',
+      tailBeforeError: true,
+      exitedCode: 0,
+      exitedOut: 'exit tail FAKE',
+    });
+  });
+
+  it("U1-7b the seam's reset writes a held tail through the original and removes the 'exit' listener", () => {
+    const listeners = process.listenerCount('exit');
+    const c = carried();
+    process.stdout.write('reset tail');
+    const held = writerTestSeams.carry('stdout');
+    const installed = process.listenerCount('exit') - listeners;
+    writerTestSeams.reset();
+    // (a) red when `reset` neither flushes nor removes the listener (listeners accumulate per
+    //     test); (b) prints the held text, the output and two counts.
+    expect({
+      held,
+      installed,
+      out: c.out(),
+      afterReset: process.listenerCount('exit') - listeners,
+    }).toEqual({ held: 'reset tail', installed: 1, out: 'reset tail', afterReset: 0 });
+  });
+
+  it('U1-8 a surrogate pair at the cut stays whole', () => {
+    const c = carried();
+    const i = 10;
+    // The low half of 😀 sits exactly `k` units from the first write's end: the naive cut parts it.
+    const head = 'astral: 😀' + 'y'.repeat(c.k - 1 - i);
+    process.stdout.write(head + V.slice(0, i));
+    process.stdout.write(V.slice(i) + ' end\n');
+    const chunks = c.chunks();
+    const units = chunks.map((t) => t.charCodeAt(t.length - 1).toString(16)).join(',');
+    // (a) red when the cut parts a pair (a chunk ends with a lone high half: its UTF-8 bytes read
+    //     back as U+FFFD); (b) prints the code units at each chunk's end and two booleans.
+    expect(
+      {
+        wellFormed: chunks.every((t) => Buffer.from(t, 'utf8').toString('utf8') === t),
+        text: c.out() === head + '[REDACTED] end\n',
+      },
+      `last units: ${units}`,
+    ).toEqual({ wellFormed: true, text: true });
+  });
+
+  it('U1-9 realm mcp: the channel is written at once; a stray stdout write carries on stderr', () => {
+    const c = carried('mcp');
+    channelStdout().write('x');
+    const channel = [...c.all];
+    process.stdout.write('stray partial');
+    const strayHeld = writerTestSeams.carry('stderr');
+    process.stderr.write(' done\n');
+    // (a) red when the channel goes through the patched write (it would be diverted and held); (b)
+    //     prints the captured writes and the held text (no value).
+    expect({ channel, strayHeld, stray: c.err(), out: c.out() }).toEqual({
+      channel: [['out', 'x']],
+      strayHeld: 'stray partial',
+      stray: 'stray partial done\n',
+      out: 'x',
+    });
+  });
+
+  it('U1-9b a terminal carries nothing', () => {
+    const saved = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+    Object.defineProperty(process.stdout, 'isTTY', {
+      value: true,
+      configurable: true,
+      writable: true,
+    });
+    try {
+      const c = carried();
+      process.stdout.write('typed: ab');
+      // (a) red when the carry runs on a terminal (each echoed key would wait); (b) prints the
+      //     output and the held text (no value).
+      expect({ out: c.out(), held: writerTestSeams.carry('stdout') }).toEqual({
+        out: 'typed: ab',
+        held: '',
+      });
+    } finally {
+      writerTestSeams.reset();
+      if (saved !== undefined) Object.defineProperty(process.stdout, 'isTTY', saved);
+      else delete (process.stdout as { isTTY?: boolean }).isTTY;
+    }
+  });
+
+  it('U1-10b the nested-member limit, pinned as it is: cut after the inner value ends, the rest of the outer shows', () => {
+    const HOST = 'https://api.FAKE-u1.example';
+    const HOOK = `${HOST}/hook/FAKESECRET123`;
+    vi.stubEnv('U1_HOST_FAKE', HOST);
+    const c = carried();
+    addDeclaredValues({ U1_HOOK: HOOK });
+    const shown = (cut?: number): string => {
+      const from = c.out().length;
+      if (cut === undefined) process.stdout.write('cut: ' + HOOK + ' end\n');
+      else {
+        process.stdout.write('cut: ' + HOOK.slice(0, cut));
+        process.stdout.write(HOOK.slice(cut) + ' end\n');
+      }
+      return c.out().slice(from);
+    };
+    // (a) case 1, one write: hidden on both trees. Case 2, the cut before the inner value ends:
+    //     whole on main, hidden with the carry — the carry's own work, red with no carry. Case 3,
+    //     the cut after the inner value ends: the inner hidden and the outer's rest shown on both
+    //     trees — the nested-member limit (Part G item 10), red under "hold the RAW tail" (the
+    //     break not taken: without match positions a complete member across the cut would show),
+    //     the pin that flips on purpose when match positions arrive (U2); (b) prints the three
+    //     outputs (fakes).
+    expect({
+      oneWrite: shown(),
+      beforeHostEnds: shown(10),
+      afterHostEnds: shown(HOST.length),
+    }).toEqual({
+      oneWrite: 'cut: [REDACTED] end\n',
+      beforeHostEnds: 'cut: [REDACTED] end\n',
+      afterHostEnds: 'cut: [REDACTED]/hook/FAKESECRET123 end\n',
+    });
+  });
+
+  it("U1-9c a span in a write's trailing partial line is not held: its body shows as built", () => {
+    vi.stubEnv('HOME', '/home/FAKE-u1-home');
+    const c = carried();
+    const body = 'realm run inspect /home/FAKE-u1-home/x';
+    process.stdout.write('next: ' + writerTestSeams.span('c', body));
+    // (a) red when the carry holds a partial line that holds a span (the re-pass would read the
+    //     body as plain text: `[REDACTED]/x`); (b) prints the output, the held text and the plain
+    //     text's pass (fake paths).
+    expect({
+      out: c.out(),
+      held: writerTestSeams.carry('stdout'),
+      plain: pass('at /home/FAKE-u1-home/x', 'log'),
+    }).toEqual({ out: 'next: ' + body, held: '', plain: 'at [REDACTED]/x' });
+  });
+
+  it('U1-14 a carriage return ends the held line: a redrawn frame is written when the next frame begins', () => {
+    const c = carried();
+    process.stdout.write('\rframe-one');
+    process.stdout.write('\rframe-two');
+    // (a) red under E-cr-boundary (both expressions back to '\n' only): held 20, out '' — the whole
+    //     20 units wait for the idle timer; (b) prints the held length and the written text.
+    expect({ held: writerTestSeams.carry('stdout').length, out: c.out() }).toEqual({
+      held: 9,
+      out: '\rframe-one\r',
+    });
   });
 });

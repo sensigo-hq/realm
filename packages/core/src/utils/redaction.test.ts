@@ -10,6 +10,7 @@ import {
   escapedBoundedValue,
   REDACTION_CHAR_CAP,
   compileDisclosure,
+  emptyDisclosureSet,
   buildDisclosureSet,
   disclose,
   weakestDeclared,
@@ -2127,5 +2128,27 @@ describe('F2 — the second decoded reading (D2, commit 2): disclose reaches wha
       'before [REDACTED] after',
       text(CONTROL),
     ]);
+  });
+});
+
+// U1: the compiled set knows its longest form — a stream that masks chunk by chunk keeps back at
+// most this many units less one. Fakes only.
+describe('U1 — the set knows its longest form', () => {
+  it('U1-10 maxFormLength is the longest form, 0 for a set with none', () => {
+    // A declared value with a line break (39 units): its whole form, its lines, its escaped
+    // spellings. The longest is its hex spelling, two units per byte: 78.
+    const value = 'FAKE-u1-line-one-01\nFAKE-u1-line-two-02';
+    const { set } = compileDisclosure([{ source: 'declared:U1', value }], {
+      declared: 'resolved',
+      audience: 'log',
+      environment: 'not_swept',
+    });
+    // (a) red when the field is absent or not the longest form (main 772c0904: absent); (b)
+    //     prints three numbers.
+    expect({
+      maxFormLength: set.maxFormLength,
+      longest: Math.max(...set.forms.map((f) => f.form.length)),
+      empty: emptyDisclosureSet('log').maxFormLength,
+    }).toEqual({ maxFormLength: 78, longest: 78, empty: 0 });
   });
 });

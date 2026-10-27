@@ -73,6 +73,9 @@ All notable changes to this project are documented here.
   attempt's. `realm run inspect`, `get_run_state` and the run's `Cost:` line show it. Until this
   release such a step recorded nothing (the 0.46.0 notes said so). A provider module's
   `callStepWithTools` may return the new optional `usage` list on its result.
+- Hardening: a declared secret or an environment value that a step prints in pieces, or relays
+  from a child program chunk by chunk, is hidden in a log as one value — when the pieces arrive
+  within 200 ms, and unless another hidden value inside it ends before the pieces split.
 
 ## [0.48.0] — 2026-10-26
 
