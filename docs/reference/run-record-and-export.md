@@ -278,7 +278,7 @@ The file is masked: every value in it is written as an export is shown it, with 
 ```text
 Exported run 'b9836b8a-17c8-445d-aca1-09c567d570cf' to '/srv/shop/b9836b8a.realm.json' (3.1 KB).
   phase: running, attempts: 0, WAL steps: 0, sealed artifacts: 0
-  masked in the file: declared secrets unknown (load failed); environment swept; hidden 0 declared, 1 environment, 0 by pattern; 0 too short to hide
+  masked in the file: declared secrets unknown (load failed); environment swept; hidden 0 declared, 1 environment, 0 by pattern; 0 too short to hide; written on --accept-partial-disclosure (refused without it)
 ```
 
 Each of `attempts` has `run_id`, `workflow_id`, `step_id`, `ts`, `error_code`, `validation_error_summary`, `submitted_key_count`, `submitted_keys`, `submitted_bytes` and `trace_entry_count`. It holds the names of the keys that were sent, not their values.

@@ -441,7 +441,7 @@ describe(`${RECORD_PAGE} — the export file and the guard's conditions`, () => 
   it("the example's header line and its disclosure block are what the code writes", async () => {
     claim(
       RECORD_PAGE,
-      'masked in the file: declared secrets unknown (load failed); environment swept; hidden 0 declared, 1 environment, 0 by pattern; 0 too short to hide',
+      'masked in the file: declared secrets unknown (load failed); environment swept; hidden 0 declared, 1 environment, 0 by pattern; 0 too short to hide; written on --accept-partial-disclosure (refused without it)',
     );
     const receipt = (over: Partial<DisclosureReceipt>): DisclosureReceipt => ({
       declared: 'resolved',
@@ -460,8 +460,9 @@ describe(`${RECORD_PAGE} — the export file and the guard's conditions`, () => 
       disclosure: DisclosureReceipt;
     };
     const bundle = await bundleOf({});
-    // (a) red when the header's words change, or the example's version or receipt keys part from
-    //     what export writes; (b) prints the line, the version and the key lists.
+    // (a) red when the header's words change, the example's last clause parts from what the flag
+    //     writes for a refused state (#886 correction), or the example's version or receipt keys
+    //     part from what export writes; (b) prints the line, the version and the key lists.
     expect({
       header: exportDisclosureLine(
         receipt({
@@ -469,12 +470,15 @@ describe(`${RECORD_PAGE} — the export file and the guard's conditions`, () => 
           declared_cause: 'load_failed',
           hidden: { declared: 0, environment: 1, pattern: 0 },
         }),
+        // #886 correction (K1): `unknown (load failed)` is refused, so it is only ever written on
+        // `--accept-partial-disclosure`; the action then passes `true`
+        true,
       ),
       version: json.realm_export_version,
       keys: Object.keys(json.disclosure),
     }).toEqual({
       header:
-        'masked in the file: declared secrets unknown (load failed); environment swept; hidden 0 declared, 1 environment, 0 by pattern; 0 too short to hide',
+        'masked in the file: declared secrets unknown (load failed); environment swept; hidden 0 declared, 1 environment, 0 by pattern; 0 too short to hide; written on --accept-partial-disclosure (refused without it)',
       version: bundle.realm_export_version,
       keys: Object.keys(bundle.disclosure),
     });
@@ -2482,7 +2486,7 @@ describe('#729 PR-3 correction 4 — the pages this correction changes', () => {
       );
       claim(
         READING_PAGE,
-        'It was added after version 0.47.1; its opening and its last clause changed after version 0.48.0.',
+        'It was added after version 0.47.1; its opening, its question clause and its last clause changed after version 0.48.0.',
       );
       const ended = await c4Ended(base, 'gone', 'Held.');
       const live = cli(ended.home, [
@@ -2540,6 +2544,35 @@ describe('#729 PR-3 correction 4 — the pages this correction changes', () => {
       });
     }, 120_000);
 
+    it("on the flag, a run whose manifest could not be read: the question's clause shows what is known, and the line names the flag once", async () => {
+      const held = await c3Run(base, 'invalid');
+      const exported = cli(held.home, [
+        'run',
+        'export',
+        held.runId,
+        '--out',
+        join(base, '879-invalid.json'),
+        '--accept-partial-disclosure',
+      ]);
+      // #886 correction (K2): (a) red when `load_failed` drops out of the question clause's cause
+      //     (it then reads `question: declared tier only`), the opening or the last clause changes,
+      //     or the line names the flag more than once; (b) prints the exit code, the third line
+      //     (realm's words and counts) and the flag's count in it.
+      expect({
+        invalid: [
+          exported.status,
+          thirdLine(exported.stdout),
+          flagCount(thirdLine(exported.stdout)),
+        ],
+      }).toEqual({
+        invalid: [
+          0,
+          'masked in the file: declared secrets unknown (load failed); environment swept; hidden 0 declared, 0 environment, 0 by pattern; 0 too short to hide; question: shown with what is known; written on --accept-partial-disclosure (refused without it)',
+          1,
+        ],
+      });
+    }, 120_000);
+
     it('"in the file": piped, the first line is masked as any printed line is and can hide a value the third line does not count', async () => {
       // #879 (C2): (a) red when the page drops the sentence this cell runs; (b) prints it.
       claim(
@@ -2557,21 +2590,34 @@ describe('#729 PR-3 correction 4 — the pages this correction changes', () => {
           base,
         );
         const lines = exported.stdout.trim().split('\n');
-        const text = readFileSync(join(folder, `${run.runId}.realm.json`), 'utf8');
-        const file = JSON.parse(text) as { disclosure: { hidden: { environment: number } } };
-        // (a) red when the opening loses `in the file`, the first line prints the folder's path
-        //     whole, or the file counts or holds the path; (b) prints the exit code, booleans (the
-        //     first line masked, the path in the file), the third line and the file's count —
-        //     never the path.
+        // #886 correction (K3): a failed export writes no file, and reading it unguarded throws a
+        // message holding the folder's path; so the cell carries whether the file was written and
+        // its count only — never the path, never a snippet of the file (-1: missing or not JSON).
+        const target = join(folder, `${run.runId}.realm.json`);
+        const written = existsSync(target);
+        const text = written ? readFileSync(target, 'utf8') : '';
+        let fileEnvironment = -1;
+        try {
+          const file = JSON.parse(text) as { disclosure: { hidden: { environment: number } } };
+          fileEnvironment = file.disclosure.hidden.environment;
+        } catch {
+          fileEnvironment = -1;
+        }
+        // (a) red when the export writes no file, the opening loses `in the file`, the first line
+        //     prints the folder's path whole, or the file counts or holds the path; (b) prints the
+        //     exit code, booleans (the file written, the first line masked, the path in the file),
+        //     the third line and the file's count — never the path.
         expect({
           code: exported.status,
+          written,
           firstMasked:
             (lines[0] ?? '').includes('[REDACTED]') && !(lines[0] ?? '').includes(folder),
           third: thirdLine(exported.stdout),
-          fileEnvironment: file.disclosure.hidden.environment,
+          fileEnvironment,
           pathInFile: text.includes(folder),
         }).toEqual({
           code: 0,
+          written: true,
           firstMasked: true,
           third:
             'masked in the file: declared secrets resolved; environment swept; hidden 6 declared, 0 environment, 0 by pattern; 0 too short to hide; question: declared tier only',
