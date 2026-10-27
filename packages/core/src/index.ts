@@ -500,13 +500,33 @@ export {
   CACHE_ECONOMICS_JSON_SCHEMA,
   parseCacheEconomics,
   priceFromEconomics,
+  matchModel,
+  minCacheableTokensFor,
 } from './economics/cache-economics.js';
 export type {
   CacheEconomics,
+  CacheEconomicsModel,
   CacheEconomicsPrice,
   CacheEconomicsRates,
   CacheEconomicsTier,
 } from './economics/cache-economics.js';
+// issue #600 caching PR 5: at admission, each agent step's fixed part — its size, what it shares,
+// and whether it can cache against a stated minimum.
+export {
+  describeCacheability,
+  DEFAULT_CHARS_PER_TOKEN_HIGH,
+  DEFAULT_CHARS_PER_TOKEN_LOW,
+} from './economics/cacheability.js';
+export type {
+  CacheBlock,
+  CacheBlockSegment,
+  CacheVerdict,
+  CacheNotJudgedCause,
+  CacheabilityStepInput,
+  CacheabilityOptions,
+  CacheShare,
+  CacheabilityStep,
+} from './economics/cacheability.js';
 export { NOT_PRICED_CAUSES, priceRequest } from './economics/price-source.js';
 export type {
   NotPricedCause,
