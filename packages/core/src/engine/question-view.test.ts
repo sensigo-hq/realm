@@ -294,19 +294,29 @@ describe('#729 PR-4 — the budget (the mint)', () => {
       }).toEqual({ whole: true, cut: undefined });
     });
 
-    it('500 + 40 + 200 fixed = 740 overflows: the 40 kept whole, the 500 cut to the room the 40 leaves', () => {
+    it('500 + 40 + 200 fixed = 740 overflows: the 40 kept whole, the 500 cut to the water-filled cap; the sentence appended whole, nothing chopped', () => {
       const m = mint(template, { a: 'a'.repeat(500), b: 'b'.repeat(40) }, {});
       const q = m.resolved_message!;
+      // The cap: (600 − the reserved sentence − 200 fixed) − 40. The reservation is the blank line
+      // and the sentence at this view's total (751): 2 + 184 = 186, so the cap is 174.
       const cap = capFor([500, 40]) - 40;
-      const kept = q.slice(100, q.indexOf('G'));
-      // (a) red when the long value is cut to the even share instead (half the room: the 40 does not
-      //     show it, being under either share); (b) prints lengths and booleans.
+      const shown = cap - marker(500).length;
+      const head =
+        'F'.repeat(100) +
+        'a'.repeat(shown) +
+        `…[cut at mint: ${shown} of 500 characters]` +
+        'G'.repeat(100) +
+        'b'.repeat(40) +
+        '\n\n';
+      // (a) red when the flat share is restored, the long value is cut to the even share, or the
+      //     sentence's reservation is dropped from (b)'s room ((a) then chops the tail, the marker
+      //     with it); (b) prints booleans, the cap and the sentence's length.
       expect({
-        fortyWhole: q.includes('G'.repeat(100) + 'b'.repeat(40)),
-        longLength: kept.length,
-        longMarker: kept.endsWith(marker(500).replace('500 of', `${cap - marker(500).length} of`)),
-        sentence: endsWithCutSentence(q),
-      }).toEqual({ fortyWhole: true, longLength: cap, longMarker: true, sentence: true });
+        head: q.startsWith(head),
+        sentence: q.slice(head.length).startsWith('[Cut when') && endsWithCutSentence(q),
+        sentenceLength: CUT_SENTENCE(751, 751).length,
+        cap,
+      }).toEqual({ head: true, sentence: true, sentenceLength: 184, cap: 174 });
     });
 
     it('two values of 500: each cut to the even share (the flat case)', () => {
