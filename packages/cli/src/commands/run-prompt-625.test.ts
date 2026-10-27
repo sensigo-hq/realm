@@ -29,7 +29,9 @@ import { quotedForTerminal } from '../lib/holder-render.js';
 import { lagless } from '../test-support/lag.js';
 
 /** C163: (a) red when gates.md no longer holds the sentence these cells pin, word for word; (b) prints it. */
-const GATES_MD_215 = `an answer that came after the time was up and carried the expiry out prints it first too, before its refusal or the sentence that says it was not recorded — through \`realm run respond\` (\`this respond call …\`), the prompt of \`realm workflow run\` (\`this run call …\`) or a reply in the gate's Slack thread to \`realm agent\` (\`this agent call …\`, posted in the thread).`;
+// #729 PR-4 (02, G9), re-pinned: the late answer's lines are printed where `realm agent` runs, and
+// the thread is told in the person's words (gates.md amended; the same sentence slack-gate-late-625.test.ts pins).
+const GATES_MD_215 = `an answer that came after the time was up and carried the expiry out prints it first too, before its refusal or the sentence that says it was not recorded — through \`realm run respond\` (\`this respond call …\`), the prompt of \`realm workflow run\` (\`this run call …\`) or a reply in the gate's Slack thread to \`realm agent\` (\`this agent call …\`, printed where \`realm agent\` runs; the thread is told in the person's words what the question met, and no command).`;
 /** C158: (a) red when realm-workflow.md no longer holds the sentence, word for word; (b) prints it. */
 function claimWorkflowPage(sentence: string): void {
   const page = readFileSync(

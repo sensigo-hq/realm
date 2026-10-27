@@ -530,9 +530,14 @@ export function cutWayLine(runId: string, ctx: RenderCtx = PLAIN): string {
 /**
  * #729 PR-4 (02 §Transport (3)): the person's way to answer a gate on the terminal — one command per
  * choice from the gate's `respond` way, as `realm agent` prints it when no handler attends the gate
- * and when a Slack post failed. The writer's context is the caller's, passed inside its print call.
+ * and when a Slack post failed. One print per line; the writer's context is the caller's, passed
+ * inside each print call (L-2).
  */
-export function terminalRespondLines(runId: string, gate: PendingGate, ctx: RenderCtx): string[] {
+export function terminalRespondLines(
+  runId: string,
+  gate: PendingGate,
+  ctx: RenderCtx = PLAIN,
+): string[] {
   const answerWay = respondWayOfGate(runId, gate);
   const commands = respondLines(answerWay, ctx);
   return respondLines(answerWay).map(({ choice }, i) => {

@@ -722,7 +722,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             // answer commands are the CLI renderer's, from the gate's `respond` way.
             // #729 PR-3 (L-2): the writer's context only inside the print call.
             // #729 PR-4: the lines are shared with the Slack notifier's fallback (one rendering).
-            console.log(terminalRespondLines(runId, gate, writerCtx()).join('\n'));
+            terminalRespondLines(runId, gate).forEach((_, i) =>
+              console.log(terminalRespondLines(runId, gate, writerCtx())[i]),
+            );
             // issue #291 (Deliverable 4e, Amendment 4): the ATTENDING-PROCESS enactment timer —
             // this IS "the non-Slack agent poll loop" the design names as its own timer host. A
             // no-op for a finding-only/non-expiring gate.

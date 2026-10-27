@@ -910,7 +910,9 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
   // already on this console) — the person's way to answer on the terminal is printed, as `realm agent`
   // prints it when no handler attends the gate; the expiry timer and the poll below still run.
   if (gateThreadTs === undefined) {
-    console.log(terminalRespondLines(runId, gate, writerCtx()).join('\n'));
+    terminalRespondLines(runId, gate).forEach((_, i) =>
+      console.log(terminalRespondLines(runId, gate, writerCtx())[i]),
+    );
   }
 
   // Start reminder/escalation timers if we have a thread anchor.
@@ -1116,7 +1118,9 @@ export function createSlackGateHandler(
       // #729 PR-4 (02 §Transport (3)): a post Slack did not take (its cause already printed) — the
       // person's way to answer on the terminal, as `realm agent` prints it with no handler.
       if (!posted) {
-        console.log(terminalRespondLines(runId, gate, writerCtx()).join('\n'));
+        terminalRespondLines(runId, gate).forEach((_, i) =>
+          console.log(terminalRespondLines(runId, gate, writerCtx())[i]),
+        );
       }
       console.log('   Waiting for approval...');
       const intervalMs = config.pollIntervalMs ?? 3000;
