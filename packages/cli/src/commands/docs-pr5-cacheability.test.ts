@@ -1115,7 +1115,7 @@ describe(
         "`profile file not read` means the command could not read the step's profile file, because the registered copy records no workflow folder, or the one it records is gone.",
         "The copy still holds the profile's text, and runs use it.",
         "What to do: register again from the workflow's folder, with `realm workflow register <path>`.",
-        'The `N checks not run:` line above the cache lines names the same reason.',
+        'The line above the cache lines that starts `1 check not run:` or `N checks not run:` names the same reason.',
         "With `--registered`, the sizes come from the profile files now in the workflow's folder, which is what registering again would store, not from the text the copy holds.",
       ])
         claim(WORKFLOW_PAGE, sentence);
@@ -1153,13 +1153,44 @@ describe(
         {
           held: stored(),
           row: out.find((l) => l.startsWith('cache: with_profile ')),
-          notRun: out.some((l) => / checks not run: /.test(l) && l.includes(`(${reason})`)),
+          // Correction 3 (I-4): both folders are gone, so two checks are left out: the line starts
+          // `2 checks not run: ` exactly (a `2 check not run:` stays red).
+          notRun: out.some((l) => /^2 checks not run: /.test(l) && l.includes(`(${reason})`)),
         },
         out.join('\n'),
       ).toEqual({
         held: 16,
         row: `cache: with_profile — profile file not read (${reason}): sizes not computed`,
         notRun: true,
+      });
+      // Correction 3 (I-4): one check left out reads `1 check not run:`. A workflow in a subfolder of
+      // its trust root is registered, then the subfolder is removed: the trust root is still there,
+      // so only the profile check is left out, and the row names the same reason. (a) red when the
+      // singular and the plural swap, or the row loses the reason; (b) prints the lines, the scratch
+      // folder written `<dir>`.
+      const root = project({
+        files: {
+          'wf/workflow.yaml':
+            'id: moved_wf\nname: moved_wf\nversion: 1\nsteps:\n' +
+            '  with_profile:\n    description: a\n    execution: agent\n    prompt: Do it.\n    agent_profile: p\n',
+          'wf/profiles/p.md': 'You are careful.',
+        },
+      });
+      expect(realm(['workflow', 'register', join(root, 'wf')]).code).toBe(0);
+      rmSync(join(root, 'wf'), { recursive: true, force: true });
+      const one = hide(realm(['workflow', 'validate', '--registered', 'moved_wf']).stdout).split(
+        '\n',
+      );
+      const oneReason = 'source_dir <dir>/proj/wf no longer exists';
+      expect(
+        {
+          notRun: one.find((l) => / not run: /.test(l)),
+          row: one.find((l) => l.startsWith('cache: with_profile ')),
+        },
+        one.join('\n'),
+      ).toEqual({
+        notRun: `1 check not run: agent-profile file resolution (${oneReason})`,
+        row: `cache: with_profile — profile file not read (${oneReason}): sizes not computed`,
       });
     });
   },
