@@ -11,7 +11,7 @@
 // (b) what it prints: the first stderr line and the exit code, the scratch folders written `<dir>`.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdtempSync, rmSync, unlinkSync } from 'node:fs';
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, rmSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,10 +48,10 @@ interface Result {
   shown: string;
 }
 
-function realm(args: string[]): Result {
+function realm(args: string[], homeDir = home): Result {
   const r = spawnSync(process.execPath, [CLI, ...args], {
     cwd: scratch,
-    env: { PATH: process.env['PATH'] ?? '', HOME: home },
+    env: { PATH: process.env['PATH'] ?? '', HOME: homeDir },
     encoding: 'utf8',
     timeout: 20_000,
     input: '',
@@ -127,4 +127,38 @@ describe('#715 (a) correction 1 (C-6) — a copied test location, on the built C
     const r = realm(['run', 'list']);
     expect(r.code, r.shown).toBe(0);
   }, 20_000);
+});
+
+// #715 (a) correction 1 (C-10): every ordinary store reads the clock file's place when it is built, so
+// a `~/.realm` this user cannot read printed a stack trace on the head; 0.48.0 printed one typed line
+// with its remedy at first use, and so does this. Mode bits do not bind root, and Windows has none.
+const NO_MODE_BITS = process.platform === 'win32' || process.getuid?.() === 0;
+
+describe('#715 (a) correction 1 (C-10) — a ~/.realm this user cannot read, on the built CLI', () => {
+  it.skipIf(NO_MODE_BITS)(
+    'realm run list: the typed line that the runs folder cannot be read, no stack, exit 1 (skipped as root or on Windows: mode bits do not bind there)',
+    () => {
+      // (a) red when only ENOENT counts as an absent clock file (the store's construction throws a
+      // plain error with its stack); (b) prints the first stderr line and the exit code.
+      const locked = join(scratch, 'home-locked');
+      mkdirSync(join(locked, '.realm', 'runs'), { recursive: true });
+      chmodSync(join(locked, '.realm'), 0o000);
+      try {
+        const r = realm(['run', 'list'], locked);
+        expect(
+          {
+            code: r.code,
+            stdout: r.stdout,
+            folder: /The runs folder .* cannot be read \(EACCES\)/.test(r.stderr),
+            clockFile: r.stderr.includes('test clock file'),
+            stack: STACK.test(r.stderr),
+          },
+          r.shown,
+        ).toEqual({ code: 1, stdout: '', folder: true, clockFile: false, stack: false });
+      } finally {
+        chmodSync(join(locked, '.realm'), 0o700);
+      }
+    },
+    20_000,
+  );
 });

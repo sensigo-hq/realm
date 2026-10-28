@@ -4,7 +4,7 @@
 // system temp folder). Each cell names (a) the change that turns it red and (b) what it prints when it
 // fails: instants, a message, a listing — never an environment or a path under a real home.
 import { afterEach, describe, expect, it } from 'vitest';
-import { cpSync, existsSync, readdirSync, realpathSync, symlinkSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, readdirSync, realpathSync, symlinkSync } from 'node:fs';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -134,4 +134,75 @@ describe('#715 (a) C.1 — the clock file', () => {
       'no run file written',
     ).toEqual([]);
   });
+});
+
+// #715 (a) correction 1 (C-10): every ordinary store reads the clock file's place at construction, so
+// a folder this user cannot read must not turn into a stack trace there. A folder that cannot be
+// searched hides the file: the store opens as before this unit and its first use refuses with the
+// typed runs-folder line. A clock file that exists but cannot be read still refuses, with its way
+// out. Mode bits do not bind root, and Windows has none: the two cells skip there, saying so.
+const NO_MODE_BITS = process.platform === 'win32' || process.getuid?.() === 0;
+
+describe('#715 (a) correction 1 (C-10) — a folder or a clock file this user cannot read', () => {
+  it.skipIf(NO_MODE_BITS)(
+    '(1) a runs folder whose parent cannot be read: the store constructs; its first use raises the typed runs-folder error (skipped as root or on Windows: mode bits do not bind there)',
+    async () => {
+      // (a) red when only ENOENT counts as absent (construction throws "cannot be read"); (b) prints
+      // the first line of each error.
+      const { root, runsDir } = await freshRoot();
+      chmodSync(root, 0o000);
+      try {
+        let built: JsonFileStore | undefined;
+        let construction = 'constructed';
+        try {
+          built = new JsonFileStore(runsDir);
+        } catch (err) {
+          construction = String((err as Error).message).split('\n')[0]!;
+        }
+        let firstUse = 'no error';
+        let code = 'none';
+        if (built !== undefined) {
+          try {
+            await built.list();
+          } catch (err) {
+            firstUse = String((err as Error).message).split('\n')[0]!;
+            code = (err as { code?: string }).code ?? 'none';
+          }
+        }
+        const shown = `${construction} | ${firstUse.replaceAll(root, '<dir>')}`;
+        expect({ construction, code, clock: built?.clock === systemClock }, shown).toEqual({
+          construction: 'constructed',
+          code: 'ENGINE_STORE_FAILED',
+          clock: true,
+        });
+      } finally {
+        chmodSync(root, 0o700);
+      }
+    },
+  );
+
+  it.skipIf(NO_MODE_BITS)(
+    '(2) a clock file that exists but cannot be read, in a folder that can: the store refuses, naming the way out (skipped as root or on Windows: mode bits do not bind there)',
+    async () => {
+      // (a) red when every read error is swallowed (the store opens on the system clock); (b) prints
+      // the error's first line.
+      const { root, runsDir } = await freshRoot();
+      await writeTestClockFile(root, new Date(T));
+      const file = join(root, TEST_CLOCK_FILE_NAME);
+      chmodSync(file, 0o000);
+      try {
+        let message = 'constructed';
+        try {
+          new JsonFileStore(runsDir);
+        } catch (err) {
+          message = String((err as Error).message).split('\n')[0]!;
+        }
+        expect(message.replaceAll(root, '<dir>'), message.replaceAll(root, '<dir>')).toBe(
+          'The test clock file <dir>/.realm-test-clock cannot be read (EACCES). To use this folder as an ordinary store, delete its clock file (<dir>/.realm-test-clock); to keep it as a test location, give this user read access to the file.',
+        );
+      } finally {
+        chmodSync(file, 0o600);
+      }
+    },
+  );
 });

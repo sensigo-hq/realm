@@ -5,7 +5,7 @@
 // on an ordinary directory has no such file and uses the host's system clock. Nothing in production
 // writes this file, and a lint rule keeps the helpers that create or read it out of production code
 // (D6-52).
-import { readFileSync, realpathSync } from 'node:fs';
+import { accessSync, constants, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { WorkflowError } from '../types/workflow-error.js';
 import { systemClock, type Clock } from '../utils/clock.js';
@@ -46,18 +46,36 @@ export async function writeTestClockFile(root: string, instant: Date): Promise<v
   await atomicWriteFile(join(root, TEST_CLOCK_FILE_NAME), JSON.stringify(file, null, 2));
 }
 
+/** Whether this user can search `dir` (and so see what is in it). */
+function searchable(dir: string): boolean {
+  try {
+    accessSync(dir, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Reads a clock file (synchronously). Absent ⇒ `undefined`. A file that exists but cannot be read,
- * or is not this format, throws a plain `Error` naming the file — never its content. For
- * `@sensigo/realm-testing`, not for hosts.
+ * Reads a clock file (synchronously). Absent ⇒ `undefined`, and so is a file in a folder this user
+ * cannot search (#715 (a) correction 1, C-10: as before this unit, a store there opens on the system
+ * clock, and its first use refuses the unreadable runs folder with its typed line and remedy). A file
+ * that exists but cannot be read throws a plain `Error` naming the file and the two ways out; one that
+ * is not this format throws naming the file — never its content. For `@sensigo/realm-testing`, not
+ * for hosts.
  */
 export function readTestClockFile(path: string): TestClockFile | undefined {
   let text: string;
   try {
     text = readFileSync(path, 'utf8');
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-    throw new Error(`the test clock file ${path} cannot be read`, { cause: err });
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return undefined;
+    if ((code === 'EACCES' || code === 'EPERM') && !searchable(dirname(path))) return undefined;
+    throw new Error(
+      `The test clock file ${path} cannot be read (${code ?? 'no error code'}). To use this folder as an ordinary store, delete its clock file (${path}); to keep it as a test location, give this user read access to the file.`,
+      { cause: err },
+    );
   }
   let parsed: unknown;
   try {
