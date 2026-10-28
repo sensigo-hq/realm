@@ -179,15 +179,22 @@ describe(
     });
 
     // Correction 1 (C-6.1): a flag given last with nothing after it, and an unknown --provider, get
-    // the command line parser's message; a flag followed by another option takes it as its value.
-    // Each: exit 1, nothing on standard output, the message on standard error, and the page says
-    // so. (a) red when the page drops the sentence or an exit or standard-output fact changes;
-    // (b) prints each exit code and the first line of standard error.
-    it("C-6.1: the parser's own messages, and a flag that takes the next option as its value", () => {
+    // the command line parser's message; a flag followed by an option that takes no value takes it
+    // as its value. Correction 2 (F-1): with a path given, a flag followed by an option that takes a
+    // value gets the parser's "too many arguments", and `--provider --floor 5` the parser's invalid
+    // argument. Each: exit 1, nothing on standard output, the message on standard error, and the
+    // page says so. (a) red when the page keeps the old sentence or drops the new one, or an exit, a
+    // standard-output fact or a quoted prefix changes; (b) prints each exit code and the first line
+    // of standard error.
+    it("C-6.1 / F-1: the parser's own messages, and which option a flag takes as its value", () => {
       claim(
         WORKFLOW_PAGE,
-        "A flag given last, with nothing after it, and a `--provider` other than `anthropic` or `openai` (in lower case) get the command line parser's own message instead, also on standard error with exit 1 and nothing on standard output: `error: option '--floor <tokens>' argument missing`, or `error: option '--provider <name>' argument 'foo' is invalid. --provider must be openai or anthropic.` A flag followed by another option takes that option as its value and gets the line above: `--floor --json` prints `Error: --floor must be a whole number of tokens, 1 or more (got '--json').`",
+        "A flag given last, with nothing after it, and a `--provider` other than `anthropic` or `openai` (in lower case) get the command line parser's own message instead, also on standard error with exit 1 and nothing on standard output: `error: option '--floor <tokens>' argument missing`, or `error: option '--provider <name>' argument 'foo' is invalid. --provider must be openai or anthropic.` A flag followed by an option that takes no value takes that option as its value and gets the line above: `--floor --json` prints `Error: --floor must be a whole number of tokens, 1 or more (got '--json').` With a path given, a flag followed by an option that takes a value is read by the command line parser instead: `--floor --ratio 4` and `--floor --provider anthropic` print `error: too many arguments for 'validate'. Expected 1 argument but got 2: …` (`register` and `watch` name themselves; the path and the value follow). `--provider --floor 5` prints `error: option '--provider <name>' argument '--floor' is invalid. --provider must be openai or anthropic.` Each goes to standard error with exit 1 and nothing on standard output.",
       );
+      expect(
+        read(WORKFLOW_PAGE),
+        'the page still says a flag followed by ANY option takes it as its value',
+      ).not.toContain('A flag followed by another option takes that option as its value');
       const v = ['workflow', 'validate', ex('01-code-reviewer')];
       const runs = [
         realm([...v, '--floor']),
@@ -203,6 +210,26 @@ describe(
         ],
         [1, '', "Error: --floor must be a whole number of tokens, 1 or more (got '--json')."],
       ]);
+      // F-1: the three orders the old sentence got wrong. stderr STARTS with the quoted prefix (the
+      // path and the value after it vary).
+      const parsed = [
+        realm([...v, '--floor', '--ratio', '4']),
+        realm([...v, '--floor', '--provider', 'anthropic']),
+        realm([...v, '--provider', '--floor', '5']),
+      ].map((r) => {
+        const first = r.stderr.trim().split('\n')[0] ?? '';
+        return { code: r.code, stdout: r.stdout, first };
+      });
+      const prefixes = [
+        "error: too many arguments for 'validate'. Expected 1 argument but got 2:",
+        "error: too many arguments for 'validate'. Expected 1 argument but got 2:",
+        "error: option '--provider <name>' argument '--floor' is invalid.",
+      ];
+      parsed.forEach((r, i) => {
+        const shown = `exit ${String(r.code)}: ${r.first}`;
+        expect([r.code, r.stdout], shown).toEqual([1, '']);
+        expect(r.first.startsWith(prefixes[i] ?? '\0'), shown).toBe(true);
+      });
     });
 
     // Correction 1 (C-6.2): a log hides the provider word and the model id when an environment value
