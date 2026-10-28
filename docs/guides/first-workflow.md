@@ -129,7 +129,7 @@ openai: realm sends no cache marker; the provider's own rules decide — see htt
 anthropic: the cache is kept per workspace (per organization on Bedrock and Google Cloud), as Anthropic's page said on 2026-10-09: drives from different workspaces each pay the write
 ```
 
-Notice `Valid`. The second line is a suggestion you can ignore here.
+Notice `Valid`. The `ℹ` line is a suggestion and the `cache:` lines under it are about prompt caching, which matters once `realm agent` or `realm listen` calls a model; you can ignore both here. [What the cache lines mean](../reference/cli/realm-workflow.md#the-cache-lines).
 
 ## 4. Register it
 

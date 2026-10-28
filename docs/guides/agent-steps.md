@@ -124,6 +124,8 @@ openai: realm sends no cache marker; the provider's own rules decide — see htt
 anthropic: the cache is kept per workspace (per organization on Bedrock and Google Cloud), as Anthropic's page said on 2026-10-09: drives from different workspaces each pay the write
 ```
 
+The `cache:` lines are explained under [The cache lines](../reference/cli/realm-workflow.md#the-cache-lines).
+
 The profile's text is copied into the registered workflow at this moment. If you edit the profile file later, register again, or the old text is still used.
 
 The record of a run names the profile each step ran with:

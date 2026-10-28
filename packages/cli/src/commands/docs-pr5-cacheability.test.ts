@@ -5,7 +5,15 @@
 // and the CHANGELOG. On a failing host a cell prints the sentence a page no longer holds, or realm's
 // own lines with the scratch folder written `<dir>`: never a key or an environment.
 import { spawn, spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -867,6 +875,80 @@ describe('cache-economics.md, "The cache minimum"', { timeout: 60_000 }, () => {
     );
     expect('error' in p ? p.error.reason : 'ACCEPTED').toBe(
       "economics/models/m: unknown key 'min_cacheable_token'",
+    );
+  });
+});
+
+/** A heading's anchor, as the site and GitHub make it: lower case, punctuation but `-` and `_`
+ *  dropped, spaces to `-`. */
+const slug = (heading: string): string =>
+  heading
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N} _-]/gu, '')
+    .replace(/ /g, '-');
+/** Correction 2 (F-8): where a link on `page` lands: `ok`, `no file`, or `no heading` (the anchor
+ *  is no heading of the target page). */
+function linkLands(page: string, href: string): string {
+  const [file, anchor] = href.split('#');
+  const target = join(dirname(join(ROOT, page)), file ?? '');
+  if (!existsSync(target)) return 'no file';
+  if (anchor === undefined) return 'ok';
+  const headings = readFileSync(target, 'utf8')
+    .split('\n')
+    .filter((l) => /^#{1,6} /.test(l))
+    .map((l) => slug(l.replace(/^#{1,6} /, '')));
+  return headings.includes(anchor) ? 'ok' : 'no heading';
+}
+
+describe('correction 2, F-8: the pages that print the cache lines say what they are', () => {
+  // The five pages a new user meets the cache lines on carry one sentence and a link after the
+  // transcript; realm-workflow.md defines the three words the provider lines use, each from a page
+  // that already says it. (a) red when a sentence or a link is removed, or an anchor is renamed so
+  // that no heading carries it; (b) prints the page and the sentence, or each link and where it
+  // lands.
+  it('F-8: each page carries its sentence, and each added link lands on a heading', () => {
+    const pages: Array<[string, string]> = [
+      [
+        'docs/start/install-and-first-run.md',
+        "The `cache:` lines and the `anthropic:` and `openai:` lines under them are about prompt caching: how big each agent step's fixed text is, and what each provider does with it. They matter once `realm agent` or `realm listen` calls a model; you can ignore them here. [What they mean](../reference/cli/realm-workflow.md#the-cache-lines).",
+      ],
+      [
+        'docs/guides/first-workflow.md',
+        'Notice `Valid`. The `ℹ` line is a suggestion and the `cache:` lines under it are about prompt caching, which matters once `realm agent` or `realm listen` calls a model; you can ignore both here. [What the cache lines mean](../reference/cli/realm-workflow.md#the-cache-lines).',
+      ],
+      [
+        'docs/guides/agent-steps.md',
+        'The `cache:` lines are explained under [The cache lines](../reference/cli/realm-workflow.md#the-cache-lines).',
+      ],
+      [
+        'docs/guides/step-handlers.md',
+        'The `cache:` lines are explained under [The cache lines](../reference/cli/realm-workflow.md#the-cache-lines).',
+      ],
+      [
+        'docs/reference/workflow/top-level-fields.md',
+        'The `cache:` lines are explained under [The cache lines](../cli/realm-workflow.md#the-cache-lines).',
+      ],
+    ];
+    for (const [page, sentence] of pages) claim(page, sentence);
+    for (const sentence of [
+      '**Words on the provider lines.**',
+      '_The drive_ is one `realm agent` driving one run, whether you start it or `realm listen` starts it for a run; its `--prompt-cache` flag sets what the provider is asked to cache (see [`realm agent`](realm-agent.md)).',
+      "_Sent uncached, silently_: a fixed part shorter than the model's minimum is not cached, and the provider says nothing about it.",
+      '_Pay the write_: the request that writes a cache entry is billed for what it writes at the cache-write price (see [How a request is priced](../cache-economics.md#how-a-request-is-priced) and [What a run costs](../../guides/realm-agent.md#what-a-run-costs)).',
+    ])
+      claim(WORKFLOW_PAGE, sentence);
+    const links: Array<[string, string]> = [
+      ...pages.map(([page, sentence]): [string, string] => [
+        page,
+        /\]\(([^)]+)\)/.exec(sentence)![1]!,
+      ]),
+      [WORKFLOW_PAGE, 'realm-agent.md'],
+      [WORKFLOW_PAGE, '../cache-economics.md#how-a-request-is-priced'],
+      [WORKFLOW_PAGE, '../../guides/realm-agent.md#what-a-run-costs'],
+    ];
+    expect(links.map(([page, href]) => `${page} → ${href}: ${linkLands(page, href)}`)).toEqual(
+      links.map(([page, href]) => `${page} → ${href}: ok`),
     );
   });
 });

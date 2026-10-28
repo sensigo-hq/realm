@@ -107,6 +107,8 @@ openai: realm sends no cache marker; the provider's own rules decide — see htt
 anthropic: the cache is kept per workspace (per organization on Bedrock and Google Cloud), as Anthropic's page said on 2026-10-09: drives from different workspaces each pay the write
 ```
 
+The `cache:` lines are explained under [The cache lines](../reference/cli/realm-workflow.md#the-cache-lines).
+
 Notice the `Extensions` line. It confirms that Realm loaded your file and found one handler. Then register:
 
 ```bash

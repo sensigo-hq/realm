@@ -432,3 +432,5 @@ anthropic: on steps without tools, realm marks the fixed part for caching unless
 openai: realm sends no cache marker; the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)
 anthropic: the cache is kept per workspace (per organization on Bedrock and Google Cloud), as Anthropic's page said on 2026-10-09: drives from different workspaces each pay the write
 ```
+
+The `cache:` lines are explained under [The cache lines](../cli/realm-workflow.md#the-cache-lines).
