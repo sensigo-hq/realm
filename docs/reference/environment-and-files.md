@@ -95,7 +95,7 @@ A workflow is registered the same way: while `workflows/<workflow-id>.json` is b
 
 The file store stamps the times it writes, such as a run's `created_at` and `updated_at`, with this computer's clock. A file store on a folder that several computers share is not supported: each computer would stamp with its own clock.
 
-A folder with a `.realm-test-clock` file beside its `runs/` folder is a test location. Only `@sensigo/realm-testing` creates one, for tests; the file store only reads the file. A store opened there takes the time from that file when it creates a run, starts a step or writes a run with `update`, so every process that opens the folder reads the same time (added after version 0.48.0). The file names the folder it was made for: a store opened on a copy of it in another folder refuses with `STATE_TEST_CLOCK_FOREIGN`.
+A folder with a `.realm-test-clock` file beside its `runs/` folder is a test location. Only `@sensigo/realm-testing` creates one, for tests; the file store only reads the file. A store opened there takes the time from that file when it creates a run, starts a step or writes a run with `update`, so every process that opens the folder reads the same time (added after version 0.48.0). The file names the folder it was made for: a store opened on a copy of it in another folder refuses with `STATE_TEST_CLOCK_FOREIGN`. To use the copy as an ordinary store, delete its `.realm-test-clock` file.
 
 ### Which commands remove files
 

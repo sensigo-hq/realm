@@ -114,7 +114,9 @@ export function resolveStoreClock(runsDir: string): Clock {
   const here = realpathSync(dirname(runsDir));
   if (file.location !== here) {
     throw new WorkflowError(
-      `This store's clock file was created for ${file.location}, not ${here}. A store opened here would run on another location's test clock. Create a test location here with \`createTestLocation\`, or open the store at ${file.location}.`,
+      // #715 (a) correction 1 (C-6): the way out that works in place comes first; the old first remedy
+      // ("create a test location here") is refused on this very folder, which holds a clock file.
+      `This store's clock file was created for ${file.location}, not ${here}. A store opened here would run on another location's test clock. To use this folder as an ordinary store, delete its clock file (${join(here, TEST_CLOCK_FILE_NAME)}); to keep the test location it came from, open the store at ${file.location}; to make a new test location, use createTestLocation on a folder that has none.`,
       {
         code: 'STATE_TEST_CLOCK_FOREIGN',
         category: 'STATE',

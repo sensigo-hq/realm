@@ -379,6 +379,8 @@ Clocks a test moves itself, for a store's `clock` (added after version 0.48.0). 
 | `countingClock(clock)`                 | The same clock, with a `reads` count of its `now()` calls.                                                                                                                                                                                                                                                      |
 | `createTestLocation({ start, root? })` | A test location: a folder with `runs/` and a `.realm-test-clock` file. Its `clock` moves the time in that file, so a `JsonFileStore` opened on its `runsDir`, in this process or another, reads it. `remove()` deletes the folders and the clock file the location made; a root you gave keeps everything else. |
 
+`createTestLocation` refuses an empty root, the working directory or a folder above it, and a root that already holds a clock file; to use such a folder as an ordinary store again, delete its `.realm-test-clock` file.
+
 `set` to an earlier time runs nothing and moves the clock back. A function given to `at` sees the clock at its own time, never earlier. An `advance` runs every due function even when some throw, then rejects with their errors.
 
 A test of Realm's own source keeps `createTestLocation`, and the clock file's helpers `@sensigo/realm` exports for this package, out of every module that is not a test or this package: Realm's own code does not create a test clock or write a clock file. The file store reads a clock file, only when it sits beside `runs/`.

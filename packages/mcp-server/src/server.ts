@@ -40,7 +40,12 @@ import { registerAbandonRun } from './tools/abandon-run.js';
 import { registerCreateWorkflow } from './tools/create-workflow.js';
 import { registerAppendTrace } from './tools/append-trace.js';
 import { registerStartRunBatch } from './tools/start-run-batch.js';
-import { doorDisclosureOf, type DoorDisclosure, type OperatorRoute } from './render-reply.js';
+import {
+  doorDisclosureOf,
+  logMasked,
+  type DoorDisclosure,
+  type OperatorRoute,
+} from './render-reply.js';
 import { registerPresentQuestion } from './tools/present-question.js';
 import { ABANDON_RUN_DESCRIPTION_NO_ANSWER_TOOL } from './tools/abandon-run.js';
 import {
@@ -561,10 +566,20 @@ if (isRunDirectly()) {
   const driver = composeBinIdentity();
   console.error(gateAnswersStartLine(settings.answers, false, 'realm-mcp'));
   // #627 W (§5.8): the stdio transport authenticates no one, so this bin's answers name no principal.
-  const server = createRealmMcpServer({
-    ...(driver !== undefined ? { driver } : {}),
-    principal: { absent: 'door_authenticates_no_principal' },
-  });
+  // #715 (a) correction 1 (C-6): a run store opened on a copy of a test location refuses with one line
+  // on stderr, masked for a log as `realm mcp`'s line is, and exit 1 — never Node's crash dump, and
+  // nothing on stdout. Any other error escapes as before. Read by its code, never `instanceof`.
+  let server: ReturnType<typeof createRealmMcpServer>;
+  try {
+    server = createRealmMcpServer({
+      ...(driver !== undefined ? { driver } : {}),
+      principal: { absent: 'door_authenticates_no_principal' },
+    });
+  } catch (err) {
+    if ((err as { code?: unknown } | null)?.code !== 'STATE_TEST_CLOCK_FOREIGN') throw err;
+    logMasked(`realm-mcp: ${(err as Error).message}`);
+    process.exit(1);
+  }
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }

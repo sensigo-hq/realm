@@ -64,6 +64,8 @@ describe('#715 (a) — the docs sentences', () => {
       ENV,
       'The file names the folder it was made for: a store opened on a copy of it in another folder refuses with `STATE_TEST_CLOCK_FOREIGN`.',
     );
+    // Correction 1 (C-6): foreign-test-clock-715.test.ts (deleting the copy's file, run list exits 0).
+    claim(ENV, 'To use the copy as an ordinary store, delete its `.realm-test-clock` file.');
   });
 
   it('realm-run-acting.md: purge reports a run that changed after it was selected', () => {
@@ -170,6 +172,12 @@ describe('#715 (a) — the docs sentences', () => {
       TESTING,
       'A test location: a folder with `runs/` and a `.realm-test-clock` file. Its `clock` moves the time in that file, so a `JsonFileStore` opened on its `runsDir`, in this process or another, reads it. `remove()` deletes the folders and the clock file the location made; a root you gave keeps everything else.',
     );
+    // Correction 1: C-3 (0) (the three refused roots), C14 (a root that holds a clock file), C-6's
+    // built-CLI cell (deleting the file makes the folder an ordinary store).
+    claim(
+      TESTING,
+      '`createTestLocation` refuses an empty root, the working directory or a folder above it, and a root that already holds a clock file; to use such a folder as an ordinary store again, delete its `.realm-test-clock` file.',
+    );
     // C9; C7, C7b; C8.
     claim(
       TESTING,
@@ -244,9 +252,10 @@ describe('#715 (a) — the docs sentences', () => {
 
   it('error-codes.md: STATE_TEST_CLOCK_FOREIGN', () => {
     // C3.
+    // Correction 1 (C-6): C3 (the message), foreign-test-clock-715.test.ts (the first way out works).
     claim(
       CODES,
-      "A run store was opened on a folder whose test clock file was made for another folder, as when a test location is copied. A store there would run on another location's test clock. The message names both folders and the two ways out: make a test location there with `createTestLocation`, or open the store at the folder the file names. Added after version 0.48.0.",
+      "A run store was opened on a folder whose test clock file was made for another folder, as when a test location is copied. A store there would run on another location's test clock. The message names both folders and the three ways out: delete the folder's clock file to use it as an ordinary store, open the store at the folder the file names, or make a new test location with `createTestLocation` on a folder that has none. Added after version 0.48.0.",
     );
   });
 

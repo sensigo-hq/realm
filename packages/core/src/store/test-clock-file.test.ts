@@ -83,7 +83,7 @@ describe('#715 (a) C.1 — the clock file', () => {
       retryable: false,
     });
     expect(e.message).toBe(
-      `This store's clock file was created for ${a}, not ${b}. A store opened here would run on another location's test clock. Create a test location here with \`createTestLocation\`, or open the store at ${a}.`,
+      `This store's clock file was created for ${a}, not ${b}. A store opened here would run on another location's test clock. To use this folder as an ordinary store, delete its clock file (${join(b, TEST_CLOCK_FILE_NAME)}); to keep the test location it came from, open the store at ${a}; to make a new test location, use createTestLocation on a folder that has none.`,
     );
     const link = join(other, 'link');
     symlinkSync(root, link);
