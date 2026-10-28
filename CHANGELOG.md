@@ -45,8 +45,9 @@ All notable changes to this project are documented here.
   or adapter with at most three of the steps that need it and how many more (at most ten, then how
   many more), the way out once — `load the missing extension` when one handler or adapter is
   missing, `load the missing extensions` when several are — and `get_run_state lists each one in
-engine_runnable.` The error reply of the call that attempts one such step counts them too. It
-  repeated one whole sentence, way out included, for every step. One step keeps its sentence. Each `engine_runnable` entry refused for a handler or adapter (`get_run_state`,
+engine_runnable.` It repeated one whole sentence, way out included, for every step. One step keeps
+  its sentence. The error reply of the call that attempts one such step counts them too. Each
+  `engine_runnable` entry refused for a handler or adapter (`get_run_state`,
   `describePending`) carries `requirement` (`kind`, `name`) beside `basis`. A step or handler name
   over 500 characters is named by its length in these sentences and in the CLI's lines for a step
   that cannot run.
