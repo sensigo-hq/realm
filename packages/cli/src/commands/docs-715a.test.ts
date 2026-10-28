@@ -44,12 +44,16 @@ describe('#715 (a) — the docs sentences', () => {
       ENV,
       'A file store on a folder that several computers share is not supported: each computer would stamp with its own clock.',
     );
-    // C4, C14 (the file beside runs/); the lint cell (only the testing package makes one).
+    // C4, C14 (the file beside runs/); correction 1 (C-2): the source scan in
+    // lint-test-location-715.test.ts (only the testing package creates one); C1, C2 (the store reads).
     claim(
       ENV,
       'A folder with a `.realm-test-clock` file beside its `runs/` folder is a test location.',
     );
-    claim(ENV, 'Only `@sensigo/realm-testing` makes one, for tests.');
+    claim(
+      ENV,
+      'Only `@sensigo/realm-testing` creates one, for tests; the file store only reads the file.',
+    );
     // C2 (create), B2 (update, claimStep at a location), C15 (another process).
     claim(
       ENV,
@@ -171,11 +175,13 @@ describe('#715 (a) — the docs sentences', () => {
       TESTING,
       '`set` to an earlier time runs nothing and moves the clock back. A function given to `at` sees the clock at its own time, never earlier. An `advance` runs every due function even when some throw, then rejects with their errors.',
     );
-    // The lint cell (lint-test-location-715.test.ts).
+    // Correction 1 (C-2): the source scan (lint-test-location-715.test.ts); C1, C2 (the store reads
+    // the file beside runs/, and none elsewhere).
     claim(
       TESTING,
-      "A lint rule keeps `createTestLocation`, and the clock file's helpers `@sensigo/realm` exports for this package, out of every module that is not a test or this package: production code never makes or reads a test clock.",
+      "A test of Realm's own source keeps `createTestLocation`, and the clock file's helpers `@sensigo/realm` exports for this package, out of every module that is not a test or this package: Realm's own code does not create a test clock or write a clock file.",
     );
+    claim(TESTING, 'The file store reads a clock file, only when it sits beside `runs/`.');
     // The type count cell below.
     claim(TESTING, 'The 30 types are named in the group that uses them.');
     // C16 (the family takes an adapter and returns cases).

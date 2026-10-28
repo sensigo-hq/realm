@@ -381,7 +381,7 @@ Clocks a test moves itself, for a store's `clock` (added after version 0.48.0). 
 
 `set` to an earlier time runs nothing and moves the clock back. A function given to `at` sees the clock at its own time, never earlier. An `advance` runs every due function even when some throw, then rejects with their errors.
 
-A lint rule keeps `createTestLocation`, and the clock file's helpers `@sensigo/realm` exports for this package, out of every module that is not a test or this package: production code never makes or reads a test clock.
+A test of Realm's own source keeps `createTestLocation`, and the clock file's helpers `@sensigo/realm` exports for this package, out of every module that is not a test or this package: Realm's own code does not create a test clock or write a clock file. The file store reads a clock file, only when it sits beside `runs/`.
 
 Types: `SettableClock`, `SettableClockOptions`, `TestLocation`.
 
