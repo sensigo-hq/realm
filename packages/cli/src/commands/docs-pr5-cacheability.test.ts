@@ -499,7 +499,7 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
     );
     claim(
       WORKFLOW_PAGE,
-      "**Steps that start the same way.** The line names the other steps whose fixed part is the same as this step's: `shares its whole fixed part with …`. On Anthropic nothing else is named: Anthropic writes its cache entry at the block Realm marks, and a read needs every character up to it, so two steps that part earlier share no entry. On OpenAI, two steps that carry the same profile and part after it, in the schema, are named too: `shares its first <n> chars with …: the schemas differ`. With a minimum in force, they are named only when the estimate of the start they share reaches it or comes near it. No other shared start is named. A step below the minimum names no sharing, because it cannot cache whatever it shares; on OpenAI with `structured_output: strict`, where the provider's own schema text is not counted, the clause stays. The clause comes back with a lower floor or a longer fixed part. A list of more than six steps names five and ends `and N more`. From example 05, with `--provider anthropic`:",
+      "**Steps that share a fixed part.** The line names the other steps whose fixed part is the same as this step's: `shares its whole fixed part with …`. On Anthropic nothing else is named: Anthropic writes its cache entry at the block Realm marks, and a read needs every character up to it, so two steps that part earlier share no entry. On OpenAI, two steps that carry the same profile and part after it, in the schema, are named too: `shares its first <n> chars with …: the schemas differ`. With a minimum in force, they are named only when the estimate of the start they share reaches it or comes near it. No other shared start is named. A step below the minimum names no sharing, because it cannot cache whatever it shares; on OpenAI with `structured_output: strict`, where the provider's own schema text is not counted, the clause stays. The clause comes back with a lower floor or a longer fixed part. A list of more than six steps names five and ends `and N more`. From example 05, with `--provider anthropic`:",
     );
     const step = (id: string, required: string, profile?: string): string =>
       `  ${id}:\n    description: s\n    execution: agent\n    prompt: Do it.\n${profile !== undefined ? `    agent_profile: ${profile}\n` : ''}    output_schema:\n      type: object\n      additionalProperties: false\n      required: [${required}]\n      properties:\n        ${required}: { type: string }\n`;
@@ -795,7 +795,7 @@ describe('the --json row, the CHANGELOG, and review-note on its page', { timeout
   it('loader-diagnostics: cacheability on a valid and a refused arm, absent when the file could not be read', () => {
     claim(
       DIAGNOSTICS_PAGE,
-      "| `cacheability` | Each agent step's fixed part, for each provider described: its size and token range, its blocks and their segments, the steps it shares a beginning with, and its verdict or why it has none. `shares_with` lists exactly the steps the `cache:` line names, all of them when the line ends `and N more`. Each entry holds `step`, `chars` (the length of the shared start), `tokens` (the token range of that start; for a whole shared fixed part, the step's own range) and `divergence_at` (the name of the segment where the two steps part, or `null` when they are equal). It holds no prompt text, and is absent when the file could not be read. See [The cache lines](../cli/realm-workflow.md#the-cache-lines). Added after version 0.48.0. |",
+      "| `cacheability` | Each agent step's fixed part, for each provider described: its size and token range, its blocks and their segments, the other steps it shares a cacheable start with (a step below the minimum lists none), and its verdict or why it has none. `shares_with` lists exactly the steps the `cache:` line names, all of them when the line ends `and N more`. Each entry holds `step`, `chars` (the length of the shared start), `tokens` (the token range of that start; for a whole shared fixed part, the step's own range) and `divergence_at` (the name of the segment where the two steps part, or `null` when they are equal). It holds no prompt text, and is absent when the file could not be read. See [The cache lines](../cli/realm-workflow.md#the-cache-lines). Added after version 0.48.0. |",
     );
     const has = (workflow: string): boolean => {
       const dir = project({ workflow });
@@ -823,16 +823,54 @@ describe('the --json row, the CHANGELOG, and review-note on its page', { timeout
       claim(DIAGNOSTICS_PAGE, sentence);
   });
 
+  // Correction 2 (F-3): since correction 1 the line names only a whole shared fixed part (and, on
+  // OpenAI, a start shared after a profile), and none below the minimum (F-4). The four places that
+  // said it names every step that "starts the same way" say what it names; the old phrases are gone
+  // from both pages and from PR 5's own CHANGELOG bullet (sliced here: the bullet, not a section).
+  // (a) red when a new phrase is dropped or an old phrase returns; (b) prints the file and the
+  // phrase.
+  it('F-3: the pages and the CHANGELOG bullet say what the line names, never "starts the same way"', () => {
+    claim(
+      WORKFLOW_PAGE,
+      'the other steps that share it (on OpenAI also a start shared after a profile; none for a step below the minimum)',
+    );
+    claim(WORKFLOW_PAGE, '**Steps that share a fixed part.**');
+    claim(
+      DIAGNOSTICS_PAGE,
+      'the other steps it shares a cacheable start with (a step below the minimum lists none)',
+    );
+    const log = read(CHANGELOG);
+    const start = log.indexOf('- **`realm workflow validate`, `register` and `watch` say how big');
+    expect(start, 'PR 5 bullet not found in the CHANGELOG').toBeGreaterThanOrEqual(0);
+    const next = log.indexOf('\n- ', start + 1);
+    const heading = log.indexOf('\n#', start + 1);
+    const ends = [next, heading].filter((i) => i > 0);
+    const bullet = log.slice(start, ends.length > 0 ? Math.min(...ends) : undefined);
+    expect(flat(bullet), 'the CHANGELOG bullet').toContain(
+      'the other steps with the same fixed text (on OpenAI, also a start they share after a profile)',
+    );
+    const OLD = ['starts the same way', 'start the same way', 'shares a beginning'];
+    const texts: Array<[string, string]> = [
+      ['realm-workflow.md', read(WORKFLOW_PAGE)],
+      ['loader-diagnostics.md', read(DIAGNOSTICS_PAGE)],
+      ['the CHANGELOG bullet', bullet],
+    ];
+    const found = texts.flatMap(([file, text]) =>
+      OLD.filter((phrase) => flat(text).includes(phrase)).map((phrase) => `${file}: ${phrase}`),
+    );
+    expect(found).toEqual([]);
+  });
+
   // The CHANGELOG's added bullet: the lines, no model and no key, the four flags, the --json field.
   // Break: a flag dropped. (a) red when a sentence or an answer differs; (b) prints them.
   it('the CHANGELOG: the lines on all three commands, the four flags, and validate --json', () => {
     claim(
       CHANGELOG,
-      "- **`realm workflow validate`, `register` and `watch` say how big each agent step's fixed part is, which steps share it, and whether it can be cached (issue #600).** Each agent step gets a `cache:` line: the size of the text it sends ahead of its input on every call, the steps whose text starts the same way, and, with a minimum, whether it is long enough to be cached at all. No model is called and no key is read. Four flags: `--provider`, `--model` (it needs `--provider`, and its minimum is read from your economics file), `--floor` (a minimum of your own) and `--ratio` (your own characters per token). `validate --json` gains `cacheability`.",
+      "- **`realm workflow validate`, `register` and `watch` say how big each agent step's fixed part is, which steps share it, and whether it can be cached (issue #600).** Each agent step gets a `cache:` line: the size of the text it sends ahead of its input on every call, the other steps with the same fixed text (on OpenAI, also a start they share after a profile), and, with a minimum, whether it is long enough to be cached at all. No model is called and no key is read. Four flags: `--provider`, `--model` (it needs `--provider`, and its minimum is read from your economics file), `--floor` (a minimum of your own) and `--ratio` (your own characters per token). `validate --json` gains `cacheability`.",
     );
     claim(
       WORKFLOW_PAGE,
-      "An agent step sends the same text ahead of its input on every call: its profile, Realm's instructions and its schema. A provider can cache that fixed part, but not when it is shorter than the model's minimum, and then it says nothing. `validate`, `register` and `watch` print one `cache:` line for each agent step: the size of its fixed part, the steps whose fixed part starts the same way, and, when a minimum is known, whether the step can be cached at all. No model is called, and no key is read. These lines were added after version 0.48.0.",
+      "An agent step sends the same text ahead of its input on every call: its profile, Realm's instructions and its schema. A provider can cache that fixed part, but not when it is shorter than the model's minimum, and then it says nothing. `validate`, `register` and `watch` print one `cache:` line for each agent step: the size of its fixed part, the other steps that share it (on OpenAI also a start shared after a profile; none for a step below the minimum), and, when a minimum is known, whether the step can be cached at all. No model is called, and no key is read. These lines were added after version 0.48.0.",
     );
     const dir = project({
       example: '01-code-reviewer',
