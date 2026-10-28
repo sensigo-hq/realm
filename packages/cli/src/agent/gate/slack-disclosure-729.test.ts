@@ -9,6 +9,7 @@ import {
   postSlackReply,
 } from './slack-gate-notifier.js';
 import { addDeclaredValues, installWriter, writerTestSeams } from '../../output/writer.js';
+import { slackResponse } from '../test-support/slack-response.js';
 
 const ENV_NAME = 'SLACK_FAKE_ENV_729';
 const ENV_VALUE = 'FAKE-SLACK-ENV-0729';
@@ -29,7 +30,7 @@ function capture() {
     'fetch',
     vi.fn(async (_url: string, init: RequestInit) => {
       bodies.push(String(init.body));
-      return { ok: true, json: async () => ({ ok: true, ts: '1.0' }) };
+      return slackResponse({ json: { ok: true, ts: '1.0' } });
     }),
   );
   return bodies;
@@ -49,7 +50,7 @@ describe('#729 PR-3 — Slack', () => {
     const bodies = capture();
     const g = gate(`Ship ${ENV_VALUE}?`);
     await postGateNotificationToSlack('https://hooks.slack.test/x', g, 'r1');
-    await postGateViaApi('xoxb-fake', 'C1', g, 'r1');
+    await postGateViaApi('xoxb-fake', 'C1', g, 'r1', true);
     const set = buildDisclosureSet({
       env: process.env,
       declared: {},
@@ -84,7 +85,7 @@ describe('#729 PR-3 — Slack', () => {
         '1.0',
         `answered with ${ENV_VALUE.slice(0, 5)}\uE001${ENV_VALUE.slice(5)}`,
       );
-      await postGateViaApi('xoxb-fake', 'C1', gate('Ship FAKE-SLACK\uE000-DECL-0729?'), 'r1');
+      await postGateViaApi('xoxb-fake', 'C1', gate('Ship FAKE-SLACK\uE000-DECL-0729?'), 'r1', true);
     } finally {
       writerTestSeams.reset();
     }
@@ -101,7 +102,7 @@ describe('#729 PR-3 — Slack', () => {
     const bodies = capture();
     const marked = gate('Ship it?\uE000cAAAAAAAAAAAAAAAAAAAAAA\uE001now\uE002');
     await postGateNotificationToSlack('https://hooks.slack.test/x', marked, 'r1');
-    await postGateViaApi('xoxb-fake', 'C1', marked, 'r1');
+    await postGateViaApi('xoxb-fake', 'C1', marked, 'r1', true);
     await postSlackReply('xoxb-fake', 'C1', '1.0', 'reply \uE000\uE001\uE002');
     // (a) red when the one send function stops stripping U+E000–E002; (b) prints booleans.
     expect(bodies.map((b) => MARKS.test(b))).toEqual([false, false, false]);

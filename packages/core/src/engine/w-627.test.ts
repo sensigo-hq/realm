@@ -1204,8 +1204,10 @@ describe('#627 W — the separation check: the mode derived, "prevents" only whe
 
 // ─── correction 2 (2.1): the question of a gate with no message, through the one composer ───────
 
-describe('#627 W correction 2 (2.1) — a re-read gate shows its step’s prompt', () => {
-  it('a second caller reaching an already-open prompt-only gate gets the step’s prompt as gate.display', async () => {
+// #729 PR-4 (f), re-pinned: the already-open reply showed the step's prompt as gate.display; now it
+// composes the live gate through the one composer, and a gate with no message has no question.
+describe('#627 W correction 2 (2.1); #729 PR-4 (f) — a re-read gate shows no question made from its step’s prompt', () => {
+  it('a second caller reaching an already-open prompt-only gate gets no gate.display', async () => {
     const def = loadWorkflowFromString(
       [
         'id: prompt627',
@@ -1247,12 +1249,12 @@ describe('#627 W correction 2 (2.1) — a re-read gate shows its step’s prompt
       dispatcher: async () => ({}),
     });
     const hint = again.context_hint;
-    // (a) red when a re-read gate's display carries resolved_message only (absent here); (b) prints
-    //     the reply's status and display.
-    expect({ status: again.status, hint, display: again.gate?.display }).toEqual({
+    // (a) red when the already-open arm renders the step's prompt into the display again; (b)
+    //     prints the reply's status, hint and whether it carries a display.
+    expect({ status: again.status, hint, display: 'display' in (again.gate ?? {}) }).toEqual({
       status: 'confirm_required',
       hint: `Run is already paused at gate '${again.gate?.gate_id}'.`,
-      display: 'Ship the release to production?',
+      display: false,
     });
   });
 });

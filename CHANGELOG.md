@@ -6,12 +6,57 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- **One composer for a gate's question, on every surface (issue #729 PR-4).** `realm run`,
+  `realm run inspect`, `realm agent`, Slack, and the MCP replies and form now show a gate's question
+  through core's one composer (`composeQuestionView`), over the gate disclosed for who reads it.
+  Closes #722.
+- **The asked person's notices (issue #729 PR-4).** Core composes what a person is told about their
+  question — opened, reminded, expired, recorded, late, refused, closed — as data (`PersonNotice`,
+  `composePersonNotice`), and `realm agent`'s Slack posts render it. The post has four parts: the
+  gate, the question with the step's output below it, how to answer, and — when it was cut — the
+  command that shows the whole output. How to answer is one `realm run respond` command, not one per
+  choice; when Realm listens in the thread, the post says so first. When the question closes
+  without an answer in the thread, the thread says so. Text from the workflow and the agent is shown
+  as written in Slack (`<`, `>` and `&` are escaped); an `owner` written as a Slack mention still
+  pings.
+- **`WorkflowCopyFault` is exported from `@sensigo/realm`.**
+
 ### Changed
 
+- **BREAKING — a gate's question is cut to the view budget when it opens (issue #729 PR-4).** A
+  gate's question longer than the view budget is cut when it opens, with a line saying so; the
+  step's whole output still goes ahead on approval. The budget is 600 characters for the message and
+  the step's output together. When the message alone is longer, its long values are cut first,
+  sharing the room so that short values stay whole — unless a declared value appears anywhere in the
+  message, or the room left is too small to show any of a value: then the message is cut only as a
+  whole, so no part of a declared value is left and no value disappears without a trace. After that
+  the step's output is cut, then the message. Values the project declares secret are masked before
+  anything is cut. The stored `resolved_message` is the question as shown.
+- **BREAKING — `display` shapes the step's output wherever a gate shows it (issue #729 PR-4)**, also
+  when the gate has a `message`; before, only `realm agent`'s terminal read it, and only for a gate
+  with no message.
+- **BREAKING — a gate with no `message` shows no question (issue #729 PR-4).** Its step's `prompt` is
+  no longer rendered as the question: `gate.display` is absent from the MCP replies, and every
+  surface shows the step's output as the gate's body.
+- **BREAKING — Slack threads name no operator command (issue #729 PR-4).** A refused answer, a late
+  answer, an expired question and a run an answer ended are told in the person's words; the
+  commands (`realm run drain --expired`, the run's ending) are printed where `realm agent` runs.
+- **The Slack reminder and expiry durations read `1h 5m`, `12m` or `42s` (issue #729 PR-4)**, the
+  forms `realm run drain` uses, instead of whole minutes.
+- **The engine takes the host's disclosure set (`disclosure`) on `executeStep`, `executeChain`,
+  `advanceRun` and `executeEngineStep` (issue #729 PR-4).** Realm's own commands and MCP server pass
+  theirs; without it, a gate's question is stored as rendered and never cut.
 - **`realm run export`'s third line says what it counts, and names `--accept-partial-disclosure` once (issue #879).** It opens `masked in the file:` (it was `masked:`): its counts are what the file hides, not what the lines printed above it hide. When the flag wrote a run that export refuses without it, the line ends `; written on --accept-partial-disclosure (refused without it)`; it ended `; shown on --accept-partial-disclosure`, and a run with no project said nothing of the flag. Where the run's manifest changed or could not be read, a question's clause before it reads `question: shown with what is known`; it named the flag too.
 
 ### Fixed
 
+- **A Slack post that is refused or does not answer within 30 s is reported, and the person's
+  terminal way is printed (issue #729 PR-4).** `realm agent` names the cause
+  (`Slack did not answer within 30 s`, `Slack refused the post: …`) and prints one
+  `realm run respond` command per choice. Before, the person was never asked and the terminal said
+  to use a command that was never shown. A rate limit within 30 s is retried once.
 - **`realm workflow init` inside a project no longer writes a `realm.yaml` Realm refuses
   (issue #878).** When a folder above the new one holds a `package.json` or a `.git` — a local
   install, any git repository — it writes four files, leaving out `realm.yaml` and `.env.example`,

@@ -15,6 +15,11 @@ import {
   operatorEndingSentence,
   resumeWay,
   shellWord,
+  buildDisclosureSet,
+  respondWayOfGate,
+  type DisclosureAudience,
+  type DisclosureSet,
+  type InspectWay,
 } from '@sensigo/realm';
 import type {
   AnswerArrival,
@@ -25,9 +30,11 @@ import type {
   ClaimProofAbsentCause,
   GateClaimVerdict,
   NotRecordedKind,
+  PendingGate,
   RunRecord,
 } from '@sensigo/realm';
-import { PLAIN, RUN_PHASE_WORDS, type RenderCtx } from '../output/writer.js';
+import { PLAIN, RUN_PHASE_WORDS, writerSetFor, type RenderCtx } from '../output/writer.js';
+import { cliCommandOf, respondLines } from '../commands/ways-renderer.js';
 
 /**
  * The one phrase for a recorded name that cannot be printed — a control character in it, or a value
@@ -491,6 +498,52 @@ export function recordedArrival(run: RunRecord, step: string): AnswerArrival {
     (e) => isAnswerEntry(e) && (e as { step_id?: unknown }).step_id === step,
   );
   return answerArrivalOf(entries[entries.length - 1]);
+}
+
+/**
+ * #729 PR-4 (03): the set a terminal discloses a gate with before core's composer reads it — the
+ * writer's for `audience`; when no writer runs, one that holds nothing (nothing is hidden, as the
+ * print would hide nothing either).
+ */
+export function viewSetFor(audience: DisclosureAudience): DisclosureSet {
+  return (
+    writerSetFor(audience) ??
+    buildDisclosureSet({
+      env: undefined,
+      declared: {},
+      declaredState: 'unknown',
+      declaredCause: 'embedder_none',
+      audience,
+    }).set
+  );
+}
+
+/**
+ * #729 PR-4 (C6 (d)): the way to a question's whole output, printed OUTSIDE the question when its view
+ * was cut — the `inspect` way, through the ways renderer (V-1 adds `--step <step> --output`).
+ */
+export function cutWayLine(runId: string, ctx: RenderCtx = PLAIN): string {
+  const way: InspectWay = { verb: 'inspect', conditions: [], run_id: runId };
+  return `The step's whole output: ${cliCommandOf(way, undefined, { driveFlags: '', ctx })!}`;
+}
+
+/**
+ * #729 PR-4 (02 §Transport (3)): the person's way to answer a gate on the terminal — one command per
+ * choice from the gate's `respond` way, as `realm agent` prints it when no handler attends the gate
+ * and when a Slack post failed. One print per line; the writer's context is the caller's, passed
+ * inside each print call (L-2).
+ */
+export function terminalRespondLines(
+  runId: string,
+  gate: PendingGate,
+  ctx: RenderCtx = PLAIN,
+): string[] {
+  const answerWay = respondWayOfGate(runId, gate);
+  const commands = respondLines(answerWay, ctx);
+  return respondLines(answerWay).map(({ choice }, i) => {
+    const label = choice.charAt(0).toUpperCase() + choice.slice(1);
+    return `   ${label}: ${commands[i]!.command}`;
+  });
 }
 
 /**

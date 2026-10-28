@@ -212,6 +212,37 @@ describe('connectSocketMode', () => {
     controller.abort();
   });
 
+  it('#729 PR-4 (02 §Transport (1)): the open is bounded by the call deadline — a fetch Slack never answers fails at 30 s and takes the retry path', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url: string, init: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+          }),
+      ),
+    );
+    connectSocketMode({
+      appToken: 'xapp-test',
+      threadTs: 'gate.ts',
+      onEvent: vi.fn(),
+      signal: controller.signal,
+    });
+    const failed = () =>
+      warn.mock.calls.filter((c) => String(c[0]).includes('failed to obtain WebSocket URL')).length;
+    await vi.advanceTimersByTimeAsync(29_999);
+    const before = failed();
+    await vi.advanceTimersByTimeAsync(1);
+    // (a) red when the open passes no signal (it hangs past 30 s: no failure, no retry); (b)
+    //     prints the counts before and at the deadline.
+    expect({ before, at: failed() }).toEqual({ before: 0, at: 1 });
+    controller.abort();
+    warn.mockRestore();
+  });
+
   it('retries with backoff when fetch throws', async () => {
     vi.useFakeTimers();
     const controller = new AbortController();

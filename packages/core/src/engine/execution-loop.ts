@@ -115,6 +115,15 @@ import { describeThrown, describeUnrecognised, releaseLineError } from '../relea
 import { createDefaultRegistry } from '../extensions/default-registry.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
 import { renderTemplate, UnknownFilterError } from './render-template.js';
+import {
+  composeQuestionView,
+  mintQuestionView,
+  mintSubstitutions,
+  questionViewSet,
+  stripSpanMarks,
+} from './question-view.js';
+import { discloseGate } from '../utils/disclosure-tables.js';
+import type { DisclosureSet } from '../utils/redaction.js';
 import { consumesInputMap, resolveInputMap } from './input-map.js';
 import { formatDuration } from '../utils/duration.js';
 import { loadWorkflowContext } from './workflow-context-loader.js';
@@ -265,6 +274,13 @@ export interface ExecuteStepOptions {
    * @see WaysContext.party
    */
   party?: Party;
+  /**
+   * #729 PR-4: the host's disclosure set, when it has one. A gate this call opens mints its question
+   * with it — span marks stripped, the declared values masked, and, when the set is complete (not
+   * withheld, not partial), cut to the view budget. Core builds none: without it a gate's question is
+   * stored as rendered, uncut.
+   */
+  disclosure?: DisclosureSet;
 }
 
 export interface SubmitGateOptions {
@@ -375,6 +391,8 @@ export interface ExecuteChainOptions {
    * the steps the chain runs after it are the engine's own and carry none.
    */
   party?: Party;
+  /** @see ExecuteStepOptions.disclosure — the named step and every step the chain runs. */
+  disclosure?: DisclosureSet;
 }
 
 /** issue #625: the one line added to a reply when a store keeping claims dropped the claimant. */
@@ -1280,6 +1298,10 @@ export function runReadError(err: unknown): WorkflowError {
  * output the gate's `preview` holds, in the same write as `pending_gate` (`applyOpenGate`, and the
  * legacy path's `update`) — round 23's answer to round 22's finding 10, which found a `preview`
  * override here equivalent.
+ *
+ * #729 PR-4: only `realm run inspect`'s labelled fallback reads this, for a gate opened before its
+ * message was stored. Every surface that shows the question composes it through
+ * `composeQuestionView` and never renders the prompt as a question ((f)); V-1's freeze retires this.
  */
 export function pendingGateQuestion(
   definition: WorkflowDefinition,
@@ -1302,16 +1324,6 @@ export function pendingGateQuestion(
         }
       : {}),
   });
-}
-
-/** {@link pendingGateQuestion}, never throwing: a prompt the definition can no longer render reads as
- *  no question (correction 2, 2.1 — a surface that shows the question never fails on it). */
-function questionOrUndefined(definition: WorkflowDefinition, run: RunRecord): string | undefined {
-  try {
-    return pendingGateQuestion(definition, run);
-  } catch {
-    return undefined;
-  }
 }
 
 /**
@@ -4467,6 +4479,12 @@ async function executeStepBody(
           }
         : {};
     let resolvedGateMessage: string | undefined;
+    // #729 PR-4 (01 (b)): the message's first render strips and masks each resolved value with the
+    // host's set and records its length (never cuts); an unresolved placeholder never passes the hook.
+    const messageSubstitutions =
+      stepDef!.gate?.message !== undefined
+        ? mintSubstitutions(stepDef!.gate.message, options.disclosure)
+        : undefined;
     if (stepDef!.gate?.message !== undefined) {
       let raw: string;
       try {
@@ -4477,7 +4495,12 @@ async function executeStepBody(
             runParams: run.params,
             ...wfCtxSpreadEarly,
           },
-          { strict: true },
+          {
+            strict: true,
+            ...(messageSubstitutions?.onSubstitution !== undefined
+              ? { onSubstitution: messageSubstitutions.onSubstitution }
+              : {}),
+          },
         );
       } catch (err) {
         if (err instanceof UnknownFilterError) {
@@ -4521,6 +4544,36 @@ async function executeStepBody(
       resolvedGateMessage = raw;
     }
 
+    // #729 PR-4 (01): the question minted once — the masked message cut to the view budget when the
+    // host's set is complete — and the frozen view beside it (V-1 stores it; PR-4 stores the text).
+    const gateMessage = stepDef!.gate?.message;
+    const minted = mintQuestionView({
+      message: resolvedGateMessage,
+      ...(messageSubstitutions !== undefined ? { substitutions: messageSubstitutions } : {}),
+      // The second render, cutting each value to its cap (01 (b)) — the same template and context.
+      ...(gateMessage !== undefined
+        ? {
+            rerender: (onSubstitution: (rendered: string, path: string) => string) =>
+              renderTemplate(
+                gateMessage,
+                {
+                  evidenceByStep: gateEvidenceCtxEarly,
+                  runParams: run.params,
+                  ...wfCtxSpreadEarly,
+                },
+                { strict: true, onSubstitution },
+              ),
+          }
+        : {}),
+      preview: output,
+      choices,
+      ...(stepDef!.display !== undefined ? { display: stepDef!.display } : {}),
+      set: options.disclosure,
+      ids: { run_id: options.runId, gate_id, step: step_name },
+    });
+    // The question the opening reply shows: the minted text; none for a gate with no message ((f)).
+    const gateDisplay = minted.view.question_text !== '' ? minted.view.question_text : undefined;
+
     const gateConfig = stepDef!.gate;
     const openedAt = new Date();
 
@@ -4546,7 +4599,9 @@ async function executeStepBody(
       choices,
       opened_at: openedAt.toISOString(),
       ...(gateConfig?.owner !== undefined ? { owner: gateConfig.owner } : {}),
-      ...(resolvedGateMessage !== undefined ? { resolved_message: resolvedGateMessage } : {}),
+      ...(minted.resolved_message !== undefined
+        ? { resolved_message: minted.resolved_message }
+        : {}),
       ...(gateConfig?.resolution_messages !== undefined
         ? { resolution_messages: gateConfig.resolution_messages }
         : {}),
@@ -4570,17 +4625,6 @@ async function executeStepBody(
     // declared.
     const gateOpenDueState = computeGateDueState(pendingGate, openedAt);
 
-    // gate.display fallback chain: gate.message resolved → step.prompt resolved → absent
-    const resolvedGateDisplay =
-      resolvedGateMessage !== undefined
-        ? resolvedGateMessage
-        : stepDef!.prompt !== undefined
-          ? renderTemplate(stepDef!.prompt, {
-              evidenceByStep: gateEvidenceCtxEarly,
-              runParams: run.params,
-              ...wfCtxSpreadEarly,
-            })
-          : undefined;
     const resolvedGateInstructions =
       stepDef!.instructions !== undefined
         ? renderTemplate(stepDef!.instructions, {
@@ -4688,10 +4732,17 @@ async function executeStepBody(
               step_name: liveGate.step_name,
               preview: liveGate.preview,
               choices: liveGate.choices,
-              // Correction 2 (2.1): the question through the ONE composer — the message, else the
-              // step's prompt rendered with what the step had when the gate opened.
-              ...((q) => (q !== undefined ? { display: q } : {}))(
-                questionOrUndefined(definition, { ...result.run, pending_gate: liveGate }),
+              // #729 PR-4 (03 #2): the question through the ONE composer, on the live gate as the
+              // host's set discloses it — the stored question; none for a gate with no message.
+              ...((q) => (q !== '' ? { display: q } : {}))(
+                composeQuestionView(
+                  discloseGate(
+                    stripSpanMarks(liveGate),
+                    questionViewSet(options.disclosure),
+                    'private',
+                  ),
+                  stepDef!.display,
+                ).question_text,
               ),
               response_spec: { choices: liveGate.choices },
               ...(liveGate.expires_at !== undefined ? { expires_at: liveGate.expires_at } : {}),
@@ -4736,7 +4787,7 @@ async function executeStepBody(
           step_name,
           preview: output,
           choices,
-          ...(resolvedGateDisplay !== undefined ? { display: resolvedGateDisplay } : {}),
+          ...(gateDisplay !== undefined ? { display: gateDisplay } : {}),
           ...(resolvedGateInstructions !== undefined
             ? { agent_hint: resolvedGateInstructions }
             : {}),
@@ -4805,7 +4856,7 @@ async function executeStepBody(
         step_name,
         preview: output,
         choices,
-        ...(resolvedGateDisplay !== undefined ? { display: resolvedGateDisplay } : {}),
+        ...(gateDisplay !== undefined ? { display: gateDisplay } : {}),
         ...(resolvedGateInstructions !== undefined ? { agent_hint: resolvedGateInstructions } : {}),
         response_spec: { choices },
         ...(pendingGate.expires_at !== undefined ? { expires_at: pendingGate.expires_at } : {}),
@@ -7391,6 +7442,8 @@ export interface ExecuteEngineStepOptions {
    * `executeEngineStep` (decision C155), before anything is read or written (the admission step).
    */
   caller?: EngineStepCaller;
+  /** @see ExecuteStepOptions.disclosure */
+  disclosure?: DisclosureSet;
 }
 
 /**
@@ -7468,6 +7521,7 @@ async function engineStepAs(
       : {}),
     ...(options.driver !== undefined ? { driver: options.driver } : {}),
     ...(options.now !== undefined ? { now: options.now } : {}),
+    ...(options.disclosure !== undefined ? { disclosure: options.disclosure } : {}),
   };
   // #729 PR-0 (D3 A-2's G5-7; T-13): the engine supplies this step's input, so an input-schema
   // refusal of it is minted `report_to_user` (`checkPreClaim`'s `inputBy`), never `provide_input`;
@@ -7558,6 +7612,8 @@ interface AdvanceLoopContext {
    * call that admitted it — the call a step's Step 1.5 names when it carries out an expired question.
    */
   via: EnactedVia;
+  /** @see ExecuteStepOptions.disclosure — every step the loop runs. */
+  disclosure?: DisclosureSet;
 }
 
 /**
@@ -8119,6 +8175,7 @@ async function advanceLoop(
             : {}),
           ...(options.driver !== undefined ? { driver: options.driver } : {}),
           ...(options.now !== undefined ? { now: options.now } : {}),
+          ...(options.disclosure !== undefined ? { disclosure: options.disclosure } : {}),
         },
         options.via,
       ),
@@ -8385,6 +8442,8 @@ export interface AdvanceRunOptions {
    * it first (decision C123). The line is in the reply's `warnings` too.
    */
   onExpiry?: (line: string) => void;
+  /** @see ExecuteStepOptions.disclosure — every step the call runs. */
+  disclosure?: DisclosureSet;
 }
 
 /**
@@ -8472,6 +8531,7 @@ export async function advanceRun(
       ...(options.onTaken !== undefined ? { onTaken: options.onTaken } : {}),
       ...(options.onNotRecorded !== undefined ? { onNotRecorded: options.onNotRecorded } : {}),
       ...(options.onGuard !== undefined ? { onGuard: options.onGuard } : {}),
+      ...(options.disclosure !== undefined ? { disclosure: options.disclosure } : {}),
       via: caller,
     },
     {
@@ -8661,6 +8721,7 @@ export async function executeChain(
             : {}),
           ...(options.driver !== undefined ? { driver: options.driver } : {}),
           ...(options.now !== undefined ? { now: options.now } : {}),
+          ...(options.disclosure !== undefined ? { disclosure: options.disclosure } : {}),
           namedStep: options.command,
           via,
         },

@@ -101,11 +101,11 @@ A template expression is a path between double braces, optionally followed by fi
 
 ### Where expressions are read
 
-| Field          | Read when                               | Paths it can use                | Filters | A path that finds nothing                    | An unknown filter                  |
-| -------------- | --------------------------------------- | ------------------------------- | ------- | -------------------------------------------- | ---------------------------------- |
-| `prompt`       | The step becomes the next action.       | All four roots                  | Yes     | The expression is left as written.           | The expression is left as written. |
-| `gate.message` | The gate opens.                         | All four roots                  | Yes     | The step stops: `GATE_MESSAGE_UNRESOLVABLE`. | The step stops: `FILTER_UNKNOWN`.  |
-| `display`      | `realm agent` prints the step's result. | Fields of the step's own output | No      | Nothing is printed in its place.             | Nothing is printed in its place.   |
+| Field          | Read when                                                                    | Paths it can use                | Filters | A path that finds nothing                    | An unknown filter                  |
+| -------------- | ---------------------------------------------------------------------------- | ------------------------------- | ------- | -------------------------------------------- | ---------------------------------- |
+| `prompt`       | The step becomes the next action.                                            | All four roots                  | Yes     | The expression is left as written.           | The expression is left as written. |
+| `gate.message` | The gate opens.                                                              | All four roots                  | Yes     | The step stops: `GATE_MESSAGE_UNRESOLVABLE`. | The step stops: `FILTER_UNKNOWN`.  |
+| `display`      | `realm agent` prints the step's result, and a surface shows the step's gate. | Fields of the step's own output | No      | Nothing is printed in its place.             | Nothing is printed in its place.   |
 
 `instructions` and `description` are not read for expressions. They are passed on as written.
 

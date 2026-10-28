@@ -31,6 +31,7 @@ import {
   type ChosenClass,
   type DisclosureClass,
   type DisclosureReceipt,
+  type DisclosureTally,
   type FactProducers,
   type WalkOptions,
   deriveOf,
@@ -618,15 +619,19 @@ export type ShownGate<G extends PendingGate | GateInfo = PendingGate> = G & {
   readonly [shownGate]: true;
 };
 
-/** A gate for `audience` (D1 §3.3). */
+/** A gate for `audience` (D1 §3.3). #729 PR-4 (F10): `onTally` receives the walk's tally, so a
+ *  host that counts what it hides (realm agent's `Disclosure:` line) walks the gate once. */
 export function discloseGate<G extends PendingGate | GateInfo>(
   gate: G,
   set: DisclosureSet,
   audience: DisclosureAudience,
-  options: WalkOptions = {},
+  options: WalkOptions & { onTally?: (tally: DisclosureTally) => void } = {},
 ): ShownGate<G> {
   const table: ClassTable = 'opened_at' in gate ? PENDING_GATE_TABLE : GATE_INFO_TABLE;
-  return discloseByTable(gate, table, set, audience, options).value as ShownGate<G>;
+  const { onTally, ...walk } = options;
+  const walked = discloseByTable(gate, table, set, audience, walk);
+  onTally?.(walked.tally);
+  return walked.value as ShownGate<G>;
 }
 
 /** A stored run for `audience` (inspect, export), with its receipt. The record is not changed. */

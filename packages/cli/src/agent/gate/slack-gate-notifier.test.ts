@@ -1,9 +1,14 @@
-// slack-gate-notifier.test.ts — Tests for formatGatePreviewForSlack, owner Slack notification,
+// slack-gate-notifier.test.ts — Tests for the gate post's view block, owner Slack notification,
 // startGateReminderTimers, postSlackReply, postGateViaApi, and bidirectional gate handling.
 import { declared } from '../../test-support/declared.js';
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import {
-  formatGatePreviewForSlack,
+  renderSlack,
+  slackView,
+  slackEscape,
+  slackOwner,
+  SLACK_ESCAPES,
+  SLACK_SECTION_TEXT_LIMIT,
   postGateNotificationToSlack,
   postGateViaApi,
   startGateReminderTimers,
@@ -28,7 +33,17 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   answerArrivalOf,
   answerViaOf,
+  buildDisclosureSet,
+  composePersonNotice,
+  respondWayOfGate,
+  CUT_SENTENCE,
+  VIEW_BUDGET,
+  type PersonNotice,
+  type RunRecord,
 } from '@sensigo/realm';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
 import { renderOutcome } from '@sensigo/realm-mcp';
 import { renderAnswerLine } from '../../lib/holder-render.js';
 import { mkdtemp } from 'node:fs/promises';
@@ -38,6 +53,7 @@ import { LlmProvider } from '../providers/llm-provider.js';
 import { startSlackGateServer } from './slack-gate-server.js';
 import type { SlackGateEvent } from './slack-gate-server.js';
 import { connectSocketMode } from './slack-socket-client.js';
+import { slackResponse } from '../test-support/slack-response.js';
 
 // Module-level mocks are hoisted by vitest — slack-gate-notifier.ts will receive these stubs for
 // its internal imports of slack-gate-server and slack-socket-client.
@@ -48,37 +64,60 @@ vi.mock('./slack-socket-client.js', () => ({
   connectSocketMode: vi.fn().mockReturnValue({ close: vi.fn() }),
 }));
 
-describe('formatGatePreviewForSlack', () => {
-  it('renders headline and message as formatted mrkdwn', () => {
-    const preview = { headline: 'Deploy failed', message: 'The pipeline failed at step 3.' };
-    const result = formatGatePreviewForSlack(preview);
-    expect(result).toBe('*Deploy failed*\n\nThe pipeline failed at step 3.');
+// #729 PR-4 (02; re-pinned from `formatGatePreviewForSlack`, which composed its own preview): the
+// view block shows core's composed view — for a message-less gate on this broadcast surface, the
+// output body as its shapes, through the composer's chain; Slack only escapes and fences it.
+describe('the gate post’s view block (the composer’s preview, rendered)', () => {
+  const viewBlock = (preview: Record<string, unknown>): string => {
+    const gate: PendingGate = {
+      gate_id: 'g0',
+      step_name: 's',
+      preview,
+      choices: ['approve'],
+      opened_at: new Date().toISOString(),
+    };
+    const { blocks } = renderSlack(
+      {
+        kind: 'question_opened',
+        run_id: 'r1',
+        gate_id: 'g0',
+        step: 's',
+        view: slackView(gate),
+        // #729 PR-4 correction (A1): every route now renders the one respond command, so the
+        // notice carries the real way (a hand-built object had no `args` to render).
+        respond: respondWayOfGate('r1', gate),
+      },
+      { mode: 'bot', listens: true },
+    );
+    return (blocks[1] as { text: { text: string } }).text.text;
+  };
+
+  it('headline and message: joined by a blank line (their shapes, on broadcast)', () => {
+    // (a) red when the composer's join is replaced (the old bold headline); (b) prints the text.
+    expect(
+      viewBlock({ headline: 'Deploy failed', message: 'The pipeline failed at step 3.' }),
+    ).toBe('‹string, 13 characters›\n\n‹string, 30 characters›');
   });
 
-  it('renders only headline when message is absent', () => {
-    const preview = { headline: 'Deploy failed' };
-    const result = formatGatePreviewForSlack(preview);
-    expect(result).toBe('*Deploy failed*');
-    expect(result).not.toContain('undefined');
+  it('headline alone: the headline, never "undefined"', () => {
+    // (a) red when an absent message renders as text; (b) prints the text.
+    expect(viewBlock({ headline: 'Deploy failed' })).toBe('‹string, 13 characters›');
   });
 
-  it('falls back to formatted multi-line JSON when neither headline nor message is present', () => {
-    const preview = { risk: 'high', title: 'Add feature' };
-    const result = formatGatePreviewForSlack(preview);
-    // Multi-line formatted JSON — not a single-line stringify
-    expect(result).toContain('\n');
-    expect(result).toContain('risk');
-    expect(result).not.toBe(JSON.stringify(preview));
+  it('any other output: its JSON, in a code fence', () => {
+    // (a) red when the fence or the JSON's indentation is lost; (b) prints the text.
+    expect(viewBlock({ risk: 'high' })).toBe('```\n{\n  "risk": "‹string, 4 characters›"\n}\n```');
   });
 
-  it('handles empty preview without throwing', () => {
-    expect(() => formatGatePreviewForSlack({})).not.toThrow();
+  it('an empty output: `(no output)`', () => {
+    // (a) red when an empty body posts nothing or throws; (b) prints the text.
+    expect(viewBlock({})).toBe('(no output)');
   });
 });
 
 describe('postGateNotificationToSlack — owner field', () => {
   it('uses resolved_message when present instead of formatGatePreviewForSlack fallback', async () => {
-    const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+    const mockFetch = vi.fn().mockResolvedValue(slackResponse({ text: 'ok' }));
     vi.stubGlobal('fetch', mockFetch);
 
     const gate: PendingGate = {
@@ -100,8 +139,8 @@ describe('postGateNotificationToSlack — owner field', () => {
     vi.unstubAllGlobals();
   });
 
-  it('falls back to formatGatePreviewForSlack when resolved_message is absent', async () => {
-    const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+  it('a message-less gate: the view block is the output body, as its shapes', async () => {
+    const mockFetch = vi.fn().mockResolvedValue(slackResponse({ text: 'ok' }));
     vi.stubGlobal('fetch', mockFetch);
 
     const gate: PendingGate = {
@@ -116,13 +155,12 @@ describe('postGateNotificationToSlack — owner field', () => {
 
     const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
     const bodyStr = init.body as string;
-    // #729 PR-3 (owner Q6; RECORD 05 "Slack"): a message-less gate's preview is posted as its
-    // shapes on this broadcast surface — formatGatePreviewForSlack over the shaped preview, so the
-    // headline line holds the headline's shape, never its text. (a) red when the raw preview is
-    // posted; (b) prints booleans.
+    // #729 PR-3 (owner Q6; RECORD 05 "Slack"); #729 PR-4 ((f), re-pinned: the composer's chain, no
+    // bold headline): a message-less gate's body is posted as its shapes on this broadcast surface,
+    // never its text. (a) red when the raw preview is posted; (b) prints booleans.
     expect({
-      shapedHeadline: bodyStr.includes('*‹string, 5 characters›*'),
-      rawHeadline: bodyStr.includes('*Draft*'),
+      shapedHeadline: bodyStr.includes('‹string, 5 characters›'),
+      rawHeadline: bodyStr.includes('Draft'),
     }).toEqual({ shapedHeadline: true, rawHeadline: false });
     expect(bodyStr).not.toContain('undefined');
 
@@ -130,7 +168,7 @@ describe('postGateNotificationToSlack — owner field', () => {
   });
 
   it('includes *Owner:* line when gate.owner is set', async () => {
-    const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+    const mockFetch = vi.fn().mockResolvedValue(slackResponse({ text: 'ok' }));
     vi.stubGlobal('fetch', mockFetch);
 
     const gate: PendingGate = {
@@ -152,7 +190,7 @@ describe('postGateNotificationToSlack — owner field', () => {
   });
 
   it('omits *Owner:* line when gate.owner is absent', async () => {
-    const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+    const mockFetch = vi.fn().mockResolvedValue(slackResponse({ text: 'ok' }));
     vi.stubGlobal('fetch', mockFetch);
 
     const gate: PendingGate = {
@@ -172,7 +210,7 @@ describe('postGateNotificationToSlack — owner field', () => {
   });
 
   it('posts the correct request body to the webhook URL', async () => {
-    const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+    const mockFetch = vi.fn().mockResolvedValue(slackResponse({ text: 'ok' }));
     vi.stubGlobal('fetch', mockFetch);
 
     const gate: PendingGate = {
@@ -205,9 +243,10 @@ describe('postGateNotificationToSlack — owner field', () => {
       choices: ['approve'],
       opened_at: new Date().toISOString(),
     };
+    // #729 PR-4 (re-pinned): the post reports whether it stood — `false` here, never a throw.
     await expect(
       postGateNotificationToSlack('https://hooks.slack.com/test', gate, 'run-id'),
-    ).resolves.toBeUndefined();
+    ).resolves.toBe(false);
 
     vi.unstubAllGlobals();
   });
@@ -217,10 +256,9 @@ describe('postGateViaApi — resolved_message', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('uses resolved_message when present instead of formatGatePreviewForSlack fallback', async () => {
-    const mockFetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ ok: true, ts: '1234567890.000' }),
-    });
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValue(slackResponse({ json: { ok: true, ts: '1234567890.000' } }));
     vi.stubGlobal('fetch', mockFetch);
 
     const gate: PendingGate = {
@@ -231,7 +269,7 @@ describe('postGateViaApi — resolved_message', () => {
       opened_at: new Date().toISOString(),
       resolved_message: 'Approve this draft?',
     };
-    await postGateViaApi('xoxb-test', 'C123', gate, 'r1');
+    await postGateViaApi('xoxb-test', 'C123', gate, 'r1', true);
 
     const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
     const bodyStr = init.body as string;
@@ -239,11 +277,10 @@ describe('postGateViaApi — resolved_message', () => {
     expect(bodyStr).not.toContain('*Draft headline*');
   });
 
-  it('falls back to formatGatePreviewForSlack when resolved_message is absent', async () => {
-    const mockFetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ ok: true, ts: '1234567890.001' }),
-    });
+  it('a message-less gate: the view block is the output body, as its shapes', async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValue(slackResponse({ json: { ok: true, ts: '1234567890.001' } }));
     vi.stubGlobal('fetch', mockFetch);
 
     const gate: PendingGate = {
@@ -254,14 +291,14 @@ describe('postGateViaApi — resolved_message', () => {
       opened_at: new Date().toISOString(),
       // no resolved_message
     };
-    await postGateViaApi('xoxb-test', 'C123', gate, 'r1');
+    await postGateViaApi('xoxb-test', 'C123', gate, 'r1', true);
 
     const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
     const bodyStr = init.body as string;
-    // #729 PR-3 (owner Q6): the message-less preview as its shapes. (a) red when the raw preview is
-    // posted; (b) prints booleans.
+    // #729 PR-3 (owner Q6); #729 PR-4 ((f), re-pinned: no bold headline): the message-less body as
+    // its shapes. (a) red when the raw preview is posted; (b) prints booleans.
     expect({
-      shapedHeadline: bodyStr.includes('*‹string, 14 characters›*'),
+      shapedHeadline: bodyStr.includes('‹string, 14 characters›'),
       rawHeadline: bodyStr.includes('Draft headline'),
     }).toEqual({ shapedHeadline: true, rawHeadline: false });
     expect(bodyStr).not.toContain('undefined');
@@ -301,7 +338,7 @@ describe('startGateReminderTimers', () => {
       vi.fn().mockImplementation((_url: string, init: RequestInit) => {
         const body = JSON.parse(init.body as string) as { text: string };
         calls.push(body.text);
-        return Promise.resolve({ json: async () => ({ ok: true }) });
+        return Promise.resolve(slackResponse({ json: { ok: true } }));
       }),
     );
 
@@ -318,7 +355,9 @@ describe('startGateReminderTimers', () => {
     await vi.advanceTimersByTimeAsync(600);
     clearTimers();
 
-    expect(calls.some((t) => t.includes('review_step') && t.includes('Reminder'))).toBe(true);
+    // #729 PR-4 (re-pinned: the `reminder` notice's words). (a) red when the plain firing loses its
+    // words; (b) prints the posted texts.
+    expect(calls).toEqual(['⏰ gate `review_step` has been open for 0s. Please respond.']);
   });
 
   it('includes owner mention in escalation message when gate.owner is set', async () => {
@@ -329,7 +368,7 @@ describe('startGateReminderTimers', () => {
       vi.fn().mockImplementation((_url: string, init: RequestInit) => {
         const body = JSON.parse(init.body as string) as { text: string };
         calls.push(body.text);
-        return Promise.resolve({ json: async () => ({ ok: true }) });
+        return Promise.resolve(slackResponse({ json: { ok: true } }));
       }),
     );
 
@@ -346,9 +385,11 @@ describe('startGateReminderTimers', () => {
     await vi.advanceTimersByTimeAsync(50);
     clearTimers();
 
-    const escalationMsg = calls.find((t) => t.includes('review_step') && t.includes('minutes'));
-    expect(escalationMsg).toBeDefined();
-    expect(escalationMsg).toContain('@prod-oncall');
+    // #729 PR-4 (re-pinned: the escalation is the `reminder` notice with its owner named first).
+    // (a) red when the mention is dropped; (b) prints the posted texts.
+    expect(
+      calls.filter((t) => t.startsWith('@prod-oncall — ⏰ gate `review_step` has been open for')),
+    ).toHaveLength(1);
   });
 
   it('posts generic escalation message (no @ mention) when gate.owner is absent', async () => {
@@ -359,7 +400,7 @@ describe('startGateReminderTimers', () => {
       vi.fn().mockImplementation((_url: string, init: RequestInit) => {
         const body = JSON.parse(init.body as string) as { text: string };
         calls.push(body.text);
-        return Promise.resolve({ json: async () => ({ ok: true }) });
+        return Promise.resolve(slackResponse({ json: { ok: true } }));
       }),
     );
 
@@ -376,15 +417,17 @@ describe('startGateReminderTimers', () => {
     await vi.advanceTimersByTimeAsync(50);
     clearTimers();
 
-    const escalationMsg = calls.find((t) => t.includes('review_step') && t.includes('minutes'));
-    expect(escalationMsg).toBeDefined();
-    // No @ mention without owner
-    expect(escalationMsg).not.toContain('@');
+    // #729 PR-4 (re-pinned): the plain reminder and the escalation both post; with no owner,
+    // neither names anyone. (a) red when a mention is invented; (b) prints the posted texts.
+    expect({
+      posts: calls.filter((t) => t.startsWith('⏰ gate `review_step` has been open for')).length,
+      mention: calls.some((t) => t.includes('@')),
+    }).toEqual({ posts: 2, mention: false });
   });
 
   it('does not fire after clearTimers() is called', async () => {
     vi.useFakeTimers();
-    const mockFetch = vi.fn().mockResolvedValue({ json: async () => ({ ok: true }) });
+    const mockFetch = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } }));
     vi.stubGlobal('fetch', mockFetch);
 
     const gate = makeGate();
@@ -434,7 +477,7 @@ describe('postSlackReply', () => {
 
 function makeMinimalStore(): RunStore {
   return declared({
-    get: vi.fn().mockResolvedValue({ terminal_state: 'completed', pending_gate: undefined }),
+    get: vi.fn(async () => ({ terminal_state: 'completed', pending_gate: undefined })),
   } as unknown as RunStore);
 }
 
@@ -560,19 +603,26 @@ describe('handleBidirectionalGate', () => {
     expect(startSlackGateServer).not.toHaveBeenCalled();
   });
 
-  it('emits fallback notice when gateThreadTs is undefined', async () => {
+  it('no thread anchor (the opening post failed): the person’s respond lines are printed, never "shown above"', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     await handleBidirectionalGate(makeGateParams({ gateThreadTs: undefined }));
 
     const output = logSpy.mock.calls.flat().join('\n');
-    expect(output).toContain('Bidirectional Slack resolution unavailable');
+    // #729 PR-4 (02 §Transport (3), re-pinned): the terminal's way, one command per choice, as
+    // `realm agent` prints it with no handler. (a) red when the false "shown above" line returns or
+    // the respond lines are not printed; (b) prints the output's lines (fakes).
+    expect({
+      approve: output.includes('   Approve: realm run respond run1 --gate g1 --choice approve'),
+      reject: output.includes('   Reject: realm run respond run1 --gate g1 --choice reject'),
+      shownAbove: output.includes('shown above'),
+    }).toEqual({ approve: true, reject: true, shownAbove: false });
 
     logSpy.mockRestore();
   });
 
   it('duplicate event_id triggers only one candidate processing attempt', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } })));
 
     let capturedOnEvent: ((event: SlackGateEvent) => void) | undefined;
     vi.mocked(startSlackGateServer).mockImplementationOnce((opts) => {
@@ -581,7 +631,7 @@ describe('handleBidirectionalGate', () => {
     });
 
     // Use a fetch spy to count how many clarification replies are sent.
-    const fetchSpy = vi.fn().mockResolvedValue({ ok: true });
+    const fetchSpy = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } }));
     vi.stubGlobal('fetch', fetchSpy);
 
     const promise = handleBidirectionalGate(makeGateParams());
@@ -611,7 +661,7 @@ describe('handleBidirectionalGate', () => {
   });
 
   it('selects Socket Mode (connectSocketMode) when slackAppToken is set and slackSigningSecret is absent', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } })));
 
     await handleBidirectionalGate(
       makeGateParams({ slackSigningSecret: undefined, slackAppToken: 'xapp-test' }),
@@ -622,7 +672,7 @@ describe('handleBidirectionalGate', () => {
   });
 
   it('selects Socket Mode over Events API when both slackAppToken and slackSigningSecret are set', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } })));
 
     await handleBidirectionalGate(
       makeGateParams({ slackSigningSecret: 'secret', slackAppToken: 'xapp-test' }),
@@ -640,7 +690,7 @@ describe('handleBidirectionalGate', () => {
       choices: ['approve', 'request_changes'],
       opened_at: new Date().toISOString(),
     };
-    const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+    const mockFetch = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } }));
     vi.stubGlobal('fetch', mockFetch);
 
     let capturedOnEvent: ((event: SlackGateEvent) => void) | undefined;
@@ -693,7 +743,7 @@ describe('handleBidirectionalGate', () => {
       choices: ['approve', 'request_changes'],
       opened_at: new Date().toISOString(),
     };
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } })));
     let onEvent: ((event: SlackGateEvent) => void) | undefined;
     vi.mocked(startSlackGateServer).mockImplementationOnce((opts) => {
       onEvent = opts.onEvent;
@@ -744,7 +794,7 @@ describe('handleBidirectionalGate', () => {
       choices: ['approve', 'request_changes'],
       opened_at: new Date().toISOString(),
     };
-    const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+    const mockFetch = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } }));
     vi.stubGlobal('fetch', mockFetch);
 
     let capturedOnEvent: ((event: SlackGateEvent) => void) | undefined;
@@ -792,7 +842,7 @@ describe('handleBidirectionalGate', () => {
       choices: ['approve', 'request_changes'],
       opened_at: new Date().toISOString(),
     };
-    const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+    const mockFetch = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } }));
     vi.stubGlobal('fetch', mockFetch);
 
     let capturedOnEvent: ((event: SlackGateEvent) => void) | undefined;
@@ -910,7 +960,7 @@ describe('handleBidirectionalGate', () => {
       choices: ['approve', 'request_changes'],
       opened_at: new Date().toISOString(),
     };
-    const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+    const mockFetch = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } }));
     vi.stubGlobal('fetch', mockFetch);
 
     // Our gate g1 is open until update is attempted, which throws (submit fails) → submitHumanResponse
@@ -968,15 +1018,24 @@ describe('handleBidirectionalGate', () => {
 
     await promise;
 
-    const replyCalls = mockFetch.mock.calls.filter(([url]) =>
-      (url as string).includes('postMessage'),
-    );
-    expect(replyCalls).toHaveLength(1); // exactly one error reply — never posts twice
-    const body = JSON.parse(replyCalls[0]![1].body as string) as { text: string };
-    expect(body.text).toContain("Couldn't record your response");
-    // Not a confirmation → the success branch (confirmation + abort) did NOT run; gate not resolved.
-    expect(body.text).not.toContain('run continuing');
-    expect(body.text).not.toContain('Gate resolved');
+    const texts = mockFetch.mock.calls
+      .filter(([url]) => (url as string).includes('postMessage'))
+      .map(
+        ([, init]) => (JSON.parse((init as RequestInit).body as string) as { text: string }).text,
+      );
+    // #729 PR-4 (re-pinned): exactly ONE refusal reply (the at-most-once guard), then — the run
+    // having ended with the question unanswered — the closed line; never a confirmation. (a) red
+    // when the refusal posts twice, a confirmation posts, or the closed line is missing; (b) prints
+    // the posted texts (fakes).
+    expect({
+      refusals: texts.filter((t) => t.includes("Couldn't record your response")).length,
+      confirmed: texts.some((t) => t.includes('run continuing') || t.includes('Gate resolved')),
+      closed: texts.at(-1),
+    }).toEqual({
+      refusals: 1,
+      confirmed: false,
+      closed: 'This question is closed: the run stopped.',
+    });
   });
 });
 
@@ -1044,7 +1103,7 @@ describe('handleBidirectionalGate — threads the registry so gate-completed run
     const registry = new ExtensionRegistry();
     registry.register('handler', 'record_outcome', handler);
 
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } })));
     let capturedOnEvent: ((event: SlackGateEvent) => void) | undefined;
     vi.mocked(startSlackGateServer).mockImplementationOnce((opts) => {
       capturedOnEvent = opts.onEvent;
@@ -1131,7 +1190,7 @@ describe('issue #719 C5 — the two-way notifier’s thread post on a run file t
     const warns = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       await writeFile(join(runsDir, 'run1.json'), '{"params":{"token": ghp_FAKE719}}');
-      const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+      const mockFetch = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } }));
       vi.stubGlobal('fetch', mockFetch);
       let capturedOnEvent: ((event: SlackGateEvent) => void) | undefined;
       vi.mocked(startSlackGateServer).mockImplementationOnce((opts) => {
@@ -1153,17 +1212,943 @@ describe('issue #719 C5 — the two-way notifier’s thread post on a run file t
       const posted = mockFetch.mock.calls
         .filter(([url]) => String(url).includes('postMessage'))
         .map(([, init]) => String((init as { body?: unknown }).body));
-      // (a) red when the parser's text reaches the thread; (b) prints booleans only — whether the
-      //     submit-error post was made, whether it names the file's fault, and whether any posted
-      //     text holds the token.
+      const consoleText = warns.mock.calls.flat().map(String).join('\n');
+      // (a) red when the parser's text reaches the thread or the console; #729 PR-4 (re-pinned):
+      //     the thread gets the code (G9), the fault's detail goes to this console. (b) prints
+      //     booleans only — whether the refusal was posted, where the fault is named, and whether
+      //     any text holds the token.
       expect({
         postedTheError: posted.some((b) => b.includes("Couldn't record your response")),
-        namesTheFault: posted.some((b) => b.includes('is not JSON')),
-        leaked: posted.some((b) => b.includes('ghp_FAKE7')),
-      }).toEqual({ postedTheError: true, namesTheFault: true, leaked: false });
+        threadNamesTheFault: posted.some((b) => b.includes('is not JSON')),
+        consoleNamesTheFault: consoleText.includes('is not JSON'),
+        leaked: posted.some((b) => b.includes('ghp_FAKE7')) || consoleText.includes('ghp_FAKE7'),
+      }).toEqual({
+        postedTheError: true,
+        threadNamesTheFault: false,
+        consoleNamesTheFault: true,
+        leaked: false,
+      });
     } finally {
       warns.mockRestore();
       await rm(runsDir, { recursive: true, force: true });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #729 PR-4 — the asked person in Slack (02; 04 "The Slack arms", "Transport"). Every value is a
+// fake. Each assertion names (a) the change that turns it red and (b) what it prints when it fails.
+// ---------------------------------------------------------------------------
+
+const PR4_DECLARED = 'CANARY-declared-4f2a';
+const PR4_ENV_NAME = 'SLACK_FAKE_ENV_PR4';
+const PR4_ENV_VALUE = 'FAKE-SLACK-ENV-PR4-0729';
+const SPAN_MARKS = /[-]/;
+const OPERATOR_COMMANDS = /realm run (drain|resume|register)|realm workflow register/;
+
+const pr4Gate = (over: Partial<PendingGate> = {}): PendingGate => ({
+  gate_id: 'g4',
+  step_name: 'review',
+  preview: { summary: 'ok' },
+  choices: ['approve', 'reject'],
+  opened_at: '2026-10-27T10:00:00.000Z',
+  resolved_message: 'Approve the release?',
+  ...over,
+});
+const openedNotice = (gate: PendingGate, runId = 'r4'): PersonNotice =>
+  composePersonNotice({
+    kind: 'question_opened',
+    run_id: runId,
+    gate,
+    view: slackView(gate),
+    respond: respondWayOfGate(runId, gate),
+  });
+type Block = { type: string; text?: { text: string }; elements?: Array<{ text: string }> };
+const texts = (blocks: unknown[]): string[] =>
+  (blocks as Block[]).map((b) => b.text?.text ?? b.elements?.[0]?.text ?? '');
+/** Every body a stubbed fetch received, parsed. */
+const bodiesOf = (stub: { mock: { calls: unknown[][] } }) =>
+  stub.mock.calls.map(
+    ([, init]) =>
+      JSON.parse(String((init as RequestInit).body)) as { text?: string; blocks?: unknown[] },
+  );
+
+/** Records `outcomeOf` reads at the poll's end (the shapes `person-notice.test.ts` pins). */
+const closedGate = pr4Gate({
+  expires_at: '2026-10-27T11:00:00.000Z',
+  on_expiry: 'settle_default',
+  default_choice: 'reject',
+});
+const closedRecord = (over: Record<string, unknown>): RunRecord =>
+  ({
+    id: 'run1',
+    terminal_state: false,
+    pending_gate: undefined,
+    evidence: [],
+    completed_steps: [],
+    failed_steps: [],
+    skipped_steps: [],
+    in_progress_steps: [],
+    ...over,
+  }) as unknown as RunRecord;
+const CLOSED_CASES = [
+  {
+    how: 'its time ran out',
+    record: closedRecord({
+      settled: { review: { outcome: 'gate', choice: 'reject', resolved_by: 'timeout' } },
+    }),
+  },
+  {
+    how: 'the run stopped',
+    record: closedRecord({
+      terminal_state: true,
+      evidence: [
+        {
+          step_id: 'review',
+          completed_at: '2026-10-27T10:06:00.000Z',
+          output_summary: { gate_cancelled_by_abort: true },
+        },
+      ],
+      skip_details: { review: { kind: 'gate_cancelled_by_abort' } },
+      aborted_at: { step_id: 'guard' },
+    }),
+  },
+  {
+    how: 'it was answered elsewhere as `approve`',
+    record: closedRecord({
+      evidence: [
+        {
+          step_id: 'review',
+          kind: 'gate_response',
+          completed_at: '2026-10-27T10:05:00.000Z',
+          responded_by: 'sam',
+          output_summary: { choice: 'approve' },
+        },
+      ],
+      settled: { review: { outcome: 'gate', choice: 'approve', resolved_by: 'human' } },
+    }),
+  },
+] as const;
+const storeReading = (record: RunRecord): RunStore =>
+  declared({ get: vi.fn(async () => record) } as unknown as RunStore);
+
+describe('#729 PR-4 — the asked person in Slack: the opening post', () => {
+  beforeEach(() => {
+    vi.stubEnv('REALM_NOT_SECRET', '');
+    vi.stubEnv(PR4_ENV_NAME, PR4_ENV_VALUE);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('question_opened, bot and webhook: the header, the view at broadcast (the output’s declared fake as its shape), the person’s route — no operator command, no span mark', async () => {
+    const gate = pr4Gate({ preview: { note: PR4_DECLARED } });
+    const bot = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true, ts: '1.0' } }));
+    vi.stubGlobal('fetch', bot);
+    await postGateViaApi('xoxb-fake', 'C1', gate, 'r4', true);
+    const hook = vi.fn().mockResolvedValue(slackResponse({ text: 'ok' }));
+    vi.stubGlobal('fetch', hook);
+    await postGateNotificationToSlack('https://hooks.slack.com/fake', gate, 'r4');
+    const [botBody] = bodiesOf(bot);
+    const [hookBody] = bodiesOf(hook);
+    const raw = JSON.stringify([botBody, hookBody]);
+    const view = '```\n{\n  "note": "‹string, 20 characters›"\n}\n```';
+    // (a) red when the composer is handed the raw gate (the fake in the block), the route is
+    //     dropped, one command per choice is rendered, the bot post (listener-attended:
+    //     `listens: true`) carries no command (correction A1), or an operator command is added
+    //     (G9); (b) prints the block texts, the commands' counts and booleans.
+    expect({
+      bot: texts(botBody!.blocks!),
+      botCommands: texts(botBody!.blocks!)[2]!.match(/realm run respond/g)?.length ?? 0,
+      webhookBlocks: texts(hookBody!.blocks!).slice(0, 2),
+      webhookCommands: texts(hookBody!.blocks!)[2]!.match(/realm run respond/g)?.length ?? 0,
+      fake: raw.includes(PR4_DECLARED),
+      redacted: raw.includes('[REDACTED]'),
+      operator: OPERATOR_COMMANDS.test(raw),
+      marks: SPAN_MARKS.test(raw),
+    }).toEqual({
+      bot: [
+        '*Gate:* `review`',
+        `Approve the release?\n\n${view}`,
+        'Reply in this thread with `approve` or `reject`, or from a terminal:\n```realm run respond r4 --gate g4 --choice &lt;one of: approve, reject&gt;```',
+      ],
+      botCommands: 1,
+      webhookBlocks: ['*Gate:* `review`', `Approve the release?\n\n${view}`],
+      webhookCommands: 1,
+      fake: false,
+      redacted: false,
+      operator: false,
+      marks: false,
+    });
+  });
+
+  it('(f): a gate with no message — the view block is the output body; the step’s prompt is never the question', async () => {
+    const posts = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true, ts: '1.0' } }));
+    vi.stubGlobal('fetch', posts);
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const definition = {
+      id: 'w',
+      name: 'w',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        review: {
+          description: 'd',
+          execution: 'agent',
+          prompt: 'PROMPT-TEXT-4f2a',
+          gate: { choices: ['approve', 'reject'] },
+        },
+      },
+    } as unknown as WorkflowDefinition;
+    const handler = createSlackGateHandler({
+      store: makeMinimalStore(),
+      definition,
+      provider: {} as never,
+      botToken: 'xoxb-fake',
+      channelId: 'C1',
+      pollIntervalMs: 0,
+    });
+    const { resolved_message: _none, ...noMessage } = pr4Gate({ preview: { headline: 'H' } });
+    await handler('r4', noMessage);
+    const [opening] = bodiesOf(posts);
+    // (a) red when the prompt is shown as the question; (b) prints the view block and a boolean.
+    expect({
+      view: texts(opening!.blocks!)[1],
+      prompt: JSON.stringify(bodiesOf(posts)).includes('PROMPT-TEXT'),
+    }).toEqual({ view: '‹string, 1 character›', prompt: false });
+  });
+
+  it('(g): the one table escapes the author’s and the agent’s strings — question, step name, choices — never the renderer’s markup', () => {
+    const gate = pr4Gate({
+      step_name: 'st<ep',
+      choices: ['a<b', 'ok'],
+      resolved_message: 'a & b < c > d ```x``` ‮e ​f',
+      preview: { k: 'v' },
+    });
+    const bot = texts(renderSlack(openedNotice(gate), { mode: 'bot', listens: true }).blocks);
+    // (a) red when one character is left unescaped, or the markup (`*`, backticks, the fence) is
+    //     escaped; (b) prints the three block texts.
+    expect(bot).toEqual([
+      '*Gate:* `st&lt;ep`',
+      'a &amp; b &lt; c &gt; d ` ` `x` ` ` �e �f\n\n```\n{\n  "k": "‹string, 1 character›"\n}\n```',
+      // correction A1: the listener-attended route, the thread sentence first, then the command.
+      "Reply in this thread with `a&lt;b` or `ok`, or from a terminal:\n```realm run respond r4 --gate g4 --choice &lt;one of: 'a&lt;b', ok&gt;```",
+    ]);
+  });
+
+  it('the owner mention (rev 8): a Slack user, user-group or special mention pings; anything else is escaped, the whole string', () => {
+    const owners = [
+      '<@U024BE7LH>',
+      '<@W012AB3CD>',
+      '<!subteam^SAZ94GDB8>',
+      '<!here>',
+      '<script>',
+      '<@U1> <script>',
+      '@ana',
+    ];
+    const header = (owner: string) =>
+      texts(
+        renderSlack(openedNotice(pr4Gate({ owner })), { mode: 'bot', listens: true }).blocks,
+      )[0];
+    const escalation = (owner: string) =>
+      renderSlack(
+        composePersonNotice({
+          kind: 'reminder',
+          run_id: 'r4',
+          gate: pr4Gate({ owner }),
+          view: slackView(pr4Gate()),
+          respond: respondWayOfGate('r4', pr4Gate()),
+          scheduled_at: '2026-10-27T10:30:00.000Z',
+          count: 1,
+          escalation: true,
+          now: new Date('2026-10-27T10:30:00.000Z'),
+        }),
+        { mode: 'bot', listens: true },
+      ).text.split(' — ')[0];
+    const shown = [
+      '<@U024BE7LH>',
+      '<@W012AB3CD>',
+      '<!subteam^SAZ94GDB8>',
+      '<!here>',
+      '&lt;script&gt;',
+      '&lt;@U1&gt; &lt;script&gt;',
+      '@ana',
+    ];
+    // (a) red when the exception is removed (the mention escaped), widened to any `<…>`, or loses
+    //     its `W` form, its special mentions or its anchoring; (b) prints the rendered owners.
+    expect({
+      header: owners.map(header),
+      escalation: owners.map(escalation),
+      direct: owners.map(slackOwner),
+    }).toEqual({
+      header: shown.map((o) => `*Gate:* \`review\`\n*Owner:* ${o}`),
+      escalation: shown,
+      direct: shown,
+    });
+  });
+
+  it('the cut line’s way rides the context block, through the ways renderer', () => {
+    // A question cut when it opened (its stored text ends with the sentence) is read as cut.
+    const cut = pr4Gate({ resolved_message: `Approve?\n\n${CUT_SENTENCE(8, 900)}` });
+    const notice = openedNotice(cut, 'run with space');
+    const blocks = renderSlack(notice, { mode: 'bot', listens: true }).blocks as Block[];
+    const source = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), 'slack-gate-notifier.ts'),
+      'utf8',
+    );
+    // (a) red when the block is dropped, or a literal command string replaces the ways renderer
+    //     (the run id renders the same either way, so the source is the witness); (b) prints the
+    //     cut flag, the block's type and text, and a boolean.
+    expect({
+      cut: notice.kind === 'question_opened' && notice.view.cut !== undefined,
+      type: blocks[3]?.type,
+      text: blocks[3]?.elements?.[0]?.text,
+      literal: source.includes('realm run inspect'),
+    }).toEqual({
+      cut: true,
+      type: 'context',
+      text: "The step's whole output: realm run inspect run with space",
+      literal: false,
+    });
+  });
+
+  it('the derivation (the channel table lives here): the worst escape MEASURED over every character the table escapes; floor(3000 / worst) carries VIEW_BUDGET', () => {
+    // The channels Realm ships and their view limits, in Slack's unit (characters; every escape is
+    // in the Basic Multilingual Plane, so a JS string's length — UTF-16 code units — equals its
+    // character count here, measured below by code points).
+    const CHANNELS = [
+      { channel: 'Slack section text (mrkdwn)', limit: SLACK_SECTION_TEXT_LIMIT },
+      { channel: 'terminal', limit: undefined },
+      { channel: 'MCP form', limit: undefined },
+    ];
+    const chars = (text: string) => [...text].length;
+    const ratios = Object.keys(SLACK_ESCAPES).map(
+      (input) => chars(slackEscape(input)) / chars(input),
+    );
+    const worst = Math.max(...ratios);
+    const smallest = Math.min(...CHANNELS.flatMap((c) => (c.limit !== undefined ? [c.limit] : [])));
+    // (a) red when an escape grows past the budget's room (`&` → a 7-character entity: floor 428);
+    //     (b) prints the measured worst case, the floor and the budget.
+    expect({ worst, floor: Math.floor(smallest / worst), budget: VIEW_BUDGET }).toEqual({
+      worst: 5,
+      floor: 600,
+      budget: 600,
+    });
+  });
+
+  it('(h) on the view block: a 3,000-character `<` substitution and a 50k parameter post within 3,000 after escaping, the view after its one transform; a `<` preview is a shape (control)', async () => {
+    const set = buildDisclosureSet({
+      env: {},
+      declared: { X: PR4_DECLARED },
+      declaredState: 'resolved',
+      audience: 'private',
+    }).set;
+    const definition = {
+      id: 'h4',
+      name: 'h4',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        review: {
+          description: 'd',
+          execution: 'auto',
+          trust: 'human_confirmed',
+          gate: { choices: ['approve', 'reject'], message: 'Check {{ run.params.x }} now' },
+        },
+      },
+    } as unknown as WorkflowDefinition;
+    const minted = async (x: string) => {
+      const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-h4-')));
+      const { run } = await store.create({ workflowId: 'h4', workflowVersion: 1, params: { x } });
+      await executeStep(store, definition, {
+        runId: run.id,
+        command: 'review',
+        input: {},
+        dispatcher: async () => ({}),
+        disclosure: set,
+      });
+      return (await store.get(run.id)).pending_gate!;
+    };
+    const blockOf = (gate: PendingGate) =>
+      texts(renderSlack(openedNotice(gate), { mode: 'bot', listens: true }).blocks);
+    const results = [];
+    for (const x of ['<'.repeat(3000), 'y'.repeat(50_000)]) {
+      const gate = await minted(x);
+      const view = slackView(gate);
+      const blocks = blockOf(gate);
+      // Escaped independently of the renderer's table (the fixture holds no backtick or bidi).
+      const esc = (t: string) =>
+        t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const expected = [esc(view.question_text), esc(view.preview_text)]
+        .filter((part) => part !== '')
+        .join('\n\n');
+      results.push({
+        within: blocks[1]!.length <= SLACK_SECTION_TEXT_LIMIT,
+        same: blocks[1] === expected,
+        // the fixture renders the listener-attended bot post (`listens: true`, correction A1):
+        // its route still opens with the thread sentence.
+        separate: blocks[0] === '*Gate:* `review`' && blocks[2]!.startsWith('Reply in this thread'),
+      });
+    }
+    const { resolved_message: _m, ...previewGate } = pr4Gate({
+      preview: { blob: '<'.repeat(3000) },
+    });
+    const control = blockOf(previewGate)[1]!;
+    // (a) red when the renderer skips the mint's fit (past 3,000), leaves `<` unescaped (the
+    //     bytes differ), or folds the header into the view block; (b) prints booleans and the
+    //     control's text.
+    expect({ results, control }).toEqual({
+      results: [
+        { within: true, same: true, separate: true },
+        { within: true, same: true, separate: true },
+      ],
+      control: '```\n{\n  "blob": "‹string, 3000 characters›"\n}\n```',
+    });
+  });
+});
+
+describe('#729 PR-4 — the asked person in Slack: the thread', () => {
+  beforeEach(() => {
+    vi.stubEnv('REALM_NOT_SECRET', '');
+    vi.stubEnv(PR4_ENV_NAME, PR4_ENV_VALUE);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
+  });
+
+  it('durations that cannot be read: the reminder and the expiry reminder say no duration, never `NaN` or `0s`', () => {
+    const view = slackView(pr4Gate());
+    const respond = respondWayOfGate('r4', pr4Gate());
+    const now = new Date('2026-10-27T10:30:00.000Z');
+    const reminder = renderSlack(
+      composePersonNotice({
+        kind: 'reminder',
+        run_id: 'r4',
+        gate: pr4Gate({ opened_at: 'not a time' }),
+        view,
+        respond,
+        scheduled_at: now.toISOString(),
+        count: 1,
+        escalation: false,
+        now,
+      }),
+      { mode: 'bot', listens: true },
+    ).text;
+    const expiry = renderSlack(
+      composePersonNotice({
+        kind: 'expiry_reminder',
+        run_id: 'r4',
+        gate: pr4Gate({ expires_at: '2026-10-27T10:30:05.000Z' }),
+        view,
+        respond,
+        now,
+      }),
+      { mode: 'bot', listens: true },
+    ).text;
+    // (a) red when an unreadable stamp or a deadline ahead is formatted (`NaN…`, `0s ago`); (b)
+    //     prints the two texts.
+    expect([reminder, expiry]).toEqual([
+      '⏰ gate `review` is still open. Please respond.',
+      '⏰ gate `review` expired — nothing will be done automatically; it is still waiting for a response.',
+    ]);
+  });
+
+  it('answer_recorded, the run goes on with no authored message: the choice and "run continuing"', () => {
+    const text = renderSlack(
+      composePersonNotice({
+        kind: 'answer_recorded',
+        run_id: 'r4',
+        gate: pr4Gate(),
+        choice: 'approve',
+        ended: false,
+      }),
+      { mode: 'bot', listens: true },
+    ).text;
+    // (a) red when the confirmation loses its choice or invents a message; (b) prints the text.
+    expect(text).toBe('✅ Gate resolved: `approve` — run continuing.');
+  });
+
+  it('answer_late per kind (answered by another, timed out with and without a choice, withdrawn) and answer_refused: the person’s words, no command', () => {
+    const late = (
+      outcome: Extract<PersonNotice, { kind: 'answer_late' }>['outcome'],
+      ended: boolean,
+    ) =>
+      renderSlack(
+        composePersonNotice({
+          kind: 'answer_late',
+          run_id: 'r4',
+          gate: pr4Gate(),
+          choice: 'reject',
+          outcome,
+          ended,
+        }),
+        { mode: 'bot', listens: true },
+      ).text;
+    const words = [
+      late(
+        {
+          step: 'review',
+          attempted: true,
+          by: { kind: 'answer', basis: 'stated', name: 'sam' },
+          choice: 'approve',
+        } as never,
+        false,
+      ),
+      late(
+        { step: 'review', attempted: true, by: { kind: 'timeout' }, choice: 'reject' } as never,
+        false,
+      ),
+      late({ step: 'review', attempted: true, by: { kind: 'timeout' } } as never, true),
+      late({ step: 'review', attempted: true, by: { kind: 'engine' } } as never, true),
+      renderSlack(
+        composePersonNotice({
+          kind: 'answer_refused',
+          run_id: 'r4',
+          gate: pr4Gate(),
+          choice: 'approve',
+          code: 'STATE_RUN_TERMINAL',
+        }),
+        { mode: 'bot', listens: true },
+      ).text,
+    ];
+    // (a) red when a kind's words change or an operator command enters the thread; (b) prints the
+    //     texts.
+    expect({ words, command: words.some((w) => /realm /.test(w)) }).toEqual({
+      words: [
+        'This question was already answered by sam — `approve` — before your reply arrived. The run goes on.',
+        "This question's time ran out before your reply arrived; it was settled as `reject`. The run goes on.",
+        "This question's time ran out before your reply arrived; the run stopped. The run has ended.",
+        'This question was withdrawn when the run stopped; your reply was not recorded. The run has ended.',
+        "⚠️ Couldn't record your response (`STATE_RUN_TERMINAL`). Try again.",
+      ],
+      command: false,
+    });
+  });
+
+  it('thread arms keep the `all` walk (S3): an environment fake in a resolution message, and in an outcome’s words, posts as `[REDACTED]`', async () => {
+    const gate = pr4Gate({
+      step_name: 'review',
+      resolution_messages: { approve: `Shipping with ${PR4_ENV_VALUE}` },
+    });
+    const posts = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } }));
+    vi.stubGlobal('fetch', posts);
+    let onEvent: ((event: SlackGateEvent) => void) | undefined;
+    vi.mocked(startSlackGateServer).mockImplementationOnce((opts) => {
+      onEvent = opts.onEvent;
+      return { close: vi.fn() };
+    });
+    const done = handleBidirectionalGate(makeGateParams({ gate, store: makeGateStore(gate) }));
+    onEvent!({
+      event_id: 'S3',
+      thread_ts: '1234567890.000',
+      user: 'U1',
+      text: 'approve',
+      ts: '1.1',
+    });
+    await done;
+    await postSlackReply(
+      'xoxb-fake',
+      'C1',
+      '1.0',
+      renderSlack(
+        composePersonNotice({
+          kind: 'answer_late',
+          run_id: 'r4',
+          gate,
+          choice: 'reject',
+          outcome: {
+            step: 'review',
+            attempted: true,
+            by: { kind: 'answer', basis: 'stated', name: PR4_ENV_VALUE },
+            choice: 'approve',
+          } as never,
+          ended: false,
+        }),
+        { mode: 'bot', listens: true },
+      ).text,
+    );
+    const replies = bodiesOf(posts).map((b) => b.text ?? '');
+    // (a) red when an arm posts through the send directly (the fake in the thread); (b) prints
+    //     booleans.
+    expect({
+      resolution: replies.some((t) => t.includes('Shipping with [REDACTED]')),
+      outcome: replies.some((t) => t.includes('answered by [REDACTED]')),
+      leaked: replies.some((t) => t.includes(PR4_ENV_VALUE)),
+    }).toEqual({ resolution: true, outcome: true, leaked: false });
+  });
+
+  it.each(CLOSED_CASES)('question_closed in the bot poll: "$how"', async ({ how, record }) => {
+    const posts = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } }));
+    vi.stubGlobal('fetch', posts);
+    await handleBidirectionalGate(
+      makeGateParams({ gate: closedGate, store: storeReading(record) }),
+    );
+    // (a) red when nothing is posted at the poll's end, or `how` is mapped wrong; (b) prints the
+    //     thread's texts.
+    expect(bodiesOf(posts).map((b) => b.text)).toEqual([`This question is closed: ${how}.`]);
+  });
+
+  it.each(CLOSED_CASES)('question_closed in the webhook loop: "$how"', async ({ how, record }) => {
+    const posts = vi.fn().mockResolvedValue(slackResponse({ text: 'ok' }));
+    vi.stubGlobal('fetch', posts);
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const handler = createSlackGateHandler({
+      store: storeReading(record),
+      definition: makeMinimalDefinition(),
+      provider: {} as never,
+      webhookUrl: 'https://hooks.slack.com/fake',
+      pollIntervalMs: 0,
+    });
+    await handler('run1', closedGate);
+    const bodies = bodiesOf(posts);
+    // (a) red when the webhook loop posts nothing at its end, `how` is mapped wrong, or the
+    //     channel's post (no thread) does not name its gate and run (correction C1); (b) prints
+    //     the posts' count and the closed text.
+    expect({ posts: bodies.length, closed: bodies[1]?.text }).toEqual({
+      posts: 2,
+      closed: `This question (gate \`review\`, run run1) is closed: ${how}.`,
+    });
+  });
+
+  it('control: a Slack answer recorded — no closed line follows the confirmation', async () => {
+    const gate = pr4Gate();
+    const posts = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } }));
+    vi.stubGlobal('fetch', posts);
+    let onEvent: ((event: SlackGateEvent) => void) | undefined;
+    vi.mocked(startSlackGateServer).mockImplementationOnce((opts) => {
+      onEvent = opts.onEvent;
+      return { close: vi.fn() };
+    });
+    const done = handleBidirectionalGate(makeGateParams({ gate, store: makeGateStore(gate) }));
+    onEvent!({
+      event_id: 'C1',
+      thread_ts: '1234567890.000',
+      user: 'U1',
+      text: 'approve',
+      ts: '1.2',
+    });
+    await done;
+    // (a) red when the closed line follows the person's own answer; (b) prints the thread's texts.
+    expect(bodiesOf(posts).map((b) => b.text)).toEqual([
+      '✅ Gate resolved: `approve` — run continuing.',
+    ]);
+  });
+});
+
+describe('#729 PR-4 — the Slack transport (02 §Transport): deadline, verdict, retry, drain', () => {
+  let warns: ReturnType<typeof vi.spyOn>;
+  let logs: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    warns = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    logs = vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
+  });
+  const said = () =>
+    [...warns.mock.calls, ...logs.mock.calls].map((c) => c.map(String).join(' ')).join('\n');
+  const RESPOND_LINES =
+    '   Approve: realm run respond run1 --gate g1 --choice approve\n   Reject: realm run respond run1 --gate g1 --choice reject';
+  /** A fetch that never answers but rejects when its signal aborts (the deadline's only way out). */
+  const silentSlack = () =>
+    vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        }),
+    );
+  /** A fetch answering each call after `delays[i]` ms with `answers[i]` (the last repeats). */
+  const timedSlack = (answers: Response[], delays: number[], delivered: boolean[] = []) =>
+    vi.fn((_url: string, init: RequestInit) => {
+      const i = Math.min(delivered.length, answers.length - 1);
+      const n = delivered.push(false) - 1;
+      return new Promise<Response>((resolve, reject) => {
+        const timer = setTimeout(
+          () => {
+            delivered[n] = true;
+            resolve(answers[i]!);
+          },
+          delays[Math.min(n, delays.length - 1)],
+        );
+        init.signal?.addEventListener('abort', () => {
+          clearTimeout(timer);
+          reject(new Error('aborted'));
+        });
+      });
+    });
+  const webhookHandler = (store: RunStore = makeMinimalStore()) =>
+    createSlackGateHandler({
+      store,
+      definition: makeMinimalDefinition(),
+      provider: {} as never,
+      webhookUrl: 'https://hooks.slack.com/fake',
+      pollIntervalMs: 0,
+    });
+  const botHandler = (store: RunStore = makeMinimalStore()) =>
+    createSlackGateHandler({
+      store,
+      definition: makeMinimalDefinition(),
+      provider: {} as never,
+      botToken: 'xoxb-fake',
+      channelId: 'C1',
+      pollIntervalMs: 0,
+      reminderIntervalMs: 1000,
+      escalationThresholdMs: 1500,
+    });
+
+  it.each(['webhook', 'bot'] as const)(
+    'the deadline (%s): a post Slack never answers fails at 30 s with its cause; the person’s respond lines are printed',
+    async (mode) => {
+      vi.useFakeTimers();
+      const slack = silentSlack();
+      vi.stubGlobal('fetch', slack);
+      let settled = false;
+      const done = (mode === 'webhook' ? webhookHandler() : botHandler())('run1', makeGate()).then(
+        () => {
+          settled = true;
+        },
+      );
+      await vi.advanceTimersByTimeAsync(29_999);
+      const before = settled;
+      await vi.advanceTimersByTimeAsync(6_000);
+      await done;
+      // (a) red when the signal is not passed or AbortSignal.timeout replaces the helper (the post
+      //     hangs: the cell times out), the cause line is missing, the respond lines are not
+      //     printed, or (bot) a reminder timer starts without a thread; (b) prints booleans and the
+      //     call count.
+      expect({
+        before,
+        cause: said().includes('  ⚠  Slack did not answer within 30 s'),
+        respond: said().includes(RESPOND_LINES),
+        shownAbove: said().includes('shown above'),
+        calls: slack.mock.calls.length,
+      }).toEqual({ before: false, cause: true, respond: true, shownAbove: false, calls: 1 });
+    },
+  );
+
+  it.each([
+    ['webhook', slackResponse({ status: 400, text: 'invalid_payload' }), 'invalid_payload'],
+    ['bot', slackResponse({ json: { ok: false, error: 'invalid_blocks' } }), 'invalid_blocks'],
+  ] as const)(
+    'the verdict (%s): a refused post names its cause and prints the respond lines; the false "shown above" is gone',
+    async (mode, answer, cause) => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(answer));
+      await (mode === 'webhook' ? webhookHandler() : botHandler())('run1', makeGate());
+      // (a) red when the status (webhook) or `ok` (bot) is ignored — no line, no respond lines;
+      //     (b) prints booleans.
+      expect({
+        cause: said().includes(`  ⚠  Slack refused the post: ${cause}`),
+        respond: said().includes(RESPOND_LINES),
+        shownAbove: said().includes('shown above'),
+      }).toEqual({ cause: true, respond: true, shownAbove: false });
+    },
+  );
+
+  it('one bounded retry on 429: Retry-After 2 → one retry after 2 s with a FRESH deadline (25 s + 2 s + 10 s stands); the post stands', async () => {
+    vi.useFakeTimers();
+    const delivered: boolean[] = [];
+    const slack = timedSlack(
+      [
+        slackResponse({ status: 429, headers: { 'Retry-After': '2' } }),
+        slackResponse({ text: 'ok' }),
+      ],
+      [25_000, 10_000, 0],
+      delivered,
+    );
+    vi.stubGlobal('fetch', slack);
+    const done = webhookHandler()('run1', makeGate());
+    await vi.advanceTimersByTimeAsync(40_000);
+    await done;
+    const retries = said().match(/Slack asked to wait 2 s before the post; retrying once/g) ?? [];
+    // (a) red when there is no retry, more than one, or the second call shares the first's deadline
+    //     (it would abort at 30 s: the cause line); (b) prints the counts and booleans.
+    expect({
+      retries: retries.length,
+      openingCalls: bodiesOf(slack).filter((b) => b.blocks !== undefined).length,
+      timedOut: said().includes('did not answer'),
+      respond: said().includes(RESPOND_LINES),
+    }).toEqual({ retries: 1, openingCalls: 2, timedOut: false, respond: false });
+  });
+
+  it('a Retry-After past the deadline (120 s): no retry, the refusal names `ratelimited`', async () => {
+    const slack = vi
+      .fn()
+      .mockResolvedValue(slackResponse({ status: 429, headers: { 'Retry-After': '120' } }));
+    vi.stubGlobal('fetch', slack);
+    await webhookHandler()('run1', makeGate());
+    // (a) red when a retry is made past the deadline (two calls), or the cause is not named; (b)
+    //     prints the count and booleans.
+    expect({
+      calls: slack.mock.calls.length,
+      cause: said().includes('  ⚠  Slack refused the post: ratelimited'),
+      retried: said().includes('retrying once'),
+    }).toEqual({ calls: 1, cause: true, retried: false });
+  });
+
+  const answeredElsewhere = CLOSED_CASES[2].record;
+  it.each([
+    ['bot', 500, true],
+    ['bot', 5_000, false],
+    ['webhook', 500, true],
+    ['webhook', 5_000, false],
+  ] as const)(
+    'question_closed is awaited under the drain bound (%s, the post takes %i ms)',
+    async (mode, delay, lands) => {
+      vi.useFakeTimers();
+      const delivered: boolean[] = [];
+      const answers =
+        mode === 'bot' ? [slackResponse({ json: { ok: true } })] : [slackResponse({ text: 'ok' })];
+      // The webhook's opening post answers at once; the closed post takes `delay`.
+      const slack = timedSlack(answers, mode === 'bot' ? [delay] : [0, delay], delivered);
+      vi.stubGlobal('fetch', slack);
+      const store = storeReading(answeredElsewhere);
+      const done =
+        mode === 'bot'
+          ? handleBidirectionalGate(makeGateParams({ gate: closedGate, store }))
+          : webhookHandler(store)('run1', closedGate);
+      await vi.advanceTimersByTimeAsync(2_100);
+      await done;
+      const undelivered =
+        said().match(/Slack thread post not delivered within 2 s; the question is closed/g) ?? [];
+      // (a) red when the post is not tracked into the drain (bot) or not raced (webhook) — the
+      //     500 ms post lost — when it is awaited without the bound (the 5 s case stalls), or when
+      //     the line is missing as the bound fires; (b) prints booleans and the line's count.
+      expect({ landed: delivered.at(-1), lines: undelivered.length }).toEqual({
+        landed: lands,
+        lines: lands ? 0 : 1,
+      });
+    },
+  );
+
+  it('the stubs: every Slack fetch stub in the four files is a full Response from `slackResponse` — no inline literal', () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const files = [
+      'slack-gate-notifier.test.ts',
+      'slack-gate-ending-625.test.ts',
+      'slack-gate-late-625.test.ts',
+      'slack-disclosure-729.test.ts',
+    ];
+    const literal = [
+      'mockResolvedValue' + '({',
+      'mockResolvedValueOnce' + '({',
+      'Promise.resolve' + '({',
+      'json: ' + 'async',
+    ];
+    const count = files.map((file) => {
+      const source = readFileSync(join(here, file), 'utf8');
+      return {
+        file,
+        literals: literal.reduce((sum, form) => sum + source.split(form).length - 1, 0),
+        helper: source.split('slackResponse(').length - 1 > 0,
+      };
+    });
+    // (a) red when one inline Response literal is restored, or a file stops using the helper; (b)
+    //     prints each file's counts.
+    expect(count).toEqual(files.map((file) => ({ file, literals: 0, helper: true })));
+  });
+});
+
+// #729 PR-4 correction (A1, A2): the person's route is keyed on whether Realm LISTENS in the thread,
+// never on the transport, and a bot post always carries the one respond command. Fakes only: the
+// tokens are `xoxb-fake`/`xapp-fake`; nothing prints an environment or a key.
+describe('#729 PR-4 correction (A1, A2): the route keyed on whether Realm listens in the thread', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+  /** The opening post's route block (block 3), posted by a bot with or without a listener. */
+  const routeOf = async (listens: boolean): Promise<string> => {
+    const posts = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true, ts: '1.0' } }));
+    vi.stubGlobal('fetch', posts);
+    await postGateViaApi('xoxb-fake', 'C1', pr4Gate(), 'r4', listens);
+    return texts(bodiesOf(posts)[0]!.blocks!)[2]!;
+  };
+  const commands = (text: string): number => text.match(/realm run respond/g)?.length ?? 0;
+  const TERMINAL = '*Gate requires a terminal response — open a terminal and run:*';
+
+  // (i) Break: the route keyed on the transport again (`host.mode === 'bot'`). (a) red when a bot
+  //     post nobody listens to says "Reply in this thread", or carries no command or two; (b)
+  //     prints the route's first line, the command count and a boolean.
+  it('(i) a bot post nobody listens to: the terminal route, with the one respond command', async () => {
+    const route = await routeOf(false);
+    expect({
+      opens: route.split('\n')[0],
+      commands: commands(route),
+      thread: route.includes('Reply in this thread'),
+    }).toEqual({ opens: TERMINAL, commands: 1, thread: false });
+  });
+
+  // (ii) Break: the command left out of the listener-attended route. (a) red when the thread
+  //      sentence is not first, or the command is missing or doubled; (b) prints a boolean and
+  //      the count.
+  it('(ii) a bot post a listener attends: the thread sentence first, then the one respond command', async () => {
+    const route = await routeOf(true);
+    expect({
+      opens: route.startsWith('Reply in this thread with'),
+      commands: commands(route),
+    }).toEqual({ opens: true, commands: 1 });
+  });
+
+  // (iii) Break: the no-listener branch prints its old words and no command. (a) red when the
+  //       console does not say no listener is configured, prints no respond line per choice, or
+  //       still says "Using terminal command fallback"; (b) prints the matching lines' count, the
+  //       respond lines (realm's own, fake ids) and a boolean.
+  it("(iii) a thread nobody listens in: the console says so and prints the person's terminal way", async () => {
+    const logs = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } })));
+    await handleBidirectionalGate(
+      makeGateParams({ slackSigningSecret: undefined, store: storeReading(closedRecord({})) }),
+    );
+    const said = logs.mock.calls.map((c) => c.map(String).join(' '));
+    expect({
+      info: said.filter((l) =>
+        l.startsWith('  ℹ  Gate notification posted; no listener is configured'),
+      ).length,
+      respond: said.filter((l) => / realm run respond run1 --gate g1 --choice /.test(l)),
+      fallback: said.some((l) => l.includes('Using terminal command fallback')),
+    }).toEqual({
+      info: 1,
+      respond: [
+        '   Approve: realm run respond run1 --gate g1 --choice approve',
+        '   Reject: realm run respond run1 --gate g1 --choice reject',
+      ],
+      fallback: false,
+    });
+  });
+
+  // (iv) Break: the handler passes the transport instead of the derived flag (`true` always).
+  //      (a) red when a bot token with no listener key posts the thread sentence, or `app_token`
+  //      does not; (b) prints the first route line and a boolean.
+  it('(iv) the handler derives the flag: no listener key — the terminal route; app_token — the thread', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const routeVia = async (appToken?: string): Promise<string> => {
+      const posts = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true, ts: '1.0' } }));
+      vi.stubGlobal('fetch', posts);
+      const handler = createSlackGateHandler({
+        store: storeReading(closedRecord({})),
+        definition: makeMinimalDefinition(),
+        provider: {} as never,
+        botToken: 'xoxb-fake',
+        channelId: 'C1',
+        pollIntervalMs: 0,
+        ...(appToken !== undefined ? { appToken } : {}),
+      });
+      await handler('run1', closedGate);
+      return texts(bodiesOf(posts)[0]!.blocks!)[2]!;
+    };
+    const without = await routeVia();
+    const withApp = await routeVia('xapp-fake');
+    expect([without.split('\n')[0], withApp.startsWith('Reply in this thread with')]).toEqual([
+      TERMINAL,
+      true,
+    ]);
   });
 });
