@@ -446,9 +446,13 @@ function verdictText(report: CacheabilityReport, layout: LayoutResult, short: bo
           : '')
       );
     case 'above_floor':
+      // As `below`: `long enough to cache` speaks for the model only on the economics file's
+      // minimum; on the author's `--floor` it is `at that minimum` (correction 2, F-5).
       return isOpenAi(layout.adapter)
         ? ` — above ${head}: within the provider's own rules (realm sends no marker)`
-        : ` — above ${head}: long enough to cache when the drive asks for caching`;
+        : ` — above ${head}: long enough to cache ` +
+            (floor.basis === 'economics' ? '' : 'at that minimum ') +
+            'when the drive asks for caching';
     default:
       // The advice to pass --ratio only when it was not passed (correction 1, C-3).
       return short

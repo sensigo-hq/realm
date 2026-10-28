@@ -268,7 +268,7 @@ describe('the lines and verdicts (C5)', { timeout: 60_000 }, () => {
       '200',
     ]);
     expect([cacheLines(a.stdout)[0], cacheLines(o.stdout)[0]]).toEqual([
-      "cache: analyze_cause — 1,782 chars ≈ 577–1,244 tokens, with Anthropic's tool text (estimate) — above the floor (512, your --floor): long enough to cache when the drive asks for caching",
+      "cache: analyze_cause — 1,782 chars ≈ 577–1,244 tokens, with Anthropic's tool text (estimate) — above the floor (512, your --floor): long enough to cache at that minimum when the drive asks for caching",
       "cache: analyze_cause — 1,118 chars ≈ 224–448 tokens (estimate) — above the floor (200, your --floor): within the provider's own rules (realm sends no marker)",
     ]);
   });
@@ -536,6 +536,39 @@ describe('the causes, one per row of the decision table (C5)', { timeout: 60_000
       ' — below the floor for claude-sonnet-5-5 (512, your --floor): this step cannot cache at that minimum',
       ' — below the floor for claude-sonnet-5-5 (512, your economics file): this step cannot cache on it',
       ' — below the floor (512, your --floor): this step cannot cache at that minimum',
+    ]);
+  });
+
+  // Correction 2 (F-5): `long enough to cache` speaks for the model only when the minimum is the
+  // economics file's; above a minimum the author typed it reads `at that minimum`, with or without
+  // --model, and whether or not the file says another number. With no floor there is no verdict. A
+  // no-schema step reads 31–62 tokens. (a) red when the wording is chosen by --model, or ignores the
+  // basis; (b) prints each clause after the sizes.
+  it('F-5: above a --floor reads `at that minimum`; above the economics file the old words; no floor no verdict', () => {
+    const run = (min: number, args: string[]): string => {
+      rmSync(join(base, 'proj'), { recursive: true, force: true });
+      const dir = project({
+        workflow: oneStep('ask'),
+        economics: economics('claude-sonnet-5-5', min),
+      });
+      const line = cacheLines(
+        realm(['workflow', 'validate', dir, '--provider', 'anthropic', ...args]).stdout,
+      )[0]!;
+      return line.slice(line.indexOf(' — ', line.indexOf('(no schema')));
+    };
+    const MODEL = ['--model', 'claude-sonnet-5-5'];
+    expect([
+      run(2048, [...MODEL, '--floor', '20']),
+      run(20, [...MODEL, '--floor', '20']),
+      run(2048, ['--floor', '20']),
+      run(20, MODEL),
+      run(20, []),
+    ]).toEqual([
+      ' — above the floor for claude-sonnet-5-5 (20, your --floor; your economics file says 2,048): long enough to cache at that minimum when the drive asks for caching',
+      ' — above the floor for claude-sonnet-5-5 (20, your --floor): long enough to cache at that minimum when the drive asks for caching',
+      ' — above the floor (20, your --floor): long enough to cache at that minimum when the drive asks for caching',
+      ' — above the floor for claude-sonnet-5-5 (20, your economics file): long enough to cache when the drive asks for caching',
+      ' — the floor was not judged: no --model named',
     ]);
   });
 });
