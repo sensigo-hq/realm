@@ -222,6 +222,12 @@ describe('#715 (a) — the docs sentences', () => {
       TESTING,
       'a run started again under an idempotency key after the clock stepped back less than 5 seconds is not stamped after the run it replaces',
     );
+    // Correction 1 (C-5): the law's edge case (store-clock-contract.ts, "at exactly ε it equals the
+    // holder"; json-file-store-clock-715.test.ts B4 "the boundary").
+    claim(
+      TESTING,
+      'At a step back of exactly 5 seconds the 5-second cap wins: that run is stamped equal to the run it replaces, not after it',
+    );
     claim(TESTING, "that run's time is lifted more than 5 seconds");
     claim(TESTING, '`get`, `list` or `stampSeal` reads the clock (on the `clock` route only)');
     // Correction 1 (C-4): store-clock-in-memory.test.ts (C16 with the hook; the wiring cell without it).
