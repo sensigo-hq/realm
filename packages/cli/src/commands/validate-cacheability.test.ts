@@ -328,6 +328,24 @@ describe('the lines and verdicts (C5)', { timeout: 60_000 }, () => {
   // Correction 1 (C-3): a near verdict advises `--ratio` only when it was not passed. examples/06's
   // identify_ticket reads near at 512 with the default range, and near at 300 with --ratio 4
   // (250–338). (a) red when the advice is printed under --ratio; (b) prints both near clauses.
+  // Correction 1 (C-5): on a two-layout line with a floor, the numbers' source is named: with
+  // --ratio the layouts close with `(estimates: <r> chars/token ±15%, your --ratio)`, before the
+  // sharing clause; without it, nothing (examples/06's handle_billing). (a) red when the append is
+  // removed; (b) prints both lines.
+  it('C-5: two layouts with --floor and --ratio name the ratio; without --ratio, nothing', () => {
+    const line = (args: string[]): string =>
+      cacheLines(
+        realm(['workflow', 'validate', ex('06-ticket-router'), '--floor', '512', ...args]).stdout,
+      )[2]!;
+    const BELOW = 'below the floor (512, your --floor): this step cannot cache at that minimum';
+    const SHARES =
+      'shares its whole fixed part with handle_bug, handle_feature, handle_account, handle_other';
+    expect([line(['--ratio', '4']), line([])]).toEqual([
+      `cache: handle_billing — anthropic 650 chars ≈ 142–191 tokens — ${BELOW} · openai 335 chars ≈ 73–98 tokens — ${BELOW} (estimates: 4 chars/token ±15%, your --ratio) — ${SHARES}`,
+      `cache: handle_billing — anthropic 650 chars ≈ 350–790 tokens, with Anthropic's tool text — near the floor (512, your --floor) · openai 335 chars ≈ 67–134 tokens — ${BELOW} — ${SHARES}`,
+    ]);
+  });
+
   it('C-3: the near clause names --ratio only when --ratio was not given', () => {
     const near = (args: string[]): string => {
       const line = cacheLines(

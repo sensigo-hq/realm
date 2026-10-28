@@ -525,7 +525,13 @@ function stepLine(report: CacheabilityReport, result: StepResult): string {
       (l) => `${l.adapter} ${sizeText(l)}${l.sized!.noSchemaAnthropic ? NO_SCHEMA : ''}`,
     );
     if (report.floor !== undefined) {
-      body = layouts.map((l, i) => `${sizes[i]!}${verdictText(report, l, true)}`).join(' · ');
+      // The ratio the numbers come from closes the layouts, as on every other line (correction 1,
+      // C-5).
+      body =
+        layouts.map((l, i) => `${sizes[i]!}${verdictText(report, l, true)}`).join(' · ') +
+        (ratio !== undefined
+          ? ` (estimates: ${String(ratio)} chars/token ±15%, your --ratio)`
+          : '');
     } else {
       body =
         sizes.join(' · ') +
