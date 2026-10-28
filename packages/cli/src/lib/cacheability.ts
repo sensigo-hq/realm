@@ -5,6 +5,7 @@
 // `@sensigo/realm-mcp`'s one reader, uncached, and nothing else: no key, no environment, no model
 // table. The floor is the runner's (its economics file) or the author's (`--floor`), never realm's.
 import {
+  cacheVerdict,
   describeCacheability,
   minCacheableTokensFor,
   type CacheabilityStep,
@@ -202,13 +203,17 @@ function profileEnd(blocks: Block[]): number {
  *   needs every byte up to and including it, so a pair that parts earlier shares no entry;
  * - on OpenAI, a pair that parts in a schema after the whole of a profile both steps carry: the
  *   author's own text, which leads the system prompt. Realm's own text alone is never named, and the
- *   strict rung, whose schema comes first, never shares a whole profile.
- * `ends` holds each step's `profileEnd` on this layout.
+ *   strict rung, whose schema comes first, never shares a whole profile. With a floor in force, such
+ *   a pair is named only when its shared start's estimate reaches the floor or comes near it:
+ *   OpenAI's cache matches a prefix only past its minimum (C-7). With no floor, Realm, which ships no
+ *   minimum, cannot judge the length, and the line states a fact about the text.
+ * `ends` holds each step's `profileEnd` on this layout; `floor` is the floor in force, in tokens.
  */
 function shareClauses(
   step: CacheabilityStep,
   adapter: RequestAdapter,
   ends: Map<string, number>,
+  floor: number | undefined,
 ): ShareClause[] {
   const own = ends.get(step.step) ?? 0;
   const groups = new Map<string, ShareClause>();
@@ -220,7 +225,8 @@ function shareClauses(
       own > 0 &&
       ends.get(share.step) === own &&
       share.chars >= own &&
-      share.divergence_at === 'schema_line'
+      share.divergence_at === 'schema_line' &&
+      (floor === undefined || cacheVerdict(share.tokens, floor) !== 'below_floor')
     )
       kind = 'schemas';
     if (kind === undefined) continue;
@@ -362,7 +368,7 @@ export async function buildCacheabilityReport(
           noSchemaAnthropic: input.noSchemaAnthropic,
           openaiStrictSchema: input.openaiStrictSchema,
           strictRung: input.strictRung,
-          clauses: shareClauses(step, adapter, ends),
+          clauses: shareClauses(step, adapter, ends, floor?.tokens),
         },
       });
     });

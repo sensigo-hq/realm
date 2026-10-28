@@ -258,4 +258,34 @@ describe('the size and the sharing (C1.1; Δ12)', () => {
       ['full', BASE.length, 0],
     ]);
   });
+
+  // Correction 1 (C-7): a pair's `tokens` is the interval of its shared start alone — the first
+  // `chars` characters of the step's fixed text — with the same ratio, never the whole text's. Two
+  // steps with one 400-char profile part at the schema's first key; step a's text goes on 27 chars
+  // past the shared start, so the whole text's interval differs (the guard). (a) red when `tokens` is computed over the whole text; (b) prints both intervals, with
+  // and without a ratio.
+  it("C-7: a share's tokens are its shared start's interval, with and without a ratio", () => {
+    const profile = 'P'.repeat(400);
+    const a = system(profile, '{"alpha_answer_field_name":1}');
+    const steps = [
+      { step: 'a', blocks: [a, MESSAGES] },
+      { step: 'b', blocks: [system(profile, '{"beta":1}'), MESSAGES] },
+    ];
+    const RATIO = { ratio: { chars_per_token: 4 } };
+    const plain = describeCacheability(steps)[0]!.shares_with[0]!;
+    const ratio = describeCacheability(steps, RATIO)[0]!.shares_with[0]!;
+    const start = a.text.slice(0, plain.chars);
+    expect([
+      [plain.tokens, cacheTokenInterval(start)],
+      [ratio.tokens, cacheTokenInterval(start, RATIO)],
+    ]).toEqual([
+      [cacheTokenInterval(start), cacheTokenInterval(start)],
+      [cacheTokenInterval(start, RATIO), cacheTokenInterval(start, RATIO)],
+    ]);
+    expect([
+      a.text.length - plain.chars,
+      JSON.stringify(cacheTokenInterval(a.text)) !== JSON.stringify(plain.tokens),
+      JSON.stringify(cacheTokenInterval(a.text, RATIO)) !== JSON.stringify(ratio.tokens),
+    ]).toEqual([27, true, true]);
+  });
 });

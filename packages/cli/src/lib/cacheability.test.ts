@@ -146,6 +146,45 @@ describe('the sharing filter (C3.2; correction 1, C-1.2)', () => {
       .steps[0]!;
     expect(line.includes('shares')).toBe(false);
   });
+  // Correction 1 (C-7): with a floor in force, an openai pair that shares a whole profile is named
+  // only when its shared start's estimate reaches the floor or comes near it (OpenAI's cache matches
+  // a prefix only past its minimum); with no floor, the profile rule alone. Profiles of 400, 1,500
+  // and 3,000 chars share 655, 1,755 and 3,255 chars: 131–262 (below 512), 351–702 (it straddles
+  // 512: near), 651–1,302 (above). (a) red when the floor filter is removed (the 400-char pair is
+  // named under 512) or inverted (the other two vanish); (b) prints each step line's sharing clause
+  // and the pair's interval.
+  it('C-7 openai: with a floor, a shared profile is named only when its estimate reaches the floor or comes near it', async () => {
+    const pair = async (size: number, floor?: number) => {
+      const def = {
+        ...definition({
+          pf_one: { agent_profile: 'p', output_schema: schemaOf('answer') },
+          pf_two: { agent_profile: 'p', output_schema: schemaOf('summary') },
+        }),
+        resolved_profiles: { p: { content: 'P'.repeat(size), content_hash: `h${String(size)}` } },
+      } as WorkflowDefinition;
+      const report = await buildCacheabilityReport(def, {
+        provider: 'openai',
+        ...(floor !== undefined ? { floor } : {}),
+      });
+      const line = renderCacheabilityLines(report).steps[0]!;
+      const tokens = report.steps[0]!.layouts[0]!.sized!.step.shares_with[0]!.tokens;
+      return [
+        line.includes(' — shares ') ? line.slice(line.indexOf(' — shares ') + 3) : 'none',
+        tokens,
+      ];
+    };
+    expect([
+      await pair(400),
+      await pair(400, 512),
+      await pair(1500, 512),
+      await pair(3000, 512),
+    ]).toEqual([
+      ['shares its first 655 chars with pf_two: the schemas differ', { low: 131, high: 262 }],
+      ['none', { low: 131, high: 262 }],
+      ['shares its first 1,755 chars with pf_two: the schemas differ', { low: 351, high: 702 }],
+      ['shares its first 3,255 chars with pf_two: the schemas differ', { low: 651, high: 1302 }],
+    ]);
+  });
 });
 
 describe('the economics detail (C3.4)', () => {

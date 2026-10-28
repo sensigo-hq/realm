@@ -451,7 +451,7 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
   // Tools, and the sharing words (correction 1, C-1.5): on Anthropic a whole shared part only; on
   // OpenAI also a pair that shares a whole profile and parts in the schema; no other start; long lists
   // capped. The cells that pin each fact: validate-cacheability's "C-1 Anthropic" and "C-1 names", and
-  // lib/cacheability's two openai cells. Break: the page's sentence back to 894d0725's. (a) red when
+  // lib/cacheability's two openai cells and its C-7 cell (a floor in force). Break: the page's sentence back to 894d0725's. (a) red when
   // the page drops a sentence or a run says otherwise; (b) prints the sentence, or the answers.
   it('a step with tools; the sharing forms: a whole part, and on openai a shared profile; long lists end `and N more`', () => {
     claim(
@@ -460,7 +460,7 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
     );
     claim(
       WORKFLOW_PAGE,
-      "**Steps that start the same way.** The line names the other steps whose fixed part is the same as this step's: `shares its whole fixed part with …`. On Anthropic nothing else is named: Anthropic writes its cache entry at the block Realm marks, and a read needs every character up to it, so two steps that part earlier share no entry. On OpenAI, two steps that carry the same profile and part after it, in the schema, are named too: `shares its first <n> chars with …: the schemas differ`. No other shared start is named. A list of more than six steps names five and ends `and N more`. From example 05, with `--provider anthropic`:",
+      "**Steps that start the same way.** The line names the other steps whose fixed part is the same as this step's: `shares its whole fixed part with …`. On Anthropic nothing else is named: Anthropic writes its cache entry at the block Realm marks, and a read needs every character up to it, so two steps that part earlier share no entry. On OpenAI, two steps that carry the same profile and part after it, in the schema, are named too: `shares its first <n> chars with …: the schemas differ`. With a minimum in force, they are named only when the estimate of the start they share reaches it or comes near it. No other shared start is named. A list of more than six steps names five and ends `and N more`. From example 05, with `--provider anthropic`:",
     );
     const step = (id: string, required: string, profile?: string): string =>
       `  ${id}:\n    description: s\n    execution: agent\n    prompt: Do it.\n${profile !== undefined ? `    agent_profile: ${profile}\n` : ''}    output_schema:\n      type: object\n      additionalProperties: false\n      required: [${required}]\n      properties:\n        ${required}: { type: string }\n`;
@@ -481,6 +481,10 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
     const openai = cacheLines(
       realm(['workflow', 'validate', pairs, '--provider', 'openai']).stdout,
     );
+    // C-7: the profile pair's shared start (655 chars, 131–262 tokens) is below 512: not named.
+    const floored = cacheLines(
+      realm(['workflow', 'validate', pairs, '--provider', 'openai', '--floor', '512']).stdout,
+    );
     const profiles = cacheLines(
       realm(['workflow', 'validate', ex('03-incident-response'), '--provider', 'openai']).stdout,
     );
@@ -495,9 +499,16 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
     expect([
       anthropic.map((l) => l.includes('shares')),
       openai.map((l) => / — shares its first [\d,]+ chars with \w+: the schemas differ$/.test(l)),
+      floored.map((l) => l.includes('shares')),
       profiles.some((l) => l.includes('shares')),
       long.endsWith(' and 7 more'),
-    ]).toEqual([[false, false, false, false], [false, false, true, true], false, true]);
+    ]).toEqual([
+      [false, false, false, false],
+      [false, false, true, true],
+      [false, false, false, false],
+      false,
+      true,
+    ]);
   });
 
   // The once-lines, the same verdict everywhere, a log's masking, and --json. Break: a once-line

@@ -82,6 +82,9 @@ export interface CacheabilityOptions {
 export interface CacheShare {
   step: string;
   chars: number;
+  /** The token range of the shared start: `cacheTokenInterval` of its first `chars` characters, with
+   *  the same `ratio` and no host extra tokens (caching PR 5 correction 1, C-7). */
+  tokens: { low: number; high: number };
   /** The segment the two texts part in; `null` when they are equal. */
   divergence_at: string | null;
 }
@@ -204,7 +207,15 @@ export function describeCacheability(
         if (theirs.text.length === 0) return;
         const p = commonPrefix(own.text, theirs.text);
         if (p === 0) return;
-        shares.push({ step: other.step, chars: p, divergence_at: divergenceAt(own, theirs, p) });
+        shares.push({
+          step: other.step,
+          chars: p,
+          tokens: cacheTokenInterval(
+            own.text.slice(0, p),
+            opts.ratio !== undefined ? { ratio: opts.ratio } : {},
+          ),
+          divergence_at: divergenceAt(own, theirs, p),
+        });
       });
     }
     const verdict = opts.floor !== undefined ? cacheVerdict(tokens, opts.floor.tokens) : undefined;

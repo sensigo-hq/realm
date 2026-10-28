@@ -514,6 +514,7 @@ export type {
 // issue #600 caching PR 5: at admission, each agent step's fixed part — its size, what it shares,
 // and whether it can cache against a stated minimum.
 export {
+  cacheVerdict,
   describeCacheability,
   DEFAULT_CHARS_PER_TOKEN_HIGH,
   DEFAULT_CHARS_PER_TOKEN_LOW,
