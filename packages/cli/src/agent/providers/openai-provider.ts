@@ -543,6 +543,33 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       llmClock?: LlmClock;
     },
   ): Promise<StepWithToolsResult> {
+    // issue #610: the accumulator is owned by the ENTRY POINT, as `callStep`'s is. One catch here
+    // sees every request that got an answer, whatever throws below: a wire error on a later turn,
+    // an unknown tool name, arguments that do not parse, or a final answer that does not parse.
+    const requests: UsageRecord[] = [];
+    try {
+      const result = await this.callStepWithToolsInternal(
+        prompt,
+        tools,
+        executor,
+        options,
+        requests,
+      );
+      return requests.length > 0 ? { ...result, usage: requests } : result;
+    } catch (err) {
+      attachBilledUsage(err, requests);
+      throw err;
+    }
+  }
+
+  /** The tool loop. Issue #610 put it behind the entry point above, which owns `requests`. */
+  private async callStepWithToolsInternal(
+    prompt: string,
+    tools: ToolDefinition[],
+    executor: ToolExecutor,
+    options: Parameters<OpenAIProvider['callStepWithTools']>[3],
+    requests: UsageRecord[],
+  ): Promise<StepWithToolsResult> {
     const clock = options.llmClock;
     // issue #401: per-invocation counters, minted beside the client below.
     const counters: WireCounters = { attempts: 0 };
@@ -574,8 +601,26 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
 
     const rawCreate = (b: Rec, o: Rec): Promise<unknown> => client.chat.completions.create(b, o);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const bounded = (body: Rec): Promise<any> =>
+    const send = (body: Rec): Promise<any> =>
       clock !== undefined ? driveCreate(rawCreate, body, clock, counters) : rawCreate(body, {});
+    // issue #610: the ONE point every request of this loop goes through, and the one place it is
+    // recorded. The record is pushed the instant the answer arrives, before any code reads it: a
+    // throw while reading must not lose what was billed. A request that fails on the wire has no
+    // record, as on the single-shot path.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const bounded = async (body: Rec): Promise<any> => {
+      const requestStart = new Date().toISOString();
+      const response = await send(body);
+      requests.push(
+        toUsageRecord(
+          requests.length,
+          requestStart,
+          readOpenAiUsage(response),
+          openAiRequestFacts(response, client),
+        ),
+      );
+      return response;
+    };
 
     const responseFormat = this.capabilities().jsonMode
       ? ({ type: 'json_object' } as const)

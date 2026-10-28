@@ -2117,8 +2117,9 @@ function buildStepDiagnostics(
   }
   // issue #600 PR 1a: PRESENT whenever the driver supplied usage — as `state: 'unobservable'` when
   // nothing was observed; ABSENT when nothing was recorded. Recorded-and-silent and not-recorded
-  // are different facts, never collapsed — and not-recorded is NOT "no model call happened" (a
-  // tool-calling step and an externally driven step both call models; see `StepDiagnostics.cache`).
+  // are different facts, never collapsed — and not-recorded is NOT "no model call happened" (an
+  // externally driven step, or a tool-calling step an older Realm recorded, both call models; see
+  // `StepDiagnostics.cache`).
   if (facts.usage !== undefined) {
     diag.cache = deriveCacheDetail(facts.usage);
   }
