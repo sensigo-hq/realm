@@ -729,6 +729,8 @@ export {
   REALM_CREDENTIAL_VARIABLES,
   notKeptMarker,
   boundWhole,
+  // #872 (b1): the one bounded renderer of a name or a reason an MCP reply echoes (500 characters).
+  capText,
   tierFor,
   compileDisclosure,
   emptyDisclosureSet,

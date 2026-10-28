@@ -814,10 +814,10 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     ]);
   });
 
-  it('error-codes.md: 89 codes defined — 74 raised, 15 that nothing raises', () => {
+  it('error-codes.md: 90 codes defined — 75 raised, 15 that nothing raises', () => {
     claim(
       'docs/reference/error-codes.md',
-      'This page lists all 89 codes that Realm defines: the 74 it raises, with when each is raised and what it tells the caller to do, and the 15 that nothing raises.',
+      'This page lists all 90 codes that Realm defines: the 75 it raises, with when each is raised and what it tells the caller to do, and the 15 that nothing raises.',
     );
     const types = readFileSync(join(ROOT, 'packages/core/src/types/workflow-error.ts'), 'utf8');
     const lines = types.slice(types.indexOf('export type ErrorCode')).split('\n');
@@ -869,8 +869,8 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       unraisedWritten: listedUnraised.filter(written),
       raisedNowhere: listedRaised.filter((c) => !written(c)),
     }).toEqual({
-      defined: 89,
-      raised: 74,
+      defined: 90,
+      raised: 75,
       unraised: 15,
       cover: [...defined].sort(),
       unraisedWritten: [],
@@ -1034,5 +1034,40 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       'completed',
       undefined,
     ]);
+  });
+});
+
+describe('#872 (b1) B11 — error-codes.md, agent-created-workflows.md, connect-an-mcp-client.md', () => {
+  it('error-codes.md: the VALIDATION_CURSOR row', () => {
+    // Pinned by execution in get-run-state-cursor-872.test.ts (B6: its code, action and words).
+    claim(
+      'docs/reference/error-codes.md',
+      "| `VALIDATION_CURSOR` | `get_run_state` was given a `cursor` without `include_steps: true` or `step_names`, or a `cursor` that names no step the run has attempted. The reply's `errors[0]` says which, and how to call again. Added after version 0.48.0. | `provide_input` | No |",
+    );
+  });
+  it('agent-created-workflows.md: one line per broken rule — the page’s example is the real line', async () => {
+    claim(
+      'docs/guides/agent-created-workflows.md',
+      "When several steps break the same rule, the reply says it in one line: the first step's message, then the other steps' names — `Step 'a': description must be non-empty (also 'b', 'c' and 4 more)`, two more names, then how many more. Each rule broken has its own line, so every kind of mistake in the plan shows at once (added after version 0.48.0).",
+    );
+    const { handleCreateWorkflow } = await import('./create-workflow.js');
+    const dir = await mkdtemp(join(tmpdir(), 'realm-guides-872-'));
+    const reply = await handleCreateWorkflow(
+      { steps: ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((id) => ({ id, description: '' })) },
+      {
+        workflowStore: new JsonWorkflowStore(join(dir, 'wf')),
+        runStore: new JsonFileStore(join(dir, 'runs')),
+      },
+    );
+    // (a) red when the page's example and the real line part; (b) prints the line.
+    expect(reply.errors).toEqual([
+      "Step 'a': description must be non-empty (also 'b', 'c' and 4 more)",
+    ]);
+  });
+  it('connect-an-mcp-client.md: "## Other clients" — Codex’s per-tool limit (a third-party fact, pinned as text with its checked note)', () => {
+    claim(
+      'docs/guides/connect-an-mcp-client.md',
+      "Codex keeps only the first and the last part of a long tool reply unless that tool's limit is raised: set `mcp_servers.<id>.tools.<tool>.output_token_limit` in its config (checked against Codex's source at 73bdd06f, 2026-10-27). Realm keeps every reply under 40,000 characters (see [The reply](../reference/mcp/tools.md#the-reply)).",
+    );
   });
 });

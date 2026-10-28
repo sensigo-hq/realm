@@ -123,6 +123,9 @@ export type ErrorCode =
   // the definition, a `run` that is not a run record, the dispatcher a step needs). Every defect
   // of those parts is named at once; refused before anything is read or written.
   | 'VALIDATION_OPTION_INVALID'
+  // #872 (b1): `get_run_state`'s `cursor` refused — given without the steps it pages, or naming no
+  // step the run has attempted. The agent fixes its own call (`provide_input`); the same call fails again.
+  | 'VALIDATION_CURSOR'
   | 'STEP_HANDLER_ERROR'
   // ENGINE
   | 'ENGINE_INTERNAL'

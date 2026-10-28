@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { createHash } from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
+  capText,
   compileSchema,
   isStrictModeRefusal,
   isAsyncSchemaRefusal,
@@ -197,17 +198,52 @@ function makeErrorEnvelope(errors: string[]): McpEnvelope {
 }
 
 /**
- * Validates all submitted steps. Returns collected error strings (empty = valid) AND
- * structured_output caveat lines (issue #236) — render-only, never a WarningCode, threaded into
- * the success envelope's `warnings` array by the caller.
+ * #872 (b1): one fault in `create_workflow`'s input — the rule it breaks (one per message template:
+ * R1–R17, the push sites below), the step it is about (none for a whole-workflow rule), its words.
  */
-function validateArgs(args: CreateWorkflowArgs): { errors: string[]; caveats: string[] } {
-  const errors: string[] = [];
+interface ArgsFault {
+  rule: string;
+  step?: string;
+  message: string;
+}
+
+/**
+ * #872 (b1): the refusal's lines, ONE per rule, in the order of each rule's first fault: the first
+ * step's full message, then `(also 's2', 's3' and k more)` — two more names, then the exact count
+ * (#872 (a)'s vocabulary: three names, then the count), every name through `capText`. A rule broken
+ * by one step only renders its message unchanged, so every fault class shows at once at any size.
+ */
+export function groupedFaultLines(faults: readonly ArgsFault[]): string[] {
+  const groups = new Map<string, ArgsFault[]>();
+  for (const fault of faults) {
+    const group = groups.get(fault.rule);
+    if (group === undefined) groups.set(fault.rule, [fault]);
+    else group.push(fault);
+  }
+  return [...groups.values()].map(([first, ...rest]) => {
+    if (rest.length === 0) return first!.message;
+    const names = rest.slice(0, 2).map((fault) => `'${capText(fault.step ?? '')}'`);
+    const more = rest.length - names.length;
+    return `${first!.message} (also ${names.join(', ')}${more > 0 ? ` and ${more} more` : ''})`;
+  });
+}
+
+/**
+ * Validates all submitted steps. Returns the faults found (empty = valid), each with its rule and
+ * step (#872 (b1): the caller renders one line per rule), AND structured_output caveat lines (issue
+ * #236) — render-only, never a WarningCode, threaded into the success envelope's `warnings` array by
+ * the caller.
+ */
+function validateArgs(args: CreateWorkflowArgs): { faults: ArgsFault[]; caveats: string[] } {
+  const faults: ArgsFault[] = [];
   const caveats: string[] = [];
+  const fault = (rule: string, step: string | undefined, message: string): void => {
+    faults.push({ rule, ...(step !== undefined ? { step } : {}), message });
+  };
 
   if (args.steps.length === 0) {
-    errors.push('steps must contain at least one step');
-    return { errors, caveats };
+    fault('R1', undefined, 'steps must contain at least one step');
+    return { faults, caveats };
   }
 
   // issue #236: the gate reject joins THIS error path — PRE-register (validateArgs runs before
@@ -228,7 +264,9 @@ function validateArgs(args: CreateWorkflowArgs): { errors: string[]; caveats: st
           const validity = asyncSchemaValidity(
             (step.input_schema as Record<string, unknown>)['$async'],
           );
-          errors.push(
+          fault(
+            'R2',
+            step.id,
             `Step '${step.id}': 'input_schema' declares ${validity}. ` +
               `${SCHEMA_KEY_CONSEQUENCE.input_schema}; remove \`$async\` from the schema.`,
           );
@@ -243,7 +281,9 @@ function validateArgs(args: CreateWorkflowArgs): { errors: string[]; caveats: st
           failure === undefined
             ? undefined
             : composeSchemaFailure(failure, 'input_schema', step.input_schema);
-        errors.push(
+        fault(
+          'R3',
+          step.id,
           `Step '${step.id}': 'input_schema' ${strict ? "is refused by realm's validator" : 'is not a valid JSON Schema'} — ` +
             `${composed?.detail ?? msg}. ${SCHEMA_KEY_CONSEQUENCE.input_schema}; ` +
             `${composed?.remedy ?? 'fix the schema'}.`,
@@ -257,7 +297,9 @@ function validateArgs(args: CreateWorkflowArgs): { errors: string[]; caveats: st
       tools: false, // create_workflow's dynamic steps never declare tools (no such field exists)
     });
     if (verdict.verdict === 'ineligible') {
-      errors.push(
+      fault(
+        'R4',
+        step.id,
         `Step '${step.id}': 'structured_output: strict' is not eligible for this step's ` +
           `schema — ${renderIneligibleMessage(verdict.reasons)}`,
       );
@@ -271,7 +313,9 @@ function validateArgs(args: CreateWorkflowArgs): { errors: string[]; caveats: st
   // Rule 7: agent_profile is not supported on dynamic workflows.
   for (const step of args.steps) {
     if ('agent_profile' in (step as unknown as Record<string, unknown>)) {
-      errors.push(
+      fault(
+        'R5',
+        step.id,
         `Step '${step.id}': agent_profile is not supported on dynamically-created workflows. Use realm register with a YAML workflow file for profile-based execution.`,
       );
     }
@@ -279,13 +323,17 @@ function validateArgs(args: CreateWorkflowArgs): { errors: string[]; caveats: st
 
   // Rule 8: extensions are not supported on dynamic workflows (register-time, operator-only).
   if ('extensions' in (args as unknown as Record<string, unknown>)) {
-    errors.push(
+    fault(
+      'R6',
+      undefined,
       `extensions is not supported on dynamically-created workflows. Project extensions are register-time and operator-only: declare them in workflow.yaml and register with realm workflow register.`,
     );
   }
   for (const step of args.steps) {
     if ('extensions' in (step as unknown as Record<string, unknown>)) {
-      errors.push(
+      fault(
+        'R7',
+        step.id,
         `Step '${step.id}': extensions is not supported on dynamically-created workflows. Project extensions are register-time and operator-only: declare them in workflow.yaml and register with realm workflow register.`,
       );
     }
@@ -295,7 +343,7 @@ function validateArgs(args: CreateWorkflowArgs): { errors: string[]; caveats: st
   const seenIds = new Set<string>();
   for (const step of args.steps) {
     if (seenIds.has(step.id)) {
-      errors.push(`Duplicate step id: '${step.id}'`);
+      fault('R8', step.id, `Duplicate step id: '${step.id}'`);
     }
     seenIds.add(step.id);
   }
@@ -303,7 +351,11 @@ function validateArgs(args: CreateWorkflowArgs): { errors: string[]; caveats: st
   // Rule 3: step IDs must be non-empty with no spaces.
   for (const step of args.steps) {
     if (step.id.trim() === '' || step.id.includes(' ')) {
-      errors.push(`Step id '${step.id}' is invalid: must be a non-empty string with no spaces`);
+      fault(
+        'R9',
+        step.id,
+        `Step id '${step.id}' is invalid: must be a non-empty string with no spaces`,
+      );
     }
   }
 
@@ -314,14 +366,18 @@ function validateArgs(args: CreateWorkflowArgs): { errors: string[]; caveats: st
   // reservation (yaml-loader.ts) — create_workflow never enforced these two at all before this fix.
   for (const step of args.steps) {
     if (step.id === 'run' || step.id === 'context' || step.id === '$settlement') {
-      errors.push(`Step id '${step.id}' is reserved and cannot be used as a step identifier`);
+      fault(
+        'R10',
+        step.id,
+        `Step id '${step.id}' is reserved and cannot be used as a step identifier`,
+      );
     }
   }
 
   // Rule 4: descriptions must be non-empty.
   for (const step of args.steps) {
     if (step.description.trim() === '') {
-      errors.push(`Step '${step.id}': description must be non-empty`);
+      fault('R11', step.id, `Step '${step.id}': description must be non-empty`);
     }
   }
 
@@ -330,7 +386,7 @@ function validateArgs(args: CreateWorkflowArgs): { errors: string[]; caveats: st
   for (const step of args.steps) {
     if (step.llm_timeout_seconds !== undefined) {
       if (!Number.isInteger(step.llm_timeout_seconds) || step.llm_timeout_seconds <= 0) {
-        errors.push(`Step '${step.id}': llm_timeout_seconds must be a positive integer`);
+        fault('R12', step.id, `Step '${step.id}': llm_timeout_seconds must be a positive integer`);
       }
     }
   }
@@ -347,38 +403,46 @@ function validateArgs(args: CreateWorkflowArgs): { errors: string[]; caveats: st
     if (step.depends_on === undefined || step.depends_on.length === 0) return;
     if (step.depends_on.length > 1) {
       // Unreachable through the door (the schema's `.max`); kept for direct callers.
-      errors.push(
+      fault(
+        'R13',
+        step.id,
         `Step '${step.id}': depends_on supports at most one predecessor — the step just before it (create_workflow runs steps in list order)`,
       );
       return;
     }
     const ref = step.depends_on[0]!;
     if (myPos === 0) {
-      errors.push(
+      fault(
+        'R14',
+        step.id,
         `Step '${step.id}' is the first step; nothing runs before it — leave depends_on out.`,
       );
       return;
     }
     if (!allIds.has(ref)) {
-      errors.push(`Step '${step.id}': depends_on references unknown step '${ref}'`);
+      fault('R15', step.id, `Step '${step.id}': depends_on references unknown step '${ref}'`);
       return;
     }
     const refPos = stepPositions.get(ref)!;
     if (refPos >= myPos) {
-      errors.push(
+      fault(
+        'R16',
+        step.id,
         `Step '${step.id}': depends_on must reference a step that appears earlier in the list`,
       );
       return;
     }
     const previous = args.steps[myPos - 1]!.id;
     if (ref !== previous) {
-      errors.push(
+      fault(
+        'R17',
+        step.id,
         `Step '${step.id}': depends_on names '${ref}', but steps run in list order, so '${step.id}' runs right after '${previous}'. Name '${previous}', leave depends_on out, or move '${step.id}' to just below '${ref}'.`,
       );
     }
   });
 
-  return { errors, caveats };
+  return { faults, caveats };
 }
 
 /**
@@ -478,9 +542,10 @@ export async function handleCreateWorkflow(
   stores?: { workflowStore?: JsonWorkflowStore; runStore?: RunStore },
 ): Promise<McpEnvelope> {
   assertToolStores(stores, 'handleCreateWorkflow');
-  const { errors, caveats: structuredOutputCaveats } = validateArgs(args);
-  if (errors.length > 0) {
-    return makeErrorEnvelope(errors);
+  const { faults, caveats: structuredOutputCaveats } = validateArgs(args);
+  if (faults.length > 0) {
+    // #872 (b1): one line per rule — every fault class at once, its size no longer the step count.
+    return makeErrorEnvelope(groupedFaultLines(faults));
   }
   // The zod 4 unit, R2 (O2): before the id is derived and anything stored — a non-finite number in
   // a step's input_schema is refused; an integer beyond 2^53−1 draws a warning.

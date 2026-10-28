@@ -1267,3 +1267,38 @@ describe('issue #729 — cannot_go_on on run-state-and-health.md', () => {
     },
   );
 });
+
+describe('#872 (b1) B11 — run-state-and-health.md: the ceiling, the cursor, step_names', () => {
+  it('the rows: params omitted, terminal_reason bounded, steps for step_names, the counts and the cursor', () => {
+    // Pinned by execution: reply-ceiling.test.ts B5 (params' omitted form, the counts),
+    // bounded-echoes-872.test.ts B8 (the reason), get-run-state-cursor-872.test.ts B4 (steps,
+    // steps_more, next_cursor).
+    claim(
+      PAGE,
+      'When the reply would pass the 40,000-character ceiling and the lists shortened before it cannot make it fit, `{ "omitted": true, "chars": <N> }` instead, N their length as JSON ([the ceiling](tools.md#the-reply); added after version 0.48.0).',
+    );
+    claim(
+      PAGE,
+      'What ended it, as a sentence. A reason over 500 characters is shown as `‹<N> characters, not kept›` (added after version 0.48.0).',
+    );
+    claim(
+      PAGE,
+      '| `steps` | `include_steps` was `true`, or `step_names` named a step the run has attempted |',
+    );
+    claim(
+      PAGE,
+      "| `steps_more`, `next_cursor` | The reply ceiling left asked steps out | How many asked steps after the last one shown were left out, and that step's id: pass it as `cursor` for the next page. See [`include_steps`](#include_steps). Added after version 0.48.0. |",
+    );
+    claim(
+      PAGE,
+      '| `skip_details_more`, `engine_runnable_more`, `agent_refused_more`, `capability_blocks_more`, `next_actions_more` | The reply ceiling shortened that list | How many entries it left out; the list keeps its first ones ([the ceiling](tools.md#the-reply)). Added after version 0.48.0. |',
+    );
+  });
+  it('"## include_steps": the step_names, cursor and empty-page paragraph', () => {
+    // Pinned by execution in get-run-state-cursor-872.test.ts (B4, B6).
+    claim(
+      PAGE,
+      "`step_names` and `cursor` were added after version 0.48.0. With `step_names`, `steps` holds only the named steps that ran; a name the run has not attempted is named in `warnings` (`'<name>' is not a step this run has attempted`, ten named, then how many more). When the reply would pass the 40,000-character ceiling ([the ceiling](tools.md#the-reply)), `steps` keeps its first steps in the order they were first attempted, `steps_more` says how many it left out and `next_cursor` names the last one shown: call again with `cursor` set to it, and the same `include_steps` or `step_names`, for the next page. The cursor is a place in the run's order of first attempts, and `step_names` picks from what follows it. A page with nothing after the cursor has no `steps` and no `next_cursor`. A `cursor` without `include_steps: true` or `step_names`, or naming no step the run has attempted, is refused with `VALIDATION_CURSOR`.",
+    );
+  });
+});

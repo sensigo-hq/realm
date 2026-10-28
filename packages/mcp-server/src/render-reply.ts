@@ -180,6 +180,8 @@ export type McpEnvelope = Omit<
   | 'gate'
 > & {
   next_actions: McpNextAction[];
+  /** #872 (b1): how many `next_actions` entries the reply ceiling left out (an exact count). */
+  next_actions_more?: number;
   agent_action?: AgentAction;
   /** issue #729 PR-0 (A-1): reading and ending the run — never counted as a next step. */
   also?: McpAlsoEntry[];
@@ -1222,8 +1224,15 @@ export function renderWaysOf(
  */
 export const PERSON_BLOCK: unique symbol = Symbol('realm.mcp.person_block');
 
-/** A handler's reply: the envelope, and the person block when there is one. */
-export type WithPersonBlock<T> = T & { [PERSON_BLOCK]?: string };
+/**
+ * #872 (b1): a reply's plan rides it under this symbol — never serialized, and kept by object spread
+ * (an own enumerable symbol key), so every `{ ...mcpReplyOf(rendered), … }` still carries it to
+ * {@link toolContentOf}. Attached by {@link mcpReplyOf} for every envelope reply.
+ */
+export const REPLY_PLAN: unique symbol = Symbol('realm.mcp.reply_plan');
+
+/** A handler's reply: the envelope, the person block when there is one, and its plan. */
+export type WithPersonBlock<T> = T & { [PERSON_BLOCK]?: string; [REPLY_PLAN]?: ReplyPlan };
 
 /** The envelope of a rendered reply, carrying its person block under {@link PERSON_BLOCK}. */
 /**
@@ -1244,9 +1253,12 @@ export function withHintTail(rendered: RenderedReply, tail: string): RenderedRep
 }
 
 export function mcpReplyOf(rendered: RenderedReply): WithPersonBlock<McpEnvelope> {
-  return rendered.person !== undefined
-    ? { ...rendered.envelope, [PERSON_BLOCK]: rendered.person }
-    : rendered.envelope;
+  // #872 (b1): every envelope reply carries the envelope's plan — `next_actions` beyond the first.
+  return {
+    ...rendered.envelope,
+    [REPLY_PLAN]: ENVELOPE_PLAN,
+    ...(rendered.person !== undefined ? { [PERSON_BLOCK]: rendered.person } : {}),
+  };
 }
 
 // ─── The disclosure step (#729 PR-3; RECORD 01 #9, #10; D3/03) ──────────────────────────────────
@@ -1339,6 +1351,8 @@ export const MCP_ENVELOPE_ROWS = {
   answer_recorded: { class: 'fact' },
   gate_claim: { class: 'fact' },
   next_actions: { class: { nested: NEXT_ACTION_TABLE } },
+  // #872 (b1): a count (no F5 producer for a number).
+  next_actions_more: { class: 'fact' },
   agent_action: { class: 'fact' },
   also: { class: { nested: ALSO_TABLE } },
   elsewhere: { class: 'fact' },
@@ -1384,11 +1398,205 @@ export type ToolResult = {
   isError?: boolean;
 };
 
+// ─── The reply ceiling (#872 (b1)) ──────────────────────────────────────────────────────────────
+
+/**
+ * #872 (b1): every reply's agent text is kept at or under this many characters — UTF-16 code units
+ * (JS `.length`), the unit Claude Code and Gemini CLI count (Codex counts bytes or tokens; its docs
+ * line says so). Gemini CLI moves a tool reply over 40,000 characters into a file, Claude Code one
+ * over 50,000. The person block (`audience: ['user']`, the second content block) is outside the
+ * measure.
+ */
+export const REPLY_CEILING_CHARS = 40_000;
+
+/**
+ * #872 (b1): a tool's plan — which lists of its reply the composer may shorten, in which order. Given
+ * the reply the composer holds, the object its last walk showed for that reply (the plan measures
+ * on it: raw sizes drift under masking and withholding) and how many characters the reply is past
+ * the ceiling, `next` returns a cut COPY of that reply — every key it does not cut, symbols
+ * included, as it was handed — or `undefined` when nothing is left to cut. A plan never closes over
+ * an earlier reply.
+ */
+export interface ReplyPlan {
+  next(
+    reply: Readonly<Record<string, unknown>>,
+    shown: Readonly<Record<string, unknown>>,
+    over: number,
+  ): Record<string, unknown> | undefined;
+}
+
+/**
+ * One part of a plan: a list (an array, or a map keyed by ids) shortened to its first items, with the
+ * exact count of what it left out in `moreKey` (and, for a list read page by page, the keys `marks`
+ * sets from the kept ids); or a field replaced whole by `omitted` — one cut, never halved.
+ */
+export type PlanPart =
+  | {
+      kind: 'list';
+      key: string;
+      moreKey: string;
+      marks?: (keptIds: readonly string[]) => Record<string, unknown>;
+    }
+  | { kind: 'omit'; key: string; omitted: (raw: unknown) => Record<string, unknown> };
+
+/** The size a value takes where it sits in the serialized reply: at depth `depth` (2 spaces each). */
+export function sizeInPlace(value: unknown, depth: number): number {
+  const text = sseJsonStringify(value);
+  let lines = 1;
+  for (let i = 0; i < text.length; i += 1) if (text.charCodeAt(i) === 10) lines += 1;
+  return text.length + (lines - 1) * 2 * depth;
+}
+
+/** A list's first `k` items, an array's or a map's (key order kept). */
+function headOf(list: unknown, k: number): unknown {
+  if (Array.isArray(list)) return list.slice(0, k);
+  return Object.fromEntries(Object.entries(list as Record<string, unknown>).slice(0, k));
+}
+
+/** How many items a list has, an array's or a map's; `undefined` for anything else. */
+function countOf(list: unknown): number | undefined {
+  if (Array.isArray(list)) return list.length;
+  if (list !== null && typeof list === 'object') return Object.keys(list).length;
+  return undefined;
+}
+
+/** The ids a list's first `k` items are read by: a map's keys; an array's indexes as text. */
+function idsOf(list: unknown, k: number): string[] {
+  if (Array.isArray(list)) return list.slice(0, k).map((_, i) => String(i));
+  return Object.keys(list as Record<string, unknown>).slice(0, k);
+}
+
+/**
+ * #872 (b1): a plan over `parts`, in their order — the composer's fit loop calls `next` until the
+ * reply fits or it returns `undefined`. Phase 1: the first part not yet cut whose CUTTABLE size (its
+ * size in place minus its floor's — one item; for an omitted field, minus the omitted form's) can
+ * close the gap with its own marker, a list cut by halving from its size until the shed covers that
+ * (floor one item). Phase 2, when no part can close it alone: the first part not yet cut, to its
+ * floor. A cut part is never cut again (its marker is on the reply), so a reply takes at most one
+ * walk per part after the first.
+ */
+export function replyPlanOf(parts: readonly PlanPart[]): ReplyPlan {
+  return {
+    next(reply, shown, over) {
+      const open = parts.filter((part) => {
+        if (!(part.key in reply) || !(part.key in shown)) return false;
+        if (part.kind === 'omit') {
+          const raw = reply[part.key];
+          return !(
+            raw !== null &&
+            typeof raw === 'object' &&
+            (raw as { omitted?: unknown }).omitted === true
+          );
+        }
+        if (part.moreKey in reply) return false;
+        const n = countOf(reply[part.key]);
+        return n !== undefined && n > 1;
+      });
+      const cutOf = (part: PlanPart, k?: number): Record<string, unknown> => {
+        if (part.kind === 'omit') return { ...reply, [part.key]: part.omitted(reply[part.key]) };
+        const raw = reply[part.key];
+        const n = countOf(raw)!;
+        const kept = k ?? 1;
+        return {
+          ...reply,
+          [part.key]: headOf(raw, kept),
+          [part.moreKey]: n - kept,
+          ...(part.marks !== undefined ? part.marks(idsOf(raw, kept)) : {}),
+        };
+      };
+      const markerOf = (part: PlanPart & { kind: 'list' }, n: number, k: number): number =>
+        sizeInPlace(
+          {
+            [part.moreKey]: n - k,
+            ...(part.marks !== undefined ? part.marks(idsOf(reply[part.key], k)) : {}),
+          },
+          0,
+        );
+      // Phase 1: the first part that can close the gap alone.
+      for (const part of open) {
+        if (part.kind === 'omit') {
+          const shed =
+            sizeInPlace(shown[part.key], 1) - sizeInPlace(part.omitted(reply[part.key]), 1);
+          if (shed >= over) return cutOf(part);
+          continue;
+        }
+        const n = countOf(reply[part.key])!;
+        const whole = sizeInPlace(shown[part.key], 1);
+        const shedAt = (k: number): number => whole - sizeInPlace(headOf(shown[part.key], k), 1);
+        if (shedAt(1) < over + markerOf(part, n, 1)) continue;
+        for (let k = Math.max(1, Math.floor(n / 2)); ; k = Math.max(1, Math.floor(k / 2))) {
+          if (shedAt(k) >= over + markerOf(part, n, k)) return cutOf(part, k);
+          if (k === 1) break;
+        }
+      }
+      // Phase 2: the first part not yet cut that has something to shed, to its floor.
+      for (const part of open) {
+        if (part.kind === 'list') return cutOf(part, 1);
+        const shed =
+          sizeInPlace(shown[part.key], 1) - sizeInPlace(part.omitted(reply[part.key]), 1);
+        if (shed > 0) return cutOf(part);
+      }
+      return undefined;
+    },
+  };
+}
+
+/** #872 (b1): the envelope's plan — `next_actions` beyond the first, with the exact count. */
+export const ENVELOPE_PLAN: ReplyPlan = replyPlanOf([
+  { kind: 'list', key: 'next_actions', moreKey: 'next_actions_more' },
+]);
+
+/** A count in the en-US thousands style (40,000). */
+function countWords(n: number): string {
+  return n.toLocaleString('en-US');
+}
+
+/**
+ * #872 (b1): the head fields one of which can alone keep a reply past the ceiling, in the order the
+ * overflow line names them — never cut (a step's own prompt is never cut; caching's prefix relies on
+ * it), so the line names the one that does it.
+ */
+function headFieldOver(
+  shown: Readonly<Record<string, unknown>>,
+): { field: string; size: number } | undefined {
+  const first = Array.isArray(shown['next_actions'])
+    ? (shown['next_actions'][0] as Record<string, unknown> | undefined)
+    : undefined;
+  const fields: Array<[string, unknown, number]> = [
+    ['next_actions[0].prompt', first?.['prompt'], 3],
+    ['next_actions[0].input_schema', first?.['input_schema'], 3],
+    ['gate', shown['gate'], 1],
+  ];
+  for (const [field, value, depth] of fields) {
+    if (value === undefined) continue;
+    const size = sizeInPlace(value, depth);
+    if (size >= REPLY_CEILING_CHARS) return { field, size };
+  }
+  return undefined;
+}
+
+/** #872 (b1): the overflow line — a head field alone, or every list at its floor. */
+export function overflowLine(
+  size: number,
+  cause: { field: string; size: number } | { floor: number },
+): string {
+  const lead = `This reply was ${countWords(size)} characters before this line, past the ${countWords(REPLY_CEILING_CHARS)}-character ceiling`;
+  return 'field' in cause
+    ? `${lead}: ${cause.field} alone is ${countWords(cause.size)}. No list was shortened for it.`
+    : `${lead}; shortening every list to one item would still leave ${countWords(cause.floor)}. No list was shortened for it; tell the user.`;
+}
+
 /**
  * The MCP tool result for one reply (P-6): the reply walked by its table for the agent, with its
  * `disclosure` receipt, as JSON — and, when it carries one, a second content block addressed to the
  * person (`audience: ["user"]`) with an operator's commands. The person block is read FIRST, from
  * the reply as given, and is emitted as its own block: it holds facts (commands), never a value.
+ *
+ * #872 (b1), the one composer law: the agent's text is kept at or under {@link REPLY_CEILING_CHARS}.
+ * Over it, the reply's plan (`plan`, else the one it carries under {@link REPLY_PLAN}) cuts copies
+ * of it until it fits; every key the plan does not cut leaves as the tool set it. When no plan can
+ * make it fit — a head field alone over the ceiling, every list at its floor, or no plan — the
+ * UNCUT reply leaves with the overflow line as its first warning (a text reply: its first line).
  *
  * A string reply (a tool's plain-text error) is disclosed with every tier and sent as text; it has
  * no field to carry a receipt.
@@ -1396,22 +1604,100 @@ export type ToolResult = {
 export function toolContentOf(
   reply: string | WithPersonBlock<Record<string, unknown>> | WithPersonBlock<McpEnvelope>,
   disclosure: ToolDisclosure,
+  plan?: ReplyPlan,
 ): ToolResult {
   if (typeof reply === 'string') {
+    const text = disclose(reply, disclosure.set, 'all').text;
     return {
-      content: [{ type: 'text' as const, text: disclose(reply, disclosure.set, 'all').text }],
+      content: [
+        {
+          type: 'text' as const,
+          text:
+            text.length > REPLY_CEILING_CHARS
+              ? `${overflowLine(text.length, { floor: text.length })}\n${text}`
+              : text,
+        },
+      ],
     };
   }
   const person = reply[PERSON_BLOCK];
-  const shown = discloseReply(reply, disclosure.set, disclosure.audience, disclosure.table);
+  const walk = (r: Readonly<Record<string, unknown>>): Record<string, unknown> =>
+    discloseReply(r, disclosure.set, disclosure.audience, disclosure.table) as Record<
+      string,
+      unknown
+    >;
+  const shown = walk(reply as Record<string, unknown>);
+  let text = sseJsonStringify(shown);
+  if (text.length > REPLY_CEILING_CHARS) {
+    text = fitted(
+      reply as Record<string, unknown>,
+      shown,
+      text.length,
+      walk,
+      plan ?? reply[REPLY_PLAN],
+    );
+  }
   return {
     content: [
-      { type: 'text' as const, text: sseJsonStringify(shown) },
+      { type: 'text' as const, text },
       ...(person !== undefined
         ? [{ type: 'text' as const, text: person, annotations: { audience: ['user'] as ['user'] } }]
         : []),
     ],
   };
+}
+
+/**
+ * #872 (b1): the fit loop — the reply cut by its plan until it fits; else the uncut reply with the
+ * overflow line as `warnings[0]` (the line is Realm's own fact text, added after the walk).
+ */
+function fitted(
+  reply: Record<string, unknown>,
+  shown: Record<string, unknown>,
+  size: number,
+  walk: (r: Readonly<Record<string, unknown>>) => Record<string, unknown>,
+  plan: ReplyPlan | undefined,
+): string {
+  const field = headFieldOver(shown);
+  if (field === undefined && plan !== undefined) {
+    let held = reply;
+    let heldShown = shown;
+    let heldSize = size;
+    for (;;) {
+      const cut = plan.next(held, heldShown, heldSize - REPLY_CEILING_CHARS);
+      if (cut === undefined) break;
+      held = cut;
+      heldShown = walk(held);
+      const text = sseJsonStringify(heldShown);
+      if (text.length <= REPLY_CEILING_CHARS) return text;
+      heldSize = text.length;
+    }
+  }
+  const line = overflowLine(size, field ?? { floor: floorSize(reply, shown, size, walk, plan) });
+  const warnings = Array.isArray(shown['warnings']) ? (shown['warnings'] as unknown[]) : [];
+  return sseJsonStringify({ ...shown, warnings: [line, ...warnings] });
+}
+
+/** #872 (b1): the reply's size with every list its plan holds at its floor (the plan's phase 2). */
+function floorSize(
+  reply: Record<string, unknown>,
+  shown: Record<string, unknown>,
+  size: number,
+  walk: (r: Readonly<Record<string, unknown>>) => Record<string, unknown>,
+  plan: ReplyPlan | undefined,
+): number {
+  if (plan === undefined) return size;
+  let held = reply;
+  let heldShown = shown;
+  let heldSize = size;
+  for (;;) {
+    // An over no part can close alone: phase 2 only, every part to its floor in order.
+    const cut = plan.next(held, heldShown, Number.POSITIVE_INFINITY);
+    if (cut === undefined) return heldSize;
+    held = cut;
+    heldShown = walk(held);
+    heldSize = sseJsonStringify(heldShown).length;
+  }
 }
 
 /**
@@ -1719,6 +2005,8 @@ export const DOOR_FACTS = {
     stuck_claims: 'author_literal',
     step_claims: 'author_literal',
     capability_blocks: 'author_literal',
+    // #872 (b1): the cursor is the last shown step's own id.
+    next_cursor: 'author_literal',
     defaulted_steps: 'author_literal',
     pending_guards: 'author_literal',
     resumable: 'command_span',

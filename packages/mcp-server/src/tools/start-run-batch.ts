@@ -89,6 +89,11 @@ export interface StartRunBatchResult {
     error: string;
     error_code?: string;
   }>;
+  /**
+   * #872 (b1): absent unless the reply passes the 40,000-character ceiling — then its first line
+   * says so (the items are paged in a later unit; nothing is cut here).
+   */
+  warnings?: string[];
 }
 
 type Started = StartRunBatchResult['started'][number];
@@ -122,6 +127,8 @@ export const START_RUN_BATCH_TABLE = {
       error_code: 'fact',
     } satisfies Record<keyof Failed, DisclosureClass>,
   },
+  // #872 (b1): the overflow line's carrier — guard-only here until (c) pages the items.
+  warnings: 'bounded',
 } as const satisfies Record<keyof StartRunBatchResult, DisclosureClass>;
 
 export async function handleStartRunBatch(

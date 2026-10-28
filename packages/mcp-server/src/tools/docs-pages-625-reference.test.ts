@@ -618,3 +618,44 @@ describe('CHANGELOG.md — #872 (a)’s entry (#871’s form: the section that h
     });
   });
 });
+
+describe('#872 (b1) B11 — tools.md and the CHANGELOG: the reply ceiling', () => {
+  it('"## The reply": the ceiling paragraph, as written', () => {
+    // Pinned by execution in reply-ceiling.test.ts: B1 (the head kept, the counts, both arms and
+    // their words, the text reply's first line), B2 (nothing but the cut list changes), B3 (the
+    // three tools that shorten nothing yet, with the line).
+    claim(
+      TOOLS,
+      "Every reply is kept at or under 40,000 characters, counted as a JavaScript string's length (UTF-16 code units; Codex counts bytes or tokens), the block addressed to the person (`audience: [\"user\"]`) not counted (added after version 0.48.0). When a reply would pass it, its longer lists are shortened and nothing else is: the head an agent acts on — `status`, `run_id`, `run_version`, `error_code`, the first of `errors`, `agent_action`, `context_hint`, `blocked_reason`, `basis`, `disclosure`, `gate`, the first `next_actions` entry whole (its `prompt` and `input_schema` included), `awaiting`, `also` and a run's step lists — and every other field stay as they are. A shortened list keeps its first items and says how many it left out in a field of its own: `next_actions_more` on every reply that has `next_actions`, and on `get_run_state` also `steps_more` (with `next_cursor`, the cursor to the next page), `skip_details_more`, `engine_runnable_more`, `agent_refused_more` and `capability_blocks_more` ([Run state and health findings](run-state-and-health.md)). When no list can make the reply fit — one field is over the ceiling by itself, or every list is down to one item — nothing is shortened, and the reply's first warning says so: `This reply was <M> characters before this line, past the 40,000-character ceiling: next_actions[0].prompt alone is <N>. No list was shortened for it.` (likewise `next_actions[0].input_schema` or `gate`), or `This reply was <M> characters before this line, past the 40,000-character ceiling; shortening every list to one item would still leave <N>. No list was shortened for it; tell the user.` A plain-text reply gets that line as its first line. `get_workflow_protocol`, `list_workflows` and `start_run_batch` shorten nothing yet: over the ceiling they send the whole reply with that line.",
+    );
+  });
+  it('"## get_run_state": the step_names and cursor rows', () => {
+    // Pinned by execution in get-run-state-cursor-872.test.ts (B4, B6).
+    claim(
+      TOOLS,
+      "Adds the named steps' attempts and costs, as `include_steps` does for every step; a name the run has not attempted is named in `warnings`. Added after version 0.48.0.",
+    );
+    claim(
+      TOOLS,
+      'Reads the next page of `steps`: the `next_cursor` a reply gave. Needs `include_steps: true` or `step_names`; refused with `VALIDATION_CURSOR` without them, or when it names no step the run has attempted. Added after version 0.48.0.',
+    );
+  });
+  it('"## abandon_run": a reason over 500 characters is shown by its length', () => {
+    // Pinned by execution in bounded-echoes-872.test.ts (B8).
+    claim(
+      TOOLS,
+      'A `reason` over 500 characters is recorded whole, and this reply shows it as `‹<N> characters, not kept›` (added after version 0.48.0).',
+    );
+  });
+  it('CHANGELOG.md: the #872 (b1) entry, as written', () => {
+    const text = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
+    const section = text.slice(text.indexOf('## [Unreleased]'), text.indexOf('\n## [0.48.0]'));
+    // (a) red when the entry is changed or moved out of the unreleased section; (b) prints it. Each
+    //     sentence is pinned by the cells named above, B7 (create_workflow) and B9 (the store law).
+    expect(flat(section)).toContain(
+      flat(
+        "**Every MCP reply stays under 40,000 characters (issue #872).** When a reply would pass the ceiling, its longer lists are shortened — `next_actions` beyond the first, and on `get_run_state` its steps' detail, then its other lists, then `params`, replaced by its size — and each says how many it left out (`next_actions_more`, `steps_more`, …); the head an agent acts on and every other field stay as they are. When nothing can make it fit, the reply's first warning says so. `get_run_state` takes `step_names` (only the named steps' detail) and `cursor` (the next page of steps, from `next_cursor`); a refused cursor is `VALIDATION_CURSOR`. `create_workflow`'s refusal says each broken rule once, with the other steps that break it named and counted. A terminal reason or an unknown key over 500 characters is named by its length. The store contract gains `EVIDENCE_WRITE_ORDER`.",
+      ),
+    );
+  });
+});

@@ -181,6 +181,8 @@ In each of these cases nothing is created. Except where the MCP layer refuses th
 | `structured_output: strict` with a schema it cannot use | `Step 'a': 'structured_output: strict' is not eligible for this step's schema — add 'additionalProperties: false' …`                                       |
 | `extensions`                                            | `extensions is not supported on dynamically-created workflows. Project extensions are register-time and operator-only: …`                                  |
 
+When several steps break the same rule, the reply says it in one line: the first step's message, then the other steps' names — `Step 'a': description must be non-empty (also 'b', 'c' and 4 more)`, two more names, then how many more. Each rule broken has its own line, so every kind of mistake in the plan shows at once (added after version 0.48.0).
+
 ## What Realm leaves out, with a warning
 
 In these cases the workflow is created and the run starts. The reply lists what was left out.

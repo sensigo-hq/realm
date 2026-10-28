@@ -8,6 +8,16 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- **Every MCP reply stays under 40,000 characters (issue #872).** When a reply would pass the
+  ceiling, its longer lists are shortened — `next_actions` beyond the first, and on `get_run_state`
+  its steps' detail, then its other lists, then `params`, replaced by its size — and each says how
+  many it left out (`next_actions_more`, `steps_more`, …); the head an agent acts on and every other
+  field stay as they are. When nothing can make it fit, the reply's first warning says so.
+  `get_run_state` takes `step_names` (only the named steps' detail) and `cursor` (the next page of
+  steps, from `next_cursor`); a refused cursor is `VALIDATION_CURSOR`. `create_workflow`'s refusal
+  says each broken rule once, with the other steps that break it named and counted. A terminal
+  reason or an unknown key over 500 characters is named by its length. The store contract gains
+  `EVIDENCE_WRITE_ORDER`.
 - **One composer for a gate's question, on every surface (issue #729 PR-4).** `realm run`,
   `realm run inspect`, `realm agent`, Slack, and the MCP replies and form now show a gate's question
   through core's one composer (`composeQuestionView`), over the gate disclosed for who reads it.

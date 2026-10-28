@@ -7,6 +7,7 @@ import {
   JsonFileStore,
   JsonWorkflowStore,
   WorkflowError,
+  capText,
   getWorkflowForRun,
   buildPreExecutionErrorEnvelope,
   classifyInProgressClaims,
@@ -69,6 +70,7 @@ import {
   disclosureOfTool,
   renderReply,
   renderWaysOf,
+  replyPlanOf,
   safeTool,
   toolContentOf,
   type WithDoorDisclosure,
@@ -87,7 +89,7 @@ import {
   markServedByTool,
   registryRole,
 } from './assert-tool-stores.js';
-import { boundedRefusal } from './refusal-format.js';
+import { boundedLines, boundedRefusal } from './refusal-format.js';
 
 /** issue #558 PR-T — the store's own classification, passed through to classifyRunHealth. */
 function toDefinitionError(err: unknown): { code: string; message: string; class?: string } {
@@ -342,6 +344,15 @@ export const RUN_STATE_SUMMARY_TABLE = {
   defaulted_steps: 'fact',
   warnings: 'bounded',
   steps: 'bounded',
+  // #872 (b1): what the reply ceiling left out — exact counts (numbers: no F5 producer) — and the
+  // cursor to the next page of `steps` (the last shown step's own id).
+  steps_more: 'fact',
+  next_cursor: 'fact',
+  skip_details_more: 'fact',
+  engine_runnable_more: 'fact',
+  agent_refused_more: 'fact',
+  capability_blocks_more: 'fact',
+  next_actions_more: 'fact',
   drive_failure_costs: { nested: DRIVE_FAILURE_COST_TABLE },
   run_cost: { nested: RUN_COST_TABLE },
   pending_guards: 'fact',
@@ -545,6 +556,23 @@ export interface RunStateSummary {
    */
   steps?: Record<string, StepView>;
   /**
+   * #872 (b1): how many asked steps after the last one shown the reply ceiling left out — read them
+   * with `cursor` set to `next_cursor`. Present only with `next_cursor`.
+   */
+  steps_more?: number;
+  /** #872 (b1): the last shown step's own id, when the reply ceiling left steps out: the next page's `cursor`. */
+  next_cursor?: string;
+  /** #872 (b1): how many `skip_details` entries the reply ceiling left out (an exact count). */
+  skip_details_more?: number;
+  /** #872 (b1): how many `engine_runnable` entries the reply ceiling left out (an exact count). */
+  engine_runnable_more?: number;
+  /** #872 (b1): how many `agent_refused` entries the reply ceiling left out (an exact count). */
+  agent_refused_more?: number;
+  /** #872 (b1): how many `capability_blocks` entries the reply ceiling left out (an exact count). */
+  capability_blocks_more?: number;
+  /** #872 (b1): how many `next_actions` entries beyond the first the reply ceiling left out. */
+  next_actions_more?: number;
+  /**
    * Issue #600 PR 1b (#611) — one cost per `drive_failures` entry, in the same order, present iff
    * `include_steps` was asked AND `drive_failures` is present. Lines up 1:1 with
    * `drive_failures.entries` — see `composeDriveFailureCosts`'s own doc.
@@ -606,15 +634,106 @@ function loadFailureWarning(workflowId: string, code: LoadErrorCode, err: unknow
   return `this server could not load the project code for workflow '${workflowId}' (${code === 'uncoded' ? 'no error code' : code}): ${escapedBoundedValue(message)}; no step can be run or advanced from this server until it loads.`;
 }
 
+/** #872 (b1): a refused `cursor` — the agent's own call, fixed by the agent (`VALIDATION_CURSOR`). */
+function cursorRefusal(message: string): WorkflowError {
+  return new WorkflowError(message, {
+    code: 'VALIDATION_CURSOR',
+    category: 'VALIDATION',
+    agentAction: 'provide_input',
+    retryable: false,
+  });
+}
+
+/**
+ * #872 (b1): the asked steps' detail, in first-attempt order (`composeStepViews`' own): every
+ * attempted step's, or the named steps' (`step_names`); after `cursor` when one is given — its
+ * position resolved in the FULL attempted-step order, then the selection filters. A name this run
+ * has not attempted is named in `warnings` (ten named, then the count).
+ */
+function stepsAsked(
+  all: Record<string, StepView>,
+  named: readonly string[] | undefined,
+  cursor: string | undefined,
+  warnings: string[],
+): Record<string, StepView> {
+  const ids = Object.keys(all);
+  if (named !== undefined) {
+    const unknown = [...new Set(named)].filter((name) => !Object.hasOwn(all, name));
+    warnings.push(
+      ...boundedLines(
+        unknown,
+        (name) => `'${capText(name)}' is not a step this run has attempted`,
+        (rest, total) =>
+          `and ${rest} more ${rest === 1 ? 'name is not a step' : 'names are not steps'} this run has attempted (${total} in all)`,
+      ),
+    );
+  }
+  let from = 0;
+  if (cursor !== undefined) {
+    const at = ids.indexOf(cursor);
+    if (at < 0) {
+      throw cursorRefusal(
+        `cursor '${capText(cursor)}' names no step this run has attempted; call again without a cursor to start from the first.`,
+      );
+    }
+    from = at + 1;
+  }
+  const wanted = named !== undefined ? new Set(named) : undefined;
+  return Object.fromEntries(
+    ids
+      .slice(from)
+      .filter((id) => wanted === undefined || wanted.has(id))
+      .map((id) => [id, all[id]!]),
+  );
+}
+
+/**
+ * #872 (b1): get_run_state's plan — what the reply ceiling may shorten, in the order the agent needs
+ * it least: the asked steps' detail (page by page with `next_cursor`), the skip details, the lists
+ * it acts on later (`engine_runnable`, `agent_refused`, `capability_blocks`), `next_actions` beyond
+ * the first, then `params` replaced whole by its size (the caller's own input; never a prefix — I4).
+ */
+export const RUN_STATE_PLAN = replyPlanOf([
+  {
+    kind: 'list',
+    key: 'steps',
+    moreKey: 'steps_more',
+    marks: (ids) => (ids.length > 0 ? { next_cursor: ids[ids.length - 1] } : {}),
+  },
+  { kind: 'list', key: 'skip_details', moreKey: 'skip_details_more' },
+  { kind: 'list', key: 'engine_runnable', moreKey: 'engine_runnable_more' },
+  { kind: 'list', key: 'agent_refused', moreKey: 'agent_refused_more' },
+  { kind: 'list', key: 'capability_blocks', moreKey: 'capability_blocks_more' },
+  { kind: 'list', key: 'next_actions', moreKey: 'next_actions_more' },
+  {
+    kind: 'omit',
+    key: 'params',
+    omitted: (raw) => ({ omitted: true, chars: JSON.stringify(raw).length }),
+  },
+]);
+
 /**
  * Business logic for the get_run_state tool.
  * Returns a structured summary of the run without the full evidence array.
  */
 export async function handleGetRunState(
-  args: { run_id: string; include_steps?: boolean | undefined },
+  args: {
+    run_id: string;
+    include_steps?: boolean | undefined;
+    step_names?: string[] | undefined;
+    cursor?: string | undefined;
+  },
   stores?: HandleRunStateStores,
 ): Promise<WithPersonBlock<RunStateSummary>> {
   assertToolStores(stores, 'handleGetRunState');
+  // #872 (b1): "asked" — every attempted step's detail, or the named steps' — read ONCE by every
+  // gate below; a `cursor` pages the asked steps, so it is refused without them.
+  const named =
+    args.step_names !== undefined && args.step_names.length > 0 ? args.step_names : undefined;
+  const asked = args.include_steps === true || named !== undefined;
+  if (args.cursor !== undefined && !asked) {
+    throw cursorRefusal('cursor pages steps: pass include_steps: true, or step_names, with it.');
+  }
   const runStore = stores?.runStore ?? new JsonFileStore();
   // decision C172: a run that cannot be read is answered as the library answers it — the store's own
   // WorkflowError (issue #719: a damaged JSON-store run file is RESOURCE_FORMAT_INVALID,
@@ -867,7 +986,7 @@ export async function handleGetRunState(
   // is not retried a second time — the view simply goes on without a definition.
   let viewDefinition: WorkflowDefinition | undefined = definition;
   if (
-    args.include_steps === true &&
+    asked &&
     viewDefinition === undefined &&
     definitionError === undefined &&
     stores?.workflowStore !== undefined
@@ -884,8 +1003,7 @@ export async function handleGetRunState(
   }
 
   // issue #600 caching PR P: the run's prices, resolved only when the view is asked for.
-  const priceSource =
-    args.include_steps === true ? await priceSourceFor(stores, viewDefinition) : undefined;
+  const priceSource = asked ? await priceSourceFor(stores, viewDefinition) : undefined;
 
   // issue #221: the SAME shared classifyRunHealth predicate the three READ surfaces (get_run_state,
   // list --stuck, inspect) derive from — computed definition-aware when the workflow resolved
@@ -912,6 +1030,20 @@ export async function handleGetRunState(
   // regardless of terminal state or seal outcome (no guard here, unlike stampDefaultedSteps'
   // complete-only stamping), via the SAME shared helper that stamping itself now calls.
   const defaultedSteps = deriveDefaultedSteps(run.evidence);
+
+  // #872 (b1): the asked steps' page — composed before the reply so its unknown-name lines join
+  // `warnings`. Gated non-empty below (composeStepViews returns `{}` for a step-free run).
+  const stepsPage = asked
+    ? stepsAsked(
+        composeStepViews(run, {
+          ...(viewDefinition !== undefined ? { definition: viewDefinition } : {}),
+          ...(priceSource !== undefined ? { priceSource } : {}),
+        }),
+        named,
+        args.cursor,
+        warnings,
+      )
+    : undefined;
 
   // #729 PR-0 (D-8 row 2, T-22): this read's action word, as an `ok` reply on the same run reads it.
   const ways = waysNow();
@@ -941,7 +1073,8 @@ export async function handleGetRunState(
     created_at: run.created_at,
     updated_at: run.updated_at,
     params: run.params,
-    ...(run.terminal_reason !== undefined ? { terminal_reason: run.terminal_reason } : {}),
+    // #872 (b1): a reason over 500 characters is named by its length (I4), never echoed whole.
+    ...(run.terminal_reason !== undefined ? { terminal_reason: capText(run.terminal_reason) } : {}),
     // issue #558 PR-C: the supersede link — the ONE explicit route onto this surface (there is no
     // `keyof RunRecord` disclosure registry to join, so the cell below is the parity guard).
     ...(run.rerun_of !== undefined ? { rerun_of: run.rerun_of } : {}),
@@ -1002,16 +1135,8 @@ export async function handleGetRunState(
     // is gated on `drive_failures` itself, never on its own emptiness (an empty array is still the
     // honest answer for a run whose drive_failures.entries carry no usage — the field's PRESENCE
     // is what "asked and there IS a drive_failures" means).
-    ...(args.include_steps === true
-      ? (() => {
-          const steps = composeStepViews(run, {
-            ...(viewDefinition !== undefined ? { definition: viewDefinition } : {}),
-            ...(priceSource !== undefined ? { priceSource } : {}),
-          });
-          return Object.keys(steps).length > 0 ? { steps } : {};
-        })()
-      : {}),
-    ...(args.include_steps === true && run.drive_failures !== undefined
+    ...(stepsPage !== undefined && Object.keys(stepsPage).length > 0 ? { steps: stepsPage } : {}),
+    ...(asked && run.drive_failures !== undefined
       ? {
           drive_failure_costs: composeDriveFailureCosts(
             run,
@@ -1019,7 +1144,7 @@ export async function handleGetRunState(
           ),
         }
       : {}),
-    ...(args.include_steps === true && priceSource !== undefined
+    ...(asked && priceSource !== undefined
       ? (() => {
           const runCost = composeRunCost(run, {
             ...(viewDefinition !== undefined ? { definition: viewDefinition } : {}),
@@ -1057,9 +1182,15 @@ export function registerGetRunState(
       ...toolMeta('get_run_state'),
       description:
         'Get the current state summary of a workflow run. Pass include_steps: true for each ' +
-        "step's model-call cost per attempt.",
+        "step's model-call cost per attempt, or step_names for the named steps only. When the reply " +
+        'leaves steps out it names next_cursor: pass it as cursor for the next page.',
       inputSchema: boundedRefusal(
-        z.object({ run_id: z.string(), include_steps: z.boolean().optional() }),
+        z.object({
+          run_id: z.string(),
+          include_steps: z.boolean().optional(),
+          step_names: z.array(z.string()).optional(),
+          cursor: z.string().optional(),
+        }),
       ),
     },
     safeTool(
@@ -1072,6 +1203,7 @@ export function registerGetRunState(
             audience: 'agent',
             table: RUN_STATE_SUMMARY_TABLE,
           },
+          RUN_STATE_PLAN,
         );
       },
       async (err, args) => {
@@ -1084,10 +1216,13 @@ export function registerGetRunState(
                 agentAction: 'report_to_user',
                 retryable: false,
               });
+        const refusedCursor = err instanceof WorkflowError && err.code === 'VALIDATION_CURSOR';
         const contextHint =
           err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND'
             ? `Run '${args.run_id}' not found.`
-            : `An error occurred while loading run state.`;
+            : refusedCursor
+              ? "get_run_state's cursor was refused; call again as errors[0] says."
+              : `An error occurred while loading run state.`;
         // issue #625 PR-2a: the code and details, as every other tool's error reply — a release-line
         // refusal from the registry this tool now resolves names its role there. #729 PR-0
         // (Amendments 9, 11): `error_details` through the ONE carrier — a #719 error's typed facts,
@@ -1103,6 +1238,9 @@ export function registerGetRunState(
           {
             ...envelope,
             ...(err instanceof WorkflowError ? { error_code: err.code } : {}),
+            // #872 (b1): the agent fixes its own call — the pre-execution resolver's
+            // `report_to_user` is not this refusal's way.
+            ...(refusedCursor ? { agent_action: 'provide_input' as const } : {}),
           },
           {
             set: await setForSubject(door, await replySubject(opts, { runId: args.run_id })),
