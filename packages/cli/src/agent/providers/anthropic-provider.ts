@@ -1237,7 +1237,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
           const originalId = toolIdMap.get(block.name!)!;
           const { serverId, toolName } = parseNamespacedId(originalId);
           const args = (block.input ?? {}) as Record<string, unknown>;
-          const start = Date.now();
+          const start = performance.now();
 
           let resultContent: string;
           let record: ToolCallRecord;
@@ -1259,7 +1259,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
               tool: toolName,
               args,
               result: serialized,
-              duration_ms: Date.now() - start,
+              duration_ms: Math.max(0, Math.round(performance.now() - start)),
               ...(classB !== undefined ? { error: classB } : {}),
             };
             resultContent = serialized;
@@ -1271,7 +1271,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
               tool: toolName,
               args,
               result: null,
-              duration_ms: Date.now() - start,
+              duration_ms: Math.max(0, Math.round(performance.now() - start)),
               error: sanitized,
             };
             resultContent = content;

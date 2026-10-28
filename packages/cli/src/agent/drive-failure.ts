@@ -204,7 +204,7 @@ export function buildEntry(
       provider,
       error_class: 'other',
       message: 'unrenderable thrown value',
-      elapsed_ms: Date.now() - attemptStartedAt,
+      elapsed_ms: Math.max(0, Math.round(performance.now() - attemptStartedAt)),
     };
   }
 }
@@ -226,7 +226,8 @@ function buildEntryUnsafe(
     // this order the `??` below is the live protector of a payload's genuine 0ms span, which also
     // makes an `||` there a caught mutant rather than an equivalent one.
     ...classified,
-    elapsed_ms: classified.elapsed_ms ?? Date.now() - attemptStartedAt,
+    elapsed_ms:
+      classified.elapsed_ms ?? Math.max(0, Math.round(performance.now() - attemptStartedAt)),
   };
 }
 

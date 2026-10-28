@@ -137,7 +137,7 @@ function validationWedgeEntry(
     provider,
     error_class: 'validation_rejected',
     message: sanitizeError(errors.join(', ')).slice(0, MESSAGE_CAP),
-    elapsed_ms: Date.now() - attemptStartedAt,
+    elapsed_ms: Math.max(0, Math.round(performance.now() - attemptStartedAt)),
   };
 }
 
@@ -614,7 +614,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
     const cleanup = ended === undefined ? undefined : pendingCleanupLine(ended, new Date());
     if (cleanup !== undefined) console.error(cleanup);
   };
-  let attemptStartedAt = Date.now();
+  // issue #715 (a) (D6-23): a start mark on the monotonic clock — only ever subtracted from another,
+  // so a wall-clock step cannot shorten or lengthen a recorded `elapsed_ms`.
+  let attemptStartedAt = performance.now();
   try {
     if (currentRun === undefined) {
       currentRun = await deps.store.get(runId);
@@ -779,7 +781,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             // issue #401: a throw from here on mints with this engine step's name, and its
             // elapsed time is measured from this step's start.
             currentStepName = step;
-            attemptStartedAt = Date.now();
+            attemptStartedAt = performance.now();
             engineStep = step;
           },
           // D6.1: another process took an engine step — the same past-tense line as for an agent
@@ -897,7 +899,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             if (exitReply === undefined) {
               if (!preClaim) console.log(`→ [auto] ${first}`);
               currentStepName = first;
-              attemptStartedAt = Date.now();
+              attemptStartedAt = performance.now();
               exitReply = await executeEngineStep(deps.store, definition, {
                 runId,
                 step: first,
@@ -1016,9 +1018,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               );
             }
             const startVersion = currentRun.version;
-            const watchStarted = Date.now();
+            const watchStarted = performance.now();
             let changed = false;
-            while (Date.now() - watchStarted < watchMs) {
+            while (performance.now() - watchStarted < watchMs) {
               await new Promise((resolve) => setTimeout(resolve, pollMs));
               const fresh = await deps.store.get(runId);
               if (fresh.version !== startVersion) {
@@ -1119,7 +1121,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           }
           // issue #401: re-stamped per repair attempt, so `elapsed_ms` measures THIS attempt
           // rather than the whole step.
-          attemptStartedAt = Date.now();
+          attemptStartedAt = performance.now();
           toolCallsForMeta = undefined;
           structuredOutputMetaForStep = undefined;
           // issue #217 conjunct (vi) ground truth — captured FRESH at the top of EVERY attempt

@@ -32,7 +32,10 @@ const ONE_HOUR_MS = 3_600_000;
  */
 export class FileDedupStore implements DedupStore {
   private readonly dir: string;
-  private lastCleanupErrorAt = 0;
+  // issue #715 (a) (D6-23): the throttle is a process-local duration on the monotonic clock, which
+  // starts near 0 at process start — so it starts at −∞, or a process younger than 60 s would
+  // suppress its first error.
+  private lastCleanupErrorAt = -Infinity;
 
   constructor(baseDir: string, workflowId: string) {
     this.dir = join(baseDir, workflowId);
@@ -109,7 +112,7 @@ export class FileDedupStore implements DedupStore {
         }
       }
     } catch (err) {
-      const now = Date.now();
+      const now = performance.now();
       if (now - this.lastCleanupErrorAt >= 60_000) {
         this.lastCleanupErrorAt = now;
         console.error(`realm dedup cleanup error in ${this.dir}:`, err);

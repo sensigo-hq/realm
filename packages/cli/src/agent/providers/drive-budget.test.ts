@@ -443,7 +443,7 @@ describe('attachDriveCall — the last untotal link in the attribution chain', (
     expect(thrown).toBe(frozen);
     expect(payloadOf(thrown)).toBeUndefined();
     // And it still classifies, because shape classification never needed the payload.
-    expect(buildEntry(thrown, 's', 'anthropic', Date.now()).error_class).toBe('api_status');
+    expect(buildEntry(thrown, 's', 'anthropic', performance.now()).error_class).toBe('api_status');
   });
 
   it('a proxy whose `has` trap throws survives the same way', () => {
@@ -764,5 +764,32 @@ describe('driveCreate — the real SDK classes, attached at the wrapper', () => 
       expect(e).toBe(hostile);
       expect(payloadOf(e)?.error_class).toBe('other');
     });
+  });
+});
+
+// issue #715 (a) (D6-23): the drive-call payload's `elapsed_ms` — the value `drive-failure.ts`'s
+// `classified.elapsed_ms ?? …` prefers — is measured on the same monotonic clock as the fallback, so
+// one recorded field never comes from two clocks. (a) red when `driveCreate` still reads `Date.now()`;
+// (b) prints the number.
+describe('#715 (a) — the drive-call payload’s elapsed_ms is monotonic', () => {
+  it('D9b a create that fails after 750 ms of monotonic time records 750, whatever the wall clock does', async () => {
+    let now = 1_000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const wall = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(wall + 3_600_000);
+    try {
+      const err = await driveCreate(
+        async () => {
+          now = 1_750;
+          throw new Error('the service refused');
+        },
+        {},
+        { ceilingMs: 5_000 },
+        { attempts: 0 },
+      ).catch((e: unknown) => e);
+      expect(payloadOf(err)?.elapsed_ms, 'elapsed_ms').toBe(750);
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 });

@@ -354,8 +354,9 @@ async function recordChange(
   version: number,
   withinMs: number,
 ): Promise<RunRecord | undefined> {
-  const end = Date.now() + withinMs;
-  while (Date.now() < end) {
+  // issue #715 (a) (D6-23): the watch window is a duration — on the monotonic clock.
+  const end = performance.now() + withinMs;
+  while (performance.now() < end) {
     await new Promise((resolve) => setTimeout(resolve, questionWatchMs));
     const fresh = await store.get(runId).catch(() => undefined);
     if (fresh !== undefined && fresh.version !== version) return fresh;
