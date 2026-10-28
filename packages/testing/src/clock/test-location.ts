@@ -5,9 +5,9 @@
 // Production code never creates one: a lint rule and a source scan keep `createTestLocation` out of
 // every production module (D6-52; #715 (a) correction 1, C-2).
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, rmdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { TEST_CLOCK_FILE_NAME, fileClock, writeTestClockFile } from '@sensigo/realm';
 import { settableClockOver, type SettableClock } from './settable-clock.js';
 
@@ -20,9 +20,11 @@ export interface TestLocation {
   /** The location's clock. Its instant IS the clock file: moving it writes the file. */
   readonly clock: SettableClock;
   /**
-   * Deletes the folders and the clock file the location made: the clock file always; `runs/` only
-   * if the location created it; the root only if the location created it. A root you gave keeps
-   * everything else.
+   * Deletes what the location made, and nothing else (#715 (a) correction 2, R-1): the clock file
+   * always; `runs/` (with the location's run files) only if the location created it; then each folder
+   * it created between the first one and the root, deepest first, each only if it is then empty — it
+   * stops at the first one that is not, quietly. A root you gave keeps everything else in it. A
+   * folder the location makes itself, when no `root` is given, is deleted whole.
    */
   remove(): Promise<void>;
 }
@@ -37,9 +39,13 @@ export interface TestLocation {
  * when an advance ends — so a store opened on `runsDir`, in this process or another, reads the same
  * time.
  *
- * `remove()` deletes only what this call made (#715 (a) correction 1, C-3; as Rust `tempfile`,
- * node-tmp and Go's `t.TempDir` do): what it made is read from `mkdir`'s own answer, the first folder
- * a recursive `mkdir` created (`undefined` when every folder already existed).
+ * `remove()` deletes only what this call made (#715 (a) correction 2, R-1): the clock file; `runs/`
+ * only if this call made it; each folder this call made from the root up to the first one, deepest
+ * first, with a non-recursive `rmdir`, stopping quietly at the first that is not empty or cannot be
+ * removed (as CPython's `os.removedirs` and GNU `rmdir -p` do: what is left is litter, never data
+ * loss); and the fresh folder made when no `root` is given, whole (its name is unique; as Python's
+ * `TemporaryDirectory` and Rust's `tempfile::TempDir` do). What this call made is read from `mkdir`'s
+ * own answer: the first folder a recursive `mkdir` created (`undefined` when every folder existed).
  */
 export async function createTestLocation(options: {
   start: Date | string;
@@ -48,6 +54,8 @@ export async function createTestLocation(options: {
   let root: string;
   // The first folder this call created for the root (a chain: it holds the rest), if any.
   let createdRoot: string | undefined;
+  // Whether the root is a fresh `mkdtemp` folder this call made (no `root` given).
+  let fresh = false;
   if (options.root !== undefined) {
     if (options.root === '') {
       throw new Error('a test location needs a root folder: the given root is empty');
@@ -66,6 +74,21 @@ export async function createTestLocation(options: {
   } else {
     root = await mkdtemp(join(tmpdir(), 'realm-test-location-'));
     createdRoot = root;
+    fresh = true;
+  }
+  // The folders this call made for the root, deepest first: the root, its parent, … up to the first
+  // folder `mkdir` created (empty when the root already existed).
+  const made: string[] = [];
+  if (createdRoot !== undefined && !fresh) {
+    let dir = createdRoot;
+    made.push(dir);
+    for (const segment of relative(createdRoot, root)
+      .split(sep)
+      .filter((s) => s !== '')) {
+      dir = join(dir, segment);
+      made.push(dir);
+    }
+    made.reverse();
   }
   const runsDir = join(root, 'runs');
   const createdRuns = await mkdir(runsDir, { recursive: true });
@@ -86,7 +109,22 @@ export async function createTestLocation(options: {
     remove: async () => {
       await rm(clockFile, { force: true });
       if (createdRuns !== undefined) await rm(createdRuns, { recursive: true, force: true });
-      if (createdRoot !== undefined) await rm(createdRoot, { recursive: true, force: true });
+      if (fresh) {
+        await rm(root, { recursive: true, force: true });
+        return;
+      }
+      for (const dir of made) {
+        try {
+          await rmdir(dir);
+        } catch (err) {
+          const code = (err as NodeJS.ErrnoException).code;
+          // Already gone, or a file now stands there: nothing of ours to remove; go on up.
+          if (code === 'ENOENT' || code === 'ENOTDIR') continue;
+          // Not empty (it holds something that is not ours, so every folder above it does too), or
+          // any other error: leave it and stop, without throwing.
+          return;
+        }
+      }
     },
   };
 }

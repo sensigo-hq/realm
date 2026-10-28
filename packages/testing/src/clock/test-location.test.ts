@@ -178,4 +178,82 @@ describe('#715 (a) correction 1 (C-3) — remove() deletes only what the locatio
     await loc.remove();
     expect(namesUnder(loc.root), 'after remove()').toEqual(['(gone)']);
   });
+
+  // #715 (a) correction 2 (R-1): `remove()` deletes the clock file, `runs/` if it made it, and the
+  // folders it made above `runs/` only while they are empty (a non-recursive `rmdir`, deepest first,
+  // stopping at the first that is not); the fresh folder of an omitted root goes whole. Each cell
+  // prints the scratch folder's listing, paths relative to it.
+
+  it('R1-a two locations under a shared parent the first one made, and a caller file in it: one.remove() leaves two and the file; two.remove() leaves the parent holding the file', async () => {
+    // (a) red when remove() removes the first folder it made recursively (two's live location and
+    // the caller file go); (b) prints the scratch listing after each remove().
+    const one = await createTestLocation({
+      start: new Date(T),
+      root: join(scratch, 'shared', 'one'),
+    });
+    const two = await createTestLocation({
+      start: new Date(T),
+      root: join(scratch, 'shared', 'two'),
+    });
+    await writeFile(join(scratch, 'shared', 'caller-note.txt'), 'mine');
+    await one.remove();
+    const afterOne = namesUnder(scratch);
+    expect(afterOne, 'after one.remove()').toEqual([
+      'shared',
+      'shared/caller-note.txt',
+      'shared/two',
+      'shared/two/.realm-test-clock',
+      'shared/two/runs',
+    ]);
+    expect(
+      two.clock.now().toISOString(),
+      `two's clock after one.remove(): ${afterOne.join(', ')}`,
+    ).toBe(iso(T));
+    await two.remove();
+    expect(namesUnder(scratch), 'after two.remove()').toEqual(['shared', 'shared/caller-note.txt']);
+  });
+
+  it('R1-b a given root that did not exist, with a file written in it: remove() takes the clock file and runs/, and leaves the root, the file and every parent', async () => {
+    // (a) red when remove() removes the first folder it made recursively; (b) prints the listing.
+    const loc = await createTestLocation({
+      start: new Date(T),
+      root: join(scratch, 'given', 'deep'),
+    });
+    await writeFile(join(loc.root, 'note.txt'), 'mine');
+    await loc.remove();
+    expect(namesUnder(scratch), 'after remove()').toEqual([
+      'given',
+      'given/deep',
+      'given/deep/note.txt',
+    ]);
+  });
+
+  it('R1-c a given root that did not exist, nothing written: the root and the folders the call made go; a folder that existed before stays', async () => {
+    // (a) red when remove() climbs past the first folder it made (`before` goes), or leaves one it
+    // made; (b) prints the listing.
+    await mkdir(join(scratch, 'before'));
+    const loc = await createTestLocation({
+      start: new Date(T),
+      root: join(scratch, 'before', 'a', 'b'),
+    });
+    expect(namesUnder(scratch), 'made').toEqual([
+      'before',
+      'before/a',
+      'before/a/b',
+      'before/a/b/.realm-test-clock',
+      'before/a/b/runs',
+    ]);
+    await loc.remove();
+    expect(namesUnder(scratch), 'after remove()').toEqual(['before']);
+  });
+
+  it('R1-d an omitted root with files written in it: the fresh folder goes whole', async () => {
+    // (a) red when the fresh folder stops being removed whole; (b) prints what is left in it.
+    const loc = await createTestLocation({ start: new Date(T) });
+    await writeFile(join(loc.root, 'extra.txt'), 'x');
+    await mkdir(join(loc.root, 'sub'));
+    await writeFile(join(loc.root, 'sub', 'more.txt'), 'y');
+    await loc.remove();
+    expect(namesUnder(loc.root), 'after remove()').toEqual(['(gone)']);
+  });
 });
