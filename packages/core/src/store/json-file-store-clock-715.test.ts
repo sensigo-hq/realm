@@ -274,6 +274,52 @@ describe('#715 (a) B1 — readings per member (JSON store)', () => {
   });
 });
 
+/** Two `auto` steps, the second after the first: claiming `after` first is refused as not eligible. */
+const TWO: WorkflowDefinition = {
+  ...AUTO,
+  steps: {
+    ...AUTO.steps,
+    after: {
+      description: 'a',
+      execution: 'auto',
+      depends_on: ['work'],
+      handler: 'h',
+      timeout_seconds: 90,
+    },
+  },
+};
+
+describe('#715 (a) correction 1 (C-7) — a refusal after the lock spends its one reading (JSON store)', () => {
+  // (a) red when the keyed create's reading moves below the policy check (the keyed-refusal cell),
+  // or claimStep's below its two guards (this claim cell and J9's already-claimed cell); (b) prints
+  // the cell's name and the count. Store-local cells, not clauses of the published law.
+  it('a keyed create refused by policy (`fail` on a live key, `reject` on an ended one) spends one', async () => {
+    const { store } = await location(T);
+    const { run } = await store.create(keyed());
+    const n = reads(store);
+    expect(await rejected(store.create(keyed({ onLiveMatch: 'fail' }))), 'fail').toBe(
+      'STATE_RUN_ALREADY_ACTIVE',
+    );
+    expect(n.count(), 'a keyed create refused by `fail`').toBe(1);
+    await terminalize(store, run);
+    n.reset();
+    expect(await rejected(store.create(keyed({ onTerminalMatch: 'reject' }))), 'reject').toBe(
+      'STATE_IDEMPOTENCY_KEY_USED',
+    );
+    expect(n.count(), 'a keyed create refused by `reject`').toBe(1);
+  });
+
+  it('a claim refused as not eligible spends one', async () => {
+    const { store } = await location(T);
+    const { run } = await store.create({ workflowId: WF, workflowVersion: 1, params: {} });
+    const n = reads(store);
+    expect(await rejected(store.claimStep(run.id, 'after', TWO)), 'not eligible').toBe(
+      'STATE_STEP_NOT_ELIGIBLE',
+    );
+    expect(n.count(), 'a claim refused as not eligible').toBe(1);
+  });
+});
+
 describe('#715 (a) B1 — J10, settleStep (unchanged until #715 (b))', () => {
   it('J10 settleStep on an ordinary directory reads no store clock', async () => {
     // (a) red when settleStep starts reading the shared system clock through `takeReading` before

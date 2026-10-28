@@ -13,6 +13,7 @@ import type {
   StampSealResult,
   WorkflowDefinition,
 } from '@sensigo/realm';
+import { WorkflowError } from '@sensigo/realm';
 import { InMemoryStore } from './in-memory-store.js';
 import {
   STORE_CLOCK_LAWS,
@@ -58,13 +59,15 @@ describe('#715 (a) C16 — the store-clock contract on InMemoryStore (clock rout
   }
 });
 
-type LossyMode = 'own-new-date' | 'no-cap' | 'no-floor' | 'reads-twice' | 'reads-on-get';
+type LossyMode =
+  'own-new-date' | 'no-cap' | 'no-floor' | 'reads-twice' | 'reads-on-get' | 'refuses-unread';
 
 /**
  * An in-memory store with ONE time defect (C17). Each mode breaks one law (`no-cap` breaks two):
  * `own-new-date` stamps `new Date()` itself; `no-cap` lifts a write by a stamp ahead without the ε
  * cap; `no-floor` stamps a superseding create with the raw clock; `reads-twice` reads the clock a
- * second time per write; `reads-on-get` reads it on every `get`.
+ * second time per write; `reads-on-get` reads it on every `get`; `refuses-unread` (#715 (a)
+ * correction 1, C-7) refuses a version-stale `update` before it reads the clock.
  */
 class LossyClockStore implements RunStore {
   readonly persistsClaims = true;
@@ -113,6 +116,19 @@ class LossyClockStore implements RunStore {
   async update(record: RunRecord): Promise<RunRecord> {
     if (this.mode === 'reads-twice') this.clock.now();
     const stored = await this.inner.get(record.id).catch(() => undefined);
+    if (
+      this.mode === 'refuses-unread' &&
+      stored !== undefined &&
+      stored.version !== record.version
+    ) {
+      throw new WorkflowError('Version conflict — run was modified by another process', {
+        code: 'STATE_SNAPSHOT_MISMATCH',
+        category: 'STATE',
+        agentAction: 'report_to_user',
+        retryable: true,
+        details: { runId: record.id, expected: record.version, actual: stored.version },
+      });
+    }
     const res = await this.inner.update(record);
     if (this.mode === 'own-new-date')
       return this.stamp(res, ['updated_at'], new Date().toISOString());
@@ -177,6 +193,31 @@ describe('#715 (a) C17 — each law fails on the store that breaks it, naming th
       expect(message, `the failure of ${law} on '${mode}'`).not.toContain('ADAPTER_WIRING');
     });
   }
+
+  it('WRITE_ONE_READING fails at its refusal clause on a store that refuses a stale update before reading the clock (correction 1, C-7)', async () => {
+    // (a) red when the law's refused-update count is dropped (the law passes on this store); (b)
+    // prints the failure message.
+    let inner: InMemoryStore | undefined;
+    const cases = storeClockContract({
+      storeName: 'LossyClockStore(refuses-unread)',
+      route: {
+        kind: 'clock',
+        makeStore: ({ clock }) =>
+          new LossyClockStore((inner = new InMemoryStore({ clock })), 'refuses-unread', clock),
+      },
+      seedLegacyTerminal: (id) => seedUnsealedInto(inner!, id),
+    });
+    let message = 'passed';
+    await cases
+      .find((c) => c.law === 'WRITE_ONE_READING')!
+      .run()
+      .catch((err: Error) => {
+        message = err.message;
+      });
+    expect(message, message).toBe(
+      'WRITE_ONE_READING: a version-stale update (refused) spent 0 readings, not 1',
+    );
+  });
 
   it('READS_SPEND_NO_READING fails with the adapter-wiring message when a stampSeal store’s adapter has no seedLegacyTerminal (correction 1, C-4)', async () => {
     // (a) red when the clause is skipped for an adapter without the hook (the law passes);

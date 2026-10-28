@@ -141,6 +141,53 @@ describe('#715 (a) B10 — readings per member (in-memory store)', () => {
   });
 });
 
+describe('#715 (a) correction 1 (C-7) — a refusal spends its one reading (in-memory store)', () => {
+  // (a) red when the keyed create's reading moves below the policy check (the keyed-refusal cell),
+  // or claimStep's below its two guards (this claim cell and M6's already-claimed one); (b) prints
+  // the cell's name and the count. Store-local cells, not clauses of the published law.
+  const TWO: WorkflowDefinition = {
+    ...AUTO,
+    steps: {
+      ...AUTO.steps,
+      after: {
+        description: 'a',
+        execution: 'auto',
+        depends_on: ['work'],
+        handler: 'h',
+        timeout_seconds: 90,
+      },
+    },
+  };
+
+  it('a keyed create refused by policy (`fail` on a live key, `reject` on an ended one) spends one', async () => {
+    const clock = steppingClock(new Date(T), 1_000);
+    const store = new InMemoryStore({ clock });
+    const { run } = await store.create(keyed());
+    let before = clock.reads;
+    expect(await code(store.create(keyed({ onLiveMatch: 'fail' }))), 'fail').toBe(
+      'STATE_RUN_ALREADY_ACTIVE',
+    );
+    expect(clock.reads - before, 'a keyed create refused by `fail`').toBe(1);
+    await terminalize(store, run);
+    before = clock.reads;
+    expect(await code(store.create(keyed({ onTerminalMatch: 'reject' }))), 'reject').toBe(
+      'STATE_IDEMPOTENCY_KEY_USED',
+    );
+    expect(clock.reads - before, 'a keyed create refused by `reject`').toBe(1);
+  });
+
+  it('a claim refused as not eligible spends one', async () => {
+    const clock = steppingClock(new Date(T), 1_000);
+    const store = new InMemoryStore({ clock });
+    const { run } = await store.create(plain);
+    const before = clock.reads;
+    expect(await code(store.claimStep(run.id, 'after', TWO)), 'not eligible').toBe(
+      'STATE_STEP_NOT_ELIGIBLE',
+    );
+    expect(clock.reads - before, 'a claim refused as not eligible').toBe(1);
+  });
+});
+
 describe('#715 (a) B10 — stamps equal the reading; MONOTONE capped; the floor', () => {
   it('every instant a write records equals its reading (M1, M4, M3, M5, M6)', async () => {
     // (a) red when a stamp comes from a second `new Date()`; (b) prints field names and values.
