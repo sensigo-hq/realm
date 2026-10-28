@@ -169,7 +169,11 @@ describe("a failed drive's usage is bounded before the write (issue #600 PR 2, A
     expect(run.drive_failures?.total).toBe(1);
     expect(failureUsage(run)).toEqual([
       null,
-      { ...request({ request_index: 1 }), provider: 'module:p.mjs' },
+      {
+        ...request({ request_index: 1 }),
+        provider: 'module:p.mjs',
+        request_id: expect.any(String),
+      },
     ]);
   });
 });

@@ -86,7 +86,8 @@ export interface RunStoreFidelityContractAdapter {
 /**
  * Issue #600 PR 2 — the request facts `USAGE_RECORD_ROUNDTRIP` writes, every one with a value no store
  * default could produce (`true` for the booleans, words other than `off` and `default`). The law
- * checks each field on this list; a field left off it is a field no store is held to.
+ * checks each field on this list; a field left off it is a field no store is held to. Issue #715 (R)
+ * adds the request's identity, `request_id`: a fixed UUID no store default could produce.
  */
 const TCK_REQUEST_FACTS: Required<
   Pick<
@@ -101,6 +102,7 @@ const TCK_REQUEST_FACTS: Required<
     | 'provider'
     | 'endpoint'
     | 'cache_split_offered'
+    | 'request_id'
   >
 > = {
   model: 'tck-model-2026-01-01',
@@ -114,6 +116,7 @@ const TCK_REQUEST_FACTS: Required<
   provider: 'tck-provider',
   endpoint: 'custom',
   cache_split_offered: true,
+  request_id: '715a0000-0000-4000-8000-00000000715a',
 };
 
 /** The program the holder laws name — a synthetic label, never a real host or user. */

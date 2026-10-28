@@ -10,8 +10,14 @@ import {
   setAdditionalRedactionValues,
   extractJsonObject,
   renderSubmissionProblems,
+  appendRequests,
+  mintRequestIds,
 } from './agent-utils.js';
 import { createHash } from 'node:crypto';
+import { readdirSync, readFileSync } from 'node:fs';
+import { dirname, join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import type { UsageRecord } from '@sensigo/realm';
 import { leakedForms, type LeakedForm } from '../test-support/redaction-oracle.js';
 import { compileDisclosure, disclose, validateAgentSubmission } from '@sensigo/realm';
 
@@ -1310,5 +1316,140 @@ describe('F2 — realm agent hides a declared secret in the spellings the door h
     } finally {
       setAdditionalRedactionValues([]);
     }
+  });
+});
+
+// ═══ issue #715 (R) — every request carries an id realm mints (D6-28, D6-44) ═══
+
+/** A version-4 UUID, as `crypto.randomUUID()` mints it. */
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const usageAt = (index: number, extra: Partial<UsageRecord> = {}): UsageRecord => ({
+  request_index: index,
+  request_start: '2026-10-28T00:00:00.000Z',
+  prompt_tokens: 100 + index,
+  ...extra,
+});
+
+describe('#715 (R) — mintRequestIds (R1)', () => {
+  // (a) red when the helper keeps an existing id, mutates its input, throws on a frozen input, mints
+  // into a non-object, or gives one id twice; (b) prints the ids and booleans, never a record's params.
+  it('new objects, each with a fresh version-4 id; a provider’s own id is overwritten; non-objects pass through; the input is untouched, frozen too', () => {
+    const input = Object.freeze([
+      Object.freeze(usageAt(0)),
+      Object.freeze(usageAt(1, { request_id: 'provider-own' })),
+    ]) as readonly UsageRecord[];
+    const once = mintRequestIds(input);
+    const twice = mintRequestIds(input);
+    const odd = mintRequestIds([null, 7, 'x', usageAt(2)] as unknown as UsageRecord[]);
+    expect({
+      ids: once.map((r) => UUID_V4.test(String(r.request_id))),
+      notProviders: once.every((r) => r.request_id !== 'provider-own'),
+      distinct: new Set([...once, ...twice].map((r) => r.request_id)).size,
+      newObjects: once.every((r, i) => r !== input[i]),
+      inputUntouched: input.map((r) => r.request_id),
+      restKept: once.map((r) => [r.request_index, r.prompt_tokens]),
+      passThrough: odd.slice(0, 3),
+      oddLast: UUID_V4.test(String((odd[3] as UsageRecord).request_id)),
+      empty: mintRequestIds([]),
+    }).toEqual({
+      ids: [true, true],
+      notProviders: true,
+      distinct: 4,
+      newObjects: true,
+      inputUntouched: [undefined, 'provider-own'],
+      restKept: [
+        [0, 100],
+        [1, 101],
+      ],
+      passThrough: [null, 7, 'x'],
+      oddLast: true,
+      empty: [],
+    });
+  });
+});
+
+describe('#715 (R) — an append keeps the ids it was given (R4)', () => {
+  // The mint is never inside `appendRequests`: appending twice keeps the first call's ids and
+  // re-bases only `request_index`. (a) red when `appendRequests` mints (the first ids change on the
+  // second append); (b) prints both lists of ids.
+  it('appendRequests(appendRequests(undefined, mint(a)), mint(b)) keeps a’s ids', () => {
+    const a = mintRequestIds([usageAt(0), usageAt(1)]);
+    const first = appendRequests(undefined, a);
+    const second = appendRequests(first, mintRequestIds([usageAt(0)]));
+    expect([
+      second.slice(0, 2).map((r) => r.request_id),
+      second.map((r) => r.request_index),
+    ]).toEqual([a.map((r) => r.request_id), [0, 1, 2]]);
+  });
+});
+
+describe('#715 (R) — the set of minting sites (R9)', () => {
+  // The repository root: this file is packages/cli/src/agent/providers/.
+  const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', '..');
+  /** Every non-test `.ts` file under `packages/<p>/src`, outside `dist` and `node_modules`. */
+  function sources(): string[] {
+    const out: string[] = [];
+    const walk = (dir: string): void => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, e.name);
+        if (e.isDirectory()) {
+          if (e.name !== 'node_modules' && e.name !== 'dist') walk(full);
+        } else if (e.name.endsWith('.ts') && !e.name.endsWith('.test.ts')) out.push(full);
+      }
+    };
+    for (const p of readdirSync(join(SRC, 'packages'))) {
+      try {
+        walk(join(SRC, 'packages', p, 'src'));
+      } catch {
+        /* a package without src */
+      }
+    }
+    return out;
+  }
+  // The four crossing points R-3 names, and nowhere else: a call in a code line (not a comment, not
+  // the definition), with the argument it is given — never `usageForStep`, a stored record, or
+  // `appendRequests`'s own body (Temporal #9724's mirror image: a mint inside a path that runs again).
+  // (a) red when a fifth site appears, a site moves onto another array, or `appendRequests` mints;
+  // (b) prints each site as `file: argument`.
+  it('mintRequestIds is called at S1, S2, S3 and F1 only, each on the array that arrived', () => {
+    const calls: string[] = [];
+    let appendMints = false;
+    for (const file of sources()) {
+      const text = readFileSync(file, 'utf8');
+      const lines = text.split('\n');
+      lines.forEach((line) => {
+        const code = line.trim();
+        if (code.startsWith('//') || code.startsWith('*') || code.startsWith('/*')) return;
+        if (code.startsWith('export function mintRequestIds(')) return;
+        // Each call's argument, read to its balancing parenthesis.
+        let from = code.indexOf('mintRequestIds(');
+        while (from >= 0) {
+          let depth = 0;
+          let end = from + 'mintRequestIds('.length;
+          for (; end < code.length; end += 1) {
+            if (code[end] === '(') depth += 1;
+            else if (code[end] === ')') {
+              if (depth === 0) break;
+              depth -= 1;
+            }
+          }
+          calls.push(`${relative(SRC, file)}: ${code.slice(from + 'mintRequestIds('.length, end)}`);
+          from = code.indexOf('mintRequestIds(', end);
+        }
+      });
+      const body = /export function appendRequests\([\s\S]*?\n\}\n/g;
+      for (const m of text.matchAll(body)) {
+        if (/mintRequestIds|randomUUID|request_id/.test(m[0])) appendMints = true;
+      }
+    }
+    expect([calls.sort(), appendMints]).toEqual([
+      [
+        'packages/cli/src/agent/drive-failure.ts: classified.usage',
+        'packages/cli/src/agent/run-agent.ts: toolsResult.usage ?? []',
+        'packages/cli/src/agent/run-agent.ts: usage ?? []',
+        'packages/cli/src/agent/run-agent.ts: usage ?? []',
+      ],
+      false,
+    ]);
   });
 });

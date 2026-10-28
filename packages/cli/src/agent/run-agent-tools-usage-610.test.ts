@@ -305,3 +305,68 @@ describe('#610 — the readers show the record a drive wrote', () => {
     ).toEqual({ counted: true, notMeasured: false });
   });
 });
+
+// ═══ issue #715 (R) — the tools path's two crossing points: S1 (a success) and the tools catch ═══
+
+/** A version-4 UUID, as `crypto.randomUUID()` mints it. */
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+describe('#715 (R) — every request the tools path records carries an id realm minted', () => {
+  it('R2a (S1): a tools step that succeeds — each stored request has a fresh UUID, none the provider’s own, all distinct, the same on a re-read', async () => {
+    const { store, run } = await drive(workflow(), [
+      {
+        output: { category: 'billing' },
+        toolCalls: 1,
+        usage: [rec(0, 100), { ...rec(1, 200), request_id: 'provider-own' }],
+      },
+    ]);
+    const ids = (r: RunRecord) =>
+      (
+        r.evidence.filter((e) => e.step_id === 'classify').at(-1)?.diagnostics?.cache?.requests ??
+        []
+      ).map((q) => q.request_id);
+    const first = ids(run);
+    const again = ids(await store.get(run.id));
+    // (a) red when S1 does not mint (no id, or the provider's own kept); (b) prints booleans and the
+    //     count, never a record's params.
+    expect({
+      count: first.length,
+      uuids: first.every((id) => UUID_V4.test(String(id))),
+      providerKept: first.includes('provider-own'),
+      distinct: new Set(first).size,
+      sameOnReread: JSON.stringify(again) === JSON.stringify(first),
+    }).toEqual({ count: 2, uuids: true, providerKept: false, distinct: 2, sameOnReread: true });
+  });
+
+  it('R3a (the tools catch): attempt 1 billed 2 and was refused, attempt 2 threw with 1 — the entry’s 3 ids are the 3 minted, in order; the prepend mints none', async () => {
+    // The spy sees every UUID minted in the drive, and the stores mint their own
+    // (`InMemoryStore.create` a run's id, `claimStep` a claim's; verify-first). So it keeps only
+    // the calls made through `mintRequestIds` (read off the call's stack): those must be exactly
+    // the requests billed, and the entry's ids those values, in order.
+    const minted: string[] = [];
+    const real = crypto.randomUUID.bind(crypto);
+    const spy = vi.spyOn(crypto, 'randomUUID').mockImplementation(() => {
+      const id = real();
+      if (/\bmintRequestIds\b/.test(new Error().stack ?? '')) minted.push(id);
+      return id;
+    });
+    let run: RunRecord;
+    try {
+      ({ run } = await drive(workflow(), [
+        { output: {}, usage: [rec(0, 100), rec(1, 200)] },
+        { throw: true, usage: [rec(0, 300)] },
+      ]));
+    } finally {
+      spy.mockRestore();
+    }
+    const ids = (run.drive_failures?.entries.at(-1)?.usage ?? []).map((r) => r.request_id);
+    const requestMints = minted;
+    // (a) red when the funnel is not in `buildEntryUnsafe` (no ids) or the prepend re-mints (more
+    //     mints than the 3 requests billed); (b) prints the counts and whether the ids match.
+    expect({
+      requestMints: requestMints.length,
+      stored: ids.length,
+      sameInOrder: ids.join() === requestMints.join(),
+    }).toEqual({ requestMints: 3, stored: 3, sameInOrder: true });
+  });
+});

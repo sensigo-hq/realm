@@ -528,6 +528,20 @@ export interface UsageRecord {
    * (`cache_creation`). Written by the adapter whenever it writes `cache_requested`.
    */
   cache_split_offered?: boolean;
+  /**
+   * Issue #715 (R; decisions D6-28, D6-44) — this request's identity: a random UUID (version 4)
+   * realm mints once per request, where a provider's answer enters realm's records
+   * (`mintRequestIds`, called at `realm agent`'s receiving sites). It ALWAYS overwrites any value a
+   * provider's own usage carried. It is the key `sameRequest` matches on and nothing else — never a
+   * time, a count, an index or a version — and it guards one decision: whether a call is attached to
+   * a drive-failure entry or is already on the step's record (`callsAlreadyRecorded`). It does not
+   * de-duplicate the cost totals a reader computes. It is NOT a provider's request id (`request-id`,
+   * `x-request-id`, an SDK's `_request_id`) and NOT Temporal's request de-dupe id; a provider's own
+   * id, if ever kept, gets its own field. Absent on a record written by an earlier process, or by a
+   * host that embeds the engine and records usage itself: no reader derives anything from it, and
+   * `sameRequest` answers `false` for such a record.
+   */
+  request_id?: string;
 }
 
 /** Issue #600 — the per-step roll-up plus the per-request detail. */

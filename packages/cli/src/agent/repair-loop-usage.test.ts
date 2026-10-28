@@ -385,3 +385,90 @@ describe('issue #600 — appendRequests', () => {
     expect(next).toHaveLength(1);
   });
 });
+
+// ═══ issue #715 (R) — the single-shot crossing points S2 (a declared structured_output) and S3 ═══
+
+/** A version-4 UUID, as `crypto.randomUUID()` mints it. */
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+/** A provider whose one call answers `OK` with two billed requests, the second carrying its own id. */
+function twoRequestProvider() {
+  return new (class extends LlmProvider {
+    callStep = vi.fn();
+    async callStepWithMeta() {
+      return {
+        output: { status: 'OK' },
+        usage: [
+          { request_index: 0, request_start: '2026-10-28T00:00:00.000Z', prompt_tokens: 10 },
+          {
+            request_index: 1,
+            request_start: '2026-10-28T00:00:01.000Z',
+            prompt_tokens: 20,
+            request_id: 'provider-own',
+          },
+        ],
+      } as never;
+    }
+  })();
+}
+
+/** The step `draft`'s stored requests' ids, whether its entry recorded a structured_output, and a re-read's ids. */
+async function idsOf(def: WorkflowDefinition) {
+  quiet();
+  const store = new InMemoryStore();
+  await drive(store, def, twoRequestProvider());
+  const run = await onlyRun(store);
+  const entry = (r: RunRecord) => executionEvidence(r, 'draft').at(-1);
+  const ids = (entry(run)?.diagnostics?.cache?.requests ?? []).map((q) => q.request_id);
+  const again = (entry(await store.get(run.id))?.diagnostics?.cache?.requests ?? []).map(
+    (q) => q.request_id,
+  );
+  vi.restoreAllMocks();
+  return {
+    path: entry(run)?.diagnostics?.structured_output !== undefined ? 'declared (S2)' : 'bare (S3)',
+    count: ids.length,
+    uuids: ids.every((id) => UUID_V4.test(String(id))),
+    providerKept: ids.includes('provider-own'),
+    distinct: new Set(ids).size,
+    sameOnReread: JSON.stringify(again) === JSON.stringify(ids),
+  };
+}
+
+describe('#715 (R) — the single-shot paths mint each request’s id', () => {
+  // (a) red when S2 does not mint (no id, or the provider's own kept); (b) prints the path, booleans
+  //     and counts, never a record's params.
+  it('R2b (S2): a step that declares structured_output: strict — each stored request has a fresh UUID, none the provider’s own, the same on a re-read', async () => {
+    const declared = {
+      ...oneStep,
+      id: 'r715-declared',
+      steps: {
+        draft: {
+          description: 'Draft',
+          execution: 'agent',
+          structured_output: 'strict',
+          output_schema: { ...OUTPUT_SCHEMA, additionalProperties: false },
+        },
+      },
+    } as WorkflowDefinition;
+    expect(await idsOf(declared)).toEqual({
+      path: 'declared (S2)',
+      count: 2,
+      uuids: true,
+      providerKept: false,
+      distinct: 2,
+      sameOnReread: true,
+    });
+  });
+
+  // (a) red when S3 does not mint; (b) prints the path, booleans and counts.
+  it('R2c (S3): a bare step — each stored request has a fresh UUID, none the provider’s own, the same on a re-read', async () => {
+    expect(await idsOf(oneStep)).toEqual({
+      path: 'bare (S3)',
+      count: 2,
+      uuids: true,
+      providerKept: false,
+      distinct: 2,
+      sameOnReread: true,
+    });
+  });
+});
