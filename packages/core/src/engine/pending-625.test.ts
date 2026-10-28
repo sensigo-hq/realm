@@ -462,6 +462,8 @@ describe('#625 PR-2a — checkPreClaim, one cell per member of PRE_CLAIM_REFUSAL
       refused_by: 'capability',
       refusal: "handler 'h' is not registered here",
       basis: 'registry',
+      // #872 (a) (add-only): the handler or adapter refused, as data.
+      requirement: { kind: 'handler', name: 'h' },
     });
     const reg = new ExtensionRegistry();
     reg.register('handler', 'h', { id: 'h', execute: async () => ({ data: {} }) });
@@ -1282,6 +1284,8 @@ describe('#625 PR-2a — round 5: one cell per reply site (C39), the C24 rebuild
       refused_by: 'capability',
       refusal: "handler 'h' is not registered here",
       basis: 'registry',
+      // #872 (a) (add-only): the handler or adapter refused, as data.
+      requirement: { kind: 'handler', name: 'h' },
     });
     const byMarker = describePending(d, marked, undefined, new Date()).engine_runnable[0]!;
     expect(byMarker).toEqual({
@@ -1290,6 +1294,8 @@ describe('#625 PR-2a — round 5: one cell per reply site (C39), the C24 rebuild
       refused_by: 'capability',
       refusal: "handler 'h' was not registered in the runner that last attempted it",
       basis: 'marker',
+      // #872 (a) (add-only): the handler or adapter refused, as data.
+      requirement: { kind: 'handler', name: 'h' },
     });
     expect(CAPABILITY_BASES).toEqual(['registry', 'marker']);
     // #729 PR-0: the basis rides the `capability_missing` entry's facts; the doors word it (the

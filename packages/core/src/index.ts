@@ -230,6 +230,10 @@ export {
   cannotGoOnUntilCorrected,
   LIBRARY_WORDS,
   libraryCannotRunWords,
+  // #872 (a): the one bounded renderer of a cannot-run entry's parts, and the hand-back hint's
+  // grouped summary (door-neutral: the MCP door adds its pointer).
+  cannotRunParts,
+  cannotRunSummary,
   // #627 W: the door's gate answers, the condition its fallback carries, `present`.
   COND_TAGS,
   GATE_ANSWERS_VALUES,
@@ -544,6 +548,8 @@ export {
   unmetCapabilities,
   findCapabilityBlockedSteps,
   capabilityWarning,
+  // #872 (a): the one spelling of a capability refusal (correction 1, C2: its home is this leaf).
+  capabilityRefusalWords,
 } from './engine/capability.js';
 export type { Requirement, CapabilityBlockInfo } from './engine/capability.js';
 export {

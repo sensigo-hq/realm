@@ -200,7 +200,7 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
     async () => {
       claim(
         PAGE,
-        '| `engine_runnable` | The run is open and owes `auto` steps | Each such step and `runnable_here` (`true`, `false` or `"unknown"`). When `false`: `refused_by` (`trust`, `precondition`, `input_schema` or `capability`), `refusal`, and for `capability` a `basis` (`registry` or `marker`). Added after version 0.46.0. |',
+        '| `engine_runnable` | The run is open and owes `auto` steps | Each such step and `runnable_here` (`true`, `false` or `"unknown"`). When `false`: `refused_by` (`trust`, `precondition`, `input_schema` or `capability`), `refusal`, and for `capability` a `basis` (`registry` or `marker`) and the `requirement` the step lacks: its `kind` (`handler` or `adapter`) and `name` (added after version 0.48.0). Added after version 0.46.0. |',
       );
       const { call, workflowStore, runStore } = await connect();
       const d = def('er', {
@@ -237,6 +237,16 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
           .filter((e) => e['runnable_here'] === false)
           .every((e) => typeof e['refusal'] === 'string' && (e['refusal'] as string).length > 0),
       ).toBe(true);
+      // #872 (a) (the row's `requirement`, added after version 0.48.0): (a) red when a capability
+      //     refusal lacks the handler it names, or another refusal carries one; (b) prints each
+      //     entry's step and requirement.
+      expect(entries.map((e) => [e['step'], e['requirement']])).toEqual([
+        ['fine', undefined],
+        ['t', undefined],
+        ['p', undefined],
+        ['s', undefined],
+        ['c', { kind: 'handler', name: 'order_total' }],
+      ]);
       // "unknown" and basis marker: a caller that passes no extensions (the tool's own handler, as a
       // program embeds it). A fresh run has no marker: the capability check is unknown.
       const fresh = await handleGetRunState({ run_id: runId }, { runStore, workflowStore });
@@ -819,6 +829,8 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
         refused_by: 'capability',
         refusal: "handler 'order_total' is not registered here",
         basis: 'registry',
+        // #872 (a) (add-only): the handler or adapter refused, as data.
+        requirement: { kind: 'handler', name: 'order_total' },
       });
     },
   );
@@ -878,6 +890,8 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
           refused_by: 'capability',
           refusal: "handler 'order_total' was not registered in the runner that last attempted it",
           basis: 'marker',
+          // #872 (a) (add-only): the handler or adapter refused, as data.
+          requirement: { kind: 'handler', name: 'order_total' },
         },
         neither: { step: 'total', runnable_here: 'unknown' },
       });

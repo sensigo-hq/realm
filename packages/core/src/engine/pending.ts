@@ -28,7 +28,7 @@ import {
   validationFactsOfError,
 } from '../validation/validation-problems.js';
 import { consumesInputMap, resolveInputMap } from './input-map.js';
-import { requirementForStep } from './capability.js';
+import { capabilityRefusalWords, requirementForStep } from './capability.js';
 import { isPastDeadline } from './instants.js';
 import { readDrivenBy, type Attributed, type ActorAbsent } from './holder.js';
 
@@ -59,6 +59,11 @@ export interface PreClaimRefused {
   refusal: string;
   /** capability only: what the refusal was judged from (decision C41). */
   basis?: CapabilityBasis;
+  /**
+   * capability only (#872 (a)): the handler or adapter refused — this registry's requirement, or
+   * the one the run's marker records (`basis: 'marker'`).
+   */
+  requirement?: { kind: 'handler' | 'adapter'; name: string };
   /** trust and input_schema: the error `executeStep` returns, unchanged. */
   error?: WorkflowError;
   /** precondition: the reply's hint. */
@@ -223,17 +228,20 @@ export function checkPreClaim(args: {
         if (registry === undefined) {
           const marker = run.capability_blocks?.[step];
           if (marker === undefined) return { unknown: 'capability' };
+          const { kind, name } = marker.requirement;
           return {
             refused_by: 'capability',
-            refusal: `${marker.requirement.kind} '${marker.requirement.name}' was not registered in the runner that last attempted it`,
+            refusal: capabilityRefusalWords(kind, name, 'marker'),
             basis: 'marker',
+            requirement: { kind, name },
           };
         }
         if (!registry.has(requirement.kind, requirement.name)) {
           return {
             refused_by: 'capability',
-            refusal: `${requirement.kind} '${requirement.name}' is not registered here`,
+            refusal: capabilityRefusalWords(requirement.kind, requirement.name, 'registry'),
             basis: 'registry',
+            requirement: { kind: requirement.kind, name: requirement.name },
           };
         }
       }
@@ -295,6 +303,12 @@ export interface EngineRunnable {
    * record says the runner that last attempted the step lacked it.
    */
   basis?: CapabilityBasis;
+  /**
+   * Present exactly when `refused_by` is `capability` (#872 (a)): the handler or adapter refused,
+   * as data — the registry's requirement, or the marker's — so a caller groups the steps without
+   * reading `refusal`.
+   */
+  requirement?: { kind: 'handler' | 'adapter'; name: string };
   /** precondition only (#729 PR-0, E1 (b)): the failed expression and the value it read. */
   precondition?: PreconditionFacts;
 }
@@ -841,6 +855,7 @@ export function describePending(
         refused_by: verdict.refused_by,
         refusal: verdict.refusal,
         ...(verdict.basis !== undefined ? { basis: verdict.basis } : {}),
+        ...(verdict.requirement !== undefined ? { requirement: verdict.requirement } : {}),
         ...(verdict.precondition !== undefined ? { precondition: verdict.precondition } : {}),
       };
     });

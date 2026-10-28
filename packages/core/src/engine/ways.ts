@@ -36,7 +36,8 @@ import {
   type PendingView,
   type PreconditionFacts,
 } from './pending.js';
-import { requirementForStep } from './capability.js';
+import { capabilityRefusalWords, requirementForStep } from './capability.js';
+import { capText } from '../utils/redaction.js';
 import { consumesInputMap, newRunCanChangeInput, refusedInputField } from './input-map.js';
 
 // ─── Parties and slots ──────────────────────────────────────────────────────────────────────────
@@ -2391,16 +2392,108 @@ export const LIBRARY_WORDS: WayRenderer<string, LibraryHost> = {
  * The library door's words for why a step cannot run (C36, C41, C53) — `'<s>' cannot run
  * (<check>): <refusal>`; a capability this program lacks says so with its way out, one judged from
  * the run's marker is past tense. `undefined` for an entry that is not a step that cannot run.
+ * #872 (a): the ONE producer of a cannot-run clause — the MCP door's hint and the testing package's
+ * stalled message say it in these words; composed from {@link cannotRunParts}, so every name in it
+ * is bounded.
  */
 export function libraryCannotRunWords(entry: Unavailable): string | undefined {
+  const parts = cannotRunParts(entry);
+  if (parts === undefined) return undefined;
+  if (entry.code !== 'capability_missing') {
+    return `'${parts.step}' cannot run (${parts.check}): ${parts.refusal}`;
+  }
+  return parts.marker
+    ? `'${parts.step}' could not run (capability): ${parts.refusal}`
+    : `'${parts.step}' cannot run here (capability): ${parts.refusal} — load the missing extension, or run the step on a runner that has it`;
+}
+
+/**
+ * The parts of a step-that-cannot-run entry, as every door's line names them (moved here from the
+ * CLI's renderer, #872 (a)): its step, the check that refuses it (`trust`, `precondition`,
+ * `input_schema`, `capability`), the refusal's own words (a capability's: what this program lacks,
+ * or what the runner that last attempted it lacked — C41), and whether it was judged from the run's
+ * marker. `undefined` for an entry that is not a step that cannot run. Every step and requirement
+ * name goes through `capText` — the ONE bounded renderer of these names on every door (I4: a name
+ * over the cap is named by its length, never cut).
+ */
+export function cannotRunParts(
+  entry: Unavailable,
+): { step: string; check: string; refusal: string; marker: boolean } | undefined {
   if (entry.code === 'capability_missing') {
     const { kind, name } = entry.facts.requirement;
-    return entry.facts.basis === 'marker'
-      ? `'${entry.facts.step}' could not run (capability): ${kind} '${name}' was not registered in the runner that last attempted it`
-      : `'${entry.facts.step}' cannot run here (capability): ${kind} '${name}' is not registered here — load the missing extension, or run the step on a runner that has it`;
+    return {
+      step: capText(entry.facts.step),
+      check: 'capability',
+      refusal: capabilityRefusalWords(kind, capText(name), entry.facts.basis),
+      marker: entry.facts.basis === 'marker',
+    };
   }
   if (entry.code === 'refused_before_claim') {
-    return `'${entry.facts.step}' cannot run (${entry.facts.check}): ${entry.facts.refusal}`;
+    return {
+      step: capText(entry.facts.step),
+      check: entry.facts.check,
+      refusal: entry.facts.refusal,
+      marker: false,
+    };
   }
   return undefined;
+}
+
+/** #872 (a): a summary names at most this many missing requirements, then counts the rest. */
+const SUMMARY_REQUIREMENTS = 10;
+/** #872 (a): a summary names at most this many steps per requirement, then counts the rest. */
+const SUMMARY_STEPS = 3;
+
+/**
+ * #872 (a), the hand-back hint's grouped shape (#872 comment 6413059563): the steps of one
+ * composition that cannot run for a capability, said once. One step: its own clause
+ * ({@link libraryCannotRunWords}). Two or more: the total first, then the steps grouped by what they
+ * lack (kind, name, basis) in the order of each group's first step — definition order — at most ten
+ * groups and three step names per group, with exact counts, then how many more handlers or
+ * adapters; the way out once, singular when one handler or adapter is missing (none when judged
+ * from the run's marker, as one marker clause carries none). Door-neutral (correction 1, C1): no
+ * full stop and no door's words — where the full list is, the MCP door says. Every name goes
+ * through `capText`. One composition never mixes the bases (one enactor per composition): the past
+ * tense is said when every entry is judged from the marker. Entries that are not a capability are
+ * not counted; none gives `''`.
+ */
+export function cannotRunSummary(entries: readonly Unavailable[]): string {
+  const capability = entries.filter(
+    (u): u is Unavailable & { code: 'capability_missing' } => u.code === 'capability_missing',
+  );
+  if (capability.length === 0) return '';
+  if (capability.length === 1) return libraryCannotRunWords(capability[0]!) ?? '';
+  const groups = new Map<string, { requirement: string; steps: string[]; count: number }>();
+  for (const entry of capability) {
+    const { kind, name } = entry.facts.requirement;
+    const key = JSON.stringify([kind, name, entry.facts.basis]);
+    let group = groups.get(key);
+    if (group === undefined) {
+      group = { requirement: `${kind} '${capText(name)}'`, steps: [], count: 0 };
+      groups.set(key, group);
+    }
+    group.count += 1;
+    if (group.steps.length < SUMMARY_STEPS) group.steps.push(`'${capText(entry.facts.step)}'`);
+  }
+  const named = [...groups.values()].slice(0, SUMMARY_REQUIREMENTS).map((group) => {
+    const more = group.count - group.steps.length;
+    return `${group.requirement} (${group.steps.join(', ')}${more > 0 ? ` and ${more} more` : ''})`;
+  });
+  const rest = groups.size - SUMMARY_REQUIREMENTS;
+  if (rest > 0) {
+    // correction 1 (C4): plain words for what is counted, never the field's name.
+    named.push(
+      `and ${rest} more ${rest === 1 ? 'handler or adapter' : 'handlers or adapters'} (${groups.size} in all)`,
+    );
+  }
+  const list = named.join('; ');
+  if (capability.every((entry) => entry.facts.basis === 'marker')) {
+    return `${capability.length} steps could not run (capability): ${list}`;
+  }
+  // correction 1 (C4): the way out follows the number of what is missing.
+  const wayOut =
+    groups.size === 1
+      ? 'load the missing extension, or run these steps on a runner that has it'
+      : 'load the missing extensions, or run these steps on a runner that has them';
+  return `${capability.length} steps cannot run here (capability): ${list} — ${wayOut}`;
 }

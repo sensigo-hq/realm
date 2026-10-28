@@ -16,9 +16,12 @@ import { fileURLToPath } from 'node:url';
 import {
   JsonFileStore,
   JsonWorkflowStore,
+  cannotRunParts,
+  cannotRunSummary,
   createDefaultRegistry,
   loadWorkflowFromString,
   type ExtensionRegistry,
+  type Unavailable,
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -504,5 +507,114 @@ describe('#625 PR-2a, C174 lane F — tools.md rows no cell quoted yet, over a r
       'advance_run',
       page,
     ]);
+  });
+});
+
+describe('#872 (a) — tools.md: two or more steps that cannot run here, said once', () => {
+  it("start_run: the page's sentence and its example — the real hint of a new run with three steps this server cannot run", async () => {
+    claim(
+      TOOLS,
+      "Two or more `auto` steps that cannot run here for a handler or adapter this server lacks are said in one sentence, in the place of the first of them (added after version 0.48.0): their count, then each missing handler or adapter with at most three of the steps that need it and how many more, at most ten of them and then how many more, the way out once, and where the full list is — for example `3 steps cannot run here (capability): handler 'enrich' ('fetch', 'tag'); handler 'publish' ('post') — load the missing extensions, or run these steps on a runner that has them. get_run_state lists each one in engine_runnable.`",
+    );
+    const { call, workflowStore } = await connect();
+    await workflowStore.register(
+      wf([
+        'id: example-872',
+        'name: example',
+        'version: 1',
+        'steps:',
+        '  fetch:',
+        '    description: Fetch.',
+        '    execution: auto',
+        '    handler: enrich',
+        '  tag:',
+        '    description: Tag.',
+        '    execution: auto',
+        '    handler: enrich',
+        '  post:',
+        '    description: Post.',
+        '    execution: auto',
+        '    handler: publish',
+      ]),
+    );
+    const r = await call('start_run', { workflow_id: 'example-872' });
+    // (a) red when the hint or the page's example changes alone (the count, a group, the way out,
+    //     the pointer); (b) prints the real hint.
+    expect(r['context_hint']).toBe(
+      `Run '${String(r['run_id'])}' created for workflow 'example-872'. 3 steps cannot run here (capability): handler 'enrich' ('fetch', 'tag'); handler 'publish' ('post') — load the missing extensions, or run these steps on a runner that has them. get_run_state lists each one in engine_runnable.`,
+    );
+  });
+});
+
+describe('CHANGELOG.md — #872 (a)’s entry (#871’s form: the section that holds it)', () => {
+  /** #871's form: `[Unreleased]` until a release renames it, then the first section after `[0.48.0]`'s. */
+  const changelogSection = (): string => {
+    const text = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
+    const start = text.includes('## [Unreleased]')
+      ? text.indexOf('## [Unreleased]')
+      : text.indexOf('\n## [') + 1;
+    return text.slice(start, text.indexOf('\n## [0.48.0]'));
+  };
+  const cap = (step: string, name: string): Unavailable => ({
+    verb: 'run_step',
+    step,
+    code: 'capability_missing',
+    facts: { step, requirement: { kind: 'handler', name }, basis: 'registry' },
+    remedy: [],
+    no_remedy: { cause: 'requires_other_program', requirement: { kind: 'handler', name } },
+  });
+
+  it('AC8 (correction 1): the entry’s changed and new sentences, and the behaviour each states', async () => {
+    for (const sentence of [
+      '**Two or more steps that cannot run here for a missing handler or adapter are said in one sentence (issue #872).**',
+      'the way out once — `load the missing extension` when one handler or adapter is missing, `load the missing extensions` when several are — and `get_run_state lists each one in engine_runnable.`',
+      'The error reply of the call that attempts one such step counts them too.',
+      "A step or handler name over 500 characters is named by its length in these sentences and in the CLI's lines for a step that cannot run.",
+    ]) {
+      // (a) red when the entry no longer holds the sentence; (b) prints the sentence.
+      expect(flat(changelogSection()), `the CHANGELOG no longer says: ${sentence}`).toContain(
+        flat(sentence),
+      );
+    }
+    const { call, workflowStore } = await connect();
+    await workflowStore.register(
+      wf([
+        'id: changelog-872',
+        'name: changelog',
+        'version: 1',
+        'steps:',
+        '  s1:',
+        '    description: S1.',
+        '    execution: auto',
+        '    handler: h',
+        '  s2:',
+        '    description: S2.',
+        '    execution: auto',
+        '    handler: h',
+      ]),
+    );
+    const runId = String((await call('start_run', { workflow_id: 'changelog-872' }))['run_id']);
+    const attempt = await call('advance_run', { run_id: runId });
+    const one = cannotRunSummary([cap('a', 'h'), cap('b', 'h')]);
+    const several = cannotRunSummary([cap('a', 'h'), cap('b', 'g')]);
+    // (a) red when a sentence's behaviour is gone: the number of the way out, the attempt's count,
+    //     the bounded name on the CLI's cannot-run lines (core's renderer they print through);
+    //     (b) prints booleans and the bounded step.
+    expect({
+      one: one.endsWith('load the missing extension, or run these steps on a runner that has it'),
+      several: several.endsWith(
+        'load the missing extensions, or run these steps on a runner that has them',
+      ),
+      attempt: [
+        attempt['status'],
+        String(attempt['context_hint']).includes('2 steps cannot run here'),
+      ],
+      cliLines: cannotRunParts(cap('s'.padEnd(600, 'x'), 'h'))?.step,
+    }).toEqual({
+      one: true,
+      several: true,
+      attempt: ['error', true],
+      cliLines: '‹600 characters, not kept›',
+    });
   });
 });
