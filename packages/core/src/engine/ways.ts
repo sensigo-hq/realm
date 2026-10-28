@@ -31,13 +31,12 @@ import {
   checkPreClaim,
   describePending,
   offeredResumeWay,
-  type CapabilityBasis,
   type DueExpiry,
   type EngineRunnable,
   type PendingView,
   type PreconditionFacts,
 } from './pending.js';
-import { requirementForStep } from './capability.js';
+import { capabilityRefusalWords, requirementForStep } from './capability.js';
 import { capText } from '../utils/redaction.js';
 import { consumesInputMap, newRunCanChangeInput, refusedInputField } from './input-map.js';
 
@@ -2409,22 +2408,6 @@ export function libraryCannotRunWords(entry: Unavailable): string | undefined {
 }
 
 /**
- * #872 (a): the ONE spelling of a capability refusal (decision C41) — what this program's registry
- * lacks (`registry`), or what the runner that last attempted the step lacked (`marker`). The wire
- * `refusal` (`checkPreClaim`) and every door's line ({@link cannotRunParts}) compose it; the caller
- * decides whether the name is bounded.
- */
-export function capabilityRefusalWords(
-  kind: 'handler' | 'adapter',
-  name: string,
-  basis: CapabilityBasis,
-): string {
-  return basis === 'marker'
-    ? `${kind} '${name}' was not registered in the runner that last attempted it`
-    : `${kind} '${name}' is not registered here`;
-}
-
-/**
  * The parts of a step-that-cannot-run entry, as every door's line names them (moved here from the
  * CLI's renderer, #872 (a)): its step, the check that refuses it (`trust`, `precondition`,
  * `input_schema`, `capability`), the refusal's own words (a capability's: what this program lacks,
@@ -2466,11 +2449,13 @@ const SUMMARY_STEPS = 3;
  * composition that cannot run for a capability, said once. One step: its own clause
  * ({@link libraryCannotRunWords}). Two or more: the total first, then the steps grouped by what they
  * lack (kind, name, basis) in the order of each group's first step — definition order — at most ten
- * groups and three step names per group, with exact counts; the way out once (none when judged
- * from the run's marker, as one marker clause carries none); then where the full list is. Every
- * name goes through `capText`. One composition never mixes the bases (one enactor per
- * composition): the past tense is said when every entry is judged from the marker. Entries that are
- * not a capability are not counted; none gives `''`.
+ * groups and three step names per group, with exact counts, then how many more handlers or
+ * adapters; the way out once, singular when one handler or adapter is missing (none when judged
+ * from the run's marker, as one marker clause carries none). Door-neutral (correction 1, C1): no
+ * full stop and no door's words — where the full list is, the MCP door says. Every name goes
+ * through `capText`. One composition never mixes the bases (one enactor per composition): the past
+ * tense is said when every entry is judged from the marker. Entries that are not a capability are
+ * not counted; none gives `''`.
  */
 export function cannotRunSummary(entries: readonly Unavailable[]): string {
   const capability = entries.filter(
@@ -2496,13 +2481,19 @@ export function cannotRunSummary(entries: readonly Unavailable[]): string {
   });
   const rest = groups.size - SUMMARY_REQUIREMENTS;
   if (rest > 0) {
+    // correction 1 (C4): plain words for what is counted, never the field's name.
     named.push(
-      `and ${rest} more ${rest === 1 ? 'requirement' : 'requirements'} (${groups.size} in all)`,
+      `and ${rest} more ${rest === 1 ? 'handler or adapter' : 'handlers or adapters'} (${groups.size} in all)`,
     );
   }
   const list = named.join('; ');
-  const pointer = 'get_run_state lists each one in engine_runnable.';
-  return capability.every((entry) => entry.facts.basis === 'marker')
-    ? `${capability.length} steps could not run (capability): ${list}. ${pointer}`
-    : `${capability.length} steps cannot run here (capability): ${list} — load the missing extensions, or run these steps on a runner that has them. ${pointer}`;
+  if (capability.every((entry) => entry.facts.basis === 'marker')) {
+    return `${capability.length} steps could not run (capability): ${list}`;
+  }
+  // correction 1 (C4): the way out follows the number of what is missing.
+  const wayOut =
+    groups.size === 1
+      ? 'load the missing extension, or run these steps on a runner that has it'
+      : 'load the missing extensions, or run these steps on a runner that has them';
+  return `${capability.length} steps cannot run here (capability): ${list} — ${wayOut}`;
 }

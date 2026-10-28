@@ -480,7 +480,7 @@ describe('#872 (a) — core-library.md: describePending names the handler or ada
   it("line 103: an engine_runnable entry refused for a handler or adapter names it in requirement — the registry's, or the marker's", async () => {
     claim(
       PAGE,
-      'An `engine_runnable` entry refused for a handler or adapter names it in `requirement`: its `kind` and `name` (added after version 0.48.0).',
+      'An `engine_runnable` or `cannot_run` entry refused for a handler or adapter names it in `requirement`: its `kind` and `name` (added after version 0.48.0).',
     );
     const d = {
       id: 'requirement-wf',
@@ -502,14 +502,20 @@ describe('#872 (a) — core-library.md: describePending names the handler or ada
       },
     };
     const byMarker = describePending(d, marked, undefined, new Date());
-    // (a) red when the field is missing, or is not the marker's on a marker-judged refusal;
-    //     (b) prints both entries' basis and requirement.
+    // (a) red when the field is missing (on `engine_runnable` or `cannot_run`), or is not the
+    //     marker's on a marker-judged refusal; (b) prints the entries' basis and requirement.
     expect([
       [byRegistry.engine_runnable[0]?.basis, byRegistry.engine_runnable[0]?.requirement],
       [byMarker.engine_runnable[0]?.basis, byMarker.engine_runnable[0]?.requirement],
+      // #872 (a) correction 1 (C6): `cannot_run` carries it too (the page's sentence).
+      [byRegistry.cannot_run[0]?.requirement, byMarker.cannot_run[0]?.requirement],
     ]).toEqual([
       ['registry', { kind: 'handler', name: 'h' }],
       ['marker', { kind: 'adapter', name: 'from_marker' }],
+      [
+        { kind: 'handler', name: 'h' },
+        { kind: 'adapter', name: 'from_marker' },
+      ],
     ]);
   });
 });

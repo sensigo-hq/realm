@@ -11,6 +11,7 @@
 import type { WorkflowDefinition, StepDefinition } from '../types/workflow-definition.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
+import type { CapabilityBasis } from './pending.js';
 
 /** The single handler/adapter an auto step requires. `step` is the step name (StepDefinition carries none). */
 export interface Requirement {
@@ -75,6 +76,23 @@ export function capabilityWarning(requirement: Requirement): string {
     `registered in this runner. If reached it will block recoverably (not fail) until a runner that ` +
     `provides this ${requirement.kind} executes it — load the missing extension or run on a capable runner.`
   );
+}
+
+/**
+ * #872 (a): the ONE spelling of a capability refusal (decision C41) — what this program's registry
+ * lacks (`registry`), or what the runner that last attempted the step lacked (`marker`). The wire
+ * `refusal` (`checkPreClaim`) and every door's line (`cannotRunParts` in `ways.ts`) compose it; the caller
+ * decides whether the name is bounded. Here, in a module with no runtime import (#872 (a)
+ * correction 1, C2), so `pending.ts` and `ways.ts` both import it without a cycle.
+ */
+export function capabilityRefusalWords(
+  kind: 'handler' | 'adapter',
+  name: string,
+  basis: CapabilityBasis,
+): string {
+  return basis === 'marker'
+    ? `${kind} '${name}' was not registered in the runner that last attempted it`
+    : `${kind} '${name}' is not registered here`;
 }
 
 /** A capability-blocked step surfaced by {@link findCapabilityBlockedSteps}. */

@@ -810,6 +810,9 @@ describe('#872 (a) — the hand-back hint: two or more steps that cannot run her
   });
   const TAIL =
     ' — load the missing extensions, or run these steps on a runner that has them. get_run_state lists each one in engine_runnable.';
+  // correction 1 (C4): one missing handler or adapter takes the singular way out.
+  const TAIL_ONE =
+    ' — load the missing extension, or run these steps on a runner that has it. get_run_state lists each one in engine_runnable.';
   const here = (s: string) => s.split('cannot run here').length - 1;
 
   it('B3: two steps needing one handler — the count first, one group, the way out once; no way out of the workflow', () => {
@@ -822,7 +825,7 @@ describe('#872 (a) — the hand-back hint: two or more steps that cannot run her
     //     twice), or the workflow's way out is added to a capability-only set; (b) prints the
     //     sentence and the counts.
     expect({ s, here: here(s), wayOut: s.includes('Correct the workflow') }).toEqual({
-      s: ` 2 steps cannot run here (capability): handler 'h' ('s1', 's2')${TAIL}`,
+      s: ` 2 steps cannot run here (capability): handler 'h' ('s1', 's2')${TAIL_ONE}`,
       here: 1,
       wayOut: false,
     });
@@ -864,8 +867,8 @@ describe('#872 (a) — the hand-back hint: two or more steps that cannot run her
       nextSentenceOf(openRun(), stepsOn(12), new ExtensionRegistry()),
       nextSentenceOf(openRun(), stepsOn(11), new ExtensionRegistry()),
     ]).toEqual([
-      ` 12 steps cannot run here (capability): ${ten}; and 2 more requirements (12 in all)${TAIL}`,
-      ` 11 steps cannot run here (capability): ${ten}; and 1 more requirement (11 in all)${TAIL}`,
+      ` 12 steps cannot run here (capability): ${ten}; and 2 more handlers or adapters (12 in all)${TAIL}`,
+      ` 11 steps cannot run here (capability): ${ten}; and 1 more handler or adapter (11 in all)${TAIL}`,
     ]);
   });
 

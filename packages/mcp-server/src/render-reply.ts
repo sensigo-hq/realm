@@ -621,6 +621,21 @@ function untilOf(narrowed: Narrowed | undefined): string | undefined {
 
 // ─── The words of what comes next (Table rows 20–29; decisions C34, C51, C57, C94, C205) ────────
 
+/** #872 (a) correction 1 (C1): where the full list is — this door's words (the renderer law). */
+const CAPABILITY_LIST_POINTER = 'get_run_state lists each one in engine_runnable.';
+
+/**
+ * #872 (a) correction 1 (C1): the MCP door's ONE producer of the capability sentence. No step that
+ * cannot run for a capability: `''`. One: core's one-step clause. Two or more: core's counted
+ * summary, then this door's pointer to the full list.
+ */
+function capabilityHintWords(entries: readonly Unavailable[]): string {
+  const caps = entries.filter((u) => u.verb === 'run_step' && u.code === 'capability_missing');
+  if (caps.length === 0) return '';
+  if (caps.length === 1) return withFullStop(libraryCannotRunWords(caps[0]!) ?? '');
+  return `${withFullStop(cannotRunSummary(caps))} ${CAPABILITY_LIST_POINTER}`;
+}
+
 /** A run_step entry for a step that cannot run (C82): refused before its claim, or a capability. */
 function cannotRunEntries(narrowed: Narrowed | undefined): Unavailable[] {
   return (narrowed?.unavailable ?? []).filter(
@@ -718,14 +733,14 @@ function nextSentence(narrowed: Narrowed | undefined, ended: boolean): string {
           : `; it runs them${OWED_UNTIL}`;
     sentence += ` Owed to the engine: ${items.join(', ')} — call advance_run${runs}.`;
   }
-  // #872 (a): the steps that cannot run for a capability are said once, in core's summary, in the
-  // place of the first of them (one step: its own clause); a step refused before its claim keeps
-  // its own clause where it is (C36, C41, C53).
+  // #872 (a): the steps that cannot run for a capability are said once, in this door's one
+  // capability sentence, in the place of the first of them (one step: its own clause); a step
+  // refused before its claim keeps its own clause where it is (C36, C41, C53).
   const cannotRun = cannotRunEntries(narrowed);
   let capabilitySaid = false;
   for (const entry of cannotRun) {
     if (entry.code === 'capability_missing') {
-      if (!capabilitySaid) sentence += ` ${withFullStop(cannotRunSummary(cannotRun))}`;
+      if (!capabilitySaid) sentence += ` ${capabilityHintWords(cannotRun)}`;
       capabilitySaid = true;
       continue;
     }
@@ -878,9 +893,10 @@ function hintOf(
       (u) =>
         u.verb === 'run_step' && u.step === reply.stopped_step && u.code === 'capability_missing',
     );
-    // #872 (a): core's one producer of the clause (a capability entry always has one).
-    const clause = blocked !== undefined ? libraryCannotRunWords(blocked) : undefined;
-    if (clause !== undefined) hint += ` ${clause}.`;
+    // #872 (a) correction 1 (C5): the attempted step's own clause when it is the only step that
+    // cannot run here; with two or more, the one sentence that counts them all (the attempted step
+    // among them), so the agent learns the whole set from the first attempt.
+    if (blocked !== undefined) hint += ` ${capabilityHintWords(reply.unavailable)}`;
   }
   return hint;
 }

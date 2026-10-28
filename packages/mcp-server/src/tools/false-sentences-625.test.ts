@@ -100,7 +100,7 @@ describe('#625 PR-2a, F17 — the MCP pages say what the build does', () => {
       );
       claim(
         TOOLS,
-        "Each entry's `next_actions` names its run's first call — empty when what the run owes needs a handler or adapter this server lacks (its `context_hint` then names the step: `'<step>' cannot run here (capability): …`) — and its `context_hint` is",
+        "Each entry's `next_actions` names its run's first call — empty when what the run owes needs a handler or adapter this server lacks (its `context_hint` then names the step: `'<step>' cannot run here (capability): …`; with two or more such steps it gives the one sentence that counts them, as `start_run`'s hint does — added after version 0.48.0) — and its `context_hint` is",
       );
       const registry = new ExtensionRegistry();
       if (has) registry.register('handler', 'totl', { id: 'totl', execute: async () => ({}) });

@@ -28,8 +28,7 @@ import {
   validationFactsOfError,
 } from '../validation/validation-problems.js';
 import { consumesInputMap, resolveInputMap } from './input-map.js';
-import { requirementForStep } from './capability.js';
-import { capabilityRefusalWords } from './ways.js';
+import { capabilityRefusalWords, requirementForStep } from './capability.js';
 import { isPastDeadline } from './instants.js';
 import { readDrivenBy, type Attributed, type ActorAbsent } from './holder.js';
 

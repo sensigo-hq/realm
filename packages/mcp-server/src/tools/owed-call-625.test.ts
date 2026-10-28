@@ -649,8 +649,9 @@ describe('#872 (a) — the hand-back hint and engine_runnable.requirement over t
       s2: { description: 'S2.', execution: 'auto', depends_on: [], handler: 'h' },
     },
   };
+  // correction 1 (C4): one missing handler, the singular way out.
   const TAIL =
-    ' — load the missing extensions, or run these steps on a runner that has them. get_run_state lists each one in engine_runnable.';
+    ' — load the missing extension, or run these steps on a runner that has it. get_run_state lists each one in engine_runnable.';
 
   it('B3 (door): start_run on a new run with two steps this server cannot run — the count, one group, the way out once; no way out of the workflow', async () => {
     await workflowStore.register(twoRoots);
