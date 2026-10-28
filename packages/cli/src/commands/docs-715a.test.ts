@@ -165,10 +165,10 @@ describe('#715 (a) — the docs sentences', () => {
       'A clock whose time goes up by `stepMs` each time it is read, with a `reads` count. Its `at` throws.',
     );
     claim(TESTING, 'The same clock, with a `reads` count of its `now()` calls.');
-    // C14, C15.
+    // C14, C15; correction 1 (C-3): test-location.test.ts (1)–(4).
     claim(
       TESTING,
-      'A test location: a folder with `runs/` and a `.realm-test-clock` file. Its `clock` moves the time in that file, so a `JsonFileStore` opened on its `runsDir`, in this process or another, reads it. `remove()` deletes the folder.',
+      'A test location: a folder with `runs/` and a `.realm-test-clock` file. Its `clock` moves the time in that file, so a `JsonFileStore` opened on its `runsDir`, in this process or another, reads it. `remove()` deletes the folders and the clock file the location made; a root you gave keeps everything else.',
     );
     // C9; C7, C7b; C8.
     claim(
