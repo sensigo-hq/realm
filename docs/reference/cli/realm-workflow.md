@@ -137,7 +137,7 @@ On OpenAI, a step with `structured_output: strict` and a schema is sent the sche
 **Your own count.** `--ratio <chars-per-token>` takes your own count: the step's characters as the line prints them, divided by the input tokens the provider counted for one request of the step with a one-character message, tools included. The range is then that count ±15%, and no tool text is added, because your count holds it:
 
 ```text
-cache: review_changes — 1,010 chars ≈ 220–290 tokens (estimate: 4 chars/token ±15%, your --ratio) — the floor was not judged: no --model named
+cache: review_changes — 1,010 chars ≈ 220–297 tokens (estimate: 4 chars/token ±15%, your --ratio) — the floor was not judged: no --model named
 ```
 
 **No verdict.** When no minimum is known, the line says why:

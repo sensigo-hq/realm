@@ -273,7 +273,7 @@ describe('the lines and verdicts (C5)', { timeout: 60_000 }, () => {
   });
 
   // --ratio takes the author's count, which already includes Anthropic's tool text: no band, and the
-  // interval is chars / r × 0.87 to × 1.15. Break: the band passed under --ratio. (a) red when
+  // interval is chars / (r × 1.15) to chars / (r × 0.85) (correction 1, C-2). Break: the band passed under --ratio. (a) red when
   // either line changes; (b) prints both runs' lines.
   it('--ratio on a banded step: no band; one layout and both layouts', () => {
     const one = realm([
@@ -288,11 +288,39 @@ describe('the lines and verdicts (C5)', { timeout: 60_000 }, () => {
     const both = realm(['workflow', 'validate', ex('01-code-reviewer'), '--ratio', '4']);
     expect([cacheLines(one.stdout), cacheLines(both.stdout)]).toEqual([
       [
-        'cache: review_changes — 1,010 chars ≈ 220–290 tokens (estimate: 4 chars/token ±15%, your --ratio) — the floor was not judged: no --model named',
+        'cache: review_changes — 1,010 chars ≈ 220–297 tokens (estimate: 4 chars/token ±15%, your --ratio) — the floor was not judged: no --model named',
       ],
       [
-        'cache: review_changes — anthropic 1,010 chars ≈ 220–290 tokens · openai 515 chars ≈ 113–148 tokens (estimates: 4 chars/token ±15%, your --ratio)',
+        'cache: review_changes — anthropic 1,010 chars ≈ 220–297 tokens · openai 515 chars ≈ 112–151 tokens (estimates: 4 chars/token ±15%, your --ratio)',
       ],
+    ]);
+  });
+
+  // Correction 1 (C-2): the line's `±15%` is on characters per token, so at --ratio 4
+  // examples/03's analyze_cause (1,782 chars) reads 388–524. A floor of 520 is inside that range:
+  // near, never `cannot cache`. (a) red when the high end is chars / r × 1.15 again (520 then reads
+  // below); (b) prints the two verdict clauses' heads.
+  it('C-2: --ratio 4 on 1,782 chars reads 388–524 — near at 520, below at 525', () => {
+    const verdict = (floor: string): string => {
+      const line = cacheLines(
+        realm([
+          'workflow',
+          'validate',
+          ex('03-incident-response'),
+          '--provider',
+          'anthropic',
+          '--ratio',
+          '4',
+          '--floor',
+          floor,
+        ]).stdout,
+      )[0]!;
+      const end = line.indexOf('your --floor)') + 'your --floor)'.length;
+      return line.slice(line.indexOf('1,782'), end);
+    };
+    expect([verdict('520'), verdict('525')]).toEqual([
+      '1,782 chars ≈ 388–524 tokens (estimate: 4 chars/token ±15%, your --ratio) — near the floor (520, your --floor)',
+      '1,782 chars ≈ 388–524 tokens (estimate: 4 chars/token ±15%, your --ratio) — below the floor (525, your --floor)',
     ]);
   });
 

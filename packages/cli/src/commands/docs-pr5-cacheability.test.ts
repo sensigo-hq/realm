@@ -277,7 +277,8 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
   });
 
   // --ratio: the count ±15%, and no tool text. Break: the band added under --ratio. (a) red when the
-  // range is not 1,010 / 4 × 0.87 to × 1.15, or the line says tool text; (b) prints the line.
+  // range is not 1,010 / (4 × 1.15) to 1,010 / (4 × 0.85) (correction 1, C-2), or the line says tool
+  // text; (b) prints the line.
   it('your own count: the range is that count ±15%, and no tool text is added', () => {
     claim(
       WORKFLOW_PAGE,
@@ -296,7 +297,7 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
     )[0]!;
     expect([
       line.includes(
-        `1,010 chars ≈ ${Math.ceil((1010 / 4) * 0.87)}–${Math.floor((1010 / 4) * 1.15)} tokens`,
+        `1,010 chars ≈ ${Math.ceil(1010 / (4 * 1.15))}–${Math.floor(1010 / (4 * 0.85))} tokens`,
       ),
       line.includes("Anthropic's tool text"),
     ]).toEqual([true, false]);

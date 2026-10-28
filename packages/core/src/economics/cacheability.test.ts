@@ -90,11 +90,33 @@ describe('the token interval (C1.1; Δ13, Δ16)', () => {
   });
 
   // (a) red when the ratio's ±15% changes or the ratio is ignored; (b) prints the interval.
-  it('with a ratio r: chars / r × 0.87 to chars / r × 1.15 — 1,000 chars at 4 read 218–287', () => {
+  it('with a ratio r: chars / (r × 1.15) to chars / (r × 0.85) — 1,000 chars at 4 read 218–294', () => {
     expect(cacheTokenInterval('a'.repeat(1000), { ratio: { chars_per_token: 4 } })).toEqual({
       low: 218,
-      high: 287,
+      high: 294,
     });
+  });
+
+  // Correction 1 (C-2): the label says ±15% on characters per token, so the high end is
+  // chars / (r × 0.85). 1,782 chars at 4 read 388–524: a floor of 520 is inside the range (near),
+  // 525 above it (below). (a) red when the high factor is put back to chars / r × 1.15 (high 512:
+  // 520 then reads below); (b) prints the interval and both verdicts.
+  it('C-2, the high end: 1,782 chars at 4 read 388–524 — near at 520, below at 525', () => {
+    const tokens = cacheTokenInterval('a'.repeat(1782), { ratio: { chars_per_token: 4 } });
+    expect([tokens, cacheVerdict(tokens, 520), cacheVerdict(tokens, 525)]).toEqual([
+      { low: 388, high: 524 },
+      'near_floor',
+      'below_floor',
+    ]);
+  });
+
+  // Correction 1 (C-2): the low end is chars / (r × 1.15), which the high-end cell does not
+  // discriminate (388 either way). 2,300 chars at 1 give a low end of 2,000 (chars / r × 0.87 gave
+  // 2,001), so a floor of 2,000 reads above. (a) red when the low factor is put back to
+  // chars / r × 0.87 (the floor then reads near); (b) prints the interval and the verdict.
+  it('C-2, the low end: 2,300 chars at 1 read from 2,000 — above at 2,000', () => {
+    const tokens = cacheTokenInterval('a'.repeat(2300), { ratio: { chars_per_token: 1 } });
+    expect([tokens.low, cacheVerdict(tokens, 2000)]).toEqual([2000, 'above_floor']);
   });
 
   // Δ13: whole token counts. At 5,116 chars, lo = 1,023.2, so every whole count in the interval is

@@ -13,8 +13,8 @@
 //   character, so the upper bound counts each such UTF-16 code unit as a token (an approximation, not
 //   a strict bound); the lower bound needs no such term: more tokens per character only raises the
 //   true count;
-// - with an author's `ratio` r (their own count of one step): `lo = chars / r × 0.87`,
-//   `hi = chars / r × 1.15`;
+// - with an author's `ratio` r (their own count of one step), taken as ±15% on characters per token:
+//   `lo = chars / (r × 1.15)`, `hi = chars / (r × 0.85)`;
 // - plus, when the host gives one, a step's `extraTokens` band (text the provider adds that counts
 //   toward its minimum — the host passes it only where it is measured, and never with a ratio, which
 //   already counts it).
@@ -42,10 +42,11 @@ export interface CacheBlock {
 export const DEFAULT_CHARS_PER_TOKEN_HIGH = 5;
 /** The default characters per token at the high end of the token count (`hi = asciiChars / 2.5 + …`). */
 export const DEFAULT_CHARS_PER_TOKEN_LOW = 2.5;
-/** An author's `--ratio` is taken as ±15%: the low end divides by 1/0.87 more, the high by 1/1.15 less. */
-const RATIO_LOW = 0.87;
-const RATIO_HIGH = 1.15;
-/** Floating-point slack for the rounding: `r × 0.87` can land a hair past a whole number. */
+/** An author's `--ratio` r is taken as ±15% on characters per token: the low end of the token count
+ *  divides by `r × 1.15`, the high end by `r × 0.85`. */
+const RATIO_PLUS = 1.15;
+const RATIO_MINUS = 0.85;
+/** Floating-point slack for the rounding: `chars / (r × 1.15)` can land a hair off a whole number. */
 const EPSILON = 1e-9;
 
 export type CacheVerdict = 'below_floor' | 'above_floor' | 'near_floor' | 'not_judged';
@@ -107,8 +108,8 @@ export function cacheTokenInterval(
   let lo: number;
   let hi: number;
   if (opts.ratio !== undefined) {
-    lo = (chars / opts.ratio.chars_per_token) * RATIO_LOW;
-    hi = (chars / opts.ratio.chars_per_token) * RATIO_HIGH;
+    lo = chars / (opts.ratio.chars_per_token * RATIO_PLUS);
+    hi = chars / (opts.ratio.chars_per_token * RATIO_MINUS);
   } else {
     let ascii = 0;
     for (let i = 0; i < chars; i += 1) if (text.charCodeAt(i) < 0x80) ascii += 1;
