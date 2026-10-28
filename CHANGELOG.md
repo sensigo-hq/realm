@@ -22,6 +22,11 @@ All notable changes to this project are documented here.
   as written in Slack (`<`, `>` and `&` are escaped); an `owner` written as a Slack mention still
   pings.
 - **`WorkflowCopyFault` is exported from `@sensigo/realm`.**
+- **Each model request `realm agent` records carries a `request_id` (issue #715).** It is a random
+  UUID that Realm mints for the request, stored with it in the step's evidence and in a failed
+  drive's `usage`. It is not the model service's own request id: Realm replaces any `request_id` a
+  provider module returns. The store TCK's `USAGE_RECORD_ROUNDTRIP` law now holds every store to
+  round-tripping it, so a store that drops a request field it does not know fails the law.
 
 ### Changed
 
@@ -83,6 +88,11 @@ engine_runnable.` The error reply of the call that attempts one such step counts
   attempt's. `realm run inspect`, `get_run_state` and the run's `Cost:` line show it. Until this
   release such a step recorded nothing (the 0.46.0 notes said so). A provider module's
   `callStepWithTools` may return the new optional `usage` list on its result.
+- **Two different model requests with the same start time and token counts are no longer taken
+  for one (issue #715).** When a drive failed, `realm agent` decided whether a request was already
+  on the step's record by its start time and token counts, so a second request that matched them
+  was not attached to the failure and its cost was lost. It now compares the request's
+  `request_id`.
 
 ## [0.48.0] — 2026-10-26
 

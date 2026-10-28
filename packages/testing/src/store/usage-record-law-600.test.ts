@@ -1,10 +1,10 @@
 // usage-record-law-600.test.ts — issue #600 PR 2 (A6, G27): the store TCK's USAGE_RECORD_ROUNDTRIP
 // law requires a store to round-trip each request fact PR 2 adds, in a step's evidence and in a
 // failed drive's usage. Green against the two stores Realm ships (InMemoryStore, JsonFileStore); red,
-// for EACH of the ten fields, against a store written here that drops that one field (the
+// for EACH of the eleven fields, against a store written here that drops that one field (the
 // `output-source-law-625.test.ts` pattern). The lifetime unit adds the tenth, `cache_auto`, an
 // object: the law compares it by deep equality, so a store that keeps its keys in another order
-// passes.
+// passes. Issue #715 (R) adds the eleventh, `request_id`, the request's identity realm mints.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: the
 // law's message, which names the field, where it was, and the test values written and read back.
@@ -24,7 +24,8 @@ const agentWf: WorkflowDefinition = {
   steps: { s: { description: 'S.', execution: 'agent', depends_on: [] } },
 };
 
-/** The ten request facts issue #600 adds to `UsageRecord` (PR 2's nine, the lifetime unit's `cache_auto`). */
+/** The eleven request fields the law holds: the ten issue #600 adds to `UsageRecord` (PR 2's nine,
+ *  the lifetime unit's `cache_auto`) and #715 (R)'s `request_id`. */
 const FIELDS = [
   'model',
   'cache_requested',
@@ -36,6 +37,7 @@ const FIELDS = [
   'endpoint',
   'cache_split_offered',
   'cache_auto',
+  'request_id',
 ] as const;
 
 /** The USAGE_RECORD_ROUNDTRIP case of the TCK, against `store`. */

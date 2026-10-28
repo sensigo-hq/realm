@@ -449,6 +449,12 @@ const USAGE_DISCLOSURE = {
         '90 uncached input tokens (measured, first request; whole prompt not reported)',
       ),
   },
+  // #715 (R): the fourth waiver — this file's own decision, named in the cell below.
+  request_id: {
+    surface: 'waived',
+    reason:
+      "No reader renders it: it exists so the driver can tell two requests apart when it decides whether a request is already on the step's record.",
+  },
 } satisfies Record<keyof UsageRecord, DisclosureRoute>;
 
 describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader, or says why not', () => {
@@ -471,7 +477,7 @@ describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader,
     }
   });
 
-  it('the registry covers every UsageRecord field, and the waiver set is exactly the three named above', () => {
+  it('the registry covers every UsageRecord field, and the waiver set is exactly the four named above', () => {
     expect(Object.keys(USAGE_DISCLOSURE).sort()).toEqual([
       'cache_auto',
       'cache_creation',
@@ -489,6 +495,7 @@ describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader,
       'output_tokens',
       'prompt_tokens',
       'provider',
+      'request_id',
       'request_index',
       'request_start',
       'uncached_input_tokens',
@@ -500,11 +507,13 @@ describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader,
     // The sibling registry above pins its waiver set; without the same assertion HERE a rendered
     // money field could be re-routed to `waived` with a plausible reason and nothing would notice —
     // the probe loop only runs probes for `rendered` entries, so the guard would fall silent about
-    // exactly the numbers it exists to guard. A fourth waiver is a decision someone makes in this
+    // exactly the numbers it exists to guard. A new waiver is a decision someone makes in this
     // file. `output_tokens` moved OUT of this set (issue #600 PR 1b / #611) — it renders now, and
     // `cache_creation` (issue #600 PR 2: the mismatch clause). PR 2 added three waivers, each naming
     // the change that would render it; caching PR P renders `provider` and `endpoint`, and leaves
-    // three: `cache_split_offered` (a precondition only) and the two per-request ordinals.
-    expect(waived).toEqual(['cache_split_offered', 'request_index', 'request_start']);
+    // three: `cache_split_offered` (a precondition only) and the two per-request ordinals. #715 (R)
+    // makes the fourth decision here: `request_id`, the request's identity, which no reader renders
+    // (its row above gives the reason).
+    expect(waived).toEqual(['cache_split_offered', 'request_id', 'request_index', 'request_start']);
   });
 });
