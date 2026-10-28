@@ -324,6 +324,23 @@ describe('the lines and verdicts (C5)', { timeout: 60_000 }, () => {
     ]);
   });
 
+  // Correction 1 (C-3): a near verdict advises `--ratio` only when it was not passed. examples/06's
+  // identify_ticket reads near at 512 with the default range, and near at 300 with --ratio 4
+  // (250–338). (a) red when the advice is printed under --ratio; (b) prints both near clauses.
+  it('C-3: the near clause names --ratio only when --ratio was not given', () => {
+    const near = (args: string[]): string => {
+      const line = cacheLines(
+        realm(['workflow', 'validate', ex('06-ticket-router'), '--provider', 'anthropic', ...args])
+          .stdout,
+      )[0]!;
+      return line.slice(line.indexOf(' — near'));
+    };
+    expect([near(['--floor', '512']), near(['--ratio', '4', '--floor', '300'])]).toEqual([
+      ' — near the floor (512, your --floor): not judged from an estimate; --ratio <chars-per-token> narrows it',
+      ' — near the floor (300, your --floor): not judged from an estimate',
+    ]);
+  });
+
   // Δ16: text outside ASCII counts up to a token a character at the high end. Break: that term
   // dropped → the high end falls under 512 and the line reads below. (a) red when the line changes;
   // (b) prints it.

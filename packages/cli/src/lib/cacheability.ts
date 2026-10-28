@@ -435,9 +435,11 @@ function verdictText(report: CacheabilityReport, layout: LayoutResult, short: bo
         ? ` — above ${head}: within the provider's own rules (realm sends no marker)`
         : ` — above ${head}: long enough to cache when the drive asks for caching`;
     default:
+      // The advice to pass --ratio only when it was not passed (correction 1, C-3).
       return short
         ? ` — near ${head}`
-        : ` — near ${head}: not judged from an estimate; --ratio <chars-per-token> narrows it`;
+        : ` — near ${head}: not judged from an estimate` +
+            (report.flags.ratio === undefined ? '; --ratio <chars-per-token> narrows it' : '');
   }
 }
 
