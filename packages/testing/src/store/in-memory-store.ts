@@ -9,6 +9,10 @@ import {
   applySettlement,
   assertSealIntegrity,
   brandClass,
+  systemClock,
+  takeReading,
+  floorAtHolder,
+  type Clock,
   type RunStore,
   type SealedBy,
   type StampSealResult,
@@ -45,13 +49,38 @@ export class InMemoryStore implements RunStore {
     'sealed_by', // issue #367 — declaration-coherence with settleStep
   ]);
 
+  /**
+   * The clock this store stamps its writes with (issue #715 (a); rule 10: an in-memory store may use
+   * any clock). What it governs: the write class — a write's `created_at` and `updated_at`, and a
+   * claim's `since` and deadline — read ONCE per `create`, `update` and `claimStep`. What it does
+   * not: instants minted outside a store, and durations. In this release of the store contract
+   * `settleStep`, `stampSeal` and every read do not use it.
+   */
+  readonly clock: Clock;
+
+  /**
+   * @param options.clock The store's clock (#715 (a), D-3); defaults to core's shared
+   *   `systemClock`. This is a defaulted AUTHORITY — it reads nothing at construction — not a
+   *   parameter default that reads a clock at the call (`now = new Date()`), which is what #715's
+   *   clock-reading lint forbids.
+   */
+  constructor(options?: { clock?: Clock }) {
+    this.clock = options?.clock ?? systemClock;
+  }
+
   async create(options: CreateRunOptions): Promise<{ run: RunRecord; created: boolean }> {
     // Idempotency: a key match applies the re-encounter policy, like JsonFileStore.
     // issue #558 PR-C: the id of the run this create SUPERSEDES, when it supersedes one — the
     // in-memory twin of JsonFileStore's `supersede()` parameter. Stays undefined when the mapped
     // run VANISHED (nothing was superseded) and on every fresh-key create.
     let supersededId: string | undefined;
+    // issue #715 (a) (M1–M4): the create's ONE reading. Unkeyed (M1): taken here, with no holder.
+    // Keyed: taken first thing in the keyed path; a create that returns the existing run (M2) has
+    // spent it; a superseding create (M3) is floored by the run it supersedes; a vanished mapped
+    // run or an unmapped key (M4) is floored by the key's newest run, if any.
+    let at: Date;
     if (options.idempotencyKey !== undefined) {
+      const r = takeReading(this.clock);
       const gk = `${options.workflowId}\0${options.idempotencyKey}`;
       const existingId = this.keyIndex.get(gk);
       if (existingId !== undefined) {
@@ -74,9 +103,19 @@ export class InMemoryStore implements RunStore {
         }
         // mapped run vanished (or superseded) → fall through to a fresh create.
       }
+      if (supersededId !== undefined) {
+        at = floorAtHolder(r, this.runs.get(supersededId)!.created_at);
+      } else {
+        at = floorAtHolder(
+          r,
+          this.newestCreatedAtForKey(options.workflowId, options.idempotencyKey),
+        );
+      }
+    } else {
+      at = takeReading(this.clock);
     }
 
-    const now = new Date().toISOString();
+    const now = at.toISOString();
     const record: RunRecord = {
       id: crypto.randomUUID(),
       workflow_id: options.workflowId,
@@ -130,6 +169,9 @@ export class InMemoryStore implements RunStore {
         retryable: false,
       });
     }
+    // issue #715 (a) (M5): the update's ONE reading, after the run is found and BEFORE the version
+    // check and the seal guard (a refused update has spent it); floored by the stored record.
+    const at = takeReading(this.clock, existing);
     if (existing.version !== record.version) {
       throw new WorkflowError('Version conflict — run was modified by another process', {
         code: 'STATE_SNAPSHOT_MISMATCH',
@@ -146,10 +188,22 @@ export class InMemoryStore implements RunStore {
       ...record,
       run_phase: deriveRunPhase(record),
       version: record.version + 1,
-      updated_at: new Date().toISOString(),
+      updated_at: at.toISOString(),
     };
     this.runs.set(updated.id, updated);
     return updated;
+  }
+
+  /** issue #715 (a) (M4): the newest PARSEABLE `created_at` among this store's runs under the key. */
+  private newestCreatedAtForKey(workflowId: string, key: string): string | undefined {
+    let newest: { ms: number; stamp: string } | undefined;
+    for (const run of this.runs.values()) {
+      if (run.workflow_id !== workflowId || run.idempotency_key !== key) continue;
+      const ms = Date.parse(run.created_at);
+      if (!Number.isFinite(ms)) continue;
+      if (newest === undefined || ms > newest.ms) newest = { ms, stamp: run.created_at };
+    }
+    return newest?.stamp;
   }
 
   async claimStep(
@@ -179,6 +233,9 @@ export class InMemoryStore implements RunStore {
         retryable: false,
       });
     }
+    // issue #715 (a) (M6): the claim's ONE reading, after the run is found and BEFORE both guards;
+    // `takeReading` is synchronous, so the single-owner stretch above stays unbroken.
+    const at = takeReading(this.clock, run);
     if (isStepSettledOrInFlight(run, stepName)) {
       throw new WorkflowError(`Step '${stepName}' is already claimed or done`, {
         code: 'STATE_STEP_ALREADY_CLAIMED',
@@ -198,7 +255,7 @@ export class InMemoryStore implements RunStore {
     }
     // Per-claim liveness clock (issue #101) — mirrors JsonFileStore.claimStep: stamp claims[S]
     // atomically with the in_progress add (OVERWRITE, so a missed settle-site delete self-heals).
-    const deadline = computeClaimDeadline(definition, stepName, new Date());
+    const deadline = computeClaimDeadline(definition, stepName, at);
     // issue #279 (increment 1, PR-A): mint an acquirer-minted fencing token alongside the
     // deadline, in the SAME synchronous stretch — dormant until PR-B's settleStep migration.
     const token = crypto.randomUUID();
@@ -217,13 +274,13 @@ export class InMemoryStore implements RunStore {
         [stepName]: {
           deadline,
           token,
-          since: new Date().toISOString(),
+          since: at.toISOString(),
           ...(claimant !== undefined ? { holder: claimant } : {}),
         },
       },
       run_phase: deriveRunPhase(run),
       version: run.version + 1,
-      updated_at: new Date().toISOString(),
+      updated_at: at.toISOString(),
     };
     this.runs.set(updated.id, updated);
     return updated;
