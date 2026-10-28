@@ -210,7 +210,7 @@ describe(
     it("C-6.1 / F-1: the parser's own messages, and which option a flag takes as its value", () => {
       claim(
         WORKFLOW_PAGE,
-        "A flag given last, with nothing after it, and a `--provider` other than `anthropic` or `openai` (in lower case) get the command line parser's own message instead, also on standard error with exit 1 and nothing on standard output: `error: option '--floor <tokens>' argument missing`, or `error: option '--provider <name>' argument 'foo' is invalid. --provider must be openai or anthropic.` A flag followed by an option that takes no value takes that option as its value and gets the line above: `--floor --json` prints `Error: --floor must be a whole number of tokens, 1 or more (got '--json').` With a path given, a flag followed by an option that takes a value is read by the command line parser instead: `--floor --ratio 4` and `--floor --provider anthropic` print `error: too many arguments for 'validate'. Expected 1 argument but got 2: …` (`register` and `watch` name themselves; the path and the value follow). `--provider --floor 5` prints `error: option '--provider <name>' argument '--floor' is invalid. --provider must be openai or anthropic.` Each goes to standard error with exit 1 and nothing on standard output.",
+        "A flag given last, with nothing after it, and a `--provider` other than `anthropic` or `openai` (in lower case) get the command line parser's own message instead, also on standard error with exit 1 and nothing on standard output: `error: option '--floor <tokens>' argument missing`, or `error: option '--provider <name>' argument 'foo' is invalid. --provider must be openai or anthropic.` A flag followed by an option that takes no value takes that option as its value. For `--floor` and `--ratio` that gets the `Error:` line above: `--floor --json` prints `Error: --floor must be a whole number of tokens, 1 or more (got '--json').` For `--provider` it gets the parser's message: `--provider --json` prints `error: option '--provider <name>' argument '--json' is invalid. --provider must be openai or anthropic.` `--model` has no check on its value: `--provider anthropic --model --json` reads `--json` as the model id, prints no error and leaves `--json` unset, so the output is text, not JSON; `--model --strict` leaves `--strict` unset, so a warning no longer fails the run. With a path given, a flag followed by an option that takes a value is read by the command line parser instead: `--floor --ratio 4` and `--floor --provider anthropic` print `error: too many arguments for 'validate'. Expected 1 argument but got 2: …` (`register` and `watch` name themselves; the path and the value follow). `--provider --floor 5` prints `error: option '--provider <name>' argument '--floor' is invalid. --provider must be openai or anthropic.` Each goes to standard error with exit 1 and nothing on standard output.",
       );
       expect(
         read(WORKFLOW_PAGE),
@@ -251,6 +251,67 @@ describe(
         expect([r.code, r.stdout], shown).toEqual([1, '']);
         expect(r.first.startsWith(prefixes[i] ?? '\0'), shown).toBe(true);
       });
+      // Correction 3 (I-1): which option a flag takes as its value, flag by flag. `--floor` and
+      // `--ratio` get realm's `Error:` line; `--provider` the parser's message, on all three commands;
+      // `--model` has no check on its value, so `--model --json` leaves `--json` unset (text, not
+      // JSON), and `--model --strict` leaves `--strict` unset, so a warning no longer fails the run:
+      // the contrast is `--strict` alone, exit 1 on the same fixture (its warning is on standard
+      // error). (a) red when the page keeps the old sentence, `--model` starts refusing a value that
+      // begins with `-`, `--json` or `--strict` is set by `--model <flag>`, the fixture stops warning,
+      // or a message changes; (b) prints each run's exit code and the first line of its standard
+      // output and standard error.
+      const firstLine = (s: string): string => hide(s).trim().split('\n')[0] ?? '';
+      const PROVIDER_JSON =
+        "error: option '--provider <name>' argument '--json' is invalid. --provider must be openai or anthropic.";
+      const valued = [
+        realm([...v, '--ratio', '--json']),
+        realm([...v, '--provider', '--json']),
+        realm(['workflow', 'register', ex('01-code-reviewer'), '--provider', '--json']),
+        realm(['workflow', 'watch', ex('01-code-reviewer'), '--provider', '--json']),
+      ];
+      expect(valued.map((r) => [r.code, r.stdout, firstLine(r.stderr)])).toEqual([
+        [1, '', "Error: --ratio must be a number of characters per token above 0 (got '--json')."],
+        [1, '', PROVIDER_JSON],
+        [1, '', PROVIDER_JSON],
+        [1, '', PROVIDER_JSON],
+      ]);
+      const asModel = realm([...v, '--provider', 'anthropic', '--model', '--json']);
+      let parses = true;
+      try {
+        JSON.parse(asModel.stdout);
+      } catch {
+        parses = false;
+      }
+      const retried = project({ workflow: oneStep('retried', '    retry: { max_attempts: 3 }\n') });
+      const INERT = "⚠ Step 'retried': 'retry' is inert on execution: 'agent' steps";
+      const gate = [
+        realm(['workflow', 'validate', retried, '--strict']),
+        realm(['workflow', 'validate', retried, '--provider', 'anthropic', '--model', '--strict']),
+      ].map((r) => [r.code, firstLine(r.stdout), firstLine(r.stderr).startsWith(INERT)]);
+      expect({
+        model: [asModel.code, firstLine(asModel.stdout), parses, asModel.stderr],
+        gate,
+      }).toEqual({
+        model: [0, 'Valid: code-reviewer v1 (3 steps)', false, ''],
+        gate: [
+          [1, 'Valid: retried v1 (1 step) — 1 warning; failing due to --strict', true],
+          [0, 'Valid: retried v1 (1 step)', true],
+        ],
+      });
+      // Correction 3 (I-6): `register` and `watch` name themselves in the parser's "too many
+      // arguments", and exit 1 before anything is registered or watched. (a) red when either stops
+      // naming itself or exits 0; (b) prints the exit code and the first line of standard error.
+      for (const c of ['register', 'watch']) {
+        const r = realm(['workflow', c, ex('01-code-reviewer'), '--floor', '--ratio', '4']);
+        const shown = `${c}: exit ${String(r.code)}: ${firstLine(r.stderr)}`;
+        expect([r.code, r.stdout], shown).toEqual([1, '']);
+        expect(
+          firstLine(r.stderr).startsWith(
+            `error: too many arguments for '${c}'. Expected 1 argument but got 2:`,
+          ),
+          shown,
+        ).toBe(true);
+      }
     });
 
     // Correction 1 (C-6.2): a log hides the provider word and the model id when an environment value
