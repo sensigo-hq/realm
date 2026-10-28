@@ -312,4 +312,25 @@ describe('the size and the sharing (C1.1; Δ12)', () => {
       `characters only ${JSON.stringify(cacheTokenInterval(text))}, step ${JSON.stringify(a.prefix.tokens)}`,
     ).toBe(true);
   });
+
+  // Correction 3 (I-8): a whole share's `tokens` equals the step's `prefix.tokens` and is its own
+  // object, so a caller that changes one does not change the other. (a) red when the two share an
+  // object (the copy removed); (b) prints the two intervals before and after.
+  it("I-8: a whole share's tokens are a copy of the step's interval, not the same object", () => {
+    const blocks = [tools(SCHEMA_A, false), system(undefined, SCHEMA_A), MESSAGES];
+    const [a] = describeCacheability([
+      { step: 'a', blocks },
+      { step: 'b', blocks },
+    ]);
+    const share = a!.shares_with[0]!;
+    const before = { share: { ...share.tokens }, prefix: { ...a!.prefix.tokens } };
+    share.tokens.low += 1;
+    expect({
+      before,
+      after: { share: { ...share.tokens }, prefix: { ...a!.prefix.tokens } },
+    }).toEqual({
+      before: { share: before.prefix, prefix: before.prefix },
+      after: { share: { ...before.prefix, low: before.prefix.low + 1 }, prefix: before.prefix },
+    });
+  });
 });

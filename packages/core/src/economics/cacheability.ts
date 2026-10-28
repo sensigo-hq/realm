@@ -216,7 +216,7 @@ export function describeCacheability(
           // A whole shared fixed part IS the step's fixed part: the same interval, band included.
           tokens:
             divergence === null
-              ? tokens
+              ? { ...tokens }
               : cacheTokenInterval(
                   own.text.slice(0, p),
                   opts.ratio !== undefined ? { ratio: opts.ratio } : {},
