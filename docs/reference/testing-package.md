@@ -386,7 +386,7 @@ Build a new adapter and store for each case, as above. Several cases delete or d
 
 | Contract                      | For a store that implements                  | Laws | Cases with Realm's own store        |
 | ----------------------------- | -------------------------------------------- | ---- | ----------------------------------- |
-| `runStoreFidelityContract`    | `RunStore`                                   | 6    | 13, with `InMemoryStore`            |
+| `runStoreFidelityContract`    | `RunStore`                                   | 10   | 18, with `InMemoryStore`            |
 | `settlementContract`          | `RunStore` with `settleStep`                 | 56   | 146, with `InMemoryStore` (below)   |
 | `perRunArtifactStoreContract` | `PerRunArtifactStore`                        | 7    | 7, with `FailedAttemptStore`        |
 | `fencedTraceBufferContract`   | `TraceBufferStore` with the fenced functions | 12   | 74, with `InMemoryTraceBufferStore` |

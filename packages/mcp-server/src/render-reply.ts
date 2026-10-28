@@ -17,13 +17,16 @@ import {
   doorWithholdsAnswers,
   generateSchemaSkeleton,
   libraryCannotRunWords,
+  listWords,
   narrowForDoor,
+  quotedNames,
   raceClausesOf,
   withFullStop,
   answersRowOf,
   endsWithCutSentence,
   AUTHOR_TEXT_LABEL,
   DOOR_SERVES,
+  NAMES_SHOWN,
   PROGRESS_VERBS,
   TERMINAL_PHASES,
   WAY_PARTIES,
@@ -182,6 +185,12 @@ export type McpEnvelope = Omit<
   next_actions: McpNextAction[];
   /** #872 (b1): how many `next_actions` entries the reply ceiling left out (an exact count). */
   next_actions_more?: number;
+  /** #872 (b1) correction 1 (H6): how many `defaulted_steps` the reply ceiling left out. */
+  defaulted_steps_more?: number;
+  /** #872 (b1) correction 1 (H6): how many `guards` the reply ceiling left out. */
+  guards_more?: number;
+  /** #872 (b1) correction 1 (H6): how many `chained_auto_steps` the reply ceiling left out. */
+  chained_auto_steps_more?: number;
   agent_action?: AgentAction;
   /** issue #729 PR-0 (A-1): reading and ending the run — never counted as a next step. */
   also?: McpAlsoEntry[];
@@ -193,7 +202,8 @@ export type McpEnvelope = Omit<
   until?: string;
   /** issue #729 PR-0 (T-1): the step a stop is about, when not the call's own. */
   error?: { about: string };
-  blocked_reason?: { eligible_steps: string[]; suggestion?: string };
+  /** #872 (b1) correction 1 (H6): at most ten `eligible_steps`; `eligible_steps_more` counts the rest. */
+  blocked_reason?: { eligible_steps: string[]; eligible_steps_more?: number; suggestion?: string };
   gate?: GateInfo;
   /** #627 W (W-e1): set on the reply Realm held back — repeating the call is never the remedy. */
   retryable?: false;
@@ -277,7 +287,8 @@ const OPENER_PASSES_TOKEN =
 /** decision C207: where one advance call stops, said after several owed items. */
 const OWED_UNTIL = ' until a step opens a question, fails or ends the run';
 
-const quoteList = (names: readonly string[]): string => names.map((n) => `'${n}'`).join(', ');
+/** #872 (b1) correction 1 (H2): names in a sentence — at most ten, then how many more (core's H1). */
+const quoteList = (names: readonly string[]): string => quotedNames(names, NAMES_SHOWN);
 
 /** The owed work of an `advance` way, as every line names it: a due expiry first, then each step. */
 function owedItems(way: WayOf<'advance'>): string[] {
@@ -372,8 +383,9 @@ export const MCP_WAYS: WayRenderer<McpNextAction, McpHost> = {
     const one = items.length === 1;
     return {
       instruction,
-      human_readable: `Call advance_run to run ${one ? 'the step' : 'the steps'} the engine owes: ${items.join(', ')}. It runs ${one ? 'it' : 'them'} with this server's extensions and environment${one ? '' : OWED_UNTIL}.`,
-      orientation: `Run is active. Engine work is owed: ${items.join(', ')}.`,
+      // #872 (b1) correction 1 (H2): the owed items in words — at most ten, then how many more.
+      human_readable: `Call advance_run to run ${one ? 'the step' : 'the steps'} the engine owes: ${listWords(items, NAMES_SHOWN)}. It runs ${one ? 'it' : 'them'} with this server's extensions and environment${one ? '' : OWED_UNTIL}.`,
+      orientation: `Run is active. Engine work is owed: ${listWords(items, NAMES_SHOWN)}.`,
     };
   },
   inspect: (way) => ({
@@ -623,8 +635,12 @@ function untilOf(narrowed: Narrowed | undefined): string | undefined {
 
 // ─── The words of what comes next (Table rows 20–29; decisions C34, C51, C57, C94, C205) ────────
 
-/** #872 (a) correction 1 (C1): where the full list is — this door's words (the renderer law). */
-const CAPABILITY_LIST_POINTER = 'get_run_state lists each one in engine_runnable.';
+/**
+ * #872 (a) correction 1 (C1): where to read the steps — this door's words (the renderer law). #872
+ * (b1) correction 1 (C5): it points, never claiming every entry — the reply ceiling can cut
+ * `engine_runnable` (with its exact `engine_runnable_more`).
+ */
+const CAPABILITY_LIST_POINTER = 'See engine_runnable in get_run_state.';
 
 /**
  * #872 (a) correction 1 (C1): the MCP door's ONE producer of the capability sentence. No step that
@@ -668,6 +684,67 @@ function refusedStepWay(entry: Unavailable & { code: 'refused_before_claim' }): 
     : 'the engine gives it no input, so correct its input_schema and register the workflow again';
 }
 
+/** #872 (b1) correction 1 (H3): at most this many refusal groups (clauses, ways) are said; the rest are counted. */
+const REFUSAL_GROUPS_SHOWN = 10;
+
+/** H3: what stands for a step's id where its refusal's own producer wrote it (never a step id). */
+const STEP_SENTINEL = '\u0000';
+
+/**
+ * #872 (b1) correction 1 (H3): the group key of a step refused before its claim — from its
+ * structured facts, never a replace-all of its id (a literal that equals an id stays). A
+ * precondition: its check, the failed expression and the value it read. Any other check: its check
+ * and its refusal text with ONLY its producer's own step-id insertion masked — an input refusal's
+ * lead `Invalid input for step '<id>'` (core's `validateInputSchema`, kept by the mapped re-mint);
+ * a trust refusal's finding words name no step (`buildTrustRefusal`'s `finding` surface).
+ */
+function refusalGroupKey(entry: Unavailable & { code: 'refused_before_claim' }): string {
+  const { check, refusal, precondition, step } = entry.facts;
+  if (check === 'precondition' && precondition !== undefined) {
+    return JSON.stringify([check, precondition.expression, precondition.value]);
+  }
+  const lead = (id: string): string => `Invalid input for step '${id}'`;
+  const masked =
+    check === 'input_schema' && refusal.startsWith(lead(step))
+      ? `${lead(STEP_SENTINEL)}${refusal.slice(lead(step).length)}`
+      : refusal;
+  return JSON.stringify([check, masked]);
+}
+
+/**
+ * #872 (b1) correction 1 (H3): the steps refused before their claim, grouped by
+ * {@link refusalGroupKey} in first-entry order.
+ */
+function refusalGroupsOf(
+  entries: readonly Unavailable[],
+): Array<Array<Unavailable & { code: 'refused_before_claim' }>> {
+  const groups = new Map<string, Array<Unavailable & { code: 'refused_before_claim' }>>();
+  for (const entry of entries) {
+    if (entry.code !== 'refused_before_claim') continue;
+    const key = refusalGroupKey(entry);
+    const group = groups.get(key);
+    if (group === undefined) groups.set(key, [entry]);
+    else group.push(entry);
+  }
+  return [...groups.values()];
+}
+
+/**
+ * H3: one group's sentence — its first entry's clause without its full stop, then the other steps
+ * refused the same way (`(also 'b', 'c' and 97 more)`), then one full stop. One entry: its clause.
+ */
+function refusalGroupWords(
+  group: ReadonlyArray<Unavailable & { code: 'refused_before_claim' }>,
+): string {
+  const clause = libraryCannotRunWords(group[0]!) ?? '';
+  if (group.length === 1) return withFullStop(clause);
+  const bare = clause.endsWith('.') ? clause.slice(0, -1) : clause;
+  return `${bare} (also ${quotedNames(
+    group.slice(1).map((entry) => entry.facts.step),
+    2,
+  )}).`;
+}
+
 /** When the run cannot go on until its workflow is corrected (C44, C51, C82): core's one predicate. */
 function cannotGoOnWithRefusal(narrowed: Narrowed | undefined, ended: boolean): boolean {
   return !ended && narrowed !== undefined && cannotGoOnUntilCorrected(narrowed);
@@ -686,7 +763,28 @@ function wayOutWords(narrowed: Narrowed): string {
   if (refused.every((u) => u.facts.check !== 'input_schema')) {
     return 'Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.';
   }
-  const ways = refused.map((u) => `for '${u.facts.step}', ${refusedStepWay(u)}`).join('; ');
+  // #872 (b1) correction 1 (H3): steps whose way has the same words share it — at most ten ways, in
+  // first-entry order, each naming three steps and how many more; the steps of any further way are
+  // counted, with where to read them.
+  const byWay = new Map<string, string[]>();
+  for (const u of refused) {
+    const way = refusedStepWay(u);
+    const steps = byWay.get(way);
+    if (steps === undefined) byWay.set(way, [u.facts.step]);
+    else steps.push(u.facts.step);
+  }
+  const groups = [...byWay.entries()];
+  const later = groups.slice(REFUSAL_GROUPS_SHOWN).flatMap(([, steps]) => steps);
+  const ways = [
+    ...groups
+      .slice(0, REFUSAL_GROUPS_SHOWN)
+      .map(([way, steps]) => `for ${quotedNames(steps, 3)}, ${way}`),
+    ...(later.length > 0
+      ? [
+          `for ${later.length} more ${later.length === 1 ? 'step' : 'steps'}, see engine_runnable and agent_refused in get_run_state`,
+        ]
+      : []),
+  ].join('; ');
   const newRun = refused.some(
     (u) => u.no_remedy?.cause === 'operator_command_untyped' && u.no_remedy.command === 'start',
   );
@@ -733,12 +831,16 @@ function nextSentence(narrowed: Narrowed | undefined, ended: boolean): string {
         : items.length === 1
           ? ''
           : `; it runs them${OWED_UNTIL}`;
-    sentence += ` Owed to the engine: ${items.join(', ')} — call advance_run${runs}.`;
+    sentence += ` Owed to the engine: ${listWords(items, NAMES_SHOWN)} — call advance_run${runs}.`;
   }
   // #872 (a): the steps that cannot run for a capability are said once, in this door's one
-  // capability sentence, in the place of the first of them (one step: its own clause); a step
-  // refused before its claim keeps its own clause where it is (C36, C41, C53).
+  // capability sentence, in the place of the first of them (one step: its own clause). #872 (b1)
+  // correction 1 (H3): steps refused before their claim the same way share one clause, said at its
+  // first step's place — at most ten clauses; the steps of any further ones are counted in one
+  // sentence, at the place of the first of them.
   const cannotRun = cannotRunEntries(narrowed);
+  const groups = refusalGroupsOf(cannotRun);
+  const groupAt = new Map<Unavailable, number>(groups.map((group, i) => [group[0]!, i]));
   let capabilitySaid = false;
   for (const entry of cannotRun) {
     if (entry.code === 'capability_missing') {
@@ -746,8 +848,17 @@ function nextSentence(narrowed: Narrowed | undefined, ended: boolean): string {
       capabilitySaid = true;
       continue;
     }
-    const clause = libraryCannotRunWords(entry);
-    if (clause !== undefined) sentence += ` ${withFullStop(clause)}`;
+    const at = groupAt.get(entry);
+    if (at === undefined || at > REFUSAL_GROUPS_SHOWN) continue;
+    if (at < REFUSAL_GROUPS_SHOWN) {
+      sentence += ` ${refusalGroupWords(groups[at]!)}`;
+      continue;
+    }
+    const later = groups.slice(REFUSAL_GROUPS_SHOWN).flatMap((group) => group);
+    sentence += ` ${later.length} more ${later.length === 1 ? 'step' : 'steps'} cannot run: ${quotedNames(
+      later.map((u) => u.facts.step),
+      3,
+    )}. See engine_runnable and agent_refused in get_run_state.`;
   }
   if (cannotGoOnWithRefusal(narrowed, ended) && narrowed !== undefined) {
     sentence += ` ${wayOutWords(narrowed)}`;
@@ -1017,8 +1128,12 @@ export function renderReply(reply: EngineReply, hostIn: McpHost): RenderedReply 
     ...(error?.about !== undefined ? { error: { about: error.about } } : {}),
     ...(blocked_reason !== undefined
       ? {
+          // #872 (b1) correction 1 (H6): at most ten eligible steps, then the exact count left out.
           blocked_reason: {
-            eligible_steps: blocked_reason.eligible_steps,
+            eligible_steps: blocked_reason.eligible_steps.slice(0, NAMES_SHOWN),
+            ...(blocked_reason.eligible_steps.length > NAMES_SHOWN
+              ? { eligible_steps_more: blocked_reason.eligible_steps.length - NAMES_SHOWN }
+              : {}),
             suggestion: suggestionOf(reply, progress, narrowed),
           },
         }
@@ -1346,6 +1461,10 @@ export const MCP_ENVELOPE_ROWS = {
   settled_by_default: { class: 'fact' },
   defaulted_steps: { class: 'fact' },
   guards: { class: 'fact' },
+  // #872 (b1) correction 1 (H6): counts the reply ceiling left out (numbers: no F5 producer).
+  defaulted_steps_more: { class: 'fact' },
+  guards_more: { class: 'fact' },
+  chained_auto_steps_more: { class: 'fact' },
   ended_by: { class: { nested: { arm: 'fact', step: 'fact', reason: 'bounded' } } },
   stopped_step: { class: 'fact' },
   answer_recorded: { class: 'fact' },
@@ -1363,7 +1482,11 @@ export const MCP_ENVELOPE_ROWS = {
     class: 'fact',
     route: { mcp: 'rendered', into: ['error', 'context_hint', 'error_details'] },
   },
-  blocked_reason: { class: { nested: { eligible_steps: 'fact', suggestion: 'bounded' } } },
+  blocked_reason: {
+    class: {
+      nested: { eligible_steps: 'fact', eligible_steps_more: 'fact', suggestion: 'bounded' },
+    },
+  },
   gate: { class: { nested: GATE_INFO_TABLE } },
 } as const satisfies Record<keyof McpEnvelope, EnvelopeRow>;
 
@@ -1418,6 +1541,12 @@ export const REPLY_CEILING_CHARS = 40_000;
  * an earlier reply.
  */
 export interface ReplyPlan {
+  /**
+   * #872 (b1) correction 1 (C3): the plan's own keys — every part's key (list and omit), every list
+   * part's `moreKey`, and every key its `marks` set. The overflow line's field arm never names one:
+   * the plan cuts it.
+   */
+  readonly keys: readonly string[];
   next(
     reply: Readonly<Record<string, unknown>>,
     shown: Readonly<Record<string, unknown>>,
@@ -1428,7 +1557,8 @@ export interface ReplyPlan {
 /**
  * One part of a plan: a list (an array, or a map keyed by ids) shortened to its first items, with the
  * exact count of what it left out in `moreKey` (and, for a list read page by page, the keys `marks`
- * sets from the kept ids); or a field replaced whole by `omitted` — one cut, never halved.
+ * sets from the kept ids, declared in `markKeys`); or a field replaced whole by `omitted` — one cut,
+ * never halved.
  */
 export type PlanPart =
   | {
@@ -1436,6 +1566,8 @@ export type PlanPart =
       key: string;
       moreKey: string;
       marks?: (keptIds: readonly string[]) => Record<string, unknown>;
+      /** correction 1 (C3): the keys `marks` sets — the plan's own keys. */
+      markKeys?: readonly string[];
     }
   | { kind: 'omit'; key: string; omitted: (raw: unknown) => Record<string, unknown> };
 
@@ -1470,13 +1602,20 @@ function idsOf(list: unknown, k: number): string[] {
  * #872 (b1): a plan over `parts`, in their order — the composer's fit loop calls `next` until the
  * reply fits or it returns `undefined`. Phase 1: the first part not yet cut whose CUTTABLE size (its
  * size in place minus its floor's — one item; for an omitted field, minus the omitted form's) can
- * close the gap with its own marker, a list cut by halving from its size until the shed covers that
- * (floor one item). Phase 2, when no part can close it alone: the first part not yet cut, to its
- * floor. A cut part is never cut again (its marker is on the reply), so a reply takes at most one
- * walk per part after the first.
+ * close the gap with its own marker; a list keeps the largest count that fits — correction 1 (C2):
+ * the largest k in [1, n − 1] whose shed covers the gap and its marker, found by a binary search
+ * (the shed does not grow with k; the marker moves by a few characters with its digits, so the
+ * search is followed by a step down while the test fails and a step up while the next count still
+ * passes). Phase 2, when no part can close it alone: the first part not yet cut, to its floor. A cut
+ * part is never cut again (its marker is on the reply), so a reply takes at most one walk per part
+ * after the first.
  */
 export function replyPlanOf(parts: readonly PlanPart[]): ReplyPlan {
+  const keys = parts.flatMap((part) =>
+    part.kind === 'omit' ? [part.key] : [part.key, part.moreKey, ...(part.markKeys ?? [])],
+  );
   return {
+    keys,
     next(reply, shown, over) {
       const open = parts.filter((part) => {
         if (!(part.key in reply) || !(part.key in shown)) return false;
@@ -1523,11 +1662,20 @@ export function replyPlanOf(parts: readonly PlanPart[]): ReplyPlan {
         const n = countOf(reply[part.key])!;
         const whole = sizeInPlace(shown[part.key], 1);
         const shedAt = (k: number): number => whole - sizeInPlace(headOf(shown[part.key], k), 1);
-        if (shedAt(1) < over + markerOf(part, n, 1)) continue;
-        for (let k = Math.max(1, Math.floor(n / 2)); ; k = Math.max(1, Math.floor(k / 2))) {
-          if (shedAt(k) >= over + markerOf(part, n, k)) return cutOf(part, k);
-          if (k === 1) break;
+        const fits = (k: number): boolean => shedAt(k) >= over + markerOf(part, n, k);
+        if (!fits(1)) continue;
+        // C2: the largest count that fits.
+        let lo = 1;
+        let hi = n - 1;
+        while (lo < hi) {
+          const mid = Math.ceil((lo + hi) / 2);
+          if (fits(mid)) lo = mid;
+          else hi = mid - 1;
         }
+        let k = lo;
+        while (k > 1 && !fits(k)) k -= 1;
+        while (k + 1 <= n - 1 && fits(k + 1)) k += 1;
+        return cutOf(part, k);
       }
       // Phase 2: the first part not yet cut that has something to shed, to its floor.
       for (const part of open) {
@@ -1541,8 +1689,16 @@ export function replyPlanOf(parts: readonly PlanPart[]): ReplyPlan {
   };
 }
 
-/** #872 (b1): the envelope's plan — `next_actions` beyond the first, with the exact count. */
+/**
+ * #872 (b1): the envelope's plan. Correction 1 (H6): the lists that grow with the run come first —
+ * `defaulted_steps` (the run-completing reply), `guards` (every guard one write settles),
+ * `chained_auto_steps` (every step one call's chain ran) — then `next_actions` beyond the first; each
+ * with its exact count.
+ */
 export const ENVELOPE_PLAN: ReplyPlan = replyPlanOf([
+  { kind: 'list', key: 'defaulted_steps', moreKey: 'defaulted_steps_more' },
+  { kind: 'list', key: 'guards', moreKey: 'guards_more' },
+  { kind: 'list', key: 'chained_auto_steps', moreKey: 'chained_auto_steps_more' },
   { kind: 'list', key: 'next_actions', moreKey: 'next_actions_more' },
 ]);
 
@@ -1552,38 +1708,68 @@ function countWords(n: number): string {
 }
 
 /**
- * #872 (b1): the head fields one of which can alone keep a reply past the ceiling, in the order the
- * overflow line names them — never cut (a step's own prompt is never cut; caching's prefix relies on
- * it), so the line names the one that does it.
+ * #872 (b1) correction 1 (C3): the part of a planned reply that alone keeps it past the ceiling —
+ * every top-level key of the walked reply except the plan's own keys, and, when `next_actions` is a
+ * list of the plan, each field of its first entry (never cut) as `next_actions[0].<field>`. Each is
+ * measured in place (depth 1; a first entry's field, depth 3). The LARGEST part at or over the
+ * ceiling, the first in key order on a tie; `undefined` when none is.
  */
-function headFieldOver(
+function fieldOver(
   shown: Readonly<Record<string, unknown>>,
+  plan: ReplyPlan,
 ): { field: string; size: number } | undefined {
-  const first = Array.isArray(shown['next_actions'])
-    ? (shown['next_actions'][0] as Record<string, unknown> | undefined)
-    : undefined;
-  const fields: Array<[string, unknown, number]> = [
-    ['next_actions[0].prompt', first?.['prompt'], 3],
-    ['next_actions[0].input_schema', first?.['input_schema'], 3],
-    ['gate', shown['gate'], 1],
-  ];
-  for (const [field, value, depth] of fields) {
-    if (value === undefined) continue;
+  const own = new Set(plan.keys);
+  let best: { field: string; size: number } | undefined;
+  // A key whose value is `undefined` is not in the serialized reply: never a part.
+  const consider = (field: string, value: unknown, depth: number): void => {
+    if (value === undefined) return;
     const size = sizeInPlace(value, depth);
-    if (size >= REPLY_CEILING_CHARS) return { field, size };
+    if (size >= REPLY_CEILING_CHARS && (best === undefined || size > best.size)) {
+      best = { field, size };
+    }
+  };
+  for (const [key, value] of Object.entries(shown)) {
+    if (!own.has(key)) {
+      consider(key, value, 1);
+      continue;
+    }
+    const first = key === 'next_actions' && Array.isArray(value) ? value[0] : undefined;
+    if (first !== null && typeof first === 'object') {
+      for (const [field, part] of Object.entries(first as Record<string, unknown>)) {
+        consider(`next_actions[0].${field}`, part, 3);
+      }
+    }
   }
-  return undefined;
+  return best;
 }
 
-/** #872 (b1): the overflow line — a head field alone, or every list at its floor. */
-export function overflowLine(
-  size: number,
-  cause: { field: string; size: number } | { floor: number },
-): string {
-  const lead = `This reply was ${countWords(size)} characters before this line, past the ${countWords(REPLY_CEILING_CHARS)}-character ceiling`;
-  return 'field' in cause
-    ? `${lead}: ${cause.field} alone is ${countWords(cause.size)}. No list was shortened for it.`
-    : `${lead}; shortening every list to one item would still leave ${countWords(cause.floor)}. No list was shortened for it; tell the user.`;
+/** #872 (b1) correction 1 (C3): why a reply leaves over the ceiling — one arm per reply. */
+export type OverflowCause =
+  | { arm: 'text' }
+  | { arm: 'guard'; wayOut?: string }
+  | { arm: 'field'; field: string; size: number }
+  | { arm: 'floor'; floor: number };
+
+/**
+ * #872 (b1): the overflow line. Correction 1 (C3), its four arms, each true of its reply: a text
+ * reply (sent whole); a reply with no plan (nothing in it is shortened, with the tool's own way out
+ * when it passes one); a part no plan cuts, alone over the ceiling (named, with its size); every
+ * part a plan can cut at its floor and still over (what that would leave).
+ */
+export function overflowLine(size: number, cause: OverflowCause): string {
+  const ceiling = `past the ${countWords(REPLY_CEILING_CHARS)}-character ceiling`;
+  if (cause.arm === 'text') {
+    return `This reply was ${countWords(size)} characters, ${ceiling}; it is sent whole.`;
+  }
+  const lead = `This reply was ${countWords(size)} characters before this line, ${ceiling}`;
+  switch (cause.arm) {
+    case 'guard':
+      return `${lead}; nothing in this reply is shortened.${cause.wayOut ?? ''}`;
+    case 'field':
+      return `${lead}: ${cause.field} alone is ${countWords(cause.size)}. No list was shortened for it.`;
+    case 'floor':
+      return `${lead}; cutting everything this reply can cut would still leave ${countWords(cause.floor)}. Nothing was cut; tell the user.`;
+  }
 }
 
 /**
@@ -1592,11 +1778,14 @@ export function overflowLine(
  * person (`audience: ["user"]`) with an operator's commands. The person block is read FIRST, from
  * the reply as given, and is emitted as its own block: it holds facts (commands), never a value.
  *
- * #872 (b1), the one composer law: the agent's text is kept at or under {@link REPLY_CEILING_CHARS}.
- * Over it, the reply's plan (`plan`, else the one it carries under {@link REPLY_PLAN}) cuts copies
- * of it until it fits; every key the plan does not cut leaves as the tool set it. When no plan can
- * make it fit — a head field alone over the ceiling, every list at its floor, or no plan — the
- * UNCUT reply leaves with the overflow line as its first warning (a text reply: its first line).
+ * #872 (b1), the one composer law: the agent's text is kept at or under {@link REPLY_CEILING_CHARS}
+ * when shortening its lists can make it fit. Over it, the reply's plan (`plan`, else the one it
+ * carries under {@link REPLY_PLAN}) cuts copies of it until it fits; every key the plan does not cut
+ * leaves as the tool set it. Correction 1 (C3): when nothing can make it fit — no plan, a part no
+ * plan cuts alone over the ceiling, or every planned part at its floor — the UNCUT reply leaves with
+ * the overflow line as the first item of `warnings`, its first key ({@link overflowLine}'s arms;
+ * `guardWayOut` is a plan-less tool's own way out, appended to its line). A text reply: its first
+ * line.
  *
  * A string reply (a tool's plain-text error) is disclosed with every tier and sent as text; it has
  * no field to carry a receipt.
@@ -1605,6 +1794,7 @@ export function toolContentOf(
   reply: string | WithPersonBlock<Record<string, unknown>> | WithPersonBlock<McpEnvelope>,
   disclosure: ToolDisclosure,
   plan?: ReplyPlan,
+  guardWayOut?: string,
 ): ToolResult {
   if (typeof reply === 'string') {
     const text = disclose(reply, disclosure.set, 'all').text;
@@ -1614,7 +1804,7 @@ export function toolContentOf(
           type: 'text' as const,
           text:
             text.length > REPLY_CEILING_CHARS
-              ? `${overflowLine(text.length, { floor: text.length })}\n${text}`
+              ? `${overflowLine(text.length, { arm: 'text' })}\n${text}`
               : text,
         },
       ],
@@ -1635,6 +1825,7 @@ export function toolContentOf(
       text.length,
       walk,
       plan ?? reply[REPLY_PLAN],
+      guardWayOut,
     );
   }
   return {
@@ -1648,8 +1839,21 @@ export function toolContentOf(
 }
 
 /**
+ * #872 (b1) correction 1 (C3): the uncut walked reply with the overflow line as `warnings[0]`, and
+ * `warnings` — created or existing — as its FIRST key; every other key in its order (the line is
+ * Realm's own fact text, added after the walk).
+ */
+function withOverflowLine(shown: Readonly<Record<string, unknown>>, line: string): string {
+  const { warnings, ...rest } = shown;
+  const others = Array.isArray(warnings) ? (warnings as unknown[]) : [];
+  return sseJsonStringify({ warnings: [line, ...others], ...rest });
+}
+
+/**
  * #872 (b1): the fit loop — the reply cut by its plan until it fits; else the uncut reply with the
- * overflow line as `warnings[0]` (the line is Realm's own fact text, added after the walk).
+ * overflow line ({@link withOverflowLine}). Correction 1 (C3): the arm is the first that holds — no
+ * plan (guard), a part no plan cuts alone over the ceiling (field), else the plan run to its end
+ * (floor). M is the size of the walked reply before the line.
  */
 function fitted(
   reply: Record<string, unknown>,
@@ -1657,36 +1861,47 @@ function fitted(
   size: number,
   walk: (r: Readonly<Record<string, unknown>>) => Record<string, unknown>,
   plan: ReplyPlan | undefined,
+  guardWayOut: string | undefined,
 ): string {
-  const field = headFieldOver(shown);
-  if (field === undefined && plan !== undefined) {
-    let held = reply;
-    let heldShown = shown;
-    let heldSize = size;
-    for (;;) {
-      const cut = plan.next(held, heldShown, heldSize - REPLY_CEILING_CHARS);
-      if (cut === undefined) break;
-      held = cut;
-      heldShown = walk(held);
-      const text = sseJsonStringify(heldShown);
-      if (text.length <= REPLY_CEILING_CHARS) return text;
-      heldSize = text.length;
-    }
+  if (plan === undefined) {
+    return withOverflowLine(
+      shown,
+      overflowLine(size, {
+        arm: 'guard',
+        ...(guardWayOut !== undefined ? { wayOut: guardWayOut } : {}),
+      }),
+    );
   }
-  const line = overflowLine(size, field ?? { floor: floorSize(reply, shown, size, walk, plan) });
-  const warnings = Array.isArray(shown['warnings']) ? (shown['warnings'] as unknown[]) : [];
-  return sseJsonStringify({ ...shown, warnings: [line, ...warnings] });
+  const field = fieldOver(shown, plan);
+  if (field !== undefined) {
+    return withOverflowLine(shown, overflowLine(size, { arm: 'field', ...field }));
+  }
+  let held = reply;
+  let heldShown = shown;
+  let heldSize = size;
+  for (;;) {
+    const cut = plan.next(held, heldShown, heldSize - REPLY_CEILING_CHARS);
+    if (cut === undefined) break;
+    held = cut;
+    heldShown = walk(held);
+    const text = sseJsonStringify(heldShown);
+    if (text.length <= REPLY_CEILING_CHARS) return text;
+    heldSize = text.length;
+  }
+  return withOverflowLine(
+    shown,
+    overflowLine(size, { arm: 'floor', floor: floorSize(reply, shown, size, walk, plan) }),
+  );
 }
 
-/** #872 (b1): the reply's size with every list its plan holds at its floor (the plan's phase 2). */
+/** #872 (b1): the reply's size with every part its plan holds at its floor (the plan's phase 2). */
 function floorSize(
   reply: Record<string, unknown>,
   shown: Record<string, unknown>,
   size: number,
   walk: (r: Readonly<Record<string, unknown>>) => Record<string, unknown>,
-  plan: ReplyPlan | undefined,
+  plan: ReplyPlan,
 ): number {
-  if (plan === undefined) return size;
   let held = reply;
   let heldShown = shown;
   let heldSize = size;

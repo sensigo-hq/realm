@@ -19,6 +19,7 @@ import {
 } from './eligibility.js';
 import { RESUMABLE_PHASES } from './lifecycle.js';
 import { escapedBoundedValue } from '../utils/redaction.js';
+import { NAMES_SHOWN, listWords, quotedNames } from '../utils/list-words.js';
 import { shellWord } from '../utils/shell-word.js';
 import { checkPreconditions, preconditionHint, preconditionRefusal } from './precondition.js';
 import { validateInputSchema } from '../validation/input-schema.js';
@@ -438,7 +439,8 @@ export function stepsThatCannotRun(pending: PendingView): EngineRunnable[] {
   return pending.cannot_run;
 }
 
-const quoteList = (names: readonly string[]): string => names.map((n) => `'${n}'`).join(', ');
+/** #872 (b1) correction 1 (H2): names in a sentence — at most ten, then how many more (H1's producer). */
+const quoteList = (names: readonly string[]): string => quotedNames(names, NAMES_SHOWN);
 
 /**
  * Decision C37: `text.` — a full stop only when the text does not already end a sentence, judged by
@@ -553,7 +555,8 @@ export function resumeWay(
     return kind !== undefined && kind.execution !== 'finalizer';
   });
   if (steps.length === 0) return undefined;
-  return { steps, command: `realm run resume ${run.id} --from ${oneOf(steps)}` };
+  // #872 (b1) correction 1 (H2): the placeholder holds the first ten steps, then how many more.
+  return { steps, command: `realm run resume ${run.id} --from ${oneOf(steps, NAMES_SHOWN)}` };
 }
 
 /**
@@ -615,10 +618,12 @@ export function operatorEndingSentence(
  * the placeholder too, so no member can run even if the placeholder is mis-pasted. The one form for
  * `--from` ({@link resumeWay}) and `--choice` ({@link respondCommand}).
  */
-export function oneOf(values: readonly string[]): string {
-  return values.length === 1
-    ? shellWord(values[0]!)
-    : `<one of: ${values.map(shellWord).join(', ')}>`;
+export function oneOf(values: readonly string[], shown?: number): string {
+  if (values.length === 1) return shellWord(values[0]!);
+  // #872 (b1) correction 1 (H2): with `shown`, the first `shown` values, then how many more — inside
+  // the placeholder (`<one of: a, b, … and 990 more>`), still one token a shell refuses as typed.
+  const words = values.map(shellWord);
+  return `<one of: ${shown === undefined ? words.join(', ') : listWords(words, shown)}>`;
 }
 
 /**

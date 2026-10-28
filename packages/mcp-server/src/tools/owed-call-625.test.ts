@@ -651,7 +651,7 @@ describe('#872 (a) — the hand-back hint and engine_runnable.requirement over t
   };
   // correction 1 (C4): one missing handler, the singular way out.
   const TAIL =
-    ' — load the missing extension, or run these steps on a runner that has it. get_run_state lists each one in engine_runnable.';
+    ' — load the missing extension, or run these steps on a runner that has it. See engine_runnable in get_run_state.';
 
   it('B3 (door): start_run on a new run with two steps this server cannot run — the count, one group, the way out once; no way out of the workflow', async () => {
     await workflowStore.register(twoRoots);
@@ -695,7 +695,7 @@ describe('#872 (a) — the hand-back hint and engine_runnable.requirement over t
     //     two steps are said one sentence each; (b) prints the markers and the hint.
     expect({ marked, tail: hint.slice(hint.indexOf('2 steps')) }).toEqual({
       marked: ['s1', 's2'],
-      tail: "2 steps could not run (capability): handler 'h' ('s1', 's2'). get_run_state lists each one in engine_runnable.",
+      tail: "2 steps could not run (capability): handler 'h' ('s1', 's2'). See engine_runnable in get_run_state.",
     });
   });
 

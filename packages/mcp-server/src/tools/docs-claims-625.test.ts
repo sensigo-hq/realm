@@ -655,7 +655,7 @@ describe('#625 PR-2a, C163 — tools.md: blocked and resolve_precondition, sente
     claim('mcp/tools.md', '`Call one of the steps indicated in next_actions instead.` for steps');
     claim(
       'mcp/tools.md',
-      "`eligible_steps`, the steps that are ready and can run here (agent steps and the engine's — an engine step is run by `advance_run`, never by name), and a `suggestion`.",
+      "`eligible_steps`, the steps that are ready and can run here (agent steps and the engine's — an engine step is run by `advance_run`, never by name) — at most ten, then `eligible_steps_more` (added after version 0.48.0) — and a `suggestion`.",
     );
     claim('mcp/tools.md', 'On a run that has ended, each tool replies as follows:');
     const { call, runId } = await atB();
@@ -1072,7 +1072,7 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
     );
     claim(
       'mcp/tools.md',
-      "`blocked_reason.eligible_steps` lists the steps that are ready — agent steps and the engine's alike; an engine step is run by `advance_run`, never by name. It may differ from `next_actions`: for example, when the engine owes an `auto` step it can run, `next_actions` offers `advance_run` and `eligible_steps` names the step.",
+      "`blocked_reason.eligible_steps` lists the steps that are ready — agent steps and the engine's alike; an engine step is run by `advance_run`, never by name — at most ten, then `eligible_steps_more` (added after version 0.48.0). It may differ from `next_actions`: for example, when the engine owes an `auto` step it can run, `next_actions` offers `advance_run` and `eligible_steps` names the step.",
     );
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(gated('docs-owed'));
@@ -1786,7 +1786,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     expect({ attempt: attempt['status'], status: r['status'], hint: r['context_hint'] }).toEqual({
       attempt: 'error',
       status: 'ok',
-      hint: `Run '${runId}': nothing ran. 2 steps cannot run here (capability): handler 'h' ('s1', 's2') — load the missing extension, or run these steps on a runner that has it. get_run_state lists each one in engine_runnable.`,
+      hint: `Run '${runId}': nothing ran. 2 steps cannot run here (capability): handler 'h' ('s1', 's2') — load the missing extension, or run these steps on a runner that has it. See engine_runnable in get_run_state.`,
     });
   });
 
@@ -3433,7 +3433,7 @@ describe("#625 PR-2a, round 30 — C211 (the architect's addendum; walk c14 W2-2
     );
     say(
       RUN_STATE,
-      "| `resumable` | An engine failure ended the run (`failed`) with a failed step `realm run resume` takes | `steps`, those steps (never a cleanup step), and `command`, `realm run resume <id> --from <step>`. Never for a run an operator ended (`abandoned`): resuming it would erase the operator's ending and its reason, which `terminal_reason` and `sealed_by_arm` give. Added after version 0.46.0. |",
+      "| `resumable` | An engine failure ended the run (`failed`) with a failed step `realm run resume` takes | `steps`, those steps (never a cleanup step) — at most ten, then `steps_more`, how many more — and `command`, `realm run resume <id> --from <step>`, its `<one of: …>` naming at most ten, then how many more (both added after version 0.48.0). Never for a run an operator ended (`abandoned`): resuming it would erase the operator's ending and its reason, which `terminal_reason` and `sealed_by_arm` give. Added after version 0.46.0. |",
     );
     say(
       RUN_STATE,

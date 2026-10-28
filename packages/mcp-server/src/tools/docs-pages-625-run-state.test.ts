@@ -433,7 +433,7 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
       );
       claim(
         PAGE,
-        "| `get_run_state` | The findings of a run that is open, judged with this server's extensions: a `capability_block` finding only when this server lacks the code too. (added after version 0.46.0) For a run that has ended, `run_health` is absent. |",
+        "| `get_run_state` | The findings of a run that is open, judged with this server's extensions: a `capability_block` finding only when this server lacks the code too. (added after version 0.46.0) At most ten of each kind, in their order; `run_health_more` gives, per kind, how many more there are, and a list in a finding's `evidence` holds at most ten entries, with `<key>_more` beside it (added after version 0.48.0). The warning counts every finding. For a run that has ended, `run_health` is absent. |",
       );
       claim(
         PAGE,
@@ -1270,12 +1270,14 @@ describe('issue #729 — cannot_go_on on run-state-and-health.md', () => {
 
 describe('#872 (b1) B11 — run-state-and-health.md: the ceiling, the cursor, step_names', () => {
   it('the rows: params omitted, terminal_reason bounded, steps for step_names, the counts and the cursor', () => {
-    // Pinned by execution: reply-ceiling.test.ts B5 (params' omitted form, the counts),
+    // Pinned by execution: reply-ceiling.test.ts B5 (params' omitted form — both conditions: phase 1
+    // before steps, phase 2 after every list before it is at its floor — the counts),
     // bounded-echoes-872.test.ts B8 (the reason), get-run-state-cursor-872.test.ts B4 (steps,
-    // steps_more, next_cursor).
+    // steps_more, next_cursor), reply-ceiling-correction-872.test.ts HC4 (the run's lists' counts),
+    // bounded-sentences-872.test.ts HC5 (run_health_more), HC7 (resumable, usage_more).
     claim(
       PAGE,
-      'When the reply would pass the 40,000-character ceiling and the lists shortened before it cannot make it fit, `{ "omitted": true, "chars": <N> }` instead, N their length as JSON ([the ceiling](tools.md#the-reply); added after version 0.48.0).',
+      'When the reply would pass the 40,000-character ceiling, `{ "omitted": true, "chars": <N> }` instead — when no list before it can make the reply fit by itself and leaving `params` out does, or when every list before it is already down to one item (the steps\' detail is cut after it) — N their length as JSON ([the ceiling](tools.md#the-reply); added after version 0.48.0).',
     );
     claim(
       PAGE,
@@ -1291,14 +1293,26 @@ describe('#872 (b1) B11 — run-state-and-health.md: the ceiling, the cursor, st
     );
     claim(
       PAGE,
-      '| `skip_details_more`, `engine_runnable_more`, `agent_refused_more`, `capability_blocks_more`, `next_actions_more` | The reply ceiling shortened that list | How many entries it left out; the list keeps its first ones ([the ceiling](tools.md#the-reply)). Added after version 0.48.0. |',
+      '| `defaulted_steps_more`, `skipped_steps_more`, `completed_steps_more`, `skip_details_more`, `waiting_on_answer_more`, `pending_guards_more`, `step_claims_more`, `stuck_claims_more`, `in_progress_steps_more`, `failed_steps_more`, `engine_runnable_more`, `agent_refused_more`, `capability_blocks_more`, `next_actions_more` | The reply ceiling shortened that list | How many entries it left out; the list keeps its first ones ([the ceiling](tools.md#the-reply)). Added after version 0.48.0. |',
+    );
+    claim(
+      PAGE,
+      '| `run_health_more` | More than ten findings of a kind | For each such kind, how many of its findings were left out: `run_health` shows ten of each kind, in their order. Added after version 0.48.0. |',
+    );
+    claim(
+      PAGE,
+      'The failures: the time, the step, the provider, the kind, and what was billed — at most three billed requests per failure, then `usage_more`, how many more (added after version 0.48.0).',
+    );
+    claim(
+      PAGE,
+      "The findings — at most ten of each kind, then `run_health_more`; a list in a finding's `evidence` at most ten entries, then `<key>_more` beside it (added after version 0.48.0). See [Health findings](#health-findings).",
     );
   });
   it('"## include_steps": the step_names, cursor and empty-page paragraph', () => {
     // Pinned by execution in get-run-state-cursor-872.test.ts (B4, B6).
     claim(
       PAGE,
-      "`step_names` and `cursor` were added after version 0.48.0. With `step_names`, `steps` holds only the named steps that ran; a name the run has not attempted is named in `warnings` (`'<name>' is not a step this run has attempted`, ten named, then how many more). When the reply would pass the 40,000-character ceiling ([the ceiling](tools.md#the-reply)), `steps` keeps its first steps in the order they were first attempted, `steps_more` says how many it left out and `next_cursor` names the last one shown: call again with `cursor` set to it, and the same `include_steps` or `step_names`, for the next page. The cursor is a place in the run's order of first attempts, and `step_names` picks from what follows it. A page with nothing after the cursor has no `steps` and no `next_cursor`. A `cursor` without `include_steps: true` or `step_names`, or naming no step the run has attempted, is refused with `VALIDATION_CURSOR`.",
+      "`step_names` and `cursor` were added after version 0.48.0. With `step_names`, `steps` holds only the named steps that ran; a name the run has not attempted is named in `warnings` (`'<name>' is not a step this run has attempted`, ten named, then how many more). When the reply would pass the 40,000-character ceiling and no list before the steps' detail, nor leaving out `params`, can make it fit by itself — the steps' detail is cut last ([the ceiling](tools.md#the-reply)) — `steps` keeps its first steps in the order they were first attempted, `steps_more` says how many it left out and `next_cursor` names the last one shown: call again with `cursor` set to it, and the same `include_steps` or `step_names`, for the next page. The cursor is a place in the run's order of first attempts, and `step_names` picks from what follows it. A page with nothing after the cursor has no `steps` and no `next_cursor`. A `cursor` without `include_steps: true` or `step_names`, or naming no step the run has attempted, is refused with `VALIDATION_CURSOR`.",
     );
   });
 });

@@ -1,7 +1,8 @@
-// create-workflow-grouped-872.test.ts — #872 (b1) A4: `create_workflow`'s refusal says each broken
-// rule ONCE — the first step's full message, then `(also 's2', 's3' and k more)` (#872 (a)'s
-// vocabulary: three names, then the exact count) — so every fault class shows at once and the reply's
-// size no longer follows the step count. The cells call `handleCreateWorkflow` directly (R1 and R13
+// create-workflow-grouped-872.test.ts — #872 (b1) A4: `create_workflow`'s refusal says each fault
+// ONCE — correction 1 (C4): steps share a line only when their fault is the same (the rule and the
+// message its push site writes for one sentinel id), the first step's full message, then `(also 's2',
+// 's3' and k more)` (core's one producer: two more names, then the exact count) — so every fault shows
+// at once and the reply's size no longer follows the step count. The cells call `handleCreateWorkflow` directly (R1 and R13
 // cannot be reached through the door: zod refuses first). Beside each: (a) what turns it red; (b)
 // what it prints on failure — rule lines, step names, counts and sizes.
 import { describe, it, expect } from 'vitest';
@@ -35,7 +36,7 @@ type Step = CreateWorkflowArgs['steps'][number];
 const step = (id: string, over: Record<string, unknown> = {}): Step =>
   ({ id, description: `Step ${id}.`, ...over }) as Step;
 
-describe('#872 (b1) B7 — create_workflow: one line per rule', () => {
+describe('#872 (b1) B7 — create_workflow: one line per fault (correction 1, C4)', () => {
   it('200 steps each breaking only R11 (empty description) → ONE line, three names then the count, under 10,000', async () => {
     const r = await refuse({
       steps: Array.from({ length: 200 }, (_, i) => step(`s${i}`, { description: '' })),
@@ -64,7 +65,7 @@ describe('#872 (b1) B7 — create_workflow: one line per rule', () => {
     ]);
   });
 
-  it('R8, R11 and R15 broken on several steps → three lines, in the order of each rule’s first fault, exact counts', async () => {
+  it('R8, R11 and R15 broken on several steps → three lines, in the order of each fault’s first step, exact counts, each id named once', async () => {
     const r = await refuse({
       steps: [
         step('a'),
@@ -80,7 +81,7 @@ describe('#872 (b1) B7 — create_workflow: one line per rule', () => {
     // (a) red when the rules are ordered otherwise, a rule splits into several lines, or a count is
     //     wrong; (b) prints the lines.
     expect(r.errors).toEqual([
-      "Duplicate step id: 'a' (also 'a')",
+      "Duplicate step id: 'a'",
       "Step 'b': description must be non-empty (also 'c', 'd' and 1 more)",
       "Step 'c': depends_on references unknown step 'zz' (also 'd', 'e' and 1 more)",
     ]);
@@ -88,7 +89,9 @@ describe('#872 (b1) B7 — create_workflow: one line per rule', () => {
 
   // Each rule's own fixture: steps breaking ONLY that rule (two of them where the rule allows two).
   const LONG = (prefix: string) => prefix.padEnd(100, 'x');
-  const RULES: Array<[string, CreateWorkflowArgs, RegExp, string | undefined]> = [
+  // The fifth column (correction 1, C4): how many lines the fixture makes — one unless its faults
+  // differ (each R17 message names its own predecessor).
+  const RULES: Array<[string, CreateWorkflowArgs, RegExp, string | undefined, number?]> = [
     ['R1', { steps: [] }, /^steps must contain at least one step$/, undefined],
     [
       'R2',
@@ -147,12 +150,7 @@ describe('#872 (b1) B7 — create_workflow: one line per rule', () => {
       /^Step 'a': extensions is not supported/,
       'b',
     ],
-    [
-      'R8',
-      { steps: [step('a'), step('a'), step('a')] },
-      /^Duplicate step id: 'a'$|^Duplicate step id: 'a' /,
-      'a',
-    ],
+    ['R8', { steps: [step('a'), step('a'), step('a')] }, /^Duplicate step id: 'a'$/, undefined],
     ['R9', { steps: [step('a b'), step('c d')] }, /^Step id 'a b' is invalid/, 'c d'],
     ['R10', { steps: [step('run'), step('context')] }, /^Step id 'run' is reserved/, 'context'],
     [
@@ -187,7 +185,7 @@ describe('#872 (b1) B7 — create_workflow: one line per rule', () => {
     ],
     [
       'R15',
-      { steps: [step('a'), step('b', { depends_on: ['zz'] }), step('c', { depends_on: ['yy'] })] },
+      { steps: [step('a'), step('b', { depends_on: ['zz'] }), step('c', { depends_on: ['zz'] })] },
       /^Step 'b': depends_on references unknown step 'zz'/,
       'c',
     ],
@@ -215,16 +213,17 @@ describe('#872 (b1) B7 — create_workflow: one line per rule', () => {
         ],
       },
       /^Step 'c': depends_on names 'a', but steps run in list order/,
-      'd',
+      undefined,
+      2,
     ],
   ];
 
   it.each(RULES)(
-    '%s: steps breaking only that rule make ONE line — its first step’s message, the others named',
-    async (_rule, args, head, also) => {
+    '%s: steps with the same fault make ONE line — its first step’s message, the others named',
+    async (_rule, args, head, also, lines = 1) => {
       const r = await refuse(args);
-      // (a) red when a rule's faults split into several lines, merge with another rule's, or lose the
-      //     first step's own words; (b) prints the lines.
+      // (a) red when the same fault splits into several lines, different faults merge, or the first
+      //     step's own words are lost; (b) prints the lines.
       expect({
         lines: r.errors.length,
         head: head.test(r.errors[0] ?? ''),
@@ -232,7 +231,7 @@ describe('#872 (b1) B7 — create_workflow: one line per rule', () => {
           also === undefined
             ? !/\(also /.test(r.errors[0] ?? '')
             : (r.errors[0] ?? '').endsWith(`(also '${also}')`),
-      }).toEqual({ lines: 1, head: true, also: true });
+      }).toEqual({ lines, head: true, also: true });
     },
   );
 

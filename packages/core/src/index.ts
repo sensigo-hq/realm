@@ -746,6 +746,8 @@ export {
   markersIn,
   inboundMarkerWarning,
 } from './utils/redaction.js';
+// #872 (b1) correction 1 (H1): the one producer of a bounded list in words.
+export { listWords, quotedNames, NAMES_SHOWN } from './utils/list-words.js';
 export type {
   DisclosureAudience,
   DisclosureTier,

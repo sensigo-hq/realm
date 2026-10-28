@@ -155,7 +155,7 @@ Three things to know:
 
 ## Other clients
 
-Codex keeps only the first and the last part of a long tool reply unless that tool's limit is raised: set `mcp_servers.<id>.tools.<tool>.output_token_limit` in its config (checked against Codex's source at 73bdd06f, 2026-10-27). Realm keeps every reply under 40,000 characters (see [The reply](../reference/mcp/tools.md#the-reply)).
+Codex keeps only the first and the last part of a long tool reply unless that tool's limit is raised: set `mcp_servers.<id>.tools.<tool>.output_token_limit` in its config (checked against Codex's source at 73bdd06f, 2026-10-27). The limit is set per tool as `output_token_limit`, in tokens; without it, Codex applies its own default, as little as 10,000 bytes. Realm keeps a reply at or under 40,000 characters when shortening its lists can make it fit (three tools shorten nothing yet — see [The reply](../reference/mcp/tools.md#the-reply)).
 
 ## Workflows that use your own code or secrets
 

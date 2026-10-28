@@ -57,13 +57,13 @@ const shownOf = (
 const sizeOf = (reply: Record<string, unknown>, table: ClassTable): number =>
   sseJsonStringify(discloseReply(reply, set, 'agent', table)).length;
 
-/** A plan that counts its calls, delegating to `plan`. */
+/** A plan that counts its calls, delegating to `plan` (its own keys forwarded — correction 1, C3). */
 const spied = (plan: ReplyPlan) => {
   const next = vi.fn(
     (r: Readonly<Record<string, unknown>>, s: Readonly<Record<string, unknown>>, o: number) =>
       plan.next(r, s, o),
   );
-  return { plan: { next } as ReplyPlan, next };
+  return { plan: { keys: plan.keys, next } as ReplyPlan, next };
 };
 
 /** One step's detail in a run state's `steps`, about `size` characters when shown. */
@@ -103,8 +103,13 @@ const action = (i: number, size: number) => ({
   human_readable: `Run step 'a${i}'. ${'h'.repeat(Math.max(0, size - 140))}`,
 });
 
+// correction 1 (C3): the overflow line's four arms, word for word.
+const TEXT_LEAD = (m: number) =>
+  `This reply was ${m.toLocaleString('en-US')} characters, past the 40,000-character ceiling; it is sent whole.`;
+const GUARD_LEAD = (m: number, wayOut = '') =>
+  `This reply was ${m.toLocaleString('en-US')} characters before this line, past the 40,000-character ceiling; nothing in this reply is shortened.${wayOut}`;
 const FLOOR_LEAD = (m: number, n: number) =>
-  `This reply was ${m.toLocaleString('en-US')} characters before this line, past the 40,000-character ceiling; shortening every list to one item would still leave ${n.toLocaleString('en-US')}. No list was shortened for it; tell the user.`;
+  `This reply was ${m.toLocaleString('en-US')} characters before this line, past the 40,000-character ceiling; cutting everything this reply can cut would still leave ${n.toLocaleString('en-US')}. Nothing was cut; tell the user.`;
 const FIELD_LEAD = (m: number, field: string, n: number) =>
   `This reply was ${m.toLocaleString('en-US')} characters before this line, past the 40,000-character ceiling: ${field} alone is ${n.toLocaleString('en-US')}. No list was shortened for it.`;
 
@@ -120,7 +125,7 @@ describe('#872 (b1) B1 — the composer: one fit loop, the overflow line', () =>
     }).toEqual({ calls: 0, same: true });
   });
 
-  it('(ii) ~150 settled steps (~44 K): one halving fits it — steps_more the exact rest, next_cursor the last shown id', () => {
+  it('(ii) ~150 settled steps (~44 K): one cut fits it — steps_more the exact rest, next_cursor the last shown id', () => {
     const { plan, next } = spied(RUN_STATE_PLAN);
     const reply = runState({ steps: steps(150, 290) });
     const before = sizeOf(reply, RUN_STATE_SUMMARY_TABLE);
@@ -216,11 +221,12 @@ describe('#872 (b1) B1 — the composer: one fit loop, the overflow line', () =>
     });
   });
 
-  it('(v) no plan: a 41 K text reply gets the floor arm (N = M) as its first line', () => {
+  it('(v) a 41 K text reply gets the text arm as its first line', () => {
     const body = 't'.repeat(41_000);
     const text = toolContentOf(body, disclosureOf({})).content[0]!.text;
-    // (a) red when a text reply over the ceiling leaves without its line; (b) prints the first line.
-    expect(text.split('\n')[0]).toBe(FLOOR_LEAD(41_000, 41_000));
+    // (a) red when a text reply over the ceiling leaves without its line, or with another arm's
+    //     words; (b) prints the first line.
+    expect(text.split('\n')[0]).toBe(TEXT_LEAD(41_000));
     expect(text.slice(text.indexOf('\n') + 1)).toBe(body);
   });
 
@@ -247,7 +253,7 @@ describe('#872 (b1) B1 — the composer: one fit loop, the overflow line', () =>
     });
   });
 
-  it('(vii, viii) each field arm on each carrier it reaches — prompt and input_schema on the envelope and on get_run_state, gate on the envelope; the first in head order wins', () => {
+  it('(vii, viii) the field arm on each carrier it reaches — prompt and input_schema on the envelope and on get_run_state, gate on the envelope; the LARGEST part wins', () => {
     const big = 'f'.repeat(40_100);
     const envelope = (first: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
       command: 'execute_step',
@@ -285,13 +291,14 @@ describe('#872 (b1) B1 — the composer: one fit loop, the overflow line', () =>
         'gate',
       ],
       [
-        'envelope prompt beside gate (prompt first)',
+        // correction 1 (C3): the gate object is larger in place than the prompt, so it is named.
+        'envelope prompt beside gate (the larger part)',
         envelope(
           { ...action(0, 200), prompt: big },
           { gate: { gate_id: 'g', step_name: 's', choices: ['y'], display: big } },
         ),
         MCP_ENVELOPE_TABLE,
-        'next_actions[0].prompt',
+        'gate',
       ],
       [
         'run state prompt',
@@ -325,8 +332,9 @@ describe('#872 (b1) B1 — the composer: one fit loop, the overflow line', () =>
           (reply['next_actions'] as unknown[]).length,
       };
     });
-    // (a) red when an arm's words, its M or N, or its field are wrong, the order of the arms
-    //     changes, or a list is cut for a field no cut can shorten; (b) prints each case's booleans.
+    // (a) red when an arm's words, its M or N, or its field are wrong, a smaller part is named
+    //     before the largest, or a list is cut for a field no cut can shorten; (b) prints each
+    //     case's booleans.
     expect(got).toEqual(cases.map(([name]) => ({ name, line: true, uncut: true })));
   });
 
@@ -359,7 +367,7 @@ describe('#872 (b1) B1 — the composer: one fit loop, the overflow line', () =>
     });
   });
 
-  it('(x) a reply with no warnings key gets one created for the line — get_run_state and the protocol', () => {
+  it('(x) a reply with no warnings key gets one created for the line, as its FIRST key — get_run_state (the field arm) and the protocol (the guard arm)', () => {
     const run = runState({ next_actions: [{ ...action(0, 200), prompt: 'f'.repeat(40_100) }] });
     const protocol = {
       workflow_id: 'w',
@@ -373,14 +381,21 @@ describe('#872 (b1) B1 — the composer: one fit loop, the overflow line', () =>
     const r = shownOf(run, RUN_STATE_SUMMARY_TABLE, RUN_STATE_PLAN).json;
     const p = shownOf(protocol, WORKFLOW_PROTOCOL_TABLE).json;
     const pm = sizeOf(protocol, WORKFLOW_PROTOCOL_TABLE);
-    // (a) red when the line needs a warnings key the reply does not have; (b) prints the keys and
-    //     the protocol's line.
+    // (a) red when the line needs a warnings key the reply does not have, the created key is not
+    //     first, or the protocol's line is not the guard arm; (b) prints the keys and the line.
     expect({
       run: 'warnings' in run === false && Array.isArray(r['warnings']),
+      firstKeys: [Object.keys(r)[0], Object.keys(p)[0]],
       protocol: (p['warnings'] as string[])[0],
       steps: (p['steps'] as unknown[]).length,
       marks: Object.keys(p).filter((k) => k.endsWith('_more') || k === 'next_cursor'),
-    }).toEqual({ run: true, protocol: FLOOR_LEAD(pm, pm), steps: 60, marks: [] });
+    }).toEqual({
+      run: true,
+      firstKeys: ['warnings', 'warnings'],
+      protocol: GUARD_LEAD(pm),
+      steps: 60,
+      marks: [],
+    });
   });
 });
 
@@ -573,7 +588,7 @@ describe('#872 (b1) B2 — a cut changes nothing but the cut list', () => {
 
 // ─── B3: guard-only in (b1) ──────────────────────────────────────────────────────────────────────
 
-describe('#872 (b1) B3 — guard-only: the protocol, the batch and list_workflows shorten nothing', () => {
+describe('#872 (b1) B3 — guard-only: the protocol, the batch and list_workflows shorten nothing (the guard arm)', () => {
   /** The line's M: the reply without the line, as it was walked (`hadKey`: its `warnings` was there). */
   const withoutLine = (json: Record<string, unknown>, hadKey = false) => {
     const { warnings, ...rest } = json;
@@ -584,7 +599,7 @@ describe('#872 (b1) B3 — guard-only: the protocol, the batch and list_workflow
   const marks = (json: Record<string, unknown>) =>
     Object.keys(json).filter((k) => k.endsWith('_more') || k === 'next_cursor');
 
-  it('get_workflow_protocol on a 117-step definition (~300 K): every step, today’s bytes plus the floor arm with N = M', async () => {
+  it('get_workflow_protocol on a 117-step definition (~300 K): every step, today’s bytes plus the guard arm', async () => {
     const { call, workflowStore } = await door();
     const big = wf(
       'b3-protocol',
@@ -605,15 +620,17 @@ describe('#872 (b1) B3 — guard-only: the protocol, the batch and list_workflow
       marks: marks(reply),
       over: m > REPLY_CEILING_CHARS,
       line: (reply['warnings'] as string[])[0],
+      first: Object.keys(reply)[0],
     }).toEqual({
       steps: 117,
       marks: [],
       over: true,
-      line: FLOOR_LEAD(m, m),
+      line: GUARD_LEAD(m),
+      first: 'warnings',
     });
   });
 
-  it('start_run_batch with 1,000 items: every item, the line in a new top-level warnings', async () => {
+  it('start_run_batch with 1,000 items: every item, the guard arm with the batch’s way out in a new top-level warnings, its first key', async () => {
     const { call } = await door();
     const { reply } = await call('start_run_batch', {
       workflow_id: ROOTS.id,
@@ -621,19 +638,22 @@ describe('#872 (b1) B3 — guard-only: the protocol, the batch and list_workflow
       max_items: 1000,
     });
     const m = withoutLine(reply);
-    // (a) red when the batch is cut or the line is missing; (b) prints the counts and the line.
+    // (a) red when the batch is cut, the line is missing, its way out is dropped, or the key is not
+    //     first; (b) prints the counts and the line.
     expect({
       started: (reply['started'] as unknown[]).length,
       marks: marks(reply),
       line: (reply['warnings'] as string[])[0],
+      first: Object.keys(reply)[0],
     }).toEqual({
       started: 1000,
       marks: [],
-      line: FLOOR_LEAD(m, m),
+      line: GUARD_LEAD(m, ' Send fewer items per call.'),
+      first: 'warnings',
     });
   }, 120_000);
 
-  it('list_workflows with a registry past the ceiling: every workflow, the line first in its warnings', async () => {
+  it('list_workflows with a registry past the ceiling: every workflow, the guard arm first in its warnings, its existing key moved first', async () => {
     const { call, workflowStore } = await door();
     for (let i = 0; i < 700; i += 1) {
       await workflowStore.register(
@@ -645,22 +665,25 @@ describe('#872 (b1) B3 — guard-only: the protocol, the batch and list_workflow
     const { reply } = await call('list_workflows', {});
     // list_workflows always carries warnings (empty here): the line joins it in place.
     const m = withoutLine(reply, true);
-    // (a) red when the list is cut or the line is missing; (b) prints the counts and the line.
+    // (a) red when the list is cut, the line is missing, or the existing key stays where it was;
+    //     (b) prints the counts and the line.
     expect({
       listed: (reply['workflows'] as unknown[]).length >= 700,
       marks: marks(reply),
       line: (reply['warnings'] as string[])[0],
+      first: Object.keys(reply)[0],
     }).toEqual({
       listed: true,
       marks: [],
-      line: FLOOR_LEAD(m, m),
+      line: GUARD_LEAD(m),
+      first: 'warnings',
     });
   }, 120_000);
 });
 
 // ─── B5: get_run_state's plan order ──────────────────────────────────────────────────────────────
 
-describe("#872 (b1) B5 — get_run_state's plan: the order, the exact counts, params last", () => {
+describe("#872 (b1) B5 — get_run_state's plan: the order (correction 1, C1: steps last), the exact counts, params before steps", () => {
   const list = (n: number, size: number) =>
     Array.from({ length: n }, (_, i) => ({
       step: `e${String(i).padStart(3, '0')}`,
@@ -673,7 +696,7 @@ describe("#872 (b1) B5 — get_run_state's plan: the order, the exact counts, pa
         .map((k) => [k, json[k]]),
     );
 
-  it('steps alone can close the gap → only steps are cut', () => {
+  it('only steps can close the gap → only steps are cut', () => {
     const json = shownOf(
       runState({ steps: steps(160, 290), engine_runnable: list(20, 200) }),
       RUN_STATE_SUMMARY_TABLE,
@@ -683,72 +706,91 @@ describe("#872 (b1) B5 — get_run_state's plan: the order, the exact counts, pa
     expect(Object.keys(marksOf(json)).sort()).toEqual(['next_cursor', 'steps_more']);
   });
 
-  it('only an act-on-later list can close it → steps stay whole (phase 1), the count exact', () => {
+  it('steps and an act-on-later list can each close it → the act-on-later list is cut, steps stay whole (C1: steps last)', () => {
+    // Each list alone is under the ceiling and can close the gap alone (~30 K + ~28 K).
     const json = shownOf(
-      runState({ steps: steps(20, 290), engine_runnable: list(300, 200) }),
+      runState({ steps: steps(90, 290), engine_runnable: list(120, 200) }),
       RUN_STATE_SUMMARY_TABLE,
       RUN_STATE_PLAN,
     ).json;
     const kept = (json['engine_runnable'] as unknown[]).length;
-    // (a) red when phase 1 halves steps first; (b) prints the marks and counts.
+    // (a) red when steps are cut before a list the agent acts on later (#916's order); (b) prints
+    //     the marks and counts.
     expect({ marks: marksOf(json), steps: Object.keys(json['steps'] as object).length }).toEqual({
-      marks: { engine_runnable_more: 300 - kept },
-      steps: 20,
+      marks: { engine_runnable_more: 120 - kept },
+      steps: 90,
     });
   });
 
-  it('params: omitted in phase 1 when no list before it can close the gap alone — every list before it then uncut, no byte of params kept', () => {
-    const params = { blob: 'P872'.repeat(15_000) };
-    const reply = runState({ steps: steps(10, 290), engine_runnable: list(10, 200), params });
+  it('params: omitted in phase 1 before steps — steps could close the gap too, and stay whole; no byte of params kept', () => {
+    // params (~30 K) and steps (~30 K) can each close the gap alone; params comes first.
+    const params = { blob: 'P872'.repeat(7_500) };
+    const reply = runState({ steps: steps(90, 290), engine_runnable: list(10, 200), params });
     const { text, json } = shownOf(reply, RUN_STATE_SUMMARY_TABLE, RUN_STATE_PLAN);
-    // (a) red when params is kept out of phase 1 (the lists floored first) or keeps a prefix; (b)
-    //     prints the marks, the omitted form and a boolean.
+    // (a) red when steps are cut before params (#916's order), params is kept out of phase 1, or a
+    //     prefix is kept; (b) prints the marks, the omitted form and a boolean.
     expect({
       marks: marksOf(json),
       params: json['params'],
+      steps: Object.keys(json['steps'] as object).length,
       leaked: text.includes('P872P872'),
     }).toEqual({
       marks: {},
       params: { omitted: true, chars: JSON.stringify(params).length },
+      steps: 90,
       leaked: false,
     });
   });
 
-  it('params in phase 2 only after every list before it is at its floor; every count exact', () => {
+  it('phase 2 floors in C1’s order — the run’s lists, skip details, the act-on-later lists, next_actions, then params (45 K), and steps (~49 K) last; every count exact', () => {
+    // Neither params nor steps can close the gap alone, even with every list before them at its
+    // floor (each is over 40,000 with the head, the floors and the other): phase 2 reaches params.
+    const ids = (n: number) =>
+      Array.from({ length: n }, (_, i) => `d${String(i).padStart(3, '0')}-${'i'.repeat(36)}`);
     const reply = runState({
-      steps: steps(40, 290),
-      skip_details: Object.fromEntries(list(40, 200).map((e) => [e.step, e])),
-      engine_runnable: list(40, 200),
-      agent_refused: list(40, 200),
-      capability_blocks: list(40, 200),
-      next_actions: Array.from({ length: 10 }, (_, i) => action(i, 400)),
-      params: { blob: 'q'.repeat(9_000) },
+      completed_steps: ids(60),
+      skip_details: Object.fromEntries(list(30, 200).map((e) => [e.step, e])),
+      engine_runnable: list(30, 200),
+      agent_refused: list(30, 200),
+      capability_blocks: list(30, 200),
+      next_actions: Array.from({ length: 10 }, (_, i) => action(i, 600)),
+      params: { blob: 'q'.repeat(45_000) },
+      steps: steps(150, 290),
     });
-    const json = shownOf(reply, RUN_STATE_SUMMARY_TABLE, RUN_STATE_PLAN).json;
-    const omitted = (json['params'] as { omitted?: boolean }).omitted === true;
-    // (a) red when params is omitted before a list is at its floor, or a count is not exact; (b)
-    //     prints the marks.
+    const { text, json } = shownOf(reply, RUN_STATE_SUMMARY_TABLE, RUN_STATE_PLAN);
+    const count = (k: string) =>
+      Array.isArray(json[k])
+        ? (json[k] as unknown[]).length
+        : Object.keys(json[k] as object).length;
+    // (a) red when params is omitted before a list ahead of it is at its floor, steps are cut before
+    //     params, a list stops at more than one item, or a count is not exact; (b) prints the marks,
+    //     the counts and the size.
     expect({
-      paramsOmittedOnlyAfterFloors:
-        !omitted ||
-        [
-          'steps_more',
-          'skip_details_more',
-          'engine_runnable_more',
-          'agent_refused_more',
-          'capability_blocks_more',
-          'next_actions_more',
-        ].every((k) => k in json),
-      counts: [
-        json['steps_more'] === undefined ||
-          (json['steps_more'] as number) + Object.keys(json['steps'] as object).length === 40,
-        json['engine_runnable_more'] === undefined ||
-          (json['engine_runnable_more'] as number) +
-            (json['engine_runnable'] as unknown[]).length ===
-            40,
-        json['next_actions_more'] === undefined ||
-          (json['next_actions_more'] as number) + (json['next_actions'] as unknown[]).length === 10,
+      fits: text.length <= REPLY_CEILING_CHARS,
+      params: json['params'],
+      floors: [
+        'completed_steps',
+        'skip_details',
+        'engine_runnable',
+        'agent_refused',
+        'capability_blocks',
+        'next_actions',
+      ].map((k) => [count(k), json[`${k}_more`]]),
+      steps: count('steps') + (json['steps_more'] as number),
+      cursor: json['next_cursor'] === Object.keys(json['steps'] as object).at(-1),
+    }).toEqual({
+      fits: true,
+      params: { omitted: true, chars: JSON.stringify(reply['params']).length },
+      floors: [
+        [1, 59],
+        [1, 29],
+        [1, 29],
+        [1, 29],
+        [1, 29],
+        [1, 9],
       ],
-    }).toEqual({ paramsOmittedOnlyAfterFloors: true, counts: [true, true, true] });
+      steps: 150,
+      cursor: true,
+    });
   });
 });

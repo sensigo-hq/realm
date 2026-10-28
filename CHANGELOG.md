@@ -8,16 +8,21 @@ All notable changes to this project are documented here.
 
 ### Added
 
-- **Every MCP reply stays under 40,000 characters (issue #872).** When a reply would pass the
-  ceiling, its longer lists are shortened — `next_actions` beyond the first, and on `get_run_state`
-  its steps' detail, then its other lists, then `params`, replaced by its size — and each says how
-  many it left out (`next_actions_more`, `steps_more`, …); the head an agent acts on and every other
-  field stay as they are. When nothing can make it fit, the reply's first warning says so.
-  `get_run_state` takes `step_names` (only the named steps' detail) and `cursor` (the next page of
-  steps, from `next_cursor`); a refused cursor is `VALIDATION_CURSOR`. `create_workflow`'s refusal
-  says each broken rule once, with the other steps that break it named and counted. A terminal
-  reason or an unknown key over 500 characters is named by its length. The store contract gains
-  `EVIDENCE_WRITE_ORDER`.
+- **An MCP reply is kept at or under 40,000 characters when shortening its lists can make it fit
+  (issue #872).** `get_workflow_protocol`, `list_workflows` and `start_run_batch` shorten nothing yet,
+  and a step's prompt or schema and a gate's question are never shortened. When a reply would pass
+  the ceiling, its longer lists are shortened — `next_actions` beyond the first, and on
+  `get_run_state` the run's own lists and its other lists, then `params`, replaced by its size, then
+  the steps' detail it was asked for — and each says how many it left out (`next_actions_more`,
+  `steps_more`, …); the head an agent acts on and every other field stay as they are. When nothing
+  can make it fit, the first item of `warnings` says which part is too long, or that nothing in the
+  reply is shortened. Names in a reply's sentences stop at ten, then say how many more; steps refused
+  the same way share one clause; `run_health` keeps ten findings of a kind and counts the rest; a
+  failed drive's request list keeps three. `get_run_state` takes `step_names` (only the named steps'
+  detail) and `cursor` (the next page of steps, from `next_cursor`); a refused cursor is
+  `VALIDATION_CURSOR`. `create_workflow`'s refusal says each fault once: steps with the same fault
+  share one line, and each other fault has its own. A terminal reason or an unknown key over 500
+  characters is named by its length. The store contract gains `EVIDENCE_WRITE_ORDER`.
 - **One composer for a gate's question, on every surface (issue #729 PR-4).** `realm run`,
   `realm run inspect`, `realm agent`, Slack, and the MCP replies and form now show a gate's question
   through core's one composer (`composeQuestionView`), over the gate disclosed for who reads it.
@@ -44,8 +49,8 @@ All notable changes to this project are documented here.
   (issue #872).** The MCP replies' `context_hint` gives their count first, then each missing handler
   or adapter with at most three of the steps that need it and how many more (at most ten, then how
   many more), the way out once — `load the missing extension` when one handler or adapter is
-  missing, `load the missing extensions` when several are — and `get_run_state lists each one in
-engine_runnable.` It repeated one whole sentence, way out included, for every step. One step keeps
+  missing, `load the missing extensions` when several are — and `See engine_runnable in
+get_run_state.` It repeated one whole sentence, way out included, for every step. One step keeps
   its sentence. The error reply of the call that attempts one such step counts them too. Each
   `engine_runnable` entry refused for a handler or adapter (`get_run_state`,
   `describePending`) carries `requirement` (`kind`, `name`) beside `basis`. A step or handler name

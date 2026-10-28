@@ -391,4 +391,29 @@ describe('#872 (b1) B11 — testing-package.md: the fidelity laws', () => {
       ]),
     );
   });
+
+  it('#872 (b1) correction 1 (AC6): the contracts table’s runStoreFidelityContract row — its laws and cases DERIVED by running the contract against InMemoryStore', async () => {
+    const { RUN_STORE_FIDELITY_LAWS, runStoreFidelityContract, InMemoryStore } =
+      await import('./index.js');
+    const row = readFileSync(join(ROOT, PAGE), 'utf8')
+      .split('\n')
+      .find((line) => /^\| `runStoreFidelityContract` +\|/.test(line));
+    const cells = (row ?? '').split('|').map((cell) => cell.trim());
+    const cases = runStoreFidelityContract({
+      store: new InMemoryStore(),
+      definition: {
+        id: 'w',
+        name: 'w',
+        version: 1,
+        steps: { work: { description: 'W.', execution: 'agent', depends_on: [] } },
+      },
+      stepName: 'work',
+    });
+    // (a) red when the row's laws or cases differ from the contract's (the page at #916's 6 / 13);
+    //     (b) prints the row's two cells and the two counts.
+    expect({ laws: cells[3], cases: cells[4] }).toEqual({
+      laws: String(RUN_STORE_FIDELITY_LAWS.length),
+      cases: `${cases.length}, with \`InMemoryStore\``,
+    });
+  });
 });

@@ -1045,10 +1045,12 @@ describe('#872 (b1) B11 — error-codes.md, agent-created-workflows.md, connect-
       "| `VALIDATION_CURSOR` | `get_run_state` was given a `cursor` without `include_steps: true` or `step_names`, or a `cursor` that names no step the run has attempted. The reply's `errors[0]` says which, and how to call again. Added after version 0.48.0. | `provide_input` | No |",
     );
   });
-  it('agent-created-workflows.md: one line per broken rule — the page’s example is the real line', async () => {
+  it('agent-created-workflows.md: one line per fault — the page’s example is the real line', async () => {
+    // Correction 1 (C4): the grouping only of the same fault, the 8,000-character cap and the closing
+    // line are pinned by execution in create-workflow-faults-872.test.ts (AC4).
     claim(
       'docs/guides/agent-created-workflows.md',
-      "When several steps break the same rule, the reply says it in one line: the first step's message, then the other steps' names — `Step 'a': description must be non-empty (also 'b', 'c' and 4 more)`, two more names, then how many more. Each rule broken has its own line, so every kind of mistake in the plan shows at once (added after version 0.48.0).",
+      "The refusal names each fault once: steps with the same fault share one line — the first step's message, then the other steps' names, `Step 'a': description must be non-empty (also 'b', 'c' and 4 more)`, two more names, then how many more. Steps share a line only when their fault is the same, so every fault shows at once; past about 8,000 characters, the last line counts the rest and names their steps (added after version 0.48.0).",
     );
     const { handleCreateWorkflow } = await import('./create-workflow.js');
     const dir = await mkdtemp(join(tmpdir(), 'realm-guides-872-'));
@@ -1065,9 +1067,11 @@ describe('#872 (b1) B11 — error-codes.md, agent-created-workflows.md, connect-
     ]);
   });
   it('connect-an-mcp-client.md: "## Other clients" — Codex’s per-tool limit (a third-party fact, pinned as text with its checked note)', () => {
+    // Realm's half — the guarantee, and the three tools that shorten nothing yet — is pinned by
+    // execution in reply-ceiling-correction-872.test.ts (AC3, the guard arm).
     claim(
       'docs/guides/connect-an-mcp-client.md',
-      "Codex keeps only the first and the last part of a long tool reply unless that tool's limit is raised: set `mcp_servers.<id>.tools.<tool>.output_token_limit` in its config (checked against Codex's source at 73bdd06f, 2026-10-27). Realm keeps every reply under 40,000 characters (see [The reply](../reference/mcp/tools.md#the-reply)).",
+      "Codex keeps only the first and the last part of a long tool reply unless that tool's limit is raised: set `mcp_servers.<id>.tools.<tool>.output_token_limit` in its config (checked against Codex's source at 73bdd06f, 2026-10-27). The limit is set per tool as `output_token_limit`, in tokens; without it, Codex applies its own default, as little as 10,000 bytes. Realm keeps a reply at or under 40,000 characters when shortening its lists can make it fit (three tools shorten nothing yet — see [The reply](../reference/mcp/tools.md#the-reply)).",
     );
   });
 });

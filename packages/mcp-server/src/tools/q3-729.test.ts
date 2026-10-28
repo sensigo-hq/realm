@@ -639,7 +639,7 @@ describe('#872 (a) — execute_step by name: two or more steps this server canno
     //     `cannot run here` twice); (b) prints the status and the hint.
     expect({ status: r['status'], hint, here: hint.split('cannot run here').length - 1 }).toEqual({
       status: 'blocked',
-      hint: `${engines('k1')} 2 steps cannot run here (capability): handler 'missing' ('k1', 'k2') — load the missing extension, or run these steps on a runner that has it. get_run_state lists each one in engine_runnable.`,
+      hint: `${engines('k1')} 2 steps cannot run here (capability): handler 'missing' ('k1', 'k2') — load the missing extension, or run these steps on a runner that has it. See engine_runnable in get_run_state.`,
       here: 1,
     });
   });
@@ -648,7 +648,7 @@ describe('#872 (a) — execute_step by name: two or more steps this server canno
 describe('#872 (a) correction 1 (C5) — the attempt’s error reply counts every step that cannot run here', () => {
   const blockedLine = (step: string, handler: string) =>
     `Step '${step}' is blocked: its handler '${handler}' is not registered in this runner. The run is NOT terminated — the step remains eligible, so a runner that provides this handler can execute it.`;
-  const POINTER = ' get_run_state lists each one in engine_runnable.';
+  const POINTER = ' See engine_runnable in get_run_state.';
 
   it('AC6 (i): advance_run attempts one of three steps on two missing handlers → the error reply says it is blocked, then counts all three, with the pointer; never the single clause', async () => {
     const c = await connect();
