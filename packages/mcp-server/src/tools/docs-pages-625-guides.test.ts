@@ -814,10 +814,10 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     ]);
   });
 
-  it('error-codes.md: 89 codes defined — 74 raised, 15 that nothing raises', () => {
+  it('error-codes.md: 90 codes defined — 75 raised, 15 that nothing raises', () => {
     claim(
       'docs/reference/error-codes.md',
-      'This page lists all 89 codes that Realm defines: the 74 it raises, with when each is raised and what it tells the caller to do, and the 15 that nothing raises.',
+      'This page lists all 90 codes that Realm defines: the 75 it raises, with when each is raised and what it tells the caller to do, and the 15 that nothing raises.',
     );
     const types = readFileSync(join(ROOT, 'packages/core/src/types/workflow-error.ts'), 'utf8');
     const lines = types.slice(types.indexOf('export type ErrorCode')).split('\n');
@@ -869,8 +869,8 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       unraisedWritten: listedUnraised.filter(written),
       raisedNowhere: listedRaised.filter((c) => !written(c)),
     }).toEqual({
-      defined: 89,
-      raised: 74,
+      defined: 90,
+      raised: 75,
       unraised: 15,
       cover: [...defined].sort(),
       unraisedWritten: [],

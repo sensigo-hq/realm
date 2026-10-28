@@ -32,6 +32,9 @@ import { hashParams } from './params-hash.js';
 import { assertSealIntegrity } from './seal-integrity.js';
 import { decideIdempotencyPolicy } from './idempotency-policy.js';
 import { atomicWriteFile } from './atomic-write.js';
+import type { Clock } from '../utils/clock.js';
+import { floorAtHolder, takeReading } from './take-reading.js';
+import { resolveStoreClock } from './test-clock-file.js';
 import {
   statIfExists,
   readIfExists,
@@ -164,10 +167,34 @@ export interface RunListing {
 /**
  * Newest-first comparator: by `created_at` descending, tie-broken by lexicographically
  * greatest `id`. Used to deterministically pick a canonical run for a key.
+ *
+ * issue #715 (a) (D6-51, D6-58): the stamps are compared by VALUE (`Date.parse`), never as
+ * strings — an ISO string compare sorts `…:00Z` after `…:00.001Z`. A `created_at` that does not
+ * parse is OLDER than every one that does; equal values (or two unparseable stamps) tie-break by
+ * id, so the order never depends on the input order.
  */
 function compareCanonical(a: RunRecord, b: RunRecord): number {
-  if (a.created_at !== b.created_at) return a.created_at < b.created_at ? 1 : -1;
+  const ta = Date.parse(a.created_at);
+  const tb = Date.parse(b.created_at);
+  const aReads = Number.isFinite(ta);
+  const bReads = Number.isFinite(tb);
+  if (aReads !== bReads) return aReads ? -1 : 1;
+  if (aReads && ta !== tb) return ta < tb ? 1 : -1;
   return a.id < b.id ? 1 : -1;
+}
+
+/**
+ * The version conflict `update()` refuses with, and `deleteAllForRun`'s `expectVersion` guard
+ * (issue #715 (a)): one builder, so the two refusals carry the same message and `details`.
+ */
+function versionConflictError(runId: string, expected: number, actual: number): WorkflowError {
+  return new WorkflowError('Version conflict — run was modified by another process', {
+    code: 'STATE_SNAPSHOT_MISMATCH',
+    category: 'STATE',
+    agentAction: 'report_to_user',
+    retryable: true,
+    details: { runId, expected, actual },
+  });
 }
 
 /**
@@ -221,8 +248,23 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
     'sealed_by',
   ]);
 
+  /**
+   * The clock this store stamps its writes with (issue #715 (a), D6-1). On an ordinary directory it
+   * is the host's system clock; on a TEST LOCATION — a directory that `@sensigo/realm-testing`'s
+   * `createTestLocation` made, with a `.realm-test-clock` file beside `runs/` — it is that file's
+   * clock, which every process opening the location reads. Resolved once, at construction; there
+   * is no option to set it.
+   *
+   * What it governs: the write class — a write's `created_at` and `updated_at`, and a claim's
+   * `since` and deadline — read ONCE per `create`, `update` and `claimStep`, after the lock is held
+   * ({@link takeReading}). What it does not: instants minted outside a store, and durations. In
+   * this release of the store contract `settleStep`, `stampSeal` and every read do not use it.
+   */
+  readonly clock: Clock;
+
   constructor(runsDir?: string) {
     this.runsDir = runsDir ?? join(homedir(), '.realm', 'runs');
+    this.clock = resolveStoreClock(this.runsDir);
   }
 
   /** The directory where run JSON files are stored. */
@@ -276,23 +318,36 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
     }
   }
 
-  /** Write (or overwrite) a pointer file for `run` under `key`. params_hash is derived from the owned run. */
-  private async writePointer(keyPath: string, run: RunRecord, key: string): Promise<void> {
+  /** Write (or overwrite) a pointer file for `run` under `key`. params_hash is derived from the owned run.
+   *  issue #715 (a): `stampedAt` is the pointer's `updated_at`, decided by the caller (the write's
+   *  reading on a keyed create; the record's own `updated_at` on an adopt, an import or a
+   *  reconcile, which spend no reading) — this method reads no clock. */
+  private async writePointer(
+    keyPath: string,
+    run: RunRecord,
+    key: string,
+    stampedAt: string,
+  ): Promise<void> {
     const pointer: KeyPointer = {
       run_id: run.id,
       workflow_id: run.workflow_id,
       key,
       params_hash: hashParams(run.params),
-      updated_at: new Date().toISOString(),
+      updated_at: stampedAt,
     };
     await atomicWriteFile(keyPath, JSON.stringify(pointer, null, 2));
   }
 
   /** Build and persist a brand-new run record (today's path, factored out). `rerunOf` is the id of
    *  the terminal run this one supersedes under the same idempotency key — supplied ONLY by
-   *  `supersede()` below, never by a caller (issue #558 PR-C). */
-  private async writeFreshRun(options: CreateRunOptions, rerunOf?: string): Promise<RunRecord> {
-    const now = new Date().toISOString();
+   *  `supersede()` below, never by a caller (issue #558 PR-C). issue #715 (a): `at` is the
+   *  create's one reading (floored per key where it has a holder) — this method reads no clock. */
+  private async writeFreshRun(
+    options: CreateRunOptions,
+    at: Date,
+    rerunOf?: string,
+  ): Promise<RunRecord> {
+    const now = at.toISOString();
     const record: RunRecord = {
       id: uuidv4(),
       workflow_id: options.workflowId,
@@ -358,9 +413,10 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
   async create(options: CreateRunOptions): Promise<{ run: RunRecord; created: boolean }> {
     await this.ensureDir();
 
-    // No idempotency key → always a fresh run.
+    // No idempotency key → always a fresh run. issue #715 (a) (J1): no lock to hold, so the one
+    // reading is taken just before the write; there is no holder to floor by.
     if (options.idempotencyKey === undefined) {
-      const run = await this.writeFreshRun(options);
+      const run = await this.writeFreshRun(options, takeReading(this.clock));
       return { run, created: true };
     }
 
@@ -375,6 +431,14 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
       retries: LOCK_RETRIES,
     });
     try {
+      // issue #715 (a) (J2, D5 §2.1, D6-13): the keyed create's ONE reading, taken right after the
+      // key lock is held and before the pointer is read; every branch below uses it. A create that
+      // returns an existing run (reuse, adopt) has spent it too (#715 (b) returns it as the call's
+      // `at`; here it is dropped).
+      const r = takeReading(this.clock);
+      // (d)'s holder: a pointer whose target is gone (a crash orphan) floors the fresh claim by the
+      // key's newest run (D6-51 branch (d)); a key with no pointer and no legacy run has no holder.
+      let orphanPointer = false;
       const pointer = await this.readPointer(keyPath);
       if (pointer !== undefined) {
         // (b) Pointer present → load the target run.
@@ -396,9 +460,17 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
           ) {
             return { run: target, created: false };
           }
-          return await this.supersede(options, keyPath, key, target.id);
+          // issue #715 (a) (J3, D6-14, D6-35): the successor is floored by the run it supersedes.
+          return await this.supersede(
+            options,
+            keyPath,
+            key,
+            target.id,
+            floorAtHolder(r, target.created_at),
+          );
         }
         // target missing → crash-orphan pointer; fall through to reclaim (d).
+        orphanPointer = true;
       } else {
         // (c) Pointer absent → lazy legacy fallback (self-migrates pre-existing data and
         // recovers run-written-but-pointer-not crash orphans, which still carry the field).
@@ -412,17 +484,31 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
               options,
             ) === 'reuse'
           ) {
-            // Migrate the adopted run into the pointer index (PR 1 behavior).
-            await this.writePointer(keyPath, canonical, key);
+            // Migrate the adopted run into the pointer index (PR 1 behavior). issue #715 (a) (J5,
+            // D-5): adopting a run is not a write of the run — the pointer carries the run's own
+            // `updated_at`.
+            await this.writePointer(keyPath, canonical, key, canonical.updated_at);
             return { run: canonical, created: false };
           }
-          return await this.supersede(options, keyPath, key, canonical.id);
+          // issue #715 (a) (J6): floored by the legacy run it supersedes.
+          return await this.supersede(
+            options,
+            keyPath,
+            key,
+            canonical.id,
+            floorAtHolder(r, canonical.created_at),
+          );
         }
       }
 
       // (d) Fresh claim / reclaim: run file FIRST, then pointer (overwrite on reclaim).
-      const run = await this.writeFreshRun(options);
-      await this.writePointer(keyPath, run, key);
+      // issue #715 (a): a crash-orphan pointer (J4) is floored by the key's newest run; a fresh key
+      // (J7) has no holder — the scan above just found none — and is stamped with the reading.
+      const at = orphanPointer
+        ? floorAtHolder(r, await this.newestCreatedAtForKey(options.workflowId, key))
+        : r;
+      const run = await this.writeFreshRun(options, at);
+      await this.writePointer(keyPath, run, key, run.updated_at);
       return { run, created: true };
     } finally {
       await release();
@@ -444,10 +530,39 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
     keyPath: string,
     key: string,
     supersededId: string,
+    at: Date,
   ): Promise<{ run: RunRecord; created: boolean }> {
-    const run = await this.writeFreshRun(options, supersededId);
-    await this.writePointer(keyPath, run, key);
+    const run = await this.writeFreshRun(options, at, supersededId);
+    await this.writePointer(keyPath, run, key, run.updated_at);
     return { run, created: true };
+  }
+
+  /**
+   * issue #715 (a) (D6-51 branch (d)): the newest PARSEABLE `created_at` among the runs whose
+   * `workflow_id` and `idempotency_key` match — the holder a crash-orphan pointer's fresh claim is
+   * floored by. Read through the same scan `findCanonicalLegacyRun` uses; a damaged file is
+   * skipped. It may only raise a floor, so it never refuses a create: ANY error (the runs folder
+   * unreadable among them) gives `undefined`, and the create then succeeds or fails exactly as it
+   * did before. Reads no clock.
+   */
+  private async newestCreatedAtForKey(
+    workflowId: string,
+    key: string,
+  ): Promise<string | undefined> {
+    try {
+      let newest: { ms: number; stamp: string } | undefined;
+      for (const { reading } of await this.scanRunFiles()) {
+        if (reading.kind !== 'record') continue;
+        const run = reading.record;
+        if (run.workflow_id !== workflowId || run.idempotency_key !== key) continue;
+        const ms = Date.parse(run.created_at);
+        if (!Number.isFinite(ms)) continue;
+        if (newest === undefined || ms > newest.ms) newest = { ms, stamp: run.created_at };
+      }
+      return newest?.stamp;
+    } catch {
+      return undefined;
+    }
   }
 
   /** Shared STATE_RUN_NOT_FOUND — used both by the pre-check and the ENOENT-hardening catch (issue
@@ -501,14 +616,14 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
       const stored = await readRunFile(path, record.id);
       if (stored === undefined) throw this.runNotFoundError(record.id);
 
+      // issue #715 (a) (J8, D5 §2.1): the update's ONE reading, taken with the lock held and BEFORE
+      // the version check and the seal guard — a refused update has spent it ("applied or refused:
+      // exactly once"); a run that does not exist (thrown above) spends none. Floored by the
+      // STORED record's `updated_at`, so a caller cannot lift or lower the floor with its own copy.
+      const at = takeReading(this.clock, stored);
+
       if (stored.version !== record.version) {
-        throw new WorkflowError('Version conflict — run was modified by another process', {
-          code: 'STATE_SNAPSHOT_MISMATCH',
-          category: 'STATE',
-          agentAction: 'report_to_user',
-          retryable: true,
-          details: { runId: record.id, expected: record.version, actual: stored.version },
-        });
+        throw versionConflictError(record.id, record.version, stored.version);
       }
 
       // issue #367: the seal-integrity boundary — the persisted fact and its TRANSITION, checked
@@ -520,7 +635,7 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
         ...record,
         run_phase: deriveRunPhase(record),
         version: record.version + 1,
-        updated_at: new Date().toISOString(),
+        updated_at: at.toISOString(),
       };
       await atomicWriteFile(path, JSON.stringify(updated, null, 2));
       return updated;
@@ -567,6 +682,11 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
       const run = await readRunFile(path, runId);
       if (run === undefined) throw this.runNotFoundError(runId);
 
+      // issue #715 (a) (J9, D5 §2.1): the claim's ONE reading, with the lock held and BEFORE the two
+      // guards (a refused claim has spent it). The deadline, `since` and `updated_at` all come
+      // from it.
+      const at = takeReading(this.clock, run);
+
       // Guard: step must not already be claimed.
       if (isStepSettledOrInFlight(run, stepName)) {
         throw new WorkflowError(
@@ -600,11 +720,11 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
       // write that adds the step to in_progress_steps. There must be no second write — a torn
       // `S ∈ in_progress` with no claims[S] would silently re-create the permanent wedge.
       // OVERWRITE (not add-if-absent) so a missed settle-site delete self-heals on re-claim.
-      const deadline = computeClaimDeadline(definition, stepName, new Date());
+      const deadline = computeClaimDeadline(definition, stepName, at);
       // issue #279 (increment 1, PR-A): mint an acquirer-minted fencing token alongside the
       // deadline, in the SAME write — dormant until PR-B's settleStep migration reads it.
       const token = uuidv4();
-      const claimedAt = new Date().toISOString();
+      const claimedAt = at.toISOString();
       const claimed: RunRecord = {
         ...run,
         in_progress_steps: [...run.in_progress_steps, stepName],
@@ -621,7 +741,7 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
         },
         run_phase: deriveRunPhase(run),
         version: run.version + 1,
-        updated_at: new Date().toISOString(),
+        updated_at: claimedAt,
       };
       await atomicWriteFile(path, JSON.stringify(claimed, null, 2));
       return claimed;
@@ -865,7 +985,9 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
         }
         // owner missing or terminal → safe to repoint to the imported record.
       }
-      await this.writePointer(keyPath, record, key);
+      // issue #715 (a) (J12, D6-3): an import spends no reading — the pointer carries the imported
+      // record's own `updated_at`.
+      await this.writePointer(keyPath, record, key, record.updated_at);
     } finally {
       await release();
     }
@@ -959,7 +1081,9 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
         continue;
       }
       summary.keysWritten++;
-      if (!dryRun) await this.writePointer(keyPath, canonical, key);
+      // issue #715 (a) (J13): a reconcile spends no reading — the pointer carries the canonical
+      // run's own `updated_at`.
+      if (!dryRun) await this.writePointer(keyPath, canonical, key, canonical.updated_at);
     }
 
     return summary;
@@ -1173,6 +1297,7 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
   async deleteAllForRun(
     runId: string,
     _dirEntries?: readonly string[],
+    options?: { expectVersion?: number },
   ): Promise<ArtifactDeletionReport> {
     const path = this.filePath(runId);
     let release: () => Promise<void>;
@@ -1226,6 +1351,14 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
           );
         }
         throw toArtifactDeleteFailedError(runId, 'JsonFileStore', [], path, err);
+      }
+
+      // issue #715 (a) (D6-9, D6-50): the anchor's version guard. A caller that selected the run at
+      // a version (purge) passes it; a run that changed since — a finalizer completed, a resume and
+      // re-terminalise — is refused with the same STATE_SNAPSHOT_MISMATCH `update()` throws, and
+      // nothing is deleted. Absent ⇒ today's behaviour.
+      if (options?.expectVersion !== undefined && record.version !== options.expectVersion) {
+        throw versionConflictError(runId, options.expectVersion, record.version);
       }
 
       // issue #184 — the resurrect-race fix: re-verify terminal UNDER THE LOCK. A run selected as

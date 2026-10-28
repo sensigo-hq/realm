@@ -5,6 +5,7 @@ import { Command } from 'commander';
 import { existsSync } from 'node:fs';
 import { shellWord } from '@sensigo/realm';
 import { workflowCommands, runCommands, topLevelCommands } from './commands-registry.js';
+import { reportExpectedRefusal } from './lib/expected-refusal.js';
 import { VERSION } from './version.js';
 
 const program = new Command();
@@ -51,4 +52,11 @@ if (
   process.exit(1);
 }
 
-program.parse();
+// #715 (a) correction 1 (C-6): awaited, so an error a command's action throws reaches this one catch.
+// An expected typed refusal is printed as one line with exit code 1; everything else is rethrown and
+// stays loud (the writer's fatal handler prints it with its stack).
+try {
+  await program.parseAsync();
+} catch (err) {
+  if (!reportExpectedRefusal(err)) throw err;
+}
