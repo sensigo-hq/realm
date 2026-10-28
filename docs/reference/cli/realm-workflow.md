@@ -255,6 +255,8 @@ Watching invoice-check/workflow.yaml — press Ctrl+C to stop
 
 A file that is refused is reported, and the copy registered before it stays in place. `watch` keeps running.
 
+`watch` prints the lines for each provider once, in the first block that shows a size for that provider. A later block carries the step lines only, so a log read from the middle can show step lines without them. A block is printed only when its lines differ from the last block printed. A save that leaves them as they were prints `Registered:` and no cache lines, and so does a repair that returns them to the block printed before a refused save. Lines that change and then change back are printed again. With `--model`, `watch` reads your economics file on each save of the workflow file or of one of its profile files, not when the economics file itself changes: an edit to it prints nothing until the next such save.
+
 If the watched folder is removed, `watch` stops:
 
 ```text

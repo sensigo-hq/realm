@@ -694,6 +694,12 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
 
   // register and watch place the block. Break: register's block before the description line, or
   // watch printing it on every save. (a) red when the order or the count differs; (b) prints them.
+  // Correction 2 (F-11): the page's three watch facts. Run here: a later block carries no provider
+  // line (fact 1); an unchanged save prints `Registered:` and no cache line, and a profile changed
+  // and changed back prints its first line again (fact 2). Fact 3 (the economics file is read on a
+  // save, not on its own change) needs a second watch with --model: pinned word for word here; its
+  // run is in the correction's report. (a) red when watch prints the provider lines twice, skips a
+  // changed-back block, or the page drops a sentence.
   it('register: after the description line; watch: after the first Registered line, and again only when the lines change', async () => {
     claim(
       WORKFLOW_PAGE,
@@ -703,6 +709,15 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
       WORKFLOW_PAGE,
       'It prints the [cache lines](#the-cache-lines) after the first `Registered` line, and again only when they change.',
     );
+    for (const sentence of [
+      '`watch` prints the lines for each provider once, in the first block that shows a size for that provider.',
+      'A later block carries the step lines only, so a log read from the middle can show step lines without them.',
+      'A block is printed only when its lines differ from the last block printed.',
+      'A save that leaves them as they were prints `Registered:` and no cache lines, and so does a repair that returns them to the block printed before a refused save.',
+      'Lines that change and then change back are printed again.',
+      'With `--model`, `watch` reads your economics file on each save of the workflow file or of one of its profile files, not when the economics file itself changes: an edit to it prints nothing until the next such save.',
+    ])
+      claim(WORKFLOW_PAGE, sentence);
     const described = project({
       workflow: oneStep('described').replace(
         'version: 1\n',
@@ -733,15 +748,29 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
       await until(2);
       writeFileSync(join(dir, 'profiles', 'p.md'), 'You are careful and brief.');
       await until(3);
-      const kinds = out
-        .split('\n')
-        .map((l) => (l.includes('] Registered:') ? 'R' : l.includes('] cache:') ? 'C' : ''))
+      writeFileSync(join(dir, 'profiles', 'p.md'), 'You are careful.');
+      await until(4);
+      const lines = out.split('\n');
+      const kinds = lines
+        .map((l) =>
+          l.includes('] Registered:')
+            ? 'R'
+            : l.includes('] cache:')
+              ? 'C'
+              : /\] (anthropic|openai): /.test(l)
+                ? 'P'
+                : '',
+        )
         .filter((k) => k !== '')
         .join('');
+      const caches = lines
+        .filter((l) => l.includes('] cache:'))
+        .map((l) => l.slice(l.indexOf('] cache:') + 2));
       expect([
         reg.indexOf('  For the cell.') + 1 === reg.findIndex((l) => l.startsWith('cache:')),
         kinds,
-      ]).toEqual([true, 'RCRRC']);
+        caches.length === 3 && caches[2] === caches[0] && caches[1] !== caches[0],
+      ]).toEqual([true, 'RCPPPRRCRC', true]);
     } finally {
       child.kill();
     }
