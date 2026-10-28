@@ -573,7 +573,9 @@ const STEP_LINE_ATTEMPT_VIEW = {
   cost_unrecorded: {
     surface: 'rendered',
     probe: (out) =>
-      expect(out).toContain('cost: not recorded — tool-calling steps do not record usage yet'),
+      expect(out).toContain(
+        'cost: not recorded — tool-calling step with no recorded usage (realm 0.48.0 or earlier recorded none)',
+      ),
   },
   cost_unreadable: {
     surface: 'rendered',
@@ -753,7 +755,9 @@ const STEP_LINE_UNRECORDED_CAUSE = {
   tool_calling_step: {
     surface: 'rendered',
     probe: (out) =>
-      expect(out).toContain('cost: not recorded — tool-calling steps do not record usage yet'),
+      expect(out).toContain(
+        'cost: not recorded — tool-calling step with no recorded usage (realm 0.48.0 or earlier recorded none)',
+      ),
   },
   not_measured_by_realm: {
     surface: 'rendered',

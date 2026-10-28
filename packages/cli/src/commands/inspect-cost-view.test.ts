@@ -445,7 +445,9 @@ describe('#600 PR 1b — the three absence sentences', () => {
       }),
     ]);
     const out = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
-    expect(out).toContain('cost: not recorded — tool-calling steps do not record usage yet');
+    expect(out).toContain(
+      'cost: not recorded — tool-calling step with no recorded usage (realm 0.48.0 or earlier recorded none)',
+    );
   });
 
   it('not_measured_by_realm', async () => {
