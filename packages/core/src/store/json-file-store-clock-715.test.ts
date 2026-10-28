@@ -323,8 +323,8 @@ describe('#715 (a) correction 1 (C-7) — a refusal after the lock spends its on
 describe('#715 (a) B1 — J10, settleStep (unchanged until #715 (b))', () => {
   it('J10 settleStep on an ordinary directory reads no store clock', async () => {
     // (a) red when settleStep starts reading the shared system clock through `takeReading` before
-    // #715 (b) moves it; (b) prints the count. An ordinary directory, never a test location: no
-    // cell of #715 (a) mixes a test location with a settling run.
+    // #715 (b) moves it; (b) prints the count. An ordinary directory, never a test location: the one
+    // cell that settles on a test location is correction 1's C-9 cell below.
     const root = await mkdtemp(join(tmpdir(), 'realm-715a-plain-'));
     roots.push(root);
     const store = new JsonFileStore(join(root, 'runs'));
@@ -447,6 +447,47 @@ describe('#715 (a) correction 1 (C-4) — J5, J12, J13: the pointer carries the 
     const shown = `J13 pointer ${pointer}, record ${run.updated_at}`;
     expect(pointer, shown).toBe(run.updated_at);
     expect(yearOf(run.updated_at), `${shown}; the wall year ${wallYear}`).not.toBe(wallYear);
+  });
+});
+
+describe('#715 (a) correction 1 (C-9) — on a test location, claimStep stamps the location; settleStep the wall clock', () => {
+  it('claimStep stamps the location’s T; a settleStep after it stamps updated_at with the wall clock, earlier than created_at', async () => {
+    // (a) red when settleStep is given the store's reading (#715 (b)'s change: its `updated_at` would be
+    // the location's T, not the wall clock's year); (b) prints the three instants and the wall year.
+    const wallYear = new Date(Date.now()).getUTCFullYear();
+    const loc = await location(T);
+    const { run } = await loc.store.create({ workflowId: WF, workflowVersion: 1, params: {} });
+    const claimed = await loc.store.claimStep(run.id, 'work', AUTO);
+    const token = claimed.claims?.['work']?.token;
+    await loc.store.settleStep(
+      run.id,
+      {
+        kind: 'settle_step',
+        step: 'work',
+        outcome: 'complete',
+        ...(token !== undefined ? { claimToken: token } : {}),
+        evidence: [],
+      },
+      AUTO,
+    );
+    const settled = await loc.store.get(run.id);
+    const shown = `created ${run.created_at}, claimed ${claimed.updated_at}, settled ${settled.updated_at}; the wall year ${wallYear}`;
+    expect(
+      {
+        claimSince: claimed.claims?.['work']?.since,
+        claimed: claimed.updated_at,
+        completed: settled.completed_steps,
+        settledYear: new Date(settled.updated_at).getUTCFullYear(),
+        updatedBeforeCreated: Date.parse(settled.updated_at) < Date.parse(settled.created_at),
+      },
+      shown,
+    ).toEqual({
+      claimSince: iso(T),
+      claimed: iso(T),
+      completed: ['work'],
+      settledYear: wallYear,
+      updatedBeforeCreated: true,
+    });
   });
 });
 

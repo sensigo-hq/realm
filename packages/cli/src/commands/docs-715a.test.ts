@@ -59,6 +59,12 @@ describe('#715 (a) — the docs sentences', () => {
       ENV,
       'A store opened there takes the time from that file when it creates a run, starts a step or writes a run with `update`, so every process that opens the folder reads the same time (added after version 0.48.0).',
     );
+    // Correction 1 (C-9): json-file-store-clock-715.test.ts, the C-9 cell (settleStep's wall year,
+    // updated before created).
+    claim(
+      ENV,
+      "When a step's result is recorded, the run's `updated_at` still comes from this computer's clock, so on a test location a run can read updated before it was created.",
+    );
     // C3.
     claim(
       ENV,
@@ -177,6 +183,11 @@ describe('#715 (a) — the docs sentences', () => {
     claim(
       TESTING,
       '`createTestLocation` refuses an empty root, the working directory or a folder above it, and a root that already holds a clock file; to use such a folder as an ordinary store again, delete its `.realm-test-clock` file.',
+    );
+    // Correction 1 (C-9): B2 (create, update, claimStep stamp the location) and the C-9 cell.
+    claim(
+      TESTING,
+      "The location's time stamps a run's `created_at`, a claim's `since` and deadline, and the `updated_at` that `create`, `update` and `claimStep` write; `settleStep` still stamps `updated_at` with this computer's clock, so a run whose step settled can read updated before it was created.",
     );
     // C9; C7, C7b; C8.
     claim(
