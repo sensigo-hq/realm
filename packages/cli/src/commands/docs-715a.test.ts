@@ -174,16 +174,24 @@ describe('#715 (a) — the docs sentences', () => {
       'A clock whose time goes up by `stepMs` each time it is read, with a `reads` count. Its `at` throws.',
     );
     claim(TESTING, 'The same clock, with a `reads` count of its `now()` calls.');
-    // C14, C15; correction 1 (C-3): test-location.test.ts (1)–(4).
+    // C14, C15; correction 1 (C-3): test-location.test.ts (1)–(4); correction 2 (R-1): R1-a (a shared
+    // parent and a caller file stay), R1-b (a given root keeps what was written in it), R1-c (only the
+    // folders it made go), R1-d and (4) (the fresh folder goes whole), R-5 (through an alias).
     claim(
       TESTING,
-      'A test location: a folder with `runs/` and a `.realm-test-clock` file. Its `clock` moves the time in that file, so a `JsonFileStore` opened on its `runsDir`, in this process or another, reads it. `remove()` deletes the folders and the clock file the location made; a root you gave keeps everything else.',
+      'A test location: a folder with `runs/` and a `.realm-test-clock` file. Its `clock` moves the time in that file, so a `JsonFileStore` opened on its `runsDir`, in this process or another, reads it.',
     );
-    // Correction 1: C-3 (0) (the three refused roots), C14 (a root that holds a clock file), C-6's
-    // built-CLI cell (deleting the file makes the folder an ordinary store).
     claim(
       TESTING,
-      '`createTestLocation` refuses an empty root, the working directory or a folder above it, and a root that already holds a clock file; to use such a folder as an ordinary store again, delete its `.realm-test-clock` file.',
+      '`remove()` deletes the clock file, the `runs/` folder if the location made it, and the other folders the location made above `runs/`, each only if it is then empty; a root you gave keeps everything else in it. A folder the location makes itself, when you give no `root`, is deleted whole.',
+    );
+    // Correction 1: C-3 (0) (the refused roots, by the path as written), C14 (a root that holds a
+    // clock file), C-6's built-CLI cell (deleting the file makes the folder an ordinary store);
+    // correction 2: R-5 (an alias of the working directory is accepted), R-3b (the parent of a `..x`
+    // working directory is accepted).
+    claim(
+      TESTING,
+      '`createTestLocation` refuses an empty root, and a root that is the working directory or a folder above it, judged by the path as written: a symlink or junction to one is not followed, and the parent of a working directory whose own name starts with `..` is not recognised as a folder above it. It also refuses a root that already holds a clock file; to use that folder as an ordinary store again, delete its `.realm-test-clock` file.',
     );
     // Correction 1 (C-9): B2 (create, update, claimStep stamp the location) and the C-9 cell.
     claim(
@@ -195,11 +203,12 @@ describe('#715 (a) — the docs sentences', () => {
       TESTING,
       '`set` to an earlier time runs nothing and moves the clock back. A function given to `at` sees the clock at its own time, never earlier. An `advance` runs every due function even when some throw, then rejects with their errors.',
     );
-    // Correction 1 (C-2): the source scan (lint-test-location-715.test.ts); C1, C2 (the store reads
-    // the file beside runs/, and none elsewhere).
+    // Correction 1 (C-2) and 2 (R-3c): the source scan (lint-test-location-715.test.ts: its
+    // PACKAGES, NEEDLES and ALLOWED are the sentence's four packages, names and exceptions); C1, C2
+    // (the store reads the file beside runs/, and none elsewhere).
     claim(
       TESTING,
-      "A test of Realm's own source keeps `createTestLocation`, and the clock file's helpers `@sensigo/realm` exports for this package, out of every module that is not a test or this package: Realm's own code does not create a test clock or write a clock file.",
+      "A test of Realm's own source keeps `createTestLocation`, and the clock file's helpers `@sensigo/realm` exports for this package, out of the `src` folders of Realm's four packages, except the files that define or re-export them, the file store's own file (it reads the clock file, and a comment there names it) and this package: no command, server or library there creates a test location or writes a clock file.",
     );
     claim(TESTING, 'The file store reads a clock file, only when it sits beside `runs/`.');
     // The type count cell below.

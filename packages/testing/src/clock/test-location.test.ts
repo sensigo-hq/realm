@@ -295,4 +295,20 @@ describe('#715 (a) correction 1 (C-3) — remove() deletes only what the locatio
       shown,
     ).toEqual({ real: ['sentinel.txt'], aliasIsLink: true, scratch: ['alias', 'real'] });
   });
+
+  it('R-3b the parent of a working directory whose name starts with `..` is not recognised as a folder above it (the documented limit); remove() deletes only what it made there', async () => {
+    // (a) red when the guard recognises that parent (the docs sentence would then be false: change
+    // it with the guard); (b) prints the scratch listing.
+    const cwd = join(scratch, '..odd');
+    await mkdir(cwd);
+    process.chdir(cwd);
+    try {
+      const loc = await createTestLocation({ start: new Date(T), root: scratch });
+      expect(namesUnder(scratch), 'made').toEqual(['..odd', '.realm-test-clock', 'runs']);
+      await loc.remove();
+    } finally {
+      process.chdir(home);
+    }
+    expect(namesUnder(scratch), 'after remove()').toEqual(['..odd']);
+  });
 });
