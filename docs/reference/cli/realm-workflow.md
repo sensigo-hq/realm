@@ -70,13 +70,17 @@ realm workflow validate --registered <id> [flags]
 
 Checks a workflow and prints the result. It stores nothing. With a path it checks the file; with `--registered` it checks the stored copy of a registered workflow against the rules of the installed version.
 
-| Flag                         | What it does                                                                                   |
-| ---------------------------- | ---------------------------------------------------------------------------------------------- |
-| `--registered <id>`          | Checks the registered copy of workflow `<id>`. Cannot be combined with a path.                 |
-| `--strict`                   | Exits with 1 if there is any warning.                                                          |
-| `--explain`                  | Prints one line for each step about `structured_output: strict`, in place of one summary line. |
-| `--json`                     | Prints the result as one JSON object and nothing else.                                         |
-| `--extensions-module <path>` | Loads this code file in place of the files named by the workflow's `extensions`.               |
+| Flag                         | What it does                                                                                                                            |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `--registered <id>`          | Checks the registered copy of workflow `<id>`. Cannot be combined with a path.                                                          |
+| `--strict`                   | Exits with 1 if there is any warning.                                                                                                   |
+| `--explain`                  | Prints one line for each step about `structured_output: strict`, in place of one summary line.                                          |
+| `--json`                     | Prints the result as one JSON object and nothing else.                                                                                  |
+| `--extensions-module <path>` | Loads this code file in place of the files named by the workflow's `extensions`.                                                        |
+| `--provider <name>`          | Describes only that provider's request, `anthropic` or `openai`, in the [cache lines](#the-cache-lines).                                |
+| `--model <id>`               | The model the runner uses. Needs `--provider`. Its minimum is read from your [economics file](../cache-economics.md#the-cache-minimum). |
+| `--floor <tokens>`           | A minimum of your own to judge each agent step against, in tokens.                                                                      |
+| `--ratio <chars-per-token>`  | Your own count of characters per token, in place of the estimate's range.                                                               |
 
 The warning that the `@sensigo/realm` your code imports is another version than the command's ([`REALM_RELEASE_LINE_MISMATCH`](../workflow/loader-diagnostics.md#warning-codes)) counts as a warning for `--strict`. This was added in 0.46.0.
 
@@ -86,6 +90,11 @@ realm workflow validate invoice-check
 
 ```text
 Valid: invoice-check v1 (2 steps)
+ℹ 1 step ready for structured_output: strict — run 'realm workflow validate --explain' for detail (REALM_NO_NUDGE=1 to silence).
+cache: step_one — anthropic 588 chars ≈ 338–765 tokens, with Anthropic's tool text · openai 304 chars ≈ 61–122 tokens (estimates: 2.5–5 chars/token, with margin)
+anthropic: on steps without tools, realm marks the fixed part for caching unless the drive's --prompt-cache turns it off; a fixed part below the model's minimum is sent uncached, silently
+openai: realm sends no cache marker; the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)
+anthropic: the cache is kept per workspace (per organization on Bedrock and Google Cloud), as Anthropic's page said on 2026-10-09: drives from different workspaces each pay the write
 ```
 
 See [What the loader refuses and warns about](../workflow/loader-diagnostics.md) for every form the output takes, and for the JSON fields.
@@ -96,17 +105,106 @@ See [What the loader refuses and warns about](../workflow/loader-diagnostics.md)
 Error: provide a workflow path, or --registered <id> to audit a stored definition.
 ```
 
+### The cache lines
+
+An agent step sends the same text ahead of its input on every call: its profile, Realm's instructions and its schema. A provider can cache that fixed part, but not when it is shorter than the model's minimum, and then it says nothing. `validate`, `register` and `watch` print one `cache:` line for each agent step: the size of its fixed part, the other steps that share it (on OpenAI also a start shared after a profile; none for a step below the minimum, except a `structured_output: strict` step on OpenAI with a model that is not an `o1` model), and, when a minimum is known, whether the step can be cached at all. No model is called, and no key is read. These lines were added after version 0.48.0.
+
+The lines below come from the examples in the Realm repository. With no flag, `realm workflow validate examples/01-code-reviewer` gives the size of the request each provider is sent:
+
+```text
+cache: review_changes — anthropic 1,010 chars ≈ 422–934 tokens, with Anthropic's tool text · openai 515 chars ≈ 103–206 tokens (estimates: 2.5–5 chars/token, with margin)
+```
+
+**How the estimate is made.** Realm has no tokenizer, so the tokens are a range. Realm's own text is counted at 2.5 to 5 characters a token, measured on English text. Text in other scripts counts up to one token a character, an approximation: for such text, pass `--ratio` from your own count. On Anthropic, a step with a schema is sent Realm's tool, and Anthropic adds text of its own to such a request: 220 to 530 tokens, set from measurements on claude-sonnet-4-6 and claude-sonnet-5-5 on 2026-10-27, with margin. The line says `with Anthropic's tool text` where it adds them.
+
+**A minimum.** `--floor <tokens>` tests a minimum of your own. With `--provider` and `--model`, the minimum is the one your [economics file](../cache-economics.md#the-cache-minimum) states for the model. When both give one, `--floor` decides. The line names both only when the numbers differ, as in `(1,000, your --floor; your economics file says 512)`; when they are the same, it names only `--floor`. `cannot cache on it` and `long enough to cache` speak for the model only when the minimum is the economics file's; a minimum given by `--floor` reads `at that minimum`. Each provider's size is then followed by its verdict, here with `--floor 512`:
+
+```text
+cache: review_changes — anthropic 1,010 chars ≈ 422–934 tokens, with Anthropic's tool text — near the floor (512, your --floor) · openai 515 chars ≈ 103–206 tokens — below the floor (512, your --floor): this step cannot cache at that minimum
+```
+
+A verdict is given only when the whole range is on one side of the minimum. A range that holds the minimum reads `near`, and is not judged. At a 512-token minimum, an Anthropic step with a schema never reads `below`: the high end of Anthropic's tool text alone reaches 530. The verdicts with `--provider`, from examples 01, 04 and 03:
+
+```text
+cache: review_changes — 1,010 chars ≈ 422–934 tokens, with Anthropic's tool text (estimate) — below the floor for claude-sonnet-4-6 (1,024, your economics file): this step cannot cache on it
+cache: tag_content — 938 chars ≈ 408–905 tokens, with Anthropic's tool text (estimate) — near the floor for claude-sonnet-5-5 (512, your economics file): not judged from an estimate; --ratio <chars-per-token> narrows it
+cache: analyze_cause — 1,782 chars ≈ 577–1,244 tokens, with Anthropic's tool text (estimate) — above the floor (512, your --floor): long enough to cache at that minimum when the drive asks for caching
+cache: analyze_cause — 1,118 chars ≈ 224–448 tokens (estimate) — above the floor (200, your --floor): within the provider's own rules (realm sends no marker)
+```
+
+On OpenAI, a step with `structured_output: strict` and a schema is sent the schema in `response_format`. OpenAI's own text for it is not counted, so a `below` verdict there ends `; by realm's bytes — OpenAI's own schema text is not counted`.
+
+**Your own count.** `--ratio <chars-per-token>` takes your own count: the step's characters as the line prints them, divided by the input tokens the provider counted for one request of the step with a one-character message, tools included. The range is then that count ±15%, and no tool text is added, because your count holds it:
+
+```text
+cache: review_changes — 1,010 chars ≈ 220–297 tokens (estimate: 4 chars/token ±15%, your --ratio) — the floor was not judged: no --model named
+```
+
+**No verdict.** When no minimum is known, the line says why:
+
+| The line ends                                                                             | When                                                                                                              |
+| ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `the floor was not judged: no --model named`                                              | `--provider` is given, with no `--model` and no `--floor`.                                                        |
+| `no economics file named in realm.yaml (runner.cache.economics); --floor tests a minimum` | `--model` is given and `realm.yaml` names no economics file.                                                      |
+| `economics unreachable: <reason>`, `your economics file: <reason>`                        | The economics file cannot be read, or does not parse.                                                             |
+| `no entry for <model> in your economics file`                                             | The economics file has no entry for the model.                                                                    |
+| `no minimum stated for <model> in your economics file`                                    | The model's entry has no `min_cacheable_tokens`.                                                                  |
+| `economics not checked (<reason>)`                                                        | `--registered`, and the copy records no project folder, or the one it records is gone.                            |
+| `profile file not read (<reason>): sizes not computed`                                    | `--registered`, the step names a profile, and the copy records no workflow folder, or the one it records is gone. |
+
+`profile file not read` means the command could not read the step's profile file, because the registered copy records no workflow folder, or the one it records is gone. The copy still holds the profile's text, and runs use it. What to do: register again from the workflow's folder, with `realm workflow register <path>`. The line above the cache lines that starts `1 check not run:` or `N checks not run:` names the same reason. With `--registered`, the sizes come from the profile files now in the workflow's folder, which is what registering again would store, not from the text the copy holds.
+
+A step that calls tools is not judged: each tool's definition comes from its MCP server when the step runs, so its request cannot be measured before a run:
+
+```text
+cache: fetch_pr — uses tools: each tool's definition comes from its MCP server at run time, so the request cannot be measured before a run: not judged
+```
+
+**Steps that share a fixed part.** The line names the other steps whose fixed part is the same as this step's: `shares its whole fixed part with …`. On Anthropic nothing else is named: Anthropic writes its cache entry at the block Realm marks, and a read needs every character up to it, so two steps that part earlier share no entry. On OpenAI, two steps that carry the same profile are named too when they first differ in the schema, which comes after it. The line then says `shares its first <n> chars with …: the schemas differ`. With a minimum in force, they are named only when the estimate of the start they share reaches it or comes near it. On OpenAI the `<n> chars` count Realm's own text after the profile too, so with a short profile most of them are Realm's. The line says what the text shares, not how much of it is yours. No other shared start is named. A step below the minimum names no sharing, because it cannot cache whatever it shares; on OpenAI with `structured_output: strict` and a model that is not an `o1` model, where the provider's own schema text is not counted, the clause stays. The clause comes back with a lower floor or a longer fixed part. Two steps that differ only in `structured_output: strict`, one strict and one not, are not named to each other: a strict step sends a different fixed part. Two identical strict steps still name each other, on both providers, unless a floor puts them below the minimum on Anthropic or with an `o1` model; two strict steps with different schemas name nothing. A list of more than six steps names five and ends `and N more`. When the two providers would not name the same steps, each provider that names any starts its part with its own name, once, as in `— anthropic: shares its whole fixed part with handle_bug, …` or `— openai: shares its whole fixed part with strict_b`; a provider that names none is left out, and with `--provider` there is one layout and no label. From example 05, with `--provider anthropic`:
+
+```text
+cache: review_security — 954 chars ≈ 411–912 tokens, with Anthropic's tool text (estimate) — the floor was not judged: no --model named — shares its whole fixed part with review_performance
+```
+
+Anthropic's page says (2026-10-28) that "a cache entry only becomes available after the first response starts", and advises waiting for the first response before sending parallel requests that need hits. On Anthropic, two steps that share a fixed part, like these two, read each other's entry only if the second request is sent after the first response has started.
+
+After the step lines come the lines that hold for each provider shown, once:
+
+```text
+anthropic: on steps without tools, realm marks the fixed part for caching unless the drive's --prompt-cache turns it off; a fixed part below the model's minimum is sent uncached, silently
+openai: realm sends no cache marker; the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)
+anthropic: the cache is kept per workspace (per organization on Bedrock and Google Cloud), as Anthropic's page said on 2026-10-09: drives from different workspaces each pay the write
+```
+
+**Words on the provider lines.** _The drive_ is one `realm agent` driving one run, whether you start it or `realm listen` starts it for a run; its `--prompt-cache` flag sets what Anthropic is asked to cache (see [`realm agent`](realm-agent.md)). _Sent uncached, silently_: a fixed part shorter than the model's minimum is not cached, and the provider says nothing about it. _Pay the write_: the request that writes a cache entry is billed for what it writes at the cache-write price (see [How a request is priced](../cache-economics.md#how-a-request-is-priced) and [What a run costs](../../guides/realm-agent.md#what-a-run-costs)).
+
+The verdict is worked out the same way on every machine: Realm reads no key and no environment variable for it. The lines are printed like any other output, so in a log a value Realm hides elsewhere is hidden in them too. That includes the model id and the word `anthropic` when an environment variable holds the same text, for example `ANTHROPIC_MODEL=claude-sonnet-5-5` or `LLM_PROVIDER=anthropic`: the line then reads `[REDACTED]` where they stood. Realm hides an environment value only when it is 8 characters or more, so `openai` prints whole. In `--json`, both print whole (#885). With `--json`, `validate` gives the same facts in `cacheability`: see [the JSON output](../workflow/loader-diagnostics.md#--json).
+
+`--model` needs `--provider`, `--floor` a whole number of tokens, 1 or more, and `--ratio` a number above 0. Otherwise the command prints one of these lines on standard error and exits with 1, with nothing on standard output, with or without `--json`:
+
+```text
+Error: --provider is required with --model: realm does not guess a model's provider. Add --provider anthropic or --provider openai.
+Error: --floor must be a whole number of tokens, 1 or more (got '0').
+Error: --ratio must be a number of characters per token above 0 (got '0').
+```
+
+A flag given last, with nothing after it, and a `--provider` other than `anthropic` or `openai` (in lower case) get the command line parser's own message instead, also on standard error with exit 1 and nothing on standard output: `error: option '--floor <tokens>' argument missing`, or `error: option '--provider <name>' argument 'foo' is invalid. --provider must be openai or anthropic.` A flag followed by an option that takes no value takes that option as its value. For `--floor` and `--ratio` that gets the `Error:` line above: `--floor --json` prints `Error: --floor must be a whole number of tokens, 1 or more (got '--json').` For `--provider` it gets the parser's message: `--provider --json` prints `error: option '--provider <name>' argument '--json' is invalid. --provider must be openai or anthropic.` `--model` has no check on its value: `--provider anthropic --model --json` reads `--json` as the model id, prints no error and leaves `--json` unset, so the output is text, not JSON; `--model --strict` leaves `--strict` unset, so a warning no longer fails the run. With a path given, a flag followed by an option that takes a value is read by the command line parser instead: `--floor --ratio 4` and `--floor --provider anthropic` print `error: too many arguments for 'validate'. Expected 1 argument but got 2: …` (`register` and `watch` name themselves; the path and the value follow). `--provider --floor 5` prints `error: option '--provider <name>' argument '--floor' is invalid. --provider must be openai or anthropic.` Each goes to standard error with exit 1 and nothing on standard output.
+
 ## `register`
 
 ```text
-realm workflow register <path> [--strict]
+realm workflow register <path> [flags]
 ```
 
 Checks the file as `validate` does and, if it is accepted, stores a copy as `~/.realm/workflows/<id>.json`. Runs are started from the stored copy. Registering a workflow that is already registered replaces the copy.
 
-| Flag       | What it does                                             |
-| ---------- | -------------------------------------------------------- |
-| `--strict` | Stores nothing and exits with 1 if there is any warning. |
+| Flag                        | What it does                                                                                                                            |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `--strict`                  | Stores nothing and exits with 1 if there is any warning.                                                                                |
+| `--provider <name>`         | Describes only that provider's request, `anthropic` or `openai`, in the [cache lines](#the-cache-lines).                                |
+| `--model <id>`              | The model the runner uses. Needs `--provider`. Its minimum is read from your [economics file](../cache-economics.md#the-cache-minimum). |
+| `--floor <tokens>`          | A minimum of your own to judge each agent step against, in tokens.                                                                      |
+| `--ratio <chars-per-token>` | Your own count of characters per token, in place of the estimate's range.                                                               |
 
 A project realm of another version ([`REALM_RELEASE_LINE_MISMATCH`](../workflow/loader-diagnostics.md#warning-codes)) is a warning: without `--strict` the workflow is registered and the warning printed; with it, nothing is stored. This was added in 0.46.0.
 
@@ -116,7 +214,13 @@ realm workflow register invoice-check
 
 ```text
 Registered: invoice-check v1 (2 steps)
+cache: step_one — anthropic 588 chars ≈ 338–765 tokens, with Anthropic's tool text · openai 304 chars ≈ 61–122 tokens (estimates: 2.5–5 chars/token, with margin)
+anthropic: on steps without tools, realm marks the fixed part for caching unless the drive's --prompt-cache turns it off; a fixed part below the model's minimum is sent uncached, silently
+openai: realm sends no cache marker; the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)
+anthropic: the cache is kept per workspace (per organization on Bedrock and Google Cloud), as Anthropic's page said on 2026-10-09: drives from different workspaces each pay the write
 ```
+
+It prints the [cache lines](#the-cache-lines) after the description line.
 
 The stored copy also holds the text of every agent profile the workflow names, and the folder of the workflow's project. See [Deploy a project](../../guides/deploy.md).
 
@@ -125,20 +229,35 @@ The stored copy also holds the text of every agent profile the workflow names, a
 ## `watch`
 
 ```text
-realm workflow watch <path>
+realm workflow watch <path> [flags]
 ```
 
 Registers the workflow, then registers it again each time the file or one of its profile files changes. It runs until you stop it with Ctrl+C. Each line it prints begins with the time.
 
+| Flag                        | What it does                                                                                                                            |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `--provider <name>`         | Describes only that provider's request, `anthropic` or `openai`, in the [cache lines](#the-cache-lines).                                |
+| `--model <id>`              | The model the runner uses. Needs `--provider`. Its minimum is read from your [economics file](../cache-economics.md#the-cache-minimum). |
+| `--floor <tokens>`          | A minimum of your own to judge each agent step against, in tokens.                                                                      |
+| `--ratio <chars-per-token>` | Your own count of characters per token, in place of the estimate's range.                                                               |
+
+It prints the [cache lines](#the-cache-lines) after the first `Registered` line, and again only when they change.
+
 ```text
 Watching invoice-check/workflow.yaml — press Ctrl+C to stop
-[2026-10-01T22:47:07.024Z] Registered: invoice-check v1 (2 steps)
-[2026-10-01T22:47:08.062Z] Registered: invoice-check v1 (2 steps)
-[2026-10-01T22:47:10.067Z] Invalid workflow: 'version' must be a number
-[2026-10-01T22:47:12.073Z] Registered: invoice-check v2 (2 steps)
+[2026-10-27T16:56:26.020Z] Registered: invoice-check v1 (2 steps)
+[2026-10-27T16:56:26.020Z] cache: step_one — anthropic 588 chars ≈ 338–765 tokens, with Anthropic's tool text · openai 304 chars ≈ 61–122 tokens (estimates: 2.5–5 chars/token, with margin)
+[2026-10-27T16:56:26.020Z] anthropic: on steps without tools, realm marks the fixed part for caching unless the drive's --prompt-cache turns it off; a fixed part below the model's minimum is sent uncached, silently
+[2026-10-27T16:56:26.020Z] openai: realm sends no cache marker; the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)
+[2026-10-27T16:56:26.020Z] anthropic: the cache is kept per workspace (per organization on Bedrock and Google Cloud), as Anthropic's page said on 2026-10-09: drives from different workspaces each pay the write
+[2026-10-27T16:56:28.472Z] Registered: invoice-check v1 (2 steps)
+[2026-10-27T16:56:30.472Z] Invalid workflow: 'version' must be a number
+[2026-10-27T16:56:32.473Z] Registered: invoice-check v2 (2 steps)
 ```
 
 A file that is refused is reported, and the copy registered before it stays in place. `watch` keeps running.
+
+`watch` prints the lines for each provider once, in the first block that shows a size for that provider. After that block, a block carries the step lines only, so a log read from the middle can show step lines without them. A block is printed only when its lines differ from the last block printed. A save that leaves them as they were prints `Registered:` and no cache lines, and so does a repair that returns them to the block printed before a refused save. Lines that change and then change back are printed again. With `--model`, `watch` reads your economics file on each save of the workflow file or of one of its profile files, not when the economics file itself changes: an edit to it prints nothing until the next such save.
 
 If the watched folder is removed, `watch` stops:
 

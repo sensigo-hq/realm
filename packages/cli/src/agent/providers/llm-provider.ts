@@ -11,6 +11,7 @@ import type {
 import { REALM_CLI_BRAND } from '../../brand.js';
 import type { ToolDefinition, ToolExecutor, StepWithToolsResult } from '../mcp/mcp-extensions.js';
 import type { LlmClock } from './agent-utils.js';
+import type { RequestAdapter } from './request-layout.js';
 
 /**
  * Describes the optional feature set that an LLM provider supports.
@@ -304,6 +305,18 @@ export type ProviderFlagsCheck =
 const NO_DEFAULT_MODEL = '--model is required: realm has no default model.';
 
 /**
+ * Issue #600 caching PR 5 — which built-in request shape a provider and model take: the o1 rule in
+ * one place. o1, o1-mini and o1-preview take the reasoning shape (no tool support, the system prompt
+ * folded into the user message); o3, o3-mini and o4-mini support the standard Chat Completions API
+ * including function calling, so they take OpenAI's. `resolveProvider` builds the provider it names;
+ * `realm workflow validate` describes that provider's request.
+ */
+export function chooseAdapter(provider: ProviderName, model: string): RequestAdapter {
+  if (provider === 'anthropic') return 'anthropic';
+  return /^o1(-|$)/i.test(model) ? 'openai-reasoning' : 'openai';
+}
+
+/**
  * Issue #676 — checks the model flags of a built-in provider and chooses the provider, before
  * anything is created. Pure: it reads only its argument. The ONE place these refusal sentences
  * are written; `realm agent` adds the closing sentence that says what happened to the run, and
@@ -473,12 +486,7 @@ export async function resolveProvider(options: {
   const { provider, model } = checked;
 
   if (provider === 'openai') {
-    // Match o1, o1-mini, o1-preview — the o1 generation requires the special-case
-    // provider (no tool support, system prompt folded into user message).
-    // o3, o3-mini, and o4-mini support the standard Chat Completions API including
-    // function calling, so they route to OpenAIProvider.
-    const REASONING_MODELS = /^o1(-|$)/i;
-    if (REASONING_MODELS.test(model)) {
+    if (chooseAdapter(provider, model) === 'openai-reasoning') {
       // issue #313 (dead-config cell 4): this branch has always DROPPED --base-url silently —
       // the o1 provider takes neither it nor the strict attestation. Silently ignoring an
       // explicit flag is exactly the class the #291 F10 precedent says to warn about.
