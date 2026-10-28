@@ -421,9 +421,11 @@ function verdictText(report: CacheabilityReport, layout: LayoutResult, short: bo
   const head = `${floorName(report)} (${n(floor.tokens)}, ${basisText(floor)})`;
   switch (layout.verdict) {
     case 'below_floor':
+      // `on it` speaks for the model: only when the minimum is the one the runner's economics file
+      // states for it; a minimum the author typed (`--floor`) is `that minimum` (correction 1, C-4).
       return (
         ` — below ${head}: ` +
-        (report.flags.model !== undefined
+        (floor.basis === 'economics'
           ? 'this step cannot cache on it'
           : 'this step cannot cache at that minimum') +
         (layout.sized?.openaiStrictSchema === true

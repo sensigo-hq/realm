@@ -154,7 +154,8 @@ describe('the lines and verdicts (C5)', { timeout: 60_000 }, () => {
   });
 
   // Below on anthropic with a schema, at the economics file's 1,024: the band in the size clause, no
-  // tail; "on it" because a model is named. Break: the `--model` words swapped ("at that minimum").
+  // tail; "on it" because the minimum is the economics file's for that model (correction 1, C-4).
+  // Break: the two wordings swapped ("at that minimum").
   // (a) red when the line changes; (b) prints the cache lines.
   it('below on anthropic at 1,024, from the economics file, with --model', () => {
     const dir = project({
@@ -483,7 +484,38 @@ describe('the causes, one per row of the decision table (C5)', { timeout: 60_000
       '1024',
     ]);
     expect(cacheLines(r.stdout)).toEqual([
-      "cache: review_changes — 1,010 chars ≈ 422–934 tokens, with Anthropic's tool text (estimate) — below the floor for claude-sonnet-5-5 (1,024, your --floor): this step cannot cache on it",
+      "cache: review_changes — 1,010 chars ≈ 422–934 tokens, with Anthropic's tool text (estimate) — below the floor for claude-sonnet-5-5 (1,024, your --floor): this step cannot cache at that minimum",
+    ]);
+  });
+
+  // Correction 1 (C-4): `cannot cache on it` speaks for the model, so it is printed only when the
+  // minimum is the one the economics file states for it; a minimum the author typed reads `at that
+  // minimum`, with or without --model, and whether or not the file says the same. A no-schema step
+  // (31–62 tokens) reads below at both 512 and 1,024. (a) red when the wording is chosen by --model
+  // (the first two read `on it`) or by the file's own number differing (the second reads `on it`);
+  // (b) prints each below clause.
+  it('C-4: `on it` only when the economics file sets the minimum; `at that minimum` for --floor', () => {
+    const dir = project({
+      workflow: oneStep('ask'),
+      economics: economics('claude-sonnet-5-5', 512),
+    });
+    const below = (args: string[]): string => {
+      const line = cacheLines(
+        realm(['workflow', 'validate', dir, '--provider', 'anthropic', ...args]).stdout,
+      )[0]!;
+      return line.slice(line.indexOf(' — below'));
+    };
+    const MODEL = ['--model', 'claude-sonnet-5-5'];
+    expect([
+      below([...MODEL, '--floor', '1024']),
+      below([...MODEL, '--floor', '512']),
+      below(MODEL),
+      below(['--floor', '512']),
+    ]).toEqual([
+      ' — below the floor for claude-sonnet-5-5 (1,024, your --floor; your economics file says 512): this step cannot cache at that minimum',
+      ' — below the floor for claude-sonnet-5-5 (512, your --floor): this step cannot cache at that minimum',
+      ' — below the floor for claude-sonnet-5-5 (512, your economics file): this step cannot cache on it',
+      ' — below the floor (512, your --floor): this step cannot cache at that minimum',
     ]);
   });
 });
