@@ -4,7 +4,15 @@
 // instants only — never an environment or a path under a real home.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  statSync,
+  symlinkSync,
+} from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative } from 'node:path';
@@ -255,5 +263,36 @@ describe('#715 (a) correction 1 (C-3) — remove() deletes only what the locatio
     await writeFile(join(loc.root, 'sub', 'more.txt'), 'y');
     await loc.remove();
     expect(namesUnder(loc.root), 'after remove()').toEqual(['(gone)']);
+  });
+
+  it('R-5 a root given through an alias (a symlink, or a junction on Windows) of the working directory is accepted, as documented; remove() deletes only what it made, through the alias', async () => {
+    // (a) red when remove() deletes more than it made through an alias (the real folder, its
+    // sentinel, or the alias itself), or the clock file stops recording the real path; (b) prints
+    // the listings of real/ and of the scratch folder.
+    const real = join(scratch, 'real');
+    const alias = join(scratch, 'alias');
+    await mkdir(real);
+    await writeFile(join(real, 'sentinel.txt'), 'keep me');
+    symlinkSync(real, alias, 'junction');
+    process.chdir(real);
+    try {
+      const loc = await createTestLocation({ start: new Date(T), root: alias });
+      const recorded = (
+        JSON.parse(readFileSync(join(real, TEST_CLOCK_FILE_NAME), 'utf8')) as { location: string }
+      ).location;
+      expect(recorded, 'the clock file records the real path').toBe(realpathSync(real));
+      await loc.remove();
+    } finally {
+      process.chdir(home);
+    }
+    const shown = `real/: ${readdirSync(real).sort().join(', ')} | scratch: ${readdirSync(scratch).sort().join(', ')}`;
+    expect(
+      {
+        real: readdirSync(real).sort(),
+        aliasIsLink: lstatSync(alias).isSymbolicLink(),
+        scratch: readdirSync(scratch).sort(),
+      },
+      shown,
+    ).toEqual({ real: ['sentinel.txt'], aliasIsLink: true, scratch: ['alias', 'real'] });
   });
 });
