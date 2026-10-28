@@ -69,9 +69,14 @@ All notable changes to this project are documented here.
   `STATE_SNAPSHOT_MISMATCH`, and deletes nothing.
 - **BREAKING — `WorkflowError.timestamp` is removed (issue #715).** A library caller that read it
   gets `undefined`.
-- **`realm run purge` reports a run that changed after it was selected as blocked, and deletes none
-  of its files (issue #715).** A resumed run keeps its sentence; any other change reads
-  `changed_since_selected`.
+- **`realm run purge` reports a run that changed after it was selected as blocked, and keeps its
+  run file (issue #715).** A resumed run keeps its sentence; any other change reads
+  `changed_since_selected`. Files that an artifact store had already deleted stay deleted. The
+  run's line then ends with
+  `(<bytes> across <n> of its artifact stores were already freed before the refusal)`. A resumed
+  run's line then leaves out "refusing to purge its trace buffer". As in 0.48.0, a run that owes a
+  cleanup step is blocked as `drain_pending` after its trace files and refused answers were deleted,
+  and a dry run lists it among the runs that would be purged.
 
 ### Fixed
 

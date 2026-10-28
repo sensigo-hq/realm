@@ -627,10 +627,10 @@ Purged 2/3 run(s) (4.9 KB freed, store-reported). 0 already gone, 1 blocked, 0 f
 | -------------- | ------------------------------------------------------------------------------------------------------------- |
 | `Purged`       | Runs deleted, of the runs selected.                                                                           |
 | `already gone` | Runs that something else deleted first.                                                                       |
-| `blocked`      | Runs that were left in place. `drain_pending` means the run still owes a cleanup step; see [`drain`](#drain). |
+| `blocked`      | Runs whose run file was kept. `drain_pending` means the run still owes a cleanup step; see [`drain`](#drain). |
 | `failed`       | Runs that could not be deleted because of an error.                                                           |
 
-A run that changed after `purge` selected it keeps all its files and is reported `blocked`: a run that was resumed with the sentence that it is no longer terminal, and any other change, such as a cleanup step that completed, as `changed_since_selected` (added after version 0.48.0).
+A run that changed after `purge` selected it is reported `blocked`, and its run file is kept: a run that was resumed with the sentence that it is no longer terminal, and any other change, such as a cleanup step that completed, as `changed_since_selected` (added after version 0.48.0). Files that an artifact store had already deleted stay deleted. Any `blocked` or `failed` line of a run that had files deleted ends with `(<bytes> across <n> of its artifact stores were already freed before the refusal)`. A run that owes a cleanup step is blocked as `drain_pending` after its trace files and refused answers were deleted, and a dry run lists it among the runs that would be purged.
 
 The line about `realm run resume` counts the selected runs that had a failed step `resume` could have made runnable again: a failed cleanup step is not counted, since `resume --from` refuses it. A run whose workflow cannot be read is counted when it has any failed step: `resume` refuses it until the workflow is registered again, and only the workflow tells a cleanup step from another.
 

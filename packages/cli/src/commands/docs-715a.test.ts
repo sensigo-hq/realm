@@ -63,10 +63,27 @@ describe('#715 (a) — the docs sentences', () => {
   });
 
   it('realm-run-acting.md: purge reports a run that changed after it was selected', () => {
-    // D2, D3, D5b.
+    // D2, D3, D5b; correction 1 (C-1): C-1a (the run file is kept, the freed bytes stay freed).
     claim(
       ACTING,
-      'A run that changed after `purge` selected it keeps all its files and is reported `blocked`: a run that was resumed with the sentence that it is no longer terminal, and any other change, such as a cleanup step that completed, as `changed_since_selected` (added after version 0.48.0).',
+      'A run that changed after `purge` selected it is reported `blocked`, and its run file is kept: a run that was resumed with the sentence that it is no longer terminal, and any other change, such as a cleanup step that completed, as `changed_since_selected` (added after version 0.48.0).',
+    );
+    // C-1a, C-1b.
+    claim(ACTING, 'Files that an artifact store had already deleted stay deleted.');
+    // C-1a, C-1c; purge.test.ts "a FAILED run with a partial free is disclosed too".
+    claim(
+      ACTING,
+      'Any `blocked` or `failed` line of a run that had files deleted ends with `(<bytes> across <n> of its artifact stores were already freed before the refusal)`.',
+    );
+    // C-1c (the dry run: the probe lane's P2, identical on 0.48.0; not pinned by a cell here).
+    claim(
+      ACTING,
+      'A run that owes a cleanup step is blocked as `drain_pending` after its trace files and refused answers were deleted, and a dry run lists it among the runs that would be purged.',
+    );
+    // C-1a, C-1c.
+    claim(
+      ACTING,
+      '| `blocked` | Runs whose run file was kept. `drain_pending` means the run still owes a cleanup step; see [`drain`](#drain). |',
     );
   });
 
@@ -230,8 +247,11 @@ describe('#715 (a) — the docs sentences', () => {
       '**`PerRunArtifactStore.deleteAllForRun` takes an optional `{ expectVersion }` (issue #715).** The store that holds the run record refuses a run whose version differs with `STATE_SNAPSHOT_MISMATCH`, and deletes nothing.',
       // D11.
       '**BREAKING — `WorkflowError.timestamp` is removed (issue #715).** A library caller that read it gets `undefined`.',
-      // D2, D3, D5b.
-      '**`realm run purge` reports a run that changed after it was selected as blocked, and deletes none of its files (issue #715).** A resumed run keeps its sentence; any other change reads `changed_since_selected`.',
+      // D2, D3, D5b; correction 1 (C-1): C-1a, C-1b, C-1c.
+      '**`realm run purge` reports a run that changed after it was selected as blocked, and keeps its run file (issue #715).** A resumed run keeps its sentence; any other change reads `changed_since_selected`.',
+      "Files that an artifact store had already deleted stay deleted. The run's line then ends with `(<bytes> across <n> of its artifact stores were already freed before the refusal)`.",
+      'A resumed run\'s line then leaves out "refusing to purge its trace buffer".',
+      'As in 0.48.0, a run that owes a cleanup step is blocked as `drain_pending` after its trace files and refused answers were deleted, and a dry run lists it among the runs that would be purged.',
       // B4, B1.
       '**A run started again under an idempotency key is stamped after the run it replaces when the clock stepped back by less than 5 seconds, and each `create`, `update` and `claimStep` of a store stamps from one reading of the clock (issue #715).**',
     ]) {

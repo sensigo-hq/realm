@@ -388,7 +388,11 @@ export async function purgeRuns(
         // (`ReclaimVersionChanged`) or the anchor's `expectVersion` (STATE_SNAPSHOT_MISMATCH)
         // refused it. Its outcome keeps purge's own words (never the fence's reclaim-worded
         // message): re-read it once and say why.
-        const outcome = await changedSinceSelected(anchorStore, run.id);
+        const outcome = await changedSinceSelected(
+          anchorStore,
+          run.id,
+          result.partial_frees[run.id] !== undefined,
+        );
         if (outcome.kind === 'already_purged') result.already_purged.push(run.id);
         else if (outcome.kind === 'failed')
           result.failed.push({ runId: run.id, error: outcome.error });
@@ -439,12 +443,15 @@ function hasDeleteAllForRunFenced(
  * issue #715 (a) (D6-50): what a run refused by the version guards (the artifact fence, the anchor's
  * `expectVersion`) became — read once more from the anchor store. Gone ⇒ `already_purged`; any other
  * read failure ⇒ `failed` with that error, as before; present and its DERIVED phase not terminal (a
- * resume) ⇒ `blocked` with the sentence a resume always printed; present and terminal (a finalizer
- * completed, or a resume and re-terminalise) ⇒ `blocked` as `changed_since_selected`.
+ * resume) ⇒ `blocked` with the sentence a resume always printed — without its "refusing to purge its
+ * trace buffer" when `freed` (an artifact store had already freed bytes, so that clause would be
+ * false; #715 (a) correction 1, C-1); present and terminal (a finalizer completed, or a resume and
+ * re-terminalise) ⇒ `blocked` as `changed_since_selected`.
  */
 async function changedSinceSelected(
   anchorStore: Pick<RunStore, 'get'>,
   runId: string,
+  freed: boolean,
 ): Promise<
   | { kind: 'already_purged' }
   | { kind: 'failed'; error: string }
@@ -460,7 +467,12 @@ async function changedSinceSelected(
     return { kind: 'failed', error: err instanceof Error ? err.message : String(err) };
   }
   if (!TERMINAL_PHASES.has(deriveRunPhase(now))) {
-    return { kind: 'blocked', reason: noLongerTerminalReason(runId) };
+    return {
+      kind: 'blocked',
+      reason: freed
+        ? `run '${runId}' is no longer terminal (resumed since selection)`
+        : noLongerTerminalReason(runId),
+    };
   }
   return { kind: 'blocked', reason: 'changed_since_selected' };
 }
