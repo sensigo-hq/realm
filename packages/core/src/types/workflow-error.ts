@@ -343,7 +343,6 @@ export class WorkflowError extends Error {
   /** issue #729 PR-0: the ways that lead on from this error (a reply's `error.remedy`). */
   readonly remedy?: readonly WayOn[];
   readonly stepId?: string;
-  readonly timestamp: string;
   readonly attempt: number;
   readonly retry_after?: number;
   /**
@@ -385,7 +384,6 @@ export class WorkflowError extends Error {
     if (options.about !== undefined) this.about = options.about;
     if (options.remedy !== undefined) this.remedy = options.remedy;
     if (options.stepId !== undefined) this.stepId = options.stepId;
-    this.timestamp = new Date().toISOString();
     this.attempt = options.attempt ?? 1;
     if (options.retry_after !== undefined) this.retry_after = options.retry_after;
     if (options.warnings !== undefined) this.warnings = options.warnings;
