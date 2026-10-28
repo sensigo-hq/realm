@@ -46,37 +46,7 @@ import {
   attachBilledUsage,
   passedSnippet,
 } from './agent-utils.js';
-
-/** The tool offered at `tool_choice:'auto'` so the model can return structured output directly —
- * `tool_use.input` arrives pre-parsed, eliminating the fenced/prefaced-JSON parse-failure class by
- * construction. `auto` (never forced) preserves reason-then-answer: a workflow whose output schema
- * declares a reasoning field LAST must not have the model rationalize post-hoc (see the design
- * decision in prompts/robust-anthropic-provider.md). Not pushed into tool_call_records anywhere it's
- * used — it's an extraction mechanism, not an agent-chosen tool. */
-const SUBMIT_TOOL_NAME = '__realm_submit__';
-
-/**
- * Issue #236: `strict` is a NEW sanctioned option, threaded from run-agent through both call
- * sites of this builder (the main `callStep`/`callStepWithMeta` call AND `performFinalExtraction`
- * — design §4 [CG]). Default absent = today's behavior byte-identical: the key is only ever
- * added to the returned object when the caller explicitly opts in.
- */
-function buildSubmitTool(
-  schema: Record<string, unknown>,
-  opts?: { strict?: boolean },
-): {
-  name: string;
-  description: string;
-  input_schema: Record<string, unknown>;
-  strict?: boolean;
-} {
-  return {
-    name: SUBMIT_TOOL_NAME,
-    description: 'Return your final result for this step as structured data.',
-    input_schema: schema,
-    ...(opts?.strict === true ? { strict: true } : {}),
-  };
-}
+import { SUBMIT_TOOL_NAME, buildSubmitTool } from './request-layout.js';
 
 /**
  * Returns the maximum output tokens for the given Anthropic model.

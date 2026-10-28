@@ -27,6 +27,7 @@ All notable changes to this project are documented here.
   drive's `usage`. It is not the model service's own request id: Realm replaces any `request_id` a
   provider module returns. The store TCK's `USAGE_RECORD_ROUNDTRIP` law now holds every store to
   round-tripping it, so a store that drops a request field it does not know fails the law.
+- **`realm workflow validate`, `register` and `watch` say how big each agent step's fixed part is, which steps share it, and whether it can be cached (issue #600).** Each agent step gets a `cache:` line: the size of the text it sends ahead of its input on every call, the other steps with the same fixed text (on OpenAI, also a start they share after a profile), and, with a minimum, whether it is long enough to be cached at all. No model is called and no key is read. Four flags: `--provider`, `--model` (it needs `--provider`, and its minimum is read from your economics file), `--floor` (a minimum of your own) and `--ratio` (your own characters per token). `validate --json` gains `cacheability`.
 
 ### Changed
 
@@ -64,6 +65,7 @@ engine_runnable.` It repeated one whole sentence, way out included, for every st
 - **The engine takes the host's disclosure set (`disclosure`) on `executeStep`, `executeChain`,
   `advanceRun` and `executeEngineStep` (issue #729 PR-4).** Realm's own commands and MCP server pass
   theirs; without it, a gate's question is stored as rendered and never cut.
+- **The economics file may carry `min_cacheable_tokens` in a model's entry (issue #600). This is a one-way door.** A realm older than this release refuses a file carrying it, on every run's price line: upgrade every realm that reads the folder before adding it.
 - **`realm run export`'s third line says what it counts, and names `--accept-partial-disclosure` once (issue #879).** It opens `masked in the file:` (it was `masked:`): its counts are what the file hides, not what the lines printed above it hide. When the flag wrote a run that export refuses without it, the line ends `; written on --accept-partial-disclosure (refused without it)`; it ended `; shown on --accept-partial-disclosure`, and a run with no project said nothing of the flag. Where the run's manifest changed or could not be read, a question's clause before it reads `question: shown with what is known`; it named the flag too.
 
 ### Fixed

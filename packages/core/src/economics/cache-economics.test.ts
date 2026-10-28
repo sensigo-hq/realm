@@ -4,6 +4,8 @@
 // reason or the computed figure: test values only.
 import { describe, expect, it } from 'vitest';
 import {
+  matchModel,
+  minCacheableTokensFor,
   parseCacheEconomics,
   priceFromEconomics,
   withoutDateSuffix,
@@ -387,6 +389,71 @@ describe('priceFromEconomics (G2)', () => {
     expect([notADay, 'priced' in aDay ? aDay.priced_by.matched_model : aDay]).toEqual([
       { not_priced: 'model_unknown' },
       'm',
+    ]);
+  });
+});
+
+// issue #600 caching PR 5 (C1.2): a model entry's optional `min_cacheable_tokens`, and the one model
+// match pricing and the floor share. On a failing host each cell prints the refusal reason, the
+// minimum or the matched id: test values only.
+describe('min_cacheable_tokens and the shared model match (caching PR 5)', () => {
+  const WITH_MIN = (value: string): string =>
+    VALID.replace('  m:\n', `  m:\n    min_cacheable_tokens: ${value}\n`);
+
+  // (a) red when the key leaves the schema (the file is then refused with an unknown key); (b) prints
+  //     the reason, or ACCEPTED and the minimum read.
+  it('the key is accepted at 512, beside prices', () => {
+    const parsed = parseCacheEconomics(WITH_MIN('512'));
+    expect(
+      'economics' in parsed ? parsed.economics.models['m']!.min_cacheable_tokens : parsed,
+    ).toBe(512);
+  });
+
+  // (a) red when the key's type or minimum is loosened; (b) prints each reason.
+  it.each([
+    ['0', 'economics/models/m/min_cacheable_tokens: must be >= 1'],
+    ['1.5', 'economics/models/m/min_cacheable_tokens: must be integer'],
+    ['"512"', 'economics/models/m/min_cacheable_tokens: must be integer'],
+  ])('refuses min_cacheable_tokens: %s, in the existing refusal form', (value, reason) => {
+    expect(reasonOf(WITH_MIN(value))).toBe(reason);
+  });
+
+  // A dated id finds the same entry for its price and its floor. (a) red when minCacheableTokensFor
+  //     matches the exact id only (the floor then reads model_unknown while the price stays
+  //     priced), or reads another entry; (b) prints the price's matched id, the shared match and
+  //     each floor answer.
+  it('a model id with a date suffix finds the same entry for price and floor; no entry, or no minimum, says which', () => {
+    const file: CacheEconomics = {
+      version: 1,
+      currency: 'USD',
+      models: {
+        'claude-sonnet-5-5': {
+          prices: [{ per_million_tokens: { input: 3, output: 15 } }],
+          min_cacheable_tokens: 512,
+        },
+        'gpt-5': { prices: [{ per_million_tokens: { input: 1, output: 8 } }] },
+      },
+    };
+    const price = priceFromEconomics(
+      file,
+      'claude-sonnet-5-5-20261001',
+      '2026-10-01T00:00:00Z',
+      usage({ prompt_tokens: 1 }),
+    );
+    expect([
+      'priced' in price ? price.priced_by.matched_model : price,
+      matchModel(file, 'claude-sonnet-5-5-20261001'),
+      minCacheableTokensFor(file, 'claude-sonnet-5-5-20261001'),
+      minCacheableTokensFor(file, 'claude-sonnet-5-5'),
+      minCacheableTokensFor(file, 'gpt-5'),
+      minCacheableTokensFor(file, 'claude-opus-9'),
+    ]).toEqual([
+      'claude-sonnet-5-5',
+      'claude-sonnet-5-5',
+      { tokens: 512 },
+      { tokens: 512 },
+      { absent: 'no_minimum_stated' },
+      { absent: 'model_unknown' },
     ]);
   });
 });

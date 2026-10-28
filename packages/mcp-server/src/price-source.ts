@@ -67,33 +67,49 @@ export function loadPriceSource(
   return loaded;
 }
 
+/**
+ * Issue #600 caching PR 5 (Δ6) — reads and parses the runner's economics file: the ONE reader, shared
+ * by pricing (`loadPriceSource`, below) and `realm workflow validate`'s cache floor. The bytes are
+ * read here and parsed by core (`parseCacheEconomics`). Uncached: every call reads the file again,
+ * so `realm workflow watch` sees an edited file on its next save. The two failures carry the detail
+ * every host prints after its cause — `cannot read '<path>': <code or message>` when the file cannot
+ * be read, `'<path>'[ (line L, column C)]: <reason>` when it does not parse.
+ */
+export async function readCacheEconomics(
+  path: string,
+): Promise<
+  | { economics: CacheEconomics }
+  | { cause: 'economics_unreachable' | 'economics_unreadable'; detail: string }
+> {
+  let text: string;
+  try {
+    text = await readFile(path, 'utf8');
+  } catch (err) {
+    return {
+      cause: 'economics_unreachable',
+      detail: `cannot read '${path}': ${errorCode(err) ?? boundedMessage(err)}`,
+    };
+  }
+  const parsed = parseCacheEconomics(text);
+  if ('error' in parsed) {
+    const at =
+      parsed.error.line !== undefined
+        ? ` (line ${parsed.error.line}${parsed.error.column !== undefined ? `, column ${parsed.error.column}` : ''})`
+        : '';
+    return { cause: 'economics_unreadable', detail: `'${path}'${at}: ${parsed.error.reason}` };
+  }
+  return { economics: parsed.economics };
+}
+
 async function buildPriceSource(
   economicsPath: string | undefined,
   importList: () => Promise<unknown>,
 ): Promise<PriceSource> {
   let economics: CacheEconomics | undefined;
   if (economicsPath !== undefined) {
-    let text: string;
-    try {
-      text = await readFile(economicsPath, 'utf8');
-    } catch (err) {
-      return notPricedSource(
-        'economics_unreachable',
-        `cannot read '${economicsPath}': ${errorCode(err) ?? boundedMessage(err)}`,
-      );
-    }
-    const parsed = parseCacheEconomics(text);
-    if ('error' in parsed) {
-      const at =
-        parsed.error.line !== undefined
-          ? ` (line ${parsed.error.line}${parsed.error.column !== undefined ? `, column ${parsed.error.column}` : ''})`
-          : '';
-      return notPricedSource(
-        'economics_unreadable',
-        `'${economicsPath}'${at}: ${parsed.error.reason}`,
-      );
-    }
-    economics = parsed.economics;
+    const read = await readCacheEconomics(economicsPath);
+    if ('cause' in read) return notPricedSource(read.cause, read.detail);
+    economics = read.economics;
   }
 
   let list: PriceSource | undefined;

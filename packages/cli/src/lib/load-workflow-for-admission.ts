@@ -131,6 +131,9 @@ export async function loadWorkflowForAdmission(
   definition: WorkflowDefinition;
   warnings: LoaderWarning[];
   manifest: LoadedProjectExtensions['manifest'];
+  /** Issue #600 caching PR 5: the runner's economics file (`runner.cache.economics`) the load
+   *  resolved, when `realm.yaml` names one — validate, register and watch read the cache floor from it. */
+  cacheEconomicsPath?: string;
 }> {
   const { definition, warnings: pass1Warnings } = loadWorkflowFromFileWithDiagnostics(filePath);
   let loaded: LoadedProjectExtensions;
@@ -160,5 +163,8 @@ export async function loadWorkflowForAdmission(
       ...wrapSentinelWarnings(loaded.sentinelWarnings),
     ],
     manifest: loaded.manifest,
+    ...(loaded.cacheEconomicsPath !== undefined
+      ? { cacheEconomicsPath: loaded.cacheEconomicsPath }
+      : {}),
   };
 }

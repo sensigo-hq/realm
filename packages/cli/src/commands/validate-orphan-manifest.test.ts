@@ -120,7 +120,14 @@ describe('realm workflow validate — orphaned-manifest guard (the one admission
   it('2. byte-identical happy path: no orphan → exactly the Valid line, exit 0', async () => {
     const { code, stdout, stderr } = await runCli(['workflow', 'validate', workflowPath]);
     expect(stderr).toBe('');
-    expect(stdout).toBe('Valid: orphan-wf v1 (1 step)\n');
+    // issue #600 caching PR 5: the agent step's cache line and the once-lines follow (add-only).
+    expect(stdout).toBe(
+      'Valid: orphan-wf v1 (1 step)\n' +
+        'cache: s1 — anthropic 155 chars ≈ 31–62 tokens (no schema: realm sends no tool) · openai 155 chars ≈ 31–62 tokens (estimates: 2.5–5 chars/token, with margin)\n' +
+        "anthropic: on steps without tools, realm marks the fixed part for caching unless the drive's --prompt-cache turns it off; a fixed part below the model's minimum is sent uncached, silently\n" +
+        "openai: realm sends no cache marker; the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)\n" +
+        "anthropic: the cache is kept per workspace (per organization on Bedrock and Google Cloud), as Anthropic's page said on 2026-10-09: drives from different workspaces each pay the write\n",
+    );
     expect(code).toBe(0);
   }, 25_000);
 });

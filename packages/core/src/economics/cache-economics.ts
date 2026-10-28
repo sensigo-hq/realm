@@ -39,7 +39,17 @@ export interface CacheEconomics {
   version: 1;
   currency: 'USD';
   /** Keyed by the exact model id; a recorded id with a date suffix matches its undated entry. */
-  models: Record<string, { prices: CacheEconomicsPrice[] }>;
+  models: Record<string, CacheEconomicsModel>;
+}
+
+/** One model's entry: its prices, and (issue #600 caching PR 5) the minimum its provider caches. */
+export interface CacheEconomicsModel {
+  prices: CacheEconomicsPrice[];
+  /**
+   * The fewest input tokens the provider caches for this model, as the runner copied it from its
+   * platform's page. `realm workflow validate` judges each agent step's fixed part against it.
+   */
+  min_cacheable_tokens?: number;
 }
 
 const RATE = { type: 'number', minimum: 0 } as const;
@@ -72,6 +82,7 @@ export const CACHE_ECONOMICS_JSON_SCHEMA = {
         additionalProperties: false,
         required: ['prices'],
         properties: {
+          min_cacheable_tokens: { type: 'integer', minimum: 1 },
           prices: {
             type: 'array',
             minItems: 1,
@@ -228,6 +239,33 @@ export function withoutDateSuffix(model: string): string | undefined {
 }
 
 /**
+ * The entry a model id names in the runner's economics file: an exact entry wins; else the id with
+ * its date suffix removed; else `undefined`. Pricing and the cache floor read a model through this
+ * one match, so a dated id finds the same entry for both.
+ */
+export function matchModel(economics: CacheEconomics, model: string): string | undefined {
+  if (Object.hasOwn(economics.models, model)) return model;
+  const stripped = withoutDateSuffix(model);
+  if (stripped !== undefined && Object.hasOwn(economics.models, stripped)) return stripped;
+  return undefined;
+}
+
+/**
+ * Issue #600 caching PR 5 — the minimum a model caches, as the runner's economics file states it.
+ * Pure. `model_unknown` when the file has no entry for the model (through {@link matchModel});
+ * `no_minimum_stated` when its entry has no `min_cacheable_tokens`.
+ */
+export function minCacheableTokensFor(
+  economics: CacheEconomics,
+  model: string,
+): { tokens: number } | { absent: 'model_unknown' | 'no_minimum_stated' } {
+  const matched = matchModel(economics, model);
+  if (matched === undefined) return { absent: 'model_unknown' };
+  const tokens = economics.models[matched]!.min_cacheable_tokens;
+  return tokens !== undefined ? { tokens } : { absent: 'no_minimum_stated' };
+}
+
+/**
  * Prices one request from the runner's economics file. Pure.
  * - The model: an exact entry wins; else the recorded id with its date suffix removed; else
  *   `model_unknown`.
@@ -247,16 +285,9 @@ export function priceFromEconomics(
   at: string,
   usage: PriceUsage,
 ): PriceResult {
-  let matched = model;
-  let entry = Object.hasOwn(economics.models, model) ? economics.models[model] : undefined;
-  if (entry === undefined) {
-    const stripped = withoutDateSuffix(model);
-    if (stripped !== undefined && Object.hasOwn(economics.models, stripped)) {
-      matched = stripped;
-      entry = economics.models[stripped];
-    }
-  }
-  if (entry === undefined) return { not_priced: 'model_unknown' };
+  const matched = matchModel(economics, model);
+  if (matched === undefined) return { not_priced: 'model_unknown' };
+  const entry = economics.models[matched]!;
   const time = Date.parse(at);
   if (Number.isNaN(time)) return { not_priced: 'date_unreadable' };
   const day = new Date(time).toISOString().slice(0, 10);
