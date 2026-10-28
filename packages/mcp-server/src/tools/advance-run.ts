@@ -12,6 +12,7 @@ import {
   TERMINAL_PHASES,
   type Attributed,
   type ActorAbsent,
+  type DisclosureSet,
 } from '@sensigo/realm';
 import { formCallOf, formDepsOf, mcpHostOf, type HandleRunStores } from './start-run.js';
 import { withQuestionForm, type FormCall } from '../form-path.js';
@@ -70,6 +71,8 @@ export async function handleAdvanceRun(
   args: { run_id: string },
   stores?: HandleRunStores,
   call?: FormCall,
+  /** #729 PR-4: told the set this call built before its engine call (the door's reply reuses it). */
+  onDisclosureSet?: (set: DisclosureSet) => void,
 ): Promise<AdvanceRunReply> {
   assertToolStores(stores, 'handleAdvanceRun');
   const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
@@ -94,6 +97,10 @@ export async function handleAdvanceRun(
     registryRole(stores, 'advance_run', 'handleAdvanceRun'),
     RealmExtensionRegistry,
   );
+  // #729 PR-4 (01): the door's set, built BEFORE the engine call — a gate the call opens mints its
+  // question with it — and handed back, so the reply is disclosed with the same set.
+  const disclosure = await disclosureOfTool(stores).setFor(definition, run);
+  onDisclosureSet?.(disclosure);
   const result = await advanceRun(runStore, definition, {
     runId: args.run_id,
     caller: 'advance_run',
@@ -102,11 +109,12 @@ export async function handleAdvanceRun(
       ? { traceBufferStore: stores.traceBufferStore }
       : {}),
     ...(stores?.driver !== undefined ? { driver: stores.driver } : {}),
+    disclosure,
   });
   // #627 W (§5.2b): a reply that reached a question this process never sent sends its form here.
   const reply = await withQuestionForm(
     result,
-    formDepsOf(stores, runStore, definition, registry),
+    formDepsOf(stores, runStore, definition, registry, disclosure),
     call,
   );
   // decision C205: a reply on a run that ended with a failed step `realm run resume` takes — this
@@ -147,7 +155,10 @@ export function registerAdvanceRun(
     safeTool(
       async (rawArgs, extra) => {
         const args = rawArgs as z.infer<typeof advanceRunArgsSchema>;
-        const result = await handleAdvanceRun(args, opts, formCallOf(opts, extra));
+        let disclosure: DisclosureSet | undefined;
+        const result = await handleAdvanceRun(args, opts, formCallOf(opts, extra), (set) => {
+          disclosure = set;
+        });
         const unknown = advanceRunUnknownKeyWarnings(args as Record<string, unknown>);
         // decision C119: `data` and `evidence` are empty in MCP replies, as `execute_step`'s — the
         // run's evidence is read with get_run_state.
@@ -159,7 +170,10 @@ export function registerAdvanceRun(
             ...(unknown.length > 0 ? { warnings: [...unknown, ...result.warnings] } : {}),
           },
           {
-            set: await setForSubject(door, await replySubject(opts, { runId: args.run_id })),
+            // #729 PR-4: the set the handler built before its engine call.
+            set:
+              disclosure ??
+              (await setForSubject(door, await replySubject(opts, { runId: args.run_id }))),
             audience: 'agent',
             table: MCP_ENVELOPE_TABLE,
           },

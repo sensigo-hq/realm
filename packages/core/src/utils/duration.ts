@@ -2,9 +2,9 @@
  * The ONE duration formatter for the lines that say how long ago, or how late, something was
  * (issue #625 PR-2a, F1): under one minute `<n>s` — never `0m`, which reads as "no time at all" —;
  * then `<m>m`, `<h>h <m>m` and `<d>d <h>h`. A negative duration reads as `0s`. The expiry line
- * (`expiryCarriedOutLine`) and `realm run drain` use it. Three older formatters are not yet this
- * one: `formatGateAge` (the CLI's `list` and `inspect`), `run-health.ts`'s coarse `formatAgo`, and
- * the Slack reminder's minutes.
+ * (`expiryCarriedOutLine`) and `realm run drain` use it, and — through `durationWords` (#729 PR-4) —
+ * the Slack reminder's and expiry reminder's spans. Two older formatters are not yet this one:
+ * `formatGateAge` (the CLI's `list` and `inspect`) and `run-health.ts`'s coarse `formatAgo`.
  */
 export function formatDuration(ms: number): string {
   const clamped = Math.max(0, ms);

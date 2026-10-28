@@ -63,6 +63,7 @@ import {
   RUN_PHASE_WORDS,
   errorWithCommand,
   writerCtx,
+  writerSetFor,
   type RenderCtx,
 } from '../output/writer.js';
 
@@ -514,6 +515,8 @@ export async function advanceRunFromShell(
       caller: 'advance',
       registry,
       now,
+      // #729 PR-4 (01): a question this call opens is minted with the writer's private set.
+      ...((set) => (set !== undefined ? { disclosure: set } : {}))(writerSetFor('private')),
       ...(driver !== undefined ? { driver } : {}),
       onExpiry: (line) => {
         expiryLine = line;

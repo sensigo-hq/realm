@@ -891,7 +891,9 @@ describe('#627 W correction 1 — the form path', () => {
     });
   }, 20_000);
 
-  it('B3: a gate with no message gets a form whose message is the reply’s gate.display', async () => {
+  // #729 PR-4 (f), re-pinned: the form's message was the step's prompt (the reply's display); now a
+  // gate with no message has no display, and the form says a question is waiting.
+  it('B3: a gate with no message — no gate.display, and the form’s message is the plain line', async () => {
     let message: string | undefined;
     const s = await session(
       {},
@@ -918,10 +920,11 @@ describe('#627 W correction 1 — the form path', () => {
     );
     const started = await s.call('start_run', { workflow_id: s.workflowId, params: {} });
     const display = (started['gate'] as { display?: string } | undefined)?.display;
-    // (a) red when the form falls back to the fixed line; (b) prints the form's message and display.
+    // (a) red when the step's prompt is shown as the question again (in the form or the display);
+    //     (b) prints the form's message and display.
     expect({ message, display }).toEqual({
-      message: 'Ship the release to production?',
-      display: 'Ship the release to production?',
+      message: "The question on step 'q' is waiting for your answer.",
+      display: undefined,
     });
   });
 
@@ -1511,7 +1514,8 @@ describe('#627 W correction 2 — the form path', () => {
     });
   });
 
-  it('2.1: a prompt-only gate — a later form (present_question, another session than the opening one) shows the step’s prompt', async () => {
+  // #729 PR-4 (f), re-pinned: a later form showed the step's prompt; now no surface invents a question.
+  it('2.1: a prompt-only gate — a later form (present_question, another session than the opening one) shows the plain line, not the step’s prompt', async () => {
     const yaml = SHAPE(['choices: [approve, reject]'], []).replace(
       '    trust: human_confirmed\n',
       '    trust: human_confirmed\n    prompt: Ship the release to production?\n',
@@ -1528,7 +1532,7 @@ describe('#627 W correction 2 — the form path', () => {
     );
     const { runId, gateId } = await openedElsewhere(s, undefined, yaml);
     await s.call('present_question', { run_id: runId, gate_id: gateId });
-    // (a) red when a later form falls back to the fixed line; (b) prints the form's message.
-    expect(message).toBe('Ship the release to production?');
+    // (a) red when a later form renders the step's prompt as the question; (b) prints the message.
+    expect(message).toBe("The question on step 'q' is waiting for your answer.");
   });
 });

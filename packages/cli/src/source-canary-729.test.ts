@@ -372,7 +372,7 @@ describe('#729 PR-3 — no canary leaves any door', () => {
         undefined,
       );
       const run = await new JsonFileStore(join(home, '.realm', 'runs')).get(gateRun);
-      await postGateViaApi('xoxb-fake', 'C1', run.pending_gate!, gateRun);
+      await postGateViaApi('xoxb-fake', 'C1', run.pending_gate!, gateRun, true);
       // (a) red when the post composes from the raw gate; (b) prints the labels.
       expect({
         door: 'slack',
@@ -1265,7 +1265,11 @@ describe(
       );
     });
 
-    it('every caller of buildDisclosureSet passes the working directory — the list is derived from the source (B2)', () => {
+    it('every caller of buildDisclosureSet that passes an environment passes the working directory — the list is derived from the source (B2)', () => {
+      // The rule: a caller that passes an environment (`env: process.env`) must pass
+      // `cwd: process.cwd()`; a caller with `env: undefined` builds a set with no environment, so
+      // there is nothing for the working-directory rule to exempt, and core (question-view.ts) must
+      // not read the working directory at all.
       const root = fileURLToPath(new URL('../../../', import.meta.url));
       const files: string[] = [];
       const walk = (dir: string): void => {
@@ -1280,6 +1284,8 @@ describe(
       for (const pkg of readdirSync(join(root, 'packages')))
         walk(join(root, 'packages', pkg, 'src'));
       const calls: string[] = [];
+      const withEnv: string[] = [];
+      const withoutEnv: string[] = [];
       const withCwd: string[] = [];
       for (const file of files) {
         const lines = readFileSync(file, 'utf8').split('\n');
@@ -1287,36 +1293,25 @@ describe(
           if (!line.includes('buildDisclosureSet(') || line.includes('export function')) return;
           if (line.trim().startsWith('*') || line.trim().startsWith('//')) return;
           const at = `${file.slice(root.length)}`;
+          const call = lines.slice(i, i + 4);
           calls.push(at);
-          if (lines.slice(i, i + 4).some((l) => l.includes('cwd: process.cwd(),')))
-            withCwd.push(at);
+          if (call.some((l) => l.includes('env: process.env,'))) withEnv.push(at);
+          if (call.some((l) => l.includes('env: undefined,'))) withoutEnv.push(at);
+          if (call.some((l) => l.includes('cwd: process.cwd(),'))) withCwd.push(at);
         });
       }
-      // (a) red when a tenth caller appears, a caller moves, or one stops passing `cwd`; (b) prints
-      //     the callers' file names (repository paths).
-      expect({ calls: calls.sort(), withCwd: withCwd.sort() }).toEqual({
-        calls: [
-          'packages/cli/src/agent/gate/slack-gate-notifier.ts',
-          'packages/cli/src/agent/providers/agent-utils.ts',
-          'packages/cli/src/commands/export.ts',
-          'packages/cli/src/commands/inspect.ts',
-          'packages/cli/src/extensions/load-project-extensions.ts',
-          'packages/cli/src/extensions/load-project-extensions.ts',
-          'packages/cli/src/output/writer.ts',
-          'packages/mcp-server/src/render-reply.ts',
-          'packages/mcp-server/src/render-reply.ts',
-        ],
-        withCwd: [
-          'packages/cli/src/agent/gate/slack-gate-notifier.ts',
-          'packages/cli/src/agent/providers/agent-utils.ts',
-          'packages/cli/src/commands/export.ts',
-          'packages/cli/src/commands/inspect.ts',
-          'packages/cli/src/extensions/load-project-extensions.ts',
-          'packages/cli/src/extensions/load-project-extensions.ts',
-          'packages/cli/src/output/writer.ts',
-          'packages/mcp-server/src/render-reply.ts',
-          'packages/mcp-server/src/render-reply.ts',
-        ],
+      // (a) red when a caller that passes an environment stops passing `cwd`, a caller passes `cwd`
+      //     with no environment (core among them), a caller's `env` is neither of the two spellings
+      //     (the derivation would miss it), or no caller passing an environment is found at all;
+      //     (b) prints the callers' file names (repository paths) and a boolean.
+      expect({
+        found: withEnv.length > 0,
+        every: calls.sort(),
+        withCwd: withCwd.sort(),
+      }).toEqual({
+        found: true,
+        every: [...withEnv, ...withoutEnv].sort(),
+        withCwd: withEnv.sort(),
       });
     });
   },

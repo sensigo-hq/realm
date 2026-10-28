@@ -2,8 +2,9 @@
 // 19): an answer from the Slack thread that came after the question's time was up and carried the
 // expiry out itself. The notifier's lines are the composer's (`describeAnswerEnding`, the one
 // `realm run respond` and the run prompt print): first `⚠ … this agent call first carried out …`,
-// then the refusal or the same-choice sentence, then what the expiry's guards did — posted to the
-// thread once and printed to the terminal once, and nothing says to try again.
+// then the refusal or the same-choice sentence, then what the expiry's guards did — printed to the
+// terminal once, and nothing says to try again. #729 PR-4 (02, G9), re-pinned: the thread no longer
+// gets those operator lines; it gets the person's `answer_late` words once.
 //
 // The attending timer is stopped here (`scheduleGateExpiryTimer` returns a cancel and never fires),
 // so the answer reaches the expired question before the timer does — the race the timer otherwise
@@ -25,9 +26,11 @@ import type { SlackGateEvent } from './slack-gate-server.js';
 import { scheduleGateExpiryTimer } from './gate-expiry-timer.js';
 import { LlmProvider } from '../providers/llm-provider.js';
 import { lagless } from '../../test-support/lag.js';
+import { slackResponse } from '../test-support/slack-response.js';
 
 /** C163: (a) red when gates.md no longer holds the sentence these cells pin, word for word; (b) prints it. */
-const GATES_MD_215 = `an answer that came after the time was up and carried the expiry out prints it first too, before its refusal or the sentence that says it was not recorded — through \`realm run respond\` (\`this respond call …\`), the prompt of \`realm workflow run\` (\`this run call …\`) or a reply in the gate's Slack thread to \`realm agent\` (\`this agent call …\`, posted in the thread).`;
+// #729 PR-4 (02), re-pinned: the line is printed where `realm agent` runs; the thread gets the person's words.
+const GATES_MD_215 = `an answer that came after the time was up and carried the expiry out prints it first too, before its refusal or the sentence that says it was not recorded — through \`realm run respond\` (\`this respond call …\`), the prompt of \`realm workflow run\` (\`this run call …\`) or a reply in the gate's Slack thread to \`realm agent\` (\`this agent call …\`, printed where \`realm agent\` runs; the thread is told in the person's words what the question met, and no command).`;
 function claimGates215(): void {
   const page = readFileSync(
     join(
@@ -89,7 +92,7 @@ describe('#625 PR-2a, C146 — a late Slack answer that carried out the expiry s
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'realm-625-slack-late-'));
     store = new JsonFileStore(dir);
-    fetchSpy = vi.fn().mockResolvedValue({ ok: true });
+    fetchSpy = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } }));
     vi.stubGlobal('fetch', fetchSpy);
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -198,10 +201,12 @@ describe('#625 PR-2a, C146 — a late Slack answer that carried out the expiry s
       `Gate '${gate.gate_id}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.`,
       "Guard step 'check' passed.",
     ];
-    // (a) red when the notifier drops the line, names another call, or posts "Couldn't record your
-    //     response … Try again" for a gate the expiry settled; (b) prints the posts.
-    expect(posts).toEqual([lines.join('\n')]);
-    // (a) red when the terminal does not get the same lines, or gets the line twice; (b) prints them.
+    // (a) red when the operator's lines are posted to the thread again (#729 PR-4, G9), or the
+    //     person is told to try again for a gate the expiry settled; (b) prints the posts.
+    expect(posts).toEqual([
+      "This question's time ran out before your reply arrived; it was settled as `approve`. The run goes on.",
+    ]);
+    // (a) red when the terminal does not get the lines, or gets the line twice; (b) prints them.
     expect(printed).toEqual([WAITING, ...lines]);
     expect(vi.mocked(scheduleGateExpiryTimer)).toHaveBeenCalledTimes(1);
   });
@@ -218,9 +223,11 @@ describe('#625 PR-2a, C146 — a late Slack answer that carried out the expiry s
       'the outcome matches your choice, but it was settled by timeout; your response was not recorded.',
       "Guard step 'check' passed.",
     ];
-    // (a) red when the same-choice answer posts "Gate resolved … run continuing" as if recorded, or
-    //     drops the line; (b) prints the posts.
-    expect(posts).toEqual([lines.join('\n')]);
+    // (a) red when the same-choice answer is posted as recorded, or the operator's lines reach the
+    //     thread (#729 PR-4, G9); (b) prints the posts.
+    expect(posts).toEqual([
+      "This question's time ran out before your reply arrived; it was settled as `approve`. The run goes on.",
+    ]);
     expect(printed).toEqual([WAITING, ...lines]);
   });
 
@@ -235,8 +242,11 @@ describe('#625 PR-2a, C146 — a late Slack answer that carried out the expiry s
       line(gate.gate_id, { on_expiry: 'abort' }),
       `Gate '${gate.gate_id}' on 'confirm' expired and the run aborted per the workflow's declared on_expiry — your choice was NOT recorded.`,
     ];
-    // (a) red when the abort's refusal is posted as a submit failure to retry; (b) prints the posts.
-    expect(posts).toEqual([lines.join('\n')]);
+    // (a) red when the abort is posted as a submit failure to retry, or the operator's lines reach
+    //     the thread (#729 PR-4, G9); (b) prints the posts.
+    expect(posts).toEqual([
+      "This question's time ran out before your reply arrived; the run stopped. The run has ended.",
+    ]);
     expect(printed).toEqual([WAITING, ...lines]);
   });
 });

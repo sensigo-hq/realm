@@ -198,6 +198,8 @@ const SETTLE = 'packages/core/src/engine/settlement.ts';
 const CL = 'packages/core/src/engine/claim-liveness.ts';
 const YL = 'packages/core/src/workflow/yaml-loader.ts';
 const RA = 'packages/cli/src/agent/run-agent.ts';
+// #729 PR-4: the one question composer — every surface's gate preview renders `display` here.
+const QV = 'packages/core/src/engine/question-view.ts';
 const RECLAIM = 'packages/cli/src/commands/reclaim.ts';
 const GEN = 'packages/mcp-server/src/protocol/generator.ts';
 
@@ -395,6 +397,7 @@ export const SURFACE_NAME: Record<string, string> = {
   [CL]: 'claim liveness',
   [YL]: 'the workflow loader',
   [RA]: "realm's own drive",
+  [QV]: "the gate's question view",
   [RECLAIM]: 'the reclaim command',
   [GEN]: 'the protocol briefing',
 };
@@ -1237,17 +1240,15 @@ export const STEP_KEY_REGISTRY = {
       c: 'consumed',
       where: [
         {
-          file: RA,
-          pattern:
-            '(gateStepDef?.display !== undefined ? renderDisplay(gateStepDef.display, gate.preview)',
+          file: QV,
+          pattern: 'if (display !== undefined) return { text: renderDisplay(display, preview)',
         },
       ],
       when: {
-        desc: "gate-trusted only — rendered on the gate surface; the run-completion result render is agent-only (see this PR's JSDoc truth fix on StepDefinition.display)",
+        desc: "gate-trusted only — the question composer renders it as the gate's preview on every surface that shows one (#729 PR-4); the run-completion result render is agent-only",
         witness: {
-          file: RA,
-          pattern:
-            '(gateStepDef?.display !== undefined ? renderDisplay(gateStepDef.display, gate.preview)',
+          file: QV,
+          pattern: 'if (display !== undefined) return { text: renderDisplay(display, preview)',
         },
       },
       inert_subpop: [

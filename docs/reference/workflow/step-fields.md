@@ -113,11 +113,11 @@ See [Agent-step controls](agent-step-controls.md) and [JSON Schema blocks](json-
 
 ## Human gates and display
 
-| Field     | Type                                          | Default | What it does                                                            |
-| --------- | --------------------------------------------- | ------- | ----------------------------------------------------------------------- |
-| `trust`   | `auto`, `human_confirmed` or `human_reviewed` | `auto`  | `human_confirmed` and `human_reviewed` make the step stop for a person. |
-| `gate`    | map                                           | None    | The choices, message, time limit and reminders of the gate.             |
-| `display` | string, with `{{ field }}` references         | None    | How `realm agent` prints the step's result and its gate preview.        |
+| Field     | Type                                          | Default | What it does                                                                                                         |
+| --------- | --------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------- |
+| `trust`   | `auto`, `human_confirmed` or `human_reviewed` | `auto`  | `human_confirmed` and `human_reviewed` make the step stop for a person.                                              |
+| `gate`    | map                                           | None    | The choices, message, time limit and reminders of the gate.                                                          |
+| `display` | string, with `{{ field }}` references         | None    | How the step's output is shown: `realm agent`'s result line, and the gate's preview on every surface that shows one. |
 
 See [Gates](gates.md).
 

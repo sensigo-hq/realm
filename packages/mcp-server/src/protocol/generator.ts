@@ -60,7 +60,7 @@ export interface WorkflowProtocol {
  * W-p1: PR-0's rule 2, the `offered` variant — byte-identical but for correction 2's words (8.6 (g)):
  * `gate.agent_hint` exists only when the author wrote `instructions`, so it is read "when the reply
  * has one". #819 follow-up 2 (reader B's M4(b)): so is `gate.display`, which a gate with no message
- * and no prompt does not carry.
+ * does not carry (#729 PR-4: no surface invents a question from the step's prompt).
  */
 const CONFIRM_RULE_OFFERED =
   "When you receive status 'confirm_required', read gate.agent_hint for instructions when the reply has one, present gate.display to the user verbatim when the reply has one, wait for their response, then call submit_human_response by copying the call in next_actions[0].instruction.call_with and filling in their choice.";
@@ -76,7 +76,7 @@ function confirmRuleOf(way: EffectiveWay): string {
   if (way === 'fallback') return `${CONFIRM_RULE_OFFERED}${APPROVAL_SENTENCE}`;
   if (way === 'asked_forms')
     return "When you receive status 'confirm_required', read gate.agent_hint when the reply has one; the user's app shows them the question as a form; follow next_actions.";
-  // #819 correction 1 (02 W1): a gate with no message and no prompt carries no display
+  // #819 correction 1 (02 W1): a gate with no message carries no display (#729 PR-4)
   return "When you receive status 'confirm_required', read gate.agent_hint when the reply has one, present gate.display to the user verbatim when the reply has one, and follow next_actions: the question is answered outside this conversation.";
 }
 
