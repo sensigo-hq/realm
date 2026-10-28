@@ -224,6 +224,11 @@ describe('#715 (a) — the docs sentences', () => {
     );
     claim(TESTING, "that run's time is lifted more than 5 seconds");
     claim(TESTING, '`get`, `list` or `stampSeal` reads the clock (on the `clock` route only)');
+    // Correction 1 (C-4): store-clock-in-memory.test.ts (C16 with the hook; the wiring cell without it).
+    claim(
+      TESTING,
+      "| `seedLegacyTerminal` | If the store has `stampSeal`: writes an ended run that has no record of how it ended into the store the route built for the case, past the store's own checks, and returns it; without it, the `READS_SPEND_NO_READING` case fails, saying that the hook is missing. |",
+    );
     // C17; the location adapter's NOT_RUN (store-clock.contract.test.ts).
     claim(
       TESTING,

@@ -117,10 +117,26 @@ describe('#715 (a) B10 — readings per member (in-memory store)', () => {
     await store.list();
     expect(d(), 'M7 get, list').toBe(0);
     // M7: settleStep and stampSeal are unchanged in #715 (a) — #715 (b) moves settleStep onto the
-    // store's reading.
+    // store's reading. Correction 1 (C-4): stampSeal stamps a terminal UNSEALED run at its real
+    // version, seeded by a direct map insert (the store refuses to write a terminal run without a
+    // seal); a stale version or a sealed run would be refused before any stamping code runs.
+    const { run: seed } = await store.create({ ...plain, workflowId: 'seed-m7' });
+    const unsealed: RunRecord = {
+      ...seed,
+      completed_steps: ['a'],
+      terminal_state: true,
+      terminal_reason: 'Workflow completed.',
+      run_phase: 'completed',
+    };
+    store['runs'].set(unsealed.id, unsealed);
     d = delta();
     await store.settleStep(run.id, { kind: 'expire_gate', gateId: 'none' }, AUTO);
-    await store.stampSeal(run.id, { arm: 'abandon_requested' }, 0).catch(() => {});
+    const stamped = await store.stampSeal(
+      unsealed.id,
+      { arm: 'complete', classified: true },
+      unsealed.version,
+    );
+    expect(stamped.stamped, 'M7 stampSeal stamped the seeded run').toBe(true);
     expect(d(), 'M7 settleStep, stampSeal').toBe(0);
   });
 });

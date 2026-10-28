@@ -31,6 +31,9 @@ import { createTestLocation, type TestLocation } from '../clock/test-location.js
  *   at a frozen instant, is stamped at least 1 ms after the run it supersedes.
  * - `KEYED_CREATE_FLOOR_CAPPED` — that floor lifts the stamp by at most ε.
  * - `READS_SPEND_NO_READING` — `get`, `list` and `stampSeal` spend no reading (clock route only).
+ *   The `stampSeal` clause stamps a terminal, UNSEALED run the adapter seeds
+ *   (`seedLegacyTerminal`), so the stamping code itself runs; a store that declares `stampSeal`
+ *   under an adapter without the hook fails the clause with an adapter-wiring message.
  */
 export const STORE_CLOCK_LAWS = [
   'WRITE_ONE_READING',
@@ -51,6 +54,18 @@ export type StoreRoute =
 export interface StoreClockContractAdapter {
   storeName: string;
   route: StoreRoute;
+  /**
+   * #715 (a) correction 1 (C-4): writes a terminal, UNSEALED run into the store the route built for
+   * the running case, past the store's own boundary, and returns it at its real version — a run
+   * `stampSeal` really stamps. Modelled on `SettlementContractAdapter.seedLegacyTerminal`: each store
+   * supplies its sanctioned channel (a direct file write, a direct map insert); the adapter keeps
+   * the store its `makeStore` built last. `READS_SPEND_NO_READING` needs it for its `stampSeal`
+   * clause: a SEALED run answers `already_stamped` before any stamping code runs, so a reading taken
+   * in the stamp itself would pass. A store that declares `stampSeal` under an adapter that omits it
+   * fails that clause with an adapter-wiring message (the settlement contract's idiom); it is never
+   * skipped.
+   */
+  seedLegacyTerminal?: (id: string) => Promise<RunRecord>;
 }
 
 export interface StoreClockContractCase {
@@ -343,28 +358,49 @@ export function storeClockContract(adapter: StoreClockContractAdapter): StoreClo
         `with its holder stamped ${holder.created_at} and the clock at ${iso(T)}, the successor was stamped ${s.created_at}, beyond ${iso(T + EPS)}`,
       );
     }),
-    L('READS_SPEND_NO_READING', 'get, list and stampSeal spend no reading', T, async (c) => {
-      const law = 'READS_SPEND_NO_READING';
-      check(
-        law,
-        c.reads !== undefined,
-        'this law runs on the clock route only (a location store’s clock is internal)',
-      );
-      const { run } = await c.store.create(plain);
-      const ended = await terminalize(c.store, run);
-      const before = c.reads!();
-      await c.store.get(run.id);
-      await c.store.list();
-      if (c.store.stampSeal !== undefined) {
-        await c.store
-          .stampSeal(ended.id, { arm: 'abandon_requested' }, ended.version)
-          .catch(() => {});
-      }
-      check(
-        law,
-        c.reads!() === before,
-        `get, list and stampSeal spent ${c.reads!() - before} readings`,
-      );
-    }),
+    L(
+      'READS_SPEND_NO_READING',
+      'get, list and stampSeal (a real stamp of a seeded terminal unsealed run) spend no reading',
+      T,
+      async (c) => {
+        const law = 'READS_SPEND_NO_READING';
+        check(
+          law,
+          c.reads !== undefined,
+          'this law runs on the clock route only (a location store’s clock is internal)',
+        );
+        const { run } = await c.store.create(plain);
+        await terminalize(c.store, run);
+        let unsealed: RunRecord | undefined;
+        if (c.store.stampSeal !== undefined) {
+          check(
+            law,
+            adapter.seedLegacyTerminal !== undefined,
+            'ADAPTER_WIRING: this store declares stampSeal but the adapter has no `seedLegacyTerminal` hook, so the stampSeal clause cannot reach a real stamp (a sealed run answers already_stamped first). Supply the hook.',
+          );
+          unsealed = await adapter.seedLegacyTerminal!('store-clock-reads-unsealed');
+        }
+        const before = c.reads!();
+        await c.store.get(run.id);
+        await c.store.list();
+        if (unsealed !== undefined) {
+          const result = await c.store.stampSeal!(
+            unsealed.id,
+            { arm: 'complete', classified: true },
+            unsealed.version,
+          );
+          check(
+            law,
+            result.stamped,
+            `stampSeal did not stamp the seeded terminal unsealed run (${result.stamped ? 'stamped' : result.reason})`,
+          );
+        }
+        check(
+          law,
+          c.reads!() === before,
+          `get, list and stampSeal spent ${c.reads!() - before} readings`,
+        );
+      },
+    ),
   ];
 }

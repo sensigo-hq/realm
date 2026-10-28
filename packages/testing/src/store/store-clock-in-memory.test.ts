@@ -24,10 +24,30 @@ import {
 const NOT_RUN: Partial<Record<StoreClockLaw, string>> = {};
 const LAWS: readonly StoreClockLaw[] = STORE_CLOCK_LAWS.filter((law) => !(law in NOT_RUN));
 
+/**
+ * #715 (a) correction 1 (C-4): this store's sanctioned channel past its boundary — a direct map
+ * insert, as `settlement-in-memory-store.test.ts` does: a terminal, UNSEALED run at its real version.
+ */
+async function seedUnsealedInto(store: InMemoryStore, id: string): Promise<RunRecord> {
+  const { run } = await store.create({ workflowId: `seed-${id}`, workflowVersion: 1, params: {} });
+  const legacy: RunRecord = {
+    ...run,
+    id,
+    completed_steps: ['a'],
+    terminal_state: true,
+    terminal_reason: 'Workflow completed.',
+    run_phase: 'completed',
+  };
+  (store as unknown as { runs: Map<string, RunRecord> }).runs.set(id, legacy);
+  return legacy;
+}
+
 describe('#715 (a) C16 — the store-clock contract on InMemoryStore (clock route)', () => {
+  let built: InMemoryStore | undefined;
   const cases = storeClockContract({
     storeName: 'InMemoryStore',
-    route: { kind: 'clock', makeStore: ({ clock }) => new InMemoryStore({ clock }) },
+    route: { kind: 'clock', makeStore: ({ clock }) => (built = new InMemoryStore({ clock })) },
+    seedLegacyTerminal: (id) => seedUnsealedInto(built!, id),
   });
   for (const law of LAWS) {
     it(law, async () => {
@@ -137,12 +157,15 @@ const VIOLATES: ReadonlyArray<[LossyMode, StoreClockLaw]> = [
 describe('#715 (a) C17 — each law fails on the store that breaks it, naming the law', () => {
   for (const [mode, law] of VIOLATES) {
     it(`${law} fails on the '${mode}' store`, async () => {
+      let inner: InMemoryStore | undefined;
       const cases = storeClockContract({
         storeName: `LossyClockStore(${mode})`,
         route: {
           kind: 'clock',
-          makeStore: ({ clock }) => new LossyClockStore(new InMemoryStore({ clock }), mode, clock),
+          makeStore: ({ clock }) =>
+            new LossyClockStore((inner = new InMemoryStore({ clock })), mode, clock),
         },
+        seedLegacyTerminal: (id) => seedUnsealedInto(inner!, id),
       });
       const target = cases.find((c) => c.law === law)!;
       let message = '';
@@ -150,6 +173,25 @@ describe('#715 (a) C17 — each law fails on the store that breaks it, naming th
         message = err.message;
       });
       expect(message, `the failure of ${law} on '${mode}'`).toMatch(new RegExp(`^${law}: `));
+      // Correction 1 (C-4): the law failed on the store's defect, never on the adapter's wiring.
+      expect(message, `the failure of ${law} on '${mode}'`).not.toContain('ADAPTER_WIRING');
     });
   }
+
+  it('READS_SPEND_NO_READING fails with the adapter-wiring message when a stampSeal store’s adapter has no seedLegacyTerminal (correction 1, C-4)', async () => {
+    // (a) red when the clause is skipped for an adapter without the hook (the law passes);
+    // (b) prints the failure message.
+    const cases = storeClockContract({
+      storeName: 'InMemoryStore (no seed hook)',
+      route: { kind: 'clock', makeStore: ({ clock }) => new InMemoryStore({ clock }) },
+    });
+    let message = 'passed';
+    await cases
+      .find((c) => c.law === 'READS_SPEND_NO_READING')!
+      .run()
+      .catch((err: Error) => {
+        message = err.message;
+      });
+    expect(message, message).toMatch(/^READS_SPEND_NO_READING: ADAPTER_WIRING: /);
+  });
 });

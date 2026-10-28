@@ -544,10 +544,11 @@ Types: `FencedTraceBufferContractAdapter`, `FencedTraceBufferContractCase`, `Fen
 
 The laws of the time a run store writes (added after version 0.48.0). Each case builds its own store, on a clock it moves.
 
-| Adapter field | Holds                                                                                                                                                                                                                                                |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `storeName`   | A name for the store, at the start of each case's `name`.                                                                                                                                                                                            |
-| `route`       | `{ kind: 'clock', makeStore({ clock }) }` for a store built with a clock it is given, such as `InMemoryStore`; `{ kind: 'location', makeStore({ location }) }` for a store opened on a test location, such as `JsonFileStore` on `location.runsDir`. |
+| Adapter field        | Holds                                                                                                                                                                                                                                                                |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `storeName`          | A name for the store, at the start of each case's `name`.                                                                                                                                                                                                            |
+| `route`              | `{ kind: 'clock', makeStore({ clock }) }` for a store built with a clock it is given, such as `InMemoryStore`; `{ kind: 'location', makeStore({ location }) }` for a store opened on a test location, such as `JsonFileStore` on `location.runsDir`.                 |
+| `seedLegacyTerminal` | If the store has `stampSeal`: writes an ended run that has no record of how it ended into the store the route built for the case, past the store's own checks, and returns it; without it, the `READS_SPEND_NO_READING` case fails, saying that the hook is missing. |
 
 | Law                                | A case fails when                                                                                                                                                    |
 | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

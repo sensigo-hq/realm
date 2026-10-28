@@ -3,7 +3,9 @@
 // location's file. Lives here for the reason `json-file-store.contract.test.ts` gives: the CLI is
 // the package that depends on both @sensigo/realm and @sensigo/realm-testing.
 import { describe, expect, it } from 'vitest';
-import { JsonFileStore } from '@sensigo/realm';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { JsonFileStore, type RunRecord } from '@sensigo/realm';
 import { STORE_CLOCK_LAWS, storeClockContract, type StoreClockLaw } from '@sensigo/realm-testing';
 
 /**
@@ -18,9 +20,37 @@ const NOT_RUN: Partial<Record<StoreClockLaw, string>> = {
 const LAWS: readonly StoreClockLaw[] = STORE_CLOCK_LAWS.filter((law) => !(law in NOT_RUN));
 
 describe('#715 (a) C16 — the store-clock contract on JsonFileStore (location route)', () => {
+  // Correction 1 (C-4): the store's sanctioned channel past its boundary — a direct file write, as
+  // `settlement-json-file-store.test.ts` does. The location route does not run
+  // READS_SPEND_NO_READING (NOT_RUN above), so the family never calls it here today; it is the
+  // adapter's whole description of the store, for a route that will.
+  let built: { store: JsonFileStore; runsDir: string } | undefined;
   const cases = storeClockContract({
     storeName: 'JsonFileStore',
-    route: { kind: 'location', makeStore: ({ location }) => new JsonFileStore(location.runsDir) },
+    route: {
+      kind: 'location',
+      makeStore: ({ location }) => {
+        built = { store: new JsonFileStore(location.runsDir), runsDir: location.runsDir };
+        return built.store;
+      },
+    },
+    seedLegacyTerminal: async (id) => {
+      const { run } = await built!.store.create({
+        workflowId: `seed-${id}`,
+        workflowVersion: 1,
+        params: {},
+      });
+      const legacy: RunRecord = {
+        ...run,
+        id,
+        completed_steps: ['a'],
+        terminal_state: true,
+        terminal_reason: 'Workflow completed.',
+        run_phase: 'completed',
+      };
+      await writeFile(join(built!.runsDir, `${id}.json`), JSON.stringify(legacy, null, 2));
+      return legacy;
+    },
   });
   for (const law of LAWS) {
     it(law, async () => {

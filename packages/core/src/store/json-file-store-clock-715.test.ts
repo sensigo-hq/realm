@@ -107,6 +107,25 @@ async function terminalize(store: JsonFileStore, run: RunRecord): Promise<RunRec
   });
 }
 
+/**
+ * #715 (a) correction 1 (C-4): a terminal, UNSEALED run at its real version, written past the store's
+ * boundary by a direct file write — the channel `settlement-json-file-store.test.ts` uses (the store
+ * itself refuses to write a terminal run without a seal).
+ */
+async function seedUnsealed(store: JsonFileStore, runsDir: string, id: string): Promise<RunRecord> {
+  const { run } = await store.create({ workflowId: `seed-${id}`, workflowVersion: 1, params: {} });
+  const legacy: RunRecord = {
+    ...run,
+    id,
+    completed_steps: ['a'],
+    terminal_state: true,
+    terminal_reason: 'Workflow completed.',
+    run_phase: 'completed',
+  };
+  await writeFile(join(runsDir, `${id}.json`), JSON.stringify(legacy, null, 2));
+  return legacy;
+}
+
 function reads(store: JsonFileStore): { count(): number; reset(): void } {
   const spy = vi.spyOn(store.clock, 'now');
   return { count: () => spy.mock.calls.length, reset: () => spy.mockClear() };
@@ -224,12 +243,20 @@ describe('#715 (a) B1 — readings per member (JSON store)', () => {
   });
 
   it('J11–J15 stampSeal, save, reconcileKeys, deleteAllForRun and every read spend none', async () => {
-    const { store } = await location(T);
+    const { store, runsDir } = await location(T);
     const { run } = await store.create(keyed());
     const ended = await terminalize(store, run);
     const other = await location(T);
+    // Correction 1 (C-4): J11 stamps a terminal UNSEALED run (a sealed one answers `already_stamped`
+    // before any stamping code runs, so a reading taken in the stamp itself would stay green).
+    const unsealed = await seedUnsealed(store, runsDir, 'j11-unsealed');
     const n = reads(store);
-    await store.stampSeal(ended.id, { arm: 'abandon_requested' }, ended.version).catch(() => {});
+    const stamped = await store.stampSeal(
+      unsealed.id,
+      { arm: 'complete', classified: true },
+      unsealed.version,
+    );
+    expect(stamped.stamped, 'J11 stampSeal stamped the seeded run').toBe(true);
     expect(n.count(), 'J11 stampSeal').toBe(0);
     const m = reads(other.store);
     await other.store.save(ended);
@@ -329,6 +356,51 @@ describe('#715 (a) B2 — every instant a write records equals its reading', () 
       [j6.created_at, j6.updated_at, p6.updated_at],
       'J6 created_at, updated_at, pointer',
     ).toEqual([iso(T + 20_000), iso(T + 20_000), iso(T + 20_000)]);
+  });
+});
+
+describe('#715 (a) correction 1 (C-4) — J5, J12, J13: the pointer carries the record’s own updated_at', () => {
+  // (a) red when one of the three call sites stamps the pointer with the wall clock
+  // (`new Date().toISOString()`) or with the write's reading: the location sits years from the wall
+  // clock, and the clock is moved a minute past the record before the call; (b) prints the pointer's
+  // and the record's instants.
+  const wallYear = new Date().getUTCFullYear();
+  const yearOf = (stamp: string): number => new Date(stamp).getUTCFullYear();
+
+  it('J5 a keyed create that ADOPTS a run with no pointer', async () => {
+    const loc = await location(T);
+    const { run } = await loc.store.create(keyed());
+    await unlink(pointerPath(loc.runsDir));
+    await loc.set(T + 60_000);
+    const again = await loc.store.create(keyed());
+    expect(again.run.id, 'J5 adopted').toBe(run.id);
+    const pointer = (await readPointer(loc.runsDir)).updated_at;
+    const shown = `J5 pointer ${pointer}, record ${again.run.updated_at}`;
+    expect(pointer, shown).toBe(again.run.updated_at);
+    expect(yearOf(again.run.updated_at), `${shown}; the wall year ${wallYear}`).not.toBe(wallYear);
+  });
+
+  it('J12 a save of a keyed record', async () => {
+    const source = await location(T);
+    const { run } = await source.store.create(keyed());
+    const target = await location(T + 60_000);
+    await target.store.save(run);
+    const pointer = (await readPointer(target.runsDir)).updated_at;
+    const shown = `J12 pointer ${pointer}, record ${run.updated_at}`;
+    expect(pointer, shown).toBe(run.updated_at);
+    expect(yearOf(run.updated_at), `${shown}; the wall year ${wallYear}`).not.toBe(wallYear);
+  });
+
+  it('J13 a reconcileKeys that writes a missing pointer', async () => {
+    const loc = await location(T);
+    const { run } = await loc.store.create(keyed());
+    await unlink(pointerPath(loc.runsDir));
+    await loc.set(T + 60_000);
+    await loc.store.reconcileKeys();
+    const pointer = (await readPointer(loc.runsDir)).updated_at;
+    const shown = `J13 pointer ${pointer}, record ${run.updated_at}`;
+    expect(pointer, shown).toBe(run.updated_at);
+    expect(yearOf(run.updated_at), `${shown}; the wall year ${wallYear}`).not.toBe(wallYear);
   });
 });
 
