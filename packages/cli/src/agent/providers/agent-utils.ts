@@ -794,3 +794,26 @@ export function appendRequests(
     request_index: index,
   }));
 }
+
+/**
+ * Issue #715 (R; D6-28, D6-44) — gives every request a provider's answer carried its identity: a
+ * new `request_id`, a random UUID (version 4), ALWAYS overwriting any `request_id` the provider's
+ * usage held. Called once per arriving array, at the points where a provider's usage enters realm's
+ * own records: the three success returns in `run-agent.ts` and the usage a provider attached to a
+ * thrown error (`buildEntry`). Never inside `appendRequests` — it re-bases and spreads every entry
+ * on every append, so a mint there would give an earlier request a new id each time — never on
+ * `usageForStep` or a stored record, and never at a write boundary: one in-memory request is written
+ * into more than one record (the step's evidence, a drive-failure entry), and `sameRequest` matches
+ * them by this id.
+ *
+ * Pure and total, like `stampRequestProvider`: returns new objects and never mutates its input (a
+ * frozen input is fine); an entry that is not a plain object (a provider module's `null`) passes
+ * through unchanged; an empty array returns an empty array.
+ */
+export function mintRequestIds(requests: readonly UsageRecord[]): UsageRecord[] {
+  return requests.map((entry) =>
+    entry === null || typeof entry !== 'object' || Array.isArray(entry)
+      ? entry
+      : { ...entry, request_id: crypto.randomUUID() },
+  );
+}

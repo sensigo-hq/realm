@@ -99,6 +99,8 @@ export const USAGE_RECORD_TABLE = {
   provider: 'fact',
   endpoint: 'fact',
   cache_split_offered: 'fact',
+  // #715 (R): an id realm mints per request (`mintRequestIds`), never a provider's.
+  request_id: 'fact',
 } as const satisfies Row<UsageRecord>;
 
 const STEP_CACHE_TABLE = {
@@ -432,6 +434,7 @@ export const USAGE_RECORD_FACTS = {
   cache_auto: 'enum',
   provider: 'enum',
   endpoint: 'enum',
+  request_id: 'id',
 } as const satisfies FactProducers<typeof USAGE_RECORD_TABLE, UsageRecord>;
 
 export const STEP_CACHE_FACTS = {

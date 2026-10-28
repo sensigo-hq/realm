@@ -357,8 +357,16 @@ describe('the payload is a BOUNDARY, not a spread (issue #401)', () => {
         ],
       },
     });
+    // #715 (R): the array survives with one addition, each request's identity, minted here where the
+    // thrown usage enters realm's records. (a) red when `buildEntry` does not mint; (b) prints the
+    // entry's usage.
     expect(buildEntry(withArray, 's', 'anthropic', performance.now()).usage).toEqual(
-      withArray.driveCall.usage,
+      withArray.driveCall.usage.map((r) => ({
+        ...r,
+        request_id: expect.stringMatching(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+        ),
+      })),
     );
 
     // A provider that attached something under the same key that is NOT an array (a bug in a
