@@ -28,10 +28,11 @@ function claimChangelog(sentence: string): void {
 }
 
 describe('#610 — the docs sentences', () => {
-  it('R11, agent-tools.md: the record keeps a tools step’s requests; an older record has none (V1′, D1)', () => {
+  it('R11, agent-tools.md: the record keeps a tools step’s requests; an older record has none (V1′, D1, P2, P4)', () => {
+    // Middle sentence's cells: P2, P4 in {anthropic,openai}-provider-tools-usage-610.test.ts. Red on the old page; prints the sentence.
     claim(
       'docs/guides/agent-tools.md',
-      'The record keeps each request a step that uses tools makes to the model, and `realm run inspect` shows what they cost, as for any agent step (added after version 0.48.0). A step that Realm 0.48.0 or earlier recorded has no usage; its `cost` line says so.',
+      "The record keeps each request the model service answers for a step that uses tools, and `realm run inspect` shows what they cost, as for any agent step (added after version 0.48.0). A request that ends in an error is not kept, so the count can be lower than the service's own log shows. A step that Realm 0.48.0 or earlier recorded has no usage; its `cost` line says so.",
     );
   });
 
