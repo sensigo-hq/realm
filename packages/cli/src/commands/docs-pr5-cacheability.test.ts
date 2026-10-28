@@ -1332,6 +1332,43 @@ describe('correction 2, F-8: the pages that print the cache lines say what they 
   });
 });
 
+describe("correction 3, I-10 and I-11: what each provider's page says, dated", () => {
+  // I-10: the `cache_write` row says what OpenAI's prompt-caching page said on 2026-10-28 (fetched
+  // 16:11Z, 56,625 bytes; its line 83 for the lifetimes and the 12-hour rate, its line 161 for
+  // "may retain entries longer"), attributed to the page; that Chat Completions uses the 30-minute
+  // default is not claimed. The dated fetch is the evidence (registry row C3-OPENAI-RET-01). (a) red
+  // when the old sentence returns or the date or the words change; (b) prints the page and the
+  // sentence.
+  it("I-10: the cache_write row says what OpenAI's page says about a write's lifetime", () => {
+    claim(
+      ECONOMICS_PAGE,
+      "| `cache_write` | When a request wrote with no lifetime split | The tokens written to the cache. OpenAI's page says (2026-10-28) that for GPT-5.6 and later a write has a 30-minute lifetime by default, or a 12-hour minimum lifetime at a higher write rate in the Responses API, and that OpenAI may keep entries longer than the requested minimum; the economics file has no key for the 12-hour rate. |",
+    );
+    expect(read(ECONOMICS_PAGE), 'the old sentence is back').not.toContain(
+      'OpenAI does not say how long it keeps them',
+    );
+  });
+
+  // I-11: after the example-05 transcript, the page quotes Anthropic's prompt-caching page of
+  // 2026-10-28 (fetched 16:11Z, 162,386 bytes, its line 614) and says what it means for two steps
+  // that share a fixed part. It claims nothing about when Realm sends requests. The dated fetch is
+  // the evidence (registry row C3-ANTH-CONC-01). (a) red when the paragraph is dropped, moved off
+  // the example-05 transcript, or reworded; (b) prints the page and the paragraph.
+  it("I-11: on Anthropic, two steps that share a fixed part read each other's entry only after the first response starts", () => {
+    const paragraph =
+      'Anthropic\'s page says (2026-10-28) that "a cache entry only becomes available after the first response starts", and advises waiting for the first response before sending parallel requests that need hits. On Anthropic, two steps that share a fixed part, like these two, read each other\'s entry only if the second request is sent after the first response has started.';
+    claim(WORKFLOW_PAGE, paragraph);
+    expect(
+      flat(read(WORKFLOW_PAGE)).includes(
+        flat(
+          `— shares its whole fixed part with review_performance\n\`\`\`\n\n${paragraph}\n\nAfter the step lines come`,
+        ),
+      ),
+      'the paragraph does not follow the example-05 transcript',
+    ).toBe(true);
+  });
+});
+
 describe('the --json row, the CHANGELOG, and review-note on its page', { timeout: 60_000 }, () => {
   // `cacheability` on the arms where a definition loaded, absent where the file could not be read.
   // Break: the field on a load failure, or missing on the refused arm. (a) red when an arm differs;

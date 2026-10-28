@@ -166,6 +166,8 @@ cache: fetch_pr — uses tools: each tool's definition comes from its MCP server
 cache: review_security — 954 chars ≈ 411–912 tokens, with Anthropic's tool text (estimate) — the floor was not judged: no --model named — shares its whole fixed part with review_performance
 ```
 
+Anthropic's page says (2026-10-28) that "a cache entry only becomes available after the first response starts", and advises waiting for the first response before sending parallel requests that need hits. On Anthropic, two steps that share a fixed part, like these two, read each other's entry only if the second request is sent after the first response has started.
+
 After the step lines come the lines that hold for each provider shown, once:
 
 ```text
