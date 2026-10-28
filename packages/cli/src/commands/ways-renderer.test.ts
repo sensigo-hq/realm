@@ -30,6 +30,7 @@ import {
   owedCallWords,
   owedRunsWords,
   heldByAnswerWords,
+  stopReasons,
 } from './ways-renderer.js';
 
 async function withRun<T>(fn: (run: RunRecord) => Promise<T>): Promise<T> {
@@ -329,5 +330,25 @@ describe('#627 W correction 2 (3.2) — the command for a register way with a co
       withCopy: 'realm workflow validate --registered w1',
       without: 'realm workflow register <file>',
     });
+  });
+});
+
+describe('#872 (a) — the CLI line names a long step or handler by its length (I4)', () => {
+  it('B7b: a 600-character step name in a `Stopped:` line → `‹600 characters, not kept›`, never a cut start', () => {
+    const step = 's'.padEnd(600, 'x');
+    const entry: Unavailable = {
+      verb: 'run_step',
+      step,
+      code: 'capability_missing',
+      facts: { step, requirement: { kind: 'handler', name: 'h' }, basis: 'registry' },
+      remedy: [],
+      no_remedy: { cause: 'requires_other_program', requirement: { kind: 'handler', name: 'h' } },
+    };
+    const reasons = stopReasons({ ways: [], unavailable: [entry] }, 'r', 'running');
+    // (a) red when the CLI's line bypasses core's bounded renderer (`capText` in `cannotRunParts`);
+    //     (b) prints the first reason (the name is fake).
+    expect(reasons[0]).toBe(
+      "'‹600 characters, not kept›' cannot run here (capability): handler 'h' is not registered here — load the missing extension, or run the step on a runner that has it",
+    );
   });
 });

@@ -506,3 +506,39 @@ describe('#625 PR-2a, C174 lane F — tools.md rows no cell quoted yet, over a r
     ]);
   });
 });
+
+describe('#872 (a) — tools.md: two or more steps that cannot run here, said once', () => {
+  it("start_run: the page's sentence and its example — the real hint of a new run with three steps this server cannot run", async () => {
+    claim(
+      TOOLS,
+      "Two or more `auto` steps that cannot run here for a handler or adapter this server lacks are said in one sentence, in the place of the first of them (added after version 0.48.0): their count, then each missing handler or adapter with at most three of the steps that need it and how many more, at most ten of them and then how many more, the way out once, and where the full list is — for example `3 steps cannot run here (capability): handler 'enrich' ('fetch', 'tag'); handler 'publish' ('post') — load the missing extensions, or run these steps on a runner that has them. get_run_state lists each one in engine_runnable.`",
+    );
+    const { call, workflowStore } = await connect();
+    await workflowStore.register(
+      wf([
+        'id: example-872',
+        'name: example',
+        'version: 1',
+        'steps:',
+        '  fetch:',
+        '    description: Fetch.',
+        '    execution: auto',
+        '    handler: enrich',
+        '  tag:',
+        '    description: Tag.',
+        '    execution: auto',
+        '    handler: enrich',
+        '  post:',
+        '    description: Post.',
+        '    execution: auto',
+        '    handler: publish',
+      ]),
+    );
+    const r = await call('start_run', { workflow_id: 'example-872' });
+    // (a) red when the hint or the page's example changes alone (the count, a group, the way out,
+    //     the pointer); (b) prints the real hint.
+    expect(r['context_hint']).toBe(
+      `Run '${String(r['run_id'])}' created for workflow 'example-872'. 3 steps cannot run here (capability): handler 'enrich' ('fetch', 'tag'); handler 'publish' ('post') — load the missing extensions, or run these steps on a runner that has them. get_run_state lists each one in engine_runnable.`,
+    );
+  });
+});

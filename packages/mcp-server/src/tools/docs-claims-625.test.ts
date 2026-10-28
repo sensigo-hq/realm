@@ -1333,8 +1333,10 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
   it('C163 start_run: a step needing a handler this server lacks — status ok, the hint names it, the block in warnings in place of its pre-flight warning', async () => {
     claim(
       'mcp/tools.md',
-      "When the step it attempts needs a handler or adapter this server lacks, the reply is still the one that created the run (`status: ok`): its `context_hint` names the step (`'<step>' cannot run here (capability): handler '<name>' is not registered here — load the missing extension, or run the step on a runner that has it.`), and the block's own message (`Step '<step>' is blocked: …`) is in `warnings`, in place of that step's pre-flight warning (`… If reached it will block …`): the step was reached.",
+      "When the step it attempts needs a handler or adapter this server lacks, the reply is still the one that created the run (`status: ok`): its `context_hint` names the step (`'<step>' cannot run here (capability): handler '<name>' is not registered here — load the missing extension, or run the step on a runner that has it.`; with two or more such steps, the one sentence above), and the block's own message (`Step '<step>' is blocked: …`) is in `warnings`, in place of that step's pre-flight warning (`… If reached it will block …`): the step was reached.",
     );
+    // #872 (a): the clause on two or more steps is pinned by owed-call-625.test.ts's B3 (door) and
+    // docs-pages-625-reference.test.ts's #872 (a) cell (the sentence above and its example).
     const { call, workflowStore } = await connect();
     await workflowStore.register(NEEDS_HANDLER);
     const r = await call('start_run', { workflow_id: NEEDS_HANDLER.id });
@@ -3565,7 +3567,7 @@ describe('#729 Q3 — tools.md: an automatic step called by name is the engine�
   it('D1: an auto step this server cannot run, called by name — the capability words, nothing claimed, no capability block; next_actions names what else can be called (an agent step, advance_run), else nothing and report_to_user', async () => {
     claim(
       'mcp/tools.md',
-      "When this server cannot run the step (its handler or adapter is not loaded here), the hint ends with `'<step>' cannot run here (capability): …`, nothing is claimed and no capability block is recorded by your call; `next_actions` names what else can be called — an agent step that is ready, or `advance_run` when the engine owes a step it can run — and is empty, with `agent_action: report_to_user`, when nothing can be.",
+      "When this server cannot run the step (its handler or adapter is not loaded here), the hint ends with `'<step>' cannot run here (capability): …` (with two or more steps that cannot run here, the one sentence that counts them, as `start_run`'s hint gives it: `<N> steps cannot run here (capability): …`; added after version 0.48.0), nothing is claimed and no capability block is recorded by your call; `next_actions` names what else can be called — an agent step that is ready, or `advance_run` when the engine owes a step it can run — and is empty, with `agent_action: report_to_user`, when nothing can be.",
     );
     const c = await connect();
     const runId = await answered(

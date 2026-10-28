@@ -13,8 +13,10 @@ import {
   agentActionOf,
   agentRenderedList,
   cannotGoOnUntilCorrected,
+  cannotRunSummary,
   doorWithholdsAnswers,
   generateSchemaSkeleton,
+  libraryCannotRunWords,
   narrowForDoor,
   raceClausesOf,
   withFullStop,
@@ -628,20 +630,6 @@ function cannotRunEntries(narrowed: Narrowed | undefined): Unavailable[] {
   );
 }
 
-/** `'<s>' cannot run (<check>): <refusal>` — one step that cannot run (C36, C41, C53). */
-function cannotRunClause(entry: Unavailable): string {
-  if (entry.code === 'capability_missing') {
-    const { kind, name } = entry.facts.requirement;
-    return entry.facts.basis === 'marker'
-      ? `'${entry.facts.step}' could not run (capability): ${kind} '${name}' was not registered in the runner that last attempted it`
-      : `'${entry.facts.step}' cannot run here (capability): ${kind} '${name}' is not registered here — load the missing extension, or run the step on a runner that has it`;
-  }
-  if (entry.code === 'refused_before_claim') {
-    return `'${entry.facts.step}' cannot run (${entry.facts.check}): ${entry.facts.refusal}`;
-  }
-  return `'${entry.step ?? ''}' cannot run`;
-}
-
 /**
  * One refused step's own way out (F15, T-13, T-20 (v)), from its entry: a trust or precondition
  * refusal is corrected in the workflow; an input refusal is corrected in its schema (or its map),
@@ -730,8 +718,20 @@ function nextSentence(narrowed: Narrowed | undefined, ended: boolean): string {
           : `; it runs them${OWED_UNTIL}`;
     sentence += ` Owed to the engine: ${items.join(', ')} — call advance_run${runs}.`;
   }
-  for (const entry of cannotRunEntries(narrowed))
-    sentence += ` ${withFullStop(cannotRunClause(entry))}`;
+  // #872 (a): the steps that cannot run for a capability are said once, in core's summary, in the
+  // place of the first of them (one step: its own clause); a step refused before its claim keeps
+  // its own clause where it is (C36, C41, C53).
+  const cannotRun = cannotRunEntries(narrowed);
+  let capabilitySaid = false;
+  for (const entry of cannotRun) {
+    if (entry.code === 'capability_missing') {
+      if (!capabilitySaid) sentence += ` ${withFullStop(cannotRunSummary(cannotRun))}`;
+      capabilitySaid = true;
+      continue;
+    }
+    const clause = libraryCannotRunWords(entry);
+    if (clause !== undefined) sentence += ` ${withFullStop(clause)}`;
+  }
   if (cannotGoOnWithRefusal(narrowed, ended) && narrowed !== undefined) {
     sentence += ` ${wayOutWords(narrowed)}`;
   }
@@ -878,7 +878,9 @@ function hintOf(
       (u) =>
         u.verb === 'run_step' && u.step === reply.stopped_step && u.code === 'capability_missing',
     );
-    if (blocked !== undefined) hint += ` ${cannotRunClause(blocked)}.`;
+    // #872 (a): core's one producer of the clause (a capability entry always has one).
+    const clause = blocked !== undefined ? libraryCannotRunWords(blocked) : undefined;
+    if (clause !== undefined) hint += ` ${clause}.`;
   }
   return hint;
 }
@@ -1724,6 +1726,9 @@ export const DOOR_FACTS = {
     runnable_here: 'enum',
     refused_by: 'enum',
     basis: 'enum',
+    // #872 (a): one producer per row (`FactProducer`), as `capability_blocks`': the handler or
+    // adapter the author named.
+    requirement: 'author_literal',
   } satisfies FactProducers<typeof ENGINE_RUNNABLE_TABLE, EngineRunnable>,
   precondition: { expression: 'author_literal' } satisfies FactProducers<
     typeof PRECONDITION_FACTS_TABLE,

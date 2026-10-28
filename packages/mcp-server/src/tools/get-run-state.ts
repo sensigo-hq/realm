@@ -243,6 +243,9 @@ export const ENGINE_RUNNABLE_TABLE = {
   refused_by: 'fact',
   refusal: 'bounded',
   basis: 'fact',
+  // #872 (a): the handler or adapter a capability refusal names — a kind and a name the author wrote
+  // (as `capability_blocks`).
+  requirement: 'fact',
   precondition: { nested: PRECONDITION_FACTS_TABLE },
 } as const satisfies Record<keyof EngineRunnable, DisclosureClass>;
 

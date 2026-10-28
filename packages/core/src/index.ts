@@ -230,6 +230,11 @@ export {
   cannotGoOnUntilCorrected,
   LIBRARY_WORDS,
   libraryCannotRunWords,
+  // #872 (a): the one spelling of a capability refusal, the one bounded renderer of a cannot-run
+  // entry's parts, and the hand-back hint's grouped summary.
+  capabilityRefusalWords,
+  cannotRunParts,
+  cannotRunSummary,
   // #627 W: the door's gate answers, the condition its fallback carries, `present`.
   COND_TAGS,
   GATE_ANSWERS_VALUES,

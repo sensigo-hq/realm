@@ -20,6 +20,7 @@ import {
   submitHumanResponse,
 } from './execution-loop.js';
 import { describePending } from './pending.js';
+import { ExtensionRegistry } from '../extensions/registry.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { RunStore } from '../store/store-interface.js';
@@ -472,5 +473,43 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
       ).rejects.toMatchObject({ code: 'VALIDATION_ACTOR_INVALID', message });
     }
     expect((await store.get(run.id)).completed_steps).toEqual([]);
+  });
+});
+
+describe('#872 (a) — core-library.md: describePending names the handler or adapter a step lacks', () => {
+  it("line 103: an engine_runnable entry refused for a handler or adapter names it in requirement — the registry's, or the marker's", async () => {
+    claim(
+      PAGE,
+      'An `engine_runnable` entry refused for a handler or adapter names it in `requirement`: its `kind` and `name` (added after version 0.48.0).',
+    );
+    const d = {
+      id: 'requirement-wf',
+      name: 'requirement',
+      version: 1,
+      steps: { x: { description: 'X', execution: 'auto', depends_on: [], handler: 'h' } },
+    } as WorkflowDefinition;
+    const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-core-library-872-')));
+    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const byRegistry = describePending(d, run, new ExtensionRegistry(), new Date());
+    const marked = {
+      ...run,
+      capability_blocks: {
+        x: {
+          requirement: { kind: 'adapter' as const, name: 'from_marker' },
+          code: 'ENGINE_ADAPTER_NOT_REGISTERED',
+          at: '2026-10-28T00:00:00.000Z',
+        },
+      },
+    };
+    const byMarker = describePending(d, marked, undefined, new Date());
+    // (a) red when the field is missing, or is not the marker's on a marker-judged refusal;
+    //     (b) prints both entries' basis and requirement.
+    expect([
+      [byRegistry.engine_runnable[0]?.basis, byRegistry.engine_runnable[0]?.requirement],
+      [byMarker.engine_runnable[0]?.basis, byMarker.engine_runnable[0]?.requirement],
+    ]).toEqual([
+      ['registry', { kind: 'handler', name: 'h' }],
+      ['marker', { kind: 'adapter', name: 'from_marker' }],
+    ]);
   });
 });

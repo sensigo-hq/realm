@@ -65,6 +65,13 @@ const WK = def('q3-mcp-wk', {
   k: { description: 'K.', execution: 'auto', depends_on: ['first'], handler: 'missing' },
 } as WorkflowDefinition['steps']);
 
+/** #872 (a): after `first`, `k1` and `k2` are owed, and this server lacks their handler. */
+const WK2 = def('q3-mcp-wk2', {
+  first: { description: 'First.', execution: 'agent', depends_on: [] },
+  k1: { description: 'K1.', execution: 'auto', depends_on: ['first'], handler: 'missing' },
+  k2: { description: 'K2.', execution: 'auto', depends_on: ['first'], handler: 'missing' },
+} as WorkflowDefinition['steps']);
+
 /** W2's `publish`: refused before its claim for its input (its schema wants `n`). */
 const W2 = def('q3-mcp-w2', {
   publish: {
@@ -138,7 +145,7 @@ async function connect() {
   const dir = await mkdtemp(join(tmpdir(), 'realm-q3-mcp-'));
   const runStore = new JsonFileStore(join(dir, 'runs'));
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
-  for (const d of [W3, WK, W2, WA, ...F1_WORKFLOWS]) await workflowStore.register(d);
+  for (const d of [W3, WK, WK2, W2, WA, ...F1_WORKFLOWS]) await workflowStore.register(d);
   const server = createRealmMcpServer({ runStore, workflowStore, registry: registry() });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'q3-729', version: '0' });
@@ -612,5 +619,21 @@ describe('#729 Q3 correction 1, C2 — no agent-step telemetry for an engine ste
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe('#872 (a) — execute_step by name: two or more steps this server cannot run are said once', () => {
+  it('B3b: K1 by name beside K2, both lacking their handler → the by-name hint ends with the count, one group, the way out once', async () => {
+    const c = await connect();
+    const runId = await answeredRun(c, WK2);
+    const r = await c.call('execute_step', { run_id: runId, command: 'k1', params: AGENT_PARAMS });
+    const hint = String(r['context_hint']);
+    // (a) red when the steps are said one sentence each on the by-name path (the count absent,
+    //     `cannot run here` twice); (b) prints the status and the hint.
+    expect({ status: r['status'], hint, here: hint.split('cannot run here').length - 1 }).toEqual({
+      status: 'blocked',
+      hint: `${engines('k1')} 2 steps cannot run here (capability): handler 'missing' ('k1', 'k2') — load the missing extensions, or run these steps on a runner that has them. get_run_state lists each one in engine_runnable.`,
+      here: 1,
+    });
   });
 });

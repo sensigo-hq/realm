@@ -11,6 +11,7 @@
 import {
   cannotGoOnFrom,
   cannotGoOnUntilCorrected,
+  cannotRunParts,
   oneOf,
   preconditionHint,
   preconditionRefusal,
@@ -138,36 +139,10 @@ export function cannotRunEntries(composed: Pick<ComposedWays, 'unavailable'>): U
 }
 
 /**
- * The parts of a step-that-cannot-run entry, as every line names them: its step, the check that
- * refuses it (`trust`, `precondition`, `input_schema`, `capability`), the refusal's own words (a
- * capability's: what this program lacks, or what the runner that last attempted it lacked — C41),
- * and whether it was judged from the run's marker.
+ * The parts of a step-that-cannot-run entry, as every line names them: core's one bounded renderer
+ * (#872 (a); every step and requirement name through `capText`), re-exported for `inspect`.
  */
-export function cannotRunParts(
-  entry: Unavailable,
-): { step: string; check: string; refusal: string; marker: boolean } | undefined {
-  if (entry.code === 'capability_missing') {
-    const { kind, name } = entry.facts.requirement;
-    const marker = entry.facts.basis === 'marker';
-    return {
-      step: entry.facts.step,
-      check: 'capability',
-      refusal: marker
-        ? `${kind} '${name}' was not registered in the runner that last attempted it`
-        : `${kind} '${name}' is not registered here`,
-      marker,
-    };
-  }
-  if (entry.code === 'refused_before_claim') {
-    return {
-      step: entry.facts.step,
-      check: entry.facts.check,
-      refusal: entry.facts.refusal,
-      marker: false,
-    };
-  }
-  return undefined;
-}
+export { cannotRunParts };
 
 /**
  * `'<s>' cannot run (<check>): <refusal>` — one step that cannot run, as every line names it (C36):

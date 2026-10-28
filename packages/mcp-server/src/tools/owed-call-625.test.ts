@@ -144,6 +144,8 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
         refused_by: 'capability',
         refusal: "handler 'h' is not registered here",
         basis: 'registry',
+        // #872 (a) (add-only): the handler or adapter refused, as data.
+        requirement: { kind: 'handler', name: 'h' },
       },
     ]);
     expect(refused.next_actions).toEqual([]);
@@ -185,6 +187,8 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
         refusal: "handler 'h' was not registered in the runner that last attempted it",
         // decision C41: the summary says what the refusal was judged from.
         basis: 'marker',
+        // #872 (a) (add-only): the handler or adapter refused, as data.
+        requirement: { kind: 'handler', name: 'h' },
       },
     ]);
     expect(noRegistry.next_actions).toEqual([]);
@@ -214,6 +218,8 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
       refused_by: 'capability',
       refusal: "handler 'h' is not registered here",
       basis: 'registry',
+      // #872 (a) (add-only): the handler or adapter refused, as data.
+      requirement: { kind: 'handler', name: 'h' },
     });
     expect(lacks.next_actions).toEqual([]);
     expect(lacks.next_actions_status).toBe('blocked_on_capability');
@@ -621,5 +627,123 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
       // #729 (the Q3 unit, C1): start_run's warnings carry core's hint (no door word in core).
       "Step 'enrich' is blocked: its handler 'h' is not registered in this runner. The run is NOT terminated — the step remains eligible, so a runner that provides this handler can execute it.",
     ]);
+  });
+});
+
+describe('#872 (a) — the hand-back hint and engine_runnable.requirement over the MCP handlers', () => {
+  let runStore: JsonFileStore;
+  let workflowStore: JsonWorkflowStore;
+  beforeEach(async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'realm-owed-872-'));
+    runStore = new JsonFileStore(join(dir, 'runs'));
+    workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+  });
+  /** Two `auto` roots that need the handler `h`, which these servers lack. */
+  const twoRoots: WorkflowDefinition = {
+    id: 'two-roots-wf',
+    name: 'two roots',
+    version: 1,
+    schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+    steps: {
+      s1: { description: 'S1.', execution: 'auto', depends_on: [], handler: 'h' },
+      s2: { description: 'S2.', execution: 'auto', depends_on: [], handler: 'h' },
+    },
+  };
+  const TAIL =
+    ' — load the missing extensions, or run these steps on a runner that has them. get_run_state lists each one in engine_runnable.';
+
+  it('B3 (door): start_run on a new run with two steps this server cannot run — the count, one group, the way out once; no way out of the workflow', async () => {
+    await workflowStore.register(twoRoots);
+    const r = await handleStartRun(
+      { workflow_id: twoRoots.id, params: {} },
+      { runStore, workflowStore, registry: new ExtensionRegistry() },
+    );
+    const hint = String(r.context_hint);
+    // (a) red when the two steps are said one sentence each, or the workflow's way out is added;
+    //     (b) prints the status, the hint and the counts.
+    expect({
+      status: r.status,
+      hint,
+      here: hint.split('cannot run here').length - 1,
+      wayOut: hint.includes('Correct the workflow'),
+    }).toEqual({
+      status: 'ok',
+      hint: `Run '${r.run_id}' created for workflow 'two-roots-wf'. 2 steps cannot run here (capability): handler 'h' ('s1', 's2')${TAIL}`,
+      here: 1,
+      wayOut: false,
+    });
+  });
+
+  it("B6 (b) (door): a caller with no registry judges by the run's markers — the past-tense summary, no way out, in start_run_batch's hint", async () => {
+    const { advanceRun } = await import('@sensigo/realm');
+    await workflowStore.register(twoRoots);
+    const batch = () =>
+      handleStartRunBatch(
+        { workflow_id: twoRoots.id, items: [{ params: {}, idempotency_key: 'k-872' }] },
+        { runStore, workflowStore },
+      );
+    const runId = (await batch()).started[0]!.run_id;
+    // A runner that lacked the handler attempted the steps: the markers are on the record. Each
+    // advance_run stops at the step it could not dispatch, so it takes two calls to mark both (one
+    // marker per call, measured).
+    await advanceRun(runStore, twoRoots, { runId, registry: new ExtensionRegistry() });
+    await advanceRun(runStore, twoRoots, { runId, registry: new ExtensionRegistry() });
+    const marked = Object.keys((await runStore.get(runId)).capability_blocks ?? {});
+    const hint = String((await batch()).started[0]!.context_hint);
+    // (a) red when the marker branch is dropped (the present tense and the way out appear) or the
+    //     two steps are said one sentence each; (b) prints the markers and the hint.
+    expect({ marked, tail: hint.slice(hint.indexOf('2 steps')) }).toEqual({
+      marked: ['s1', 's2'],
+      tail: "2 steps could not run (capability): handler 'h' ('s1', 's2'). get_run_state lists each one in engine_runnable.",
+    });
+  });
+
+  it('B8: get_run_state names the handler or adapter refused in engine_runnable.requirement — the registry’s, or the marker’s — and only for a capability refusal', async () => {
+    const mixed: WorkflowDefinition = {
+      id: 'requirement-wf',
+      name: 'requirement',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        enrich: { description: 'Enrich.', execution: 'auto', depends_on: [], handler: 'h' },
+        t: { description: 'T.', execution: 'auto', depends_on: [], trust: 'nope' as never },
+      },
+    };
+    await workflowStore.register(mixed);
+    const { run } = await runStore.create({
+      workflowId: mixed.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const byRegistry = await handleGetRunState(
+      { run_id: run.id },
+      { runStore, workflowStore, registry: new ExtensionRegistry() },
+    );
+    // The run's marker names another adapter than the definition's handler: the field is the
+    // marker's, as the refusal's words are.
+    await runStore.update({
+      ...run,
+      capability_blocks: {
+        enrich: {
+          requirement: { kind: 'adapter', name: 'from_marker' },
+          code: 'ENGINE_ADAPTER_NOT_REGISTERED',
+          at: '2026-10-28T00:00:00.000Z',
+        },
+      },
+    });
+    const byMarker = await handleGetRunState({ run_id: run.id }, { runStore, workflowStore });
+    const entry = (r: typeof byRegistry, step: string) =>
+      (r.engine_runnable ?? []).find((e) => e.step === step);
+    // (a) red when the field is not set in either branch, is the definition's on a marker, or is
+    //     set on a refusal that is not a capability's; (b) prints the entries' fields.
+    expect({
+      registry: [entry(byRegistry, 'enrich')?.basis, entry(byRegistry, 'enrich')?.requirement],
+      marker: [entry(byMarker, 'enrich')?.basis, entry(byMarker, 'enrich')?.requirement],
+      trust: [entry(byRegistry, 't')?.refused_by, 'requirement' in (entry(byRegistry, 't') ?? {})],
+    }).toEqual({
+      registry: ['registry', { kind: 'handler', name: 'h' }],
+      marker: ['marker', { kind: 'adapter', name: 'from_marker' }],
+      trust: ['trust', false],
+    });
   });
 });
