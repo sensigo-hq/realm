@@ -1268,6 +1268,9 @@ describe('correction 2, F-8: the pages that print the cache lines say what they 
   // that already says it. (a) red when a sentence or a link is removed, or an anchor is renamed so
   // that no heading carries it; (b) prints the page and the sentence, or each link and where it
   // lands.
+  // Correction 3 (I-7): `--prompt-cache` sets what ANTHROPIC is asked to cache; that a drive on
+  // OpenAI refuses it is run in `commands/prompt-cache-600.test.ts`, G17 (`realm agent`) and G19
+  // (`realm listen`). (a) red when the page says "the provider" again.
   it('F-8: each page carries its sentence, and each added link lands on a heading', () => {
     const pages: Array<[string, string]> = [
       [
@@ -1294,7 +1297,7 @@ describe('correction 2, F-8: the pages that print the cache lines say what they 
     for (const [page, sentence] of pages) claim(page, sentence);
     for (const sentence of [
       '**Words on the provider lines.**',
-      '_The drive_ is one `realm agent` driving one run, whether you start it or `realm listen` starts it for a run; its `--prompt-cache` flag sets what the provider is asked to cache (see [`realm agent`](realm-agent.md)).',
+      '_The drive_ is one `realm agent` driving one run, whether you start it or `realm listen` starts it for a run; its `--prompt-cache` flag sets what Anthropic is asked to cache (see [`realm agent`](realm-agent.md)).',
       "_Sent uncached, silently_: a fixed part shorter than the model's minimum is not cached, and the provider says nothing about it.",
       '_Pay the write_: the request that writes a cache entry is billed for what it writes at the cache-write price (see [How a request is priced](../cache-economics.md#how-a-request-is-priced) and [What a run costs](../../guides/realm-agent.md#what-a-run-costs)).',
     ])
