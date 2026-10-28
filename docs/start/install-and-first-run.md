@@ -95,7 +95,7 @@ openai: realm sends no cache marker; the provider's own rules decide — see htt
 anthropic: the cache is kept per workspace (per organization on Bedrock and Google Cloud), as Anthropic's page said on 2026-10-09: drives from different workspaces each pay the write
 ```
 
-The `cache:` lines and the `anthropic:` and `openai:` lines under them are about prompt caching: how big each agent step's fixed text is, and what each provider does with it. They matter once `realm agent` or `realm listen` calls a model; you can ignore them here. [What they mean](../reference/cli/realm-workflow.md#the-cache-lines).
+The `cache:` lines and the `anthropic:` and `openai:` lines under them are about prompt caching: how big each agent step's fixed text is, and what each provider does with it. They matter once a model runs your agent steps, which `realm agent` does; you can ignore them here. [What they mean](../reference/cli/realm-workflow.md#the-cache-lines).
 
 ## 4. Run it, and give a wrong answer
 

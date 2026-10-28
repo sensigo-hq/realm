@@ -1275,11 +1275,11 @@ describe('correction 2, F-8: the pages that print the cache lines say what they 
     const pages: Array<[string, string]> = [
       [
         'docs/start/install-and-first-run.md',
-        "The `cache:` lines and the `anthropic:` and `openai:` lines under them are about prompt caching: how big each agent step's fixed text is, and what each provider does with it. They matter once `realm agent` or `realm listen` calls a model; you can ignore them here. [What they mean](../reference/cli/realm-workflow.md#the-cache-lines).",
+        "The `cache:` lines and the `anthropic:` and `openai:` lines under them are about prompt caching: how big each agent step's fixed text is, and what each provider does with it. They matter once a model runs your agent steps, which `realm agent` does; you can ignore them here. [What they mean](../reference/cli/realm-workflow.md#the-cache-lines).",
       ],
       [
         'docs/guides/first-workflow.md',
-        'Notice `Valid`. The `ℹ` line is a suggestion and the `cache:` lines under it are about prompt caching, which matters once `realm agent` or `realm listen` calls a model; you can ignore both here. [What the cache lines mean](../reference/cli/realm-workflow.md#the-cache-lines).',
+        'Notice `Valid`. The `ℹ` line is a suggestion; the `cache:` lines and the `anthropic:` and `openai:` lines under them are about prompt caching, which matters once a model runs your agent steps, which `realm agent` does; you can ignore them all here. [What the cache lines mean](../reference/cli/realm-workflow.md#the-cache-lines).',
       ],
       [
         'docs/guides/agent-steps.md',
@@ -1295,6 +1295,21 @@ describe('correction 2, F-8: the pages that print the cache lines say what they 
       ],
     ];
     for (const [page, sentence] of pages) claim(page, sentence);
+    // Correction 3 (I-9b, I-9c): the two first-use pages' sentences name the `cache:`, `anthropic:`
+    // and `openai:` lines; the transcript right above each sentence holds them. A check of the page's
+    // own text, not a run: no cell runs these two pages' commands (that is P-7, left for #902).
+    // (a) red when that transcript loses one of the three kinds of line; (b) prints the page and the
+    // kinds it found.
+    const kindsAbove = (page: string, sentence: string): string[] => {
+      const text = read(page);
+      const open = text.lastIndexOf('```text\n', text.indexOf(sentence));
+      const block = text.slice(open + 8, text.indexOf('\n```', open + 8)).split('\n');
+      return ['cache:', 'anthropic:', 'openai:'].filter((s) => block.some((l) => l.startsWith(s)));
+    };
+    const firstUse = pages.slice(0, 2);
+    expect(firstUse.map(([page, sentence]) => [page, kindsAbove(page, sentence)])).toEqual(
+      firstUse.map(([page]) => [page, ['cache:', 'anthropic:', 'openai:']]),
+    );
     for (const sentence of [
       '**Words on the provider lines.**',
       '_The drive_ is one `realm agent` driving one run, whether you start it or `realm listen` starts it for a run; its `--prompt-cache` flag sets what Anthropic is asked to cache (see [`realm agent`](realm-agent.md)).',
