@@ -3,6 +3,8 @@
 // Used when notifiers.slack_gate.app_token (xapp-...) is configured alongside bot_token.
 import type { SlackGateEvent } from './slack-gate-server.js';
 
+import { deadlineSignal, readWithin, SLACK_CALL_DEADLINE_MS } from './slack-call.js';
+
 export interface SlackSocketConfig {
   /** App-level token (starts with xapp-) — notifiers.slack_gate.app_token. */
   appToken: string;
@@ -35,6 +37,9 @@ export function connectSocketMode(config: SlackSocketConfig): { close(): void } 
 
     // Step 1 — obtain the WebSocket URL from Slack.
     let wsUrl: string;
+    // #729 PR-4 (02 §Transport (1)): the open is bounded by the call deadline; a timeout takes the
+    // retry path below, as any failed open does.
+    const deadline = deadlineSignal(SLACK_CALL_DEADLINE_MS);
     try {
       const response = await fetch('https://slack.com/api/apps.connections.open', {
         method: 'POST',
@@ -42,8 +47,13 @@ export function connectSocketMode(config: SlackSocketConfig): { close(): void } 
           'Content-Type': 'application/json',
           Authorization: `Bearer ${appToken}`,
         },
+        signal: deadline.signal,
       });
-      const data = (await response.json()) as { ok: boolean; url?: string; error?: string };
+      const data = (await readWithin(deadline.signal, () => response.json())) as {
+        ok: boolean;
+        url?: string;
+        error?: string;
+      };
       if (!data.ok || data.url === undefined) {
         const delay = backoffMs;
         backoffMs = Math.min(backoffMs * 2, 30_000);
@@ -70,6 +80,8 @@ export function connectSocketMode(config: SlackSocketConfig): { close(): void } 
         }
       }, delay);
       return;
+    } finally {
+      deadline.clear();
     }
 
     if (stopped || signal?.aborted) return;

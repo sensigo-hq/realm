@@ -41,6 +41,7 @@ import {
   type RunRecord,
   WorkflowError,
   type WorkflowDefinition,
+  stripSpanMarks,
 } from '@sensigo/realm';
 import { readRunManifest, type RunManifest } from '../lib/read-run-manifest.js';
 
@@ -49,7 +50,6 @@ import { readRunManifest, type RunManifest } from '../lib/read-run-manifest.js';
 const SPAN_START = '\uE000';
 const SPAN_MID = '\uE001';
 const SPAN_END = '\uE002';
-const MARKS = /[\uE000-\uE002]/g;
 const SPAN = /\uE000([cqd])([A-Za-z0-9_-]{22})\uE001([^\uE000-\uE002]*)\uE002/g;
 
 /** A span's kind: a command (`c`), question text (`q`), or data built by a class table (`d`). */
@@ -81,9 +81,9 @@ function span(kind: SpanKind, text: string): string {
 }
 
 /** Removes every span mark (U+E000–E002): the edges that leave the process (Slack, a provider) and
- *  any value printed beside a span. */
+ *  any value printed beside a span. #729 PR-4: core's {@link stripSpanMarks}, the one strip. */
 export function stripMarks(text: string): string {
-  return text.replace(MARKS, '');
+  return stripSpanMarks(text);
 }
 
 /**
@@ -93,8 +93,7 @@ export function stripMarks(text: string): string {
  * removed from the serialised text and the value read back.
  */
 export function withoutMarks<T>(value: T): T {
-  const json = JSON.stringify(value);
-  return json === undefined ? value : (JSON.parse(stripMarks(json)) as T);
+  return stripSpanMarks(value);
 }
 
 // ─── The render context ─────────────────────────────────────────────────────────────────────────
@@ -390,6 +389,7 @@ function setFor(audience: DisclosureAudience): DisclosureSet {
     const standing = processStanding(s);
     set = buildDisclosureSet({
       env: process.env,
+      cwd: process.cwd(),
       declared: Object.fromEntries(s.declared),
       declaredState: standing.declared,
       ...(standing.declaredCause !== undefined ? { declaredCause: standing.declaredCause } : {}),

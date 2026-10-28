@@ -26,6 +26,7 @@ import {
   type DisclosureEntry,
 } from './redaction.js';
 import { discloseByTable } from './disclosure-walk.js';
+import { discloseGate } from './disclosure-tables.js';
 import * as round1 from '../test-support/disclosure-law/round-1/redaction.js';
 
 describe('scrubEmail', () => {
@@ -323,6 +324,118 @@ describe('#729 PR-3 — the environment filter (one filter, RECORD 01 #5)', () =
       ]),
     ).toEqual(['B']);
     expect(notSecretIntersection([])).toEqual([]);
+  });
+});
+
+describe('F2 — the working directory is never a member (option B)', () => {
+  // Fakes only: no real home, no real project. The three names are the class's members: npm's two
+  // and one invented launcher name — the rule is by VALUE, so every name holding the cwd is skipped.
+  const HOME_DIR = '/home/fakeuser-f2';
+  const CWD = '/srv/fake-project-0001';
+  const SIBLING = '/srv/fake-project-0002';
+  const NAMES = ['INIT_CWD', 'npm_config_local_prefix', 'FAKE_LAUNCHER_CWD'] as const;
+  const holding = (value: string): Record<string, string> => ({
+    HOME: HOME_DIR,
+    API: 'FAKE-API-VALUE-F2-01',
+    ...Object.fromEntries(NAMES.map((n) => [n, value])),
+  });
+  const names = (
+    env: Record<string, string>,
+    audience: 'agent' | 'broadcast' | 'log' | 'private' | 'file',
+    cwd?: string,
+  ) =>
+    environmentEntries(env, { audience, ...(cwd !== undefined ? { cwd } : {}) }).map(
+      (e) => e.source,
+    );
+
+  for (const audience of ['log', 'agent', 'broadcast'] as const) {
+    it(`F2-1 (${audience}): a variable whose value is the cwd is not a member, whatever its name`, () => {
+      // (a) red when the value rule is removed (the three names are members again); (b) prints the
+      //     member names (no value).
+      expect(names(holding(CWD), audience, CWD)).toEqual(['env:HOME', 'env:API']);
+    });
+  }
+
+  it('F2-2: the same names holding a SIBLING folder stay members (the rule is by value, not name)', () => {
+    // (a) red when a name list replaces the value rule (the sibling is exempted by name); (b) prints
+    //     the member names.
+    expect(names(holding(SIBLING), 'log', CWD)).toEqual([
+      'env:HOME',
+      'env:API',
+      'env:INIT_CWD',
+      'env:npm_config_local_prefix',
+      'env:FAKE_LAUNCHER_CWD',
+    ]);
+  });
+
+  it('F2-3a: the cwd spelled with a trailing slash is the cwd', () => {
+    // (a) red when one trailing slash is no longer removed before comparing; (b) prints names.
+    expect(names({ HOME: HOME_DIR, INIT_CWD: `${CWD}/` }, 'log', CWD)).toEqual(['env:HOME']);
+  });
+
+  it('F2-3b: a folder under the cwd is not the cwd', () => {
+    // (a) red when the rule matches by prefix instead of the folder itself; (b) prints names.
+    expect(names({ HOME: HOME_DIR, INIT_CWD: `${CWD}/sub` }, 'log', CWD)).toEqual([
+      'env:HOME',
+      'env:INIT_CWD',
+    ]);
+  });
+
+  it('F2-4: the home folder as the cwd stays a member on a log, and exempt on private (D-7)', () => {
+    // (a) red when the HOME-value guard is dropped (HOME exempted on a log because it is the cwd);
+    //     (b) prints the member names per audience.
+    expect({
+      log: names({ HOME: HOME_DIR }, 'log', HOME_DIR),
+      private: names({ HOME: HOME_DIR }, 'private', HOME_DIR),
+    }).toEqual({ log: ['env:HOME'], private: [] });
+  });
+
+  it("F2-5: INIT_CWD holding the home folder, which is the cwd, stays a member (HOME's shadow; a control)", () => {
+    // (a) red when the guard compares anything but HOME's value; (b) prints the member names.
+    expect(names({ HOME: HOME_DIR, INIT_CWD: HOME_DIR }, 'log', HOME_DIR)).toEqual([
+      'env:HOME',
+      'env:INIT_CWD',
+    ]);
+  });
+
+  it("F2-6: the cwd UNDER the home folder — INIT_CWD skipped, HOME still a member (the walker's case)", () => {
+    const cwd = `${HOME_DIR}/code/x`;
+    // (a) red when the guard is the `personal` predicate instead of HOME's value (every folder under
+    //     home would stay a member); (b) prints the member names.
+    expect(names({ HOME: HOME_DIR, INIT_CWD: cwd }, 'log', cwd)).toEqual(['env:HOME']);
+    // What a log shows of a path in that folder: only the home folder's part.
+    const set = buildDisclosureSet({
+      env: { HOME: HOME_DIR, INIT_CWD: cwd },
+      declared: {},
+      declaredState: 'resolved',
+      audience: 'log',
+      cwd,
+    }).set;
+    // (a) red when INIT_CWD is a member again (the whole folder hidden); (b) prints the fake text.
+    expect(disclose(`${cwd}/realm.yaml`, set, 'all').text).toBe('[REDACTED]/code/x/realm.yaml');
+  });
+
+  it('F2-7: a DECLARED secret equal to the cwd is still hidden (declared members are not environment entries; a control)', () => {
+    const set = buildDisclosureSet({
+      env: holding(CWD),
+      declared: { PROJECT_PATH_SECRET: CWD },
+      declaredState: 'resolved',
+      audience: 'log',
+      cwd: CWD,
+    }).set;
+    // (a) red when the cwd rule reaches declared values; (b) prints the fake text.
+    expect(disclose(`${CWD}/realm.yaml`, set, 'all').text).toBe('[REDACTED]/realm.yaml');
+  });
+
+  it('F2-8: no cwd passed — the members are exactly as before (an embedder; a control)', () => {
+    // (a) red when the rule applies without a cwd; (b) prints the member names.
+    expect(names(holding(CWD), 'log')).toEqual([
+      'env:HOME',
+      'env:API',
+      'env:INIT_CWD',
+      'env:npm_config_local_prefix',
+      'env:FAKE_LAUNCHER_CWD',
+    ]);
   });
 });
 
@@ -1937,5 +2050,82 @@ describe('#729 PR-3 correction 7 — the quote closer, E-2’s terminator and th
       i11: [true],
       parses: true,
     });
+  });
+});
+
+describe('F2 — the second decoded reading (D2, commit 2): disclose reaches what the door reached', () => {
+  const BS = '\\';
+  const DECLARED = `pa${BS}${BS}nss-word1`; // 13 characters, two literal backslashes (probe3's; fake)
+  const ONCE = JSON.parse(`"${DECLARED}"`) as string; // one backslash
+  const TWICE = JSON.parse(`"${ONCE}"`) as string; // a newline
+  const CONTROL = 'pa\nss-OTHER9'; // twice-shaped, not declared
+  const setOf = (value: string) =>
+    buildDisclosureSet({
+      env: {},
+      declared: { FAKE_SECRET: value },
+      declaredState: 'resolved',
+      audience: 'agent',
+    }).set;
+  const text = (t: string) => `before ${t} after`;
+  const gate = (v: string) =>
+    ({
+      gate_id: 'g1',
+      step: 's1',
+      choices: ['yes', 'no'],
+      resolved_message: 'q',
+      opened_at: '2026-10-27T10:00:00.000Z',
+      preview: { v },
+    }) as never;
+  it('D2-4: the twice-decoded spelling of a declared value is hidden by disclose, at `all` and at `declared`', () => {
+    const set = setOf(DECLARED);
+    // (a) red when D2 is removed (the newline spelling passes disclose); (b) prints the fake texts.
+    expect({
+      all: disclose(text(TWICE), set, 'all').text,
+      declared: disclose(text(TWICE), set, 'declared').text,
+    }).toEqual({ all: 'before [REDACTED] after', declared: 'before [REDACTED] after' });
+  });
+  it('D2-5 (control): the declared and once-decoded spellings stay hidden; a non-declared twice-shaped text stays shown', () => {
+    const set = setOf(DECLARED);
+    // (b) prints the fake texts.
+    expect([DECLARED, ONCE, CONTROL].map((t) => disclose(text(t), set, 'all').text)).toEqual([
+      'before [REDACTED] after',
+      'before [REDACTED] after',
+      text(CONTROL),
+    ]);
+  });
+  it('D2-6: the bound — four backslashes: the thrice-decoded spelling is shown by disclose (recorded) and hidden by the walk', () => {
+    const four = `pa${BS}${BS}${BS}${BS}nss-word1`;
+    const thrice = JSON.parse(
+      `"${JSON.parse(`"${JSON.parse(`"${four}"`) as string}"`) as string}"`,
+    ) as string;
+    const set = setOf(four);
+    const walked = (discloseGate(gate(text(thrice)), set, 'agent') as { preview: { v: string } })
+      .preview.v;
+    // (a) red when disclose reaches a third level (the recorded bound moved), or the walk's one
+    //     re-escape stops reaching D2; (b) prints the fake texts.
+    expect({
+      disclose: disclose(text(thrice), set, 'all').text,
+      walkHides: walked.includes('[REDACTED]'),
+    }).toEqual({
+      disclose: text(thrice),
+      walkHides: true,
+    });
+  });
+  it("D2-7: the walk over probe3's four leaves — the twice-read leaf is now hidden in place, as the others are", () => {
+    const set = setOf(DECLARED);
+    const walk = (t: string) =>
+      (discloseGate(gate(text(t)), set, 'agent') as { preview: { v: string } }).preview.v;
+    // Before D2 the twice-read leaf was hidden WHOLE ('[REDACTED]'): only the escaped-spelling rule
+    // reached it. With D2 the leaf's own pass finds the spelling, so it is hidden where it stands, as
+    // the declared and once-read leaves are; the secret is hidden either way (pinned as the code does
+    // it — the prompt expected the walk byte-identical; a numbered divergence in the report).
+    // (a) red when D2 is removed (the leaf reads '[REDACTED]' again) or the walk stops hiding a
+    //     spelling; (b) prints the four walked texts (fake).
+    expect([DECLARED, ONCE, TWICE, CONTROL].map(walk)).toEqual([
+      'before [REDACTED] after',
+      'before [REDACTED] after',
+      'before [REDACTED] after',
+      text(CONTROL),
+    ]);
   });
 });

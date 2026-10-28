@@ -539,6 +539,7 @@ export async function loadProjectExtensions(
       `identity capture failed: ${errMsg(err)}`,
       buildDisclosureSet({
         env: process.env,
+        cwd: process.cwd(),
         declared: Object.fromEntries(
           (secretValues ?? []).map((value, i) => [`manifest#${i + 1}`, value]),
         ),
@@ -647,6 +648,7 @@ async function applyDeploymentManifest(
   // (I8), naming the manifest and the `config` keys that refer to it (F37).
   const declared = buildDisclosureSet({
     env: process.env,
+    cwd: process.cwd(),
     declared: resolved.values,
     declaredState: 'resolved',
     audience: 'log',

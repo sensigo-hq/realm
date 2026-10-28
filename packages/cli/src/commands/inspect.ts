@@ -12,6 +12,9 @@ import {
   lastExecutionIdentity,
   pendingCleanupLine,
   pendingGateQuestion,
+  composeQuestionView,
+  discloseGate,
+  stripSpanMarks,
   resumeWay,
   dueExpiry,
   composeWaysAt,
@@ -89,6 +92,7 @@ import {
   describeProgram,
   renderAnswerLine,
   quotedForTerminal,
+  viewSetFor,
 } from '../lib/holder-render.js';
 import {
   RUN_PHASE_WORDS,
@@ -134,8 +138,15 @@ function openQuestionLine(
 ): string {
   // #729 PR-3 correction 2 (C2): a question is shown at the declared tier, as every surface shows it
   // (P-9), and the receipt line says so.
-  if (gate.resolved_message !== undefined)
-    return `  Question: ${questionSpan(quotedForTerminal(gate.resolved_message))}`;
+  // #729 PR-4 (03 #5): through core's ONE composer, over the gate disclosed for this terminal — the
+  // question as the gate stored it when it opened.
+  if (gate.resolved_message !== undefined) {
+    const { question_text } = composeQuestionView(
+      discloseGate(stripSpanMarks(gate), viewSetFor('private'), 'private'),
+      definition?.steps[gate.step_name]?.display,
+    );
+    return `  Question: ${questionSpan(quotedForTerminal(question_text))}`;
+  }
   // Correction 1 (E6): with no frozen message and no definition to read, inspect cannot know whether
   // the gate declares one — it says so, never "none".
   if (definition === undefined)
@@ -2001,6 +2012,7 @@ export const inspectCommand = new Command('inspect')
         if (audience !== undefined && before !== undefined && after !== undefined) {
           const set = buildDisclosureSet({
             env: process.env,
+            cwd: process.cwd(),
             declared: manifest.declared,
             declaredState: manifest.declaredState,
             ...(manifest.declaredCause !== undefined

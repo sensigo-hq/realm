@@ -134,7 +134,7 @@ The record of a run names the profile each step ran with:
 
 ## 4. Choose what is shown with `display`
 
-`display` is a short template for showing the step's answer to a person. `realm agent` prints it in the terminal when the step finishes, in place of the raw JSON.
+`display` is a short template for showing the step's answer to a person. `realm agent` prints it in the terminal when the step finishes, in place of the raw JSON. When the step opens a gate, every surface that shows the gate's preview shows it through `display` too: the terminal, `realm workflow run`, Slack and the MCP replies.
 
 ```yaml
 display: |

@@ -18,6 +18,7 @@ import {
   type AgentTraceEntry,
   markersIn,
   inboundMarkerWarning,
+  type DisclosureSet,
 } from '@sensigo/realm';
 import {
   formCallOf,
@@ -247,6 +248,8 @@ export async function handleExecuteStep(
   },
   stores?: HandleRunStores,
   call?: FormCall,
+  /** #729 PR-4: told the set this call built before its engine call (the door's reply reuses it). */
+  onDisclosureSet?: (set: DisclosureSet) => void,
 ): Promise<WithPersonBlock<McpEnvelope>> {
   assertToolStores(stores, 'handleExecuteStep');
   const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
@@ -317,6 +320,11 @@ export async function handleExecuteStep(
     RealmExtensionRegistry,
   );
 
+  // #729 PR-4 (01): the door's set, built BEFORE the engine call — a gate the call opens mints its
+  // question with it — and handed back, so the reply is disclosed with the same set.
+  const disclosure = await disclosureOfTool(stores).setFor(definition, run);
+  onDisclosureSet?.(disclosure);
+
   const result = await executeChain(runStore, definition, {
     runId: args.run_id,
     command: args.command,
@@ -338,6 +346,7 @@ export async function handleExecuteStep(
     // the asked person answers through submit_human_response); the party rides the call so core's
     // one judge refuses what this door never offers (Q4) — R26 holds on both sides at this door.
     party: 'agent',
+    disclosure,
   });
 
   // P2/P3 observability: on a pre-claim validation rejection, fan a metadata-only record out to the
@@ -354,7 +363,7 @@ export async function handleExecuteStep(
   // #627 W (§5.2b): a reply that reached a question this process never sent sends its form here.
   const reply = await withQuestionForm(
     result,
-    formDepsOf(stores, runStore, definition, registry),
+    formDepsOf(stores, runStore, definition, registry, disclosure),
     call,
   );
 
@@ -400,7 +409,10 @@ export async function handleExecuteStepTool(
         ['params', args.params ?? {}],
         ...(args.trace ?? []).map((entry, i) => [`trace[${i}].data`, entry.data] as const),
       ]);
-      const result = await handleExecuteStep(args, stores, call);
+      let disclosure: DisclosureSet | undefined;
+      const result = await handleExecuteStep(args, stores, call, (set) => {
+        disclosure = set;
+      });
       // #729 PR-3 (D1 D5): an answer that sends a marker back is recorded as sent — and said so.
       const markers = markersIn(args.params ?? {});
       return toolContentOf(
@@ -419,7 +431,10 @@ export async function handleExecuteStepTool(
             : {}),
         },
         {
-          set: await setForSubject(door, await replySubject(stores, { runId: args.run_id })),
+          // #729 PR-4: the set the handler built before its engine call.
+          set:
+            disclosure ??
+            (await setForSubject(door, await replySubject(stores, { runId: args.run_id }))),
           audience: 'agent',
           table: MCP_ENVELOPE_TABLE,
         },

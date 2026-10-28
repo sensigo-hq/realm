@@ -365,7 +365,7 @@ Stopped waiting — detached from run '7d1f0c2e-5a8b-4c36-9e21-3b6f8d0a4c17' at 
   Inspect:   realm run inspect 7d1f0c2e-5a8b-4c36-9e21-3b6f8d0a4c17
 ```
 
-The gate's prompt shows the question before its choices: the gate's `message`, or the step's `prompt` when the gate has no `message`, rendered as the reply that opened the gate renders it. Each of its lines is printed as written, with any other control character written as the escape `realm run inspect` writes in its `Message:` line (a tab as `\t`, an escape character as `\u001b`): `Question: Ship it?` for one line, and for more, `Question:` with each line indented below it. Added after version 0.46.0.
+The gate's prompt shows the question before its choices: the gate's `message` as it was stored when the gate opened; a gate with no `message` shows none, since the step's `prompt` is never shown as the question. Below it, `Preview:` shows the step's output, through the step's `display` when it has one. Each of its lines is printed as written, with any other control character written as the escape `realm run inspect` writes in its `Message:` line (a tab as `\t`, an escape character as `\u001b`): `Question: Ship it?` for one line, and for more, `Question:` with each line indented below it. Added after version 0.46.0.
 
 Leaving a prompt with Ctrl+D or Ctrl+C keeps the run and says how to carry on:
 

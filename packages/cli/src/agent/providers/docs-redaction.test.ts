@@ -476,9 +476,15 @@ describe(`${TOOLS_PAGE} — what realm agent replaces (GHSA-gxfq)`, () => {
   });
 
   it('for every value: the value with its JSON-style escapes read, and each line of that', () => {
+    // F2 (D2): the CHANGELOG's hardening line, executed by agent-utils.test.ts's D2 cell and by
+    // redaction.test.ts's "F2 — the second decoded reading".
+    claim(
+      'CHANGELOG.md',
+      'Hardening: `realm agent` now hides a declared secret in the spellings the MCP door already hid.',
+    );
     claim(
       TOOLS_PAGE,
-      'For every value, it also hides, in the same forms, the value with these escapes read, when that has 8 or more characters: `\\n`, `\\r`, `\\t`, `\\b`, `\\f`, `\\/`, `\\\\`, `\\"`, `\\uXXXX` and `\\xHH` (a value that ends in a lone `\\` has no such reading); and each line of that which has 8 or more characters and no spaces or other blank characters.',
+      'For every value, it also hides, in the same forms, the value with these escapes read once, and once more when the value\'s own text still holds a backslash (a key stored with its line breaks written as `\\\\n`), when that has 8 or more characters: `\\n`, `\\r`, `\\t`, `\\b`, `\\f`, `\\/`, `\\\\`, `\\"`, `\\uXXXX` and `\\xHH` (a value that ends in a lone `\\` has no such reading); and each line of that which has 8 or more characters and no spaces or other blank characters.',
     );
     isolateEnv();
     // A key written on one line with `\n`, as an ENVIRONMENT value (no parts), printed after a
@@ -1047,7 +1053,7 @@ describe(`${MANIFEST_PAGE} — secret values in a builder's error (GHSA-gxfq)`, 
   it('hides every value with its JSON-style escapes read; leaves alone what the tools page lists', () => {
     claim(
       MANIFEST_PAGE,
-      'For every value, it also hides, in the same forms, the value with these escapes read, when that has 8 or more characters: `\\n`, `\\r`, `\\t`, `\\b`, `\\f`, `\\/`, `\\\\`, `\\"`, `\\uXXXX` and `\\xHH` (a value that ends in a lone `\\` has no such reading); and each line of that which has 8 or more characters and no spaces or other blank characters.',
+      'For every value, it also hides, in the same forms, the value with these escapes read once, and once more when the value\'s own text still holds a backslash (a key stored with its line breaks written as `\\\\n`), when that has 8 or more characters: `\\n`, `\\r`, `\\t`, `\\b`, `\\f`, `\\/`, `\\\\`, `\\"`, `\\uXXXX` and `\\xHH` (a value that ends in a lone `\\` has no such reading); and each line of that which has 8 or more characters and no spaces or other blank characters.',
     );
     claim(MANIFEST_PAGE, 'It leaves alone what that page lists as left alone.');
     claim(

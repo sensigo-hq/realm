@@ -198,6 +198,8 @@ const STEP_PARTS: readonly PartRule[] = [
   typed('string', 'options', 'writerNonce'),
   // issue #729 (the Q3 unit): the door's party, checked when present — a closed vocabulary.
   typed('party', 'options', 'party'),
+  // #729 PR-4: the host's disclosure set, which a gate this call opens mints its question with.
+  typed('object', 'options', 'disclosure'),
 ];
 
 /**
@@ -219,6 +221,7 @@ export const REQUIRED_PARTS: Readonly<Record<Entry, readonly PartRule[]>> = {
     typed('registry', 'options', 'registry'),
     typed('date', 'options', 'now'),
     typed('object', 'options', 'traceBufferStore'),
+    typed('object', 'options', 'disclosure'),
   ],
   advanceRun: [
     ...DEFINITION,
@@ -233,6 +236,7 @@ export const REQUIRED_PARTS: Readonly<Record<Entry, readonly PartRule[]>> = {
     typed('function', 'options', 'onNotRecorded'),
     typed('function', 'options', 'onGuard'),
     typed('function', 'options', 'onExpiry'),
+    typed('object', 'options', 'disclosure'),
   ],
   submitHumanResponse: [
     ...DEFINITION,
@@ -294,6 +298,7 @@ const EXECUTE_STEP_MEMBERS = [
   'outputSource',
   'caller',
   'party',
+  'disclosure',
 ] as const satisfies readonly (keyof ExecuteStepOptions)[];
 const EXECUTE_CHAIN_MEMBERS = [
   'runId',
@@ -309,6 +314,7 @@ const EXECUTE_CHAIN_MEMBERS = [
   'now',
   'caller',
   'party',
+  'disclosure',
 ] as const satisfies readonly (keyof ExecuteChainOptions)[];
 const EXECUTE_ENGINE_STEP_MEMBERS = [
   'runId',
@@ -319,6 +325,7 @@ const EXECUTE_ENGINE_STEP_MEMBERS = [
   'driver',
   'now',
   'caller',
+  'disclosure',
 ] as const satisfies readonly (keyof ExecuteEngineStepOptions)[];
 const ADVANCE_RUN_MEMBERS = [
   'runId',
@@ -333,6 +340,7 @@ const ADVANCE_RUN_MEMBERS = [
   'caller',
   'command',
   'onExpiry',
+  'disclosure',
 ] as const satisfies readonly (keyof AdvanceRunOptions)[];
 /**
  * #627 W (§5.8): `route`, `shown`, `principal`, `clientPromptRequested` are W's. Skew: an embedder

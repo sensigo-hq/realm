@@ -4,7 +4,15 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { executeStep, executeChain, submitHumanResponse } from './execution-loop.js';
+import {
+  executeStep,
+  executeChain,
+  submitHumanResponse,
+  advanceRun,
+  executeEngineStep,
+} from './execution-loop.js';
+import { buildDisclosureSet } from '../utils/redaction.js';
+import { endsWithCutSentence } from './question-view.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import { classifyRunHealth } from './run-health.js';
 import { WorkflowError } from '../types/workflow-error.js';
@@ -1468,7 +1476,8 @@ describe('executeStep', () => {
       );
     });
 
-    it('resolves step.prompt into gate.display when step has trust: human_confirmed', async () => {
+    // #729 PR-4 (f), re-pinned: the prompt was the display; now no surface invents a question from it.
+    it('a gate with no message carries no gate.display, although its step has a prompt (trust: human_confirmed)', async () => {
       const gatePromptDefinition: WorkflowDefinition = {
         id: 'gate-prompt-wf',
         name: 'Gate Prompt Workflow',
@@ -1512,7 +1521,8 @@ describe('executeStep', () => {
       });
 
       expect(envelope.status).toBe('confirm_required');
-      expect(envelope.gate?.display).toBe('Risk: high');
+      // (a) red when the prompt is rendered into the display again; (b) prints the display.
+      expect(envelope.gate?.display).toBeUndefined();
     });
   });
 
@@ -2373,7 +2383,8 @@ describe('executeStep', () => {
       expect(gateSnap!.output_summary).not.toHaveProperty('gate_message');
     });
 
-    it('no gate.message: pending_gate.resolved_message is absent and gate.display falls back to step.prompt', async () => {
+    // #729 PR-4 (f), re-pinned: gate.display fell back to step.prompt; now it is absent.
+    it('no gate.message: pending_gate.resolved_message is absent and gate.display is absent (no prompt fallback)', async () => {
       const gateNoMsgWf: WorkflowDefinition = {
         id: 'gate-no-msg-wf',
         name: 'Gate No Message',
@@ -2404,7 +2415,8 @@ describe('executeStep', () => {
       });
 
       expect(envelope.status).toBe('confirm_required');
-      expect(envelope.gate?.display).toBe('Prompt fallback');
+      // (a) red when the prompt fallback returns; (b) prints the display.
+      expect(envelope.gate?.display).toBeUndefined();
 
       const updatedRun = await store.get(run.id);
       expect(updatedRun.pending_gate?.resolved_message).toBeUndefined();
@@ -5692,5 +5704,148 @@ describe('#373 — the legacy fail seal names every failure', () => {
     // This site has never carried settlement.ts's `?? 'unknown error'` fallback, and does not gain
     // one here — the single-failure branch is the no-regression control.
     expect(record.terminal_reason).toBe("Step 'only' failed: Dispatcher failed: only exploded");
+  });
+});
+
+// #729 PR-4 (01; 04 "The mint under PR-3's law"): a gate's question is minted with the host's
+// disclosure set, through every engine entry that opens a gate — stripped, masked, then cut under a
+// complete set; with no set, stored as rendered. Fakes only (`CANARY-…`). Each assertion names (a)
+// the change that turns it red and (b) what it prints: the stored question (a fake), booleans, codes.
+describe('#729 PR-4 — the mint takes the host’s disclosure set', () => {
+  const FAKE = 'CANARY-declared-4f2a-0123456789abcdef';
+  const set = buildDisclosureSet({
+    env: {},
+    declared: { SECRET_X: FAKE },
+    declaredState: 'resolved',
+    audience: 'agent',
+  }).set;
+  let store: JsonFileStore;
+  beforeEach(async () => {
+    store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-pr4-mint-')));
+  });
+  /** One bare `auto` gate step whose message substitutes the run's `token` param. */
+  const def = (message: string): WorkflowDefinition => ({
+    id: 'mint729',
+    name: 'Mint 729',
+    version: 1,
+    steps: {
+      gate_step: {
+        description: 'The gate.',
+        execution: 'auto',
+        trust: 'human_confirmed',
+        depends_on: [],
+        gate: { choices: ['approve', 'reject'], message },
+      },
+    },
+  });
+  const stored = async (runId: string) => (await store.get(runId)).pending_gate?.resolved_message;
+  const MESSAGE = 'Approve {{ run.params.token }} for release';
+
+  it('every engine entry that opens a gate mints with the set: executeStep, executeChain, advanceRun, executeEngineStep', async () => {
+    const d = def(MESSAGE);
+    const open = async (how: string): Promise<string | undefined> => {
+      const { run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: { token: FAKE },
+      });
+      const step = {
+        runId: run.id,
+        command: 'gate_step',
+        input: {},
+        dispatcher: async () => ({ s: 1 }),
+        disclosure: set,
+      };
+      if (how === 'executeStep') await executeStep(store, d, step);
+      if (how === 'executeChain') await executeChain(store, d, step);
+      if (how === 'advanceRun') await advanceRun(store, d, { runId: run.id, disclosure: set });
+      if (how === 'executeEngineStep')
+        await executeEngineStep(store, d, {
+          runId: run.id,
+          step: 'gate_step',
+          run,
+          disclosure: set,
+        });
+      return stored(run.id);
+    };
+    const results = [];
+    for (const how of ['executeStep', 'executeChain', 'advanceRun', 'executeEngineStep'])
+      results.push(await open(how));
+    // (a) red when an entry drops `disclosure` on its way to the mint (the fake stored raw); (b)
+    //     prints the four stored questions.
+    expect(results).toEqual(Array(4).fill('Approve [REDACTED] for release'));
+  });
+
+  it('a caller passing no set (an embedder; the async child; the testing runner) stores the rendered text whole, uncut — the control', async () => {
+    const long = `${MESSAGE} ${'x'.repeat(700)}`;
+    const d = def(long);
+    const { run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: { token: FAKE },
+    });
+    await executeStep(store, d, {
+      runId: run.id,
+      command: 'gate_step',
+      input: {},
+      dispatcher: async () => ({ s: 1 }),
+    });
+    const q = (await stored(run.id))!;
+    // (a) red when the mint cuts without a set, or masks with one it was not given; (b) prints the
+    //     length and booleans (the fake is a fake).
+    expect({
+      whole: q === `Approve ${FAKE} for release ${'x'.repeat(700)}`,
+      cut: endsWithCutSentence(q),
+    }).toEqual({
+      whole: true,
+      cut: false,
+    });
+  });
+
+  it('masked before cut: a long substitution holding the declared value stores `[REDACTED]`, never a prefix', async () => {
+    const d = def('Approve {{ run.params.token }} after {{ run.params.pad }}');
+    const { run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      // The value straddles its cap's cut point (about 156 characters shown): masked first it
+      // shows whole as `[REDACTED]` at 140; cut first, its first characters would stand in clear.
+      params: { token: `${'y'.repeat(140)}${FAKE}${'y'.repeat(3000)}`, pad: 'z'.repeat(3000) },
+    });
+    await executeStep(store, d, {
+      runId: run.id,
+      command: 'gate_step',
+      input: {},
+      dispatcher: async () => ({ s: 1 }),
+      disclosure: set,
+    });
+    const q = (await stored(run.id))!;
+    // (a) red when the hook cuts before it masks; (b) prints booleans.
+    expect({
+      redacted: q.includes('[REDACTED]'),
+      prefix: q.includes(FAKE.slice(0, 8)),
+      cut: endsWithCutSentence(q),
+    }).toEqual({ redacted: true, prefix: false, cut: true });
+  });
+
+  it('the refusals stay: 50 unresolved placeholders after 500 fixed characters, and an unresolved workflow.context path, refuse the gate', async () => {
+    const many = def('x'.repeat(500) + '{{ $settlement.s.f }}'.repeat(50));
+    const ctx = def('Context: {{ workflow.context.missing }}');
+    const refused: (string | undefined)[] = [];
+    for (const d of [many, ctx]) {
+      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      await store.update({ ...(await store.get(run.id)), workflow_context_snapshots: {} });
+      const reply = await executeStep(store, d, {
+        runId: run.id,
+        command: 'gate_step',
+        input: {},
+        dispatcher: async () => ({ s: 1 }),
+        disclosure: set,
+      });
+      refused.push(reply.error_code ?? reply.status);
+      expect((await store.get(run.id)).pending_gate).toBeUndefined();
+    }
+    // (a) red when the hook is applied to an unresolved placeholder (cut away, the scan blinded, the
+    //     gate opened); (b) prints the codes.
+    expect(refused).toEqual(['GATE_MESSAGE_UNRESOLVABLE', 'GATE_MESSAGE_UNRESOLVABLE']);
   });
 });
