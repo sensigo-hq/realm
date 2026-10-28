@@ -14,6 +14,7 @@
 // params.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -567,5 +568,34 @@ describe('#715 (a) B11 — an ordinary directory stamps with the wall clock, as 
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('#715 (a) D1 — deleteAllForRun’s expectVersion (the anchor’s version guard)', () => {
+  it('the stored version deletes as before; an older one refuses STATE_SNAPSHOT_MISMATCH and deletes nothing', async () => {
+    // (a) red when the version check is missing, or runs after deletion; (b) prints the code and
+    // details.
+    const loc = await location(T);
+    const { run } = await loc.store.create(keyed());
+    const ended = await terminalize(loc.store, run);
+    let caught: { code?: string; details?: Record<string, unknown> } = {};
+    try {
+      await loc.store.deleteAllForRun(ended.id, undefined, { expectVersion: ended.version - 1 });
+    } catch (err) {
+      caught = err as typeof caught;
+    }
+    expect({ code: caught.code, details: caught.details }, 'the refusal').toEqual({
+      code: 'STATE_SNAPSHOT_MISMATCH',
+      details: { runId: ended.id, expected: ended.version - 1, actual: ended.version },
+    });
+    expect(existsSync(join(loc.runsDir, `${ended.id}.json`)), 'the run file is intact').toBe(true);
+    expect(existsSync(pointerPath(loc.runsDir)), 'the key pointer is intact').toBe(true);
+    const report = await loc.store.deleteAllForRun(ended.id, undefined, {
+      expectVersion: ended.version,
+    });
+    expect(report.bytes_deleted > 0, `deleted at the stored version: ${report.bytes_deleted}`).toBe(
+      true,
+    );
+    expect(existsSync(join(loc.runsDir, `${ended.id}.json`)), 'the run file is gone').toBe(false);
   });
 });

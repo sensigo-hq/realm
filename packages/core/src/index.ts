@@ -959,6 +959,7 @@ export {
   stepNotEligibleError,
   runNotFoundError,
   ReclaimVersionChanged,
+  noLongerTerminalReason,
 } from './store/fence-predicate.js';
 // #627 W (§5.9): the separation check's evidence, typed once (the CLI measures it).
 export {

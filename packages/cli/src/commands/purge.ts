@@ -37,9 +37,11 @@ import type {
 import {
   type ArtifactDeletionReport,
   WorkflowError,
+  ReclaimVersionChanged,
   TERMINAL_PHASES,
   classifyInProgressClaims,
   deriveRunPhase,
+  noLongerTerminalReason,
   resumeWay,
 } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
@@ -332,10 +334,18 @@ export async function purgeRuns(
       for (const store of artifactStores) {
         if (hasDeleteAllForRunFenced(store)) {
           // issue #207 PR-2 (D3 §5; data since #616 PR-0): fenced — the store re-verifies at
-          // destruction time, inside its own critical section, that the run is still gone or its
-          // DERIVED phase still terminal (`run_absent_or_terminal`), against the run it reads
-          // there (its run reader is the anchor store — the CLI action constructs it so).
-          const report = await store.deleteAllForRunFenced(run.id, PURGE_FENCE, dirEntries);
+          // destruction time, inside its own critical section, against the run it reads there (its
+          // run reader is the anchor store — the CLI action constructs it so). issue #715 (a)
+          // (D6-9, D6-50): the fence is the run's version AT SELECTION (`run_at_version`): a run
+          // that changed since — resumed, re-terminalised, its finalizer completed — is refused
+          // before any of its files goes. A run at that version is the run selected, hence
+          // terminal, so the terminal re-check is subsumed; an absent run is refused too
+          // (`STATE_RUN_NOT_FOUND` → already_purged).
+          const report = await store.deleteAllForRunFenced(
+            run.id,
+            { kind: 'run_at_version', version: run.version },
+            dirEntries,
+          );
           if (report.bytes_deleted > 0) {
             freedThisRun += report.bytes_deleted;
             storesFreed++;
@@ -354,8 +364,11 @@ export async function purgeRuns(
       }
       // The anchor LAST, and only on total success (issue #184) — structural crash-anchor: any
       // throw above (from a non-anchor artifact store) never reaches this line, so the run file
-      // is guaranteed intact for re-enumeration on the next pass.
-      const anchorReport = await anchorStore.deleteAllForRun(run.id, dirEntries);
+      // is guaranteed intact for re-enumeration on the next pass. issue #715 (a): the anchor's own
+      // second guard is the version at selection (`expectVersion`, D6-50).
+      const anchorReport = await anchorStore.deleteAllForRun(run.id, dirEntries, {
+        expectVersion: run.version,
+      });
       freedThisRun += anchorReport.bytes_deleted;
       result.purged.push(run.id);
       result.freed_bytes[run.id] = freedThisRun;
@@ -367,7 +380,20 @@ export async function purgeRuns(
       if (freedThisRun > 0) {
         result.partial_frees[run.id] = { bytes: freedThisRun, stores: storesFreed };
       }
-      if (err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND') {
+      if (
+        err instanceof ReclaimVersionChanged ||
+        (err instanceof WorkflowError && err.code === 'STATE_SNAPSHOT_MISMATCH')
+      ) {
+        // issue #715 (a) (D6-50): the run changed since it was selected — the artifact fence
+        // (`ReclaimVersionChanged`) or the anchor's `expectVersion` (STATE_SNAPSHOT_MISMATCH)
+        // refused it. Its outcome keeps purge's own words (never the fence's reclaim-worded
+        // message): re-read it once and say why.
+        const outcome = await changedSinceSelected(anchorStore, run.id);
+        if (outcome.kind === 'already_purged') result.already_purged.push(run.id);
+        else if (outcome.kind === 'failed')
+          result.failed.push({ runId: run.id, error: outcome.error });
+        else result.blocked.push({ runId: run.id, reason: outcome.reason });
+      } else if (err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND') {
         // already_purged contributes nothing: the pre-delete re-check above throws before any
         // store runs, so no report is ever collected on this path.
         result.already_purged.push(run.id);
@@ -410,18 +436,34 @@ function hasDeleteAllForRunFenced(
 }
 
 /**
- * The fenced-delete predicate for every purged run (issue #207 PR-2, D3 §5; data since #616 PR-0 —
- * core's `run_absent_or_terminal`), evaluated by the artifact store INSIDE its own critical section,
- * immediately before its WAL delete: run genuinely gone → proceeds — safe to purge its WAL; run
- * still present but its DERIVED phase no longer terminal (a concurrent `realm run resume` raced the
- * purge) → the typed `STATE_RUN_BUSY` refusal purge's own bucket mapping already routes to
- * `blocked`; ANY OTHER read failure (a genuine I/O error, not an absence or a resume race) →
- * propagates UNWRAPPED — this is neither `STATE_RUN_NOT_FOUND` nor `STATE_RUN_BUSY`, so it falls
- * through purge's own catch to the `failed` bucket, not `blocked`. Extends #184's
- * terminal-re-verify from the anchor layer to the WAL artifact layer, closing the purge/resume
- * resurrect race for WALs too.
+ * issue #715 (a) (D6-50): what a run refused by the version guards (the artifact fence, the anchor's
+ * `expectVersion`) became — read once more from the anchor store. Gone ⇒ `already_purged`; any other
+ * read failure ⇒ `failed` with that error, as before; present and its DERIVED phase not terminal (a
+ * resume) ⇒ `blocked` with the sentence a resume always printed; present and terminal (a finalizer
+ * completed, or a resume and re-terminalise) ⇒ `blocked` as `changed_since_selected`.
  */
-const PURGE_FENCE: RunScopedFencePredicate = { kind: 'run_absent_or_terminal' };
+async function changedSinceSelected(
+  anchorStore: Pick<RunStore, 'get'>,
+  runId: string,
+): Promise<
+  | { kind: 'already_purged' }
+  | { kind: 'failed'; error: string }
+  | { kind: 'blocked'; reason: string }
+> {
+  let now: RunRecord;
+  try {
+    now = await anchorStore.get(runId);
+  } catch (err) {
+    if (err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND') {
+      return { kind: 'already_purged' };
+    }
+    return { kind: 'failed', error: err instanceof Error ? err.message : String(err) };
+  }
+  if (!TERMINAL_PHASES.has(deriveRunPhase(now))) {
+    return { kind: 'blocked', reason: noLongerTerminalReason(runId) };
+  }
+  return { kind: 'blocked', reason: 'changed_since_selected' };
+}
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -562,8 +604,8 @@ export const purgeCommand = new Command('purge')
       const runStore = new JsonFileStore();
       const runsDir = runStore.runsDirPath;
       const failedAttemptStore = new FailedAttemptStore(runsDir);
-      // The run reader is the anchor store: the `run_absent_or_terminal` fence is evaluated against
-      // it, inside the trace buffer's own critical section (issue #616 PR-0).
+      // The run reader is the anchor store: the `run_at_version` fence (issue #715 (a)) is evaluated
+      // against it, inside the trace buffer's own critical section (issue #616 PR-0).
       const traceBufferStore = new JsonTraceBufferStore(runsDir, runStore);
       // The crash-anchor is now STRUCTURAL, not positional (issue #184): runStore (JsonFileStore)
       // is passed to purgeRuns as the separate anchorStore argument, and purgeRuns's own control
