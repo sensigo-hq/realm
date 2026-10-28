@@ -87,7 +87,8 @@ describe('#715 (a) — the docs sentences', () => {
       ACTING,
       'Any `blocked` or `failed` line of a run that had files deleted ends with `(<bytes> across <n> of its artifact stores were already freed before the refusal)`.',
     );
-    // C-1c (the dry run: the probe lane's P2, identical on 0.48.0; not pinned by a cell here).
+    // C-1c; correction 2 (R-2): purge.test.ts C-1d runs the dry run and the forced purge of a run
+    // that owes a cleanup step (both artifact stores freed, the run file kept).
     claim(
       ACTING,
       'A run that owes a cleanup step is blocked as `drain_pending` after its trace files and refused answers were deleted, and a dry run lists it among the runs that would be purged.',

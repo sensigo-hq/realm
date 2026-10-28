@@ -1770,6 +1770,81 @@ describe('purgeRuns — a run that changed after it was selected (issue #715 (a)
     }
   });
 
+  it('C-1d a run that owes a cleanup step: a dry run lists it as would-be-purged; --force frees BOTH artifact stores, keeps the run file, and blocks it as `drain_pending` (correction 2, R-2)', async () => {
+    // (a) red when the selection leaves a run that owes a cleanup step out of `selected`, the sidecar
+    // store stops running before the refusal, or the parenthetical loses its count; (b) prints the
+    // dry-run result, the outcome and the stderr lines, the run id written `<id>`.
+    const s = await makeStores();
+    try {
+      const run = makeRun({
+        id: 'c1d-drain',
+        run_phase: 'completed',
+        terminal_state: true,
+        sealed_by: { arm: 'complete' },
+        finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
+      });
+      await injectRun(s.dir, run);
+      await s.traceBufferStore.append(run.id, 'step-agent', [{ event: 'e' }]);
+      await appendSidecarLine(s.failedAttemptStore, run.id);
+      const sidecar = join(s.dir, `${run.id}.attempts.jsonl`);
+      const traceFiles = async (): Promise<number> =>
+        (await readdir(s.dir)).filter((f) => f.startsWith(`trace-buffer-${run.id}-`)).length;
+
+      const dry = await purgeRuns({ runId: run.id, dryRun: true }, s.runStore, s.artifactStores);
+      const dryShown = {
+        selected: dry.selected.map((c) => c.run.id),
+        blocked: dry.blocked,
+        purged: dry.purged,
+        partial: dry.partial_frees,
+        traceFiles: await traceFiles(),
+        sidecar: existsSync(sidecar),
+      };
+      expect(dryShown, JSON.stringify(dryShown).replaceAll(run.id, '<id>')).toEqual({
+        selected: [run.id],
+        blocked: [],
+        purged: [],
+        partial: {},
+        traceFiles: 1,
+        sidecar: true,
+      });
+
+      const forced = await purgeRuns(
+        { runId: run.id, dryRun: false },
+        s.runStore,
+        s.artifactStores,
+      );
+      const lines = stderrOf(forced, run.id);
+      const outcome = {
+        blocked: forced.blocked,
+        purged: forced.purged,
+        stores: forced.partial_frees[run.id]?.stores,
+        runFile: existsSync(join(s.dir, `${run.id}.json`)),
+        traceFiles: await traceFiles(),
+        sidecar: existsSync(sidecar),
+        lines: lines.length,
+      };
+      const shown = JSON.stringify({ outcome, lines }).replaceAll(run.id, '<id>');
+      expect(outcome, shown).toEqual({
+        blocked: [{ runId: run.id, reason: 'drain_pending' }],
+        purged: [],
+        stores: 2,
+        runFile: true,
+        traceFiles: 0,
+        sidecar: false,
+        lines: 1,
+      });
+      expect(lines[0], shown).toMatch(/^ {2}⚠ <id>: drain_pending \(/);
+      expect(
+        lines[0]!.endsWith(
+          'across 2 of its artifact stores were already freed before the refusal)',
+        ),
+        shown,
+      ).toBe(true);
+    } finally {
+      await rm(s.dir, { recursive: true, force: true });
+    }
+  });
+
   it('D5 control: an unmoved run purges as before; a run already gone is already_purged; an artifact store’s I/O failure is failed', async () => {
     // (a) red when the new mapping swallows other errors or changes an unmoved run's outcome;
     // (b) prints the buckets.
