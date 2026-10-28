@@ -1290,9 +1290,10 @@ export const runCommand = new Command('run')
         // continues; no `break` remains in this loop.
       } catch (err) {
         // issue #447 — the operator cancelled the prompt. Ctrl-D at a pending `rl.question`
-        // rejects with an AbortError carrying `code: 'ABORT_ERR'`. Nothing awaits
-        // `program.parse()`, so today that surfaces as an unhandled-rejection stack: a saved run
-        // that looks like a crash.
+        // rejects with an AbortError carrying `code: 'ABORT_ERR'`. Before #715 (a) correction 1
+        // nothing awaited `program.parse()`; the entry now awaits `parseAsync()` and rethrows every
+        // error it does not name, so an AbortError left here still surfaces as an
+        // unhandled-rejection stack: a saved run that looks like a crash.
         //
         // BOTH Ctrl-D and Ctrl-C land here in EVERY wiring now (issue #458): readline's raw/
         // terminal mode is keyed on stdin's TTY-ness at the `createInterface` call above — the

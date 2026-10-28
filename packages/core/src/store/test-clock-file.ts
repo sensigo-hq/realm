@@ -3,8 +3,9 @@
 // creates (`createTestLocation`); it carries its own settable clock in a small file beside the store's
 // `runs/` folder, and every process that opens that location reads its time from the file. A store
 // on an ordinary directory has no such file and uses the host's system clock. Nothing in production
-// writes this file, and a lint rule keeps the helpers that create or read it out of production code
-// (D6-52).
+// writes this file, and a lint rule (static imports) and a source scan (the names as text, in any
+// import form; `lint-test-location-715.test.ts`) keep the helpers that create or read it out of
+// production code (D6-52).
 import { accessSync, constants, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { WorkflowError } from '../types/workflow-error.js';

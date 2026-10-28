@@ -160,10 +160,12 @@ const ZOD_V3_RESTRICTIONS = {
 };
 
 /**
- * #715 (a) (D6-52): production code never creates or reads a test clock. The CLI ships
- * `@sensigo/realm-testing` as a production dependency (for `realm workflow test`), and core exports
- * the clock file's helpers for that package, so both are named here; tests and the testing package
- * are allowed by the override block below.
+ * #715 (a) (D6-52): production code never creates a test location or writes a clock file (the file
+ * store reads one, beside `runs/`). The CLI ships `@sensigo/realm-testing` as a production dependency
+ * (for `realm workflow test`), and core exports the clock file's helpers for that package, so both
+ * are named here; tests and the testing package are allowed by the override block below. The rule
+ * catches static import and export-from declarations; the source scan in
+ * `lint-test-location-715.test.ts` finds the names as text in any other form.
  */
 const TEST_CLOCK_RESTRICTIONS = [
   {

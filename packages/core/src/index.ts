@@ -479,8 +479,9 @@ export { createSystemClock, systemClock } from './utils/clock.js';
 export type { Clock } from './utils/clock.js';
 export { takeReading, floorAtHolder } from './store/take-reading.js';
 // issue #715 (a) (D6-1, D6-54): a test location's clock file. For `@sensigo/realm-testing`, not for
-// hosts: a lint rule keeps `writeTestClockFile`, `fileClock` and `readTestClockFile` out of production
-// code (D6-52).
+// hosts: a lint rule (static imports) and a source scan (the names as text, in any import form;
+// `lint-test-location-715.test.ts`) keep `writeTestClockFile`, `fileClock` and `readTestClockFile`
+// out of production code (D6-52).
 export {
   TEST_CLOCK_FILE_NAME,
   testClockFilePath,
