@@ -172,15 +172,17 @@ openai: realm sends no cache marker; the provider's own rules decide — see htt
 anthropic: the cache is kept per workspace (per organization on Bedrock and Google Cloud), as Anthropic's page said on 2026-10-09: drives from different workspaces each pay the write
 ```
 
-The verdict is worked out the same way on every machine: Realm reads no key and no environment variable for it. The lines are printed like any other output, so in a log a value Realm hides elsewhere is hidden in them too. With `--json`, `validate` gives the same facts in `cacheability`: see [the JSON output](../workflow/loader-diagnostics.md#--json).
+The verdict is worked out the same way on every machine: Realm reads no key and no environment variable for it. The lines are printed like any other output, so in a log a value Realm hides elsewhere is hidden in them too. That includes the model id and the word `anthropic` when an environment variable holds the same text, for example `ANTHROPIC_MODEL=claude-sonnet-5-5` or `LLM_PROVIDER=anthropic`: the line then reads `[REDACTED]` where they stood. Realm hides an environment value only when it is 8 characters or more, so `openai` prints whole. In `--json`, both print whole (#885). With `--json`, `validate` gives the same facts in `cacheability`: see [the JSON output](../workflow/loader-diagnostics.md#--json).
 
-`--model` needs `--provider`, `--floor` a whole number of tokens, 1 or more, and `--ratio` a number above 0. Otherwise the command prints one of these lines and exits with 1, with or without `--json`:
+`--model` needs `--provider`, `--floor` a whole number of tokens, 1 or more, and `--ratio` a number above 0. Otherwise the command prints one of these lines on standard error and exits with 1, with nothing on standard output, with or without `--json`:
 
 ```text
 Error: --provider is required with --model: realm does not guess a model's provider. Add --provider anthropic or --provider openai.
 Error: --floor must be a whole number of tokens, 1 or more (got '0').
 Error: --ratio must be a number of characters per token above 0 (got '0').
 ```
+
+A flag given last, with nothing after it, and a `--provider` other than `anthropic` or `openai` (in lower case) get the command line parser's own message instead, also on standard error with exit 1 and nothing on standard output: `error: option '--floor <tokens>' argument missing`, or `error: option '--provider <name>' argument 'foo' is invalid. --provider must be openai or anthropic.` A flag followed by another option takes that option as its value and gets the line above: `--floor --json` prints `Error: --floor must be a whole number of tokens, 1 or more (got '--json').`
 
 ## `register`
 

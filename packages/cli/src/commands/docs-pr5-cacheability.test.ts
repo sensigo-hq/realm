@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   DEFAULT_CHARS_PER_TOKEN_HIGH,
   DEFAULT_CHARS_PER_TOKEN_LOW,
+  DISCLOSURE_FLOORS,
   parseCacheEconomics,
   priceFromEconomics,
 } from '@sensigo/realm';
@@ -149,11 +150,13 @@ describe(
     });
 
     // The refusals, printed on standard error with exit 1, with or without --json. Break: a refusal's
-    // words changed on the page. (a) red when realm's line or exit code differs; (b) prints them.
+    // words changed on the page. (a) red when realm's line or exit code differs, or a refusal prints
+    // nothing on standard error (correction 1, C-6.3: an empty line would pass the claim vacuously);
+    // (b) prints them, and each exit code with its standard error's length.
     it('the three refusals', () => {
       claim(
         WORKFLOW_PAGE,
-        '`--model` needs `--provider`, `--floor` a whole number of tokens, 1 or more, and `--ratio` a number above 0. Otherwise the command prints one of these lines and exits with 1, with or without `--json`:',
+        '`--model` needs `--provider`, `--floor` a whole number of tokens, 1 or more, and `--ratio` a number above 0. Otherwise the command prints one of these lines on standard error and exits with 1, with nothing on standard output, with or without `--json`:',
       );
       const v = ['workflow', 'validate', ex('01-code-reviewer')];
       const runs = [
@@ -166,7 +169,85 @@ describe(
         [1, ''],
         [1, ''],
       ]);
-      for (const r of runs) claim(WORKFLOW_PAGE, r.stderr.trim());
+      for (const r of runs) {
+        expect(
+          r.stderr.trim().length,
+          `exit ${String(r.code)}: standard error is empty`,
+        ).toBeGreaterThan(0);
+        claim(WORKFLOW_PAGE, r.stderr.trim());
+      }
+    });
+
+    // Correction 1 (C-6.1): a flag given last with nothing after it, and an unknown --provider, get
+    // the command line parser's message; a flag followed by another option takes it as its value.
+    // Each: exit 1, nothing on standard output, the message on standard error, and the page says
+    // so. (a) red when the page drops the sentence or an exit or standard-output fact changes;
+    // (b) prints each exit code and the first line of standard error.
+    it("C-6.1: the parser's own messages, and a flag that takes the next option as its value", () => {
+      claim(
+        WORKFLOW_PAGE,
+        "A flag given last, with nothing after it, and a `--provider` other than `anthropic` or `openai` (in lower case) get the command line parser's own message instead, also on standard error with exit 1 and nothing on standard output: `error: option '--floor <tokens>' argument missing`, or `error: option '--provider <name>' argument 'foo' is invalid. --provider must be openai or anthropic.` A flag followed by another option takes that option as its value and gets the line above: `--floor --json` prints `Error: --floor must be a whole number of tokens, 1 or more (got '--json').`",
+      );
+      const v = ['workflow', 'validate', ex('01-code-reviewer')];
+      const runs = [
+        realm([...v, '--floor']),
+        realm([...v, '--provider', 'foo']),
+        realm([...v, '--floor', '--json']),
+      ];
+      expect(runs.map((r) => [r.code, r.stdout, r.stderr.trim().split('\n')[0]])).toEqual([
+        [1, '', "error: option '--floor <tokens>' argument missing"],
+        [
+          1,
+          '',
+          "error: option '--provider <name>' argument 'foo' is invalid. --provider must be openai or anthropic.",
+        ],
+        [1, '', "Error: --floor must be a whole number of tokens, 1 or more (got '--json')."],
+      ]);
+    });
+
+    // Correction 1 (C-6.2): a log hides the provider word and the model id when an environment value
+    // holds them, at 8 characters or more (core's environment floor, read here, not restated):
+    // `anthropic` is masked, `openai` prints whole; --json prints both whole. (a) red when the page
+    // names the word without the 8-character condition, drops the sentence, or a run says otherwise;
+    // (b) prints the two adapter words of each line, the environment's value written `<env>`.
+    it('C-6.2: a log hides `anthropic` when the environment holds it; `openai` is under the floor; --json prints both whole', () => {
+      claim(
+        WORKFLOW_PAGE,
+        'That includes the model id and the word `anthropic` when an environment variable holds the same text, for example `ANTHROPIC_MODEL=claude-sonnet-5-5` or `LLM_PROVIDER=anthropic`: the line then reads `[REDACTED]` where they stood. Realm hides an environment value only when it is 8 characters or more, so `openai` prints whole. In `--json`, both print whole (#885).',
+      );
+      const v = ['workflow', 'validate', ex('01-code-reviewer')];
+      const words = (value: string): string[] => {
+        const line = cacheLines(realm(v, { LLM_PROVIDER: value }).stdout)[0]!
+          .split(value)
+          .join('<env>');
+        return [
+          / — (\S+) 1,010 chars/.exec(line)?.[1] ?? '?',
+          / · (\S+) 515 chars/.exec(line)?.[1] ?? '?',
+        ];
+      };
+      const json = (value: string): string[] =>
+        (
+          JSON.parse(realm([...v, '--json'], { LLM_PROVIDER: value }).stdout) as {
+            cacheability: { steps: Array<{ layouts: Array<{ adapter: string }> }> };
+          }
+        ).cacheability.steps[0]!.layouts.map((l) => l.adapter.split(value).join('<env>'));
+      expect([
+        'openai'.length < DISCLOSURE_FLOORS.environment,
+        'anthropic'.length >= DISCLOSURE_FLOORS.environment,
+        DISCLOSURE_FLOORS.environment,
+        words('anthropic'),
+        words('openai'),
+        json('anthropic'),
+        json('openai'),
+      ]).toEqual([
+        true,
+        true,
+        8,
+        ['[REDACTED]', 'openai'],
+        ['anthropic', '<env>'],
+        ['<env>', 'openai'],
+        ['anthropic', '<env>'],
+      ]);
     });
 
     // The watch transcript holds only what watch prints: lines that begin with `Watching ` or the time.
@@ -427,9 +508,16 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
       WORKFLOW_PAGE,
       'After the step lines come the lines that hold for each provider shown, once:',
     );
+    // Correction 1 re-pin: the paragraph's two halves, each word for word, since C-6.2 adds its own
+    // sentences between them (that cell claims them). (a) each red when the page changes that half;
+    // (b) prints the half the page no longer holds (claim's message), no environment.
     claim(
       WORKFLOW_PAGE,
-      'The verdict is worked out the same way on every machine: Realm reads no key and no environment variable for it. The lines are printed like any other output, so in a log a value Realm hides elsewhere is hidden in them too. With `--json`, `validate` gives the same facts in `cacheability`: see [the JSON output](../workflow/loader-diagnostics.md#--json).',
+      'The verdict is worked out the same way on every machine: Realm reads no key and no environment variable for it. The lines are printed like any other output, so in a log a value Realm hides elsewhere is hidden in them too.',
+    );
+    claim(
+      WORKFLOW_PAGE,
+      'With `--json`, `validate` gives the same facts in `cacheability`: see [the JSON output](../workflow/loader-diagnostics.md#--json).',
     );
     const five = realm(['workflow', 'validate', ex('05-parallel-code-review')]).stdout.split('\n');
     const lastStep = five.map((l) => l.startsWith('cache:')).lastIndexOf(true);
@@ -591,10 +679,13 @@ describe('cache-economics.md, "The cache minimum"', { timeout: 60_000 }, () => {
 
   // The one-way door: the form a realm prints for a key its schema does not hold, executed here on a
   // sibling key; that realm 0.48.x holds no `min_cacheable_tokens` is INFERRED from its code (the
-  // review's walk runs it on 0.48.0). Also the dated table: its date and its four sources. Break: the
-  // upgrade line's words, the date, or a source changed. (a) red when the page or the form differs;
-  // (b) prints the reason and the missing text.
-  it('the upgrade line, the table dated 2026-10-16 with its four sources, and the CHANGELOG door', () => {
+  // review's walk runs it on 0.48.0). Also the dated table: its date and its four sources; and
+  // (correction 1, C-6.4) the Bedrock rows, AWS's own model names dated 2026-10-27 (MA 2's fetch,
+  // registry MA2-BEDROCK-01, -02). Break: the upgrade line's words, the date, a source, or a
+  // Bedrock row changed. (a) red when the page or the form differs, "Claude 5.x" or
+  // "GPT-5.6, GPT-6.1" returns, or a model moves rows; (b) prints the reason, the missing text, or
+  // the rows.
+  it('the upgrade line, the table dated 2026-10-16 with its four sources, the Bedrock rows dated 2026-10-27, and the CHANGELOG door', () => {
     claim(
       ECONOMICS_PAGE,
       "**Upgrade every realm that reads the folder before adding the key.** A realm older than this release refuses a file carrying it, on every run's price line, with `your economics file: '<path>': economics/models/<id>: unknown key 'min_cacheable_tokens'`.",
@@ -610,6 +701,30 @@ describe('cache-economics.md, "The cache minimum"', { timeout: 60_000 }, () => {
       'https://developers.openai.com/api/docs/guides/prompt-caching',
     ])
       claim(ECONOMICS_PAGE, url);
+    const lines = read(ECONOMICS_PAGE).split('\n');
+    const at = lines.findIndex((l) => l.startsWith('| [Amazon Bedrock]'));
+    expect([
+      ...lines.slice(at, at + 3).map((l) =>
+        l
+          .split('|')
+          .slice(1, 4)
+          .map((c) => c.trim()),
+      ),
+      lines[at + 3]!.startsWith('| [Google Gemini]'),
+    ]).toEqual([
+      [
+        '[Amazon Bedrock](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html), as of 2026-10-27',
+        '512',
+        'Haiku 5.5, Sonnet 5.5, Opus 5.5, Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5',
+      ],
+      [
+        '',
+        '1,024',
+        'Opus 4.8, Sonnet 5, Sonnet 4.6, Sonnet 4.5, 3.7 Sonnet, 3.5 Sonnet v2, GPT-6.1 Sol, GPT-6 Astra, GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.6 Luna',
+      ],
+      ['', '4,096', 'Opus 4.7, Opus 4.6, Opus 4.5, Haiku 4.5'],
+      true,
+    ]);
     claim(
       CHANGELOG,
       "- **The economics file may carry `min_cacheable_tokens` in a model's entry (issue #600). This is a one-way door.** A realm older than this release refuses a file carrying it, on every run's price line: upgrade every realm that reads the folder before adding it.",

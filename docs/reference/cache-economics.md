@@ -137,18 +137,18 @@ It is a whole number, 1 or more. A model name with a date at its end finds the s
 
 The minimums the providers published, as of 2026-10-16. Copy the table of the platform you call: Bedrock's differs from Anthropic's on Opus 4.7. For an OpenAI model before GPT-5.6, state no minimum: OpenAI says it varies with the request's settings.
 
-| Platform                                                                                   | Minimum | Models                                                                            |
-| ------------------------------------------------------------------------------------------ | ------- | --------------------------------------------------------------------------------- |
-| [Anthropic](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)          | 512     | Fable 5.1, Mythos 5.1, Opus 5.5, Opus 5, Sonnet 5.5, Haiku 5.5, Fable 5, Mythos 5 |
-|                                                                                            | 1,024   | Opus 4.8, Sonnet 5, Sonnet 4.6, Sonnet 4.5 (the page lists more)                  |
-|                                                                                            | 2,048   | Mythos Preview, Opus 4.7                                                          |
-|                                                                                            | 4,096   | Opus 4.6, Opus 4.5, Haiku 4.5                                                     |
-| [Amazon Bedrock](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html) | 512     | Claude 5.x                                                                        |
-|                                                                                            | 1,024   | Opus 4.8, Sonnet 5, Sonnet 4.6, Sonnet 4.5, GPT-5.6, GPT-6.1                      |
-|                                                                                            | 4,096   | Opus 4.7, Opus 4.6, Opus 4.5, Haiku 4.5                                           |
-| [Google Gemini](https://ai.google.dev/gemini-api/docs/caching)                             | 2,048   | Gemini 2.5 Flash, Gemini 2.5 Pro                                                  |
-|                                                                                            | 4,096   | Gemini 4 Argon, 3.8 Flash, 3.6 Flash, 3.1 Pro Preview                             |
-| [OpenAI](https://developers.openai.com/api/docs/guides/prompt-caching)                     | 1,024   | GPT-5.6 and later                                                                 |
+| Platform                                                                                                     | Minimum | Models                                                                                                                                    |
+| ------------------------------------------------------------------------------------------------------------ | ------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| [Anthropic](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)                            | 512     | Fable 5.1, Mythos 5.1, Opus 5.5, Opus 5, Sonnet 5.5, Haiku 5.5, Fable 5, Mythos 5                                                         |
+|                                                                                                              | 1,024   | Opus 4.8, Sonnet 5, Sonnet 4.6, Sonnet 4.5 (the page lists more)                                                                          |
+|                                                                                                              | 2,048   | Mythos Preview, Opus 4.7                                                                                                                  |
+|                                                                                                              | 4,096   | Opus 4.6, Opus 4.5, Haiku 4.5                                                                                                             |
+| [Amazon Bedrock](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html), as of 2026-10-27 | 512     | Haiku 5.5, Sonnet 5.5, Opus 5.5, Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5                                                         |
+|                                                                                                              | 1,024   | Opus 4.8, Sonnet 5, Sonnet 4.6, Sonnet 4.5, 3.7 Sonnet, 3.5 Sonnet v2, GPT-6.1 Sol, GPT-6 Astra, GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.6 Luna |
+|                                                                                                              | 4,096   | Opus 4.7, Opus 4.6, Opus 4.5, Haiku 4.5                                                                                                   |
+| [Google Gemini](https://ai.google.dev/gemini-api/docs/caching)                                               | 2,048   | Gemini 2.5 Flash, Gemini 2.5 Pro                                                                                                          |
+|                                                                                                              | 4,096   | Gemini 4 Argon, 3.8 Flash, 3.6 Flash, 3.1 Pro Preview                                                                                     |
+| [OpenAI](https://developers.openai.com/api/docs/guides/prompt-caching)                                       | 1,024   | GPT-5.6 and later                                                                                                                         |
 
 ## How a request is priced
 
