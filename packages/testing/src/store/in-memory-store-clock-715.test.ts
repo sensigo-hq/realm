@@ -116,6 +116,12 @@ describe('#715 (a) B10 — readings per member (in-memory store)', () => {
     await store.get(run.id);
     await store.list();
     expect(d(), 'M7 get, list').toBe(0);
+    // M7: settleStep and stampSeal are unchanged in #715 (a) — #715 (b) moves settleStep onto the
+    // store's reading.
+    d = delta();
+    await store.settleStep(run.id, { kind: 'expire_gate', gateId: 'none' }, AUTO);
+    await store.stampSeal(run.id, { arm: 'abandon_requested' }, 0).catch(() => {});
+    expect(d(), 'M7 settleStep, stampSeal').toBe(0);
   });
 });
 

@@ -196,6 +196,8 @@ With an in-memory run store and both other stores given, `start_run` over this s
 | `InMemoryTraceBufferStore` | `@sensigo/realm`         | Trace entries, in memory.              | `new InMemoryTraceBufferStore(runStore)`.                           |
 | `InMemoryStore`            | `@sensigo/realm-testing` | Runs, in memory.                       | `new InMemoryStore()`.                                              |
 
+`JsonFileStore` and `InMemoryStore` each have a `clock`: the time they stamp their writes with (added after version 0.48.0). `JsonFileStore` takes no clock: its clock is this computer's, or the clock file of a [test location](environment-and-files.md#the-clock-a-runs-times-come-from) when its folder is one. `InMemoryStore` takes one, `new InMemoryStore({ clock })`, and uses `systemClock` when none is given. Each `create`, `update` and `claimStep` reads the clock once and stamps everything it records with that reading: `created_at`, `updated_at`, and a claim's `since` and deadline. The clock does not stamp times taken outside the store, or durations. In this version `settleStep`, `stampSeal` and the reads do not use it.
+
 `JsonFileStore` has a `runsDirPath` property with its folder, and `listWithDiagnostics(workflowId?)`, which returns `{ records, unreadable, copies }`: every readable run, and each run file it cannot read as a run (empty, not JSON, not a run record, holding another run, in the format of an earlier Realm, or not readable), with its `file`, `path`, `class`, the reason and the way out (added after version 0.47.0). A copy of a run whose own file reads (see `isCopyOfReadableRun`) is in `copies`, not `unreadable`. `workflowId` filters `records` only: every damaged file is reported whatever the filter, since what it holds cannot be trusted. Its `get` refuses such a file, and `list` every such file but a copy of a run whose own file reads, with its typed error: `RESOURCE_FORMAT_INVALID`, `STATE_LEGACY_FORMAT` or `ENGINE_STORE_FAILED`, naming the file and its way out. `list(workflowId)` and `reconcileKeys(workflowId)` refuse only a damaged file that can concern that workflow (see `damagedFileConcerns`). A runs folder that cannot be read or made is refused with `ENGINE_STORE_FAILED`, naming the folder. Up to version 0.47.0, `list` returned a file that was JSON but not a run, or in the format of an earlier Realm, and `get` returned a file holding another run.
 
 ## The run store interface
@@ -295,6 +297,16 @@ Without it, two steps that complete at the same moment can each write an ending 
 | `deriveRunPhase`          | Every write  | Works out the phase to store with the record.                                         |
 
 Declare the store's release line once, from the `@sensigo/realm` the store imports its errors from: `declareReleaseLine(MyStore)` for a class, `declareReleaseLine(store)` for a plain object. Realm refuses a store that declares none with `ENGINE_RELEASE_LINE_UNDECLARED`, and a store of another realm version with `ENGINE_RELEASE_LINE_MISMATCH`, before any work. `releaseLineOf(store)` reads what a store declares. The store contracts' `STORE_RELEASE_LINE_TRUE` law checks the declaration against the store's own errors (see [Testing package](testing-package.md#store-contracts)). This was added in 0.46.0.
+
+### A store's clock
+
+A `Clock` has two functions: `now()`, which returns the current time as a new `Date`, and `at(when, fn)`, which runs `fn` once when the clock reaches `when` and returns a function that cancels it.
+
+`createSystemClock({ onWaiterError })` builds a clock on this computer's time. A function given to `at` that throws or rejects is passed to `onWaiterError`, and a forward step of the computer's clock is noticed within 60 seconds. `systemClock` is the clock a store uses when it is given none; its `at` throws, because it has nowhere to report a failure.
+
+`takeReading(clock, record?)` reads the clock once for a write. When the record's `updated_at` is ahead of the clock, the reading moves up to it, but by 5 seconds at most.
+
+`floorAtHolder(reading, holderCreatedAt?)` moves a keyed `create`'s reading to 1 millisecond after the `created_at` of the run it replaces, again by 5 seconds at most. So a run started again under an idempotency key is stamped after the run it replaces when the clock stepped back by less than 5 seconds.
 
 ## The other store interfaces
 

@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JsonFileStore } from './json-file-store.js';
 import { writeTestClockFile } from './test-clock-file.js';
+import { systemClock } from '../utils/clock.js';
 import { computeClaimDeadline } from '../engine/claim-liveness.js';
 import { CLOCK_SKEW_EPSILON_MS as EPS } from '../engine/instants.js';
 import type { RunRecord } from '../types/run-record.js';
@@ -243,6 +244,21 @@ describe('#715 (a) B1 — readings per member (JSON store)', () => {
     expect(n.count(), 'J15 get, list, listWithDiagnostics, listRunIds, statAllForRun').toBe(0);
     await store.deleteAllForRun(ended.id);
     expect(n.count(), 'J14 deleteAllForRun').toBe(0);
+  });
+});
+
+describe('#715 (a) B1 — J10, settleStep (unchanged until #715 (b))', () => {
+  it('J10 settleStep on an ordinary directory reads no store clock', async () => {
+    // (a) red when settleStep starts reading the shared system clock through `takeReading` before
+    // #715 (b) moves it; (b) prints the count. An ordinary directory, never a test location: no
+    // cell of #715 (a) mixes a test location with a settling run.
+    const root = await mkdtemp(join(tmpdir(), 'realm-715a-plain-'));
+    roots.push(root);
+    const store = new JsonFileStore(join(root, 'runs'));
+    const { run } = await store.create({ workflowId: WF, workflowVersion: 1, params: {} });
+    const spy = vi.spyOn(systemClock, 'now');
+    await store.settleStep(run.id, { kind: 'expire_gate', gateId: 'none' }, AUTO);
+    expect(spy.mock.calls.length, 'J10 settleStep').toBe(0);
   });
 });
 

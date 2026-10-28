@@ -22,6 +22,15 @@ All notable changes to this project are documented here.
   as written in Slack (`<`, `>` and `&` are escaped); an `owner` written as a Slack mention still
   pings.
 - **`WorkflowCopyFault` is exported from `@sensigo/realm`.**
+- **A run store's clock (issue #715).** `@sensigo/realm` exports `Clock`, `createSystemClock`,
+  `systemClock`, `takeReading` and `floorAtHolder`. `JsonFileStore` and `InMemoryStore` have a
+  `clock`, the time they stamp their writes with; `InMemoryStore` takes one:
+  `new InMemoryStore({ clock })`.
+- **Test clocks and test locations (issue #715).** `@sensigo/realm-testing` exports
+  `settableClock`, `steppingClock`, `countingClock`, `createTestLocation`, and the store contract
+  `storeClockContract` with its laws `STORE_CLOCK_LAWS`. A test location's clock is the file
+  `.realm-test-clock` beside its `runs/` folder. A store opened on a copy of a test location in
+  another folder refuses with the new code `STATE_TEST_CLOCK_FOREIGN`.
 
 ### Changed
 
@@ -50,6 +59,15 @@ All notable changes to this project are documented here.
   theirs; without it, a gate's question is stored as rendered and never cut.
 - **`realm run export`'s third line says what it counts, and names `--accept-partial-disclosure` once (issue #879).** It opens `masked in the file:` (it was `masked:`): its counts are what the file hides, not what the lines printed above it hide. When the flag wrote a run that export refuses without it, the line ends `; written on --accept-partial-disclosure (refused without it)`; it ended `; shown on --accept-partial-disclosure`, and a run with no project said nothing of the flag. Where the run's manifest changed or could not be read, a question's clause before it reads `question: shown with what is known`; it named the flag too.
 
+- **`PerRunArtifactStore.deleteAllForRun` takes an optional `{ expectVersion }` (issue #715).** The
+  store that holds the run record refuses a run whose version differs with
+  `STATE_SNAPSHOT_MISMATCH`, and deletes nothing.
+- **BREAKING — `WorkflowError.timestamp` is removed (issue #715).** A library caller that read it
+  gets `undefined`.
+- **`realm run purge` reports a run that changed after it was selected as blocked, and deletes none
+  of its files (issue #715).** A resumed run keeps its sentence; any other change reads
+  `changed_since_selected`.
+
 ### Fixed
 
 - **A Slack post that is refused or does not answer within 30 s is reported, and the person's
@@ -73,6 +91,9 @@ All notable changes to this project are documented here.
   attempt's. `realm run inspect`, `get_run_state` and the run's `Cost:` line show it. Until this
   release such a step recorded nothing (the 0.46.0 notes said so). A provider module's
   `callStepWithTools` may return the new optional `usage` list on its result.
+- **A run started again under an idempotency key is stamped after the run it replaces when the
+  clock stepped back by less than 5 seconds, and each `create`, `update` and `claimStep` of a store
+  stamps from one reading of the clock (issue #715).**
 
 ## [0.48.0] — 2026-10-26
 
