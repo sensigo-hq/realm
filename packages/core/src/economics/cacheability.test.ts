@@ -288,4 +288,28 @@ describe('the size and the sharing (C1.1; Δ12)', () => {
       JSON.stringify(cacheTokenInterval(a.text, RATIO)) !== JSON.stringify(ratio.tokens),
     ]).toEqual([27, true, true]);
   });
+
+  // Correction 2 (F-2): a WHOLE shared fixed part is the step's fixed part, so its `tokens` are the
+  // step's own `prefix.tokens`, the host's band included — never the characters-only interval. Two
+  // identical banded steps. (a) red when a whole share goes back to the characters-only interval
+  // (the second row of the guard shows the two differ); (b) prints both intervals.
+  it("F-2: a whole share's tokens are the step's own interval, band included", () => {
+    const blocks = [tools(SCHEMA_A, false), system(undefined, SCHEMA_A), MESSAGES];
+    const BAND = { low: 220, high: 530 };
+    const report = describeCacheability([
+      { step: 'a', blocks, extraTokens: BAND },
+      { step: 'b', blocks, extraTokens: BAND },
+    ]);
+    const a = report[0]!;
+    const share = a.shares_with[0]!;
+    const text = blocks.map((b) => (b.stable ? b.text : '')).join('');
+    expect({
+      share: [share.step, share.chars, share.divergence_at, share.tokens],
+      prefix: a.prefix.tokens,
+    }).toEqual({ share: ['b', text.length, null, a.prefix.tokens], prefix: a.prefix.tokens });
+    expect(
+      JSON.stringify(cacheTokenInterval(text)) !== JSON.stringify(a.prefix.tokens),
+      `characters only ${JSON.stringify(cacheTokenInterval(text))}, step ${JSON.stringify(a.prefix.tokens)}`,
+    ).toBe(true);
+  });
 });

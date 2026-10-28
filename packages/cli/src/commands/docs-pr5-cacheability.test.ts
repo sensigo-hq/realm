@@ -783,7 +783,7 @@ describe('the --json row, the CHANGELOG, and review-note on its page', { timeout
   it('loader-diagnostics: cacheability on a valid and a refused arm, absent when the file could not be read', () => {
     claim(
       DIAGNOSTICS_PAGE,
-      "| `cacheability` | Each agent step's fixed part, for each provider described: its size and token range, its blocks and their segments, the steps it shares a beginning with, and its verdict or why it has none. It holds no prompt text, and is absent when the file could not be read. See [The cache lines](../cli/realm-workflow.md#the-cache-lines). Added after version 0.48.0. |",
+      "| `cacheability` | Each agent step's fixed part, for each provider described: its size and token range, its blocks and their segments, the steps it shares a beginning with, and its verdict or why it has none. `shares_with` lists exactly the steps the `cache:` line names, all of them when the line ends `and N more`. Each entry holds `step`, `chars` (the length of the shared start), `tokens` (the token range of that start; for a whole shared fixed part, the step's own range) and `divergence_at` (the name of the segment where the two steps part, or `null` when they are equal). It holds no prompt text, and is absent when the file could not be read. See [The cache lines](../cli/realm-workflow.md#the-cache-lines). Added after version 0.48.0. |",
     );
     const has = (workflow: string): boolean => {
       const dir = project({ workflow });
@@ -797,6 +797,18 @@ describe('the --json row, the CHANGELOG, and review-note on its page', { timeout
       has(oneStep('refused', '    depend_on: [x]\n')),
       has('id: broken\nsteps: [\n'),
     ]).toEqual([true, true, false]);
+  });
+
+  // Correction 2 (F-2): the page says what `shares_with` holds — exactly the steps the line names,
+  // all of them past `and N more`, and a whole share's `tokens` are the step's own range (pinned by
+  // execution in validate-cacheability.test.ts "F-2 --json" and core's "F-2"). (a) red when the page
+  // drops either sentence; (b) prints the sentence.
+  it('F-2: loader-diagnostics says what `shares_with` holds', () => {
+    for (const sentence of [
+      '`shares_with` lists exactly the steps the `cache:` line names, all of them when the line ends `and N more`.',
+      "Each entry holds `step`, `chars` (the length of the shared start), `tokens` (the token range of that start; for a whole shared fixed part, the step's own range) and `divergence_at` (the name of the segment where the two steps part, or `null` when they are equal).",
+    ])
+      claim(DIAGNOSTICS_PAGE, sentence);
   });
 
   // The CHANGELOG's added bullet: the lines, no model and no key, the four flags, the --json field.

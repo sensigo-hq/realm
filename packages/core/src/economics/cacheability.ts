@@ -82,8 +82,10 @@ export interface CacheabilityOptions {
 export interface CacheShare {
   step: string;
   chars: number;
-  /** The token range of the shared start: `cacheTokenInterval` of its first `chars` characters, with
-   *  the same `ratio` and no host extra tokens (caching PR 5 correction 1, C-7). */
+  /** The token range of the shared start. For a whole shared fixed part (`divergence_at` `null`) it
+   *  is the step's own `prefix.tokens`, host extra tokens included (caching PR 5 correction 2, F-2);
+   *  for a partial start, `cacheTokenInterval` of its first `chars` characters, with the same `ratio`
+   *  and no host extra tokens (correction 1, C-7). */
   tokens: { low: number; high: number };
   /** The segment the two texts part in; `null` when they are equal. */
   divergence_at: string | null;
@@ -207,14 +209,19 @@ export function describeCacheability(
         if (theirs.text.length === 0) return;
         const p = commonPrefix(own.text, theirs.text);
         if (p === 0) return;
+        const divergence = divergenceAt(own, theirs, p);
         shares.push({
           step: other.step,
           chars: p,
-          tokens: cacheTokenInterval(
-            own.text.slice(0, p),
-            opts.ratio !== undefined ? { ratio: opts.ratio } : {},
-          ),
-          divergence_at: divergenceAt(own, theirs, p),
+          // A whole shared fixed part IS the step's fixed part: the same interval, band included.
+          tokens:
+            divergence === null
+              ? tokens
+              : cacheTokenInterval(
+                  own.text.slice(0, p),
+                  opts.ratio !== undefined ? { ratio: opts.ratio } : {},
+                ),
+          divergence_at: divergence,
         });
       });
     }

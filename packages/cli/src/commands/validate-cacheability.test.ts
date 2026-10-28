@@ -646,6 +646,56 @@ describe('the sharing (C5; Δ12)', { timeout: 60_000 }, () => {
     ]);
   });
 
+  // Correction 2 (F-2): a whole share's `tokens` are the step's own `prefix.tokens` (Anthropic's band
+  // in both), and --json keeps every share the line names while the line caps at five. Thirteen
+  // identical steps on Anthropic. (a) red when a whole share goes back to the characters-only
+  // interval, or when the cap is applied to the JSON; (b) prints each step's prefix interval, its
+  // share intervals that differ from it, the share count and the line's sharing clause.
+  it("F-2 --json: a whole share's tokens equal the step's own; twelve listed, the line names five", () => {
+    const ids = Array.from({ length: 13 }, (_, i) => `s${String(i + 1).padStart(2, '0')}`);
+    const dir = project({
+      workflow: shareWorkflow(
+        'same-13',
+        ids.map((id) => shareStep(id, 'answer')),
+      ),
+    });
+    const line = cacheLines(
+      realm(['workflow', 'validate', dir, '--provider', 'anthropic']).stdout,
+    )[0]!;
+    const json = JSON.parse(
+      realm(['workflow', 'validate', dir, '--provider', 'anthropic', '--json']).stdout,
+    ) as {
+      cacheability: {
+        steps: Array<{
+          layouts: Array<{
+            extra_tokens?: unknown;
+            prefix: { tokens: { low: number; high: number } };
+            shares_with: Array<{ step: string; tokens: { low: number; high: number } }>;
+          }>;
+        }>;
+      };
+    };
+    const seen = json.cacheability.steps.map((s) => {
+      const l = s.layouts[0]!;
+      const off = l.shares_with.filter(
+        (w) => JSON.stringify(w.tokens) !== JSON.stringify(l.prefix.tokens),
+      );
+      return [JSON.stringify(l.prefix.tokens), off.map((w) => w.tokens), l.shares_with.length];
+    });
+    expect(
+      {
+        banded: json.cacheability.steps[0]!.layouts[0]!.extra_tokens !== undefined,
+        seen: seen.map(([, off, n]) => [off, n]),
+        clause: line.split(' — ').slice(-1)[0],
+      },
+      `the step's own interval: ${String(seen[0]![0])}`,
+    ).toEqual({
+      banded: true,
+      seen: ids.map(() => [[], 12]),
+      clause: 'shares its whole fixed part with s02, s03, s04, s05, s06 and 7 more',
+    });
+  });
+
   // Not printed: a pair that parts inside the profile (examples/03's two profiles, on openai). Break:
   // the profile filter dropped (a 10-char "You are a " clause appears). (a) red when a sharing clause
   // appears; (b) prints the lines.
