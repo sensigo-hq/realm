@@ -1,7 +1,12 @@
 // MCP extensions — CLI-internal MCP types: McpTool, ToolDefinition, ToolExecutor,
 // StepWithToolsResult, McpClient. Also re-exports ToolCallRecord and McpServerConfig
 // from @sensigo/realm for use within the CLI package.
-import type { ToolCallRecord, McpServerConfig, StructuredOutputMeta } from '@sensigo/realm';
+import type {
+  ToolCallRecord,
+  McpServerConfig,
+  StructuredOutputMeta,
+  UsageRecord,
+} from '@sensigo/realm';
 export type { ToolCallRecord, McpServerConfig };
 
 // MCP-native tool shape returned by the server's tool list
@@ -79,6 +84,11 @@ export interface StepWithToolsResult {
     /** Strict-decorated requests that returned 200 before the drop; 0 = the first one was rejected. */
     strict_turns_before_drop: number;
   };
+  /**
+   * Issue #610: one entry per wire request the step made, in wire order. Absent ⇒ the provider
+   * reported nothing; realm's own providers always report once a request returned.
+   */
+  usage?: UsageRecord[];
 }
 
 // McpClient interface — implemented in mcp-client.ts
