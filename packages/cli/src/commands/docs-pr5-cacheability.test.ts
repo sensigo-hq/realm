@@ -878,7 +878,7 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
     );
     for (const sentence of [
       '`watch` prints the lines for each provider once, in the first block that shows a size for that provider.',
-      'A later block carries the step lines only, so a log read from the middle can show step lines without them.',
+      'After that block, a block carries the step lines only, so a log read from the middle can show step lines without them.',
       'A block is printed only when its lines differ from the last block printed.',
       'A save that leaves them as they were prints `Registered:` and no cache lines, and so does a repair that returns them to the block printed before a refused save.',
       'Lines that change and then change back are printed again.',
@@ -938,6 +938,72 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
         kinds,
         caches.length === 3 && caches[2] === caches[0] && caches[1] !== caches[0],
       ]).toEqual([true, 'RCPPPRRCRC', true]);
+    } finally {
+      child.kill();
+    }
+  });
+
+  // Correction 3 (I-5): the first block that shows a size is not the first block. A workflow with no
+  // agent step prints `Registered:` alone; the save that adds one prints the step line and the
+  // provider lines; an unchanged save prints `Registered:` alone; a refused save prints `Invalid:`
+  // (on standard error, read here with standard output); the repair that returns to the block
+  // printed before prints `Registered:` alone. The 300 ms settle after each count covers watch's
+  // start-up gap (#919). (a) red when the provider lines come in a later block, an unchanged save or
+  // the repair prints cache lines, or the page keeps "A later block carries the step lines only";
+  // (b) prints the kinds string and the output, the scratch folder written `<dir>`.
+  it('I-5: the provider lines come in the first block that shows a size; an unchanged save and a repair print none', async () => {
+    claim(
+      WORKFLOW_PAGE,
+      '`watch` prints the lines for each provider once, in the first block that shows a size for that provider. After that block, a block carries the step lines only, so a log read from the middle can show step lines without them.',
+    );
+    expect(read(WORKFLOW_PAGE), 'the page keeps the old sentence').not.toContain(
+      'A later block carries the step lines only',
+    );
+    const dir = project({
+      workflow:
+        'id: w\nname: w\nversion: 1\nsteps:\n  plain:\n    description: a step\n    execution: auto\n    depends_on: []\n    input_schema: { type: object, additionalProperties: true }\n',
+    });
+    const child = spawn(process.execPath, [DIST_CLI, 'workflow', 'watch', dir], {
+      cwd: base,
+      env: { PATH: process.env['PATH'] ?? '', HOME: home, REALM_NO_NUDGE: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = '';
+    child.stdout.on('data', (c: Buffer) => (out += c.toString()));
+    child.stderr.on('data', (c: Buffer) => (out += c.toString()));
+    const until = async (need: number): Promise<void> => {
+      const end = Date.now() + 20_000;
+      const count = (): number =>
+        out.split('\n').filter((l) => /\] (Registered|Invalid):/.test(l)).length;
+      while (count() < need && Date.now() < end) await new Promise((r) => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 300));
+    };
+    try {
+      await until(1);
+      writeFileSync(join(dir, 'workflow.yaml'), oneStep('w'));
+      await until(2);
+      writeFileSync(join(dir, 'workflow.yaml'), oneStep('w'));
+      await until(3);
+      writeFileSync(join(dir, 'workflow.yaml'), 'id: w\nsteps: [unclosed\n');
+      await until(4);
+      writeFileSync(join(dir, 'workflow.yaml'), oneStep('w'));
+      await until(5);
+      const kinds = out
+        .split('\n')
+        .map((l) =>
+          l.includes('] Registered:')
+            ? 'R'
+            : l.includes('] Invalid:')
+              ? 'I'
+              : l.includes('] cache:')
+                ? 'C'
+                : /\] (anthropic|openai): /.test(l)
+                  ? 'P'
+                  : '',
+        )
+        .filter((k) => k !== '')
+        .join('');
+      expect(kinds, hide(out)).toBe('RRCPPPRIR');
     } finally {
       child.kill();
     }
