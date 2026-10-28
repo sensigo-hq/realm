@@ -198,7 +198,11 @@ function profileEnd(blocks: Block[]): number {
 /**
  * The sharing a step's line names, grouped. A line names only a share that can produce a read (MA 2,
  * the design authority, 2026-10-27):
- * - a whole shared fixed part, on every layout;
+ * - nothing for a step whose verdict on this layout is below the floor: it writes no cache entry, so
+ *   no share can produce a read (MA 2, 2026-10-28; correction 2, F-4). The one exception is a layout
+ *   whose size realm does not count in full (`sizeCounted` false: OpenAI's strict rung, where the
+ *   provider adds its own schema text): there `below` does not rule a read out, and the clauses stay;
+ * - otherwise, a whole shared fixed part, on every layout;
  * - on Anthropic nothing else: Anthropic writes its cache entry only at the marked block, and a read
  *   needs every byte up to and including it, so a pair that parts earlier shares no entry;
  * - on OpenAI, a pair that parts in a schema after the whole of a profile both steps carry: the
@@ -207,14 +211,17 @@ function profileEnd(blocks: Block[]): number {
  *   a pair is named only when its shared start's estimate reaches the floor or comes near it:
  *   OpenAI's cache matches a prefix only past its minimum (C-7). With no floor, Realm, which ships no
  *   minimum, cannot judge the length, and the line states a fact about the text.
- * `ends` holds each step's `profileEnd` on this layout; `floor` is the floor in force, in tokens.
+ * `ends` holds each step's `profileEnd` on this layout; `floor` is the floor in force, in tokens;
+ * `sizeCounted` is false when realm does not count the whole fixed part (OpenAI's strict rung).
  */
 function shareClauses(
   step: CacheabilityStep,
   adapter: RequestAdapter,
   ends: Map<string, number>,
   floor: number | undefined,
+  sizeCounted: boolean,
 ): ShareClause[] {
+  if (step.verdict === 'below_floor' && sizeCounted) return [];
   const own = ends.get(step.step) ?? 0;
   const groups = new Map<string, ShareClause>();
   for (const share of step.shares_with) {
@@ -368,7 +375,7 @@ export async function buildCacheabilityReport(
           noSchemaAnthropic: input.noSchemaAnthropic,
           openaiStrictSchema: input.openaiStrictSchema,
           strictRung: input.strictRung,
-          clauses: shareClauses(step, adapter, ends, floor?.tokens),
+          clauses: shareClauses(step, adapter, ends, floor?.tokens, !input.openaiStrictSchema),
         },
       });
     });

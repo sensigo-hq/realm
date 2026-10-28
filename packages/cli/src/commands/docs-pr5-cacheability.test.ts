@@ -475,6 +475,18 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
     ]).toEqual([true, true]);
   });
 
+  // Correction 2 (F-4): the page says a step below the minimum names no sharing, the OpenAI strict
+  // exception, and when the clause comes back. The behaviour is pinned by execution in
+  // validate-cacheability's "F-4 one layout", "F-4 --json", "F-4 exception" and "F-4 two layouts".
+  // (a) red when the page drops a sentence; (b) prints the sentence.
+  it('F-4: a step below the minimum names no sharing; the OpenAI strict exception', () => {
+    for (const sentence of [
+      "A step below the minimum names no sharing, because it cannot cache whatever it shares; on OpenAI with `structured_output: strict`, where the provider's own schema text is not counted, the clause stays.",
+      'The clause comes back with a lower floor or a longer fixed part.',
+    ])
+      claim(WORKFLOW_PAGE, sentence);
+  });
+
   // Tools, and the sharing words (correction 1, C-1.5): on Anthropic a whole shared part only; on
   // OpenAI also a pair that shares a whole profile and parts in the schema; no other start; long lists
   // capped. The cells that pin each fact: validate-cacheability's "C-1 Anthropic" and "C-1 names", and
@@ -487,7 +499,7 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
     );
     claim(
       WORKFLOW_PAGE,
-      "**Steps that start the same way.** The line names the other steps whose fixed part is the same as this step's: `shares its whole fixed part with …`. On Anthropic nothing else is named: Anthropic writes its cache entry at the block Realm marks, and a read needs every character up to it, so two steps that part earlier share no entry. On OpenAI, two steps that carry the same profile and part after it, in the schema, are named too: `shares its first <n> chars with …: the schemas differ`. With a minimum in force, they are named only when the estimate of the start they share reaches it or comes near it. No other shared start is named. A list of more than six steps names five and ends `and N more`. From example 05, with `--provider anthropic`:",
+      "**Steps that start the same way.** The line names the other steps whose fixed part is the same as this step's: `shares its whole fixed part with …`. On Anthropic nothing else is named: Anthropic writes its cache entry at the block Realm marks, and a read needs every character up to it, so two steps that part earlier share no entry. On OpenAI, two steps that carry the same profile and part after it, in the schema, are named too: `shares its first <n> chars with …: the schemas differ`. With a minimum in force, they are named only when the estimate of the start they share reaches it or comes near it. No other shared start is named. A step below the minimum names no sharing, because it cannot cache whatever it shares; on OpenAI with `structured_output: strict`, where the provider's own schema text is not counted, the clause stays. The clause comes back with a lower floor or a longer fixed part. A list of more than six steps names five and ends `and N more`. From example 05, with `--provider anthropic`:",
     );
     const step = (id: string, required: string, profile?: string): string =>
       `  ${id}:\n    description: s\n    execution: agent\n    prompt: Do it.\n${profile !== undefined ? `    agent_profile: ${profile}\n` : ''}    output_schema:\n      type: object\n      additionalProperties: false\n      required: [${required}]\n      properties:\n        ${required}: { type: string }\n`;

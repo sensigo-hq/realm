@@ -340,9 +340,11 @@ describe('the lines and verdicts (C5)', { timeout: 60_000 }, () => {
     const BELOW = 'below the floor (512, your --floor): this step cannot cache at that minimum';
     const SHARES =
       'shares its whole fixed part with handle_bug, handle_feature, handle_account, handle_other';
+    // Correction 2 (F-4) re-pin: a below layout names no sharing, so with --ratio 4 (both below) the
+    // clause is gone, and without it only the near Anthropic layout names it, labelled.
     expect([line(['--ratio', '4']), line([])]).toEqual([
-      `cache: handle_billing — anthropic 650 chars ≈ 142–191 tokens — ${BELOW} · openai 335 chars ≈ 73–98 tokens — ${BELOW} (estimates: 4 chars/token ±15%, your --ratio) — ${SHARES}`,
-      `cache: handle_billing — anthropic 650 chars ≈ 350–790 tokens, with Anthropic's tool text — near the floor (512, your --floor) · openai 335 chars ≈ 67–134 tokens — ${BELOW} — ${SHARES}`,
+      `cache: handle_billing — anthropic 650 chars ≈ 142–191 tokens — ${BELOW} · openai 335 chars ≈ 73–98 tokens — ${BELOW} (estimates: 4 chars/token ±15%, your --ratio)`,
+      `cache: handle_billing — anthropic 650 chars ≈ 350–790 tokens, with Anthropic's tool text — near the floor (512, your --floor) · openai 335 chars ≈ 67–134 tokens — ${BELOW} — anthropic: ${SHARES}`,
     ]);
   });
 
@@ -702,6 +704,116 @@ describe('the sharing (C5; Δ12)', { timeout: 60_000 }, () => {
   it("not printed: examples/03's steps part inside their profiles on openai", () => {
     const r = realm(['workflow', 'validate', ex('03-incident-response'), '--provider', 'openai']);
     expect(cacheLines(r.stdout).map((l) => l.includes('shares'))).toEqual([false, false]);
+  });
+});
+
+describe('correction 2, F-4: a step below the floor names no sharing', { timeout: 60_000 }, () => {
+  // MA 2 (2026-10-28, MA2-PR5-BELOWFLOOR): a step whose whole range is under the minimum writes
+  // nothing, so no share can produce a read; its line drops the sharing clause. examples/06's
+  // handle_bug shares its whole fixed part with four steps; on Anthropic it reads 350–790 tokens.
+  const BUG_SHARES =
+    ' — shares its whole fixed part with handle_billing, handle_feature, handle_account, handle_other';
+  const bugLine = (args: string[]): string =>
+    cacheLines(
+      realm(['workflow', 'validate', ex('06-ticket-router'), '--provider', 'anthropic', ...args])
+        .stdout,
+    ).find((l) => l.startsWith('cache: handle_bug '))!;
+
+  // (a) red when the filter is removed (below keeps the clause), or widened to every layout with a
+  // floor (near or above loses it: the near row is the boundary); (b) prints each line.
+  it('F-4 one layout: below drops the clause; above, no floor and near keep it', () => {
+    const lines = [
+      bugLine(['--floor', '1000']),
+      bugLine(['--floor', '300']),
+      bugLine([]),
+      bugLine(['--floor', '512']),
+    ];
+    expect(
+      lines.map((l) => [l.includes(' — shares '), l.endsWith(BUG_SHARES)]),
+      lines.join('\n'),
+    ).toEqual([
+      [false, false],
+      [true, true],
+      [true, true],
+      [true, true],
+    ]);
+    expect(lines[0], lines[0]).toMatch(
+      /below the floor \(1,000, your --floor\): this step cannot cache at that minimum$/,
+    );
+    expect(lines[3], lines[3]).toContain('near the floor (512, your --floor)');
+  });
+
+  // --json follows the same filter: `shares_with` is `[]` on the below layout and lists the four
+  // on the near one. (a) red when the JSON ignores the filter; (b) prints the layout and the list.
+  it('F-4 --json: shares_with is empty on a below layout, not on a near one', () => {
+    const list = (floor: string): [string, string[]] => {
+      const json = JSON.parse(
+        realm([
+          'workflow',
+          'validate',
+          ex('06-ticket-router'),
+          '--provider',
+          'anthropic',
+          '--floor',
+          floor,
+          '--json',
+        ]).stdout,
+      ) as {
+        cacheability: {
+          steps: Array<{
+            step: string;
+            layouts: Array<{ verdict: string; shares_with: Array<{ step: string }> }>;
+          }>;
+        };
+      };
+      const l = json.cacheability.steps.find((s) => s.step === 'handle_bug')!.layouts[0]!;
+      return [l.verdict, l.shares_with.map((w) => w.step)];
+    };
+    expect([list('1000'), list('512')]).toEqual([
+      ['below_floor', []],
+      ['near_floor', ['handle_billing', 'handle_feature', 'handle_account', 'handle_other']],
+    ]);
+  });
+
+  // The exception: on OpenAI's strict rung realm does not count the provider's schema text, so a
+  // below verdict is hedged (`by realm's bytes`) and does not rule a read out — the clause stays.
+  // Two identical strict steps, --floor 2000 above both layouts' ranges. On two layouts Anthropic
+  // drops the clause and OpenAI keeps it, so it prints labelled. (a) red when the exception is
+  // removed (OpenAI loses the clause) or the filter is removed (Anthropic keeps it, unlabelled);
+  // (b) prints each line.
+  it("F-4 exception: an OpenAI strict pair below the floor keeps its clause beside `by realm's bytes`", () => {
+    const dir = project({
+      workflow: shareWorkflow('strict-pair', [
+        shareStep('twin_a', 'verdict', { strict: true }),
+        shareStep('twin_b', 'verdict', { strict: true }),
+      ]),
+    });
+    const first = (args: string[]): string =>
+      cacheLines(realm(['workflow', 'validate', dir, '--floor', '2000', ...args]).stdout)[0]!;
+    const openai = first(['--provider', 'openai']);
+    const both = first([]);
+    expect([openai, both], [openai, both].join('\n')).toEqual([
+      "cache: twin_a — 507 chars ≈ 102–203 tokens (estimate) — below the floor (2,000, your --floor): this step cannot cache at that minimum; by realm's bytes — OpenAI's own schema text is not counted — shares its whole fixed part with twin_b",
+      "cache: twin_a — anthropic 606 chars ≈ 342–773 tokens, with Anthropic's tool text — below the floor (2,000, your --floor): this step cannot cache at that minimum · openai 507 chars ≈ 102–203 tokens — below the floor (2,000, your --floor): this step cannot cache at that minimum; by realm's bytes — OpenAI's own schema text is not counted — openai: shares its whole fixed part with twin_b",
+    ]);
+  });
+
+  // The two-layout forms at --floor 512 on examples/06 (also pinned whole by C-5 above): without
+  // --ratio Anthropic is near and OpenAI below, so only Anthropic names the sharing, labelled; with
+  // --ratio 4 both are below and the clause is gone. (a) red when the filter is removed or widened;
+  // (b) prints each sharing tail.
+  it('F-4 two layouts at --floor 512: near Anthropic keeps the clause, labelled; --ratio 4 drops it', () => {
+    const tail = (args: string[]): string => {
+      const l = cacheLines(
+        realm(['workflow', 'validate', ex('06-ticket-router'), '--floor', '512', ...args]).stdout,
+      ).find((x) => x.startsWith('cache: handle_bug '))!;
+      const at = l.indexOf(' — anthropic: ');
+      return at >= 0 ? l.slice(at) : l.includes(' — shares ') ? 'UNLABELLED' : '';
+    };
+    expect([tail([]), tail(['--ratio', '4'])]).toEqual([
+      ' — anthropic: shares its whole fixed part with handle_billing, handle_feature, handle_account, handle_other',
+      '',
+    ]);
   });
 });
 
