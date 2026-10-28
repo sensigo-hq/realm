@@ -7,11 +7,12 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { WorkflowDefinition } from '@sensigo/realm';
+import type { CacheabilityStep, CacheShare, WorkflowDefinition } from '@sensigo/realm';
 import {
   buildCacheabilityReport,
   checkCacheFlags,
   renderCacheabilityLines,
+  shareClauses,
 } from './cacheability.js';
 
 afterEach(() => {
@@ -82,6 +83,87 @@ const schemaOf = (name: string): Record<string, unknown> => ({
 });
 /** The same 400-character profile for every step that names `p400`. */
 const P400 = { p400: { content: 'P'.repeat(400), content_hash: 'h400' } };
+
+describe('the share rule, one condition at a time (correction 2, F-9)', () => {
+  // `shareClauses` is called with a hand-built step, so the describer's segment order cannot make
+  // one condition stand in for another: through the describer, "parts in the schema line" already
+  // makes the layout, profile-end and coverage conditions true, so deleting one of those leaves
+  // every command cell green. The baseline names one `schemas` clause; each row changes exactly one
+  // input. (a) deleting ONE condition turns red exactly the rows that depend on it: rows 1–5 and 6
+  // each their own; the F-4 check rows 7 and 9-below together; row 8 when F-4's exception is
+  // removed. (b) a failing row prints its name and the clauses returned (test values only).
+  it('F-9: each condition of the OpenAI schemas clause, and F-4, pinned on its own row', () => {
+    const SHARE: CacheShare = {
+      step: 'b',
+      chars: 300,
+      tokens: { low: 120, high: 250 },
+      divergence_at: 'schema_line',
+    };
+    const step = (
+      verdict: CacheabilityStep['verdict'],
+      share: Partial<CacheShare> = {},
+    ): CacheabilityStep => ({
+      step: 'a',
+      prefix: { chars: 400, tokens: { low: 160, high: 320 }, basis: 'default' },
+      shares_with: [{ ...SHARE, ...share }],
+      verdict,
+    });
+    const ends = (a: number, b: number): Map<string, number> =>
+      new Map([
+        ['a', a],
+        ['b', b],
+      ]);
+    const SCHEMAS = [{ kind: 'schemas', chars: 300, steps: ['b'] }];
+    const rows: Array<[string, Parameters<typeof shareClauses>, unknown]> = [
+      ['baseline', [step('above_floor'), 'openai', ends(40, 40), 100, true], SCHEMAS],
+      ['1 the Anthropic layout', [step('above_floor'), 'anthropic', ends(40, 40), 100, true], []],
+      ['2 no profile of its own', [step('above_floor'), 'openai', ends(0, 0), 100, true], []],
+      [
+        '3 the other profile ends elsewhere',
+        [step('above_floor'), 'openai', ends(40, 41), 100, true],
+        [],
+      ],
+      [
+        '4 the start short of the profile',
+        [step('above_floor', { chars: 39 }), 'openai', ends(40, 40), 100, true],
+        [],
+      ],
+      [
+        '5 parts outside the schema line',
+        [step('above_floor', { divergence_at: 'base' }), 'openai', ends(40, 40), 100, true],
+        [],
+      ],
+      [
+        '6 the share below the floor',
+        [step('above_floor'), 'openai', ends(40, 40), 10000, true],
+        [],
+      ],
+      [
+        '7 F-4: the step below, the share above',
+        [step('below_floor'), 'openai', ends(40, 40), 100, true],
+        [],
+      ],
+      [
+        '8 F-4 exception: row 7, the size not counted',
+        [step('below_floor'), 'openai', ends(40, 40), 100, false],
+        SCHEMAS,
+      ],
+      [
+        '9 a whole share, the step below',
+        [step('below_floor', { divergence_at: null }), 'openai', ends(40, 40), 100, true],
+        [],
+      ],
+      [
+        '9 a whole share, the step above',
+        [step('above_floor', { divergence_at: null }), 'openai', ends(40, 40), 100, true],
+        [{ kind: 'whole', chars: 300, steps: ['b'] }],
+      ],
+    ];
+    expect(rows.map(([name, args]) => [name, shareClauses(...args)])).toEqual(
+      rows.map(([name, , expected]) => [name, expected]),
+    );
+  });
+});
 
 describe('the sharing filter (C3.2; correction 1, C-1.2)', () => {
   // OpenAI names a partial share only after the whole of a profile both steps carry. np_one and

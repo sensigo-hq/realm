@@ -213,8 +213,10 @@ function profileEnd(blocks: Block[]): number {
  *   minimum, cannot judge the length, and the line states a fact about the text.
  * `ends` holds each step's `profileEnd` on this layout; `floor` is the floor in force, in tokens;
  * `sizeCounted` is false when realm does not count the whole fixed part (OpenAI's strict rung).
+ * Exported for its cells (correction 2, F-9), which pin each condition with a hand-built step; it is
+ * internal to the CLI package, not a public interface.
  */
-function shareClauses(
+export function shareClauses(
   step: CacheabilityStep,
   adapter: RequestAdapter,
   ends: Map<string, number>,
