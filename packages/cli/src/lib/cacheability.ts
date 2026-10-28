@@ -19,7 +19,6 @@ import {
   type RequestAdapter,
 } from '../agent/providers/request-layout.js';
 import { chooseAdapter, type ProviderName } from '../agent/providers/llm-provider.js';
-import { buildSystemPrompt } from '../agent/providers/agent-utils.js';
 import { quotedForTerminal } from './holder-render.js';
 
 // ─── The flags ──────────────────────────────────────────────────────────────────────────────────
@@ -124,7 +123,7 @@ type EconomicsAnswer =
 
 /** A sharing clause as printed: its kind, the shared length, and the steps, in definition order. */
 interface ShareClause {
-  kind: 'whole' | 'schemas' | 'strict';
+  kind: 'whole' | 'schemas';
   chars: number;
   steps: string[];
 }
@@ -164,9 +163,6 @@ export interface CacheabilityReport {
   economicsNotRun?: string;
 }
 
-/** The share shorter than realm's shorter base prompt is shared boilerplate, not a reuse to act on. */
-const SHORTER_BASE = buildSystemPrompt(undefined, undefined, false).length;
-
 /** The layouts the flags name: both built-in ones with no provider; the provider's own with one. */
 function adaptersFor(flags: CacheFlags): RequestAdapter[] {
   if (flags.provider === undefined) return ['anthropic', 'openai'];
@@ -183,27 +179,60 @@ async function economicsFor(model: string, path: string | undefined): Promise<Ec
   return 'tokens' in min ? { tokens: min.tokens } : { cause: min.absent };
 }
 
-/** Prints the sharing a step's line names: the host's filter (Δ12) over core's pairs, grouped. */
-function shareClauses(step: CacheabilityStep): ShareClause[] {
+/**
+ * Where a step's profile ends in its fixed text (the stable blocks in wire order, as core joins them),
+ * its `\n\n` included; 0 when the step carries no profile text.
+ */
+function profileEnd(blocks: Block[]): number {
+  let offset = 0;
+  for (const block of blocks) {
+    if (!block.stable) continue;
+    const profile = block.segments.find((s) => s.name === 'profile');
+    if (profile !== undefined) return profile.end - profile.start > 2 ? offset + profile.end : 0;
+    offset += block.text.length;
+  }
+  return 0;
+}
+
+/**
+ * The sharing a step's line names, grouped. A line names only a share that can produce a read (MA 2,
+ * the design authority, 2026-10-27):
+ * - a whole shared fixed part, on every layout;
+ * - on Anthropic nothing else: Anthropic writes its cache entry only at the marked block, and a read
+ *   needs every byte up to and including it, so a pair that parts earlier shares no entry;
+ * - on OpenAI, a pair that parts in a schema after the whole of a profile both steps carry: the
+ *   author's own text, which leads the system prompt. Realm's own text alone is never named, and the
+ *   strict rung, whose schema comes first, never shares a whole profile.
+ * `ends` holds each step's `profileEnd` on this layout.
+ */
+function shareClauses(
+  step: CacheabilityStep,
+  adapter: RequestAdapter,
+  ends: Map<string, number>,
+): ShareClause[] {
+  const own = ends.get(step.step) ?? 0;
   const groups = new Map<string, ShareClause>();
   for (const share of step.shares_with) {
     let kind: ShareClause['kind'] | undefined;
     if (share.divergence_at === null) kind = 'whole';
-    else if (share.chars < SHORTER_BASE) kind = undefined;
-    else if (['tool_schema', 'schema_line', 'response_format'].includes(share.divergence_at))
+    else if (
+      isOpenAi(adapter) &&
+      own > 0 &&
+      ends.get(share.step) === own &&
+      share.chars >= own &&
+      share.divergence_at === 'schema_line'
+    )
       kind = 'schemas';
-    else if (share.divergence_at === 'tool_strict') kind = 'strict';
     if (kind === undefined) continue;
     const key = `${kind}:${kind === 'whole' ? 0 : share.chars}`;
     const group = groups.get(key);
     if (group !== undefined) group.steps.push(share.step);
     else groups.set(key, { kind, chars: share.chars, steps: [share.step] });
   }
-  const order = { whole: 0, schemas: 1, strict: 2 } as const;
   return [...groups.values()].sort((a, b) =>
     a.kind === 'whole' || b.kind === 'whole'
-      ? order[a.kind] - order[b.kind]
-      : b.chars - a.chars || order[a.kind] - order[b.kind],
+      ? (a.kind === 'whole' ? 0 : 1) - (b.kind === 'whole' ? 0 : 1)
+      : b.chars - a.chars,
   );
 }
 
@@ -311,6 +340,7 @@ export async function buildCacheabilityReport(
         ...(flags.ratio !== undefined ? { ratio: { chars_per_token: flags.ratio } } : {}),
       },
     );
+    const ends = new Map(inputs.map((input) => [input.name, profileEnd(input.blocks)]));
     inputs.forEach((input, k) => {
       const result = results.find((r) => r.step === input.name)!;
       const step = measured[k]!;
@@ -332,7 +362,7 @@ export async function buildCacheabilityReport(
           noSchemaAnthropic: input.noSchemaAnthropic,
           openaiStrictSchema: input.openaiStrictSchema,
           strictRung: input.strictRung,
-          clauses: shareClauses(step),
+          clauses: shareClauses(step, adapter, ends),
         },
       });
     });
@@ -435,16 +465,19 @@ function causeText(report: CacheabilityReport, cause: NonNullable<StepResult['ca
   }
 }
 
+/** The names a clause prints: all of six or fewer; of more, the first five and `and N more`. The
+ *  cap is the rendering's only: the clause, and `--json`'s `shares_with`, keep every step. */
+function namesText(steps: string[]): string {
+  return steps.length <= 6
+    ? steps.join(', ')
+    : `${steps.slice(0, 5).join(', ')} and ${n(steps.length - 5)} more`;
+}
+
 function clauseText(clause: ShareClause): string {
-  const steps = clause.steps.join(', ');
-  switch (clause.kind) {
-    case 'whole':
-      return `shares its whole fixed part with ${steps}`;
-    case 'schemas':
-      return `shares its first ${n(clause.chars)} chars with ${steps}: the schemas differ`;
-    case 'strict':
-      return `shares its first ${n(clause.chars)} chars with ${steps}: only structured_output: strict differs`;
-  }
+  const steps = namesText(clause.steps);
+  return clause.kind === 'whole'
+    ? `shares its whole fixed part with ${steps}`
+    : `shares its first ${n(clause.chars)} chars with ${steps}: the schemas differ`;
 }
 
 /** ` — <clauses>`, once when every layout says the same, else per layout; '' when none says any. */

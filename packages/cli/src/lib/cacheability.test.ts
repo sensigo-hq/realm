@@ -1,6 +1,6 @@
 // lib/cacheability.test.ts — issue #600 caching PR 5 (C3.2–C3.5): the host's own rules, called
 // directly where the commands' cells (validate-cacheability.test.ts) cannot reach them cleanly — the
-// flags' edge values, the share filter's length rule, the economics detail's escaping, and the
+// flags' edge values, the share filter's profile rule, the economics detail's escaping, and the
 // once-lines printed once per process. On a failing host each cell prints realm's words and the
 // flags' answers: test values only, the scratch path written `<dir>`.
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -73,26 +73,66 @@ describe('the flags (C3.5)', () => {
   });
 });
 
-describe('the sharing filter (C3.2; Δ12)', () => {
-  // Two schemas that differ at their first property: on anthropic the tool's 118-char header plus
-  // the schema's 32-char opening make 150 shared chars, under realm's shorter base (155) — shared
-  // boilerplate, not printed; on openai the base and the schema line come first, so 226 are shared
-  // and the clause prints. (a) red when the length rule is dropped (the anthropic clause appears) or
-  // applied to the openai pair; (b) prints the step line.
-  it("a share shorter than realm's 155-char base is not printed: anthropic hides it, openai shows it", async () => {
-    const def = definition({
-      a: { input_schema: { type: 'object', properties: { a: { type: 'string' } } } },
-      b: { input_schema: { type: 'object', properties: { b: { type: 'string' } } } },
-    });
-    const lines = renderCacheabilityLines(await buildCacheabilityReport(def, {})).steps;
-    expect(lines[0]!.split(' — ').slice(-1)[0]).toBe(
-      'openai: shares its first 226 chars with b: the schemas differ',
+/** An eligible schema with one required string. */
+const schemaOf = (name: string): Record<string, unknown> => ({
+  type: 'object',
+  additionalProperties: false,
+  required: [name],
+  properties: { [name]: { type: 'string' } },
+});
+/** The same 400-character profile for every step that names `p400`. */
+const P400 = { p400: { content: 'P'.repeat(400), content_hash: 'h400' } };
+
+describe('the sharing filter (C3.2; correction 1, C-1.2)', () => {
+  // OpenAI names a partial share only after the whole of a profile both steps carry. np_one and
+  // np_two carry none, and their first required names start with the same letter (they shared 254
+  // chars at 894d0725, all Realm's own text); pfs_one and pfs_two share a profile but are strict, so
+  // their schema comes first. (a) red when the profile condition is removed (the no-profile pair is
+  // named); (b) prints the step lines' sharing clauses.
+  it('openai: no partial share is named without a whole shared profile, nor on the strict rung', async () => {
+    const def = {
+      ...definition({
+        np_one: { output_schema: schemaOf('category') },
+        np_two: { output_schema: schemaOf('code') },
+        pfs_one: {
+          agent_profile: 'p400',
+          structured_output: 'strict',
+          output_schema: schemaOf('answer'),
+        },
+        pfs_two: {
+          agent_profile: 'p400',
+          structured_output: 'strict',
+          output_schema: schemaOf('summary'),
+        },
+      }),
+      resolved_profiles: P400,
+    } as WorkflowDefinition;
+    const lines = renderCacheabilityLines(
+      await buildCacheabilityReport(def, { provider: 'openai' }),
+    ).steps;
+    expect(lines.map((l) => l.includes('shares'))).toEqual([false, false, false, false]);
+  });
+  // The profile pair: the same 400-char profile, different schemas, not strict. They share the
+  // profile, its `\n\n`, Realm's 155-char base, the schema line's 39-char lead and the schema's
+  // 59-char opening: 655. (a) red when the profile condition is inverted (the pair is not named);
+  // (b) prints the step line's sharing clause.
+  it('openai: a pair that shares a whole profile and parts in the schema is named', async () => {
+    const def = {
+      ...definition({
+        pf_one: { agent_profile: 'p400', output_schema: schemaOf('answer') },
+        pf_two: { agent_profile: 'p400', output_schema: schemaOf('summary') },
+      }),
+      resolved_profiles: P400,
+    } as WorkflowDefinition;
+    const line = renderCacheabilityLines(await buildCacheabilityReport(def, { provider: 'openai' }))
+      .steps[0]!;
+    expect(line.split(' — ').slice(-1)[0]).toBe(
+      'shares its first 655 chars with pf_two: the schemas differ',
     );
   });
-  // The profile rule alone: two profiles that share their first 200 characters part inside the
-  // profile, past realm's 155-char base, so the length rule lets the pair through and only the
-  // profile rule keeps it out. (a) red when a pair that parts inside a profile is printed; (b)
-  // prints whether the line names a share.
+  // A pair that parts inside its profile shares no whole profile: two profiles that share their
+  // first 200 characters are not named. (a) red when a pair that parts inside a profile is printed;
+  // (b) prints whether the line names a share.
   it('a pair that parts inside its profile is not printed, even past 155 shared chars', async () => {
     const shared = 'x'.repeat(200);
     const def = {

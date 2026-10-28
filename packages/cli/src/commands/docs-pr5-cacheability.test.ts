@@ -366,32 +366,56 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
     ]).toEqual([true, true]);
   });
 
-  // Tools, and the sharing words. Break: the profile filter dropped (03's openai steps then name a
-  // share), or the strict words changed. (a) red when a sentence or a clause differs; (b) prints them.
-  it('a step with tools; the three sharing forms; a pair that parts in a profile is not named', () => {
+  // Tools, and the sharing words (correction 1, C-1.5): on Anthropic a whole shared part only; on
+  // OpenAI also a pair that shares a whole profile and parts in the schema; no other start; long lists
+  // capped. The cells that pin each fact: validate-cacheability's "C-1 Anthropic" and "C-1 names", and
+  // lib/cacheability's two openai cells. Break: the page's sentence back to 894d0725's. (a) red when
+  // the page drops a sentence or a run says otherwise; (b) prints the sentence, or the answers.
+  it('a step with tools; the sharing forms: a whole part, and on openai a shared profile; long lists end `and N more`', () => {
     claim(
       WORKFLOW_PAGE,
       "A step that calls tools is not judged: each tool's definition comes from its MCP server when the step runs, so its request cannot be measured before a run:",
     );
     claim(
       WORKFLOW_PAGE,
-      "**Steps that start the same way.** The line names the steps whose fixed part begins with the same text, and where the two part: `shares its whole fixed part with …`, `shares its first <n> chars with …: the schemas differ`, or `shares its first <n> chars with …: only structured_output: strict differs`. Two steps that part inside a profile, or inside Realm's own instructions, are not named. From example 05, with `--provider anthropic`:",
+      "**Steps that start the same way.** The line names the other steps whose fixed part is the same as this step's: `shares its whole fixed part with …`. On Anthropic nothing else is named: Anthropic writes its cache entry at the block Realm marks, and a read needs every character up to it, so two steps that part earlier share no entry. On OpenAI, two steps that carry the same profile and part after it, in the schema, are named too: `shares its first <n> chars with …: the schemas differ`. No other shared start is named. A list of more than six steps names five and ends `and N more`. From example 05, with `--provider anthropic`:",
     );
-    const pair = (strict: boolean, id: string): string =>
-      `  ${id}:\n    description: s\n    execution: agent\n    prompt: Do it.\n${strict ? '    structured_output: strict\n' : ''}${ELIGIBLE_SCHEMA}`;
-    const dir = project({
-      workflow: `id: strict-pair\nname: strict-pair\nversion: 1\nsteps:\n${pair(false, 'plain')}${pair(true, 'strict')}`,
+    const step = (id: string, required: string, profile?: string): string =>
+      `  ${id}:\n    description: s\n    execution: agent\n    prompt: Do it.\n${profile !== undefined ? `    agent_profile: ${profile}\n` : ''}    output_schema:\n      type: object\n      additionalProperties: false\n      required: [${required}]\n      properties:\n        ${required}: { type: string }\n`;
+    const workflow = (steps: string[]): string =>
+      `id: shares\nname: shares\nversion: 1\nsteps:\n${steps.join('')}`;
+    const pairs = project({
+      workflow: workflow([
+        step('cat_one', 'category'),
+        step('cat_two', 'code'),
+        step('pf_one', 'answer', 'p'),
+        step('pf_two', 'summary', 'p'),
+      ]),
+      files: { 'profiles/p.md': 'P'.repeat(400) },
     });
-    const strictLine = cacheLines(
-      realm(['workflow', 'validate', dir, '--provider', 'anthropic']).stdout,
-    )[0]!;
+    const anthropic = cacheLines(
+      realm(['workflow', 'validate', pairs, '--provider', 'anthropic']).stdout,
+    );
+    const openai = cacheLines(
+      realm(['workflow', 'validate', pairs, '--provider', 'openai']).stdout,
+    );
     const profiles = cacheLines(
       realm(['workflow', 'validate', ex('03-incident-response'), '--provider', 'openai']).stdout,
     );
+    const same = project({
+      workflow: workflow(
+        Array.from({ length: 13 }, (_, i) => step(`s${String(i + 1).padStart(2, '0')}`, 'answer')),
+      ),
+    });
+    const long = cacheLines(
+      realm(['workflow', 'validate', same, '--provider', 'openai']).stdout,
+    )[0]!;
     expect([
-      strictLine.endsWith('chars with strict: only structured_output: strict differs'),
+      anthropic.map((l) => l.includes('shares')),
+      openai.map((l) => / — shares its first [\d,]+ chars with \w+: the schemas differ$/.test(l)),
       profiles.some((l) => l.includes('shares')),
-    ]).toEqual([true, false]);
+      long.endsWith(' and 7 more'),
+    ]).toEqual([[false, false, false, false], [false, false, true, true], false, true]);
   });
 
   // The once-lines, the same verdict everywhere, a log's masking, and --json. Break: a once-line

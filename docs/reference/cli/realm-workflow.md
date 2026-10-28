@@ -127,8 +127,8 @@ A verdict is given only when the whole range is on one side of the minimum. A ra
 
 ```text
 cache: review_changes — 1,010 chars ≈ 422–934 tokens, with Anthropic's tool text (estimate) — below the floor for claude-sonnet-4-6 (1,024, your economics file): this step cannot cache on it
-cache: tag_content — 938 chars ≈ 408–905 tokens, with Anthropic's tool text (estimate) — near the floor for claude-sonnet-5-5 (512, your economics file): not judged from an estimate; --ratio <chars-per-token> narrows it — shares its first 177 chars with summarise: the schemas differ
-cache: analyze_cause — 1,782 chars ≈ 577–1,244 tokens, with Anthropic's tool text (estimate) — above the floor (512, your --floor): long enough to cache when the drive asks for caching — shares its first 177 chars with draft_response: the schemas differ
+cache: tag_content — 938 chars ≈ 408–905 tokens, with Anthropic's tool text (estimate) — near the floor for claude-sonnet-5-5 (512, your economics file): not judged from an estimate; --ratio <chars-per-token> narrows it
+cache: analyze_cause — 1,782 chars ≈ 577–1,244 tokens, with Anthropic's tool text (estimate) — above the floor (512, your --floor): long enough to cache when the drive asks for caching
 cache: analyze_cause — 1,118 chars ≈ 224–448 tokens (estimate) — above the floor (200, your --floor): within the provider's own rules (realm sends no marker)
 ```
 
@@ -158,10 +158,10 @@ A step that calls tools is not judged: each tool's definition comes from its MCP
 cache: fetch_pr — uses tools: each tool's definition comes from its MCP server at run time, so the request cannot be measured before a run: not judged
 ```
 
-**Steps that start the same way.** The line names the steps whose fixed part begins with the same text, and where the two part: `shares its whole fixed part with …`, `shares its first <n> chars with …: the schemas differ`, or `shares its first <n> chars with …: only structured_output: strict differs`. Two steps that part inside a profile, or inside Realm's own instructions, are not named. From example 05, with `--provider anthropic`:
+**Steps that start the same way.** The line names the other steps whose fixed part is the same as this step's: `shares its whole fixed part with …`. On Anthropic nothing else is named: Anthropic writes its cache entry at the block Realm marks, and a read needs every character up to it, so two steps that part earlier share no entry. On OpenAI, two steps that carry the same profile and part after it, in the schema, are named too: `shares its first <n> chars with …: the schemas differ`. No other shared start is named. A list of more than six steps names five and ends `and N more`. From example 05, with `--provider anthropic`:
 
 ```text
-cache: review_security — 954 chars ≈ 411–912 tokens, with Anthropic's tool text (estimate) — the floor was not judged: no --model named — shares its whole fixed part with review_performance; shares its first 177 chars with synthesize_review: the schemas differ
+cache: review_security — 954 chars ≈ 411–912 tokens, with Anthropic's tool text (estimate) — the floor was not judged: no --model named — shares its whole fixed part with review_performance
 ```
 
 After the step lines come the lines that hold for each provider shown, once:

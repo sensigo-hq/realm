@@ -110,6 +110,20 @@ const ELIGIBLE_SCHEMA = [
   '',
 ].join('\n');
 
+/** A step for the sharing cells: a schema with one required string, a profile and strict if asked. */
+const shareStep = (
+  id: string,
+  required: string,
+  opts: { profile?: string; strict?: boolean } = {},
+): string =>
+  `  ${id}:\n    description: s\n    execution: agent\n    prompt: Do it.\n` +
+  (opts.profile !== undefined ? `    agent_profile: ${opts.profile}\n` : '') +
+  (opts.strict === true ? '    structured_output: strict\n' : '') +
+  `    output_schema:\n      type: object\n      additionalProperties: false\n      required: [${required}]\n      properties:\n        ${required}: { type: string }\n`;
+/** A workflow of the given steps. */
+const shareWorkflow = (id: string, steps: string[]): string =>
+  `id: ${id}\nname: ${id}\nversion: 1\nsteps:\n${steps.join('')}`;
+
 const ONCE_ANTHROPIC =
   "anthropic: on steps without tools, realm marks the fixed part for caching unless the drive's --prompt-cache turns it off; a fixed part below the model's minimum is sent uncached, silently";
 const ONCE_OPENAI =
@@ -179,7 +193,7 @@ describe('the lines and verdicts (C5)', { timeout: 60_000 }, () => {
       'claude-sonnet-5-5',
     ]);
     expect(cacheLines(r.stdout)[1]).toBe(
-      "cache: tag_content — 938 chars ≈ 408–905 tokens, with Anthropic's tool text (estimate) — near the floor for claude-sonnet-5-5 (512, your economics file): not judged from an estimate; --ratio <chars-per-token> narrows it — shares its first 177 chars with summarise: the schemas differ",
+      "cache: tag_content — 938 chars ≈ 408–905 tokens, with Anthropic's tool text (estimate) — near the floor for claude-sonnet-5-5 (512, your economics file): not judged from an estimate; --ratio <chars-per-token> narrows it",
     );
   });
 
@@ -253,7 +267,7 @@ describe('the lines and verdicts (C5)', { timeout: 60_000 }, () => {
       '200',
     ]);
     expect([cacheLines(a.stdout)[0], cacheLines(o.stdout)[0]]).toEqual([
-      "cache: analyze_cause — 1,782 chars ≈ 577–1,244 tokens, with Anthropic's tool text (estimate) — above the floor (512, your --floor): long enough to cache when the drive asks for caching — shares its first 177 chars with draft_response: the schemas differ",
+      "cache: analyze_cause — 1,782 chars ≈ 577–1,244 tokens, with Anthropic's tool text (estimate) — above the floor (512, your --floor): long enough to cache when the drive asks for caching",
       "cache: analyze_cause — 1,118 chars ≈ 224–448 tokens (estimate) — above the floor (200, your --floor): within the provider's own rules (realm sends no marker)",
     ]);
   });
@@ -441,22 +455,99 @@ describe('the sharing (C5; Δ12)', { timeout: 60_000 }, () => {
       'anthropic',
     ]);
     expect(cacheLines(r.stdout)[0]).toBe(
-      "cache: review_security — 954 chars ≈ 411–912 tokens, with Anthropic's tool text (estimate) — the floor was not judged: no --model named — shares its whole fixed part with review_performance; shares its first 177 chars with synthesize_review: the schemas differ",
+      "cache: review_security — 954 chars ≈ 411–912 tokens, with Anthropic's tool text (estimate) — the floor was not judged: no --model named — shares its whole fixed part with review_performance",
     );
   });
 
-  // Two steps with one schema, one of them strict. Break: the pair read from one side only (the
-  // non-strict step then names no clause). (a) red when either line changes; (b) prints them.
-  it('only structured_output: strict differs — read from both steps', () => {
-    const step = (id: string, strict: boolean): string =>
-      `  ${id}:\n    description: s\n    execution: agent\n    prompt: Do it.\n${strict ? '    structured_output: strict\n' : ''}${ELIGIBLE_SCHEMA}`;
+  // Correction 1 (C-1): Anthropic names a whole shared fixed part only. Anthropic writes its cache
+  // entry at the marked block, and a read needs every byte up to it, so a pair that parts earlier
+  // shares none. cat_one and cat_two differ in schema, with first required names that start with the
+  // same letter (they shared 178 chars at 894d0725, all Realm's own text); sp_plain and sp_strict
+  // differ only in `structured_output: strict`; twin_a and twin_b are the same. On Anthropic the tools
+  // block leads, so no pair there shares a whole profile: the break restores 894d0725's length rule.
+  // (a) red when a partial share is named on Anthropic; (b) prints the lines.
+  it('C-1 Anthropic: only a whole shared fixed part is named', () => {
     const dir = project({
-      workflow: `id: strict-pair\nname: strict-pair\nversion: 1\nsteps:\n${step('plain', false)}${step('strict', true).replace('description: s', 'description: s\n    depends_on: [plain]')}`,
+      workflow: shareWorkflow('anth-share', [
+        shareStep('cat_one', 'category'),
+        shareStep('cat_two', 'code'),
+        shareStep('sp_plain', 'answer', { profile: 'p' }),
+        shareStep('sp_strict', 'answer', { profile: 'p', strict: true }),
+        shareStep('twin_a', 'verdict'),
+        shareStep('twin_b', 'verdict'),
+      ]),
+      profiles: { 'p.md': 'You are careful.' },
     });
     const r = realm(['workflow', 'validate', dir, '--provider', 'anthropic']);
+    const NOT_JUDGED =
+      "with Anthropic's tool text (estimate) — the floor was not judged: no --model named";
     expect(cacheLines(r.stdout)).toEqual([
-      "cache: plain — 588 chars ≈ 338–765 tokens, with Anthropic's tool text (estimate) — the floor was not judged: no --model named — shares its first 228 chars with strict: only structured_output: strict differs",
-      "cache: strict — 602 chars ≈ 341–771 tokens, with Anthropic's tool text (estimate) — the floor was not judged: no --model named — shares its first 228 chars with plain: only structured_output: strict differs",
+      `cache: cat_one — 596 chars ≈ 340–769 tokens, ${NOT_JUDGED}`,
+      `cache: cat_two — 580 chars ≈ 336–762 tokens, ${NOT_JUDGED}`,
+      `cache: sp_plain — 606 chars ≈ 342–773 tokens, ${NOT_JUDGED}`,
+      `cache: sp_strict — 620 chars ≈ 344–778 tokens, ${NOT_JUDGED}`,
+      `cache: twin_a — 592 chars ≈ 339–767 tokens, ${NOT_JUDGED} — shares its whole fixed part with twin_b`,
+      `cache: twin_b — 592 chars ≈ 339–767 tokens, ${NOT_JUDGED} — shares its whole fixed part with twin_a`,
+    ]);
+  });
+
+  // Correction 1 (C-1.4): the names are capped in the rendering only. Seven identical steps name all
+  // six others; thirteen name five and `and 7 more`, and --json's shares_with keeps all twelve.
+  // (a) red when the cap is removed (twelve names) or applied to the steps (--json then lists five);
+  // (b) prints the first line's sharing clause and the counts.
+  it('C-1 names: six or fewer printed whole; more, the first five and `and N more`', () => {
+    const run = (count: number, args: string[] = []) => {
+      rmSync(join(base, 'proj'), { recursive: true, force: true });
+      const ids = Array.from({ length: count }, (_, i) => `s${String(i + 1).padStart(2, '0')}`);
+      const dir = project({
+        workflow: shareWorkflow(
+          `same-${String(count)}`,
+          ids.map((id) => shareStep(id, 'answer')),
+        ),
+      });
+      return realm(['workflow', 'validate', dir, ...args]);
+    };
+    const seven = cacheLines(run(7).stdout)[0]!;
+    const thirteen = cacheLines(run(13).stdout)[0]!;
+    const json = JSON.parse(run(13, ['--json']).stdout) as {
+      cacheability: { steps: Array<{ layouts: Array<{ shares_with: unknown[] }> }> };
+    };
+    expect([
+      seven.split(' — ').slice(-1)[0],
+      thirteen.split(' — ').slice(-1)[0],
+      json.cacheability.steps[0]!.layouts.map((l) => l.shares_with.length),
+    ]).toEqual([
+      'shares its whole fixed part with s02, s03, s04, s05, s06, s07',
+      'shares its whole fixed part with s02, s03, s04, s05, s06 and 7 more',
+      [12, 12],
+    ]);
+  });
+
+  // Correction 1 (C-1): --json's shares_with holds the pairs the line names, no others: on Anthropic
+  // a pair that parts is not listed, a whole-share pair is. (a) red when the filter and the clause
+  // part ways (the raw pairs listed); (b) prints each step's listed names.
+  it('C-1 --json: shares_with lists only the pairs the line names', () => {
+    const dir = project({
+      workflow: shareWorkflow('anth-json', [
+        shareStep('cat_one', 'category'),
+        shareStep('cat_two', 'code'),
+        shareStep('twin_a', 'verdict'),
+        shareStep('twin_b', 'verdict'),
+      ]),
+    });
+    const r = realm(['workflow', 'validate', dir, '--provider', 'anthropic', '--json']);
+    const steps = (
+      JSON.parse(r.stdout) as {
+        cacheability: {
+          steps: Array<{ layouts: Array<{ shares_with: Array<{ step: string }> }> }>;
+        };
+      }
+    ).cacheability.steps;
+    expect(steps.map((s) => s.layouts[0]!.shares_with.map((w) => w.step))).toEqual([
+      [],
+      [],
+      ['twin_b'],
+      ['twin_a'],
     ]);
   });
 
