@@ -475,7 +475,8 @@ describe('#715 (a) B7 — compareCanonical compares by value', () => {
     terminal_reason: 'Abandoned via realm run abandon',
   };
 
-  async function canonicalOf(a: Partial<RunRecord>, b: Partial<RunRecord>): Promise<string> {
+  type Stamped = { id: string; created_at: string };
+  async function canonicalOf(a: Stamped, b: Stamped): Promise<string> {
     const loc = await location(T);
     await importRun(loc, { ...ended, ...a, abandoned_at: a.created_at, updated_at: a.created_at });
     await importRun(loc, { ...ended, ...b, abandoned_at: b.created_at, updated_at: b.created_at });
