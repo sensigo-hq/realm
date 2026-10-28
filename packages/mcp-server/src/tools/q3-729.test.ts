@@ -65,6 +65,20 @@ const WK = def('q3-mcp-wk', {
   k: { description: 'K.', execution: 'auto', depends_on: ['first'], handler: 'missing' },
 } as WorkflowDefinition['steps']);
 
+/** #872 (a): after `first`, `k1` and `k2` are owed, and this server lacks their handler. */
+const WK2 = def('q3-mcp-wk2', {
+  first: { description: 'First.', execution: 'agent', depends_on: [] },
+  k1: { description: 'K1.', execution: 'auto', depends_on: ['first'], handler: 'missing' },
+  k2: { description: 'K2.', execution: 'auto', depends_on: ['first'], handler: 'missing' },
+} as WorkflowDefinition['steps']);
+
+/** #872 (a) correction 1 (C5): three `auto` roots on two handlers this server lacks. */
+const W3H = def('q3-mcp-w3h', {
+  r1: { description: 'R1.', execution: 'auto', depends_on: [], handler: 'missing_a' },
+  r2: { description: 'R2.', execution: 'auto', depends_on: [], handler: 'missing_a' },
+  r3: { description: 'R3.', execution: 'auto', depends_on: [], handler: 'missing_b' },
+} as WorkflowDefinition['steps']);
+
 /** W2's `publish`: refused before its claim for its input (its schema wants `n`). */
 const W2 = def('q3-mcp-w2', {
   publish: {
@@ -138,7 +152,7 @@ async function connect() {
   const dir = await mkdtemp(join(tmpdir(), 'realm-q3-mcp-'));
   const runStore = new JsonFileStore(join(dir, 'runs'));
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
-  for (const d of [W3, WK, W2, WA, ...F1_WORKFLOWS]) await workflowStore.register(d);
+  for (const d of [W3, WK, WK2, W3H, W2, WA, ...F1_WORKFLOWS]) await workflowStore.register(d);
   const server = createRealmMcpServer({ runStore, workflowStore, registry: registry() });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'q3-729', version: '0' });
@@ -612,5 +626,61 @@ describe('#729 Q3 correction 1, C2 — no agent-step telemetry for an engine ste
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe('#872 (a) — execute_step by name: two or more steps this server cannot run are said once', () => {
+  it('B3b: K1 by name beside K2, both lacking their handler → the by-name hint ends with the count, one group, the way out once', async () => {
+    const c = await connect();
+    const runId = await answeredRun(c, WK2);
+    const r = await c.call('execute_step', { run_id: runId, command: 'k1', params: AGENT_PARAMS });
+    const hint = String(r['context_hint']);
+    // (a) red when the steps are said one sentence each on the by-name path (the count absent,
+    //     `cannot run here` twice); (b) prints the status and the hint.
+    expect({ status: r['status'], hint, here: hint.split('cannot run here').length - 1 }).toEqual({
+      status: 'blocked',
+      hint: `${engines('k1')} 2 steps cannot run here (capability): handler 'missing' ('k1', 'k2') — load the missing extension, or run these steps on a runner that has it. get_run_state lists each one in engine_runnable.`,
+      here: 1,
+    });
+  });
+});
+
+describe('#872 (a) correction 1 (C5) — the attempt’s error reply counts every step that cannot run here', () => {
+  const blockedLine = (step: string, handler: string) =>
+    `Step '${step}' is blocked: its handler '${handler}' is not registered in this runner. The run is NOT terminated — the step remains eligible, so a runner that provides this handler can execute it.`;
+  const POINTER = ' get_run_state lists each one in engine_runnable.';
+
+  it('AC6 (i): advance_run attempts one of three steps on two missing handlers → the error reply says it is blocked, then counts all three, with the pointer; never the single clause', async () => {
+    const c = await connect();
+    const s = await c.call('start_run', { workflow_id: W3H.id, params: {} });
+    const runId = String(s['run_id']);
+    const r = await c.call('advance_run', { run_id: runId });
+    const hint = String(r['context_hint']);
+    const stopped = String(r['stopped_step']);
+    // (a) red when the dispatch branch says only the attempted step's own clause (one missing
+    //     handler at a time); (b) prints the status, the step attempted and the hint.
+    expect({ status: r['status'], stopped, hint }).toEqual({
+      status: 'error',
+      stopped: 'r2',
+      hint: `${blockedLine('r2', 'missing_a')} 3 steps cannot run here (capability): handler 'missing_a' ('r1', 'r2'); handler 'missing_b' ('r3') — load the missing extensions, or run these steps on a runner that has them.${POINTER}`,
+    });
+    expect(
+      hint.includes(
+        "'r2' cannot run here (capability): handler 'missing_a' is not registered here",
+      ),
+    ).toBe(false);
+  });
+
+  it('AC6 (ii): an agent step whose chain attempts one of two such steps → execute_step’s error reply counts both', async () => {
+    const c = await connect();
+    const { run } = await c.runStore.create({ workflowId: WK2.id, workflowVersion: 1, params: {} });
+    const r = await c.call('execute_step', { run_id: run.id, command: 'first', params: {} });
+    // (a) red when the dispatch branch says only the attempted step's own clause; (b) prints the
+    //     status, the step attempted and the hint.
+    expect({ status: r['status'], stopped: r['stopped_step'], hint: r['context_hint'] }).toEqual({
+      status: 'error',
+      stopped: 'k1',
+      hint: `${blockedLine('k1', 'missing')} 2 steps cannot run here (capability): handler 'missing' ('k1', 'k2') — load the missing extension, or run these steps on a runner that has it.${POINTER}`,
+    });
   });
 });

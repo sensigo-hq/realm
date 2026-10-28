@@ -39,6 +39,17 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- **Two or more steps that cannot run here for a missing handler or adapter are said in one sentence
+  (issue #872).** The MCP replies' `context_hint` gives their count first, then each missing handler
+  or adapter with at most three of the steps that need it and how many more (at most ten, then how
+  many more), the way out once — `load the missing extension` when one handler or adapter is
+  missing, `load the missing extensions` when several are — and `get_run_state lists each one in
+engine_runnable.` It repeated one whole sentence, way out included, for every step. One step keeps
+  its sentence. The error reply of the call that attempts one such step counts them too. Each
+  `engine_runnable` entry refused for a handler or adapter (`get_run_state`,
+  `describePending`) carries `requirement` (`kind`, `name`) beside `basis`. A step or handler name
+  over 500 characters is named by its length in these sentences and in the CLI's lines for a step
+  that cannot run.
 - **BREAKING — a gate's question is cut to the view budget when it opens (issue #729 PR-4).** A
   gate's question longer than the view budget is cut when it opens, with a line saying so; the
   step's whole output still goes ahead on approval. The budget is 600 characters for the message and

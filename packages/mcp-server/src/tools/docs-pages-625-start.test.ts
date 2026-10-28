@@ -327,6 +327,8 @@ describe(
           refused_by: 'capability',
           refusal: NOT_HERE,
           basis: 'registry',
+          // #872 (a) (add-only): the handler or adapter refused, as data.
+          requirement: { kind: 'handler', name: 'missing_h' },
         },
       ]);
       const finding = (state['run_health'] as Array<Record<string, unknown>>).find(
@@ -679,6 +681,8 @@ describe(
             refused_by: 'capability',
             refusal: NOT_HERE,
             basis: 'registry',
+            // #872 (a) (add-only): the handler or adapter refused, as data.
+            requirement: { kind: 'handler', name: 'missing_h' },
           },
         ],
         advance: [
@@ -731,6 +735,8 @@ describe(
             refused_by: 'capability',
             refusal: WAS_NOT,
             basis: 'marker',
+            // #872 (a) (add-only): the handler or adapter refused, as data.
+            requirement: { kind: 'handler', name: 'missing_h' },
           },
         ],
         next: expect.stringContaining(`'h' could not run (capability): ${WAS_NOT}`),
