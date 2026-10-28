@@ -331,3 +331,56 @@ describe('#627 W correction 2 (3.2) — the command for a register way with a co
     });
   });
 });
+
+describe('framework v1.37 J-1 — the renderer law: a way table takes one carrier and the host’s own settings, never a record, view, definition, registry or clock', () => {
+  it('every `WayRenderer` table in the two hosts (and the engine’s own) references none of the five types and no clock; the CLI renderer module imports none of them', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { fileURLToPath } = await import('node:url');
+    // The modules that hold a table, derived from the source: `export const X: WayRenderer<`.
+    const modules: Record<string, string> = {
+      'packages/cli/src/commands/ways-renderer.ts': fileURLToPath(
+        new URL('./ways-renderer.ts', import.meta.url),
+      ),
+      'packages/mcp-server/src/render-reply.ts': fileURLToPath(
+        new URL('../../../mcp-server/src/render-reply.ts', import.meta.url),
+      ),
+      'packages/core/src/engine/ways.ts': fileURLToPath(
+        new URL('../../../core/src/engine/ways.ts', import.meta.url),
+      ),
+    };
+    const FORBIDDEN =
+      /\b(RunRecord|PendingView|WorkflowDefinition|RunStatusView|ExtensionRegistry)\b|\bDate\.now\(|\bnew Date\(/g;
+    // Comments stripped: the law is about the code, and a comment may name a type it forbids.
+    const code = (src: string): string =>
+      src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const tables: Record<string, string[]> = {};
+    for (const [name, path] of Object.entries(modules)) {
+      const src = code(readFileSync(path, 'utf8'));
+      const re = /^export const (\w+): WayRenderer</gm;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(src)) !== null) {
+        const end = src.indexOf('\n};', m.index);
+        const body = src.slice(m.index, end === -1 ? src.length : end);
+        tables[`${name}#${m[1]}`] = [...body.matchAll(FORBIDDEN)].map((x) => x[0]);
+      }
+    }
+    const cliImports = code(
+      readFileSync(modules['packages/cli/src/commands/ways-renderer.ts']!, 'utf8'),
+    )
+      .split('\n')
+      .filter((l) => /^\s*(import |type |\w+,$|\} from)/.test(l))
+      .join('\n');
+    // (a) red when a table references a record, a view, a definition, a registry or a clock, when the
+    //     CLI renderer module imports one of the five, or when a table drops out of the derivation
+    //     (the three names are the denominator); (b) prints the tables found with the offending
+    //     names, and the CLI module's offending imports.
+    expect({ tables, cliImports: [...cliImports.matchAll(FORBIDDEN)].map((x) => x[0]) }).toEqual({
+      tables: {
+        'packages/cli/src/commands/ways-renderer.ts#CLI_COMMANDS': [],
+        'packages/mcp-server/src/render-reply.ts#MCP_WAYS': [],
+        'packages/core/src/engine/ways.ts#LIBRARY_WORDS': [],
+      },
+      cliImports: [],
+    });
+  });
+});
