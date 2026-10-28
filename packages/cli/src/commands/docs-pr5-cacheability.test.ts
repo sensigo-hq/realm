@@ -29,6 +29,17 @@ const read = (page: string): string => readFileSync(join(ROOT, page), 'utf8');
 function claim(page: string, text: string): void {
   expect(flat(read(page)).includes(flat(text)), `${page} no longer says: ${text}`).toBe(true);
 }
+/** Correction 2 (F-7): the page holds a LINE equal to realm's printed line — not merely one that
+ *  contains it, so a page line that kept a stale ending fails. (a) red when a stale tail is appended
+ *  to that transcript line; (b) prints the page's file name, the line, and whether a page line
+ *  begins with it (a stale tail). */
+function claimLine(page: string, line: string): void {
+  const lines = read(page).split('\n');
+  expect(
+    lines.includes(line),
+    `${page} has no line equal to: ${line} (a page line begins with it: ${String(lines.some((l) => l.startsWith(line)))})`,
+  ).toBe(true);
+}
 const WORKFLOW_PAGE = 'docs/reference/cli/realm-workflow.md';
 const ECONOMICS_PAGE = 'docs/reference/cache-economics.md';
 const DIAGNOSTICS_PAGE = 'docs/reference/workflow/loader-diagnostics.md';
@@ -111,8 +122,9 @@ describe(
   { timeout: 60_000 },
   () => {
     // Each example line on the page, produced by the command the page says it came from. Break: one
-    // word of an example changed on the page. (a) red when a page line differs from realm's; (b)
-    // prints the line the page no longer holds.
+    // word of an example changed on the page. (a) red when a page line differs from realm's — since
+    // correction 2 (F-7), also when it carries a stale tail after realm's line; (b) prints the line
+    // the page no longer holds.
     it('every example line, from examples 01, 03, 04, 05 and 09', () => {
       claim(
         WORKFLOW_PAGE,
@@ -141,18 +153,19 @@ describe(
         v([ex('05-parallel-code-review'), '--provider', 'anthropic'])[0]!,
       ];
       expect(lines).toHaveLength(9);
-      for (const line of lines) claim(WORKFLOW_PAGE, line);
+      for (const line of lines) claimLine(WORKFLOW_PAGE, line);
       const once = realm(['workflow', 'validate', ex('05-parallel-code-review')])
         .stdout.split('\n')
         .filter((l) => l.startsWith('anthropic: ') || l.startsWith('openai: '));
       expect(once).toHaveLength(3);
-      for (const line of once) claim(WORKFLOW_PAGE, line);
+      for (const line of once) claimLine(WORKFLOW_PAGE, line);
     });
 
     // The refusals, printed on standard error with exit 1, with or without --json. Break: a refusal's
     // words changed on the page. (a) red when realm's line or exit code differs, or a refusal prints
-    // nothing on standard error (correction 1, C-6.3: an empty line would pass the claim vacuously);
-    // (b) prints them, and each exit code with its standard error's length.
+    // nothing on standard error (correction 1, C-6.3: an empty line would pass the claim vacuously),
+    // or the page's line carries a stale tail (correction 2, F-7); (b) prints them, and each exit
+    // code with its standard error's length.
     it('the three refusals', () => {
       claim(
         WORKFLOW_PAGE,
@@ -174,7 +187,7 @@ describe(
           r.stderr.trim().length,
           `exit ${String(r.code)}: standard error is empty`,
         ).toBeGreaterThan(0);
-        claim(WORKFLOW_PAGE, r.stderr.trim());
+        claimLine(WORKFLOW_PAGE, r.stderr.trim());
       }
     });
 
