@@ -275,6 +275,22 @@ describe(
         ['<env>', 'openai'],
         ['anthropic', '<env>'],
       ]);
+      // Correction 2 (F-6): the sentence's model-id half, run (correction 1 ran only the provider
+      // word): piped, with ANTHROPIC_MODEL holding the id, the line reads `[REDACTED]` where it
+      // stood. And the page's "8 characters or more" is core's environment floor, read here, so a
+      // change of the floor turns it red. (b) prints the line, the environment's value written
+      // `<env>`.
+      const modelLine = cacheLines(
+        realm([...v, '--provider', 'anthropic', '--model', 'claude-sonnet-5-5', '--floor', '500'], {
+          ANTHROPIC_MODEL: 'claude-sonnet-5-5',
+        }).stdout,
+      )[0]!
+        .split('claude-sonnet-5-5')
+        .join('<env>');
+      expect(modelLine, modelLine).toContain('the floor for [REDACTED] (500, your --floor)');
+      expect(read(WORKFLOW_PAGE), "the page no longer states core's environment floor").toContain(
+        `Realm hides an environment value only when it is ${String(DISCLOSURE_FLOORS.environment)} characters or more`,
+      );
     });
 
     // The watch transcript holds only what watch prints: lines that begin with `Watching ` or the time.
@@ -338,7 +354,7 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
   it('a minimum: --floor or the economics file, both named when they differ; never below at 512 with a schema; OpenAI strict ends with its tail', () => {
     claim(
       WORKFLOW_PAGE,
-      "**A minimum.** `--floor <tokens>` tests a minimum of your own. With `--provider` and `--model`, the minimum is the one your [economics file](../cache-economics.md#the-cache-minimum) states for the model. When both give one, `--floor` decides and the line names both. Each provider's size is then followed by its verdict, here with `--floor 512`:",
+      "**A minimum.** `--floor <tokens>` tests a minimum of your own. With `--provider` and `--model`, the minimum is the one your [economics file](../cache-economics.md#the-cache-minimum) states for the model. When both give one, `--floor` decides. The line names both only when the numbers differ, as in `(1,000, your --floor; your economics file says 512)`; when they are the same, it names only `--floor`. `cannot cache on it` and `long enough to cache` speak for the model only when the minimum is the economics file's; a minimum given by `--floor` reads `at that minimum`. Each provider's size is then followed by its verdict, here with `--floor 512`:",
     );
     claim(
       WORKFLOW_PAGE,
@@ -487,6 +503,60 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
       claim(WORKFLOW_PAGE, sentence);
   });
 
+  // Correction 2 (F-6): four sentences the walk and the reader could not find. 6.1: both minimums
+  // are named only when they differ, and which words speak for the model (pinned by execution in
+  // validate-cacheability's "both bases", "C-4" and "F-5"). 6.2: a strict step and a plain one are
+  // not named to each other; identical strict steps are; strict steps with different schemas are not
+  // (pinned in this file's "F-6.2" cell). 6.3: on OpenAI the shared characters count Realm's text too
+  // (the lib cells on a shared profile). 6.4: the OpenAI profile sentence, as two. (a) red when the
+  // page drops a sentence; (b) prints the sentence.
+  it('F-6: both minimums named only when they differ; strict and plain steps; what the chars count; the profile rule', () => {
+    for (const sentence of [
+      'When both give one, `--floor` decides. The line names both only when the numbers differ, as in `(1,000, your --floor; your economics file says 512)`; when they are the same, it names only `--floor`.',
+      "`cannot cache on it` and `long enough to cache` speak for the model only when the minimum is the economics file's; a minimum given by `--floor` reads `at that minimum`.",
+      'Two steps that differ only in `structured_output: strict`, one strict and one not, are not named to each other: a strict step sends a different fixed part.',
+      'Two identical strict steps still name each other, on both providers; two strict steps with different schemas name nothing.',
+      "On OpenAI the `<n> chars` count Realm's own text after the profile too, so with a short profile most of them are Realm's.",
+      'The line says what the text shares, not how much of it is yours.',
+      'On OpenAI, two steps that carry the same profile are named too when they first differ in the schema, which comes after it.',
+      'The line then says `shares its first <n> chars with …: the schemas differ`.',
+    ])
+      claim(WORKFLOW_PAGE, sentence);
+  });
+
+  // Correction 2 (F-6.2), by execution: two steps with the same prompt and schema, one strict and
+  // one not, are not named to each other; two identical strict steps are; two strict steps with
+  // different schemas are not — on both providers. (a) red when a strict and a plain step are named
+  // to each other, or identical strict steps are not; (b) prints each step's sharing clause.
+  it('F-6.2: strict and plain are not named to each other; identical strict steps are', () => {
+    const step = (id: string, required: string, strict: boolean): string =>
+      `  ${id}:\n    description: s\n    execution: agent\n    prompt: Do it.\n${strict ? '    structured_output: strict\n' : ''}    output_schema:\n      type: object\n      additionalProperties: false\n      required: [${required}]\n      properties:\n        ${required}: { type: string }\n`;
+    const dir = project({
+      workflow: `id: strictness\nname: strictness\nversion: 1\nsteps:\n${[
+        step('plain_a', 'response_draft', false),
+        step('plain_b', 'response_draft', false),
+        step('strict_a', 'response_draft', true),
+        step('strict_b', 'response_draft', true),
+        step('strict_c', 'other_field', true),
+      ].join('')}`,
+    });
+    const clauses = (provider: string): string[] =>
+      cacheLines(realm(['workflow', 'validate', dir, '--provider', provider]).stdout).map(
+        (l) => / — (shares [^—]*)$/.exec(l)?.[1] ?? '',
+      );
+    const expected = [
+      'shares its whole fixed part with plain_b',
+      'shares its whole fixed part with plain_a',
+      'shares its whole fixed part with strict_b',
+      'shares its whole fixed part with strict_a',
+      '',
+    ];
+    expect({ anthropic: clauses('anthropic'), openai: clauses('openai') }).toEqual({
+      anthropic: expected,
+      openai: expected,
+    });
+  });
+
   // Tools, and the sharing words (correction 1, C-1.5): on Anthropic a whole shared part only; on
   // OpenAI also a pair that shares a whole profile and parts in the schema; no other start; long lists
   // capped. The cells that pin each fact: validate-cacheability's "C-1 Anthropic" and "C-1 names", and
@@ -499,7 +569,7 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
     );
     claim(
       WORKFLOW_PAGE,
-      "**Steps that share a fixed part.** The line names the other steps whose fixed part is the same as this step's: `shares its whole fixed part with …`. On Anthropic nothing else is named: Anthropic writes its cache entry at the block Realm marks, and a read needs every character up to it, so two steps that part earlier share no entry. On OpenAI, two steps that carry the same profile and part after it, in the schema, are named too: `shares its first <n> chars with …: the schemas differ`. With a minimum in force, they are named only when the estimate of the start they share reaches it or comes near it. No other shared start is named. A step below the minimum names no sharing, because it cannot cache whatever it shares; on OpenAI with `structured_output: strict`, where the provider's own schema text is not counted, the clause stays. The clause comes back with a lower floor or a longer fixed part. A list of more than six steps names five and ends `and N more`. From example 05, with `--provider anthropic`:",
+      "**Steps that share a fixed part.** The line names the other steps whose fixed part is the same as this step's: `shares its whole fixed part with …`. On Anthropic nothing else is named: Anthropic writes its cache entry at the block Realm marks, and a read needs every character up to it, so two steps that part earlier share no entry. On OpenAI, two steps that carry the same profile are named too when they first differ in the schema, which comes after it. The line then says `shares its first <n> chars with …: the schemas differ`. With a minimum in force, they are named only when the estimate of the start they share reaches it or comes near it. On OpenAI the `<n> chars` count Realm's own text after the profile too, so with a short profile most of them are Realm's. The line says what the text shares, not how much of it is yours. No other shared start is named. A step below the minimum names no sharing, because it cannot cache whatever it shares; on OpenAI with `structured_output: strict`, where the provider's own schema text is not counted, the clause stays. The clause comes back with a lower floor or a longer fixed part. Two steps that differ only in `structured_output: strict`, one strict and one not, are not named to each other: a strict step sends a different fixed part. Two identical strict steps still name each other, on both providers; two strict steps with different schemas name nothing. A list of more than six steps names five and ends `and N more`. From example 05, with `--provider anthropic`:",
     );
     const step = (id: string, required: string, profile?: string): string =>
       `  ${id}:\n    description: s\n    execution: agent\n    prompt: Do it.\n${profile !== undefined ? `    agent_profile: ${profile}\n` : ''}    output_schema:\n      type: object\n      additionalProperties: false\n      required: [${required}]\n      properties:\n        ${required}: { type: string }\n`;
