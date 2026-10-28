@@ -150,7 +150,9 @@ cache: review_changes — 1,010 chars ≈ 220–297 tokens (estimate: 4 chars/to
 | `no entry for <model> in your economics file`                                             | The economics file has no entry for the model.                                                                    |
 | `no minimum stated for <model> in your economics file`                                    | The model's entry has no `min_cacheable_tokens`.                                                                  |
 | `economics not checked (<reason>)`                                                        | `--registered`, and the copy records no project folder, or the one it records is gone.                            |
-| `profile unavailable (<reason>): sizes not computed`                                      | `--registered`, the step names a profile, and the copy records no workflow folder, or the one it records is gone. |
+| `profile file not read (<reason>): sizes not computed`                                    | `--registered`, the step names a profile, and the copy records no workflow folder, or the one it records is gone. |
+
+`profile file not read` means the command could not read the step's profile file, because the registered copy records no workflow folder, or the one it records is gone. The copy still holds the profile's text, and runs use it. What to do: register again from the workflow's folder, with `realm workflow register <path>`. The `N checks not run:` line above the cache lines names the same reason. With `--registered`, the sizes come from the profile files now in the workflow's folder, which is what registering again would store, not from the text the copy holds.
 
 A step that calls tools is not judged: each tool's definition comes from its MCP server when the step runs, so its request cannot be measured before a run:
 

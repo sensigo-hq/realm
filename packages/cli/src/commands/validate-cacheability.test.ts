@@ -437,7 +437,7 @@ describe('the causes, one per row of the decision table (C5)', { timeout: 60_000
 
   // Rows 2 and 5 by one route: --registered on a copy whose tree was deleted. The step that names a
   // profile cannot be sized; the other is sized, and its floor's economics were not checked. Break:
-  // row 2 applied to every step (the profile-less one then reads "profile unavailable"), or row 5's
+  // row 2 applied to every step (the profile-less one then reads "profile file not read"), or row 5's
   // guard negated. (a) red when either line changes; (b) prints the lines.
   it('rows 2 and 5: --registered on a copy whose source tree is gone', () => {
     const dir = project({
@@ -451,7 +451,7 @@ describe('the causes, one per row of the decision table (C5)', { timeout: 60_000
     rmSync(dir, { recursive: true, force: true });
     const r = realm(['workflow', 'validate', '--registered', 'gone-tree']);
     expect(cacheLines(r.stdout)).toEqual([
-      'cache: with_profile — profile unavailable (source_dir <dir>/proj no longer exists): sizes not computed',
+      'cache: with_profile — profile file not read (source_dir <dir>/proj no longer exists): sizes not computed',
       'cache: without_profile — anthropic 155 chars ≈ 31–62 tokens (no schema: realm sends no tool) · openai 155 chars ≈ 31–62 tokens (estimates: 2.5–5 chars/token, with margin) — economics not checked (trust_root <dir>/proj no longer exists)',
     ]);
   });

@@ -521,7 +521,7 @@ function stepLine(report: CacheabilityReport, result: StepResult): string {
     return `cache: ${result.step} — uses tools: each tool's definition comes from its MCP server at run time, so the request cannot be measured before a run: not judged`;
   }
   if (result.kind === 'profile_unavailable') {
-    return `cache: ${result.step} — profile unavailable (${report.profilesNotRun ?? ''}): sizes not computed`;
+    return `cache: ${result.step} — profile file not read (${report.profilesNotRun ?? ''}): sizes not computed`;
   }
   const layouts = result.layouts;
   const ratio = report.flags.ratio;

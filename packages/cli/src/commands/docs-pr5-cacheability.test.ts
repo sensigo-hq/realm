@@ -487,7 +487,7 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
       '| `no entry for <model> in your economics file` | The economics file has no entry for the model. |',
       "| `no minimum stated for <model> in your economics file` | The model's entry has no `min_cacheable_tokens`. |",
       '| `economics not checked (<reason>)` | `--registered`, and the copy records no project folder, or the one it records is gone. |',
-      '| `profile unavailable (<reason>): sizes not computed` | `--registered`, the step names a profile, and the copy records no workflow folder, or the one it records is gone. |',
+      '| `profile file not read (<reason>): sizes not computed` | `--registered`, the step names a profile, and the copy records no workflow folder, or the one it records is gone. |',
     ]) {
       claim(WORKFLOW_PAGE, row.replace(/ +\|/g, ' |'));
     }
@@ -506,7 +506,7 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
     );
     expect([
       registered[0]!.includes(
-        '— profile unavailable (source_dir <dir>/proj no longer exists): sizes not computed',
+        '— profile file not read (source_dir <dir>/proj no longer exists): sizes not computed',
       ),
       registered[1]!.endsWith('— economics not checked (trust_root <dir>/proj no longer exists)'),
     ]).toEqual([true, true]);
@@ -900,6 +900,74 @@ function linkLands(page: string, href: string): string {
     .map((l) => slug(l.replace(/^#{1,6} /, '')));
   return headings.includes(anchor) ? 'ok' : 'no heading';
 }
+
+describe(
+  'correction 2, F-10: the profile row says what the command did',
+  { timeout: 60_000 },
+  () => {
+    // The page says what `profile file not read` means and what to do, and where `--registered`'s
+    // sizes come from. Each runtime claim is run here on a scratch registration: the sizes follow the
+    // profile file on disk while the copy's stored text stays as registered; with the folder gone, the
+    // copy still holds the text, the row reads `profile file not read`, and the `N checks not run:`
+    // line names the same reason. That runs send the stored text is pinned in
+    // `agent/profile-reaches-the-model.test.ts` ("travels from the definition, through the drive, onto
+    // the wire"). (a) red when the page drops a sentence, the old words return, or the sizes stop
+    // following the file; (b) prints the page's sentence, or the lines, the scratch folder written
+    // `<dir>`.
+    it('F-10: the row, what to do, and where the --registered sizes come from', () => {
+      for (const sentence of [
+        "`profile file not read` means the command could not read the step's profile file, because the registered copy records no workflow folder, or the one it records is gone.",
+        "The copy still holds the profile's text, and runs use it.",
+        "What to do: register again from the workflow's folder, with `realm workflow register <path>`.",
+        'The `N checks not run:` line above the cache lines names the same reason.',
+        "With `--registered`, the sizes come from the profile files now in the workflow's folder, which is what registering again would store, not from the text the copy holds.",
+      ])
+        claim(WORKFLOW_PAGE, sentence);
+      const dir = project({
+        workflow:
+          'id: moved\nname: moved\nversion: 1\nsteps:\n' +
+          '  with_profile:\n    description: a\n    execution: agent\n    prompt: Do it.\n    agent_profile: p\n',
+        files: { 'profiles/p.md': 'You are careful.' },
+      });
+      expect(realm(['workflow', 'register', dir]).code).toBe(0);
+      const stored = (): number =>
+        (
+          JSON.parse(readFileSync(join(home, '.realm', 'workflows', 'moved.json'), 'utf8')) as {
+            resolved_profiles: Record<string, { content: string }>;
+          }
+        ).resolved_profiles['p']!.content.length;
+      const chars = (): number => {
+        const line = cacheLines(
+          realm(['workflow', 'validate', '--registered', 'moved']).stdout,
+        )[0]!;
+        return Number(/ — anthropic ([\d,]+) chars/.exec(line)?.[1]?.replace(/,/g, '') ?? -1);
+      };
+      const before = [chars(), stored()];
+      writeFileSync(join(dir, 'profiles', 'p.md'), 'You are careful.' + 'x'.repeat(326));
+      const after = [chars(), stored()];
+      expect({ before, after, grew: after[0]! - before[0]! }).toEqual({
+        before: [before[0], 16],
+        after: [after[0], 16],
+        grew: 326,
+      });
+      rmSync(dir, { recursive: true, force: true });
+      const out = hide(realm(['workflow', 'validate', '--registered', 'moved']).stdout).split('\n');
+      const reason = 'source_dir <dir>/proj no longer exists';
+      expect(
+        {
+          held: stored(),
+          row: out.find((l) => l.startsWith('cache: with_profile ')),
+          notRun: out.some((l) => / checks not run: /.test(l) && l.includes(`(${reason})`)),
+        },
+        out.join('\n'),
+      ).toEqual({
+        held: 16,
+        row: `cache: with_profile — profile file not read (${reason}): sizes not computed`,
+        notRun: true,
+      });
+    });
+  },
+);
 
 describe('correction 2, F-8: the pages that print the cache lines say what they are', () => {
   // The five pages a new user meets the cache lines on carry one sentence and a link after the
