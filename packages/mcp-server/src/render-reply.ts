@@ -13,8 +13,10 @@ import {
   agentActionOf,
   agentRenderedList,
   cannotGoOnUntilCorrected,
+  cannotRunSummary,
   doorWithholdsAnswers,
   generateSchemaSkeleton,
+  libraryCannotRunWords,
   narrowForDoor,
   raceClausesOf,
   withFullStop,
@@ -619,6 +621,21 @@ function untilOf(narrowed: Narrowed | undefined): string | undefined {
 
 // ─── The words of what comes next (Table rows 20–29; decisions C34, C51, C57, C94, C205) ────────
 
+/** #872 (a) correction 1 (C1): where the full list is — this door's words (the renderer law). */
+const CAPABILITY_LIST_POINTER = 'get_run_state lists each one in engine_runnable.';
+
+/**
+ * #872 (a) correction 1 (C1): the MCP door's ONE producer of the capability sentence. No step that
+ * cannot run for a capability: `''`. One: core's one-step clause. Two or more: core's counted
+ * summary, then this door's pointer to the full list.
+ */
+function capabilityHintWords(entries: readonly Unavailable[]): string {
+  const caps = entries.filter((u) => u.verb === 'run_step' && u.code === 'capability_missing');
+  if (caps.length === 0) return '';
+  if (caps.length === 1) return withFullStop(libraryCannotRunWords(caps[0]!) ?? '');
+  return `${withFullStop(cannotRunSummary(caps))} ${CAPABILITY_LIST_POINTER}`;
+}
+
 /** A run_step entry for a step that cannot run (C82): refused before its claim, or a capability. */
 function cannotRunEntries(narrowed: Narrowed | undefined): Unavailable[] {
   return (narrowed?.unavailable ?? []).filter(
@@ -626,20 +643,6 @@ function cannotRunEntries(narrowed: Narrowed | undefined): Unavailable[] {
       u.verb === 'run_step' &&
       (u.code === 'refused_before_claim' || u.code === 'capability_missing'),
   );
-}
-
-/** `'<s>' cannot run (<check>): <refusal>` — one step that cannot run (C36, C41, C53). */
-function cannotRunClause(entry: Unavailable): string {
-  if (entry.code === 'capability_missing') {
-    const { kind, name } = entry.facts.requirement;
-    return entry.facts.basis === 'marker'
-      ? `'${entry.facts.step}' could not run (capability): ${kind} '${name}' was not registered in the runner that last attempted it`
-      : `'${entry.facts.step}' cannot run here (capability): ${kind} '${name}' is not registered here — load the missing extension, or run the step on a runner that has it`;
-  }
-  if (entry.code === 'refused_before_claim') {
-    return `'${entry.facts.step}' cannot run (${entry.facts.check}): ${entry.facts.refusal}`;
-  }
-  return `'${entry.step ?? ''}' cannot run`;
 }
 
 /**
@@ -730,8 +733,20 @@ function nextSentence(narrowed: Narrowed | undefined, ended: boolean): string {
           : `; it runs them${OWED_UNTIL}`;
     sentence += ` Owed to the engine: ${items.join(', ')} — call advance_run${runs}.`;
   }
-  for (const entry of cannotRunEntries(narrowed))
-    sentence += ` ${withFullStop(cannotRunClause(entry))}`;
+  // #872 (a): the steps that cannot run for a capability are said once, in this door's one
+  // capability sentence, in the place of the first of them (one step: its own clause); a step
+  // refused before its claim keeps its own clause where it is (C36, C41, C53).
+  const cannotRun = cannotRunEntries(narrowed);
+  let capabilitySaid = false;
+  for (const entry of cannotRun) {
+    if (entry.code === 'capability_missing') {
+      if (!capabilitySaid) sentence += ` ${capabilityHintWords(cannotRun)}`;
+      capabilitySaid = true;
+      continue;
+    }
+    const clause = libraryCannotRunWords(entry);
+    if (clause !== undefined) sentence += ` ${withFullStop(clause)}`;
+  }
   if (cannotGoOnWithRefusal(narrowed, ended) && narrowed !== undefined) {
     sentence += ` ${wayOutWords(narrowed)}`;
   }
@@ -878,7 +893,10 @@ function hintOf(
       (u) =>
         u.verb === 'run_step' && u.step === reply.stopped_step && u.code === 'capability_missing',
     );
-    if (blocked !== undefined) hint += ` ${cannotRunClause(blocked)}.`;
+    // #872 (a) correction 1 (C5): the attempted step's own clause when it is the only step that
+    // cannot run here; with two or more, the one sentence that counts them all (the attempted step
+    // among them), so the agent learns the whole set from the first attempt.
+    if (blocked !== undefined) hint += ` ${capabilityHintWords(reply.unavailable)}`;
   }
   return hint;
 }
@@ -1724,6 +1742,9 @@ export const DOOR_FACTS = {
     runnable_here: 'enum',
     refused_by: 'enum',
     basis: 'enum',
+    // #872 (a): one producer per row (`FactProducer`), as `capability_blocks`': the handler or
+    // adapter the author named.
+    requirement: 'author_literal',
   } satisfies FactProducers<typeof ENGINE_RUNNABLE_TABLE, EngineRunnable>,
   precondition: { expression: 'author_literal' } satisfies FactProducers<
     typeof PRECONDITION_FACTS_TABLE,
