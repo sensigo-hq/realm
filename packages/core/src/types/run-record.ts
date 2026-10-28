@@ -321,11 +321,12 @@ export interface StepDiagnostics {
   /**
    * Issue #600 PR 1a — what the provider said this step's model calls cost, per WIRE REQUEST.
    * PRESENT when the driver supplied the step's usage — `realm agent` does for every model call it
-   * makes through `callStepWithMeta` — with `state: 'unobservable'` when the provider reported
-   * nothing. ABSENT when nothing was recorded for the step, which happens three ways: the step made
-   * no model call (a handler step, or one answered at a `realm workflow run` prompt); it called a
-   * model on the tool-calling path, which records nothing yet (issue #610); or an external agent
-   * drove it over MCP `execute_step`, so its model calls were never realm's to see. Absence alone
+   * makes through `callStepWithMeta` or `callStepWithTools` (the tool-calling path since issue #610)
+   * — with `state: 'unobservable'` when the provider reported nothing. ABSENT when nothing was
+   * recorded for the step, which happens three ways: the step made no model call (a handler step,
+   * or one answered at a `realm workflow run` prompt); an external agent drove it over MCP
+   * `execute_step`, so its model calls were never realm's to see; or the entry is a tool-calling
+   * step that an older Realm (0.48.0 and earlier) wrote, before that path recorded. Absence alone
    * therefore never proves that no model call happened. A step realm's driver repaired (the #217
    * schema-repair loop) records every call, the rejected ones included.
    *
@@ -527,6 +528,20 @@ export interface UsageRecord {
    * (`cache_creation`). Written by the adapter whenever it writes `cache_requested`.
    */
   cache_split_offered?: boolean;
+  /**
+   * Issue #715 (R; decisions D6-28, D6-44) — this request's identity: a random UUID (version 4)
+   * realm mints once per request, where a provider's answer enters realm's records
+   * (`mintRequestIds`, called at `realm agent`'s receiving sites). It ALWAYS overwrites any value a
+   * provider's own usage carried. It is the key `sameRequest` matches on and nothing else — never a
+   * time, a count, an index or a version — and it guards one decision: whether a call is attached to
+   * a drive-failure entry or is already on the step's record (`callsAlreadyRecorded`). It does not
+   * de-duplicate the cost totals a reader computes. It is NOT a provider's request id (`request-id`,
+   * `x-request-id`, an SDK's `_request_id`) and NOT Temporal's request de-dupe id; a provider's own
+   * id, if ever kept, gets its own field. Absent on a record written by an earlier process, or by a
+   * host that embeds the engine and records usage itself: no reader derives anything from it, and
+   * `sameRequest` answers `false` for such a record.
+   */
+  request_id?: string;
 }
 
 /** Issue #600 — the per-step roll-up plus the per-request detail. */
@@ -1117,8 +1132,9 @@ export interface DriveFailureRecord {
    *
    * ABSENT until a request returns: a failure before any request left the process (`sdk_missing`)
    * and a first request that failed on the wire (a 5xx, a timeout, a dropped connection) both
-   * leave it absent, so absence never proves no request was made — and the tool-calling path
-   * records none at all yet (issue #610). `[]` — which realm's own providers never attach; a
+   * leave it absent, so absence never proves no request was made. A failed tool-calling drive
+   * carries its billed usage like any other (issue #610); a record Realm 0.48.0 or earlier wrote
+   * carries none for one. `[]` — which realm's own providers never attach; a
    * third-party provider module can — says only that the payload carried a `usage` key with no
    * requests.
    */

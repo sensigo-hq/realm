@@ -19,7 +19,7 @@ import {
   type RunStore,
   type UsageRecord,
 } from '@sensigo/realm';
-import { sanitizeError, extractHttpStatus } from './providers/agent-utils.js';
+import { sanitizeError, extractHttpStatus, mintRequestIds } from './providers/agent-utils.js';
 
 /** At most this many entries are retained, most-recent-last. */
 const RING_CAP = 5;
@@ -226,6 +226,10 @@ function buildEntryUnsafe(
     // this order the `??` below is the live protector of a payload's genuine 0ms span, which also
     // makes an `||` there a caught mutant rather than an equivalent one.
     ...classified,
+    // #715 (R): the usage a provider attached to the thrown error enters realm's records here, the
+    // one funnel for all three chokepoints, so each of its requests gets its id once (D6-28). The
+    // step's earlier requests the caller prepends were minted where they arrived.
+    ...(Array.isArray(classified.usage) ? { usage: mintRequestIds(classified.usage) } : {}),
     elapsed_ms: classified.elapsed_ms ?? Date.now() - attemptStartedAt,
   };
 }

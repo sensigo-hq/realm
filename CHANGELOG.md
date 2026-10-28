@@ -22,6 +22,11 @@ All notable changes to this project are documented here.
   as written in Slack (`<`, `>` and `&` are escaped); an `owner` written as a Slack mention still
   pings.
 - **`WorkflowCopyFault` is exported from `@sensigo/realm`.**
+- **Each model request `realm agent` records carries a `request_id` (issue #715).** It is a random
+  UUID that Realm mints for the request, stored with it in the step's evidence and in a failed
+  drive's `usage`. It is not the model service's own request id: Realm replaces any `request_id` a
+  provider module returns. The store TCK's `USAGE_RECORD_ROUNDTRIP` law now holds every store to
+  round-tripping it, so a store that drops a request field it does not know fails the law.
 - **`realm workflow validate`, `register` and `watch` say how big each agent step's fixed part is, which steps share it, and whether it can be cached (issue #600).** Each agent step gets a `cache:` line: the size of the text it sends ahead of its input on every call, the steps whose text starts the same way, and, with a minimum, whether it is long enough to be cached at all. No model is called and no key is read. Four flags: `--provider`, `--model` (it needs `--provider`, and its minimum is read from your economics file), `--floor` (a minimum of your own) and `--ratio` (your own characters per token). `validate --json` gains `cacheability`.
 
 ### Changed
@@ -68,6 +73,18 @@ All notable changes to this project are documented here.
   working directory (npm's `INIT_CWD` and `npm_config_local_prefix`, a CI runner's workspace
   variable) is not treated as a secret. The home folder stays hidden in a log.
 - Hardening: `realm agent` now hides a declared secret in the spellings the MCP door already hid.
+- **A step that uses tools records what its model requests cost (issue #610).** Each request such a
+  step makes that gets an answer — every turn, the retry after a refused strict tool list, and the
+  final answer — is kept on the step's record in the order sent, as for every other agent step,
+  and a step that fails keeps the requests that had returned, including an earlier repair
+  attempt's. `realm run inspect`, `get_run_state` and the run's `Cost:` line show it. Until this
+  release such a step recorded nothing (the 0.46.0 notes said so). A provider module's
+  `callStepWithTools` may return the new optional `usage` list on its result.
+- **Two different model requests with the same start time and token counts are no longer taken
+  for one (issue #715).** When a drive failed, `realm agent` decided whether a request was already
+  on the step's record by its start time and token counts, so a second request that matched them
+  was not attached to the failure and its cost was lost. It now compares the request's
+  `request_id`.
 
 ## [0.48.0] — 2026-10-26
 

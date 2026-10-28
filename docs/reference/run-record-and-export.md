@@ -127,7 +127,7 @@ A guard's entry holds `aborted` in its `output_summary`, and `abort_message` whe
 | `structured_output`     | object  | No           | Whether strict structured output was asked for and sent. See [Agent-step controls](workflow/agent-step-controls.md#structured_output). |
 | `cache`                 | object  | No           | What the model's provider reported about the prompt cache: `state`, `basis` and `requests`. Added in 0.46.0.                           |
 
-`cache.state` is `engaged`, `never_engaged`, `write_only`, `partially_observed` or `unobservable`. `cache.basis` is `provider_reported` or `unobservable`. Each of `cache.requests` has `request_index` and `request_start`, and the counts the provider reported: `prompt_tokens`, `uncached_input_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `cache_write_tokens`, `output_tokens`, `cache_creation`.
+`cache.state` is `engaged`, `never_engaged`, `write_only`, `partially_observed` or `unobservable`. `cache.basis` is `provider_reported` or `unobservable`. Each of `cache.requests` has `request_index`, `request_start` and `request_id` (added after version 0.48.0), and the counts the provider reported: `prompt_tokens`, `uncached_input_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `cache_write_tokens`, `output_tokens`, `cache_creation`.
 
 A request `realm agent` sent also records what Realm asked for, what answered and where the request went (added after version 0.47.0; a request recorded before has none of these):
 
@@ -143,6 +143,8 @@ A request `realm agent` sent also records what Realm asked for, what answered an
 | `provider`               | The provider that served the request, as `realm agent` names it: `anthropic`, `openai`, `openai-reasoning`, or `module:<file>` for your own provider. Realm uses it to find the request's price in the price list when the request went to the provider's own endpoint, and `realm run inspect` names the provider whose price was used (`priced as anthropic's claude-sonnet-5-5`; added after version 0.47.0).                                                                |
 | `endpoint`               | `default` when the request went to the provider's own address, `custom` when it went elsewhere (`--base-url`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`). The address is not recorded. With `custom`, `realm run inspect` adds `list price, your endpoint may bill differently` to a figure from the price list, and, when a lifetime was asked and nothing was written or read, `, or the endpoint dropped the request to cache` (added after version 0.47.0).                   |
 | `cache_split_offered`    | Whether the provider reports how much of a write is kept for each lifetime (`cache_creation`).                                                                                                                                                                                                                                                                                                                                                                                  |
+
+Each request also carries a `request_id`, a random UUID that Realm itself mints (added after version 0.48.0). It is not the model service's own request id. Realm replaces any `request_id` a provider module puts in the usage it returns. A request recorded before this version has none, and Realm never matches it against a new request.
 
 A failed drive's `usage`, under `drive_failures`, holds the same fields.
 

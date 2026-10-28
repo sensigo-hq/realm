@@ -70,6 +70,7 @@ import {
   safeErrorText,
   safeExplainFailure,
   appendRequests,
+  mintRequestIds,
   type LlmClock,
 } from './providers/agent-utils.js';
 import { isToolCapable } from './providers/llm-provider.js';
@@ -576,15 +577,18 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   // #600: whether the driven step's calls are ALREADY on its record. Chokepoints 3 and 4 attach
   // `usageForStep` to a drive-failure entry; when the failure belongs to a step `executeChain` ran
   // AFTER the driven step saved, those calls are already on that step's evidence, and attaching them
-  // again would count them twice. Keyed on CONTENT (the step's first billed request appearing on one
-  // of its entries), never on a count or a version: the step's own claim moves the version while its
-  // calls stay unsaved, and other writers add entries for the step that carry none of its calls (a
-  // reclaim's audit line, a compensating un-claim, another driver's save). A failed re-read answers
-  // `false`, so the calls are attached: the store is failing, and the entry likely will not land.
+  // again would count them twice. Keyed on the RECORD'S CONTENT (the step's first billed request
+  // appearing on one of its entries), never on a count or a version: the step's own claim moves the
+  // version while its calls stay unsaved, and other writers add entries for the step that carry none
+  // of its calls (a reclaim's audit line, a compensating un-claim, another driver's save). The part
+  // of the content compared is the request's own identity (#715 (R), D6-28): the `request_id` realm
+  // minted with the request and stored with it — never its start time and token counts, which two
+  // different requests can share. Absent on either side ⇒ not the same request: a stored record
+  // without the id was written by an earlier process, so it is never this process's in-memory
+  // request, and there is no fallback to the old content rule. A failed re-read answers `false`, so
+  // the calls are attached: the store is failing, and the entry likely will not land.
   const sameRequest = (a: UsageRecord, b: UsageRecord): boolean =>
-    a.request_start === b.request_start &&
-    a.prompt_tokens === b.prompt_tokens &&
-    a.output_tokens === b.output_tokens;
+    a.request_id !== undefined && b.request_id !== undefined && a.request_id === b.request_id;
   const callsAlreadyRecorded = async (
     step: string,
     calls: readonly UsageRecord[],
@@ -1555,23 +1559,37 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 // issue #401, CHOKEPOINT (1): recorded AFTER the original line, never instead of
                 // it. Returns rather than throws, which is what makes double-minting structurally
                 // impossible — the last-resort catch below never sees this path.
-                await recordDriveFailure(
-                  deps.store,
-                  runId,
-                  buildEntry(err, stepName, providerForEvidence ?? 'unknown', attemptStartedAt),
+                // issue #610: as the single-shot catch does, the calls this step's earlier #217
+                // repair attempts already billed go in front of the throwing call's own (wire
+                // order). `err` itself is never mutated.
+                const entry = buildEntry(
+                  err,
+                  stepName,
+                  providerForEvidence ?? 'unknown',
+                  attemptStartedAt,
                 );
+                if (usageForStep !== undefined && usageForStep.length > 0) {
+                  entry.usage = appendRequests(usageForStep, entry.usage);
+                }
+                await recordDriveFailure(deps.store, runId, entry);
                 return 'failed';
               }
               stepInput = toolsResult.output;
+              // issue #610: `?? []` is load-bearing, as on the single-shot paths. A model call
+              // HAPPENED, so the record must say `unobservable`, not stay silent. A provider that
+              // reports nothing (a third-party module) would otherwise leave `cache` absent. Each
+              // #217 repair pass appends its requests, so a repaired step records every call it
+              // paid for, in wire order.
+              usageForStep = appendRequests(usageForStep, mintRequestIds(toolsResult.usage ?? []));
               toolCallsForMeta = toolsResult.toolCalls;
               // issue #332 item 6: the tools path never consumes structuredOutputPlan (there is no
-              // grammar-constrained call here — callStepWithTools has no strict concept at all), so
-              // a strict-DECLARED, tools-bearing step used to leave structuredOutputMetaForStep
-              // undefined — falling through to execution-loop.ts's synthesized `external_agent`
-              // stamp, which claims "realm made no request at all". That's a misattribution: realm's
-              // OWN agent DID drive this step, via the tools path, which structurally cannot honor
-              // strict. Mint the honest, distinct reason here instead of letting the engine
-              // synthesize the wrong one.
+              // grammar-constrained OUTPUT call here — the tools path's strict is #311's per-tool
+              // argument strict), so a strict-DECLARED, tools-bearing step used to leave
+              // structuredOutputMetaForStep undefined — falling through to execution-loop.ts's
+              // synthesized `external_agent` stamp, which claims "realm made no request at all".
+              // That's a misattribution: realm's OWN agent DID drive this step, via the tools path,
+              // which structurally cannot honor strict. Mint the honest, distinct reason here
+              // instead of letting the engine synthesize the wrong one.
               //
               // NOT a ladder outcome — deliberately does NOT touch structuredOutputSticky. Sticky
               // exists to remember a LIVE downgrade across repair-loop attempts for the SAME step
@@ -1652,10 +1670,10 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   // record must say `unobservable`, not stay silent. A provider that reports
                   // nothing (the base default, any third-party module) would otherwise leave
                   // `cache` absent — and absent means nothing was recorded, which a handler step
-                  // and a tool-calling step (issue #610) also produce; see StepDiagnostics.cache.
+                  // also produces; see StepDiagnostics.cache.
                   // Repair calls now accumulate: each #217 repair pass appends its requests, so a
                   // repaired step records every call it paid for, in wire order.
-                  usageForStep = appendRequests(usageForStep, usage ?? []);
+                  usageForStep = appendRequests(usageForStep, mintRequestIds(usage ?? []));
                   if (structuredOutputPlan.ineligibleMeta !== undefined) {
                     // Gate-ineligible or sticky — strict was never attempted this call at all.
                     structuredOutputMetaForStep = structuredOutputPlan.ineligibleMeta;
@@ -1708,10 +1726,10 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   // record must say `unobservable`, not stay silent. A provider that reports
                   // nothing (the base default, any third-party module) would otherwise leave
                   // `cache` absent — and absent means nothing was recorded, which a handler step
-                  // and a tool-calling step (issue #610) also produce; see StepDiagnostics.cache.
+                  // also produces; see StepDiagnostics.cache.
                   // Repair calls now accumulate: each #217 repair pass appends its requests, so a
                   // repaired step records every call it paid for, in wire order.
-                  usageForStep = appendRequests(usageForStep, usage ?? []);
+                  usageForStep = appendRequests(usageForStep, mintRequestIds(usage ?? []));
                 }
               } catch (err) {
                 // The catch-side sticky-arming block that used to live here is DELETED as dead

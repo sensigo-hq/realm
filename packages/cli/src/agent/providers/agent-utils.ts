@@ -398,6 +398,11 @@ export interface DriveCallPayload {
   retry_after_observed_ms?: number;
   declared_per_attempt_ms?: number;
   derived_ceiling_ms?: number;
+  /**
+   * Issue #610: what the requests that returned before the throw billed, one entry per request in
+   * wire order (`attachBilledUsage`, or a provider's own typed throw). Absent when none returned.
+   */
+  usage?: UsageRecord[];
 }
 
 /** What one client's fetch wrapper has seen. Per-invocation, minted beside the client. */
@@ -733,9 +738,8 @@ export async function driveCreate<T>(
  * Absence is preserved deliberately, and it is narrower than it looks. Nothing is attached until a
  * request RETURNS, so `usage: undefined` covers a failure before any request left the process (a
  * pre-dispatch `sdk_missing`) AND a first request that failed on the wire (a 5xx, a timeout, a
- * dropped connection): it never proves no request was made. And the tool-calling path attaches
- * nothing at all yet — `callStepWithTools` builds no `UsageRecord` and calls this helper nowhere —
- * so a tools step's `usage` is absent whatever it billed (issue #610).
+ * dropped connection): it never proves no request was made. `callStepWithTools` attaches through
+ * this helper at its entry, like the other entry points (issue #610).
  *
  * TOTAL, like `attachDriveCall`: a frozen error, or a proxy whose traps throw, propagates intact
  * and unenriched — the recording machinery never replaces the failure it is recording.
@@ -788,4 +792,27 @@ export function appendRequests(
     ...entry,
     request_index: index,
   }));
+}
+
+/**
+ * Issue #715 (R; D6-28, D6-44) — gives every request a provider's answer carried its identity: a
+ * new `request_id`, a random UUID (version 4), ALWAYS overwriting any `request_id` the provider's
+ * usage held. Called once per arriving array, at the points where a provider's usage enters realm's
+ * own records: the three success returns in `run-agent.ts` and the usage a provider attached to a
+ * thrown error (`buildEntry`). Never inside `appendRequests` — it re-bases and spreads every entry
+ * on every append, so a mint there would give an earlier request a new id each time — never on
+ * `usageForStep` or a stored record, and never at a write boundary: one in-memory request is written
+ * into more than one record (the step's evidence, a drive-failure entry), and `sameRequest` matches
+ * them by this id.
+ *
+ * Pure and total, like `stampRequestProvider`: returns new objects and never mutates its input (a
+ * frozen input is fine); an entry that is not a plain object (a provider module's `null`) passes
+ * through unchanged; an empty array returns an empty array.
+ */
+export function mintRequestIds(requests: readonly UsageRecord[]): UsageRecord[] {
+  return requests.map((entry) =>
+    entry === null || typeof entry !== 'object' || Array.isArray(entry)
+      ? entry
+      : { ...entry, request_id: crypto.randomUUID() },
+  );
 }
