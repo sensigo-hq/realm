@@ -34,14 +34,15 @@ const TAIL = ' — load the missing extension, or run these steps on a runner th
 const DOOR = '. get_run_state lists each one in engine_runnable.'.length;
 
 describe('#872 (a) — cannotRunSummary, the grouped hand-back hint', () => {
-  it("B6 (a): every step judged from the run's marker — the past tense, no way out, the pointer", () => {
+  it("B6 (a): every step judged from the run's marker — the past tense, no way out, no pointer (the MCP door adds it)", () => {
     const summary = cannotRunSummary([
       cap('a', 'handler', 'h', 'marker'),
       cap('b', 'handler', 'h', 'marker'),
       cap('c', 'adapter', 'g', 'marker'),
     ]);
-    // (a) red when the marker branch is dropped (the present tense and the way out appear) or the
-    //     pointer is lost; (b) prints the summary (step and requirement names only).
+    // (a) red when the marker branch is dropped (the present tense and the way out appear) or core
+    //     says the door's pointer again (AC1b); (b) prints the summary (step and requirement
+    //     names only).
     expect(summary).toBe(
       "3 steps could not run (capability): handler 'h' ('a', 'b'); adapter 'g' ('c')",
     );
