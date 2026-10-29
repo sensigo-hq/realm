@@ -574,7 +574,7 @@ describe('the causes, one per row of the decision table (C5)', { timeout: 60_000
 });
 
 describe('the sharing (C5; Δ12)', { timeout: 60_000 }, () => {
-  // The whole-part clause first, then the others by size. Break: the whole clause given a size or
+  // The whole-part clause. Break: the whole clause given a size or
   // put last. (a) red when the line changes; (b) prints it.
   it('whole: examples/05 review_security and review_performance send the same fixed part', () => {
     const r = realm([
@@ -681,12 +681,12 @@ describe('the sharing (C5; Δ12)', { timeout: 60_000 }, () => {
     ]);
   });
 
-  // Correction 2 (F-2): a whole share's `tokens` are the step's own `prefix.tokens` (Anthropic's band
-  // in both), and --json keeps every share the line names while the line caps at five. Thirteen
-  // identical steps on Anthropic. (a) red when a whole share goes back to the characters-only
-  // interval, or when the cap is applied to the JSON; (b) prints each step's prefix interval, its
-  // share intervals that differ from it, the share count and the line's sharing clause.
-  it("F-2 --json: a whole share's tokens equal the step's own; twelve listed, the line names five", () => {
+  // Correction 2 (F-2; #918): --json keeps every share the line names while the line caps at five,
+  // each entry exactly `{ step }` (its size is the layout's own `prefix`). Thirteen identical steps
+  // on Anthropic. (a) red when an entry carries more than its step (the core share's `chars`,
+  // `tokens`, `divergence_at`), or when the cap is applied to the JSON; (b) prints each step's
+  // entries' keys, the count, and the line's sharing clause.
+  it('F-2 --json: shares_with holds each named step as `{ step }`; twelve listed, the line names five', () => {
     const ids = Array.from({ length: 13 }, (_, i) => `s${String(i + 1).padStart(2, '0')}`);
     const dir = project({
       workflow: shareWorkflow(
@@ -702,37 +702,22 @@ describe('the sharing (C5; Δ12)', { timeout: 60_000 }, () => {
     ) as {
       cacheability: {
         steps: Array<{
-          layouts: Array<{
-            extra_tokens?: unknown;
-            prefix: { tokens: { low: number; high: number } };
-            shares_with: Array<{ step: string; tokens: { low: number; high: number } }>;
-          }>;
+          step: string;
+          layouts: Array<{ shares_with: Array<Record<string, unknown>> }>;
         }>;
       };
     };
-    const seen = json.cacheability.steps.map((s) => {
-      const l = s.layouts[0]!;
-      const off = l.shares_with.filter(
-        (w) => JSON.stringify(w.tokens) !== JSON.stringify(l.prefix.tokens),
-      );
-      return [JSON.stringify(l.prefix.tokens), off.map((w) => w.tokens), l.shares_with.length];
-    });
-    expect(
-      {
-        banded: json.cacheability.steps[0]!.layouts[0]!.extra_tokens !== undefined,
-        seen: seen.map(([, off, n]) => [off, n]),
-        clause: line.split(' — ').slice(-1)[0],
-      },
-      `the step's own interval: ${String(seen[0]![0])}`,
-    ).toEqual({
-      banded: true,
-      seen: ids.map(() => [[], 12]),
+    expect({
+      entries: json.cacheability.steps.map((s) => s.layouts[0]!.shares_with),
+      clause: line.split(' — ').slice(-1)[0],
+    }).toEqual({
+      entries: ids.map((id) => ids.filter((other) => other !== id).map((step) => ({ step }))),
       clause: 'shares its whole fixed part with s02, s03, s04, s05, s06 and 7 more',
     });
   });
 
   // Not printed: a pair that parts inside the profile (examples/03's two profiles, on openai). Break:
-  // the profile filter dropped (a 10-char "You are a " clause appears). (a) red when a sharing clause
+  // a share inside one message named (a 10-char "You are a " clause appears). (a) red when a sharing clause
   // appears; (b) prints the lines.
   it("not printed: examples/03's steps part inside their profiles on openai", () => {
     const r = realm(['workflow', 'validate', ex('03-incident-response'), '--provider', 'openai']);
@@ -1066,6 +1051,49 @@ describe('--json (C5; C3.6)', { timeout: 60_000 }, () => {
       false,
       false,
     ]);
+  });
+
+  // N4 (#918): --json follows the line. On OpenAI a pair that shares its whole fixed part lists
+  // each other as exactly `{ step }`; a pair that shares only a profile (and parts in the schema,
+  // inside the one system message) lists nothing. (a) red when the shared-start clause is restored
+  // (the profile pair gains entries) or an entry carries the core share whole (four keys); (b)
+  // prints each step's `shares_with` as its entries' keys.
+  it('N4: --json shares_with is `{ step }` per step the line names; the profile pair lists none', () => {
+    const dir = project({
+      workflow: shareWorkflow('n4', [
+        shareStep('w_one', 'answer'),
+        shareStep('w_two', 'answer'),
+        shareStep('pf_one', 'answer', { profile: 'p' }),
+        shareStep('pf_two', 'summary', { profile: 'p' }),
+      ]),
+      profiles: { 'p.md': 'P'.repeat(400) },
+    });
+    const json = JSON.parse(
+      realm(['workflow', 'validate', dir, '--provider', 'openai', '--json']).stdout,
+    ) as {
+      cacheability: {
+        steps: Array<{
+          step: string;
+          layouts: Array<{ shares_with: Array<Record<string, unknown>> }>;
+        }>;
+      };
+    };
+    const lists = Object.fromEntries(
+      json.cacheability.steps.map((s) => [s.step, s.layouts[0]!.shares_with]),
+    );
+    expect(
+      lists,
+      JSON.stringify(
+        Object.fromEntries(
+          Object.entries(lists).map(([k, v]) => [k, v.map((e) => Object.keys(e))]),
+        ),
+      ),
+    ).toEqual({
+      w_one: [{ step: 'w_two' }],
+      w_two: [{ step: 'w_one' }],
+      pf_one: [],
+      pf_two: [],
+    });
   });
 
   // The class row (Δ3): the model id is a fact, printed raw in --json even when an environment
