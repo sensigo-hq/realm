@@ -39,9 +39,8 @@ const C3B =
   'Error: --prompt-cache sets caching only for Anthropic; Realm asks OpenAI for no caching, so the flag would change nothing. ' +
   'Remove --prompt-cache, or use --provider anthropic with an Anthropic model.';
 const C3E = (id: string) =>
-  `Error: --prompt-cache has nothing to apply to: workflow '${id}' has no agent step that sends its instructions in one request ` +
-  '(steps that call tools are not cached yet), so the flag would change nothing. Remove --prompt-cache; it applies once the ' +
-  'workflow has an agent step without tools.';
+  `Error: --prompt-cache has nothing to apply to: workflow '${id}' has no agent step, so the flag would change nothing. ` +
+  'Remove --prompt-cache.';
 
 const AGENT_WF = [
   'id: prompt-cache-600',
@@ -161,6 +160,11 @@ function onlyRun(): { text: string; record: RunRecord } {
   return { text, record: JSON.parse(text) as RunRecord };
 }
 const wf = (dir: string) => ['--workflow', join(dir, 'workflow.yaml')];
+/** stderr's first line when it is the C3E refusal of workflow `id`, else `'not the refusal'`. */
+const notTheRefusal = (stderr: string, id: string): string => {
+  const first = stderr.trim().split('\n')[0] ?? '';
+  return first.startsWith(C3E(id)) ? first : 'not the refusal';
+};
 const ANTHROPIC = (baseUrl: string) =>
   env({ ANTHROPIC_API_KEY: 'k-600', ANTHROPIC_BASE_URL: baseUrl });
 const OPENAI = () =>
@@ -350,12 +354,11 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
   }, 30_000);
 
   // G19b, the create path. (a) red when the create-path check is removed; (b) prints stderr.
-  it('G19b a workflow with no agent step, or only tool-calling ones → refused, for any stated value, off included; no run file', async () => {
+  it('G19b a workflow with no agent step → refused, for any stated value, off included; no run file', async () => {
     const results = [];
     for (const [dir, id, value] of [
       ['auto', 'prompt-cache-600-auto', 'short'],
       ['auto', 'prompt-cache-600-auto', 'off'],
-      ['tools', 'prompt-cache-600-tools', 'long'],
     ] as const) {
       const r = await runCli(
         ['agent', ...wf(dir), '--model', 'claude-x', '--prompt-cache', value],
@@ -370,9 +373,23 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
     expect(results.map((x) => [x.code, x.stderr === x.expected ? 'refused' : x.stderr])).toEqual([
       [1, 'refused'],
       [1, 'refused'],
-      [1, 'refused'],
     ]);
     expect(runFiles()).toEqual([]);
+  }, 60_000);
+
+  // M11 (issue #899), the create path: a workflow whose every agent step calls tools now has a
+  // step to apply the setting to. (a) red when the refusal reads `singleShot > 0` again; (b) prints
+  // the exit code, the first line of stderr and the run-file count.
+  it('M11 create — a workflow whose every agent step calls tools, with --prompt-cache long → not refused; the run starts', async () => {
+    const r = await runCli(
+      ['agent', ...wf('tools'), '--model', 'claude-x', '--prompt-cache', 'long'],
+      ANTHROPIC(CLOSED_PORT),
+    );
+    expect({
+      code: r.code,
+      stderr: notTheRefusal(r.stderr, 'prompt-cache-600-tools'),
+      runFiles: runFiles().length,
+    }).toEqual({ code: r.code, stderr: 'not the refusal', runFiles: 1 });
   }, 60_000);
 
   // G19b, the attach path. (a) red when the attach-path check runs after resolveRunAttach (the
@@ -423,6 +440,44 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
       (JSON.parse(readFileSync(join(runsDir(), `${failed.id}.json`), 'utf8')) as RunRecord)
         .terminal_state,
     ).toBe(true);
+  }, 60_000);
+
+  // M11 (issue #899), the attach path: --run-id of a run of a workflow whose every agent step calls
+  // tools is not refused, and the drive attaches (the run file changes). (a) red when the refusal
+  // reads `singleShot > 0` again; (b) prints the exit code, the first line of stderr, the run-file
+  // count and whether the run file changed.
+  it('M11 attach — --run-id of a run whose every agent step calls tools, with --prompt-cache long → not refused; the drive attaches', async () => {
+    const definition = {
+      id: 'prompt-cache-600-tools',
+      name: 'Prompt cache 600 tools',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      mcp_servers: [{ id: 'srv', transport: 'stdio', command: 'node', args: ['-e', '0'] }],
+      steps: {
+        t: {
+          description: 'Use the tool.',
+          execution: 'agent',
+          tools: ['srv:op'],
+          input_schema: { type: 'object' },
+        },
+      },
+    } as unknown as WorkflowDefinition;
+    await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(definition);
+    const store = new JsonFileStore(runsDir());
+    const run = (await store.create({ workflowId: definition.id, workflowVersion: 1, params: {} }))
+      .run;
+    const file = join(runsDir(), `${run.id}.json`);
+    const before = readFileSync(file);
+    const r = await runCli(
+      ['agent', '--run-id', run.id, '--model', 'claude-x', '--prompt-cache', 'long'],
+      ANTHROPIC(CLOSED_PORT),
+    );
+    expect({
+      code: r.code,
+      stderr: notTheRefusal(r.stderr, definition.id),
+      runFiles: runFiles().length,
+      changed: !readFileSync(file).equals(before),
+    }).toEqual({ code: r.code, stderr: 'not the refusal', runFiles: 1, changed: true });
   }, 60_000);
 
   // G19b, the controls. (a) red when the flag-less command is refused, or the listen child's
