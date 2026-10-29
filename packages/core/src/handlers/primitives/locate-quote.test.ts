@@ -455,16 +455,25 @@ describe('locateQuote — the floor, the count, the offsets, the empty inputs, t
           return `${window.slice(0, 1_500)} Zebra quartz fjords vex. ${window.slice(1_500)}`;
         return window;
       });
-      const began = performance.now();
-      const states = quotes.map((quote) => locateQuote(quote, source).state);
-      const elapsed = performance.now() - began;
+      // The fastest of three passes is the estimate: load only ever adds time, and the first pass
+      // also pays the warm-up (about 200 ms, against 80–100 ms after it, at a load average of 6 on
+      // 2026-10-29).
+      const passes: number[] = [];
+      let states: string[] = [];
+      for (let pass = 0; pass < 3; pass++) {
+        const began = performance.now();
+        states = quotes.map((quote) => locateQuote(quote, source).state);
+        passes.push(performance.now() - began);
+      }
+      const fastest = Math.min(...passes);
       // (a) red when locating grows far slower — a coarse budget: tiling one character at a time
       //     measured 0.44 s here, against 0.08 s, so the next cell carries that break's red; (b)
-      //     prints whether it was under a second and how many quotes were located.
-      expect({ underASecond: elapsed < 1_000, located: states.length }).toEqual({
-        underASecond: true,
-        located: 25,
-      });
+      //     prints whether it was under a second and how many quotes were located, and the three
+      //     passes' times in the message.
+      expect(
+        { underASecond: fastest < 1_000, located: states.length },
+        `passes ${passes.map((ms) => ms.toFixed(0)).join(', ')} ms`,
+      ).toEqual({ underASecond: true, located: 25 });
     },
   );
 
@@ -693,7 +702,7 @@ describe('locateQuote — correction 1, A7–A9: `nearest`, the cost, the gaps',
   });
 
   it(
-    'A8: 25 fabricated 3,000-character prose quotes over a 40,000-character source in under a second',
+    'A8: 25 fabricated 3,000-character prose quotes over a 40,000-character source stay inside the search budget',
     { timeout: 20_000 },
     () => {
       const words =
@@ -717,15 +726,34 @@ describe('locateQuote — correction 1, A7–A9: `nearest`, the cost, the gaps',
         .join('\n\n')
         .slice(0, 40_000);
       const quotes = Array.from({ length: 25 }, () => prose(3_000));
-      const began = performance.now();
-      const states = new Set(quotes.map((q) => locateQuote(q, source).state));
-      const elapsed = performance.now() - began;
-      // (a) red under the old tiling (3.1–3.4 s measured by the review); (b) prints the states seen
-      //     and whether it was under a second.
-      expect({ states: [...states], underASecond: elapsed < 1_000 }).toEqual({
-        states: ['not_found'],
-        underASecond: true,
-      });
+      // Counted, not timed. Each substring search reads the source, so the searches are the cost,
+      // and a count does not move with the machine's load. The first form of this cell timed one
+      // pass against a second: it went red at 1,130 ms on 2026-10-29 with the locator unchanged,
+      // under a load average of about 20 (a pass took 349–438 ms at a load average of 10, every
+      // quote spending the whole budget of 1,000 searches).
+      const spies = (['includes', 'indexOf', 'startsWith'] as const).map((m) =>
+        vi.spyOn(String.prototype, m),
+      );
+      const searched = (): number => spies.reduce((n, spy) => n + spy.mock.calls.length, 0);
+      const states = new Set<string>();
+      let most = 0;
+      try {
+        for (const quote of quotes) {
+          const before = searched();
+          states.add(locateQuote(quote, source).state);
+          most = Math.max(most, searched() - before);
+        }
+      } finally {
+        // Restored even when a call throws, so the next cells' string methods are their own.
+        for (const spy of spies) spy.mockRestore();
+      }
+      // (a) red under the old tiling (no budget: 3.1–3.4 s measured by the review), and when the
+      //     budget's throw is removed (`Budget`, `locate-quote.ts`); (b) prints the states seen and
+      //     whether every quote stayed inside the budget, with the largest count in the message.
+      expect(
+        { states: [...states], withinBudget: most <= QUOTE_SEARCH_BUDGET + 50 },
+        `most searches for one quote: ${String(most)} (bound ${String(QUOTE_SEARCH_BUDGET + 50)})`,
+      ).toEqual({ states: ['not_found'], withinBudget: true });
     },
   );
 
