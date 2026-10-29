@@ -1017,7 +1017,10 @@ describe('#627 W correction 1 (E4, E5) — the held-back reply by row, its arms,
   });
 });
 
-describe('#627 W correction 1 (A4) — the realm-mcp bin takes no flags', () => {
+// These cells start the built server as a child process (`spawnSync`, its own limit 20 s). vitest's default test
+// budget is 5 s, so on a loaded machine a cold start ran out of it (a counted run on 2026-10-29 failed one of these
+// cells at 5,000 ms): the cell failed for a reason that is not its subject. The budget is set above the child's limit.
+describe('#627 W correction 1 (A4) — the realm-mcp bin takes no flags', { timeout: 30_000 }, () => {
   it('`realm-mcp --gate-answers withheld` refuses the start: one line, exit 1', async () => {
     const bin = fileURLToPath(new URL('../dist/server.js', import.meta.url));
     const home = await mkdtemp(join(tmpdir(), 'realm-door-627-bin-'));
@@ -1041,61 +1044,65 @@ describe('#627 W correction 1 (A4) — the realm-mcp bin takes no flags', () => 
   });
 });
 
-describe('#627 W correction 2 (4.1) — realm-mcp judges its variables as realm mcp judges its flags', () => {
-  const bin = fileURLToPath(new URL('../dist/server.js', import.meta.url));
-  /** The built bin with only these variables; stdin closed, so a started server exits after its line. */
-  const run = async (env: Record<string, string>) => {
-    const home = await mkdtemp(join(tmpdir(), 'realm-door-627-bin2-'));
-    const r = spawnSync(process.execPath, [bin], {
-      env: { PATH: process.env['PATH'] ?? '', HOME: home, ...env },
-      input: '',
-      encoding: 'utf8',
-      timeout: 20_000,
-    });
-    const lines = r.stderr.trim().split('\n');
-    return {
-      code: r.status,
-      lines: lines.length,
-      first: lines[0] ?? '',
-      stack: r.stderr.includes('    at '),
+describe(
+  '#627 W correction 2 (4.1) — realm-mcp judges its variables as realm mcp judges its flags',
+  { timeout: 30_000 },
+  () => {
+    const bin = fileURLToPath(new URL('../dist/server.js', import.meta.url));
+    /** The built bin with only these variables; stdin closed, so a started server exits after its line. */
+    const run = async (env: Record<string, string>) => {
+      const home = await mkdtemp(join(tmpdir(), 'realm-door-627-bin2-'));
+      const r = spawnSync(process.execPath, [bin], {
+        env: { PATH: process.env['PATH'] ?? '', HOME: home, ...env },
+        input: '',
+        encoding: 'utf8',
+        timeout: 20_000,
+      });
+      const lines = r.stderr.trim().split('\n');
+      return {
+        code: r.status,
+        lines: lines.length,
+        first: lines[0] ?? '',
+        stack: r.stderr.includes('    at '),
+      };
     };
-  };
 
-  it('a bad REALM_MCP_GATE_ANSWERS refuses the start: one line naming the variable, exit 1, no stack trace', async () => {
-    const r = await run({ REALM_MCP_GATE_ANSWERS: 'bogus' });
-    // (a) red when the bin builds the server first (a stack trace with the option's words); (b)
-    //     prints the exit, the line count, whether it names the variable, and whether a stack shows.
-    expect({
-      code: r.code,
-      lines: r.lines,
-      names: r.first.startsWith("realm-mcp: invalid REALM_MCP_GATE_ANSWERS value 'bogus'"),
-      stack: r.stack,
-    }).toEqual({
-      code: 1,
-      lines: 1,
-      names: true,
-      stack: false,
+    it('a bad REALM_MCP_GATE_ANSWERS refuses the start: one line naming the variable, exit 1, no stack trace', async () => {
+      const r = await run({ REALM_MCP_GATE_ANSWERS: 'bogus' });
+      // (a) red when the bin builds the server first (a stack trace with the option's words); (b)
+      //     prints the exit, the line count, whether it names the variable, and whether a stack shows.
+      expect({
+        code: r.code,
+        lines: r.lines,
+        names: r.first.startsWith("realm-mcp: invalid REALM_MCP_GATE_ANSWERS value 'bogus'"),
+        stack: r.stack,
+      }).toEqual({
+        code: 1,
+        lines: 1,
+        names: true,
+        stack: false,
+      });
     });
-  });
 
-  it('a bad REALM_MCP_FORM_WAIT_SECONDS: the line names the variable, never the library option', async () => {
-    const r = await run({ REALM_MCP_FORM_WAIT_SECONDS: '10' });
-    // (a) red when the line says the library's "formWaitSeconds"; (b) prints the exit and the line's
-    //     opening.
-    expect({ code: r.code, first: r.first.split(':').slice(0, 2).join(':') }).toEqual({
-      code: 1,
-      first: "realm-mcp: invalid REALM_MCP_FORM_WAIT_SECONDS value '10'",
+    it('a bad REALM_MCP_FORM_WAIT_SECONDS: the line names the variable, never the library option', async () => {
+      const r = await run({ REALM_MCP_FORM_WAIT_SECONDS: '10' });
+      // (a) red when the line says the library's "formWaitSeconds"; (b) prints the exit and the line's
+      //     opening.
+      expect({ code: r.code, first: r.first.split(':').slice(0, 2).join(':') }).toEqual({
+        code: 1,
+        first: "realm-mcp: invalid REALM_MCP_FORM_WAIT_SECONDS value '10'",
+      });
     });
-  });
 
-  it('a valid value: stderr’s first line is the start line, naming the variable', async () => {
-    const r = await run({ REALM_MCP_GATE_ANSWERS: 'withheld' });
-    // (a) red when the bin prints no start line; (b) prints its first stderr line's opening.
-    expect(r.first.split('. ')[0]).toBe(
-      'Gate answers over MCP: withheld (from REALM_MCP_GATE_ANSWERS)',
-    );
-  });
-});
+    it('a valid value: stderr’s first line is the start line, naming the variable', async () => {
+      const r = await run({ REALM_MCP_GATE_ANSWERS: 'withheld' });
+      // (a) red when the bin prints no start line; (b) prints its first stderr line's opening.
+      expect(r.first.split('. ')[0]).toBe(
+        'Gate answers over MCP: withheld (from REALM_MCP_GATE_ANSWERS)',
+      );
+    });
+  },
+);
 
 describe('#627 W correction 2 (4.2, 4.3) — the library refuses an inert form wait and an empty value', () => {
   it('a form wait under withheld, or on a statelessHttp door, builds no server; an empty gateAnswers is refused', () => {

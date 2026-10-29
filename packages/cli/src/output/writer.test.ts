@@ -372,7 +372,7 @@ describe('#729 PR-3 — the fatal handler', () => {
       said: r.stderr.includes('Error: boom [REDACTED]'),
       leaked: r.stderr.includes(ENV_VALUE),
     }).toEqual({ code: 1, said: true, leaked: false });
-  });
+  }, 30_000);
 });
 
 describe('#729 PR-3 — the abandon echo: the text between spans is masked as one text, the spans held fixed', () => {
