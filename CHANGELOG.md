@@ -126,7 +126,11 @@ engine_runnable.` It repeated one whole sentence, way out included, for every st
   `realm listen`, `realm workflow validate`, `register` and `watch` now refuse a value that starts
   with `-` (a lone `-` is accepted) as the value of `--model`; `--model --strict` used to take
   `--strict` as the model id and drop the flag, so a CI gate passed. Write `--model=<id>` for a value
-  that starts with `-`.
+  that starts with `-`. The same now holds for 23 other options that took any word: `--project` (on
+  `workflow run`, `agent`, `run drain`, `run respond`, `run advance`, `mcp` and `serve`),
+  `--extensions-module` (`run drain`, `mcp`, `serve`), `--workflow` (`run list`, `reclaim`, `purge`,
+  `reconcile`), `run export --out`, `agent --params` and `--base-url`, `serve --port`, and
+  `listen --port`, `--host`, `--dedup-store`, `--log-level` and `--sweep-expired-gates`.
 
 ## [0.48.0] — 2026-10-26
 

@@ -343,6 +343,8 @@ Runs the workflow in the terminal, one step at a time, asking you for each step'
 | `--project <dir>`            | The current folder | The project whose `realm.yaml` applies if the workflow has no project of its own.                                                                                                                          |
 | `--mint-writer-nonce`        | Off                | Marks each attempt's trace entries with a fresh identifier.                                                                                                                                                |
 
+`--project` refuses a value that starts with `-`, except a lone `-`; write `--option=value` for one.
+
 `--params-from-run` refuses a run of another workflow (`Error: run '<run-id>' is a run of workflow '<other>', not '<this>'; its params are not this workflow's.`) and refuses to be given with `--params` (`Error: give --params or --params-from-run, not both.`). `realm run abandon` prints a command that uses it.
 
 Parameters given with `--params`, and an answer typed at a step's prompt, are recorded as given. When they hold a mark Realm prints in place of a hidden value, such as `[REDACTED]`, a warning says so: `Warning: This answer holds '[REDACTED]': a value Realm hid when it showed it, sent back. Realm records what was sent, the marker included, so the run now holds the marker, not the value. Send the value itself, or leave the field out. An answer with no marker is recorded as sent.` For an answer typed at a step's prompt, the same sentence is printed indented under the prompt, without `Warning:`. Added after version 0.47.1.

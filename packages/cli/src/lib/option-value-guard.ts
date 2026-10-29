@@ -21,9 +21,12 @@ export interface GuardedOption {
 }
 
 /**
- * The options whose value is refused when it is a flag-like word typed as the next word. Keyed by the
- * leaf command's name (a command parsed on its own has no parent, so a path cannot be read) and the
- * long flag. Each takes any word without a check of its own (the census, `plans/issue-920/census/`).
+ * The options whose value is refused when it is a flag-like word typed as the next word (28). Keyed by
+ * the leaf command's name (a command parsed on its own has no parent, so a path cannot be read) and
+ * the long flag. Each takes any word without a check of its own (the census, `plans/issue-920/census/`).
+ * `option-value-guard-classes.test.ts` holds the other two classes: the options that already refuse
+ * such a word with their own message, and the free-text ones where a value starting with `-` is
+ * plausible (`run abandon --reason`, `run respond --by`).
  */
 export const GUARDED_OPTIONS: readonly GuardedOption[] = [
   // C-1: the model id, on the five commands that take one.
@@ -32,6 +35,34 @@ export const GUARDED_OPTIONS: readonly GuardedOption[] = [
   { command: 'watch', option: '--model' },
   { command: 'agent', option: '--model' },
   { command: 'listen', option: '--model' },
+  // C-2: the other options that take any word without a check of their own (23). Each accepts the word
+  // and goes on, and a dropped flag changes what the command does (`reconcile --workflow --dry-run`
+  // writes; `drain <id> --extensions-module --force` drains nothing) or its message misleads.
+  { command: 'run', option: '--project' }, // realm workflow run
+  { command: 'agent', option: '--project' },
+  { command: 'agent', option: '--params' },
+  { command: 'agent', option: '--base-url' },
+  { command: 'drain', option: '--project' },
+  // Its own check ("Cannot resolve --extensions-module") runs only on the --force path, so the
+  // swallow `--extensions-module --force` was never checked.
+  { command: 'drain', option: '--extensions-module' },
+  { command: 'serve', option: '--project' },
+  { command: 'serve', option: '--extensions-module' },
+  { command: 'serve', option: '--port' },
+  { command: 'mcp', option: '--project' },
+  { command: 'mcp', option: '--extensions-module' },
+  { command: 'listen', option: '--port' },
+  { command: 'listen', option: '--host' },
+  { command: 'listen', option: '--dedup-store' },
+  { command: 'listen', option: '--log-level' },
+  { command: 'listen', option: '--sweep-expired-gates' },
+  { command: 'list', option: '--workflow' }, // realm run list
+  { command: 'reclaim', option: '--workflow' },
+  { command: 'purge', option: '--workflow' },
+  { command: 'reconcile', option: '--workflow' },
+  { command: 'export', option: '--out' },
+  { command: 'respond', option: '--project' },
+  { command: 'advance', option: '--project' },
 ];
 
 /** A string of two or more characters that starts with `-` (Commander's option-looking token). A lone

@@ -362,18 +362,171 @@ describe('#920 C-1 — the pages say what the guard does', () => {
     expect(read(WORKFLOW), `${WORKFLOW} still says --model has no check`).not.toContain(
       '`--model` has no check on its value',
     );
-    for (const page of [
+    // C-2 extended these two sentences with the page's other guarded options (re-pinned there).
+    claim(
       'docs/reference/cli/realm-agent.md',
+      '`--model`, `--project`, `--params` and `--base-url` refuse a value that starts with `-`, except a lone `-`; write `--option=value` for one.',
+    );
+    claim(
       'docs/reference/cli/realm-listen.md',
-    ]) {
-      claim(
-        page,
-        '`--model` refuses a value that starts with `-`, except a lone `-`; write `--model=-x` for one.',
-      );
-    }
+      '`--model`, `--port`, `--host`, `--dedup-store`, `--log-level` and `--sweep-expired-gates` refuse a value that starts with `-`, except a lone `-`; write `--option=value` for one.',
+    );
     expect(flat(unreleased()), 'the CHANGELOG [Unreleased] #920 bullet').toContain(
       flat(
         '**A word that starts with `-` is refused as the value of `--model` (issue #920).** `realm agent`, `realm listen`, `realm workflow validate`, `register` and `watch` now refuse a value that starts with `-` (a lone `-` is accepted) as the value of `--model`; `--model --strict` used to take `--strict` as the model id and drop the flag, so a CI gate passed. Write `--model=<id>` for a value that starts with `-`.',
+      ),
+    );
+  });
+});
+
+/** The guard's two lines for an option, as the built `realm` prints them. */
+function guardLines(flags: string, long: string, word: string): string[] {
+  return [
+    `error: option '${flags}' argument is ambiguous: '${word}' looks like a flag.`,
+    `Did you forget to specify the option argument for '${long}'? To specify an option argument starting with a dash use '${long}=-XYZ'.`,
+  ];
+}
+
+describe('#920 C-2 — the other 23 options, one command family each (the built realm)', () => {
+  // Each: the option typed with a real flag of the command after it, as the typo; the run exits 1
+  // with the guard's two lines, prints nothing on standard output and does nothing. (a) red when the
+  // family's row is missing from the guarded table (the command then runs: it writes, drains, starts
+  // a server, or prints another message); (b) prints the run.
+  const ID = '00000000-0000-4000-8000-000000000920';
+  function refusedBy(r: Run, flags: string, long: string, word: string): void {
+    expect([r.code, r.stdout, r.stderr.split('\n').slice(0, 2)], r.shown).toEqual([
+      1,
+      '',
+      guardLines(flags, long, word),
+    ]);
+  }
+
+  it('run reconcile --workflow --dry-run: refused, nothing written', () => {
+    const r = realm(['run', 'reconcile', '--workflow', '--dry-run']);
+    refusedBy(r, '--workflow <id>', '--workflow', '--dry-run');
+    expect(r.stdout.includes('Wrote'), r.shown).toBe(false);
+  }, 20_000);
+
+  it('run drain <id> --extensions-module --force: refused (it drained nothing and said so)', () => {
+    refusedBy(
+      realm(['run', 'drain', ID, '--extensions-module', '--force']),
+      '--extensions-module <path>',
+      '--extensions-module',
+      '--force',
+    );
+  }, 20_000);
+
+  it('workflow run <dir> --project --params: refused before the run starts', () => {
+    const dir = retryProject();
+    refusedBy(
+      realm(['workflow', 'run', dir, '--project', '--params']),
+      '--project <dir>',
+      '--project',
+      '--params',
+    );
+    expect(existsSync(join(home, '.realm', 'runs')), 'no runs folder made').toBe(false);
+  }, 20_000);
+
+  it('run purge --older-than 0m --workflow --force: refused (it was a silent dry run)', () => {
+    refusedBy(
+      realm(['run', 'purge', '--older-than', '0m', '--workflow', '--force']),
+      '--workflow <id>',
+      '--workflow',
+      '--force',
+    );
+  }, 20_000);
+
+  it('run export <id> --out --accept-partial-disclosure: refused, no file named after the flag', () => {
+    const r = realm(['run', 'export', ID, '--out', '--accept-partial-disclosure']);
+    refusedBy(r, '--out <path>', '--out', '--accept-partial-disclosure');
+    expect(readdirSync(base).includes('--accept-partial-disclosure'), r.shown).toBe(false);
+  }, 20_000);
+
+  it('agent --project --register: refused, no run made', () => {
+    const dir = retryProject();
+    const r = realm([
+      'agent',
+      '--workflow',
+      join(dir, 'workflow.yaml'),
+      '--provider',
+      'anthropic',
+      '--model',
+      'claude-sonnet-5-5',
+      '--project',
+      '--register',
+    ]);
+    refusedBy(r, '--project <dir>', '--project', '--register');
+    expect(existsSync(join(home, '.realm', 'runs')), r.shown).toBe(false);
+  }, 20_000);
+
+  it('mcp --extensions-module --check: refused at once, the server is not started', () => {
+    refusedBy(
+      realm(['mcp', '--extensions-module', '--check'], 8_000),
+      '--extensions-module <path>',
+      '--extensions-module',
+      '--check',
+    );
+  }, 20_000);
+
+  it('run list --workflow --stuck: refused (it said "No runs found")', () => {
+    refusedBy(
+      realm(['run', 'list', '--workflow', '--stuck']),
+      '--workflow <id>',
+      '--workflow',
+      '--stuck',
+    );
+  }, 20_000);
+
+  it('serve --dev --port -1: refused with the message, not a Node RangeError', () => {
+    refusedBy(realm(['serve', '--dev', '--port', '-1'], 8_000), '--port <number>', '--port', '-1');
+  }, 20_000);
+
+  it('listen <workflow> --port -1: refused with the message, not an uncaught stack', () => {
+    const hook = triggerProject();
+    refusedBy(
+      realm(
+        ['listen', hook, '--port', '-1', '--provider', 'anthropic', '--model', 'claude-sonnet-5-5'],
+        8_000,
+      ),
+      '--port <n>',
+      '--port',
+      '-1',
+    );
+  }, 20_000);
+});
+
+describe('#920 C-2 — the pages name every guarded option', () => {
+  it('the C-2 sentences, word for word, at their places on four pages', () => {
+    // (a) red when a page loses a sentence; (b) prints the page and the sentence. (realm-agent.md and
+    // realm-listen.md: cell 7.)
+    const one = (o: string): string =>
+      `\`${o}\` refuses a value that starts with \`-\`, except a lone \`-\`; write \`--option=value\` for one.`;
+    const two = (a: string, b: string): string =>
+      `\`${a}\` and \`${b}\` refuse a value that starts with \`-\`, except a lone \`-\`; write \`--option=value\` for one.`;
+    const WORKFLOW = 'docs/reference/cli/realm-workflow.md';
+    const READING = 'docs/reference/cli/realm-run-reading.md';
+    const ACTING = 'docs/reference/cli/realm-run-acting.md';
+    const MCP = 'docs/reference/cli/realm-mcp-and-serve.md';
+    claim(WORKFLOW, one('--project'));
+    claim(READING, one('--workflow'));
+    claim(READING, one('--out'));
+    claim(ACTING, two('--project', '--extensions-module'));
+    claim(MCP, two('--project', '--extensions-module'));
+    claim(
+      MCP,
+      '`--port`, `--project` and `--extensions-module` refuse a value that starts with `-`, except a lone `-`; write `--option=value` for one.',
+    );
+    // On realm-run-acting.md the single-option sentence stands after five sections: respond and
+    // advance (--project), reclaim, purge and reconcile (--workflow).
+    const acting = flat(read(ACTING));
+    const count = (text: string): number => acting.split(flat(text)).length - 1;
+    expect(
+      { project: count(one('--project')), workflow: count(one('--workflow')) },
+      `${ACTING}: the single-option sentences`,
+    ).toEqual({ project: 2, workflow: 3 });
+    expect(flat(unreleased()), 'the CHANGELOG [Unreleased] #920 bullet, C-2 clause').toContain(
+      flat(
+        'The same now holds for 23 other options that took any word: `--project` (on `workflow run`, `agent`, `run drain`, `run respond`, `run advance`, `mcp` and `serve`), `--extensions-module` (`run drain`, `mcp`, `serve`), `--workflow` (`run list`, `reclaim`, `purge`, `reconcile`), `run export --out`, `agent --params` and `--base-url`, `serve --port`, and `listen --port`, `--host`, `--dedup-store`, `--log-level` and `--sweep-expired-gates`.',
       ),
     );
   });
