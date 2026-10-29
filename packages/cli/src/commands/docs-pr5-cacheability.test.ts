@@ -586,12 +586,12 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
         'm',
       ]).stdout,
     );
+    // D1 (G-1): the step that names a profile is sized from the text the copy holds.
     expect([
-      registered[0]!.includes(
-        '— profile file not read (source_dir <dir>/proj no longer exists): sizes not computed',
-      ),
+      registered[0]!.startsWith('cache: with_profile — 173 chars'),
+      registered[0]!.includes('profile file not read'),
       registered[1]!.endsWith('— economics not checked (no project folder to read it from)'),
-    ]).toEqual([true, true]);
+    ]).toEqual([true, false, true]);
   });
 
   // Correction 2 (F-4): the page says a step below the minimum names no sharing, the OpenAI strict
@@ -1273,11 +1273,11 @@ describe(
   'correction 2, F-10: the profile row says what the command did',
   { timeout: 60_000 },
   () => {
-    // The page says what `profile file not read` means and what to do, and where `--registered`'s
-    // sizes come from. Each runtime claim is run here on a scratch registration: the sizes follow the
-    // profile file on disk while the copy's stored text stays as registered; with the folder gone, the
-    // copy still holds the text, the row reads `profile file not read`, and the `N checks not run:`
-    // line names the same reason. That runs send the stored text is pinned in
+    // The page says what the profile row means and what to do, and where `--registered`'s sizes come
+    // from. Each runtime claim is run here on a scratch registration: with the folder gone, the copy
+    // still holds the text, the step is sized from it (D1, G-1; that the sizes stay the stored text's
+    // when a file is edited is run in validate-cacheability.test.ts, "G-1 (2)"), and the line that
+    // starts `1 check not run:` or `N checks not run:` is printed. That runs send the stored text is pinned in
     // `agent/profile-reaches-the-model.test.ts` ("travels from the definition, through the drive, onto
     // the wire"). (a) red when the page drops a sentence, the old words return, or the sizes stop
     // following the file; (b) prints the page's sentence, or the lines, the scratch folder written
@@ -1304,20 +1304,8 @@ describe(
             resolved_profiles: Record<string, { content: string }>;
           }
         ).resolved_profiles['p']!.content.length;
-      const chars = (): number => {
-        const line = cacheLines(
-          realm(['workflow', 'validate', '--registered', 'moved']).stdout,
-        )[0]!;
-        return Number(/ — anthropic ([\d,]+) chars/.exec(line)?.[1]?.replace(/,/g, '') ?? -1);
-      };
-      const before = [chars(), stored()];
-      writeFileSync(join(dir, 'profiles', 'p.md'), 'You are careful.' + 'x'.repeat(326));
-      const after = [chars(), stored()];
-      expect({ before, after, grew: after[0]! - before[0]! }).toEqual({
-        before: [before[0], 16],
-        after: [after[0], 16],
-        grew: 326,
-      });
+      // D1 (G-1): the run where the registered size followed the edited file is inverted in
+      // validate-cacheability.test.ts, "G-1 (2)": the copy's lines keep the stored text's size.
       rmSync(dir, { recursive: true, force: true });
       const out = hide(realm(['workflow', 'validate', '--registered', 'moved']).stdout).split('\n');
       const reason = 'source_dir <dir>/proj no longer exists';
@@ -1332,7 +1320,8 @@ describe(
         out.join('\n'),
       ).toEqual({
         held: 16,
-        row: `cache: with_profile — profile file not read (${reason}): sizes not computed`,
+        // D1 (G-1): the copy holds the text, so the step is sized and no profile row prints.
+        row: 'cache: with_profile — anthropic 173 chars ≈ 35–69 tokens (no schema: realm sends no tool) · openai 173 chars ≈ 35–69 tokens (estimates: 2.5–5 chars/token, with margin)',
         notRun: true,
       });
       // Correction 3 (I-4): one check left out reads `1 check not run:`. A workflow in a subfolder of
@@ -1362,7 +1351,8 @@ describe(
         one.join('\n'),
       ).toEqual({
         notRun: `1 check not run: agent-profile file resolution (${oneReason})`,
-        row: `cache: with_profile — profile file not read (${oneReason}): sizes not computed`,
+        // D1 (G-1): sized from the stored text, as above.
+        row: 'cache: with_profile — anthropic 173 chars ≈ 35–69 tokens (no schema: realm sends no tool) · openai 173 chars ≈ 35–69 tokens (estimates: 2.5–5 chars/token, with margin)',
       });
     });
   },

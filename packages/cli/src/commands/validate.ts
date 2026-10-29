@@ -724,6 +724,9 @@ async function validateRegistered(
     trust_root: typeof stored.trust_root === 'string' ? stored.trust_root : undefined,
   };
   const storedExtensions = stored.extensions;
+  // #600 D1 (G-1): the profile texts the copy holds, read before the strip removes them — what a run
+  // of this copy sends (run-agent reads `definition.resolved_profiles[…].content`).
+  const storedProfiles = storedProfileTexts(stored.resolved_profiles);
 
   const clone = { ...stored } as Record<string, unknown>;
   for (const key of RUNTIME_ONLY_WORKFLOW_KEYS) delete clone[key];
@@ -861,13 +864,17 @@ async function validateRegistered(
     ...findRetryWithoutExplicitTimeout(definition),
     ...wrapSentinelWarnings(sentinelWarnings),
   ];
-  // issue #600 caching PR 5: a check that did not run leaves the cache lines what it could not supply
-  // — the profiles (sizes), or the economics file (the floor) — said with the existing reason.
-  const profilesNotRun = notRun.find((x) => x.id === 'agent_profile_resolution')?.reason;
+  // #600 D1 (G-1): the cache lines describe the registered copy, so they size the profile text it
+  // holds, not the files in the folder (which the loader audit above read for its own checks). The
+  // swap comes after the audit and before the report; nothing after the report reads the field.
+  // An unusable stored value deletes the field, so every profile step shows as missing.
+  if (storedProfiles !== undefined) definition.resolved_profiles = storedProfiles;
+  else delete definition.resolved_profiles;
+  // issue #600 caching PR 5: the project-extensions check that did not run leaves the cache lines
+  // without the economics file (the floor).
   const economicsNotRun = notRun.find((x) => x.id === 'project_extensions')?.reason;
   const cache = await buildCacheabilityReport(definition, cacheFlags, {
     ...(cacheEconomicsPath !== undefined ? { cacheEconomicsPath } : {}),
-    ...(profilesNotRun !== undefined ? { profilesNotRun } : {}),
     ...(economicsNotRun !== undefined ? { economicsNotRun } : {}),
   });
   if (json) {
@@ -923,6 +930,27 @@ async function validateRegistered(
   if (strictFailed) {
     process.exit(1);
   }
+}
+
+/**
+ * #600 D1 (G-1): the profile texts a registered copy holds (`resolved_profiles`), shape-checked. An
+ * entry is kept when it is an object with a string `content` (its `content_hash` is not needed: only
+ * the text is sized or compared); a stored value that is not an object gives `undefined`, and every
+ * profile step then shows as missing. `Object.fromEntries` defines each name as an own property, so a
+ * profile named `__proto__` stays a name.
+ */
+function storedProfileTexts(
+  value: unknown,
+): Record<string, { content: string; content_hash: string }> | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      ([, entry]) =>
+        typeof entry === 'object' &&
+        entry !== null &&
+        typeof (entry as { content?: unknown }).content === 'string',
+    ),
+  ) as Record<string, { content: string; content_hash: string }>;
 }
 
 export const validateCommand = new Command('validate')

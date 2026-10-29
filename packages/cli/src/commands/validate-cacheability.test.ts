@@ -435,12 +435,12 @@ describe('the causes, one per row of the decision table (C5)', { timeout: 60_000
     ]);
   });
 
-  // Row 2 by one route: --registered on a copy whose tree was deleted. The step that names a profile
-  // cannot be sized; the other is sized, and with no --model it carries no clause (D1, G-3: the
-  // economics clause, row 5, asks for --model; it is pinned in D1's G-3 cells). Break: row 2 applied
-  // to every step (the profile-less one then reads "profile file not read"). (a) red when either line
-  // changes; (b) prints the lines.
-  it('rows 2 and 5: --registered on a copy whose source tree is gone', () => {
+  // --registered on a copy whose tree was deleted (D1): the step that names a profile is sized from
+  // the profile text the copy holds (G-1), so both steps are sized, and with no --model neither
+  // carries a clause (G-3: the economics clause asks for --model; D1's G-3 cells pin it). Break: the
+  // cache report sizes the folder again (the swap to the stored text removed: the step is sized
+  // without its profile). (a) red when either line changes; (b) prints the lines.
+  it('--registered on a copy whose source tree is gone: both steps sized from the copy, no clause', () => {
     const dir = project({
       workflow:
         'id: gone-tree\nname: gone-tree\nversion: 1\nsteps:\n' +
@@ -452,7 +452,7 @@ describe('the causes, one per row of the decision table (C5)', { timeout: 60_000
     rmSync(dir, { recursive: true, force: true });
     const r = realm(['workflow', 'validate', '--registered', 'gone-tree']);
     expect(cacheLines(r.stdout)).toEqual([
-      'cache: with_profile — profile file not read (source_dir <dir>/proj no longer exists): sizes not computed',
+      'cache: with_profile — anthropic 173 chars ≈ 35–69 tokens (no schema: realm sends no tool) · openai 173 chars ≈ 35–69 tokens (estimates: 2.5–5 chars/token, with margin)',
       'cache: without_profile — anthropic 155 chars ≈ 31–62 tokens (no schema: realm sends no tool) · openai 155 chars ≈ 31–62 tokens (estimates: 2.5–5 chars/token, with margin)',
     ]);
   });
@@ -1309,6 +1309,191 @@ describe(
         none: causes([]),
         model: causes(['--provider', 'anthropic', '--model', 'm']),
       }).toEqual({ none: ['no_model', 'no_model'], model: ['economics_not_checked'] });
+    });
+  },
+);
+
+describe(
+  'D1 G-1: the cache lines of a registered copy size the stored text',
+  { timeout: 60_000 },
+  () => {
+    // A project with two profile steps and one without: `first` names `a`, `second` names `b`.
+    function twoProfiles(): string {
+      return project({
+        workflow:
+          'id: twoprof\nname: twoprof\nversion: 1\nsteps:\n' +
+          '  first:\n    description: a\n    execution: agent\n    prompt: Do it.\n    agent_profile: a\n' +
+          '  second:\n    description: b\n    execution: agent\n    prompt: Do it.\n    agent_profile: b\n' +
+          '  plain:\n    description: c\n    execution: agent\n    prompt: Do it.\n',
+        profiles: {
+          'a.md': 'You are careful.',
+          'b.md': 'You review code for bugs and say what you find.',
+        },
+      });
+    }
+    /** `register`'s cache lines for the project. */
+    function registerLines(dir: string): string[] {
+      const r = realm(['workflow', 'register', dir]);
+      expect(r.code).toBe(0);
+      return cacheLines(r.stdout);
+    }
+
+    // (1) Break: the cache report goes back to the folder (the swap to the stored text removed): with the
+    // folder gone, each profile step is then sized without its profile. (a) red when a line differs from
+    // register's; (b) prints both blocks, the scratch folder written `<dir>`.
+    it('G-1 (1): the folder deleted: the step lines equal the lines register printed; the only other line is the checks line', () => {
+      const dir = twoProfiles();
+      const registered = registerLines(dir);
+      rmSync(dir, { recursive: true, force: true });
+      const r = realm(['workflow', 'validate', '--registered', 'twoprof']);
+      const out = hide(r.stdout).split('\n');
+      expect({
+        lines: cacheLines(r.stdout),
+        checks: out.filter((l) => / not run: /.test(l)),
+      }).toEqual({
+        lines: registered,
+        checks: [
+          '2 checks not run: agent-profile file resolution (source_dir <dir>/proj no longer exists); project extensions (modules, manifest, config_schema) (trust_root <dir>/proj no longer exists)',
+        ],
+      });
+    });
+
+    // (2) Inverts correction 2's F-10 run, where the registered size followed the file: a profile file
+    // grows by 326 characters and the workflow is not registered again. Break: the registered lines
+    // follow the file (the swap removed). (a) red when the registered lines follow the file, or file mode
+    // stops following it; (b) prints both blocks.
+    it('G-1 (2): a profile file edited, not registered again: --registered keeps the stored sizes, file mode the new ones', () => {
+      const dir = twoProfiles();
+      const registered = registerLines(dir);
+      writeFileSync(join(dir, 'profiles', 'a.md'), 'You are careful.' + 'x'.repeat(326));
+      const chars = (line: string): number =>
+        Number(/ — anthropic ([\d,]+) chars/.exec(line)?.[1]?.replace(/,/g, '') ?? -1);
+      const copy = cacheLines(realm(['workflow', 'validate', '--registered', 'twoprof']).stdout);
+      const file = cacheLines(realm(['workflow', 'validate', dir]).stdout);
+      expect({ copy, grew: chars(file[0]!) - chars(registered[0]!) }).toEqual({
+        copy: registered,
+        grew: 326,
+      });
+    });
+
+    // (3) The loader audit is untouched: a profile file deleted from a present folder still fails the
+    // command. Break: the audit's error swallowed (or the stored text used when the file is missing).
+    // (a) red when the command sizes the step or exits 0; (b) prints the exit, the error and the lines.
+    it('G-1 (3): a profile file deleted from a present folder: `Invalid workflow … not found`, exit 1, no cache lines', () => {
+      const dir = twoProfiles();
+      registerLines(dir);
+      rmSync(join(dir, 'profiles', 'b.md'));
+      const r = realm(['workflow', 'validate', '--registered', 'twoprof']);
+      expect({
+        code: r.code,
+        error: hide(`${r.stdout}${r.stderr}`)
+          .split('\n')
+          .filter((l) => l.startsWith('Invalid workflow')),
+        lines: cacheLines(r.stdout),
+      }).toEqual({
+        code: 1,
+        error: [
+          "Invalid workflow: Step 'second': agent_profile 'b' not found. Searched: <dir>/proj/profiles/b.md",
+        ],
+        lines: [],
+      });
+    });
+
+    // (4) Break: the swap removed (the profile steps then size without their profiles, 155 characters,
+    // not their stored text). (a) red when a profile step is not sized from its text, carries the old
+    // `profile_unavailable` cause, or the reasons leave `checks_not_run`; (b) prints the fields.
+    it('G-1 (4) --json: the folder deleted: the profile steps are sized; `checks_not_run` keeps both reasons', () => {
+      const dir = twoProfiles();
+      registerLines(dir);
+      rmSync(dir, { recursive: true, force: true });
+      const doc = JSON.parse(
+        hide(realm(['workflow', 'validate', '--registered', 'twoprof', '--json']).stdout),
+      ) as {
+        checks_not_run: Array<{ id: string; reason: string }>;
+        cacheability: {
+          steps: Array<{
+            step: string;
+            layouts: Array<{
+              verdict: string;
+              not_judged_cause?: string;
+              prefix?: { chars: number };
+            }>;
+          }>;
+        };
+      };
+      expect({
+        steps: doc.cacheability.steps.map((s) => [
+          s.step,
+          s.layouts.map((l) => [l.prefix?.chars, l.verdict, l.not_judged_cause]),
+        ]),
+        reasons: doc.checks_not_run,
+      }).toEqual({
+        steps: [
+          [
+            'first',
+            [
+              [173, 'not_judged', 'no_model'],
+              [173, 'not_judged', 'no_model'],
+            ],
+          ],
+          [
+            'second',
+            [
+              [204, 'not_judged', 'no_model'],
+              [204, 'not_judged', 'no_model'],
+            ],
+          ],
+          [
+            'plain',
+            [
+              [155, 'not_judged', 'no_model'],
+              [155, 'not_judged', 'no_model'],
+            ],
+          ],
+        ],
+        reasons: [
+          { id: 'agent_profile_resolution', reason: 'source_dir <dir>/proj no longer exists' },
+          { id: 'project_extensions', reason: 'trust_root <dir>/proj no longer exists' },
+        ],
+      });
+    });
+
+    // (5) A copy shaped like one made before v0.14: `resolved_profiles` present, no `source_dir` and no
+    // `trust_root`. Break: the swap removed (no folder is recorded, so nothing else supplies the text:
+    // each profile step is sized without it). (a) red when a line differs from register's, the
+    // economics clause is missing with --model, or an `ℹ` note prints; (b) prints the lines.
+    it('G-1 (5): a copy shaped like one from before v0.14: sized as register sized it; with --model the G-3 clause; no note', () => {
+      const dir = twoProfiles();
+      const registered = registerLines(dir);
+      editCopy('twoprof', (copy) => {
+        delete copy['source_dir'];
+        delete copy['trust_root'];
+      });
+      const plain = realm(['workflow', 'validate', '--registered', 'twoprof'], {
+        REALM_NO_NUDGE: '0',
+      });
+      const model = realm(
+        [
+          'workflow',
+          'validate',
+          '--registered',
+          'twoprof',
+          '--provider',
+          'anthropic',
+          '--model',
+          'm',
+        ],
+        { REALM_NO_NUDGE: '0' },
+      );
+      expect({
+        lines: cacheLines(plain.stdout),
+        model: cacheLines(model.stdout).map((l) =>
+          l.endsWith(' — economics not checked (no project folder to read it from)'),
+        ),
+        notes: [plain.stdout, model.stdout].flatMap((o) =>
+          o.split('\n').filter((l) => l.startsWith('ℹ')),
+        ),
+      }).toEqual({ lines: registered, model: [true, true, true], notes: [] });
     });
   },
 );
