@@ -123,7 +123,7 @@ describe('#899 — the docs sentences', () => {
 
   it('§3.7 the CHANGELOG entry, sentence by sentence (M1, M3, M5, M11; the Upgrading line: §8 problem 1)', () => {
     for (const sentence of [
-      "When `realm agent` or `realm listen` drives a step that calls tools, it now asks Anthropic to cache the step's fixed instructions and the conversation so far at each turn, so a turn can read what the turn before wrote once that part reaches the model's minimum.",
+      "**When `realm agent` or `realm listen` drives a step that calls tools, it now asks Anthropic to cache the step's fixed instructions and the conversation so far at each turn, so a turn can read what the turn before wrote once that part reaches the model's minimum.**",
       'The request a step makes after using up its tool calls is sent with no cache marker.',
       '`--prompt-cache off` sends what it sent before.',
       'A workflow whose every agent step calls tools no longer refuses `--prompt-cache`.',
