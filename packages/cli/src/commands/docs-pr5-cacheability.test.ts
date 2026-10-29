@@ -381,9 +381,7 @@ describe(
     // (b) prints the foreign lines and both cache lines.
     it("the watch transcript holds only watch's own lines, and its cache line is the scaffold's", () => {
       const page = read(WORKFLOW_PAGE);
-      const at = page.indexOf(
-        'after the first `Registered` line, and again only when they change.',
-      );
+      const at = page.indexOf('and again only when they differ from the last block printed.');
       const block = /```text\n([\s\S]*?)```/.exec(page.slice(at))![1]!;
       const foreign = block
         .split('\n')
@@ -955,14 +953,23 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
   // save, not on its own change) needs a second watch with --model: pinned word for word here; its
   // run is in the correction's report. (a) red when watch prints the provider lines twice, skips a
   // changed-back block, or the page drops a sentence.
-  it('register: after the description line; watch: after the first Registered line, and again only when the lines change', async () => {
+  // Follow-up C-3: watch's sentence says the lines start with the first save that has an agent step,
+  // come again only when they differ from the last block printed, and that each provider's lines come
+  // once. Run in the cell "I-5: the provider lines come in the first block that shows a size; …"
+  // below: a first save with no agent step prints `Registered:` alone, the save that adds one prints
+  // the lines. (a) red when the old sentence returns or the new one is dropped; (b) prints the page's
+  // sentence.
+  it('register: after the description line; watch: after a Registered line, from the first save with an agent step, and again only when the lines differ', async () => {
     claim(
       WORKFLOW_PAGE,
       'It prints the [cache lines](#the-cache-lines) after the description line.',
     );
     claim(
       WORKFLOW_PAGE,
-      'It prints the [cache lines](#the-cache-lines) after the first `Registered` line, and again only when they change.',
+      'It prints the [cache lines](#the-cache-lines) after a `Registered` line, starting with the first save that has an agent step, and again only when they differ from the last block printed. The lines for each provider are printed once, in the first block that shows a size for that provider.',
+    );
+    expect(read(WORKFLOW_PAGE), 'the page keeps the old watch sentence').not.toContain(
+      'after the first `Registered` line, and again only when they change.',
     );
     for (const sentence of [
       '`watch` prints the lines for each provider once, in the first block that shows a size for that provider.',
