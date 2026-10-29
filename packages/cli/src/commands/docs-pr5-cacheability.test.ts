@@ -442,9 +442,18 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
       WORKFLOW_PAGE,
       "A verdict is given only when the whole range is on one side of the minimum. A range that holds the minimum reads `near`, and is not judged. At a 512-token minimum, an Anthropic step with a schema never reads `below`: the high end of Anthropic's tool text alone reaches 530. The verdicts with `--provider`, from examples 01, 04 and 03:",
     );
+    // Follow-up C-2: except with an `o1` model. The request shape is pinned in
+    // `agent/providers/openai-reasoning-provider.test.ts`, not repeated here: "callStep does NOT send
+    // response_format", "callStep folds system prompt into the user message (no system role)" and
+    // "callStep with inputSchema — schema is in the user message content". The verdict line is run in
+    // "I-2, I-3, I-9a" below: `o1`'s `below` line has no ending, `gpt-4o`'s has it.
     claim(
       WORKFLOW_PAGE,
-      "On OpenAI, a step with `structured_output: strict` and a schema is sent the schema in `response_format`. OpenAI's own text for it is not counted, so a `below` verdict there ends `; by realm's bytes — OpenAI's own schema text is not counted`.",
+      "On OpenAI, except with an `o1` model, a step with `structured_output: strict` and a schema is sent the schema in `response_format`. OpenAI's own text for it is not counted, so a `below` verdict there ends `; by realm's bytes — OpenAI's own schema text is not counted`.",
+    );
+    claim(
+      WORKFLOW_PAGE,
+      'An `o1` model is sent no `response_format`: its system text goes in the user message and its schema is part of the text Realm counts, so a `below` verdict for it does not end that way.',
     );
     const both = project({
       example: '01-code-reviewer',
@@ -777,6 +786,29 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
         `below the floor for o1 (2,000, your --floor): ${BELOW}`,
       ],
     });
+    // Follow-up C-2: with `gpt-4o` the strict step's `below` line carries the ending `; by realm's
+    // bytes — …`; with `o1` it does not (the `o1` tail just above is the whole verdict, so an ending
+    // there would turn it red). (a) red when the `gpt-4o` line loses the ending; (b) prints the line.
+    const gpt4o =
+      cacheLines(
+        realm([
+          'workflow',
+          'validate',
+          twins,
+          '--provider',
+          'openai',
+          '--model',
+          'gpt-4o',
+          '--floor',
+          '2000',
+        ]).stdout,
+      )[0] ?? '';
+    expect(
+      gpt4o.includes(
+        `below the floor for gpt-4o (2,000, your --floor): ${BELOW}; by realm's bytes — OpenAI's own schema text is not counted`,
+      ),
+      gpt4o,
+    ).toBe(true);
     // I-9a: both providers shown. A split clause starts with its provider; a provider that names
     // none is left out; one provider, or a clause both name alike, has no label.
     const both2000 =

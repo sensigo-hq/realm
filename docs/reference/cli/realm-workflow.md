@@ -132,7 +132,7 @@ cache: analyze_cause — 1,782 chars ≈ 577–1,244 tokens, with Anthropic's to
 cache: analyze_cause — 1,118 chars ≈ 224–448 tokens (estimate) — above the floor (200, your --floor): within the provider's own rules (realm sends no marker)
 ```
 
-On OpenAI, a step with `structured_output: strict` and a schema is sent the schema in `response_format`. OpenAI's own text for it is not counted, so a `below` verdict there ends `; by realm's bytes — OpenAI's own schema text is not counted`.
+On OpenAI, except with an `o1` model, a step with `structured_output: strict` and a schema is sent the schema in `response_format`. OpenAI's own text for it is not counted, so a `below` verdict there ends `; by realm's bytes — OpenAI's own schema text is not counted`. An `o1` model is sent no `response_format`: its system text goes in the user message and its schema is part of the text Realm counts, so a `below` verdict for it does not end that way.
 
 **Your own count.** `--ratio <chars-per-token>` takes your own count: the step's characters as the line prints them, divided by the input tokens the provider counted for one request of the step with a one-character message, tools included. The range is then that count ±15%, and no tool text is added, because your count holds it:
 
