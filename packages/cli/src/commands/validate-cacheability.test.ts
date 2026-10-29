@@ -1548,3 +1548,187 @@ describe(
     });
   },
 );
+
+describe(
+  "D1 G-5: a note when a profile file differs from the copy's text",
+  { timeout: 60_000 },
+  () => {
+    // `b` is named by two steps (s1, s3) and `a` by one (s2), so the workflow's order (b, a) differs
+    // from the alphabetical one. Every call shows ℹ lines (REALM_NO_NUDGE 0) except cell 8's. Each cell
+    // (a) names the change that turns it red, (b) prints the note lines and the exit, the scratch folder
+    // written `<dir>`.
+    const NOTE = (names: string): string =>
+      `ℹ profile text differs from the registered copy for: ${names} — this check used the copy's text; register again to update it`;
+    const SHOW = { REALM_NO_NUDGE: '0' };
+    function drift(extra = ''): { dir: string; registered: string[] } {
+      const dir = project({
+        workflow:
+          'id: drift\nname: drift\nversion: 1\nsteps:\n' +
+          '  s1:\n    description: a\n    execution: agent\n    prompt: Do it.\n    agent_profile: b\n' +
+          '  s2:\n    description: b\n    execution: agent\n    prompt: Do it.\n    agent_profile: a\n' +
+          '  s3:\n    description: c\n    execution: agent\n    prompt: Do it.\n    agent_profile: b\n' +
+          extra,
+        profiles: {
+          'a.md': 'You are careful.\nYou check twice.\n',
+          'b.md': 'You review code for bugs.',
+        },
+      });
+      const r = realm(['workflow', 'register', dir]);
+      expect(r.code).toBe(0);
+      return { dir, registered: cacheLines(r.stdout) };
+    }
+    const validate = (
+      flags: string[] = [],
+      env: Record<string, string> = SHOW,
+    ): { code: number; notes: string[]; lines: string[]; stdout: string } => {
+      const r = realm(['workflow', 'validate', '--registered', 'drift', ...flags], env);
+      return {
+        code: r.code,
+        notes: hide(r.stdout)
+          .split('\n')
+          .filter((l) => l.startsWith('ℹ')),
+        lines: cacheLines(r.stdout),
+        stdout: r.stdout,
+      };
+    };
+    const append = (dir: string, file: string): void =>
+      writeFileSync(
+        join(dir, 'profiles', file),
+        readFileSync(join(dir, 'profiles', file), 'utf8') + 'More.',
+      );
+
+    // (1) Breaks: iterate steps instead of names (`b` twice); sort the names (`a, b`); omit the note.
+    it("G-5 (1): two profiles edited, one named by two steps: one note, each name once, in workflow order; the copy's sizes", () => {
+      const { dir, registered } = drift();
+      append(dir, 'a.md');
+      append(dir, 'b.md');
+      const v = validate();
+      expect({ notes: v.notes, lines: v.lines }).toEqual({
+        notes: [NOTE('b, a')],
+        lines: registered,
+      });
+    });
+
+    // (2) Break: compare names, or always print.
+    it('G-5 (2): nothing changed: no note', () => {
+      drift();
+      expect(validate().notes).toEqual([]);
+    });
+
+    // (3) Break: print without the audit having run (the folder's map taken whatever the audit did).
+    it('G-5 (3): the folder deleted: no note, no crash', () => {
+      const { dir } = drift();
+      rmSync(dir, { recursive: true, force: true });
+      const v = validate();
+      expect({ code: v.code, notes: v.notes }).toEqual({ code: 0, notes: [] });
+    });
+
+    // (4) Break: compare against the stored entry unguarded, or against nothing (`b` then named).
+    it("G-5 (4): the copy lacks `b`'s text, the folder present: G-2's row on b's steps, `b` in no note", () => {
+      drift();
+      editCopy('drift', (copy) => {
+        delete (copy['resolved_profiles'] as Record<string, unknown>)['b'];
+      });
+      const v = validate();
+      expect({
+        rows: v.lines.filter((l) => l.includes('profile text not stored in the registered copy'))
+          .length,
+        notes: v.notes,
+      }).toEqual({ rows: 2, notes: [] });
+    });
+
+    // (5) Break: read the raw stored map unguarded (it throws when `resolved_profiles` is absent).
+    it('G-5 (5): the copy holds no `resolved_profiles` at all, the folder present: no crash, every profile step the row, no note', () => {
+      drift();
+      editCopy('drift', (copy) => {
+        delete copy['resolved_profiles'];
+      });
+      const v = validate();
+      expect({
+        code: v.code,
+        rows: v.lines.filter((l) => l.includes('profile text not stored in the registered copy'))
+          .length,
+        notes: v.notes,
+      }).toEqual({ code: 0, rows: 3, notes: [] });
+    });
+
+    // (6) Break: compare `content_hash` instead of the text (the stored entry has none).
+    it('G-5 (6): a stored entry with `content` but no `content_hash`, the file unchanged: no note', () => {
+      drift();
+      editCopy('drift', (copy) => {
+        delete (copy['resolved_profiles'] as Record<string, Record<string, unknown>>)['a']![
+          'content_hash'
+        ];
+      });
+      expect(validate().notes).toEqual([]);
+    });
+
+    // (7) Break: print the note before the --json arm returns.
+    it("G-5 (7) --json after an edit: no ℹ line, and the JSON equals the unedited run's", () => {
+      const { dir } = drift();
+      const before = validate(['--json']).stdout;
+      append(dir, 'a.md');
+      const after = validate(['--json']).stdout;
+      expect({
+        notes: after.split('\n').filter((l) => l.includes('ℹ')).length,
+        same: JSON.stringify(JSON.parse(after)) === JSON.stringify(JSON.parse(before)),
+      }).toEqual({ notes: 0, same: true });
+    });
+
+    // (8) Break: the note printed whatever REALM_NO_NUDGE says.
+    it('G-5 (8): REALM_NO_NUDGE=1 after an edit: no note', () => {
+      const { dir } = drift();
+      append(dir, 'a.md');
+      expect(validate([], { REALM_NO_NUDGE: '1' }).notes).toEqual([]);
+    });
+
+    // (9) Breaks: push the note into the warnings (then --strict exits 1 on the first copy); print it
+    // after the --strict exit (then the second copy's run has no note).
+    it('G-5 (9): exit codes: an edited valid copy exits 0 with and without --strict, the note present; a copy with a warning, --strict: the note and exit 1', () => {
+      const { dir } = drift();
+      append(dir, 'a.md');
+      const plain = validate();
+      const strict = validate(['--strict']);
+      rmSync(dir, { recursive: true, force: true });
+      const warned = drift(
+        '  r:\n    description: r\n    execution: auto\n    handler: h\n    retry:\n      max_attempts: 2\n',
+      );
+      append(warned.dir, 'a.md');
+      const warnedStrict = validate(['--strict']);
+      expect({
+        plain: [plain.code, plain.notes],
+        strict: [strict.code, strict.notes],
+        warned: [warnedStrict.code, warnedStrict.notes],
+      }).toEqual({
+        plain: [0, [NOTE('a')]],
+        strict: [0, [NOTE('a')]],
+        warned: [1, [NOTE('a')]],
+      });
+    });
+
+    // (10) The copy's recorded `source_dir` is `C:\x`, not an absolute path here: the audit resolves it
+    // against the shell's working folder, where a same-named DECOY holds a different `a.md`. Break: drop
+    // the absolute-path guard (the decoy's file is then compared: a note).
+    it("G-5 (10): a recorded folder `C:\\x` with a decoy in the working folder: no note, the copy's sizes", () => {
+      const { dir, registered } = drift();
+      editCopy('drift', (copy) => {
+        copy['source_dir'] = 'C:\\x';
+      });
+      const decoy = join(base, 'C:\\x');
+      cpSync(dir, decoy, { recursive: true });
+      append(decoy, 'a.md');
+      const v = validate();
+      expect({ notes: v.notes, lines: v.lines }).toEqual({ notes: [], lines: registered });
+    });
+
+    // (11) Only the line endings change (LF to CRLF): the text differs, so the note prints. Break:
+    // normalise line endings before comparing.
+    it("G-5 (11): a profile whose line endings alone change (LF to CRLF): the note, the copy's sizes", () => {
+      const { dir, registered } = drift();
+      const file = join(dir, 'profiles', 'a.md');
+      writeFileSync(file, readFileSync(file, 'utf8').replace(/\n/g, '\r\n'));
+      const v = validate();
+      expect({ notes: v.notes, lines: v.lines }).toEqual({ notes: [NOTE('a')], lines: registered });
+    });
+  },
+);
