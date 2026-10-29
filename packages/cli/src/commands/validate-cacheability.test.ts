@@ -6,7 +6,7 @@
 // economics file. Every line is pinned whole. On a failing host a cell prints realm's own lines, with
 // the scratch folder's path written `<dir>`: sizes, words, causes — never a key or an environment.
 import { spawn, spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -435,10 +435,11 @@ describe('the causes, one per row of the decision table (C5)', { timeout: 60_000
     ]);
   });
 
-  // Rows 2 and 5 by one route: --registered on a copy whose tree was deleted. The step that names a
-  // profile cannot be sized; the other is sized, and its floor's economics were not checked. Break:
-  // row 2 applied to every step (the profile-less one then reads "profile file not read"), or row 5's
-  // guard negated. (a) red when either line changes; (b) prints the lines.
+  // Row 2 by one route: --registered on a copy whose tree was deleted. The step that names a profile
+  // cannot be sized; the other is sized, and with no --model it carries no clause (D1, G-3: the
+  // economics clause, row 5, asks for --model; it is pinned in D1's G-3 cells). Break: row 2 applied
+  // to every step (the profile-less one then reads "profile file not read"). (a) red when either line
+  // changes; (b) prints the lines.
   it('rows 2 and 5: --registered on a copy whose source tree is gone', () => {
     const dir = project({
       workflow:
@@ -452,7 +453,7 @@ describe('the causes, one per row of the decision table (C5)', { timeout: 60_000
     const r = realm(['workflow', 'validate', '--registered', 'gone-tree']);
     expect(cacheLines(r.stdout)).toEqual([
       'cache: with_profile — profile file not read (source_dir <dir>/proj no longer exists): sizes not computed',
-      'cache: without_profile — anthropic 155 chars ≈ 31–62 tokens (no schema: realm sends no tool) · openai 155 chars ≈ 31–62 tokens (estimates: 2.5–5 chars/token, with margin) — economics not checked (trust_root <dir>/proj no longer exists)',
+      'cache: without_profile — anthropic 155 chars ≈ 31–62 tokens (no schema: realm sends no tool) · openai 155 chars ≈ 31–62 tokens (estimates: 2.5–5 chars/token, with margin)',
     ]);
   });
 
@@ -1201,3 +1202,113 @@ describe('--json (C5; C3.6)', { timeout: 60_000 }, () => {
     ]);
   });
 });
+
+/** A registered copy's file in the scratch registry, read and rewritten as JSON (D1's cells). */
+function editCopy(id: string, edit: (copy: Record<string, unknown>) => void): void {
+  const file = join(home, '.realm', 'workflows', `${id}.json`);
+  const copy = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+  edit(copy);
+  writeFileSync(file, JSON.stringify(copy, null, 2));
+}
+
+describe(
+  'D1 G-3: `economics not checked` only with --model, in words true for every reason',
+  { timeout: 60_000 },
+  () => {
+    // A copy with no profile step whose project folder is deleted: only the project-extensions check
+    // is left out (the economics), so these cells see the economics clause alone. (a) red when the
+    // cause ignores --model, or the clause quotes a reason, or the JSON value stays; (b) prints the
+    // lines, the scratch folder written `<dir>`.
+    const MOVED_SIZE =
+      'cache: plain — 155 chars ≈ 31–62 tokens (estimate) (no schema: realm sends no tool)';
+    function moved(): (flags: string[]) => { lines: string[]; out: string } {
+      const dir = project({ workflow: oneStep('plain') });
+      expect(realm(['workflow', 'register', dir]).code).toBe(0);
+      rmSync(dir, { recursive: true, force: true });
+      return (flags) => {
+        const r = realm(['workflow', 'validate', '--registered', 'plain', ...flags]);
+        return { lines: cacheLines(r.stdout), out: hide(r.stdout) };
+      };
+    }
+
+    // Break: the cause ignores --model (economics_not_checked whenever the check was left out).
+    it('G-3 (1): no flags: no cache line says `economics not checked`', () => {
+      const { lines } = moved()([]);
+      expect(lines).toEqual([
+        'cache: plain — anthropic 155 chars ≈ 31–62 tokens (no schema: realm sends no tool) · openai 155 chars ≈ 31–62 tokens (estimates: 2.5–5 chars/token, with margin)',
+      ]);
+    });
+
+    // Break: the cause ignores --model (the economics clause replaces the actionable no-model one).
+    it('G-3 (2): --provider anthropic keeps `the floor was not judged: no --model named`', () => {
+      expect(moved()(['--provider', 'anthropic']).lines).toEqual([
+        `${MOVED_SIZE} — the floor was not judged: no --model named`,
+      ]);
+    });
+
+    // Break: the clause quotes the reason again (the record's field name and the path return).
+    it('G-3 (3): --provider anthropic --model m: the clause in the new words; no path or record field on a cache line, only on the checks line', () => {
+      const { lines, out } = moved()(['--provider', 'anthropic', '--model', 'm']);
+      expect({
+        lines,
+        leak: lines.filter((l) => /trust_root|source_dir|<dir>/.test(l)),
+        checks: out.split('\n').filter((l) => / not run: /.test(l)),
+      }).toEqual({
+        lines: [`${MOVED_SIZE} — economics not checked (no project folder to read it from)`],
+        leak: [],
+        checks: [
+          '1 check not run: project extensions (modules, manifest, config_schema) (trust_root <dir>/proj no longer exists)',
+        ],
+      });
+    });
+
+    // CONTROL: --floor alone asks for no economics; the floor decides, as before D1. Break: the cause
+    // clause printed in place of the floor's verdict.
+    it('G-3 (4) CONTROL: --floor 512 alone: the verdict, no clause', () => {
+      expect(moved()(['--floor', '512']).lines).toEqual([
+        'cache: plain — anthropic 155 chars ≈ 31–62 tokens (no schema: realm sends no tool) — below the floor (512, your --floor): this step cannot cache at that minimum · openai 155 chars ≈ 31–62 tokens — below the floor (512, your --floor): this step cannot cache at that minimum',
+      ]);
+    });
+
+    // A copy shaped like one create_workflow made (origin agent, no trust_root): the reason differs,
+    // the words do not. Break: the clause quotes the reason again (`no trust_root recorded …`).
+    it('G-3 (5): a create_workflow-shaped copy with --model: the same clause', () => {
+      const dir = project({ workflow: oneStep('agentmade') });
+      expect(realm(['workflow', 'register', dir]).code).toBe(0);
+      editCopy('agentmade', (copy) => {
+        copy['origin'] = 'agent';
+        delete copy['trust_root'];
+      });
+      const r = realm([
+        'workflow',
+        'validate',
+        '--registered',
+        'agentmade',
+        '--provider',
+        'anthropic',
+        '--model',
+        'm',
+      ]);
+      expect(cacheLines(r.stdout)).toEqual([
+        'cache: agentmade — 155 chars ≈ 31–62 tokens (estimate) (no schema: realm sends no tool) — economics not checked (no project folder to read it from)',
+      ]);
+    });
+
+    // Break: the cause ignores --model (the JSON keeps economics_not_checked with no flags).
+    it('G-3 (6) --json: no flags gives `no_model`; with --model, `economics_not_checked`', () => {
+      const run = moved();
+      const causes = (flags: string[]): unknown[] => {
+        const r = realm(['workflow', 'validate', '--registered', 'plain', '--json', ...flags]);
+        const doc = JSON.parse(r.stdout) as {
+          cacheability: { steps: Array<{ layouts: Array<{ not_judged_cause?: string }> }> };
+        };
+        return doc.cacheability.steps.flatMap((s) => s.layouts.map((l) => l.not_judged_cause));
+      };
+      expect(run([]).lines.length).toBe(1);
+      expect({
+        none: causes([]),
+        model: causes(['--provider', 'anthropic', '--model', 'm']),
+      }).toEqual({ none: ['no_model', 'no_model'], model: ['economics_not_checked'] });
+    });
+  },
+);

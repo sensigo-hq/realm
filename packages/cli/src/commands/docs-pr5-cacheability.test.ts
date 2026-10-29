@@ -573,14 +573,24 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
     });
     expect(realm(['workflow', 'register', dir]).code).toBe(0);
     rmSync(dir, { recursive: true, force: true });
+    // D1 (G-3): the economics row needs --model; without it the line carries no clause.
     const registered = cacheLines(
-      realm(['workflow', 'validate', '--registered', 'gone-tree']).stdout,
+      realm([
+        'workflow',
+        'validate',
+        '--registered',
+        'gone-tree',
+        '--provider',
+        'anthropic',
+        '--model',
+        'm',
+      ]).stdout,
     );
     expect([
       registered[0]!.includes(
         '— profile file not read (source_dir <dir>/proj no longer exists): sizes not computed',
       ),
-      registered[1]!.endsWith('— economics not checked (trust_root <dir>/proj no longer exists)'),
+      registered[1]!.endsWith('— economics not checked (no project folder to read it from)'),
     ]).toEqual([true, true]);
   });
 
