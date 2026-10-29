@@ -43,7 +43,8 @@ import {
  * `EVIDENCE_KEEPS_ANSWER_FACTS` (issue #627 W, §5.8 — how an answer arrived: the route its door
  * declared with what showed the question, the program that recorded it, whether the door asked the
  * user's app to ask the person, and the transport's principal, each read back exactly, typed
- * absences included).
+ * absences included) and `EVIDENCE_WRITE_ORDER` (#872 (b1) — a run's evidence reads back in the
+ * order it was written: `get_run_state` pages a run's steps in that order, by a step's place in it).
  */
 export const RUN_STORE_FIDELITY_LAWS = [
   'FIDELITY_HONESTY',
@@ -55,6 +56,7 @@ export const RUN_STORE_FIDELITY_LAWS = [
   'USAGE_RECORD_ROUNDTRIP',
   'SUPPLIER_ROUND_TRIPS',
   'EVIDENCE_KEEPS_ANSWER_FACTS',
+  'EVIDENCE_WRITE_ORDER',
 ] as const;
 
 export type RunStoreFidelityLaw = (typeof RUN_STORE_FIDELITY_LAWS)[number];
@@ -608,6 +610,45 @@ export function runStoreFidelityContract(
         throw new Error(
           'a gate_response entry written without client_prompt_requested and driven_by must read ' +
             'back without them (issue #627): a store never fills in an answer fact',
+        );
+      }
+    },
+  });
+
+  // #872 (b1) — EVIDENCE_WRITE_ORDER. Always active: every store round-trips evidence. A run's
+  // evidence reads back in WRITE order — `get_run_state` pages a run's steps in first-attempt order,
+  // its cursor a step's place in that order, so a store that reorders evidence moves the pages.
+  cases.push({
+    law: 'EVIDENCE_WRITE_ORDER',
+    name: "three steps' evidence written in three separate writes (a, b, c) reads back as a, b, c",
+    run: async () => {
+      const { run } = await adapter.store.create({
+        workflowId: `tck-order-${Math.random().toString(36).slice(2)}`,
+        workflowVersion: 1,
+        params: {},
+      });
+      const entry = (step_id: string): EvidenceSnapshot => ({
+        step_id,
+        started_at: '2026-01-01T00:00:00.000Z',
+        completed_at: '2026-01-01T00:00:01.000Z',
+        duration_ms: 1,
+        input_summary: {},
+        output_summary: {},
+        status: 'success',
+        evidence_hash: `tck-order-${step_id}`,
+      });
+      let current = run;
+      for (const step of ['a', 'b', 'c']) {
+        current = await adapter.store.update({
+          ...current,
+          evidence: [...current.evidence, entry(step)],
+        });
+      }
+      const read = (await adapter.store.get(run.id)).evidence.map((e) => e.step_id);
+      if (JSON.stringify(read) !== JSON.stringify(['a', 'b', 'c'])) {
+        throw new Error(
+          `a store must read a run's evidence back in the order it was written (#872): wrote a, b, c ` +
+            `in three writes, read back ${JSON.stringify(read)}`,
         );
       }
     },

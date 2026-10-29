@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
+  capText,
   ABANDON_KILL_ADVISORY,
   JsonFileStore,
   WorkflowError,
@@ -113,7 +114,8 @@ export async function handleAbandonRun(
     // guarantee).
     run_phase: run.run_phase,
     terminal_state: run.terminal_state,
-    terminal_reason: run.terminal_reason,
+    // #872 (b1): a reason over 500 characters is named by its length (I4), never echoed whole.
+    terminal_reason: run.terminal_reason !== undefined ? capText(run.terminal_reason) : undefined,
     note: alreadyAbandoned ? `${ABANDON_NO_OP_NOTE} ${ABANDON_ADVISORY}` : ABANDON_ADVISORY,
   };
 }
