@@ -382,6 +382,10 @@ describe(
     it("the watch transcript holds only watch's own lines, and its cache line is the scaffold's", () => {
       const page = read(WORKFLOW_PAGE);
       const at = page.indexOf('and again only when they differ from the last block printed.');
+      expect(
+        at,
+        'docs/reference/cli/realm-workflow.md no longer holds the sentence that ends "and again only when they differ from the last block printed."',
+      ).toBeGreaterThanOrEqual(0);
       const block = /```text\n([\s\S]*?)```/.exec(page.slice(at))![1]!;
       const foreign = block
         .split('\n')
@@ -840,7 +844,7 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
     );
     claim(
       WORKFLOW_PAGE,
-      "**Steps that share a fixed part.** The line names the other steps whose fixed part is the same as this step's: `shares its whole fixed part with …`. On Anthropic nothing else is named: Anthropic writes its cache entry at the block Realm marks, and a read needs every character up to it, so two steps that part earlier share no entry. On OpenAI nothing else is named either: Realm sends the profile, its instructions and the schema in one system message, and on gpt-5.6-luna a start two steps shared inside that message was not read (Realm's own check, 2026-10-28). A step below the minimum names no sharing, because it cannot cache whatever it shares; on OpenAI with `structured_output: strict` and a model that is not an `o1` model, where the provider's own schema text is not counted, the clause stays. The clause comes back with a lower floor or a longer fixed part. Two steps that differ only in `structured_output: strict`, one strict and one not, are not named to each other: a strict step sends a different fixed part. With an `o1` model on OpenAI they are named, unless a floor puts them below the minimum: an `o1` model is sent the same fixed part for a strict step and a plain one. Two identical strict steps still name each other, on both providers, unless a floor puts them below the minimum on Anthropic or with an `o1` model; two strict steps with different schemas name nothing. A list of more than six steps names five and ends `and N more`. When the two providers would not name the same steps, each provider that names any starts its part with its own name, once, as in `— anthropic: shares its whole fixed part with handle_bug, …` or `— openai: shares its whole fixed part with strict_b`; a provider that names none is left out, and with `--provider` there is one layout and no label. From example 05, with `--provider anthropic`:",
+      "**Steps that share a fixed part.** The line names the other steps whose fixed part is the same as this step's: `shares its whole fixed part with …`. On Anthropic nothing else is named: Anthropic writes its cache entry at the block Realm marks, and a read needs every character up to it, so two steps that part earlier share no entry. On OpenAI nothing else is named either: Realm sends the profile, Realm's instructions and the schema in one system message, and on gpt-5.6-luna a start two steps shared inside that message was not read (Realm's own check, 2026-10-28). A step below the minimum names no sharing, because it cannot cache whatever it shares; on OpenAI with `structured_output: strict` and a model that is not an `o1` model, where the provider's own schema text is not counted, the clause stays. The clause comes back with a lower floor or a longer fixed part. Two steps that differ only in `structured_output: strict`, one strict and one not, are not named to each other: a strict step sends a different fixed part. With an `o1` model on OpenAI they are named, unless a floor puts them below the minimum: an `o1` model is sent the same fixed part for a strict step and a plain one. Two identical strict steps still name each other, on both providers, unless a floor puts them below the minimum on Anthropic or with an `o1` model; two strict steps with different schemas name nothing. A list of more than six steps names five and ends `and N more`. When the two providers would not name the same steps, each provider that names any starts its part with its own name, once, as in `— anthropic: shares its whole fixed part with handle_bug, …` or `— openai: shares its whole fixed part with strict_b`; a provider that names none is left out, and with `--provider` there is one layout and no label. From example 05, with `--provider anthropic`:",
     );
     const step = (id: string, required: string, profile?: string): string =>
       `  ${id}:\n    description: s\n    execution: agent\n    prompt: Do it.\n${profile !== undefined ? `    agent_profile: ${profile}\n` : ''}    output_schema:\n      type: object\n      additionalProperties: false\n      required: [${required}]\n      properties:\n        ${required}: { type: string }\n`;
@@ -1444,16 +1448,20 @@ describe("correction 3, I-10 and I-11: what each provider's page says, dated", (
   // I-11: after the example-05 transcript, the page quotes Anthropic's prompt-caching page of
   // 2026-10-28 (fetched 16:11Z, 162,386 bytes, its line 614) and says what it means for two steps
   // that share a fixed part. The dated fetch is the evidence (registry row C3-ANTH-CONC-01).
-  // Follow-up C-4: the paragraph then says when Realm sends them: one `realm agent` drive takes the
-  // ready steps one after the other (run in `agent/drive-one-request-at-a-time-600.test.ts`, its
-  // first arm), and two drives at once can send them together (its second arm); a host that sends
-  // the steps itself is not run. (a) red when the paragraph is dropped, moved off the example-05
-  // transcript, or reworded; (b) prints the page and the paragraph.
+  // Follow-up C-4 and its correction 1: the paragraph then says when Realm sends them, and each half
+  // is run in `agent/drive-one-request-at-a-time-600.test.ts`: its ARM 1 ('one drive: while the first
+  // reply is held the provider has been called once; the second call follows its release') runs one
+  // drive sending its steps in turn; its ARM 2 ('two runs started together: their first steps are in
+  // flight together; each run sends its second step only after its own first reply') runs two runs
+  // started together, sending their first step together and each run its second step only after its
+  // own first reply. A host that sends the steps itself is not run. (a) red when the paragraph is
+  // dropped, moved off the example-05 transcript, or reworded (the old sentence back, the new one
+  // dropped); (b) prints the page and the paragraph.
   it("I-11: on Anthropic, two steps that share a fixed part read each other's entry only after the first response starts", () => {
     const paragraph =
       'Anthropic\'s page says (2026-10-28) that "a cache entry only becomes available after the first response starts", and advises waiting for the first response before sending parallel requests that need hits. On Anthropic, two steps that share a fixed part, like these two, read each other\'s entry only if the second request is sent after the first response has started.';
     const drives =
-      'One `realm agent` drive takes the ready steps one after the other, so it sends these two in turn, the second after the first response. Two drives running at once (several runs started together, for example by `realm listen`), or a host that sends the two steps itself, can send them together.';
+      'One `realm agent` drive takes the ready steps one after the other, so it sends these two in turn, the second after the first response. Runs started together (for example by `realm listen`) each have their own drive, and each sends its own steps in turn. But the runs overlap: the first step of two such runs goes out at the same moment, and neither request reads the entry the other is still writing. A host that sends the two steps itself can send them together.';
     claim(WORKFLOW_PAGE, paragraph);
     claim(WORKFLOW_PAGE, drives);
     expect(
