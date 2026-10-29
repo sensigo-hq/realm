@@ -16,17 +16,18 @@ To test a workflow from the command line, with no test file, see [Test a workflo
 
 ## The exports
 
-| Group                               | Values                                                                                                                                                                                                                                                                                                   |
-| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Fixtures](#fixtures)               | `loadFixtureFromFile`, `loadFixtureFromString`, `loadFixturesFromDir`, `runFixtureTests`                                                                                                                                                                                                                 |
-| [Driving a run](#driving-a-run)     | `InMemoryStore`, `MockServiceRecorder`, `createAgentDispatcher`, `createGateResponder`                                                                                                                                                                                                                   |
-| [Assertions](#assertions)           | `assertFinalState`, `assertStepSucceeded`, `assertStepFailed`, `assertStepOutput`, `assertEvidenceHash`                                                                                                                                                                                                  |
-| [Unit helpers](#unit-helpers)       | `testStepHandler`, `testAdapter`, `testProcessor`                                                                                                                                                                                                                                                        |
-| [GitHub stand-in](#github-stand-in) | `startGitHubMockServer`                                                                                                                                                                                                                                                                                  |
-| [Store contracts](#store-contracts) | `runStoreFidelityContract`, `settlementContract`, `defaultSettlementFixture`, `perRunArtifactStoreContract`, `fencedTraceBufferContract`, `createFenceRunSource`, `fenceTestRun`, `storeReleaseLineLaw`, `RUN_STORE_FIDELITY_LAWS`, `SETTLEMENT_LAWS`, `ARTIFACT_STORE_LAWS`, `FENCED_TRACE_BUFFER_LAWS` |
-| Version                             | `VERSION`, the package's version as a string, for example `"0.46.0"`.                                                                                                                                                                                                                                    |
+| Group                                                   | Values                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Fixtures](#fixtures)                                   | `loadFixtureFromFile`, `loadFixtureFromString`, `loadFixturesFromDir`, `runFixtureTests`                                                                                                                                                                                                                                                           |
+| [Driving a run](#driving-a-run)                         | `InMemoryStore`, `MockServiceRecorder`, `createAgentDispatcher`, `createGateResponder`                                                                                                                                                                                                                                                             |
+| [Assertions](#assertions)                               | `assertFinalState`, `assertStepSucceeded`, `assertStepFailed`, `assertStepOutput`, `assertEvidenceHash`                                                                                                                                                                                                                                            |
+| [Unit helpers](#unit-helpers)                           | `testStepHandler`, `testAdapter`, `testProcessor`                                                                                                                                                                                                                                                                                                  |
+| [GitHub stand-in](#github-stand-in)                     | `startGitHubMockServer`                                                                                                                                                                                                                                                                                                                            |
+| [Clocks and test locations](#clocks-and-test-locations) | `settableClock`, `steppingClock`, `countingClock`, `createTestLocation`                                                                                                                                                                                                                                                                            |
+| [Store contracts](#store-contracts)                     | `runStoreFidelityContract`, `settlementContract`, `defaultSettlementFixture`, `perRunArtifactStoreContract`, `fencedTraceBufferContract`, `createFenceRunSource`, `fenceTestRun`, `storeReleaseLineLaw`, `RUN_STORE_FIDELITY_LAWS`, `SETTLEMENT_LAWS`, `ARTIFACT_STORE_LAWS`, `FENCED_TRACE_BUFFER_LAWS`, `storeClockContract`, `STORE_CLOCK_LAWS` |
+| Version                                                 | `VERSION`, the package's version as a string, for example `"0.46.0"`.                                                                                                                                                                                                                                                                              |
 
-The 23 types are named in the group that uses them.
+The 30 types are named in the group that uses them.
 
 ## Fixtures
 
@@ -213,9 +214,12 @@ await createGateResponder(store, definition, run.id, { decide: 'approve' });
 
 ```ts
 new InMemoryStore();
+new InMemoryStore({ clock });
 ```
 
 A run store that keeps runs in memory. It has the 7 functions of a run store: `create`, `get`, `update`, `claimStep`, `settleStep`, `stampSeal` and `list`. It keeps every field of a run's record. See [Core library](core-library.md) for what each function does.
+
+Given a `clock`, it stamps its writes with that clock; without one, with this computer's (added after version 0.48.0). See [A store's clock](core-library.md#a-stores-clock).
 
 ### `MockServiceRecorder`
 
@@ -364,9 +368,28 @@ With `port` left out, the system picks a free port. The file maps a method and a
 
 The query string is not matched. The file is read once, when the server starts. A port in use gives `GitHubMockServer: cannot bind to port 4871: listen EADDRINUSE: address already in use 127.0.0.1:4871`.
 
+## Clocks and test locations
+
+Clocks a test moves itself, for a store's `clock` (added after version 0.48.0). See [A store's clock](core-library.md#a-stores-clock).
+
+| Export                                 | Returns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `settableClock(start, options?)`       | A clock that moves only when the test calls `advance(ms)` or `set(time)`. Moving it runs each function given to `at` that is due, one at a time, earliest first, and waits for each to finish.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `steppingClock(start, stepMs)`         | A clock whose time goes up by `stepMs` each time it is read, with a `reads` count. Its `at` throws.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `countingClock(clock)`                 | The same clock, with a `reads` count of its `now()` calls.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `createTestLocation({ start, root? })` | A test location: a folder with `runs/` and a `.realm-test-clock` file. Its `clock` moves the time in that file, so a `JsonFileStore` opened on its `runsDir`, in this process or another, reads it. `remove()` deletes the clock file, the `runs/` folder if the location made it, and the other folders the location made above `runs/`, each only if it is then empty; a root you gave keeps everything else in it. A folder the location makes itself, when you give no `root`, is deleted whole. The location's time stamps a run's `created_at`, a claim's `since` and deadline, and the `updated_at` that `create`, `update` and `claimStep` write; `settleStep` still stamps `updated_at` with this computer's clock, so a run whose step settled can read updated before it was created. |
+
+`createTestLocation` refuses an empty root, and a root that is the working directory or a folder above it, judged by the path as written: a symlink or junction to one is not followed, and the parent of a working directory whose own name starts with `..` is not recognised as a folder above it. It also refuses a root that already holds a clock file; to use that folder as an ordinary store again, delete its `.realm-test-clock` file.
+
+`set` to an earlier time runs nothing and moves the clock back. A function given to `at` sees the clock at its own time, never earlier. An `advance` runs every due function even when some throw, then rejects with their errors.
+
+A test of Realm's own source keeps `createTestLocation`, and the clock file's helpers `@sensigo/realm` exports for this package, out of the `src` folders of Realm's four packages, except the files that define or re-export them, the file store's own file (it reads the clock file, and a comment there names it) and this package: no command, server or library there creates a test location or writes a clock file. The file store reads a clock file, only when it sits beside `runs/`.
+
+Types: `SettableClock`, `SettableClockOptions`, `TestLocation`.
+
 ## Store contracts
 
-A store contract is a set of tests for a store you wrote. Each of the 4 contract functions takes an adapter that describes your store and returns a list of cases. A case has a `law`, a `name`, and a `run` function that throws if your store breaks the law.
+A store contract is a set of tests for a store you wrote. Each of the 5 contract functions takes an adapter that describes your store and returns a list of cases. A case has a `law`, a `name`, and a `run` function that throws if your store breaks the law.
 
 ```js
 import { it } from 'vitest';
@@ -390,14 +413,15 @@ Build a new adapter and store for each case, as above. Several cases delete or d
 | `settlementContract`          | `RunStore` with `settleStep`                 | 56   | 146, with `InMemoryStore` (below)   |
 | `perRunArtifactStoreContract` | `PerRunArtifactStore`                        | 7    | 7, with `FailedAttemptStore`        |
 | `fencedTraceBufferContract`   | `TraceBufferStore` with the fenced functions | 12   | 74, with `InMemoryTraceBufferStore` |
+| `storeClockContract`          | `RunStore`, on a clock the test moves        | 5    | 5, with `InMemoryStore`             |
 
 Every case in the last column passed. The store interfaces are in [Core library](core-library.md).
 
-Each contract has the law `STORE_RELEASE_LINE_TRUE`: the release line your store declares must be the line of the errors it throws. The case makes your store refuse something (a run that does not exist, an injected failure, a fence that refuses) and compares the two. `storeReleaseLineLaw(store, provokeRefusal)` runs the same check for any store kind: `provokeRefusal` must make the store throw one of its own errors. A test runner that takes its laws from the exported list (below) runs it with no edit; one that lists its laws by hand must list it, or the case is never run. The law and `storeReleaseLineLaw` were added in 0.46.0; the counts above include them.
+Each of the first four contracts has the law `STORE_RELEASE_LINE_TRUE`: the release line your store declares must be the line of the errors it throws. The case makes your store refuse something (a run that does not exist, an injected failure, a fence that refuses) and compares the two. `storeReleaseLineLaw(store, provokeRefusal)` runs the same check for any store kind: `provokeRefusal` must make the store throw one of its own errors. A test runner that takes its laws from the exported list (below) runs it with no edit; one that lists its laws by hand must list it, or the case is never run. The law and `storeReleaseLineLaw` were added in 0.46.0; the counts above include them.
 
 #### Running every law
 
-Each of four contracts exports the names of its laws as a list, so that a test file does not keep its own copy of them: `RUN_STORE_FIDELITY_LAWS`, `SETTLEMENT_LAWS`, `ARTIFACT_STORE_LAWS` and `FENCED_TRACE_BUFFER_LAWS`. They were added in 0.46.0. Run the list, minus the laws that the file names in a `NOT_RUN` object with a reason for each:
+Each contract exports the names of its laws as a list, so that a test file does not keep its own copy of them: `RUN_STORE_FIDELITY_LAWS`, `SETTLEMENT_LAWS`, `ARTIFACT_STORE_LAWS` and `FENCED_TRACE_BUFFER_LAWS`, added in 0.46.0, and `STORE_CLOCK_LAWS`, added after version 0.48.0. Run the list, minus the laws that the file names in a `NOT_RUN` object with a reason for each:
 
 ```js
 import { SETTLEMENT_LAWS } from '@sensigo/realm-testing';
@@ -520,6 +544,28 @@ Types: `PerRunArtifactStoreContractAdapter`, `ArtifactStoreContractCase`, `Artif
 The 12 laws: `STRUCTURAL`, `FENCE_REFUSES`, `FENCE_DATA`, `CS_OCCUPANCY`, `PER_KEY_INDEPENDENCE`, `NO_SILENT_LOSS`, `CARRIAGE_ROUND_TRIP`, `SEAL`, `SEAL_BUDGET`, `PER_WRITER_BUDGET`, `VERBATIM`, `STORE_RELEASE_LINE_TRUE`.
 
 Types: `FencedTraceBufferContractAdapter`, `FencedTraceBufferContractCase`, `FencedTraceBufferLaw`.
+
+### `storeClockContract(adapter)`
+
+The laws of the time a run store writes (added after version 0.48.0). Each case builds its own store, on a clock it moves.
+
+| Adapter field        | Holds                                                                                                                                                                                                                                                                |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `storeName`          | A name for the store, at the start of each case's `name`.                                                                                                                                                                                                            |
+| `route`              | `{ kind: 'clock', makeStore({ clock }) }` for a store built with a clock it is given, such as `InMemoryStore`; `{ kind: 'location', makeStore({ location }) }` for a store opened on a test location, such as `JsonFileStore` on `location.runsDir`.                 |
+| `seedLegacyTerminal` | If the store has `stampSeal`: writes an ended run that has no record of how it ended into the store the route built for the case, past the store's own checks, and returns it; without it, the `READS_SPEND_NO_READING` case fails, saying that the hook is missing. |
+
+| Law                                | A case fails when                                                                                                                                                                                                                                                 |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `WRITE_ONE_READING`                | a `create`, `update` or `claimStep` records a time other than the clock's, or (on the `clock` route) reads the clock more or less than once, refused or not                                                                                                       |
+| `MONOTONE_CAPPED`                  | a write after the clock stepped back behind a record is not stamped with the record's time, or with the clock's time plus 5 seconds when the record is further ahead                                                                                              |
+| `KEYED_CREATE_ORDERS_AFTER_HOLDER` | a run started again under an idempotency key after the clock stepped back less than 5 seconds is not stamped after the run it replaces. At a step back of exactly 5 seconds the 5-second cap wins: that run is stamped equal to the run it replaces, not after it |
+| `KEYED_CREATE_FLOOR_CAPPED`        | that run's time is lifted more than 5 seconds                                                                                                                                                                                                                     |
+| `READS_SPEND_NO_READING`           | `get`, `list` or `stampSeal` reads the clock (on the `clock` route only)                                                                                                                                                                                          |
+
+A failing case's message starts with its law's name. On the `location` route the reads cannot be counted, so a file running that route names `READS_SPEND_NO_READING` in its `NOT_RUN`.
+
+Types: `StoreClockContractAdapter`, `StoreClockContractCase`, `StoreClockLaw`, `StoreRoute`.
 
 ### `createFenceRunSource()`
 

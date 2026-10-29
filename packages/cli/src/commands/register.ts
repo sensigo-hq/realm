@@ -21,6 +21,15 @@ import {
   loadWorkflowForAdmission,
   ExtensionLoadError,
 } from '../lib/load-workflow-for-admission.js';
+import { parseProvider } from './agent.js';
+import type { ProviderName } from '../agent/providers/llm-provider.js';
+import {
+  CACHE_FLAG_HELP,
+  buildCacheabilityReport,
+  checkCacheFlags,
+  printCacheabilityLines,
+  renderCacheabilityLines,
+} from '../lib/cacheability.js';
 
 export const registerCommand = new Command('register')
   .argument('<path>', 'Path to workflow directory or workflow.yaml file')
@@ -28,96 +37,129 @@ export const registerCommand = new Command('register')
     '--strict',
     'Exit non-zero and refuse to register if any loader warning is present (issue #169)',
   )
+  .option('--provider <name>', CACHE_FLAG_HELP.provider, parseProvider)
+  .option('--model <id>', CACHE_FLAG_HELP.model)
+  .option('--floor <tokens>', CACHE_FLAG_HELP.floor)
+  .option('--ratio <chars-per-token>', CACHE_FLAG_HELP.ratio)
   .description('Register a workflow definition')
-  .action(async (inputPath: string, opts: { strict?: boolean }) => {
-    const filePath =
-      inputPath.endsWith('.yaml') || inputPath.endsWith('.yml')
-        ? inputPath
-        : join(inputPath, 'workflow.yaml');
-
-    try {
-      const { definition, warnings } = await loadWorkflowForAdmission(filePath, {
-        surface: 'register',
-      });
-
-      // The issue #170 boundary-reject, LIVE since the flip — checked before --strict, so an
-      // unknown key is refused with or without the flag. Store-registered definitions already in
-      // the registry are never re-parsed and are unaffected.
-      if (rejectOnErrorSeverity(warnings)) {
-        printLoaderWarnings(warnings);
-        // One grammar with validate (issue #451): the line names WHICH warning escalated. The id
-        // the old line carried is not missed — the operator just typed the path.
-        console.error(renderEscalationLine(warnings));
+  .action(
+    async (
+      inputPath: string,
+      opts: {
+        strict?: boolean;
+        provider?: ProviderName;
+        model?: string;
+        floor?: string;
+        ratio?: string;
+      },
+    ) => {
+      // issue #600 caching PR 5 — the cache flags, checked first (validate's usage-error precedent).
+      const cacheChecked = checkCacheFlags(opts);
+      if (!cacheChecked.ok) {
+        console.error(cacheChecked.message);
         process.exit(1);
         return;
       }
+      const filePath =
+        inputPath.endsWith('.yaml') || inputPath.endsWith('.yml')
+          ? inputPath
+          : join(inputPath, 'workflow.yaml');
 
-      if (opts.strict && failsStrict(warnings)) {
-        printLoaderWarnings(warnings);
-        console.error(
-          `Error: '${definition.id}' v${definition.version} has ${warnings.length} ${warnings.length === 1 ? 'warning' : 'warnings'}; refusing to register due to --strict`,
+      try {
+        const { definition, warnings, cacheEconomicsPath } = await loadWorkflowForAdmission(
+          filePath,
+          { surface: 'register' },
         );
-        process.exit(1);
-        return;
-      }
 
-      const store = new JsonWorkflowStore();
-      await store.register(definition);
-      printLoaderWarnings(warnings);
-      const contextWarnings = lintWorkflowContext(definition);
-      for (const warning of contextWarnings) {
-        console.warn(`⚠ ${warning}`);
-      }
-      const stepCount = Object.keys(definition.steps).length;
-      // issue #559 — the author-extension names, on the SAME line as the verdict: register has
-      // no other clause today, so the tail composition validate uses is this one clause, always.
-      const extensionClause = renderExtensionKeysClause(extensionKeysOf(definition));
-      const extensionTail = extensionClause !== undefined ? ` — ${extensionClause}` : '';
-      console.log(
-        `Registered: ${definition.id} v${definition.version} (${stepCount} ${stepCount === 1 ? 'step' : 'steps'})${extensionTail}`,
-      );
-      if (definition.description !== undefined) {
-        console.log(`  ${definition.description}`);
-      }
-    } catch (err) {
-      // issue #424 — see the comment at validate.ts's extension-free catch. This is the ONLY
-      // render site for a loader failure here: the ManifestSecretsError catch above rethrows
-      // into this one, so rendering there too would double-print.
-      if (err instanceof WorkflowError && err.warnings !== undefined) {
-        printLoaderWarnings(err.warnings);
-      }
-      // issue #451 — an extensions-load failure gets the sentence run and validate print for it.
-      // First arm by placement only: an ExtensionLoadError is never a WorkflowError, so the
-      // order against the family split below is immaterial.
-      if (err instanceof ExtensionLoadError) {
-        // issue #463 — the workflow's own warnings first, then the sentence (the #424 catch-render
-        // shape). The PLAIN render, not printLoaderWarnings: historically that helper rewrote
-        // `— ignored` to `— REFUSED below` for the codes this boundary refuses, and on this path
-        // the escalation gate never ran — the refusal below is the extensions error, so
-        // "REFUSED below" would have named the wrong cause. Issue #540 deleted that substitution
-        // — the two renderers now produce identical bytes — but the plain render stays here
-        // (kept as two call shapes on purpose, see #542); `— ignored` is the core's statement
-        // about the PARSE, true here as on every surface, and the composition then reads exactly
-        // as `realm run` prints it (test.ts's render comment — #450's reasoning, generalized).
-        if (err.warnings !== undefined) {
-          for (const w of err.warnings) console.warn(renderLoaderWarning(w));
+        // The issue #170 boundary-reject, LIVE since the flip — checked before --strict, so an
+        // unknown key is refused with or without the flag. Store-registered definitions already in
+        // the registry are never re-parsed and are unaffected.
+        if (rejectOnErrorSeverity(warnings)) {
+          printLoaderWarnings(warnings);
+          // One grammar with validate (issue #451): the line names WHICH warning escalated. The id
+          // the old line carried is not missed — the operator just typed the path.
+          console.error(renderEscalationLine(warnings));
+          process.exit(1);
+          return;
         }
-        console.error(`Error loading extensions: ${err.message}`);
+
+        if (opts.strict && failsStrict(warnings)) {
+          printLoaderWarnings(warnings);
+          console.error(
+            `Error: '${definition.id}' v${definition.version} has ${warnings.length} ${warnings.length === 1 ? 'warning' : 'warnings'}; refusing to register due to --strict`,
+          );
+          process.exit(1);
+          return;
+        }
+
+        const store = new JsonWorkflowStore();
+        await store.register(definition);
+        printLoaderWarnings(warnings);
+        const contextWarnings = lintWorkflowContext(definition);
+        for (const warning of contextWarnings) {
+          console.warn(`⚠ ${warning}`);
+        }
+        const stepCount = Object.keys(definition.steps).length;
+        // issue #559 — the author-extension names, on the SAME line as the verdict: register has
+        // no other clause today, so the tail composition validate uses is this one clause, always.
+        const extensionClause = renderExtensionKeysClause(extensionKeysOf(definition));
+        const extensionTail = extensionClause !== undefined ? ` — ${extensionClause}` : '';
+        console.log(
+          `Registered: ${definition.id} v${definition.version} (${stepCount} ${stepCount === 1 ? 'step' : 'steps'})${extensionTail}`,
+        );
+        if (definition.description !== undefined) {
+          console.log(`  ${definition.description}`);
+        }
+        // issue #600 caching PR 5: the cache lines, after the description line.
+        printCacheabilityLines(
+          renderCacheabilityLines(
+            await buildCacheabilityReport(
+              definition,
+              cacheChecked.flags,
+              cacheEconomicsPath !== undefined ? { cacheEconomicsPath } : {},
+            ),
+          ),
+        );
+      } catch (err) {
+        // issue #424 — see the comment at validate.ts's extension-free catch. This is the ONLY
+        // render site for a loader failure here: the ManifestSecretsError catch above rethrows
+        // into this one, so rendering there too would double-print.
+        if (err instanceof WorkflowError && err.warnings !== undefined) {
+          printLoaderWarnings(err.warnings);
+        }
+        // issue #451 — an extensions-load failure gets the sentence run and validate print for it.
+        // First arm by placement only: an ExtensionLoadError is never a WorkflowError, so the
+        // order against the family split below is immaterial.
+        if (err instanceof ExtensionLoadError) {
+          // issue #463 — the workflow's own warnings first, then the sentence (the #424 catch-render
+          // shape). The PLAIN render, not printLoaderWarnings: historically that helper rewrote
+          // `— ignored` to `— REFUSED below` for the codes this boundary refuses, and on this path
+          // the escalation gate never ran — the refusal below is the extensions error, so
+          // "REFUSED below" would have named the wrong cause. Issue #540 deleted that substitution
+          // — the two renderers now produce identical bytes — but the plain render stays here
+          // (kept as two call shapes on purpose, see #542); `— ignored` is the core's statement
+          // about the PARSE, true here as on every surface, and the composition then reads exactly
+          // as `realm run` prints it (test.ts's render comment — #450's reasoning, generalized).
+          if (err.warnings !== undefined) {
+            for (const w of err.warnings) console.warn(renderLoaderWarning(w));
+          }
+          console.error(`Error loading extensions: ${err.message}`);
+        }
+        // issue #425 — THE FAMILY SPLIT. An `Invalid workflow:` message announces itself, so it
+        // renders verbatim through the shared helper (which also lists a multi-error throw one per
+        // line). Everything else this catch can see — a store failure, an unreadable path —
+        // announces nothing on its own, so it keeps the prefix that earns its place (#417). The
+        // predicate carries the colon, byte-matching the helper's own check.
+        else if (err instanceof WorkflowError && err.message.startsWith('Invalid workflow:')) {
+          console.error(renderLoadFailure(err));
+        } else {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(`Error: ${message}`);
+        }
+        process.exit(1);
       }
-      // issue #425 — THE FAMILY SPLIT. An `Invalid workflow:` message announces itself, so it
-      // renders verbatim through the shared helper (which also lists a multi-error throw one per
-      // line). Everything else this catch can see — a store failure, an unreadable path —
-      // announces nothing on its own, so it keeps the prefix that earns its place (#417). The
-      // predicate carries the colon, byte-matching the helper's own check.
-      else if (err instanceof WorkflowError && err.message.startsWith('Invalid workflow:')) {
-        console.error(renderLoadFailure(err));
-      } else {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`Error: ${message}`);
-      }
-      process.exit(1);
-    }
-  });
+    },
+  );
 
 /** @internal Exported for testing only. */
 export function lintWorkflowContext(definition: WorkflowDefinition): string[] {

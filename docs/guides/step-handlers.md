@@ -101,7 +101,13 @@ It prints:
 Valid: price v1 (2 steps)
 Extensions: ./registry.mjs (adapters: 0, handlers: 1, processors: 0)
 ℹ 1 step ready for structured_output: strict — run 'realm workflow validate --explain' for detail (REALM_NO_NUDGE=1 to silence).
+cache: confirm — anthropic 574 chars ≈ 335–760 tokens, with Anthropic's tool text · openai 297 chars ≈ 60–119 tokens (estimates: 2.5–5 chars/token, with margin)
+anthropic: on steps without tools, realm marks the fixed part for caching unless the drive's --prompt-cache turns it off; a fixed part below the model's minimum is sent uncached, silently
+openai: realm sends no cache marker; the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)
+anthropic: the cache is kept per workspace (per organization on Bedrock and Google Cloud), as Anthropic's page said on 2026-10-09: drives from different workspaces each pay the write
 ```
+
+The `cache:` lines are explained under [The cache lines](../reference/cli/realm-workflow.md#the-cache-lines).
 
 Notice the `Extensions` line. It confirms that Realm loaded your file and found one handler. Then register:
 

@@ -47,6 +47,17 @@ import {
   ExtensionLoadError,
   admittedDefinitionOf,
 } from '../lib/load-workflow-for-admission.js';
+import { parseProvider } from './agent.js';
+import type { ProviderName } from '../agent/providers/llm-provider.js';
+import {
+  CACHE_FLAG_HELP,
+  buildCacheabilityReport,
+  cacheabilityJson,
+  checkCacheFlags,
+  printCacheabilityLines,
+  renderCacheabilityLines,
+  type CacheFlags,
+} from '../lib/cacheability.js';
 import {
   CONTEXT_DEPENDENT_CHECKS,
   notRunReason,
@@ -358,6 +369,12 @@ interface ValidateJsonEmit {
    * `valid: false` arm always shows `[]` even when the file carries such keys.
    */
   extensionKeys: readonly string[];
+  /**
+   * Issue #600 caching PR 5 — each agent step's fixed part: its size, what it shares, and whether it
+   * can cache (`lib/cacheability.ts`). On every arm where a definition loaded; never on a
+   * load-failure arm.
+   */
+  cacheability?: Record<string, unknown>;
 }
 
 /**
@@ -381,6 +398,9 @@ const VALIDATE_JSON_TABLE: ClassTable = {
   errors: 'bounded',
   checks_not_run: 'fact',
   extension_keys: 'fact',
+  // issue #600 caching PR 5 (Δ3): sizes, counts, verdict and cause words, segment names, step ids, a
+  // model id and floor numbers — never prompt text.
+  cacheability: 'fact',
 };
 
 function emitValidateJson(result: ValidateJsonEmit): void {
@@ -400,6 +420,7 @@ function emitValidateJson(result: ValidateJsonEmit): void {
       errors: result.errors,
       checks_not_run: result.checksNotRun,
       extension_keys: result.extensionKeys,
+      ...(result.cacheability !== undefined ? { cacheability: result.cacheability } : {}),
     },
     VALIDATE_JSON_TABLE,
   );
@@ -515,7 +536,8 @@ async function validateRegistered(
   id: string,
   strict: boolean,
   json: boolean,
-  overrideModule?: string,
+  overrideModule: string | undefined,
+  cacheFlags: CacheFlags,
 ): Promise<void> {
   const store = new JsonWorkflowStore();
 
@@ -770,6 +792,8 @@ async function validateRegistered(
 
   let sentinelWarnings: string[] | undefined;
   let releaseLineWarnings: LoaderWarning[] | undefined;
+  // issue #600 caching PR 5: the economics file the extensions pass resolved, when it ran.
+  let cacheEconomicsPath: string | undefined;
   for (const check of applicable) {
     if (notRun.some((n) => n.id === check.id)) continue;
     if (check.id === 'agent_profile_resolution') {
@@ -819,6 +843,7 @@ async function validateRegistered(
       }
       sentinelWarnings = loaded.sentinelWarnings;
       releaseLineWarnings = loaded.releaseLineWarnings;
+      cacheEconomicsPath = loaded.cacheEconomicsPath;
       try {
         loadWorkflowFromStringWithDiagnostics(stripped, loaded.registry);
       } catch (err) {
@@ -836,6 +861,15 @@ async function validateRegistered(
     ...findRetryWithoutExplicitTimeout(definition),
     ...wrapSentinelWarnings(sentinelWarnings),
   ];
+  // issue #600 caching PR 5: a check that did not run leaves the cache lines what it could not supply
+  // — the profiles (sizes), or the economics file (the floor) — said with the existing reason.
+  const profilesNotRun = notRun.find((x) => x.id === 'agent_profile_resolution')?.reason;
+  const economicsNotRun = notRun.find((x) => x.id === 'project_extensions')?.reason;
+  const cache = await buildCacheabilityReport(definition, cacheFlags, {
+    ...(cacheEconomicsPath !== undefined ? { cacheEconomicsPath } : {}),
+    ...(profilesNotRun !== undefined ? { profilesNotRun } : {}),
+    ...(economicsNotRun !== undefined ? { economicsNotRun } : {}),
+  });
   if (json) {
     if (rejectOnErrorSeverity(accumulated)) {
       emitValidateJson({
@@ -850,6 +884,7 @@ async function validateRegistered(
         errors: [renderEscalationLine(accumulated)],
         checksNotRun: notRun,
         extensionKeys: [],
+        cacheability: cacheabilityJson(cache),
       });
       process.exit(1);
     }
@@ -866,6 +901,7 @@ async function validateRegistered(
       errors: [],
       checksNotRun: notRun,
       extensionKeys: extensionKeysOf(definition),
+      cacheability: cacheabilityJson(cache),
     });
     if (strictFailed) {
       process.exit(1);
@@ -882,6 +918,8 @@ async function validateRegistered(
     notRun.length,
     extensionKeysOf(definition),
   );
+  // issue #600 caching PR 5: the last block (no nudge in this mode), before a --strict exit.
+  printCacheabilityLines(renderCacheabilityLines(cache));
   if (strictFailed) {
     process.exit(1);
   }
@@ -906,6 +944,10 @@ export const validateCommand = new Command('validate')
     'Print the full per-step structured_output adoption detail instead of the one-line summary the default run prints (issue #422)',
   )
   .option('--json', 'Emit the result as JSON on stdout, and nothing else')
+  .option('--provider <name>', CACHE_FLAG_HELP.provider, parseProvider)
+  .option('--model <id>', CACHE_FLAG_HELP.model)
+  .option('--floor <tokens>', CACHE_FLAG_HELP.floor)
+  .option('--ratio <chars-per-token>', CACHE_FLAG_HELP.ratio)
   .description('Validate a workflow YAML file')
   .action(
     async (
@@ -916,11 +958,25 @@ export const validateCommand = new Command('validate')
         explain?: boolean;
         registered?: string;
         json?: boolean;
+        provider?: ProviderName;
+        model?: string;
+        floor?: string;
+        ratio?: string;
       },
     ) => {
       const strict = opts.strict === true;
       const explain = opts.explain === true;
       const json = opts.json === true;
+
+      // issue #600 caching PR 5 — the cache flags, checked first: the usage-error precedent below
+      // (stderr, human even under --json, exit 1, nothing else printed).
+      const cacheChecked = checkCacheFlags(opts);
+      if (!cacheChecked.ok) {
+        console.error(cacheChecked.message);
+        process.exit(1);
+        return;
+      }
+      const cacheFlags = cacheChecked.flags;
 
       // Exactly-one, checked FIRST and load-bearing: commander parses a `[path]` positional and
       // a `--registered <id>` option happily together and enforces nothing between them
@@ -946,7 +1002,7 @@ export const validateCommand = new Command('validate')
       }
 
       if (opts.registered !== undefined) {
-        await validateRegistered(opts.registered, strict, json, opts.extensionsModule);
+        await validateRegistered(opts.registered, strict, json, opts.extensionsModule, cacheFlags);
         return;
       }
 
@@ -967,11 +1023,17 @@ export const validateCommand = new Command('validate')
       let definition: WorkflowDefinition;
       let warnings: LoaderWarning[];
       let manifest: LoadedProjectExtensions['manifest'];
+      let cacheEconomicsPath: string | undefined;
       try {
-        ({ definition, warnings, manifest } = await loadWorkflowForAdmission(filePath, {
-          ...(opts.extensionsModule !== undefined ? { overrideModule: opts.extensionsModule } : {}),
-          surface: 'validate',
-        }));
+        ({ definition, warnings, manifest, cacheEconomicsPath } = await loadWorkflowForAdmission(
+          filePath,
+          {
+            ...(opts.extensionsModule !== undefined
+              ? { overrideModule: opts.extensionsModule }
+              : {}),
+            surface: 'validate',
+          },
+        ));
       } catch (err) {
         if (err instanceof ExtensionLoadError) {
           // issue #463 — the workflow's own warnings first: pass-1's plus the retry advisory,
@@ -1031,6 +1093,11 @@ export const validateCommand = new Command('validate')
       }
 
       const accumulated = [...warnings, ...findRetryWithoutExplicitTimeout(definition)];
+      const cache = await buildCacheabilityReport(
+        definition,
+        cacheFlags,
+        cacheEconomicsPath !== undefined ? { cacheEconomicsPath } : {},
+      );
       if (json) {
         if (rejectOnErrorSeverity(accumulated)) {
           emitValidateJson({
@@ -1045,6 +1112,7 @@ export const validateCommand = new Command('validate')
             errors: [renderEscalationLine(accumulated)],
             checksNotRun: [],
             extensionKeys: [],
+            cacheability: cacheabilityJson(cache),
           });
           process.exit(1);
         }
@@ -1061,6 +1129,7 @@ export const validateCommand = new Command('validate')
           errors: [],
           checksNotRun: [],
           extensionKeys: extensionKeysOf(definition),
+          cacheability: cacheabilityJson(cache),
         });
         // issue #422/#236: the Extensions manifest line and the nudge are both suppressed under
         // --json — human-informational, not represented (additive later if ever wanted).
@@ -1090,6 +1159,8 @@ export const validateCommand = new Command('validate')
       // issue #422: genuinely end-of-report, BELOW the Extensions block — the summary is a
       // pointer at what you could do next, not part of what was just validated.
       printStructuredOutputNudge(definition, { explain });
+      // issue #600 caching PR 5: the cache lines, last — after the nudge, before a --strict exit.
+      printCacheabilityLines(renderCacheabilityLines(cache));
       if (strictFailed) {
         process.exit(1);
       }
