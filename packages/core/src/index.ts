@@ -628,6 +628,7 @@ export type {
 export type { Processor, ProcessorInput, ProcessorOutput } from './extensions/processor.js';
 export { ExtensionRegistry } from './extensions/registry.js';
 export { createDefaultRegistry } from './extensions/default-registry.js';
+export { BUILT_IN_REQUIREMENTS, isBuiltInRequirement } from './extensions/built-in-requirements.js';
 export type { ExtensionManifest, ExtensionModuleRef } from './extensions/manifest.js';
 export {
   validateDeploymentManifest,

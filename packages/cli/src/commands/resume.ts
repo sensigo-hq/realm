@@ -240,7 +240,7 @@ export const resumeCommand = new Command('resume')
           composeWaysAt,
           deriveRunPhase,
         } = await import('@sensigo/realm');
-        const { cannotGoOnLines } = await import('./ways-renderer.js');
+        const { advanceNeedsWords, cannotGoOnLines } = await import('./ways-renderer.js');
         const resumed = await runStore.get(runId);
         const wf = await getWorkflowForRun(workflowStore, resumed, {
           retryVerb: 'resume again',
@@ -248,24 +248,27 @@ export const resumeCommand = new Command('resume')
         });
         const resumedAt = new Date();
         const pending = describePending(wf, resumed, undefined, resumedAt);
+        // #729 PR-0 (A-10): the run's ways, composed once by core with no registry (an observer,
+        // C33), for both the owed line and the cannot-go-on lines.
+        const composed = composeWaysAt(resumed, resumedAt, { definition: wf });
+        // issue #923 (C33): resume loads no project code, so the code an owed step needs is a
+        // condition said before the `:` (`advanceNeedsWords`, the one producer), never judged here.
+        const advance = composed.ways.find((w) => w.verb === 'advance');
+        const needs =
+          advance !== undefined && advance.verb === 'advance' ? advanceNeedsWords(advance) : '';
         // decision C207: with several owed, where the call stops — never a promise that all run.
         const { steps, until } = owedWords(pending);
         view = {
           owedLine:
             pending.owed.length > 0
               ? // decision C212: the line ends with its command — no full stop.
-                `To run ${steps} the engine owes (${owedList(pending)})${until === '' ? '' : `${until},`} without a model: realm run advance ${runId}`
+                `To run ${steps} the engine owes (${owedList(pending)})${until === '' ? '' : `${until},`} without a model${needs === '' ? '' : `, ${needs}`}: realm run advance ${runId}`
               : undefined,
           stuck: cannotGoOnHere(resumed, pending),
           agentReady: pending.agent_steps.length > 0,
-          // decision C64: the resumed run cannot go on from here — the steps and the way out.
-          // #729 PR-0 (A-10): the run's ways, composed by core and rendered by the CLI's renderer.
-          cannotGoOn: cannotGoOnLines(
-            composeWaysAt(resumed, resumedAt, { definition: wf }),
-            runId,
-            deriveRunPhase(resumed),
-            writerCtx(),
-          ),
+          // decision C64: the resumed run cannot go on from here — the steps and the way out,
+          // rendered by the CLI's renderer.
+          cannotGoOn: cannotGoOnLines(composed, runId, deriveRunPhase(resumed), writerCtx()),
         };
       } catch {
         // The resume itself succeeded; the owed line is advisory.

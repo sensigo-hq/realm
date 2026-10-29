@@ -53,6 +53,7 @@ import {
   operatorInputLine,
   owedCallWords,
   owedItems,
+  advanceNeedsWords,
   heldByAnswerWords,
   writerHost,
 } from './ways-renderer.js';
@@ -1303,8 +1304,11 @@ export async function inspectRun(
       // decision C207: with several owed, where the call stops — the clause the preview ends with.
       // decision C212: the words after the command are set off by a space — no punctuation follows
       // it (`owedCallWords`).
+      // issue #923 (C33): inspect loads no project code, so the code an owed step needs is a
+      // condition said before the command (`advanceNeedsWords`), never judged here.
+      const needs = advanceNeedsWords(advance);
       lines.push(
-        `Owed to the engine: ${owedItems(advance).join(', ')} — ${CLI_COMMANDS.advance(advance, undefined, writerHost())}${owedCallWords(advance)}`,
+        `Owed to the engine: ${owedItems(advance).join(', ')} — ${needs === '' ? '' : `${needs}: `}${CLI_COMMANDS.advance(advance, undefined, writerHost())}${owedCallWords(advance)}`,
       );
     }
     // decision C205: an agent step ready — the drive, in the words `realm run advance` and `realm
