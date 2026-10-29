@@ -100,8 +100,6 @@ export function checkCacheFlags(opts: {
 export interface CacheContext {
   /** The runner's economics file the admission load resolved (`runner.cache.economics`). */
   cacheEconomicsPath?: string;
-  /** `--registered`: why agent-profile resolution did not run (the existing not-run reason). */
-  profilesNotRun?: string;
   /**
    * `--registered`: why the project-extensions check did not run — no economics path is known. It
    * decides the economics clause only when `--model` asked for the economics (D1, G-3); its words
@@ -161,7 +159,6 @@ export interface CacheabilityReport {
   adapters: RequestAdapter[];
   floor?: Floor;
   steps: StepResult[];
-  profilesNotRun?: string;
 }
 
 /** The layouts the flags name: both built-in ones with no provider; the provider's own with one. */
@@ -256,7 +253,13 @@ export async function buildCacheabilityReport(
         })),
       };
     }
-    if (ctx.profilesNotRun !== undefined && step.agent_profile !== undefined) {
+    // D1 (G-2): decided per profile, from the text the definition carries (for --registered, the text
+    // the copy holds): a step whose profile has no text is not sized without it. File mode, register
+    // and watch always carry the text (the loader refuses a profile it cannot read).
+    if (
+      step.agent_profile !== undefined &&
+      definition.resolved_profiles?.[step.agent_profile]?.content === undefined
+    ) {
       return {
         step: name,
         kind: 'profile_unavailable',
@@ -341,7 +344,6 @@ export async function buildCacheabilityReport(
     adapters,
     ...(floor !== undefined ? { floor } : {}),
     steps: results,
-    ...(ctx.profilesNotRun !== undefined ? { profilesNotRun: ctx.profilesNotRun } : {}),
   };
 }
 
@@ -471,7 +473,7 @@ function stepLine(report: CacheabilityReport, result: StepResult): string {
     return `cache: ${result.step} — uses tools: each tool's definition comes from its MCP server at run time, so the request cannot be measured before a run: not judged`;
   }
   if (result.kind === 'profile_unavailable') {
-    return `cache: ${result.step} — profile file not read (${report.profilesNotRun ?? ''}): sizes not computed`;
+    return `cache: ${result.step} — profile text not stored in the registered copy: sizes not computed — register the workflow again to store it`;
   }
   const layouts = result.layouts;
   const ratio = report.flags.ratio;

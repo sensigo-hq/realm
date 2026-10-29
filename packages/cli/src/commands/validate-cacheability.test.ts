@@ -1497,3 +1497,54 @@ describe(
     });
   },
 );
+
+describe(
+  'D1 G-2: the profile row is decided per profile, from the stored text',
+  { timeout: 60_000 },
+  () => {
+    // The folder is present and the copy holds the text of `a` but not of `b` (the registry file edited,
+    // as a damaged or hand-edited copy would be). (1) Break: the row keyed on the folder's not-run reason
+    // again, the cheapest wrong edit: with the folder present no reason exists, so `second` is sized
+    // WITHOUT its profile and no row prints. (a) red when the row is not on `second` alone, or `--json`
+    // marks another step; (b) prints the lines and the causes. (2) A folder gone with the text stored
+    // prints no row: "G-1 (1)" pins it.
+    it("G-2 (1): the copy lacks one profile's text, the folder present: the row on that step only; `--json` marks only it", () => {
+      const dir = project({
+        workflow:
+          'id: twoprof\nname: twoprof\nversion: 1\nsteps:\n' +
+          '  first:\n    description: a\n    execution: agent\n    prompt: Do it.\n    agent_profile: a\n' +
+          '  second:\n    description: b\n    execution: agent\n    prompt: Do it.\n    agent_profile: b\n' +
+          '  plain:\n    description: c\n    execution: agent\n    prompt: Do it.\n',
+        profiles: {
+          'a.md': 'You are careful.',
+          'b.md': 'You review code for bugs and say what you find.',
+        },
+      });
+      expect(realm(['workflow', 'register', dir]).code).toBe(0);
+      editCopy('twoprof', (copy) => {
+        delete (copy['resolved_profiles'] as Record<string, unknown>)['b'];
+      });
+      const lines = cacheLines(realm(['workflow', 'validate', '--registered', 'twoprof']).stdout);
+      const doc = JSON.parse(
+        realm(['workflow', 'validate', '--registered', 'twoprof', '--json']).stdout,
+      ) as {
+        cacheability: {
+          steps: Array<{ step: string; layouts: Array<{ not_judged_cause?: string }> }>;
+        };
+      };
+      expect({
+        lines,
+        marked: doc.cacheability.steps
+          .filter((s) => s.layouts.some((l) => l.not_judged_cause === 'profile_unavailable'))
+          .map((s) => s.step),
+      }).toEqual({
+        lines: [
+          'cache: first — anthropic 173 chars ≈ 35–69 tokens (no schema: realm sends no tool) · openai 173 chars ≈ 35–69 tokens (estimates: 2.5–5 chars/token, with margin)',
+          'cache: second — profile text not stored in the registered copy: sizes not computed — register the workflow again to store it',
+          'cache: plain — anthropic 155 chars ≈ 31–62 tokens (no schema: realm sends no tool) · openai 155 chars ≈ 31–62 tokens (estimates: 2.5–5 chars/token, with margin)',
+        ],
+        marked: ['second'],
+      });
+    });
+  },
+);
