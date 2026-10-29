@@ -639,6 +639,62 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
     });
   });
 
+  // Follow-up C-1: the page defines "an `o1` model", and says that with one a strict step and a plain
+  // one ARE named to each other (an `o1` model is sent the same fixed part for both), unless a floor
+  // puts them below the minimum. Run on twins (`strict_a` strict, `plain_b` plain, one schema) with
+  // `--provider openai`, name by name. (a) red when the definition is wrong for one name, the page
+  // drops the exception, or the command stops naming the pair for `o1`; (b) prints each case's name
+  // and both of its lines, the scratch folder written `<dir>`.
+  it('C-1: an `o1` model is defined; with one, a strict and a plain step are named to each other unless below the floor', () => {
+    claim(
+      WORKFLOW_PAGE,
+      'An `o1` model, on this page, is a model whose name is `o1` or starts with `o1-`, in any case (`o1`, `o1-mini`); `o1mini` and `openai/o1` are not. Realm looks only at the name you give `--model`.',
+    );
+    claim(
+      WORKFLOW_PAGE,
+      'With an `o1` model on OpenAI they are named, unless a floor puts them below the minimum: an `o1` model is sent the same fixed part for a strict step and a plain one.',
+    );
+    const step = (id: string, strict: boolean): string =>
+      `  ${id}:\n    description: s\n    execution: agent\n    prompt: Do it.\n${strict ? '    structured_output: strict\n' : ''}${ELIGIBLE_SCHEMA}`;
+    const twins = project({
+      workflow: `id: twins\nname: twins\nversion: 1\nsteps:\n${step('strict_a', true)}${step('plain_b', false)}`,
+    });
+    const cases: Array<[string, string[]]> = [
+      ['o1', ['--model', 'o1']],
+      ['o1-mini', ['--model', 'o1-mini']],
+      ['O1', ['--model', 'O1']],
+      ['gpt-4o', ['--model', 'gpt-4o']],
+      ['o1mini', ['--model', 'o1mini']],
+      ['openai/o1', ['--model', 'openai/o1']],
+      ['no --model', []],
+      ['o1 --floor 2000', ['--model', 'o1', '--floor', '2000']],
+    ];
+    const seen = cases.map(([name, args]) => {
+      const lines = cacheLines(
+        realm(['workflow', 'validate', twins, '--provider', 'openai', ...args]).stdout,
+      );
+      const named =
+        lines.length === 2 &&
+        lines[0]!.endsWith(' — shares its whole fixed part with plain_b') &&
+        lines[1]!.endsWith(' — shares its whole fixed part with strict_a');
+      const none = lines.length === 2 && lines.every((l) => !l.includes(' shares '));
+      return { name, lines, verdict: named ? 'named' : none ? 'not named' : 'other' };
+    });
+    expect(
+      Object.fromEntries(seen.map((s) => [s.name, s.verdict])),
+      seen.map((s) => `${s.name}: ${s.lines.join(' | ')}`).join('\n'),
+    ).toEqual({
+      o1: 'named',
+      'o1-mini': 'named',
+      O1: 'named',
+      'gpt-4o': 'not named',
+      o1mini: 'not named',
+      'openai/o1': 'not named',
+      'no --model': 'not named',
+      'o1 --floor 2000': 'not named',
+    });
+  });
+
   // Correction 3 (I-2, I-3, I-9a), by execution on two identical `structured_output: strict` steps.
   // Below the minimum, OpenAI keeps the clause (its own schema text is not counted), except with an
   // `o1` model, which takes the reasoning shape where the schema text is counted; Anthropic drops it.
@@ -757,7 +813,7 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
     );
     claim(
       WORKFLOW_PAGE,
-      "**Steps that share a fixed part.** The line names the other steps whose fixed part is the same as this step's: `shares its whole fixed part with …`. On Anthropic nothing else is named: Anthropic writes its cache entry at the block Realm marks, and a read needs every character up to it, so two steps that part earlier share no entry. On OpenAI, two steps that carry the same profile are named too when they first differ in the schema, which comes after it. The line then says `shares its first <n> chars with …: the schemas differ`. With a minimum in force, they are named only when the estimate of the start they share reaches it or comes near it. On OpenAI the `<n> chars` count Realm's own text after the profile too, so with a short profile most of them are Realm's. The line says what the text shares, not how much of it is yours. No other shared start is named. A step below the minimum names no sharing, because it cannot cache whatever it shares; on OpenAI with `structured_output: strict` and a model that is not an `o1` model, where the provider's own schema text is not counted, the clause stays. The clause comes back with a lower floor or a longer fixed part. Two steps that differ only in `structured_output: strict`, one strict and one not, are not named to each other: a strict step sends a different fixed part. Two identical strict steps still name each other, on both providers, unless a floor puts them below the minimum on Anthropic or with an `o1` model; two strict steps with different schemas name nothing. A list of more than six steps names five and ends `and N more`. When the two providers would not name the same steps, each provider that names any starts its part with its own name, once, as in `— anthropic: shares its whole fixed part with handle_bug, …` or `— openai: shares its whole fixed part with strict_b`; a provider that names none is left out, and with `--provider` there is one layout and no label. From example 05, with `--provider anthropic`:",
+      "**Steps that share a fixed part.** The line names the other steps whose fixed part is the same as this step's: `shares its whole fixed part with …`. On Anthropic nothing else is named: Anthropic writes its cache entry at the block Realm marks, and a read needs every character up to it, so two steps that part earlier share no entry. On OpenAI, two steps that carry the same profile are named too when they first differ in the schema, which comes after it. The line then says `shares its first <n> chars with …: the schemas differ`. With a minimum in force, they are named only when the estimate of the start they share reaches it or comes near it. On OpenAI the `<n> chars` count Realm's own text after the profile too, so with a short profile most of them are Realm's. The line says what the text shares, not how much of it is yours. No other shared start is named. A step below the minimum names no sharing, because it cannot cache whatever it shares; on OpenAI with `structured_output: strict` and a model that is not an `o1` model, where the provider's own schema text is not counted, the clause stays. The clause comes back with a lower floor or a longer fixed part. Two steps that differ only in `structured_output: strict`, one strict and one not, are not named to each other: a strict step sends a different fixed part. With an `o1` model on OpenAI they are named, unless a floor puts them below the minimum: an `o1` model is sent the same fixed part for a strict step and a plain one. Two identical strict steps still name each other, on both providers, unless a floor puts them below the minimum on Anthropic or with an `o1` model; two strict steps with different schemas name nothing. A list of more than six steps names five and ends `and N more`. When the two providers would not name the same steps, each provider that names any starts its part with its own name, once, as in `— anthropic: shares its whole fixed part with handle_bug, …` or `— openai: shares its whole fixed part with strict_b`; a provider that names none is left out, and with `--provider` there is one layout and no label. From example 05, with `--provider anthropic`:",
     );
     const step = (id: string, required: string, profile?: string): string =>
       `  ${id}:\n    description: s\n    execution: agent\n    prompt: Do it.\n${profile !== undefined ? `    agent_profile: ${profile}\n` : ''}    output_schema:\n      type: object\n      additionalProperties: false\n      required: [${required}]\n      properties:\n        ${required}: { type: string }\n`;
@@ -1451,7 +1507,7 @@ describe('the --json row, the CHANGELOG, and review-note on its page', { timeout
     );
     claim(
       WORKFLOW_PAGE,
-      "An agent step sends the same text ahead of its input on every call: its profile, Realm's instructions and its schema. A provider can cache that fixed part, but not when it is shorter than the model's minimum, and then it says nothing. `validate`, `register` and `watch` print one `cache:` line for each agent step: the size of its fixed part, the other steps that share it (on OpenAI also a start shared after a profile; none for a step below the minimum, except a `structured_output: strict` step on OpenAI with a model that is not an `o1` model), and, when a minimum is known, whether the step can be cached at all. No model is called, and no key is read. These lines were added after version 0.48.0.",
+      "An agent step sends the same text ahead of its input on every call: its profile, Realm's instructions and its schema. A provider can cache that fixed part, but not when it is shorter than the model's minimum, and then it says nothing. `validate`, `register` and `watch` print one `cache:` line for each agent step: the size of its fixed part, the other steps that share it (on OpenAI also a start shared after a profile; none for a step below the minimum, except a `structured_output: strict` step on OpenAI with a model that is not an `o1` model), and, when a minimum is known, whether the step can be cached at all. No model is called, and no key is read. An `o1` model, on this page, is a model whose name is `o1` or starts with `o1-`, in any case (`o1`, `o1-mini`); `o1mini` and `openai/o1` are not. Realm looks only at the name you give `--model`. These lines were added after version 0.48.0.",
     );
     const dir = project({
       example: '01-code-reviewer',
