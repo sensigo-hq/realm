@@ -45,7 +45,7 @@ All notable changes to this project are documented here.
   drive's `usage`. It is not the model service's own request id: Realm replaces any `request_id` a
   provider module returns. The store TCK's `USAGE_RECORD_ROUNDTRIP` law now holds every store to
   round-tripping it, so a store that drops a request field it does not know fails the law.
-- **`realm workflow validate`, `register` and `watch` say how big each agent step's fixed part is, which steps share it, and whether it can be cached (issue #600).** Each agent step gets a `cache:` line: the size of the text it sends ahead of its input on every call, the other steps with the same fixed text (on OpenAI, also a start they share after a profile), and, with a minimum, whether it is long enough to be cached at all. No model is called and no key is read. Four flags: `--provider`, `--model` (it needs `--provider`, and its minimum is read from your economics file), `--floor` (a minimum of your own) and `--ratio` (your own characters per token). `validate --json` gains `cacheability`.
+- **`realm workflow validate`, `register` and `watch` say how big each agent step's fixed part is, which steps share it, and whether it can be cached (issue #600).** Each agent step gets a `cache:` line: the size of the text it sends ahead of its input on every call, the other steps with the same fixed text, and, with a minimum, whether it is long enough to be cached at all. No model is called and no key is read. Four flags: `--provider`, `--model` (it needs `--provider`, and its minimum is read from your economics file), `--floor` (a minimum of your own) and `--ratio` (your own characters per token). `validate --json` gains `cacheability`.
 - **A run store's clock (issue #715).** `@sensigo/realm` exports `Clock`, `createSystemClock`,
   `systemClock`, `takeReading` and `floorAtHolder`. `JsonFileStore` and `InMemoryStore` have a
   `clock`, the time they stamp their writes with; `InMemoryStore` takes one:
@@ -55,6 +55,7 @@ All notable changes to this project are documented here.
   `storeClockContract` with its laws `STORE_CLOCK_LAWS`. A test location's clock is the file
   `.realm-test-clock` beside its `runs/` folder. A store opened on a copy of a test location in
   another folder refuses with the new code `STATE_TEST_CLOCK_FOREIGN`.
+- **When `realm agent` or `realm listen` drives a step that calls tools, it now asks Anthropic to cache the step's fixed instructions and the conversation so far at each turn, so a turn can read what the turn before wrote once that part reaches the model's minimum.** The request a step makes after using up its tool calls is sent with no cache marker. `--prompt-cache off` sends what it sent before. A workflow whose every agent step calls tools no longer refuses `--prompt-cache`. **Upgrading:** a gateway or proxy that rejects `cache_control` now also fails steps that call tools, which worked before; run with `--prompt-cache off`. (#899)
 
 ### Changed
 

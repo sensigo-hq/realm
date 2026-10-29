@@ -769,27 +769,32 @@ describe('#729 PR-3 correction 1 — D-2, D-3, D-4: comparisons, references and 
 });
 
 describe('#729 PR-3 correction 1 — F21: the high-water mark', () => {
-  it('repeated separators stay linear: 40,000 characters take under 8× the time of 10,000, and under 2 s', () => {
-    const time = (n: number): number => {
+  it('repeated separators stay linear: an 8× input takes under 22× the time (10,000 → 80,000 characters)', () => {
+    // The linear pass costs about 8× on an 8× input (6.3–8.1× measured as the minimum of several
+    // samples); the pass the mark replaced — each separator's value read from its own start again
+    // — about 70× (0.3 s at 10,000 and 23 s at 80,000 characters here; 64× in theory). The bound 22
+    // is the geometric midpoint of 8 and 64. The estimator is the minimum, because noise only ever adds time: seven
+    // samples at the small size, whose single samples are a few milliseconds, three at the large.
+    const time = (n: number, samples: number): number => {
       const text = 'token:'.repeat(Math.ceil(n / 6));
-      const runs: number[] = [];
-      for (let i = 0; i < 3; i++) {
+      let min = Infinity;
+      for (let i = 0; i < samples; i++) {
         const t0 = performance.now();
         disclose(text, NONE, 'all');
-        runs.push(performance.now() - t0);
+        min = Math.min(min, performance.now() - t0);
       }
-      return runs.sort((a, b) => a - b)[1]!;
+      return min;
     };
-    time(10_000);
-    const small = Math.max(time(10_000), 1);
-    const large = time(40_000);
-    // (a) red when each separator's value is read from its own start again (quadratic: about
-    //     16×, seconds at 40,000); (b) prints two booleans.
-    expect({ under8x: large < 8 * small, under2s: large < 2000 }).toEqual({
-      under8x: true,
-      under2s: true,
-    });
-  });
+    time(10_000, 3);
+    const small = Math.max(time(10_000, 7), 1);
+    const large = time(80_000, 3);
+    // (a) red when each separator's value is read from its own start again (`start = from` in
+    //     place of the mark: quadratic, about 70× here); (b) prints the two times and the ratio.
+    expect(
+      large,
+      `small ${small.toFixed(1)} ms, large ${large.toFixed(1)} ms, ratio ${(large / small).toFixed(1)} (bound 22)`,
+    ).toBeLessThan(22 * small);
+  }, 240_000);
 
   it('a value that runs past the previous value is still hidden whole: a quoted value, an Authorization value', () => {
     // The second credential name sits inside the first value's run; its value ends past that run.
