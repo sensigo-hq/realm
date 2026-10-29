@@ -122,6 +122,11 @@ engine_runnable.` It repeated one whole sentence, way out included, for every st
 - **A run started again under an idempotency key is stamped after the run it replaces when the
   clock stepped back by less than 5 seconds, and each `create`, `update` and `claimStep` of a store
   stamps from one reading of the clock (issue #715).**
+- **A word that starts with `-` is refused as the value of `--model` (issue #920).** `realm agent`,
+  `realm listen`, `realm workflow validate`, `register` and `watch` now refuse a value that starts
+  with `-` (a lone `-` is accepted) as the value of `--model`; `--model --strict` used to take
+  `--strict` as the model id and drop the flag, so a CI gate passed. Write `--model=<id>` for a value
+  that starts with `-`.
 
 ## [0.48.0] — 2026-10-26
 
