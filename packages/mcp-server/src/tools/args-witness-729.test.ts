@@ -28,7 +28,12 @@ const DOOR: Record<string, { tool: string; extras: Record<string, string> }> = {
   advance: { tool: 'advance_run', extras: {} },
   inspect: {
     tool: 'get_run_state',
-    extras: { include_steps: 'how much of the record this read returns (a view option)' },
+    extras: {
+      include_steps: 'how much of the record this read returns (a view option)',
+      // #872 (b1): authorized by MA 4 during the build (add-only), as include_steps' form.
+      step_names: "which steps' records this read returns (a view option)",
+      cursor: "where this read's page of steps resumes, under the reply's ceiling (a view option)",
+    },
   },
   abandon: { tool: 'abandon_run', extras: {} },
 };

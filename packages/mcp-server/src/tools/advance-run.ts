@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
+  capText,
   JsonWorkflowStore,
   JsonFileStore,
   advanceRun,
@@ -49,7 +50,8 @@ const KNOWN_ARGS = ['run_id'] as const;
 export function advanceRunUnknownKeyWarnings(args: Record<string, unknown>): string[] {
   return boundedLines(
     Object.keys(args).filter((key) => !(KNOWN_ARGS as readonly string[]).includes(key)),
-    (key) => `advance_run: unknown argument '${key}' was ignored.`,
+    // #872 (b1): a key over 500 characters is named by its length (I4).
+    (key) => `advance_run: unknown argument '${capText(key)}' was ignored.`,
     moreUnknownKeys,
   );
 }

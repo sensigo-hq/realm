@@ -896,6 +896,16 @@ const TOOLS_LIST: Record<string, unknown> = {
       include_steps: {
         type: 'boolean',
       },
+      // #872 (b1): the named steps' detail and its cursor.
+      step_names: {
+        type: 'array',
+        items: {
+          type: 'string',
+        },
+      },
+      cursor: {
+        type: 'string',
+      },
     },
     required: ['run_id'],
     $schema: 'http://json-schema.org/draft-07/schema#',

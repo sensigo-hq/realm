@@ -8,7 +8,7 @@
 // pinned to each builder's body by one cross cell per adapter (`request-layout.test.ts`). The submit
 // tool is the exception: both sides build it with the one function below, so no cell can catch a
 // drift in it; the move is what prevents one. The tools-loop path and `performFinalExtraction` are out
-// of its scope: a step with tools is not described (realm sends no cache marker on it).
+// of its scope: a step with tools is not described (realm marks its turns as it sends them).
 import type { CacheBlock } from '@sensigo/realm';
 import { buildSystemPrompt } from './agent-utils.js';
 

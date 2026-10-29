@@ -775,7 +775,7 @@ describe('#729 PR-3 correction 2 (C9) — the malformed-reference load error, as
     expect(line).toBe(
       "  malformed secret reference '${secret:[REDACTED]' at adapters.svc.config.endpoint — the form is ${secret:NAME} with NAME = [A-Z0-9_]+.",
     );
-  });
+  }, 60_000);
 });
 
 // ── #729 PR-3 correction 2: the CLI (C1–C5, G7) ───────────────────────────────────────────────────
@@ -1381,7 +1381,7 @@ describe("#729 PR-3 correction 3 (H-9) — realm's own text never puts a credent
       `  malformed secret reference '\${secret:[REDACTED]' at adapters.svc.config.token${FORM}`,
       `  malformed secret reference '\${secret:[REDACTED]' at notifiers.slack_gate.config.bot_token${FORM}`,
     ]);
-  });
+  }, 60_000);
 });
 
 describe('#729 PR-3 correction 3 (H-10) — the receipt says why the declared part is unknown', () => {

@@ -125,7 +125,7 @@ const shareWorkflow = (id: string, steps: string[]): string =>
   `id: ${id}\nname: ${id}\nversion: 1\nsteps:\n${steps.join('')}`;
 
 const ONCE_ANTHROPIC =
-  "anthropic: on steps without tools, realm marks the fixed part for caching unless the drive's --prompt-cache turns it off; a fixed part below the model's minimum is sent uncached, silently";
+  "anthropic: when realm agent or realm listen drives a step, realm marks its fixed part for caching, and on steps with tools the conversation at each turn, unless --prompt-cache turns it off; below the model's minimum nothing is cached, silently";
 const ONCE_OPENAI =
   "openai: realm sends no cache marker; the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)";
 const ONCE_SCOPE =
@@ -574,7 +574,7 @@ describe('the causes, one per row of the decision table (C5)', { timeout: 60_000
 });
 
 describe('the sharing (C5; Δ12)', { timeout: 60_000 }, () => {
-  // The whole-part clause first, then the others by size. Break: the whole clause given a size or
+  // The whole-part clause. Break: the whole clause given a size or
   // put last. (a) red when the line changes; (b) prints it.
   it('whole: examples/05 review_security and review_performance send the same fixed part', () => {
     const r = realm([
@@ -681,12 +681,12 @@ describe('the sharing (C5; Δ12)', { timeout: 60_000 }, () => {
     ]);
   });
 
-  // Correction 2 (F-2): a whole share's `tokens` are the step's own `prefix.tokens` (Anthropic's band
-  // in both), and --json keeps every share the line names while the line caps at five. Thirteen
-  // identical steps on Anthropic. (a) red when a whole share goes back to the characters-only
-  // interval, or when the cap is applied to the JSON; (b) prints each step's prefix interval, its
-  // share intervals that differ from it, the share count and the line's sharing clause.
-  it("F-2 --json: a whole share's tokens equal the step's own; twelve listed, the line names five", () => {
+  // Correction 2 (F-2; #918): --json keeps every share the line names while the line caps at five,
+  // each entry exactly `{ step }` (its size is the layout's own `prefix`). Thirteen identical steps
+  // on Anthropic. (a) red when an entry carries more than its step (the core share's `chars`,
+  // `tokens`, `divergence_at`), or when the cap is applied to the JSON; (b) prints each step's
+  // entries' keys, the count, and the line's sharing clause.
+  it('F-2 --json: shares_with holds each named step as `{ step }`; twelve listed, the line names five', () => {
     const ids = Array.from({ length: 13 }, (_, i) => `s${String(i + 1).padStart(2, '0')}`);
     const dir = project({
       workflow: shareWorkflow(
@@ -702,37 +702,22 @@ describe('the sharing (C5; Δ12)', { timeout: 60_000 }, () => {
     ) as {
       cacheability: {
         steps: Array<{
-          layouts: Array<{
-            extra_tokens?: unknown;
-            prefix: { tokens: { low: number; high: number } };
-            shares_with: Array<{ step: string; tokens: { low: number; high: number } }>;
-          }>;
+          step: string;
+          layouts: Array<{ shares_with: Array<Record<string, unknown>> }>;
         }>;
       };
     };
-    const seen = json.cacheability.steps.map((s) => {
-      const l = s.layouts[0]!;
-      const off = l.shares_with.filter(
-        (w) => JSON.stringify(w.tokens) !== JSON.stringify(l.prefix.tokens),
-      );
-      return [JSON.stringify(l.prefix.tokens), off.map((w) => w.tokens), l.shares_with.length];
-    });
-    expect(
-      {
-        banded: json.cacheability.steps[0]!.layouts[0]!.extra_tokens !== undefined,
-        seen: seen.map(([, off, n]) => [off, n]),
-        clause: line.split(' — ').slice(-1)[0],
-      },
-      `the step's own interval: ${String(seen[0]![0])}`,
-    ).toEqual({
-      banded: true,
-      seen: ids.map(() => [[], 12]),
+    expect({
+      entries: json.cacheability.steps.map((s) => s.layouts[0]!.shares_with),
+      clause: line.split(' — ').slice(-1)[0],
+    }).toEqual({
+      entries: ids.map((id) => ids.filter((other) => other !== id).map((step) => ({ step }))),
       clause: 'shares its whole fixed part with s02, s03, s04, s05, s06 and 7 more',
     });
   });
 
   // Not printed: a pair that parts inside the profile (examples/03's two profiles, on openai). Break:
-  // the profile filter dropped (a 10-char "You are a " clause appears). (a) red when a sharing clause
+  // a share inside one message named (a 10-char "You are a " clause appears). (a) red when a sharing clause
   // appears; (b) prints the lines.
   it("not printed: examples/03's steps part inside their profiles on openai", () => {
     const r = realm(['workflow', 'validate', ex('03-incident-response'), '--provider', 'openai']);
@@ -879,8 +864,43 @@ describe('the once-lines (C5; Δ15)', { timeout: 60_000 }, () => {
       [ONCE_ANTHROPIC, ONCE_OPENAI, ONCE_SCOPE],
       [ONCE_OPENAI],
       [ONCE_ANTHROPIC, ONCE_SCOPE],
-      [],
+      [ONCE_ANTHROPIC, ONCE_OPENAI, ONCE_SCOPE],
     ]);
+  });
+
+  // M12 (issue #899): a step that calls tools now prints the once-lines of each provider in scope,
+  // one cell per producing branch of `shown`, the at-stake branch first. Every list is compared
+  // whole. (b) Each prints the once-lines of its run.
+  const TOOLS = '09-webhook-pr-review';
+  // (a) red under `shown`'s old test (`l.sized !== undefined && …`), which prints no once-line.
+  it('M12 a workflow whose agent steps all call tools, --provider anthropic → the anthropic lines', () => {
+    const r = realm(['workflow', 'validate', ex(TOOLS), '--provider', 'anthropic']);
+    expect(onceLines(r.stdout)).toEqual([ONCE_ANTHROPIC, ONCE_SCOPE]);
+  });
+  // (a) red under `shown`'s old test (no once-line at all).
+  it('M12 the same, --provider openai → the openai line only', () => {
+    const r = realm(['workflow', 'validate', ex(TOOLS), '--provider', 'openai']);
+    expect(onceLines(r.stdout)).toEqual([ONCE_OPENAI]);
+  });
+  // (a) red under `shown`'s old test (no once-line at all).
+  it('M12 the same, no --provider → the three, in the order the block gives them', () => {
+    const r = realm(['workflow', 'validate', ex(TOOLS)]);
+    expect(onceLines(r.stdout)).toEqual([ONCE_ANTHROPIC, ONCE_OPENAI, ONCE_SCOPE]);
+  });
+  // (a) red under the old once-line text.
+  it('M12 a sized single-shot step, --provider anthropic → the new anthropic line', () => {
+    const dir = project({ workflow: oneStep('sized') });
+    const r = realm(['workflow', 'validate', dir, '--provider', 'anthropic']);
+    expect(onceLines(r.stdout)).toEqual([ONCE_ANTHROPIC, ONCE_SCOPE]);
+  });
+  // (a) red when a once-line prints with no step that shows a size or calls tools.
+  it('M12 a workflow with no agent step → no once-line', () => {
+    const dir = project({
+      workflow:
+        'id: w\nname: w\nversion: 1\nsteps:\n  plain:\n    description: a step\n    execution: auto\n    depends_on: []\n    input_schema: { type: object, additionalProperties: true }\n',
+    });
+    const r = realm(['workflow', 'validate', dir]);
+    expect({ code: r.code, once: onceLines(r.stdout) }).toEqual({ code: 0, once: [] });
   });
 });
 
@@ -994,6 +1014,35 @@ describe('where the block prints (C5; Δ10)', { timeout: 60_000 }, () => {
       child.kill();
     }
   });
+
+  // M12 watch (issue #899): on a workflow whose agent steps all call tools, the first block carries
+  // the once-lines of both providers. (a) red under `shown`'s old test (the block has the step lines
+  // only); (b) prints the once-lines seen after the first save, times cut.
+  it('M12 watch: a workflow whose agent steps all call tools prints the once-lines in its first block', async () => {
+    const dir = project({ example: '09-webhook-pr-review' });
+    const child = spawn(process.execPath, [DIST_CLI, 'workflow', 'watch', dir], {
+      cwd: base,
+      env: { PATH: process.env['PATH'] ?? '', HOME: home, REALM_NO_NUDGE: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = '';
+    child.stdout.on('data', (c: Buffer) => (out += c.toString()));
+    child.stderr.on('data', (c: Buffer) => (out += c.toString()));
+    try {
+      const end = Date.now() + 20_000;
+      while (!out.includes('Registered:') && Date.now() < end) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      await new Promise((r) => setTimeout(r, 300));
+      const once = hide(out)
+        .split('\n')
+        .filter((l) => / anthropic: | openai: /.test(l))
+        .map((l) => l.replace(/^\[[^\]]+\] /, ''));
+      expect(once).toEqual([ONCE_ANTHROPIC, ONCE_OPENAI, ONCE_SCOPE]);
+    } finally {
+      child.kill();
+    }
+  });
 });
 
 describe('--json (C5; C3.6)', { timeout: 60_000 }, () => {
@@ -1066,6 +1115,49 @@ describe('--json (C5; C3.6)', { timeout: 60_000 }, () => {
       false,
       false,
     ]);
+  });
+
+  // N4 (#918): --json follows the line. On OpenAI a pair that shares its whole fixed part lists
+  // each other as exactly `{ step }`; a pair that shares only a profile (and parts in the schema,
+  // inside the one system message) lists nothing. (a) red when the shared-start clause is restored
+  // (the profile pair gains entries) or an entry carries the core share whole (four keys); (b)
+  // prints each step's `shares_with` as its entries' keys.
+  it('N4: --json shares_with is `{ step }` per step the line names; the profile pair lists none', () => {
+    const dir = project({
+      workflow: shareWorkflow('n4', [
+        shareStep('w_one', 'answer'),
+        shareStep('w_two', 'answer'),
+        shareStep('pf_one', 'answer', { profile: 'p' }),
+        shareStep('pf_two', 'summary', { profile: 'p' }),
+      ]),
+      profiles: { 'p.md': 'P'.repeat(400) },
+    });
+    const json = JSON.parse(
+      realm(['workflow', 'validate', dir, '--provider', 'openai', '--json']).stdout,
+    ) as {
+      cacheability: {
+        steps: Array<{
+          step: string;
+          layouts: Array<{ shares_with: Array<Record<string, unknown>> }>;
+        }>;
+      };
+    };
+    const lists = Object.fromEntries(
+      json.cacheability.steps.map((s) => [s.step, s.layouts[0]!.shares_with]),
+    );
+    expect(
+      lists,
+      JSON.stringify(
+        Object.fromEntries(
+          Object.entries(lists).map(([k, v]) => [k, v.map((e) => Object.keys(e))]),
+        ),
+      ),
+    ).toEqual({
+      w_one: [{ step: 'w_two' }],
+      w_two: [{ step: 'w_one' }],
+      pf_one: [],
+      pf_two: [],
+    });
   });
 
   // The class row (Δ3): the model id is a fact, printed raw in --json even when an environment
