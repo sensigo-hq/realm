@@ -62,9 +62,10 @@ export interface ProviderCapabilities {
    */
   strictGate?: 'compat_endpoint';
   /**
-   * Issue #600 — what this provider instance asks its service to cache on its single-shot request:
-   * `'off'` (nothing), or `{ lifetime_s }` (the cache lifetime asked for, in whole seconds — the
-   * lifetime unit: the one choice the provider resolved, `auto` included). Absent means Realm asks
+   * Issue #600 — what this provider instance asks its service to cache on each request it marks:
+   * a single-shot request, and every main turn of a tool step: `'off'` (nothing), or
+   * `{ lifetime_s }` (the cache lifetime asked for, in whole seconds — the lifetime unit: the one
+   * choice the provider resolved, `auto` included). Absent means Realm asks
    * this provider for no caching, and any caching it does is its own. The Anthropic provider declares
    * it (`'off'` included); the OpenAI providers declare nothing; a provider module may declare either
    * shape (the start line says what it reads, and that `--prompt-cache` does not reach a module).

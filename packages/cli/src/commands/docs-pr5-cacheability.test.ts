@@ -814,7 +814,7 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
   it('once each; the same lines with or without keys in the environment; a log hides a value there too; --json has cacheability', () => {
     claim(
       WORKFLOW_PAGE,
-      'After the step lines come the lines that hold for each provider shown, once:',
+      "After the step lines come the lines that hold for each provider, once. A provider's lines print when a step line shows a size for that provider, or when a step calls tools and that provider is in scope (both, or the one `--provider` names):",
     );
     // Correction 1 re-pin: the paragraph's two halves, each word for word, since C-6.2 adds its own
     // sentences between them (that cell claims them). (a) each red when the page changes that half;
@@ -877,7 +877,7 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
       'It prints the [cache lines](#the-cache-lines) after the first `Registered` line, and again only when they change.',
     );
     for (const sentence of [
-      '`watch` prints the lines for each provider once, in the first block that shows a size for that provider.',
+      '`watch` prints the lines for each provider once, in the first block that shows a size for that provider or a step that calls tools.',
       'After that block, a block carries the step lines only, so a log read from the middle can show step lines without them.',
       'A block is printed only when its lines differ from the last block printed.',
       'A save that leaves them as they were prints `Registered:` and no cache lines, and so does a repair that returns them to the block printed before a refused save.',
@@ -954,7 +954,7 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
   it('I-5: the provider lines come in the first block that shows a size; an unchanged save and a repair print none', async () => {
     claim(
       WORKFLOW_PAGE,
-      '`watch` prints the lines for each provider once, in the first block that shows a size for that provider. After that block, a block carries the step lines only, so a log read from the middle can show step lines without them.',
+      '`watch` prints the lines for each provider once, in the first block that shows a size for that provider or a step that calls tools. After that block, a block carries the step lines only, so a log read from the middle can show step lines without them.',
     );
     expect(read(WORKFLOW_PAGE), 'the page keeps the old sentence').not.toContain(
       'A later block carries the step lines only',
@@ -1313,7 +1313,7 @@ describe('correction 2, F-8: the pages that print the cache lines say what they 
     for (const sentence of [
       '**Words on the provider lines.**',
       '_The drive_ is one `realm agent` driving one run, whether you start it or `realm listen` starts it for a run; its `--prompt-cache` flag sets what Anthropic is asked to cache (see [`realm agent`](realm-agent.md)).',
-      "_Sent uncached, silently_: a fixed part shorter than the model's minimum is not cached, and the provider says nothing about it.",
+      "_Nothing is cached, silently_: below the model's minimum nothing is cached, and the provider says nothing about it.",
       '_Pay the write_: the request that writes a cache entry is billed for what it writes at the cache-write price (see [How a request is priced](../cache-economics.md#how-a-request-is-priced) and [What a run costs](../../guides/realm-agent.md#what-a-run-costs)).',
     ])
       claim(WORKFLOW_PAGE, sentence);

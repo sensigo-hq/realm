@@ -37,6 +37,7 @@ All notable changes to this project are documented here.
   `storeClockContract` with its laws `STORE_CLOCK_LAWS`. A test location's clock is the file
   `.realm-test-clock` beside its `runs/` folder. A store opened on a copy of a test location in
   another folder refuses with the new code `STATE_TEST_CLOCK_FOREIGN`.
+- When `realm agent` or `realm listen` drives a step that calls tools, it now asks Anthropic to cache the step's fixed instructions and the conversation so far at each turn, so a turn can read what the turn before wrote once that part reaches the model's minimum. The request a step makes after using up its tool calls is sent with no cache marker. `--prompt-cache off` sends what it sent before. A workflow whose every agent step calls tools no longer refuses `--prompt-cache`. **Upgrading:** a gateway or proxy that rejects `cache_control` now also fails steps that call tools, which worked before; run with `--prompt-cache off`. (#899)
 
 ### Changed
 
