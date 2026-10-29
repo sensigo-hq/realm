@@ -28,6 +28,15 @@ All notable changes to this project are documented here.
   provider module returns. The store TCK's `USAGE_RECORD_ROUNDTRIP` law now holds every store to
   round-tripping it, so a store that drops a request field it does not know fails the law.
 - **`realm workflow validate`, `register` and `watch` say how big each agent step's fixed part is, which steps share it, and whether it can be cached (issue #600).** Each agent step gets a `cache:` line: the size of the text it sends ahead of its input on every call, the other steps with the same fixed text (on OpenAI, also a start they share after a profile), and, with a minimum, whether it is long enough to be cached at all. No model is called and no key is read. Four flags: `--provider`, `--model` (it needs `--provider`, and its minimum is read from your economics file), `--floor` (a minimum of your own) and `--ratio` (your own characters per token). `validate --json` gains `cacheability`.
+- **A run store's clock (issue #715).** `@sensigo/realm` exports `Clock`, `createSystemClock`,
+  `systemClock`, `takeReading` and `floorAtHolder`. `JsonFileStore` and `InMemoryStore` have a
+  `clock`, the time they stamp their writes with; `InMemoryStore` takes one:
+  `new InMemoryStore({ clock })`.
+- **Test clocks and test locations (issue #715).** `@sensigo/realm-testing` exports
+  `settableClock`, `steppingClock`, `countingClock`, `createTestLocation`, and the store contract
+  `storeClockContract` with its laws `STORE_CLOCK_LAWS`. A test location's clock is the file
+  `.realm-test-clock` beside its `runs/` folder. A store opened on a copy of a test location in
+  another folder refuses with the new code `STATE_TEST_CLOCK_FOREIGN`.
 
 ### Changed
 
@@ -68,6 +77,20 @@ engine_runnable.` It repeated one whole sentence, way out included, for every st
 - **The economics file may carry `min_cacheable_tokens` in a model's entry (issue #600). This is a one-way door.** A realm older than this release refuses a file carrying it, on every run's price line: upgrade every realm that reads the folder before adding it.
 - **`realm run export`'s third line says what it counts, and names `--accept-partial-disclosure` once (issue #879).** It opens `masked in the file:` (it was `masked:`): its counts are what the file hides, not what the lines printed above it hide. When the flag wrote a run that export refuses without it, the line ends `; written on --accept-partial-disclosure (refused without it)`; it ended `; shown on --accept-partial-disclosure`, and a run with no project said nothing of the flag. Where the run's manifest changed or could not be read, a question's clause before it reads `question: shown with what is known`; it named the flag too.
 
+- **`PerRunArtifactStore.deleteAllForRun` takes an optional `{ expectVersion }` (issue #715).** The
+  store that holds the run record refuses a run whose version differs with
+  `STATE_SNAPSHOT_MISMATCH`, and deletes nothing.
+- **BREAKING — `WorkflowError.timestamp` is removed (issue #715).** A library caller that read it
+  gets `undefined`.
+- **`realm run purge` reports a run that changed after it was selected as blocked, and keeps its
+  run file (issue #715).** A resumed run keeps its sentence; any other change reads
+  `changed_since_selected`. Files that an artifact store had already deleted stay deleted. The
+  run's line then ends with
+  `(<bytes> across <n> of its artifact stores were already freed before the refusal)`. A resumed
+  run's line then leaves out "refusing to purge its trace buffer". As in 0.48.0, a run that owes a
+  cleanup step is blocked as `drain_pending` after its trace files and refused answers were deleted,
+  and a dry run lists it among the runs that would be purged.
+
 ### Fixed
 
 - **A Slack post that is refused or does not answer within 30 s is reported, and the person's
@@ -96,6 +119,9 @@ engine_runnable.` It repeated one whole sentence, way out included, for every st
   on the step's record by its start time and token counts, so a second request that matched them
   was not attached to the failure and its cost was lost. It now compares the request's
   `request_id`.
+- **A run started again under an idempotency key is stamped after the run it replaces when the
+  clock stepped back by less than 5 seconds, and each `create`, `update` and `claimStep` of a store
+  stamps from one reading of the clock (issue #715).**
 
 ## [0.48.0] — 2026-10-26
 

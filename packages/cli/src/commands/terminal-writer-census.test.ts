@@ -237,6 +237,13 @@ const EXPECTED: Record<string, CensusEntry> = {
     classes: ['fixture-input'],
     reason: 'SEALED_BY_ROUNDTRIP seals a run properly to prove the arm survives a round trip.',
   },
+  'packages/testing/src/store/store-clock-contract.ts': {
+    count: 1,
+    classes: ['fixture-input'],
+    reason:
+      'The store-clock TCK (issue #715 (a)) ends a holder run (the #558 PR-C supersede journey), so ' +
+      'a superseding keyed create has a holder.',
+  },
   'packages/testing/src/store/fence-run-source.ts': {
     count: 2,
     classes: ['fixture-input'],
@@ -412,11 +419,12 @@ describe('#367 — the terminal-writer census', () => {
   });
 
   // #729 PR-3: +3 class-table rows (disclosure-tables.ts, abandon-run.ts, get-run-state.ts).
-  it('the post-strip total is 83 across 15 files — the figure the map is built from', () => {
+  // #715 (a): +1 (store-clock-contract.ts, the store-clock TCK's holder run), in a new file.
+  it('the post-strip total is 84 across 16 files — the figure the map is built from', () => {
     const scan = scanTerminalWriters(REPO_ROOT);
     const total = Object.values(scan.hits).reduce((n, l) => n + l.length, 0);
-    expect(total).toBe(83);
-    expect(Object.keys(scan.hits)).toHaveLength(15);
+    expect(total).toBe(84);
+    expect(Object.keys(scan.hits)).toHaveLength(16);
   });
 });
 

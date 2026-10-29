@@ -50,6 +50,21 @@ export type {
   SettlementFixture,
 } from './store/settlement-contract.js';
 
+// issue #715 (a) (D6-36): the store's time laws, as their own family.
+export { storeClockContract, STORE_CLOCK_LAWS } from './store/store-clock-contract.js';
+export type {
+  StoreClockLaw,
+  StoreRoute,
+  StoreClockContractAdapter,
+  StoreClockContractCase,
+} from './store/store-clock-contract.js';
+
+// Clocks and test locations (issue #715 (a); D5 §6, D6-1, D6-20, D6-54)
+export { settableClock, steppingClock, countingClock } from './clock/settable-clock.js';
+export type { SettableClock, SettableClockOptions } from './clock/settable-clock.js';
+export { createTestLocation } from './clock/test-location.js';
+export type { TestLocation } from './clock/test-location.js';
+
 // Fixtures
 export {
   loadFixtureFromFile,

@@ -7,7 +7,7 @@ export interface ToolCallRecord {
   tool: string; // bare tool name: "get_pull_request" (NOT namespaced)
   args: Record<string, unknown>;
   result: string | null; // sanitized serialized payload for any call that RETURNED (success OR a Class-B isError result); null ONLY when the call THREW (Class A)
-  duration_ms: number; // Date.now() before and after executor()
+  duration_ms: number; // performance.now() before and after executor(), rounded, never below 0
   error?: string; // present iff the call failed, in either class — Class A: the sanitized thrown message; Class B: the extracted text of the isError result (issue #345)
 }
 

@@ -204,7 +204,7 @@ export function buildEntry(
       provider,
       error_class: 'other',
       message: 'unrenderable thrown value',
-      elapsed_ms: Date.now() - attemptStartedAt,
+      elapsed_ms: Math.max(0, Math.round(performance.now() - attemptStartedAt)),
     };
   }
 }
@@ -230,7 +230,8 @@ function buildEntryUnsafe(
     // one funnel for all three chokepoints, so each of its requests gets its id once (D6-28). The
     // step's earlier requests the caller prepends were minted where they arrived.
     ...(Array.isArray(classified.usage) ? { usage: mintRequestIds(classified.usage) } : {}),
-    elapsed_ms: classified.elapsed_ms ?? Date.now() - attemptStartedAt,
+    elapsed_ms:
+      classified.elapsed_ms ?? Math.max(0, Math.round(performance.now() - attemptStartedAt)),
   };
 }
 
