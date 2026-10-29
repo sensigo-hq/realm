@@ -23,6 +23,8 @@ You define workflows in YAML. The engine enforces step order, checks each agent 
 
 ## Installation
 
+Realm's automated tests run on Linux. On Windows, run Realm inside WSL 2 (the Windows Subsystem for Linux); running it directly on Windows is not supported yet.
+
 **CLI (global)**
 
 ```bash
