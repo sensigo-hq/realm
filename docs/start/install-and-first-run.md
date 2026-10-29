@@ -6,7 +6,7 @@ At the end of this page you have a finished Realm run on your machine and you ha
 
 ## Before you start
 
-You need Node.js 22 or later, and a terminal.
+You need Node.js 22 or later, and a terminal. Realm's automated tests run on Linux. On Windows, run Realm inside WSL 2 (the Windows Subsystem for Linux); running it directly on Windows is not supported yet.
 
 ## 1. Install the command-line tool
 
