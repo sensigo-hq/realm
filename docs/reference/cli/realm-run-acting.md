@@ -38,7 +38,7 @@ Answers the gate a run is waiting at. `realm run inspect <run-id>` prints the ga
 | `--project <dir>`            | No       | Used only for a workflow registered without a project folder (made by an agent or from a string): the folder whose `realm.yaml` and code it loads. Default: the current folder. A workflow registered from a folder loads its code from there, and `--project` is not used (the command says so). |
 | `--extensions-module <path>` | No       | Loads this code file in place of the files named by the workflow's `extensions`.                                                                                                                                                                                                                  |
 
-`--project` refuses a value that starts with `-`, except a lone `-`; write `--option=value` for one.
+`--by` and `--project` refuse a value that starts with `-`, except a lone `-`; write `--option=value` for one.
 
 ```bash
 realm run respond 3ebc1158-1d29-41b5-9ca5-df054a681b58 --gate 0d499c26-a6b4-406f-ae29-6d6ef5c75fcb --choice approve
@@ -280,6 +280,8 @@ Ends an open run. Its phase becomes `abandoned`. The workflow's cleanup steps do
 | Flag              | What it does                                                             |
 | ----------------- | ------------------------------------------------------------------------ |
 | `--reason <text>` | Recorded as the run's cause. Default: `Abandoned via realm run abandon`. |
+
+`--reason` refuses a value that starts with `-`, except a lone `-`; write `--option=value` for one.
 
 ```bash
 realm run abandon 00b33778-f504-4d65-93ca-6300441f41e7 --reason "upstream still down"

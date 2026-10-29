@@ -19,6 +19,13 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Command, CommanderError } from 'commander';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  CURRENT_WORKFLOW_SCHEMA_VERSION,
+  JsonFileStore,
+  JsonWorkflowStore,
+  executeStep,
+} from '@sensigo/realm';
+import type { WorkflowDefinition } from '@sensigo/realm';
 import { attachOptionValueGuard, looksLikeFlag } from './option-value-guard.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -266,7 +273,8 @@ describe('#920 C-1 — `--model` refuses a word that starts with `-` (the built 
   }, 25_000);
 
   it('5. the echo stops at the first `=`: a swallowed --api-key=<secret> prints only --api-key', () => {
-    // (a) red when the whole word is echoed; (b) prints the run (its first line has no secret either way).
+    // (a) red when the whole word is echoed; (b) prints the run. `sk-abc12345678` is a fake
+    // secret-shaped string the message must not echo; the cell's text masks its first occurrence only.
     const dir = retryProject();
     const r = realm([
       'workflow',
@@ -387,7 +395,7 @@ function guardLines(flags: string, long: string, word: string): string[] {
   ];
 }
 
-describe('#920 C-2 — the other 23 options, one command family each (the built realm)', () => {
+describe('#920 C-2 — the other 25 options, one command family each (the built realm)', () => {
   // Each: the option typed with a real flag of the command after it, as the typo; the run exits 1
   // with the guard's two lines, prints nothing on standard output and does nothing. (a) red when the
   // family's row is missing from the guarded table (the command then runs: it writes, drains, starts
@@ -493,6 +501,146 @@ describe('#920 C-2 — the other 23 options, one command family each (the built 
       '-1',
     );
   }, 20_000);
+  /** A live run of a one-step workflow, made in this HOME's store; returns the store and its id. */
+  async function liveRun(): Promise<{ runs: JsonFileStore; id: string }> {
+    mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
+    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
+    const runs = new JsonFileStore(join(home, '.realm', 'runs'));
+    const def = {
+      id: 'live',
+      name: 'live',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: { a: { description: 'A.', execution: 'agent', depends_on: [] } },
+    } as WorkflowDefinition;
+    await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(def);
+    const { run } = await runs.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    return { runs, id: run.id };
+  }
+
+  /** A run waiting at an open question (`confirm`, choices approve/reject, not expired). */
+  async function atOpenQuestion(): Promise<{ runs: JsonFileStore; id: string; gate: string }> {
+    mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
+    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
+    const runs = new JsonFileStore(join(home, '.realm', 'runs'));
+    const def = {
+      id: 'asked',
+      name: 'asked',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        confirm: {
+          description: 'Confirm',
+          execution: 'auto',
+          trust: 'human_confirmed',
+          depends_on: [],
+          gate: { choices: ['approve', 'reject'], timeout_seconds: 3600 },
+        },
+        after: { description: 'After', execution: 'auto', depends_on: ['confirm'] },
+      },
+    } as WorkflowDefinition;
+    await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(def);
+    const { run } = await runs.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const opened = await executeStep(runs, def, {
+      runId: run.id,
+      command: 'confirm',
+      input: {},
+      dispatcher: async () => ({}),
+    });
+    if (opened.status !== 'confirm_required' || opened.gate === undefined)
+      throw new Error(`fixture: ${opened.status}`);
+    return { runs, id: run.id, gate: opened.gate.gate_id };
+  }
+
+  it('run abandon <live run> --reason --help: refused, the run goes on; --reason=--help ends it with that cause', async () => {
+    // (a) red when the `abandon --reason` row is missing (the typo then ends the run with cause
+    // `--help`), and — separately — when the adjacency test is dropped (`--reason=--help` is then
+    // refused); (b) prints the run and the run's phase and cause, read from the store.
+    const typo = await liveRun();
+    const r = realm(['run', 'abandon', typo.id, '--reason', '--help']);
+    const after = await typo.runs.get(typo.id);
+    expect(
+      {
+        code: r.code,
+        stdout: r.stdout,
+        lines: r.stderr.split('\n').slice(0, 2),
+        phase: after.run_phase,
+        cause: after.terminal_reason,
+      },
+      `${r.shown}; store: ${after.run_phase}, cause ${String(after.terminal_reason)}`,
+    ).toEqual({
+      code: 1,
+      stdout: '',
+      lines: guardLines('--reason <text>', '--reason', '--help'),
+      phase: 'running',
+      cause: undefined,
+    });
+    const meant = await liveRun();
+    const e = realm(['run', 'abandon', meant.id, '--reason=--help']);
+    const ended = await meant.runs.get(meant.id);
+    expect(
+      { code: e.code, phase: ended.run_phase, cause: ended.terminal_reason },
+      `${e.shown}; store: ${ended.run_phase}, cause ${String(ended.terminal_reason)}`,
+    ).toEqual({ code: 0, phase: 'abandoned', cause: '--help' });
+  }, 45_000);
+
+  it('run respond <run> --gate <g> --choice approve --by --project: refused, the question stays open; --by=--project records that name', async () => {
+    // (a) red when the `respond --by` row is missing (the typo then records the answer, answered by
+    // `--project`), and — separately — when the adjacency test is dropped (`--by=--project` is then
+    // refused); (b) prints the run and the store's question and stated names (never `driven_by`,
+    // which holds the OS user and host).
+    const typo = await atOpenQuestion();
+    const r = realm([
+      'run',
+      'respond',
+      typo.id,
+      '--gate',
+      typo.gate,
+      '--choice',
+      'approve',
+      '--by',
+      '--project',
+    ]);
+    const after = await typo.runs.get(typo.id);
+    const stated = (run: typeof after): unknown[] =>
+      run.evidence.map((ev) => ev.responded_by).filter((by) => by !== undefined);
+    expect(
+      {
+        code: r.code,
+        stdout: r.stdout,
+        lines: r.stderr.split('\n').slice(0, 2),
+        open: after.pending_gate?.gate_id === typo.gate,
+        stated: stated(after),
+      },
+      `${r.shown}; store: open ${String(after.pending_gate?.gate_id === typo.gate)}, stated ${JSON.stringify(stated(after))}`,
+    ).toEqual({
+      code: 1,
+      stdout: '',
+      lines: guardLines('--by <name>', '--by', '--project'),
+      open: true,
+      stated: [],
+    });
+    const meant = await atOpenQuestion();
+    const e = realm([
+      'run',
+      'respond',
+      meant.id,
+      '--gate',
+      meant.gate,
+      '--choice',
+      'approve',
+      '--by=--project',
+    ]);
+    const answered = await meant.runs.get(meant.id);
+    expect(
+      {
+        code: e.code,
+        open: answered.pending_gate?.gate_id === meant.gate,
+        stated: stated(answered),
+      },
+      `${e.shown}; store: open ${String(answered.pending_gate?.gate_id === meant.gate)}, stated ${JSON.stringify(stated(answered))}`,
+    ).toEqual({ code: 0, open: false, stated: ['--project'] });
+  }, 45_000);
 });
 
 describe('#920 C-2 — the pages name every guarded option', () => {
@@ -511,22 +659,29 @@ describe('#920 C-2 — the pages name every guarded option', () => {
     claim(READING, one('--workflow'));
     claim(READING, one('--out'));
     claim(ACTING, two('--project', '--extensions-module'));
+    claim(ACTING, two('--by', '--project'));
+    claim(ACTING, one('--reason'));
     claim(MCP, two('--project', '--extensions-module'));
     claim(
       MCP,
       '`--port`, `--project` and `--extensions-module` refuse a value that starts with `-`, except a lone `-`; write `--option=value` for one.',
     );
-    // On realm-run-acting.md the single-option sentence stands after five sections: respond and
-    // advance (--project), reclaim, purge and reconcile (--workflow).
+    // On realm-run-acting.md the --project single-option sentence stands after one section
+    // (advance) and the --workflow one after three (reclaim, purge, reconcile); respond holds the
+    // two-option sentence for --by and --project, abandon the single --reason one.
     const acting = flat(read(ACTING));
     const count = (text: string): number => acting.split(flat(text)).length - 1;
     expect(
-      { project: count(one('--project')), workflow: count(one('--workflow')) },
+      {
+        project: count(one('--project')),
+        workflow: count(one('--workflow')),
+        reason: count(one('--reason')),
+      },
       `${ACTING}: the single-option sentences`,
-    ).toEqual({ project: 2, workflow: 3 });
+    ).toEqual({ project: 1, workflow: 3, reason: 1 });
     expect(flat(unreleased()), 'the CHANGELOG [Unreleased] #920 bullet, C-2 clause').toContain(
       flat(
-        'The same now holds for 23 other options that took any word: `--project` (on `workflow run`, `agent`, `run drain`, `run respond`, `run advance`, `mcp` and `serve`), `--extensions-module` (`run drain`, `mcp`, `serve`), `--workflow` (`run list`, `reclaim`, `purge`, `reconcile`), `run export --out`, `agent --params` and `--base-url`, `serve --port`, and `listen --port`, `--host`, `--dedup-store`, `--log-level` and `--sweep-expired-gates`.',
+        'The same now holds for 25 other options that took any word: `--project` (on `workflow run`, `agent`, `run drain`, `run respond`, `run advance`, `mcp` and `serve`), `--extensions-module` (`run drain`, `mcp`, `serve`), `--workflow` (`run list`, `reclaim`, `purge`, `reconcile`), `run export --out`, `run abandon --reason`, `run respond --by`, `agent --params` and `--base-url`, `serve --port`, and `listen --port`, `--host`, `--dedup-store`, `--log-level` and `--sweep-expired-gates`.',
       ),
     );
   });

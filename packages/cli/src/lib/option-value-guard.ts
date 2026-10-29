@@ -9,9 +9,8 @@
 // hook: a refusal is printed by Commander's own error channel (standard error, exit 1, nothing on
 // standard output) before anything else runs. It refuses only the options in GUARDED_OPTIONS: the
 // value-taking options that take any word without a check of their own. The other value-taking
-// options either refuse such a word with their own message already, or are free text where a value
-// that starts with `-` is plausible; `option-value-guard-classes.test.ts` classifies every
-// value-taking option of the command tree, so a new one cannot ship unclassified.
+// options refuse such a word with their own message already; `option-value-guard-classes.test.ts`
+// classifies every value-taking option of the command tree, so a new one cannot ship unclassified.
 import type { Command, Option } from 'commander';
 
 /** A guarded option: the leaf command's name and the option's long flag. */
@@ -21,12 +20,11 @@ export interface GuardedOption {
 }
 
 /**
- * The options whose value is refused when it is a flag-like word typed as the next word (28). Keyed by
+ * The options whose value is refused when it is a flag-like word typed as the next word (30). Keyed by
  * the leaf command's name (a command parsed on its own has no parent, so a path cannot be read) and
  * the long flag. Each takes any word without a check of its own (the census, `plans/issue-920/census/`).
- * `option-value-guard-classes.test.ts` holds the other two classes: the options that already refuse
- * such a word with their own message, and the free-text ones where a value starting with `-` is
- * plausible (`run abandon --reason`, `run respond --by`).
+ * `option-value-guard-classes.test.ts` holds the other class: the options that already refuse such a
+ * word with their own message.
  */
 export const GUARDED_OPTIONS: readonly GuardedOption[] = [
   // C-1: the model id, on the five commands that take one.
@@ -35,7 +33,7 @@ export const GUARDED_OPTIONS: readonly GuardedOption[] = [
   { command: 'watch', option: '--model' },
   { command: 'agent', option: '--model' },
   { command: 'listen', option: '--model' },
-  // C-2: the other options that take any word without a check of their own (23). Each accepts the word
+  // C-2: the other options that take any word without a check of their own (25). Each accepts the word
   // and goes on, and a dropped flag changes what the command does (`reconcile --workflow --dry-run`
   // writes; `drain <id> --extensions-module --force` drains nothing) or its message misleads.
   { command: 'run', option: '--project' }, // realm workflow run
@@ -63,6 +61,8 @@ export const GUARDED_OPTIONS: readonly GuardedOption[] = [
   { command: 'export', option: '--out' },
   { command: 'respond', option: '--project' },
   { command: 'advance', option: '--project' },
+  { command: 'abandon', option: '--reason' }, // realm run abandon
+  { command: 'respond', option: '--by' }, // realm run respond
 ];
 
 /** A string of two or more characters that starts with `-` (Commander's option-looking token). A lone

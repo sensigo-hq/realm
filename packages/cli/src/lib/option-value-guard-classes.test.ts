@@ -1,13 +1,12 @@
 // option-value-guard-classes.test.ts — issue #920, C-2: the completeness law. Every option of the
-// command tree that takes a value is in EXACTLY ONE of three classes, so a new value-taking option
+// command tree that takes a value is in EXACTLY ONE of two classes, so a new value-taking option
 // cannot ship unclassified:
 //   - GUARDED (production, `option-value-guard.ts`): takes any word without a check of its own; the
 //     guard refuses a flag-like word typed after it;
 //   - OWN_CHECK (here): already refuses such a word with its own message (13 by an `argParser`, 37 by
-//     a check in the action or, for `serve --host`, by the name lookup that names the word);
-//   - FREE_TEXT (here): free text recorded as typed, where a value that starts with `-` is plausible.
-// Rule for a new option: it already refuses → OWN_CHECK; free text where a dash-leading value is
-// plausible → FREE_TEXT; otherwise → GUARDED. Prints only the (leaf, flag) pairs that break the law.
+//     a check in the action or, for `serve --host`, by the name lookup that names the word).
+// Rule for a new option: it already refuses → OWN_CHECK; otherwise → GUARDED. Prints only the
+// (leaf, flag) pairs that break the law.
 import { describe, expect, it } from 'vitest';
 import type { Command } from 'commander';
 import { workflowCommands, runCommands, topLevelCommands } from '../commands-registry.js';
@@ -71,9 +70,6 @@ const OWN_CHECK: readonly Pair[] = [
   'agent --cache-gaps',
 ];
 
-/** Free text recorded as typed: a value that starts with `-` ("- duplicate run") is plausible (2). */
-const FREE_TEXT: readonly Pair[] = ['abandon --reason', 'respond --by'];
-
 /** Every (leaf name, long flag) of an option that takes a value, with each command object it is on. */
 function derived(): Map<Pair, Command[]> {
   const out = new Map<Pair, Command[]>();
@@ -94,13 +90,13 @@ function derived(): Map<Pair, Command[]> {
 }
 
 describe('#920 C-2 — every value-taking option is classified exactly once', () => {
-  it('1. the three tables and the command tree agree (28 + 50 + 2 = 80)', () => {
+  it('1. the two tables and the command tree agree (30 + 50 = 80)', () => {
     // (a) red when a guarded row is deleted, an option is added to a command, or a row is in two
     // tables; (b) prints the unclassified, extra and duplicated (leaf, flag) pairs only.
     const tree = derived();
     const guarded: Pair[] = GUARDED_OPTIONS.map((g) => `${g.command} ${g.option}` as Pair);
-    const tables = { guarded, ownCheck: [...OWN_CHECK], freeText: [...FREE_TEXT] };
-    const all = [...guarded, ...OWN_CHECK, ...FREE_TEXT];
+    const tables = { guarded, ownCheck: [...OWN_CHECK] };
+    const all = [...guarded, ...OWN_CHECK];
     const inTwo = [...new Set(all.filter((p, i) => all.indexOf(p) !== i))];
     const unclassified = [...tree.keys()].filter((p) => !all.includes(p));
     const notInTree = all.filter((p) => !tree.has(p));
@@ -120,7 +116,7 @@ describe('#920 C-2 — every value-taking option is classified exactly once', ()
       },
       JSON.stringify({ inTwo, unclassified, notInTree, shared }),
     ).toEqual({
-      counts: { guarded: 28, ownCheck: 50, freeText: 2 },
+      counts: { guarded: 30, ownCheck: 50 },
       tree: 80,
       inTwo: [],
       unclassified: [],
