@@ -40,8 +40,13 @@ export default defineConfig({
     // global); the 5s default stays the tight floor for the pure majority. The stale predecessor
     // of this rule named "3 genuinely-spawning CLI tests" as self-protecting — the population grew
     // without inheriting budgets, which is exactly how #371's starvation flakes happened. A new
-    // heavy cell that skips its budget re-arms the class loudly (a 5s timeout, not a silent pass)
-    // — that loud failure is the enforcement; there is no separate guard script for it.
+    // heavy cell that skips its budget re-arms the class loudly (a 5s timeout, not a silent pass).
+    // 2026-10-29: 31 of 478 spawning cells had drifted that way and voided counted runs under load,
+    // so the loud failure is no longer the only enforcement: `packages/cli/src/spawn-budget-guard.test.ts`
+    // fails when a cell that starts a child process has no declared budget (the owner's yes, session
+    // aaefd3da, uuid 37bb7e82-5e97-43a6-9603-74d1182addf2: "add the narrow time-limit check"). It is
+    // narrow on purpose — spawning cells only; its header says what counts as declared and what it
+    // cannot see.
     // `turbo.json`'s `concurrency` key (also #371) now carries the other half of the de-starvation
     // pairing this config's `maxWorkers` comment describes below.
     testTimeout: 5000,
