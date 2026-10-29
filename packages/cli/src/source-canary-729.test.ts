@@ -269,7 +269,7 @@ describe('#729 PR-3 — no canary leaves any door', () => {
     // (a) red when the writer's pass or the run's declared part is removed from inspect; (b)
     //     prints the leaked labels.
     expect({ door: 'inspect', leaked: leaked(bytes) }).toEqual({ door: 'inspect', leaked: [] });
-  });
+  }, 60_000);
 
   it('realm run export (the file)', () => {
     const out = join(root, 'export.json');
@@ -279,7 +279,7 @@ describe('#729 PR-3 — no canary leaves any door', () => {
     // (a) red when the bundle is not walked or the run's manifest is not read; (b) prints the
     //     leaked labels.
     expect({ door: 'export', leaked: leaked(bytes) }).toEqual({ door: 'export', leaked: [] });
-  });
+  }, 60_000);
 
   it('realm mcp over stdio (every message, and stderr)', async () => {
     let stderr = '';

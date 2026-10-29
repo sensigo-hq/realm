@@ -766,6 +766,8 @@ export {
   REALM_CREDENTIAL_VARIABLES,
   notKeptMarker,
   boundWhole,
+  // #872 (b1): the one bounded renderer of a name or a reason an MCP reply echoes (500 characters).
+  capText,
   tierFor,
   compileDisclosure,
   emptyDisclosureSet,
@@ -781,6 +783,8 @@ export {
   markersIn,
   inboundMarkerWarning,
 } from './utils/redaction.js';
+// #872 (b1) correction 1 (H1): the one producer of a bounded list in words.
+export { listWords, quotedNames, NAMES_SHOWN } from './utils/list-words.js';
 export type {
   DisclosureAudience,
   DisclosureTier,

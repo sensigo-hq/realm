@@ -809,10 +809,10 @@ describe('#872 (a) — the hand-back hint: two or more steps that cannot run her
     uses_service: service,
   });
   const TAIL =
-    ' — load the missing extensions, or run these steps on a runner that has them. get_run_state lists each one in engine_runnable.';
+    ' — load the missing extensions, or run these steps on a runner that has them. See engine_runnable in get_run_state.';
   // correction 1 (C4): one missing handler or adapter takes the singular way out.
   const TAIL_ONE =
-    ' — load the missing extension, or run these steps on a runner that has it. get_run_state lists each one in engine_runnable.';
+    ' — load the missing extension, or run these steps on a runner that has it. See engine_runnable in get_run_state.';
   const here = (s: string) => s.split('cannot run here').length - 1;
 
   it('B3: two steps needing one handler — the count first, one group, the way out once; no way out of the workflow', () => {

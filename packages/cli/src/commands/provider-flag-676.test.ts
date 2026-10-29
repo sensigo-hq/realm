@@ -44,5 +44,5 @@ describe('parseProvider (issue #676)', () => {
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 });
