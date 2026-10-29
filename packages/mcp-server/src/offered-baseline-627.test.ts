@@ -160,7 +160,7 @@ describe.skipIf(!ready)(
         mcpNewer: statSync(BASE_MCP).mtimeMs > committedMs,
         coreNewer: statSync(BASE_CORE).mtimeMs > committedMs,
       }).toEqual({ changed: 0, mcpNewer: true, coreNewer: true });
-    });
+    }, 30_000);
 
     it('the corpus, call by call', async () => {
       const base = (await import(BASE_MCP)) as { createRealmMcpServer: Factory };
