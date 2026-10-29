@@ -109,6 +109,12 @@ export async function handleGetWorkflowProtocol(
   };
 }
 
+/**
+ * #872 (b1): the tool's reply — the generator's protocol, plus the `warnings` the reply ceiling's
+ * overflow line rides (the generator's public `WorkflowProtocol` untouched).
+ */
+export type WorkflowProtocolReply = WorkflowProtocol & { warnings?: string[] };
+
 /** #729 PR-3 (M-1): the protocol is the definition's author text and realm's rules: facts. */
 export const WORKFLOW_PROTOCOL_TABLE = {
   workflow_id: 'fact',
@@ -120,7 +126,9 @@ export const WORKFLOW_PROTOCOL_TABLE = {
   rules: 'fact',
   error_handling: 'fact',
   quick_start: 'fact',
-} as const satisfies Record<keyof WorkflowProtocol, DisclosureClass>;
+  // #872 (b1): the overflow line's carrier — guard-only here until (b2) pages the steps.
+  warnings: 'bounded',
+} as const satisfies Record<keyof WorkflowProtocolReply, DisclosureClass>;
 
 /** Registers the get_workflow_protocol MCP tool on the server. */
 export function registerGetWorkflowProtocol(

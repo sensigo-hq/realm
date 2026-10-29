@@ -377,3 +377,48 @@ describe(
     });
   },
 );
+
+describe('#872 (b1) B11 — testing-package.md: the fidelity laws', () => {
+  it('the law table names EVIDENCE_WRITE_ORDER, and (ride-along) SUPPLIER_ROUND_TRIPS and EVIDENCE_KEEPS_ANSWER_FACTS', async () => {
+    for (const row of [
+      '| `SUPPLIER_ROUND_TRIPS` | An evidence entry written with who supplied its input (`supplied_by`) comes back with it, and one written without comes back without one, never with a supplier the store made up. |',
+      "| `EVIDENCE_KEEPS_ANSWER_FACTS` | A gate answer's entry comes back with how the answer arrived — the route its door declared with what showed the question (`answer`), the program that recorded it (`driven_by`), whether the door asked the user's app to ask the person (`client_prompt_requested`) and the transport's principal (`principal`) — each exactly, typed absences included. |",
+      "| `EVIDENCE_WRITE_ORDER` | A run's evidence, written in three separate writes, comes back in the order it was written. Added after version 0.48.0. |",
+    ])
+      claim(PAGE, row);
+    const { RUN_STORE_FIDELITY_LAWS } = await import('./index.js');
+    // (a) red when a row names a law the contract does not export; (b) prints the law list.
+    expect(RUN_STORE_FIDELITY_LAWS).toEqual(
+      expect.arrayContaining([
+        'SUPPLIER_ROUND_TRIPS',
+        'EVIDENCE_KEEPS_ANSWER_FACTS',
+        'EVIDENCE_WRITE_ORDER',
+      ]),
+    );
+  });
+
+  it('#872 (b1) correction 1 (AC6): the contracts table’s runStoreFidelityContract row — its laws and cases DERIVED by running the contract against InMemoryStore', async () => {
+    const { RUN_STORE_FIDELITY_LAWS, runStoreFidelityContract, InMemoryStore } =
+      await import('./index.js');
+    const row = readFileSync(join(ROOT, PAGE), 'utf8')
+      .split('\n')
+      .find((line) => /^\| `runStoreFidelityContract` +\|/.test(line));
+    const cells = (row ?? '').split('|').map((cell) => cell.trim());
+    const cases = runStoreFidelityContract({
+      store: new InMemoryStore(),
+      definition: {
+        id: 'w',
+        name: 'w',
+        version: 1,
+        steps: { work: { description: 'W.', execution: 'agent', depends_on: [] } },
+      },
+      stepName: 'work',
+    });
+    // (a) red when the row's laws or cases differ from the contract's (the page at #916's 6 / 13);
+    //     (b) prints the row's two cells and the two counts.
+    expect({ laws: cells[3], cases: cells[4] }).toEqual({
+      laws: String(RUN_STORE_FIDELITY_LAWS.length),
+      cases: `${cases.length}, with \`InMemoryStore\``,
+    });
+  });
+});

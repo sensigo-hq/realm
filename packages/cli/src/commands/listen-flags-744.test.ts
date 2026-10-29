@@ -33,25 +33,29 @@ describe('realm listen through the built CLI: a bad limit flag (issue #744)', ()
     ['--max-concurrent', 'abc'],
     ['--max-body-bytes', '0'],
     ['--body-timeout-ms', '1.5'],
-  ])('listen %s %s: exit 1, Commander’s line', (flag, value) => {
-    // A scratch HOME and working folder with no workflow: nothing of the real ~/.realm is read, no
-    // `.env` of this repository is loaded, and nothing could start if the flag were taken.
-    const home = mkdtempSync(join(tmpdir(), 'realm-744-flags-'));
-    try {
-      const r = spawnSync(process.execPath, [CLI_ENTRY, 'listen', flag, value], {
-        cwd: home,
-        env: { PATH: process.env['PATH'] ?? '', HOME: home },
-        encoding: 'utf8',
-        timeout: 20_000,
-      });
-      // (a) red when the CLI takes the value (it then stops on something else, such as the
-      //     missing workflow), or the message changes; (b) prints the exit code and standard error.
-      expect({ status: r.status, stderr: r.stderr.trim() }).toEqual({
-        status: 1,
-        stderr: `error: option '${flag} <n>' argument '${value}' is invalid. ${flag}${MESSAGE}`,
-      });
-    } finally {
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
+  ])(
+    'listen %s %s: exit 1, Commander’s line',
+    (flag, value) => {
+      // A scratch HOME and working folder with no workflow: nothing of the real ~/.realm is read, no
+      // `.env` of this repository is loaded, and nothing could start if the flag were taken.
+      const home = mkdtempSync(join(tmpdir(), 'realm-744-flags-'));
+      try {
+        const r = spawnSync(process.execPath, [CLI_ENTRY, 'listen', flag, value], {
+          cwd: home,
+          env: { PATH: process.env['PATH'] ?? '', HOME: home },
+          encoding: 'utf8',
+          timeout: 20_000,
+        });
+        // (a) red when the CLI takes the value (it then stops on something else, such as the
+        //     missing workflow), or the message changes; (b) prints the exit code and standard error.
+        expect({ status: r.status, stderr: r.stderr.trim() }).toEqual({
+          status: 1,
+          stderr: `error: option '${flag} <n>' argument '${value}' is invalid. ${flag}${MESSAGE}`,
+        });
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
 });

@@ -103,21 +103,54 @@ export const ANTHROPIC_CACHE_TIERS: CacheTiers = {
 };
 
 /**
- * Issue #600 PR 2 (B1) — the single-shot request's `system`: the plain string when nothing is asked
+ * Issue #899 — the one `cache_control` shape a request's markers carry: `short` sends no `ttl` (the
+ * provider's default lifetime, 5 minutes); `long` sends `ttl: '1h'`. Both markers of a request come
+ * from here, so they cannot disagree.
+ */
+function cacheControlFor(choice: Exclude<CacheChoice, 'off'>): Record<string, string> {
+  return choice === 'long' ? { type: 'ephemeral', ttl: '1h' } : { type: 'ephemeral' };
+}
+
+/**
+ * Issue #600 PR 2 (B1) — a request's `system`: the plain string when nothing is asked
  * to be cached (byte-for-byte the request before caching), else one text block whose
  * `cache_control` marks the whole fixed part — the profile, Realm's instructions and the schema —
  * as the part to cache. `short` sends no `ttl` (the provider's default lifetime, 5 minutes); `long`
- * sends `ttl: '1h'` — byte-identical to the two bodies sent before the lifetime unit. The tools path never
- * calls this.
+ * sends `ttl: '1h'` — byte-identical to the two bodies sent before the lifetime unit. The tool
+ * loop's main turns call it too (issue #899); its final extraction does not.
  */
 function systemWithCache(
   systemPrompt: string,
   choice: CacheChoice,
 ): string | Array<{ type: 'text'; text: string; cache_control: Record<string, string> }> {
   if (choice === 'off') return systemPrompt;
-  const cacheControl: Record<string, string> =
-    choice === 'long' ? { type: 'ephemeral', ttl: '1h' } : { type: 'ephemeral' };
-  return [{ type: 'text', text: systemPrompt, cache_control: cacheControl }];
+  return [{ type: 'text', text: systemPrompt, cache_control: cacheControlFor(choice) }];
+}
+
+/**
+ * Issue #899 — a main turn's `messages` with a cache marker on the last block of the last message,
+ * so the next turn can read the conversation so far. Built as a COPY at three levels: a new array, a
+ * new last-message object, and new content — a string becomes one marked text block; an array
+ * becomes a new array whose last block is a shallow copy carrying `cache_control` (on a
+ * `tool_result` block the key sits on the block itself, never inside its `content`). Nothing in
+ * `messages` is written: it is `history` itself, or a new array whose other elements ARE history's
+ * objects, and a marker written in place would pile up turn after turn (Anthropic refuses a fifth).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function markLastMessage(messages: readonly any[], cacheControl: Record<string, string>): any[] {
+  if (messages.length === 0) return [...messages];
+  const last = messages[messages.length - 1];
+  const content: unknown = last.content;
+  const marked =
+    typeof content === 'string'
+      ? [{ type: 'text', text: content, cache_control: cacheControl }]
+      : Array.isArray(content) && content.length > 0
+        ? [
+            ...content.slice(0, -1),
+            { ...(content[content.length - 1] as object), cache_control: cacheControl },
+          ]
+        : content;
+  return [...messages.slice(0, -1), { ...last, content: marked }];
 }
 
 /**
@@ -378,8 +411,9 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
   private readonly cacheChoice: CacheChoice;
 
   /**
-   * `promptCache` (issue #600): what the single-shot request asks to cache. Without it the provider
-   * asks for nothing (`off`) — the request is byte-for-byte the one before caching. `off`, `short`
+   * `promptCache` (issue #600): what it asks to cache on each request it marks: a single-shot
+   * request, and every main turn of a tool step. Without it the provider asks for nothing (`off`) —
+   * the request is byte-for-byte the one before caching. `off`, `short`
    * and `long` ask for that; `auto` asks for what `chooseCacheLifetime` chooses from `auto.gaps_s`
    * and {@link ANTHROPIC_CACHE_TIERS}, with the short lifetime as the prior for a drive with no
    * measurement and the long one for a drive `realm listen` started.
@@ -419,7 +453,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
    * via a `response_format` json_object mode.
    */
   capabilities(): ProviderCapabilities {
-    // issue #600 PR 2 (B2): what the single-shot request asks to cache, always — `off` included;
+    // issue #600 PR 2 (B2): what it asks to cache on each request it marks: a single-shot request,
+    // and every main turn of a tool step; always — `off` included;
     // the lifetime unit: the one resolved choice, as `'off'` or its lifetime in seconds.
     return {
       jsonMode: false,
@@ -433,7 +468,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
   }
 
   /**
-   * Issue #600 PR 2 (B3) — what realm asked for on a single-shot request, and where it sent it:
+   * Issue #600 PR 2 (B3) — what realm asked for on each request it marks: a single-shot request,
+   * and every main turn of a tool step; and where it sent it:
    * the response's `model`, the ask (`lifetime` with its seconds and whether the lifetime was sent,
    * or `off`), its source and runner when given, the endpoint, and that Anthropic reports a
    * lifetime split. Never `provider`: `realm agent` stamps that. The lifetime unit: when the setting
@@ -465,10 +501,10 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
   }
 
   /**
-   * Issue #610 — what a request of the tool loop records about itself: the response's `model`, the
-   * endpoint, and that Anthropic reports a lifetime split. No cache ask: the tool loop sends no
-   * cache marker (issue #899 adds one), so any ask written here would be false. Never `provider`:
-   * `realm agent` stamps that.
+   * Issue #610 — what the tool loop's FINAL EXTRACTION records about itself: the response's
+   * `model`, the endpoint, and that Anthropic reports a lifetime split. No cache ask: that request
+   * carries no cache marker (issue #899), so any ask written here would be false. The main turns
+   * record {@link requestFacts}. Never `provider`: `realm agent` stamps that.
    */
   private toolsRequestFacts(response: unknown, client: unknown): Partial<UsageRecord> {
     const model = responseModel(response);
@@ -837,9 +873,13 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     // issue #610: the ONE point every request of this loop goes through, and the one place it is
     // recorded. The record is pushed the instant the answer arrives, before any code reads it: a
     // throw while reading must not lose what was billed. A request that fails on the wire has no
-    // record, as on the single-shot path.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const bounded = async (body: Rec): Promise<any> => {
+    // record, as on the single-shot path. Issue #899: `facts` is what that request records about
+    // itself — a main turn what it asked to cache, the final extraction no ask.
+    const bounded = async (
+      body: Rec,
+      facts: (response: unknown, client: unknown) => Partial<UsageRecord>,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ): Promise<any> => {
       const requestStart = new Date().toISOString();
       const response = await send(body);
       requests.push(
@@ -847,7 +887,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
           requests.length,
           requestStart,
           readAnthropicUsage(response),
-          this.toolsRequestFacts(response, client),
+          facts(response, client),
         ),
       );
       return response;
@@ -1009,11 +1049,17 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       const key = requestToolsKey(requestTools);
       // The property order is today's (model, max_tokens, system, messages, tools), so a request
       // that needs nothing removed is byte-for-byte what it was before issue #677.
+      // Issue #899: unless the choice is `off`, the turn asks to cache `system` and the
+      // conversation so far — a marker on a COPY of the last message, never on `history`.
+      const choice = this.cacheChoice;
       const opts: Record<string, unknown> = {
         model: this.model,
         max_tokens: resolveMaxTokens(this.model),
-        system,
-        messages: messagesFor(key),
+        system: systemWithCache(system, choice),
+        messages:
+          choice === 'off'
+            ? messagesFor(key)
+            : markLastMessage(messagesFor(key), cacheControlFor(choice)),
       };
       if (requestTools !== undefined) opts['tools'] = requestTools;
       return { body: opts, key };
@@ -1047,7 +1093,9 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       const carriedStrict = toolArgsStrictActive;
       try {
         const request = buildMainCallOpts();
-        const response = await bounded(request.body);
+        const response = await bounded(request.body, (response, client) =>
+          this.requestFacts(response, client),
+        );
         // Only a strict-DECORATED request that came back 200 counts toward the disclosed
         // "turns before drop" — that is exactly what the number claims.
         if (carriedStrict) strictTurnsBeforeDrop += 1;
@@ -1079,7 +1127,12 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         // `messages` from its own key (issue #677): the stripped list is a different list, so the
         // thinking of the turns made while strict was on stays out of it.
         const retry = buildMainCallOpts();
-        return { response: await bounded(retry.body), key: retry.key };
+        return {
+          response: await bounded(retry.body, (response, client) =>
+            this.requestFacts(response, client),
+          ),
+          key: retry.key,
+        };
       }
     };
 
@@ -1127,7 +1180,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         // option above), not an `output_config.format` request parameter — deliberately not
         // used here (banked, design record R-P).
       }
-      const final = await bounded(finalOpts);
+      // Issue #899: no cache marker and no ask — nothing after this request could read its write.
+      const final = await bounded(finalOpts, this.toolsRequestFacts);
       const blocks = final.content as Array<{
         type: string;
         text?: string;

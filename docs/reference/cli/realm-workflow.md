@@ -92,7 +92,7 @@ realm workflow validate invoice-check
 Valid: invoice-check v1 (2 steps)
 ℹ 1 step ready for structured_output: strict — run 'realm workflow validate --explain' for detail (REALM_NO_NUDGE=1 to silence).
 cache: step_one — anthropic 588 chars ≈ 338–765 tokens, with Anthropic's tool text · openai 304 chars ≈ 61–122 tokens (estimates: 2.5–5 chars/token, with margin)
-anthropic: on steps without tools, realm marks the fixed part for caching unless the drive's --prompt-cache turns it off; a fixed part below the model's minimum is sent uncached, silently
+anthropic: when realm agent or realm listen drives a step, realm marks its fixed part for caching, and on steps with tools the conversation at each turn, unless --prompt-cache turns it off; below the model's minimum nothing is cached, silently
 openai: realm sends no cache marker; the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)
 anthropic: the cache is kept per workspace (per organization on Bedrock and Google Cloud), as Anthropic's page said on 2026-10-09: drives from different workspaces each pay the write
 ```
@@ -168,15 +168,15 @@ cache: review_security — 954 chars ≈ 411–912 tokens, with Anthropic's tool
 
 Anthropic's page says (2026-10-28) that "a cache entry only becomes available after the first response starts", and advises waiting for the first response before sending parallel requests that need hits. On Anthropic, two steps that share a fixed part, like these two, read each other's entry only if the second request is sent after the first response has started.
 
-After the step lines come the lines that hold for each provider shown, once:
+After the step lines come the lines that hold for each provider, once. A provider's lines print when a step line shows a size for that provider, or when a step calls tools and that provider is in scope (both, or the one `--provider` names):
 
 ```text
-anthropic: on steps without tools, realm marks the fixed part for caching unless the drive's --prompt-cache turns it off; a fixed part below the model's minimum is sent uncached, silently
+anthropic: when realm agent or realm listen drives a step, realm marks its fixed part for caching, and on steps with tools the conversation at each turn, unless --prompt-cache turns it off; below the model's minimum nothing is cached, silently
 openai: realm sends no cache marker; the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)
 anthropic: the cache is kept per workspace (per organization on Bedrock and Google Cloud), as Anthropic's page said on 2026-10-09: drives from different workspaces each pay the write
 ```
 
-**Words on the provider lines.** _The drive_ is one `realm agent` driving one run, whether you start it or `realm listen` starts it for a run; its `--prompt-cache` flag sets what Anthropic is asked to cache (see [`realm agent`](realm-agent.md)). _Sent uncached, silently_: a fixed part shorter than the model's minimum is not cached, and the provider says nothing about it. _Pay the write_: the request that writes a cache entry is billed for what it writes at the cache-write price (see [How a request is priced](../cache-economics.md#how-a-request-is-priced) and [What a run costs](../../guides/realm-agent.md#what-a-run-costs)).
+**Words on the provider lines.** _The drive_ is one `realm agent` driving one run, whether you start it or `realm listen` starts it for a run; its `--prompt-cache` flag sets what Anthropic is asked to cache (see [`realm agent`](realm-agent.md)). _Nothing is cached, silently_: below the model's minimum nothing is cached, and the provider says nothing about it. _Pay the write_: the request that writes a cache entry is billed for what it writes at the cache-write price (see [How a request is priced](../cache-economics.md#how-a-request-is-priced) and [What a run costs](../../guides/realm-agent.md#what-a-run-costs)).
 
 The verdict is worked out the same way on every machine: Realm reads no key and no environment variable for it. The lines are printed like any other output, so in a log a value Realm hides elsewhere is hidden in them too. That includes the model id and the word `anthropic` when an environment variable holds the same text, for example `ANTHROPIC_MODEL=claude-sonnet-5-5` or `LLM_PROVIDER=anthropic`: the line then reads `[REDACTED]` where they stood. Realm hides an environment value only when it is 8 characters or more, so `openai` prints whole. In `--json`, both print whole (#885). With `--json`, `validate` gives the same facts in `cacheability`: see [the JSON output](../workflow/loader-diagnostics.md#--json).
 
@@ -215,7 +215,7 @@ realm workflow register invoice-check
 ```text
 Registered: invoice-check v1 (2 steps)
 cache: step_one — anthropic 588 chars ≈ 338–765 tokens, with Anthropic's tool text · openai 304 chars ≈ 61–122 tokens (estimates: 2.5–5 chars/token, with margin)
-anthropic: on steps without tools, realm marks the fixed part for caching unless the drive's --prompt-cache turns it off; a fixed part below the model's minimum is sent uncached, silently
+anthropic: when realm agent or realm listen drives a step, realm marks its fixed part for caching, and on steps with tools the conversation at each turn, unless --prompt-cache turns it off; below the model's minimum nothing is cached, silently
 openai: realm sends no cache marker; the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)
 anthropic: the cache is kept per workspace (per organization on Bedrock and Google Cloud), as Anthropic's page said on 2026-10-09: drives from different workspaces each pay the write
 ```
@@ -247,7 +247,7 @@ It prints the [cache lines](#the-cache-lines) after the first `Registered` line,
 Watching invoice-check/workflow.yaml — press Ctrl+C to stop
 [2026-10-27T16:56:26.020Z] Registered: invoice-check v1 (2 steps)
 [2026-10-27T16:56:26.020Z] cache: step_one — anthropic 588 chars ≈ 338–765 tokens, with Anthropic's tool text · openai 304 chars ≈ 61–122 tokens (estimates: 2.5–5 chars/token, with margin)
-[2026-10-27T16:56:26.020Z] anthropic: on steps without tools, realm marks the fixed part for caching unless the drive's --prompt-cache turns it off; a fixed part below the model's minimum is sent uncached, silently
+[2026-10-27T16:56:26.020Z] anthropic: when realm agent or realm listen drives a step, realm marks its fixed part for caching, and on steps with tools the conversation at each turn, unless --prompt-cache turns it off; below the model's minimum nothing is cached, silently
 [2026-10-27T16:56:26.020Z] openai: realm sends no cache marker; the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)
 [2026-10-27T16:56:26.020Z] anthropic: the cache is kept per workspace (per organization on Bedrock and Google Cloud), as Anthropic's page said on 2026-10-09: drives from different workspaces each pay the write
 [2026-10-27T16:56:28.472Z] Registered: invoice-check v1 (2 steps)
@@ -257,7 +257,7 @@ Watching invoice-check/workflow.yaml — press Ctrl+C to stop
 
 A file that is refused is reported, and the copy registered before it stays in place. `watch` keeps running.
 
-`watch` prints the lines for each provider once, in the first block that shows a size for that provider. After that block, a block carries the step lines only, so a log read from the middle can show step lines without them. A block is printed only when its lines differ from the last block printed. A save that leaves them as they were prints `Registered:` and no cache lines, and so does a repair that returns them to the block printed before a refused save. Lines that change and then change back are printed again. With `--model`, `watch` reads your economics file on each save of the workflow file or of one of its profile files, not when the economics file itself changes: an edit to it prints nothing until the next such save.
+`watch` prints the lines for each provider once, in the first block that shows a size for that provider or a step that calls tools. After that block, a block carries the step lines only, so a log read from the middle can show step lines without them. A block is printed only when its lines differ from the last block printed. A save that leaves them as they were prints `Registered:` and no cache lines, and so does a repair that returns them to the block printed before a refused save. Lines that change and then change back are printed again. With `--model`, `watch` reads your economics file on each save of the workflow file or of one of its profile files, not when the economics file itself changes: an edit to it prints nothing until the next such save.
 
 If the watched folder is removed, `watch` stops:
 

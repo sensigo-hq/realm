@@ -8,6 +8,24 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- **An MCP reply is kept at or under 40,000 characters when shortening its lists can make it fit
+  (issue #872).** `get_workflow_protocol`, `list_workflows` and `start_run_batch` shorten nothing
+  yet, and a step's prompt or schema is never shortened. When a reply would pass the ceiling, its
+  longer lists are shortened — `next_actions` beyond the first, and on `get_run_state` the run's own
+  lists and its other lists, then `params`, replaced by its size, then the steps' detail it was
+  asked for — and each says how many it left out (`next_actions_more`, `steps_more`, …); the head an
+  agent acts on and every other field stay as they are. When nothing can make it fit, everything
+  Realm can shorten in it is cut to its least, and the reply says so: a text reply in its first
+  line, any other in the first item of `warnings` — which part is too long, that nothing in it is
+  shortened, or how long it still is. Names in a reply's sentences stop at ten, then say how many
+  more; steps refused the same way share one clause (at most ten clauses, then a count);
+  `run_health` keeps ten findings of a kind and counts the rest; a failed drive's request list keeps
+  three. `get_run_state` takes `step_names` (only the named steps' detail) and `cursor` (the next
+  page of steps, from `next_cursor`); a refused cursor is `VALIDATION_CURSOR`. `create_workflow`'s
+  refusal says each fault once: steps with the same fault share one line, and each other fault has
+  its own line until the lines reach 8,000 characters; one last line then counts the rest and names
+  three of their steps. A terminal reason or an unknown key over 500 characters is named by its
+  length. The store contract gains `EVIDENCE_WRITE_ORDER`.
 - **One composer for a gate's question, on every surface (issue #729 PR-4).** `realm run`,
   `realm run inspect`, `realm agent`, Slack, and the MCP replies and form now show a gate's question
   through core's one composer (`composeQuestionView`), over the gate disclosed for who reads it.
@@ -37,6 +55,7 @@ All notable changes to this project are documented here.
   `storeClockContract` with its laws `STORE_CLOCK_LAWS`. A test location's clock is the file
   `.realm-test-clock` beside its `runs/` folder. A store opened on a copy of a test location in
   another folder refuses with the new code `STATE_TEST_CLOCK_FOREIGN`.
+- **When `realm agent` or `realm listen` drives a step that calls tools, it now asks Anthropic to cache the step's fixed instructions and the conversation so far at each turn, so a turn can read what the turn before wrote once that part reaches the model's minimum.** The request a step makes after using up its tool calls is sent with no cache marker. `--prompt-cache off` sends what it sent before. A workflow whose every agent step calls tools no longer refuses `--prompt-cache`. **Upgrading:** a gateway or proxy that rejects `cache_control` now also fails steps that call tools, which worked before; run with `--prompt-cache off`. (#899)
 
 ### Changed
 
@@ -44,8 +63,8 @@ All notable changes to this project are documented here.
   (issue #872).** The MCP replies' `context_hint` gives their count first, then each missing handler
   or adapter with at most three of the steps that need it and how many more (at most ten, then how
   many more), the way out once — `load the missing extension` when one handler or adapter is
-  missing, `load the missing extensions` when several are — and `get_run_state lists each one in
-engine_runnable.` It repeated one whole sentence, way out included, for every step. One step keeps
+  missing, `load the missing extensions` when several are — and `See engine_runnable in
+get_run_state.` It repeated one whole sentence, way out included, for every step. One step keeps
   its sentence. The error reply of the call that attempts one such step counts them too. Each
   `engine_runnable` entry refused for a handler or adapter (`get_run_state`,
   `describePending`) carries `requirement` (`kind`, `name`) beside `basis`. A step or handler name
