@@ -98,7 +98,7 @@ describe('AnthropicProvider under a clock — the ceiling is PER CREATE', () => 
     // ...and the CHOKEPOINT agrees. The payload being on the cause chain is only half the claim;
     // what matters is that the classifier walks to it, so the wrapped abort is recorded as a
     // budget abort rather than as a shapeless 'other'.
-    expect(buildEntry(err, 'classify', 'anthropic', Date.now()).error_class).toBe(
+    expect(buildEntry(err, 'classify', 'anthropic', performance.now()).error_class).toBe(
       'aborted_by_budget',
     );
   });

@@ -473,6 +473,22 @@ export {
   INSTANT_CLASSES,
 } from './engine/instants.js';
 export type { InstantClass, InstantReading } from './engine/instants.js';
+// issue #715 (a) (D5 §1.1, §2.1; D6-3, D6-4, D6-6, D6-7, D6-14, D6-35): the clock a run store holds,
+// the one place a store takes its reading for a write, and the per-key floor on that reading.
+export { createSystemClock, systemClock } from './utils/clock.js';
+export type { Clock } from './utils/clock.js';
+export { takeReading, floorAtHolder } from './store/take-reading.js';
+// issue #715 (a) (D6-1, D6-54): a test location's clock file. For `@sensigo/realm-testing`, not for
+// hosts: a lint rule (static imports) and a source scan (the names as text, in any import form;
+// `lint-test-location-715.test.ts`) keep `writeTestClockFile`, `fileClock` and `readTestClockFile`
+// out of production code (D6-52).
+export {
+  TEST_CLOCK_FILE_NAME,
+  testClockFilePath,
+  writeTestClockFile,
+  readTestClockFile,
+  fileClock,
+} from './store/test-clock-file.js';
 // issue #600 PR 1b: one cost view per step, derived once and rendered by inspect + get_run_state.
 export {
   composeCostView,
@@ -971,6 +987,7 @@ export {
   stepNotEligibleError,
   runNotFoundError,
   ReclaimVersionChanged,
+  noLongerTerminalReason,
 } from './store/fence-predicate.js';
 // #627 W (§5.9): the separation check's evidence, typed once (the CLI measures it).
 export {

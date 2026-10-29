@@ -28,7 +28,8 @@ export class TokenBucketRateLimiter implements RateLimiter {
     this.capacity = config.burst;
     this.tokens = config.burst;
     this.intervalMs = 1000 / config.requests_per_second;
-    this.now = now ?? (() => Date.now());
+    // issue #715 (a) (D6-23): refill timing is a duration — on the monotonic clock by default.
+    this.now = now ?? (() => performance.now());
     this.startRefill();
   }
 

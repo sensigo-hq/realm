@@ -145,6 +145,43 @@ const PLAIN_CMD_SELECTORS = [
   },
 ];
 
+/**
+ * The zod 4 unit (Z2b): zod 4 still ships the legacy `zod/v3` entry, whose array parse is the
+ * UNFIXED one (GHSA-mrhx-c7xc-m3w5). A schema built from it has no `_zod`, so the MCP SDK would parse
+ * a tool's arguments on that path, silently. Shared by the two `no-restricted-imports` blocks below:
+ * a later block REPLACES an earlier one's list for the files it matches, so the override for tests
+ * and the testing package re-states it (#715 (a)).
+ */
+const ZOD_V3_MESSAGE =
+  "zod/v3 is zod 3's unfixed array parse (GHSA-mrhx-c7xc-m3w5): import from 'zod' (zod 4).";
+const ZOD_V3_RESTRICTIONS = {
+  paths: [{ name: 'zod/v3', message: ZOD_V3_MESSAGE }],
+  patterns: [{ group: ['zod/v3/*'], message: ZOD_V3_MESSAGE }],
+};
+
+/**
+ * #715 (a) (D6-52): production code never creates a test location or writes a clock file (the file
+ * store reads one, beside `runs/`). The CLI ships `@sensigo/realm-testing` as a production dependency
+ * (for `realm workflow test`), and core exports the clock file's helpers for that package, so both
+ * are named here; tests and the testing package are allowed by the override block below. The rule
+ * catches static import and export-from declarations; the source scan in
+ * `lint-test-location-715.test.ts` finds the names as text in any other form.
+ */
+const TEST_CLOCK_RESTRICTIONS = [
+  {
+    name: '@sensigo/realm-testing',
+    importNames: ['createTestLocation'],
+    message:
+      'A production module never creates a test location: `createTestLocation` is for tests (#715, D6-52).',
+  },
+  {
+    name: '@sensigo/realm',
+    importNames: ['writeTestClockFile', 'fileClock', 'readTestClockFile'],
+    message:
+      "A production module never creates or reads a test clock: the clock file's helpers are for @sensigo/realm-testing and tests (#715, D6-52).",
+  },
+];
+
 export default tseslint.config(
   { ignores: ['**/dist/**', '**/node_modules/**', '**/coverage/**'] },
   eslint.configs.recommended,
@@ -167,28 +204,23 @@ export default tseslint.config(
         'error',
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
       ],
-      // The zod 4 unit (Z2b): zod 4 still ships the legacy `zod/v3` entry, whose array parse is the
-      // UNFIXED one (GHSA-mrhx-c7xc-m3w5). A schema built from it has no `_zod`, so the MCP SDK would
-      // parse a tool's arguments on that path, silently.
+      // The zod 4 unit (Z2b) and #715 (a)'s test clocks: see the two constants above.
       'no-restricted-imports': [
         'error',
         {
-          paths: [
-            {
-              name: 'zod/v3',
-              message:
-                "zod/v3 is zod 3's unfixed array parse (GHSA-mrhx-c7xc-m3w5): import from 'zod' (zod 4).",
-            },
-          ],
-          patterns: [
-            {
-              group: ['zod/v3/*'],
-              message:
-                "zod/v3 is zod 3's unfixed array parse (GHSA-mrhx-c7xc-m3w5): import from 'zod' (zod 4).",
-            },
-          ],
+          paths: [...ZOD_V3_RESTRICTIONS.paths, ...TEST_CLOCK_RESTRICTIONS],
+          patterns: ZOD_V3_RESTRICTIONS.patterns,
         },
       ],
+    },
+  },
+  // #715 (a) (D6-52): tests and the testing package may create and read test clocks — this block
+  // REPLACES the list above for those files, so it re-states the zod/v3 restriction without the
+  // test-clock members.
+  {
+    files: ['packages/testing/**/*.ts', '**/*.test.ts'],
+    rules: {
+      'no-restricted-imports': ['error', ZOD_V3_RESTRICTIONS],
     },
   },
   // ---------------------------------------------------------------------------

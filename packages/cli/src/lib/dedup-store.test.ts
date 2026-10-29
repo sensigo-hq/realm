@@ -1,6 +1,6 @@
 // Tests for dedup stores. The shared suite runs against both implementations.
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FileDedupStore, InMemoryDedupStore } from './dedup-store.js';
@@ -100,6 +100,32 @@ describe('InMemoryDedupStore cleanup', () => {
       expect(store.check('k')).toBe(false); // expired AFTER — driven by the clock, not a race
     } finally {
       vi.useRealTimers();
+    }
+  });
+});
+
+// issue #715 (a) (D6-23): the cleanup error throttle is a process-local duration on the monotonic
+// clock. `performance.now()` is process uptime, so the throttle starts at −∞: the FIRST failure prints
+// even in a process younger than 60 s. (a) red when the site still reads `Date.now()`, or the initial
+// value is 0; (b) prints the number of error lines.
+describe('FileDedupStore cleanup — the error throttle is monotonic (issue #715 (a))', () => {
+  it('D12 two failures within 60 s print one line, a third after 60 s prints another; the first prints at 1 s of uptime', () => {
+    const base = mkdtempSync(join(tmpdir(), 'dedup-715a-'));
+    // The store's folder is a FILE: every cleanup's readdir fails (ENOTDIR) and reaches the throttle.
+    writeFileSync(join(base, 'wf'), 'not a folder');
+    const store = new FileDedupStore(base, 'wf');
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const now = vi.spyOn(performance, 'now');
+    try {
+      now.mockReturnValue(1_000);
+      store.cleanup(60_000);
+      now.mockReturnValue(30_000);
+      store.cleanup(60_000);
+      now.mockReturnValue(70_000);
+      store.cleanup(60_000);
+      expect(errors.mock.calls.length, 'error lines').toBe(2);
+    } finally {
+      vi.restoreAllMocks();
     }
   });
 });

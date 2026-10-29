@@ -913,7 +913,14 @@ describe('purgeRuns — fenced WAL delete (issue #207 PR-2)', () => {
           // there.
           if (getCalls <= 2) return runStore.get(id);
           const fresh = await runStore.get(id);
-          return { ...fresh, run_phase: 'running' as const, terminal_state: false };
+          // A real resume bumps the version (issue #715 (a): the version fence lets a
+          // same-version flip through, correctly).
+          return {
+            ...fresh,
+            version: fresh.version + 1,
+            run_phase: 'running' as const,
+            terminal_state: false,
+          };
         },
         list: (wf?: string) => runStore.list(wf),
         statAllForRun: (id: string, dirEntries?: readonly string[]) =>
@@ -1383,5 +1390,501 @@ describe('purge — disposal coherence (issue #558 PR-C)', () => {
       eligible: false,
       reason: "not terminal (phase: 'running')",
     });
+  });
+});
+
+// =================================================================================================
+// issue #715 (a) (D6-9, D6-50) — purge refuses a run that changed after it was selected, before any of
+// its files goes: the artifact stores are fenced with the run's version at selection
+// (`run_at_version`), and the anchor is called with `expectVersion`. The race itself (a finalizer
+// completing, or a resume and re-terminalise, between selection and delete) is the design's
+// INFERRED scenario (read, never run): these cells reproduce its EFFECT — a version bump on a
+// terminal run between selection and delete — through the seam the race cells above use (an anchor
+// whose `get` acts on its Nth call). Each assertion names (a) the change that turns it red and
+// (b) what it prints: the outcome buckets, the reason, the WAL's existence.
+// =================================================================================================
+describe('purgeRuns — a run that changed after it was selected (issue #715 (a))', () => {
+  type Anchor = Pick<RunStore, 'get' | 'list'> & PerRunArtifactStore & { runsDirPath: string };
+  type Order = string[];
+
+  /**
+   * The anchor over the real run store. On its 2nd `get` (purge's own pre-delete re-check, after
+   * selection) it runs `move` — a real write that bumps the version. Later reads go through `after`.
+   */
+  function anchorOver(
+    runStore: JsonFileStore,
+    move: (id: string) => Promise<void>,
+    after: (id: string) => Promise<RunRecord> = (id) => runStore.get(id),
+    order?: Order,
+  ): Anchor {
+    let gets = 0;
+    return declared({
+      runsDirPath: runStore.runsDirPath,
+      get: async (id: string) => {
+        gets++;
+        if (gets === 2) await move(id);
+        return gets <= 2 ? runStore.get(id) : after(id);
+      },
+      list: (wf?: string) => runStore.list(wf),
+      statAllForRun: (id: string, dirEntries?: readonly string[]) =>
+        runStore.statAllForRun(id, dirEntries),
+      deleteAllForRun: async (
+        id: string,
+        dirEntries?: readonly string[],
+        options?: { expectVersion?: number },
+      ) => {
+        order?.push('anchor');
+        return runStore.deleteAllForRun(id, dirEntries, options);
+      },
+    });
+  }
+
+  /** A real write that bumps the version and leaves the run terminal. */
+  const bump = (runStore: JsonFileStore) => async (id: string) => {
+    await runStore.update(await runStore.get(id));
+  };
+
+  async function seeded(id: string): Promise<{ s: Stores; run: RunRecord }> {
+    const s = await makeStores();
+    const run = makeRun({
+      id,
+      run_phase: 'completed',
+      terminal_state: true,
+      sealed_by: { arm: 'complete' },
+    });
+    await injectRun(s.dir, run);
+    await s.traceBufferStore.append(run.id, 'step-agent', [{ event: 'e' }]);
+    return { s, run };
+  }
+
+  it('D2 a terminal run whose version moved is blocked `changed_since_selected`: the WAL and the anchor stay, and the line says so', async () => {
+    // (a) red when the artifact stage keeps `run_absent_or_terminal` (the run is still terminal, so
+    // the WAL goes); (b) prints the buckets and the WAL's entry count.
+    const { s, run } = await seeded('d2-moved');
+    try {
+      const anchor = anchorOver(s.runStore, bump(s.runStore));
+      const traceBufferStore = new JsonTraceBufferStore(s.dir, s.runStore);
+      const result = await purgeRuns({ runId: run.id, dryRun: false }, anchor, [traceBufferStore]);
+      expect(
+        { blocked: result.blocked, purged: result.purged, failed: result.failed },
+        'the outcome',
+      ).toEqual({
+        blocked: [{ runId: run.id, reason: 'changed_since_selected' }],
+        purged: [],
+        failed: [],
+      });
+      expect(await traceBufferStore.read(run.id, 'step-agent'), 'the WAL').toHaveLength(1);
+      expect(existsSync(join(s.dir, `${run.id}.json`)), 'the anchor').toBe(true);
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const logs = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        printPurgeReport(result, false);
+        expect(
+          errors.mock.calls.map((c) => c[0]),
+          'stderr',
+        ).toContain(`  ⚠ ${run.id}: changed_since_selected`);
+      } finally {
+        errors.mockRestore();
+        logs.mockRestore();
+      }
+    } finally {
+      await rm(s.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('D3 with no artifact stores, the anchor’s own version guard blocks a moved run: the run file stays', async () => {
+    // (a) red when the anchor's `expectVersion` is missing; (b) prints the buckets.
+    const { s, run } = await seeded('d3-moved');
+    try {
+      const anchor = anchorOver(s.runStore, bump(s.runStore));
+      const result = await purgeRuns({ runId: run.id, dryRun: false }, anchor, []);
+      expect({ blocked: result.blocked, purged: result.purged }, 'the outcome').toEqual({
+        blocked: [{ runId: run.id, reason: 'changed_since_selected' }],
+        purged: [],
+      });
+      expect(existsSync(join(s.dir, `${run.id}.json`)), 'the anchor').toBe(true);
+    } finally {
+      await rm(s.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('D4 the fenced artifact deletes run BEFORE the anchor delete', async () => {
+    // (a) red when the order flips; (b) prints the call-order log.
+    const { s, run } = await seeded('d4-order');
+    try {
+      const order: Order = [];
+      const anchor = anchorOver(s.runStore, async () => {}, undefined, order);
+      const traceBufferStore = new JsonTraceBufferStore(s.dir, s.runStore);
+      const fenced = traceBufferStore.deleteAllForRunFenced.bind(traceBufferStore);
+      vi.spyOn(traceBufferStore, 'deleteAllForRunFenced').mockImplementation((...args) => {
+        order.push('fenced');
+        return fenced(...args);
+      });
+      const result = await purgeRuns({ runId: run.id, dryRun: false }, anchor, [traceBufferStore]);
+      expect(result.purged, 'purged').toEqual([run.id]);
+      expect(order, order.join(' → ')).toEqual(['fenced', 'anchor']);
+    } finally {
+      await rm(s.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('D5b each branch of the classification: resumed keeps its sentence; moved reads changed_since_selected; gone is already_purged; a failed re-read is failed — none says reclaim', async () => {
+    // (a) red when the catch prints the fence's own message, or a branch is missing; (b) prints the
+    // outcome of each branch.
+    const outcomes: Record<string, unknown> = {};
+    const printed: string[] = [];
+    const branches: Array<[string, (s: Stores) => Anchor]> = [
+      [
+        'resumed',
+        (s) =>
+          anchorOver(s.runStore, bump(s.runStore), async (id) => ({
+            ...(await s.runStore.get(id)),
+            run_phase: 'running' as const,
+            terminal_state: false,
+          })),
+      ],
+      ['moved', (s) => anchorOver(s.runStore, bump(s.runStore))],
+      [
+        'gone',
+        (s) =>
+          anchorOver(s.runStore, bump(s.runStore), async (id) => {
+            throw new WorkflowError(`Run not found: ${id}`, {
+              code: 'STATE_RUN_NOT_FOUND',
+              category: 'STATE',
+              agentAction: 'report_to_user',
+              retryable: false,
+            });
+          }),
+      ],
+      [
+        'unreadable',
+        (s) =>
+          anchorOver(s.runStore, bump(s.runStore), async () => {
+            throw new Error('the run file cannot be read');
+          }),
+      ],
+    ];
+    for (const [branch, anchorFor] of branches) {
+      const { s, run } = await seeded(`d5b-${branch}`);
+      try {
+        const traceBufferStore = new JsonTraceBufferStore(s.dir, s.runStore);
+        const result = await purgeRuns({ runId: run.id, dryRun: false }, anchorFor(s), [
+          traceBufferStore,
+        ]);
+        outcomes[branch] = {
+          blocked: result.blocked.map((b) => b.reason),
+          already_purged: result.already_purged.length,
+          failed: result.failed.map((f) => f.error),
+          purged: result.purged.length,
+        };
+        const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const logs = vi.spyOn(console, 'log').mockImplementation(() => {});
+        try {
+          printPurgeReport(result, false);
+          printed.push(...errors.mock.calls.map((c) => String(c[0])));
+        } finally {
+          errors.mockRestore();
+          logs.mockRestore();
+        }
+      } finally {
+        await rm(s.dir, { recursive: true, force: true });
+      }
+    }
+    expect(outcomes, 'the outcome per branch').toEqual({
+      resumed: {
+        blocked: [
+          "run 'd5b-resumed' is no longer terminal (resumed since selection) — refusing to purge its trace buffer",
+        ],
+        already_purged: 0,
+        failed: [],
+        purged: 0,
+      },
+      moved: { blocked: ['changed_since_selected'], already_purged: 0, failed: [], purged: 0 },
+      gone: { blocked: [], already_purged: 1, failed: [], purged: 0 },
+      unreadable: {
+        blocked: [],
+        already_purged: 0,
+        failed: ['the run file cannot be read'],
+        purged: 0,
+      },
+    });
+    expect(
+      printed.filter((line) => /reclaim|ReclaimVersionChanged/.test(line)),
+      `printed: ${printed.join(' | ')}`,
+    ).toEqual([]);
+  });
+
+  /**
+   * #715 (a) correction 1 (C-1): the artifact stage is not atomic with the anchor. A trace buffer
+   * whose fenced delete COMPLETES (at the run's selected version) and then moves the run, before
+   * purge reaches the anchor — the window the probe lane measured. Returns the bytes it freed.
+   */
+  function freesThenMoves(
+    traceBufferStore: JsonTraceBufferStore,
+    move: () => Promise<void>,
+  ): { freed: () => number } {
+    let freed = 0;
+    const fenced = traceBufferStore.deleteAllForRunFenced.bind(traceBufferStore);
+    vi.spyOn(traceBufferStore, 'deleteAllForRunFenced').mockImplementation(async (...args) => {
+      const report = await fenced(...args);
+      freed += report.bytes_deleted;
+      await move();
+      return report;
+    });
+    return { freed: () => freed };
+  }
+
+  /** The stderr lines `printPurgeReport` prints for `result`, with `id` written `<id>`. */
+  function stderrOf(result: Awaited<ReturnType<typeof purgeRuns>>, id: string): string[] {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const logs = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      printPurgeReport(result, false);
+      return errors.mock.calls.map((c) => String(c[0]).replaceAll(id, '<id>'));
+    } finally {
+      errors.mockRestore();
+      logs.mockRestore();
+    }
+  }
+
+  it('C-1a a run that moved AFTER its trace buffer was freed: blocked `changed_since_selected`, the run file kept, the freed bytes on its line', async () => {
+    // (a) red when the anchor's `expectVersion` is dropped (the anchor deletes the moved run: it
+    // reads `purged`); (b) prints the outcome and the stderr lines, ids written `<id>`.
+    const { s, run } = await seeded('c1a-moved');
+    try {
+      const anchor = anchorOver(s.runStore, async () => {});
+      const traceBufferStore = new JsonTraceBufferStore(s.dir, s.runStore);
+      const tb = freesThenMoves(traceBufferStore, () => bump(s.runStore)(run.id));
+      const result = await purgeRuns({ runId: run.id, dryRun: false }, anchor, [traceBufferStore]);
+      const lines = stderrOf(result, run.id);
+      const shown = JSON.stringify({ blocked: result.blocked, purged: result.purged, lines });
+      expect(tb.freed(), 'the trace buffer freed bytes first').toBeGreaterThan(0);
+      expect(
+        {
+          blocked: result.blocked,
+          purged: result.purged,
+          partial: result.partial_frees[run.id],
+        },
+        shown.replaceAll(run.id, '<id>'),
+      ).toEqual({
+        blocked: [{ runId: run.id, reason: 'changed_since_selected' }],
+        purged: [],
+        partial: { bytes: tb.freed(), stores: 1 },
+      });
+      expect(existsSync(join(s.dir, `${run.id}.json`)), 'the run file').toBe(true);
+      expect(lines, 'stderr').toContain(
+        `  ⚠ <id>: changed_since_selected (${tb.freed()} B across 1 of its artifact stores were already freed before the refusal)`,
+      );
+    } finally {
+      await rm(s.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('C-1b a RESUMED run whose trace buffer was already freed: the short sentence and the freed bytes; with nothing freed, the full sentence', async () => {
+    // (a) red when `changedSinceSelected` always uses the long sentence ("— refusing to purge its
+    // trace buffer" beside "were already freed"); (b) prints the blocked entries and the stderr
+    // lines, ids written `<id>`.
+    const resumedAfter = (s: Stores) => async (id: string) => ({
+      ...(await s.runStore.get(id)),
+      run_phase: 'running' as const,
+      terminal_state: false,
+    });
+    const { s, run } = await seeded('c1b-resumed');
+    try {
+      const anchor = anchorOver(s.runStore, async () => {}, resumedAfter(s));
+      const traceBufferStore = new JsonTraceBufferStore(s.dir, s.runStore);
+      const tb = freesThenMoves(traceBufferStore, () => bump(s.runStore)(run.id));
+      const result = await purgeRuns({ runId: run.id, dryRun: false }, anchor, [traceBufferStore]);
+      const lines = stderrOf(result, run.id);
+      expect(
+        { blocked: result.blocked, lines },
+        JSON.stringify({ blocked: result.blocked, lines }).replaceAll(run.id, '<id>'),
+      ).toEqual({
+        blocked: [
+          {
+            runId: run.id,
+            reason: `run '${run.id}' is no longer terminal (resumed since selection)`,
+          },
+        ],
+        lines: [
+          `  ⚠ <id>: run '<id>' is no longer terminal (resumed since selection) (${tb.freed()} B across 1 of its artifact stores were already freed before the refusal)`,
+        ],
+      });
+      expect(existsSync(join(s.dir, `${run.id}.json`)), 'the run file').toBe(true);
+    } finally {
+      await rm(s.dir, { recursive: true, force: true });
+    }
+    // D3's shape: no artifact store, so nothing is freed before the anchor refuses the resumed run.
+    const nothing = await seeded('c1b-nothing-freed');
+    try {
+      const anchor = anchorOver(
+        nothing.s.runStore,
+        bump(nothing.s.runStore),
+        resumedAfter(nothing.s),
+      );
+      const result = await purgeRuns({ runId: nothing.run.id, dryRun: false }, anchor, []);
+      const lines = stderrOf(result, nothing.run.id);
+      expect(lines, JSON.stringify(lines)).toEqual([
+        "  ⚠ <id>: run '<id>' is no longer terminal (resumed since selection) — refusing to purge its trace buffer",
+      ]);
+    } finally {
+      await rm(nothing.s.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('C-1c a run that owes a cleanup step: `drain_pending` after its trace buffer was freed; the run file kept; the freed bytes on its line', async () => {
+    // (a) red when purge's catch stops recording `partial_frees` (the line loses its parenthetical);
+    // (b) prints the outcome and the stderr lines, ids written `<id>`. Not a race: the anchor
+    // refuses a run with a pending finalizer after every artifact store ran (identical on 0.48.0).
+    const s = await makeStores();
+    try {
+      const run = makeRun({
+        id: 'c1c-drain',
+        run_phase: 'completed',
+        terminal_state: true,
+        sealed_by: { arm: 'complete' },
+        finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
+      });
+      await injectRun(s.dir, run);
+      await s.traceBufferStore.append(run.id, 'step-agent', [{ event: 'e' }]);
+      const traceBufferStore = new JsonTraceBufferStore(s.dir, s.runStore);
+      const result = await purgeRuns({ runId: run.id, dryRun: false }, s.runStore, [
+        traceBufferStore,
+      ]);
+      const lines = stderrOf(result, run.id);
+      const partial = result.partial_frees[run.id];
+      expect(
+        { blocked: result.blocked, purged: result.purged, stores: partial?.stores },
+        JSON.stringify({ blocked: result.blocked, lines }).replaceAll(run.id, '<id>'),
+      ).toEqual({
+        blocked: [{ runId: run.id, reason: 'drain_pending' }],
+        purged: [],
+        stores: 1,
+      });
+      expect(existsSync(join(s.dir, `${run.id}.json`)), 'the run file').toBe(true);
+      expect(lines, JSON.stringify(lines)).toEqual([
+        `  ⚠ <id>: drain_pending (${String(partial?.bytes)} B across 1 of its artifact stores were already freed before the refusal)`,
+      ]);
+    } finally {
+      await rm(s.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('C-1d a run that owes a cleanup step: a dry run lists it as would-be-purged; --force frees BOTH artifact stores, keeps the run file, and blocks it as `drain_pending` (correction 2, R-2)', async () => {
+    // (a) red when the selection leaves a run that owes a cleanup step out of `selected`, the sidecar
+    // store stops running before the refusal, or the parenthetical loses its count; (b) prints the
+    // dry-run result, the outcome and the stderr lines, the run id written `<id>`.
+    const s = await makeStores();
+    try {
+      const run = makeRun({
+        id: 'c1d-drain',
+        run_phase: 'completed',
+        terminal_state: true,
+        sealed_by: { arm: 'complete' },
+        finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
+      });
+      await injectRun(s.dir, run);
+      await s.traceBufferStore.append(run.id, 'step-agent', [{ event: 'e' }]);
+      await appendSidecarLine(s.failedAttemptStore, run.id);
+      const sidecar = join(s.dir, `${run.id}.attempts.jsonl`);
+      const traceFiles = async (): Promise<number> =>
+        (await readdir(s.dir)).filter((f) => f.startsWith(`trace-buffer-${run.id}-`)).length;
+
+      const dry = await purgeRuns({ runId: run.id, dryRun: true }, s.runStore, s.artifactStores);
+      const dryShown = {
+        selected: dry.selected.map((c) => c.run.id),
+        blocked: dry.blocked,
+        purged: dry.purged,
+        partial: dry.partial_frees,
+        traceFiles: await traceFiles(),
+        sidecar: existsSync(sidecar),
+      };
+      expect(dryShown, JSON.stringify(dryShown).replaceAll(run.id, '<id>')).toEqual({
+        selected: [run.id],
+        blocked: [],
+        purged: [],
+        partial: {},
+        traceFiles: 1,
+        sidecar: true,
+      });
+
+      const forced = await purgeRuns(
+        { runId: run.id, dryRun: false },
+        s.runStore,
+        s.artifactStores,
+      );
+      const lines = stderrOf(forced, run.id);
+      const outcome = {
+        blocked: forced.blocked,
+        purged: forced.purged,
+        stores: forced.partial_frees[run.id]?.stores,
+        runFile: existsSync(join(s.dir, `${run.id}.json`)),
+        traceFiles: await traceFiles(),
+        sidecar: existsSync(sidecar),
+        lines: lines.length,
+      };
+      const shown = JSON.stringify({ outcome, lines }).replaceAll(run.id, '<id>');
+      expect(outcome, shown).toEqual({
+        blocked: [{ runId: run.id, reason: 'drain_pending' }],
+        purged: [],
+        stores: 2,
+        runFile: true,
+        traceFiles: 0,
+        sidecar: false,
+        lines: 1,
+      });
+      expect(lines[0], shown).toMatch(/^ {2}⚠ <id>: drain_pending \(/);
+      expect(
+        lines[0]!.endsWith(
+          'across 2 of its artifact stores were already freed before the refusal)',
+        ),
+        shown,
+      ).toBe(true);
+    } finally {
+      await rm(s.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('D5 control: an unmoved run purges as before; a run already gone is already_purged; an artifact store’s I/O failure is failed', async () => {
+    // (a) red when the new mapping swallows other errors or changes an unmoved run's outcome;
+    // (b) prints the buckets.
+    const { s, run } = await seeded('d5-unmoved');
+    try {
+      const first = await purgeRuns({ runId: run.id, dryRun: false }, s.runStore, s.artifactStores);
+      expect(
+        { purged: first.purged, freed: (first.freed_bytes[run.id] ?? 0) > 0 },
+        'unmoved',
+      ).toEqual({
+        purged: [run.id],
+        freed: true,
+      });
+      const run2 = makeRun({
+        id: 'd5-io',
+        run_phase: 'completed',
+        terminal_state: true,
+        sealed_by: { arm: 'complete' },
+      });
+      await injectRun(s.dir, run2);
+      const broken: PerRunArtifactStore = declared({
+        statAllForRun: async () => ({ bytes: 0 }),
+        deleteAllForRun: async () => {
+          throw new Error('the disk refused');
+        },
+      });
+      const failing = await purgeRuns({ runId: run2.id, dryRun: false }, s.runStore, [broken]);
+      expect(failing.failed, 'an artifact store failure').toEqual([
+        { runId: run2.id, error: 'the disk refused' },
+      ]);
+      const gone = await purgeRuns(
+        { runId: run2.id, dryRun: false },
+        anchorOver(s.runStore, async (id) => {
+          await rm(join(s.dir, `${id}.json`));
+        }),
+        [],
+      );
+      expect(gone.already_purged, 'gone before the delete').toEqual([run2.id]);
+    } finally {
+      await rm(s.dir, { recursive: true, force: true });
+    }
   });
 });

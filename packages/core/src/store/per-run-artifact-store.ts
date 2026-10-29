@@ -46,8 +46,18 @@ export interface PerRunArtifactStore {
    * vanishes between the two still counts as deleted — the bytes are best-effort and the figure
    * is a floor, which is the documented choice. Reporting nothing would be worse: an operator
    * would read a concurrent purge as "nothing was there".
+   *
+   * @param options.expectVersion issue #715 (a) (D6-9, D6-50): the run's `version` when the caller
+   *   selected it. Only the ANCHOR store — the one that holds the run record (`JsonFileStore`) —
+   *   honours it: under its lock, a run whose version differs is refused with
+   *   `STATE_SNAPSHOT_MISMATCH` and nothing is deleted. Every other artifact store ignores it (their
+   *   own guard is the fence predicate of `deleteAllForRunFenced`).
    */
-  deleteAllForRun(runId: string, dirEntries?: readonly string[]): Promise<ArtifactDeletionReport>;
+  deleteAllForRun(
+    runId: string,
+    dirEntries?: readonly string[],
+    options?: { expectVersion?: number },
+  ): Promise<ArtifactDeletionReport>;
 
   /**
    * Reports the bytes this store holds for `runId`, WITHOUT deleting anything (issue #189).

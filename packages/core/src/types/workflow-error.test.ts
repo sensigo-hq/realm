@@ -77,15 +77,21 @@ describe('WorkflowError', () => {
     expect(err.attempt).toBe(1);
   });
 
-  it('timestamp is a valid ISO 8601 string', () => {
-    const err = new WorkflowError('test', {
-      code: 'ENGINE_INTERNAL',
-      category: 'ENGINE',
-      agentAction: 'stop',
-      retryable: false,
-    });
-    expect(() => new Date(err.timestamp)).not.toThrow();
-    expect(new Date(err.timestamp).toISOString()).toBe(err.timestamp);
+  it('D11 (#715 (a), D6-23): a thrown WorkflowError carries no `timestamp` — an error is not a clock reading', () => {
+    // (a) red when the field comes back; (b) prints the error's own keys.
+    let caught: unknown;
+    try {
+      throw new WorkflowError('test', {
+        code: 'ENGINE_INTERNAL',
+        category: 'ENGINE',
+        agentAction: 'stop',
+        retryable: false,
+      });
+    } catch (err) {
+      caught = err;
+    }
+    const keys = Object.keys(caught as object);
+    expect(Object.prototype.hasOwnProperty.call(caught, 'timestamp'), keys.join(', ')).toBe(false);
   });
 
   it.each(ALL_CATEGORIES)('can be constructed with category %s', (category) => {

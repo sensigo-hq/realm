@@ -4,11 +4,11 @@
 // error line has already been printed, and nothing here may replace it, hide it, or crash on top
 // of it. Most of these cells are about that discipline rather than about the happy path.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { WorkflowError, JsonFileStore } from '@sensigo/realm';
+import { WorkflowError, JsonFileStore, ExtensionRegistry } from '@sensigo/realm';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { RunRecord, DriveFailureRecord } from '@sensigo/realm';
+import type { RunRecord, DriveFailureRecord, WorkflowDefinition } from '@sensigo/realm';
 import {
   recordDriveFailure,
   classifyDriveError,
@@ -18,6 +18,9 @@ import {
   MESSAGE_CAP,
 } from './drive-failure.js';
 import { setAdditionalRedactionValues } from './providers/agent-utils.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
+import { runAgent, type AgentDeps } from './run-agent.js';
+import { LlmProvider } from './providers/llm-provider.js';
 
 function makeRun(over: Partial<RunRecord> = {}): RunRecord {
   return {
@@ -236,7 +239,7 @@ describe('classifyDriveError — precedence (issue #401)', () => {
     const outer = new Error('step failed', { cause: middle });
 
     expect(findDriveCall(outer)).toBeDefined();
-    const built = buildEntry(outer, 's', 'openai', Date.now() - 5000);
+    const built = buildEntry(outer, 's', 'openai', performance.now() - 5000);
     expect(built.error_class).toBe('sdk_missing');
     // INVERTED by issue #401's reorder. The spread now sits ABOVE `elapsed_ms:`, so what
     // protects a payload's genuine 0ms span is the `??` on that line — and it is live, not dead:
@@ -261,7 +264,7 @@ describe('classifyDriveError — precedence (issue #401)', () => {
   });
 
   it('the message is CAPPED at 500 characters', () => {
-    const built = buildEntry(new Error('x'.repeat(2000)), 's', 'p', Date.now());
+    const built = buildEntry(new Error('x'.repeat(2000)), 's', 'p', performance.now());
     expect(built.message).toHaveLength(500);
   });
 
@@ -295,7 +298,7 @@ describe('classifyDriveError — precedence (issue #401)', () => {
       },
     };
 
-    const built = buildEntry(hostile, 'classify', 'anthropic', Date.now() - 10);
+    const built = buildEntry(hostile, 'classify', 'anthropic', performance.now() - 10);
     expect(built.error_class).toBe('other');
     expect(built.message).toBe('unrenderable thrown value');
     // All six required fields present — a degraded entry is still a complete entry.
@@ -334,7 +337,7 @@ describe('the payload is a BOUNDARY, not a spread (issue #401)', () => {
         wire_secret: 'sk-should-never-be-stored',
       },
     });
-    const built = buildEntry(err, 's', 'anthropic', Date.now() - 1234);
+    const built = buildEntry(err, 's', 'anthropic', performance.now() - 1234);
 
     expect(built.error_class).toBe('api_status'); // shape decided, the claim did not
     expect(built.attempts_sdk).toBe(3); // a real number is kept
@@ -357,7 +360,7 @@ describe('the payload is a BOUNDARY, not a spread (issue #401)', () => {
     // #715 (R): the array survives with one addition, each request's identity, minted here where the
     // thrown usage enters realm's records. (a) red when `buildEntry` does not mint; (b) prints the
     // entry's usage.
-    expect(buildEntry(withArray, 's', 'anthropic', Date.now()).usage).toEqual(
+    expect(buildEntry(withArray, 's', 'anthropic', performance.now()).usage).toEqual(
       withArray.driveCall.usage.map((r) => ({
         ...r,
         request_id: expect.stringMatching(
@@ -373,7 +376,7 @@ describe('the payload is a BOUNDARY, not a spread (issue #401)', () => {
       status: 429,
       driveCall: { usage: 'not-an-array' },
     });
-    expect(buildEntry(withGarbage, 's', 'anthropic', Date.now()).usage).toBeUndefined();
+    expect(buildEntry(withGarbage, 's', 'anthropic', performance.now()).usage).toBeUndefined();
   });
 
   it('aborted_by_budget IS a recognized class and survives the pick', () => {
@@ -386,7 +389,7 @@ describe('the payload is a BOUNDARY, not a spread (issue #401)', () => {
         elapsed_ms: 151_502,
       },
     });
-    const built = buildEntry(err, 's', 'anthropic', Date.now());
+    const built = buildEntry(err, 's', 'anthropic', performance.now());
     expect(built.error_class).toBe('aborted_by_budget');
     expect(built.declared_per_attempt_ms).toBe(30_000);
     expect(built.elapsed_ms).toBe(151_502);
@@ -423,13 +426,13 @@ describe('W1 — real SDK error objects classify by their CONSTRUCTOR', () => {
     it(`${pkg}: a real APIConnectionError classifies connection_error`, async () => {
       const err = await realError(pkg, 'APIConnectionError');
       expect(classifyDriveError(err).error_class).toBe('connection_error');
-      expect(buildEntry(err, 's', 'p', Date.now()).error_class).toBe('connection_error');
+      expect(buildEntry(err, 's', 'p', performance.now()).error_class).toBe('connection_error');
     });
 
     it(`${pkg}: a real APIConnectionTimeoutError classifies connection_timeout`, async () => {
       const err = await realError(pkg, 'APIConnectionTimeoutError');
       expect(classifyDriveError(err).error_class).toBe('connection_timeout');
-      expect(buildEntry(err, 's', 'p', Date.now()).error_class).toBe('connection_timeout');
+      expect(buildEntry(err, 's', 'p', performance.now()).error_class).toBe('connection_timeout');
     });
   }
 
@@ -439,7 +442,7 @@ describe('W1 — real SDK error objects classify by their CONSTRUCTOR', () => {
     const err = Object.assign(await realError('openai', 'APIConnectionTimeoutError'), {
       driveCall: { attempts_sdk: 2, elapsed_ms: 900 },
     });
-    const built = buildEntry(err, 's', 'openai', Date.now());
+    const built = buildEntry(err, 's', 'openai', performance.now());
     expect(built.error_class).toBe('connection_timeout');
     expect(built.attempts_sdk).toBe(2); // the measurements it did carry are still kept
   });
@@ -471,7 +474,11 @@ describe('issue #719 — the fence names why, when the store refused with a Real
       writeFileSync(join(runsDir, 'bad.json'), '{not json');
       const store = new JsonFileStore(runsDir);
       const refusal = await store.get('bad').catch((e: unknown) => e);
-      await recordDriveFailure(store, 'bad', buildEntry(refusal, 's', 'anthropic', Date.now()));
+      await recordDriveFailure(
+        store,
+        'bad',
+        buildEntry(refusal, 's', 'anthropic', performance.now()),
+      );
       const line = errors.join('\n');
       // (a) red when the store's message is appended to an entry that already carries it (the
       //     fault printed twice on one line); (b) prints the line count and how often the fault
@@ -506,7 +513,7 @@ describe('issue #719 — the fence names why, when the store refused with a Real
       const message = refusal instanceof Error ? refusal.message : '';
       // The precondition: the message crosses the cap, so the cell cannot pass on a short one.
       expect({ overCap: message.length > MESSAGE_CAP }).toEqual({ overCap: true });
-      await recordDriveFailure(store, id, buildEntry(refusal, 's', 'anthropic', Date.now()));
+      await recordDriveFailure(store, id, buildEntry(refusal, 's', 'anthropic', performance.now()));
       const line = errors.join('\n');
       // (a) red when the line prints the entry's capped, sanitised copy (the way out cut, the
       //     folder hidden) or the fault twice; (b) prints the line count and booleans only.
@@ -522,6 +529,102 @@ describe('issue #719 — the fence names why, when the store refused with a Real
     } finally {
       vi.unstubAllEnvs();
       rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+// issue #715 (a) (D6-23): a recorded `elapsed_ms` is a DURATION, measured on the monotonic clock
+// (`performance.now()`), so a wall-clock step cannot shorten or lengthen it. One cell per producing
+// branch (guardrail 7): the degraded entry, the `??` fallback, the validation wedge. Each spies
+// `performance.now` at 1,000 then 1,750 and moves `Date.now` an hour; (a) red when the site still
+// reads `Date.now()`; (b) prints the number.
+describe('#715 (a) — elapsed_ms is measured on the monotonic clock', () => {
+  const HOUR = 3_600_000;
+
+  it('D7 the degraded entry (an unrenderable thrown value) records 750, whatever the wall clock does', () => {
+    vi.spyOn(performance, 'now').mockReturnValue(1_750);
+    const wall = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(wall + HOUR);
+    try {
+      const hostile = {
+        get name(): string {
+          throw new Error('hostile getter');
+        },
+      };
+      const built = buildEntry(hostile, 's', 'p', 1_000);
+      expect(built.message, 'the degraded branch').toBe('unrenderable thrown value');
+      expect(built.elapsed_ms, 'elapsed_ms').toBe(750);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('D8 the `classified.elapsed_ms ?? …` fallback records 750, whatever the wall clock does', () => {
+    vi.spyOn(performance, 'now').mockReturnValue(1_750);
+    const wall = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(wall + HOUR);
+    try {
+      const built = buildEntry(new Error('plain, no payload'), 's', 'p', 1_000);
+      expect(built.elapsed_ms, 'elapsed_ms').toBe(750);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('D9 the validation wedge `realm agent` records (run-agent’s own builder) carries 750', async () => {
+    // An agent step whose input the schema refuses, with no repair: the wedge is written by
+    // run-agent's `validationWedgeEntry`. `performance.now` reads 1,000 until the provider is
+    // called (the attempt's start mark), 1,750 after.
+    let now = 1_000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const wf = {
+        id: 'wedge-715a',
+        name: 'wedge',
+        version: 1,
+        schema_version: 1,
+        steps: {
+          ask: {
+            description: 'Ask',
+            execution: 'agent',
+            depends_on: [],
+            input_schema: {
+              type: 'object',
+              properties: { summary: { type: 'string' } },
+              required: ['summary'],
+            },
+          },
+        },
+      } as unknown as WorkflowDefinition;
+      const store = new InMemoryStore();
+      const provider = new (class extends LlmProvider {
+        async callStep(): Promise<Record<string, unknown>> {
+          now = 1_750;
+          return { wrong: 'shape' };
+        }
+      })();
+      const deps = {
+        store,
+        workflowStore: {
+          register: async () => {},
+          get: async () => {
+            throw new Error('not registered');
+          },
+          list: async () => [],
+        },
+        provider,
+        registry: new ExtensionRegistry(),
+        schemaRetries: 0,
+      } as unknown as AgentDeps;
+      await runAgent(deps, { definition: wf, params: {} });
+      const [run] = await store.list();
+      const entry = (await store.get(run!.id)).drive_failures?.entries[0];
+      expect(entry?.error_class, 'the wedge').toBe('validation_rejected');
+      expect(entry?.elapsed_ms, 'elapsed_ms').toBe(750);
+    } finally {
+      vi.restoreAllMocks();
     }
   });
 });

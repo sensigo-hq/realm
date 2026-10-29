@@ -1636,3 +1636,76 @@ describe('issue #759 — the repair prompt carries the reply’s ten, in order, 
     });
   });
 });
+
+// issue #715 (a) (D6-23): the in-flight watch window is a duration on the monotonic clock. With a
+// 60 s window and `performance.now` jumping past it after the first poll, the drive stops watching
+// after ONE poll instead of sleeping out the window. (a) red when the loop still reads `Date.now()`
+// (the cell then waits the real 60 s and times out); (b) prints the poll count.
+describe('runAgent — the in-flight watch window is monotonic (issue #715 (a))', () => {
+  it('D10 a monotonic jump past the window ends the watch after one poll', async () => {
+    const wf: WorkflowDefinition = {
+      id: 'watch-715a',
+      name: 'Watch',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: { review: { description: 'Agent step', execution: 'agent', depends_on: [] } },
+    };
+    const store = new InMemoryStore();
+    const { run } = await store.create({
+      workflowId: 'watch-715a',
+      workflowVersion: 1,
+      params: {},
+    });
+    await store.update({
+      ...run,
+      in_progress_steps: ['review'],
+      claims: { review: { deadline: null } },
+    });
+    // phase 0 until the waiting line prints; then the watch's start mark (1) and its first check (2)
+    // read 0; every later read is past the window.
+    let phase = 0;
+    let polls = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => {
+      if (phase === 1) {
+        phase = 2;
+        return 0;
+      }
+      if (phase === 2) {
+        phase = 3;
+        return 0;
+      }
+      return phase === 3 ? 60_001 : 0;
+    });
+    const get = store.get.bind(store);
+    vi.spyOn(store, 'get').mockImplementation(async (id: string) => {
+      if (phase === 3) polls++;
+      return get(id);
+    });
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((line?: unknown) => {
+      if (phase === 0 && String(line).includes('waiting up to')) phase = 1;
+    });
+    try {
+      await runAgent(
+        {
+          store,
+          workflowStore: makeWorkflowStore(wf),
+          provider: new (class extends LlmProvider {
+            callStep = vi.fn();
+          })(),
+          registry: createDefaultRegistry(),
+        },
+        {
+          definition: wf,
+          existingRunId: run.id,
+          params: {},
+          inFlightPollMs: 5,
+          inFlightWatchMs: 60_000,
+        },
+      );
+      expect(polls, 'polls during the watch').toBe(1);
+    } finally {
+      logSpy.mockRestore();
+      vi.restoreAllMocks();
+    }
+  });
+});

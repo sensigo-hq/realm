@@ -635,7 +635,8 @@ export async function driveCreate<T>(
   // the payload if and only if THIS create saw them.
   delete counters.lastStatus;
   delete counters.lastRetryAfterMs;
-  const started = Date.now();
+  // issue #715 (a) (D6-23): a monotonic start mark — `elapsed_ms` is a duration, never a wall difference.
+  const started = performance.now();
   const controller = new AbortController();
 
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -673,7 +674,7 @@ export async function driveCreate<T>(
     const sawRetryAfter = counters.lastRetryAfterMs !== undefined;
     const delta: DriveCallPayload = {
       attempts_sdk: counters.attempts - before.attempts,
-      elapsed_ms: Date.now() - started,
+      elapsed_ms: Math.max(0, Math.round(performance.now() - started)),
       ...(sawStatus ? { last_observed_status: counters.lastStatus } : {}),
       ...(sawRetryAfter ? { retry_after_observed_ms: counters.lastRetryAfterMs } : {}),
       ...(clock.declaredPerAttemptMs !== undefined

@@ -150,7 +150,14 @@ async function purgeResumedRun(
         // the fence's read from inside the trace buffer — a `realm run resume` landing exactly there.
         if (getCalls <= 2) return runStore.get(runId);
         const fresh = await runStore.get(runId);
-        return { ...fresh, run_phase: 'running' as const, terminal_state: false };
+        // A real resume bumps the version (issue #715 (a): the version fence lets a
+        // same-version flip through, correctly).
+        return {
+          ...fresh,
+          version: fresh.version + 1,
+          run_phase: 'running' as const,
+          terminal_state: false,
+        };
       },
       list: (workflowId?: string) => runStore.list(workflowId),
       statAllForRun: (runId: string, dirEntries?: readonly string[]) =>
