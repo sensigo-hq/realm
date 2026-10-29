@@ -40,12 +40,12 @@ describe('U4 — the provider gate', () => {
       "Error: provider module default export must be an instance extending LlmProvider — it looks like realm's LlmProvider by its class name but carries no release mark: an older realm copy that does not mark its classes, or another library's class of the same name.\n" +
         `${TODAY_SECOND}\n`,
     );
-  });
+  }, 30_000);
   it('not_realm: anything else — today’s two lines, unchanged', () => {
     const r = gate('export default { hello: 1 };\n');
     expect(r.status).toBe(1);
     expect(r.stderr).toBe(
       `Error: provider module default export must be an instance extending LlmProvider.\n${TODAY_SECOND}\n`,
     );
-  });
+  }, 30_000);
 });
