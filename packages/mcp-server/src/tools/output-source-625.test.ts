@@ -56,7 +56,7 @@ describe('#625 PR-2a, F4 — get_run_state shows no output_source, and its page 
       ) as Record<string, unknown>;
     const runId = (await call('start_run', { workflow_id: WF.id }))['run_id'] as string;
     const state = await call('get_run_state', { run_id: runId, include_steps: true });
-    const record = await runStore.get(runId);
+    const { record: record } = await runStore.get(runId);
     // (a) red when get_run_state starts carrying `output_source` (its page would then be false), or
     //     the record stops carrying it; (b) prints both.
     expect({

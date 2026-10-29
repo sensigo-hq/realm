@@ -96,7 +96,7 @@ describe('my-workflow programmatic', () => {
     const definition = await loadWorkflowFromFile(
       path.join(__dirname, '../my-workflow/workflow.yaml'),
     );
-    const run = await store.create({
+    const { record: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: definition.version,
       params: { input: 'hello' },

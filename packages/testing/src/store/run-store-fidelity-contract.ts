@@ -281,14 +281,14 @@ export function runStoreFidelityContract(
       law: 'FIDELITY_HONESTY',
       name: `a store declaring '${field}' actually round-trips it (create → update → get)`,
       run: async () => {
-        const { run } = await adapter.store.create({
+        const { record: run } = await adapter.store.create({
           workflowId: `tck-fidelity-${field}`,
           workflowVersion: 1,
           params: {},
         });
         const sampleValue = SAMPLE_VALUES[field];
         await adapter.store.update({ ...run, [field]: sampleValue });
-        const reread = await adapter.store.get(run.id);
+        const { record: reread } = await adapter.store.get(run.id);
         const actual = (reread as unknown as Record<string, unknown>)[field];
         const wroteJson = JSON.stringify(sampleValue);
         const readJson = JSON.stringify(actual);
@@ -312,13 +312,13 @@ export function runStoreFidelityContract(
     name: "create's start entry: kept when the store declares 'extension_identity', absent when it does not",
     run: async () => {
       const entry = { ...SAMPLE_VALUES.extension_identity![0]!, origin: 'start' as const };
-      const { run } = await adapter.store.create({
+      const { record: run } = await adapter.store.create({
         workflowId: 'tck-fidelity-start-identity',
         workflowVersion: 1,
         params: {},
         extensionIdentity: [entry],
       });
-      const reread = await adapter.store.get(run.id);
+      const { record: reread } = await adapter.store.get(run.id);
       const declared = declaredFields.has('extension_identity');
       const want = declared ? JSON.stringify([entry]) : undefined;
       const read = JSON.stringify(reread.extension_identity);
@@ -337,7 +337,7 @@ export function runStoreFidelityContract(
       law: 'SEALED_BY_ROUNDTRIP',
       name: 'a store declaring sealed_by round-trips the seal arm through a PROPER terminal write',
       run: async () => {
-        const { run } = await adapter.store.create({
+        const { record: run } = await adapter.store.create({
           workflowId: 'tck-fidelity-sealed-by',
           workflowVersion: 1,
           params: {},
@@ -351,7 +351,7 @@ export function runStoreFidelityContract(
           sealed_by: { arm: 'complete', step: 'tck-step' },
           terminal_reason: 'Workflow completed.',
         });
-        const reread = await adapter.store.get(run.id);
+        const { record: reread } = await adapter.store.get(run.id);
         const wrote = JSON.stringify({ arm: 'complete', step: 'tck-step' });
         const read = JSON.stringify(reread.sealed_by);
         if (read !== wrote) {
@@ -375,13 +375,13 @@ export function runStoreFidelityContract(
         law: 'CLAIM_NAMES_HOLDER',
         name: 'a claim made with a claimant reads back with that holder and a since — returned and re-read',
         run: async () => {
-          const { run } = await adapter.store.create({
+          const { record: run } = await adapter.store.create({
             workflowId: `tck-holder-${Math.random().toString(36).slice(2)}`,
             workflowVersion: 1,
             params: {},
           });
           const before = Date.now();
-          const claimed = await adapter.store.claimStep(
+          const { record: claimed } = await adapter.store.claimStep(
             run.id,
             adapter.stepName,
             adapter.definition,
@@ -397,7 +397,7 @@ export function runStoreFidelityContract(
             'the returned record',
           );
           assertClaimNames(
-            await adapter.store.get(run.id),
+            (await adapter.store.get(run.id)).record,
             adapter.stepName,
             TCK_CLAIMANT,
             before,
@@ -410,7 +410,7 @@ export function runStoreFidelityContract(
         law: 'CLAIM_NAMES_HOLDER',
         name: 'a claim made WITHOUT a claimant reads back with a since and NO holder',
         run: async () => {
-          const { run } = await adapter.store.create({
+          const { record: run } = await adapter.store.create({
             workflowId: `tck-holder-${Math.random().toString(36).slice(2)}`,
             workflowVersion: 1,
             params: {},
@@ -419,7 +419,7 @@ export function runStoreFidelityContract(
           await adapter.store.claimStep(run.id, adapter.stepName, adapter.definition);
           const after = Date.now();
           assertClaimNames(
-            await adapter.store.get(run.id),
+            (await adapter.store.get(run.id)).record,
             adapter.stepName,
             undefined,
             before,
@@ -445,7 +445,7 @@ export function runStoreFidelityContract(
     law: 'EVIDENCE_KEEPS_DRIVER_AND_PROOF',
     name: 'an entry written with driven_by, a gate_response entry written with claim_proof and an entry written with output_source read back with all three',
     run: async () => {
-      const { run } = await adapter.store.create({
+      const { record: run } = await adapter.store.create({
         workflowId: `tck-evidence-${Math.random().toString(36).slice(2)}`,
         workflowVersion: 1,
         params: {},
@@ -469,7 +469,7 @@ export function runStoreFidelityContract(
           { ...base, output_source: 'dependency' },
         ],
       });
-      const reread = await adapter.store.get(run.id);
+      const { record: reread } = await adapter.store.get(run.id);
       const wroteDriver = JSON.stringify(TCK_CLAIMANT);
       const readDriver = JSON.stringify(reread.evidence[0]?.driven_by);
       if (readDriver !== wroteDriver) {
@@ -503,7 +503,7 @@ export function runStoreFidelityContract(
     law: 'SUPPLIER_ROUND_TRIPS',
     name: 'an entry written with supplied_by reads back with it, and one written without reads back without',
     run: async () => {
-      const { run } = await adapter.store.create({
+      const { record: run } = await adapter.store.create({
         workflowId: `tck-supplier-${Math.random().toString(36).slice(2)}`,
         workflowVersion: 1,
         params: {},
@@ -522,7 +522,7 @@ export function runStoreFidelityContract(
         ...run,
         evidence: [{ ...base, supplied_by: 'agent' }, { ...base }],
       });
-      const reread = await adapter.store.get(run.id);
+      const { record: reread } = await adapter.store.get(run.id);
       const read = reread.evidence[0]?.supplied_by;
       if (read !== 'agent') {
         throw new Error(
@@ -549,7 +549,7 @@ export function runStoreFidelityContract(
     law: 'EVIDENCE_KEEPS_ANSWER_FACTS',
     name: 'a gate_response entry written with answer, driven_by, client_prompt_requested and principal reads back with each one, and one written with the typed absences reads back with them',
     run: async () => {
-      const { run } = await adapter.store.create({
+      const { record: run } = await adapter.store.create({
         workflowId: `tck-answer-${Math.random().toString(36).slice(2)}`,
         workflowVersion: 1,
         params: {},
@@ -582,7 +582,7 @@ export function runStoreFidelityContract(
           { ...base, ...absent },
         ],
       });
-      const reread = await adapter.store.get(run.id);
+      const { record: reread } = await adapter.store.get(run.id);
       const pairs: [string, unknown, unknown][] = [
         ['answer', declared.answer, reread.evidence[0]?.answer],
         ['driven_by', declared.driven_by, reread.evidence[0]?.driven_by],
@@ -617,7 +617,7 @@ export function runStoreFidelityContract(
     law: 'CLAIM_SINGLE_OWNER',
     name: 'two concurrent claimStep calls for the same (runId, step) — exactly one succeeds',
     run: async () => {
-      const { run } = await adapter.store.create({
+      const { record: run } = await adapter.store.create({
         workflowId: `tck-claim-${Math.random().toString(36).slice(2)}`,
         workflowVersion: 1,
         params: {},
@@ -654,7 +654,7 @@ export function runStoreFidelityContract(
     law: 'USAGE_RECORD_ROUNDTRIP',
     name: "a request record written with every request fact, in a step's evidence and in a failed drive's usage, reads back with each one",
     run: async () => {
-      const { run } = await adapter.store.create({
+      const { record: run } = await adapter.store.create({
         workflowId: `tck-usage-${Math.random().toString(36).slice(2)}`,
         workflowVersion: 1,
         params: {},
@@ -699,7 +699,7 @@ export function runStoreFidelityContract(
           ],
         },
       });
-      const reread = await adapter.store.get(run.id);
+      const { record: reread } = await adapter.store.get(run.id);
       const places: Array<[string, unknown]> = [
         [
           'evidence[0].diagnostics.cache.requests[0]',

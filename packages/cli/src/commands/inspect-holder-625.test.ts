@@ -13,6 +13,7 @@ import { describe, it, expect } from 'vitest';
 import { inspectRun } from './inspect.js';
 import { listRuns } from './list.js';
 import type { RunRecord, RunStore, WorkflowRegistrar } from '@sensigo/realm';
+import { snap, listing, doubleClock, noSettle } from '../test-support/snapshot-double.js';
 
 const workflowStore: WorkflowRegistrar = {
   register: async () => {},
@@ -25,10 +26,12 @@ const workflowStore: WorkflowRegistrar = {
 function makeStore(run: RunRecord, persistsClaims = true): RunStore {
   return {
     persistsClaims,
-    get: async () => run,
-    create: async () => ({ run, created: true }),
-    update: async () => run,
-    list: async () => [run],
+    clock: doubleClock,
+    settleStep: noSettle,
+    get: async () => snap(run),
+    create: async () => ({ ...snap(run), created: true }),
+    update: async () => snap(run),
+    list: async () => listing([run]),
     claimStep: async () => {
       throw new Error('claimStep is not used by inspect');
     },
@@ -614,7 +617,11 @@ describe('review correction C7 — "Question opened through" only under the atte
           },
         },
       };
-      const { run } = await store.create({ workflowId: 'c7-wf', workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: 'c7-wf',
+        workflowVersion: 1,
+        params: {},
+      });
       const reply = await executeStep(store, definition, {
         runId: run.id,
         command: 'confirm',

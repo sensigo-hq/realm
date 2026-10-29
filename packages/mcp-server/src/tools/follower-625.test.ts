@@ -146,7 +146,7 @@ const gate = (depends_on: string[], choices = ['approve', 'reject']): StepDefini
 });
 
 async function phaseOf(home: string, runId: string): Promise<string> {
-  return (await new JsonFileStore(join(home, '.realm', 'runs')).get(runId)).run_phase;
+  return (await new JsonFileStore(join(home, '.realm', 'runs')).get(runId)).record.run_phase;
 }
 
 describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
@@ -232,7 +232,7 @@ describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
       // The follower keeps sending {} — refused each time until the rejection budget is spent and
       // `work` FAILS; the recovery step behind it (`one_failed`) is then owed and reached.
       expect(calls.filter((c) => c === 'execute_step').length).toBeGreaterThan(1);
-      const run = await new JsonFileStore(join(home, '.realm', 'runs')).get(s.run_id!);
+      const { record: run } = await new JsonFileStore(join(home, '.realm', 'runs')).get(s.run_id!);
       expect(run.failed_steps).toEqual(['work']);
       expect(run.completed_steps).toContain('recover');
     });
@@ -365,7 +365,9 @@ describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
         const { calls } = await follow(client, started);
         expect(calls).toEqual(['execute_step', 'submit_human_response', 'advance_run']);
         expect(calls).not.toContain('stamp');
-        const run = await new JsonFileStore(join(home, '.realm', 'runs')).get(started.run_id!);
+        const { record: run } = await new JsonFileStore(join(home, '.realm', 'runs')).get(
+          started.run_id!,
+        );
         expect(run.run_phase).toBe('completed');
         expect(run.completed_steps).toContain('stamp_it');
       },
@@ -387,7 +389,7 @@ describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
       const s = await call(client, 'start_run', { workflow_id: d.id, params: {} });
       await follow(client, s);
       const runs = new JsonFileStore(join(home, '.realm', 'runs'));
-      const failed = await runs.get(s.run_id!);
+      const { record: failed } = await runs.get(s.run_id!);
       expect(failed.failed_steps).toEqual(['g']);
       // What `realm run resume --from g` writes (the core transform, then one update).
       await runs.update(applyResume(failed, 'g', d).run);
@@ -412,7 +414,7 @@ describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
       // for the step that just failed to dispatch — the follower spends no call to learn it.
       expect(calls).toEqual(['execute_step']);
       expect(last.next_actions).toEqual([]);
-      const run = await new JsonFileStore(join(home, '.realm', 'runs')).get(s.run_id!);
+      const { record: run } = await new JsonFileStore(join(home, '.realm', 'runs')).get(s.run_id!);
       expect(run.capability_blocks?.['x']).toBeDefined();
       const state = await call(client, 'get_run_state', { run_id: s.run_id! });
       expect(state['engine_runnable']).toEqual([

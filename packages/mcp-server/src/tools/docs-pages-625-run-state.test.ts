@@ -22,8 +22,6 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   createDefaultRegistry,
   loadWorkflowFromString,
-  submitHumanResponse,
-  type RunStore,
   type StepDefinition,
   type WorkflowDefinition,
 } from '@sensigo/realm';
@@ -958,7 +956,7 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
       const unnamed = await answersOf(await answerOne({}));
       // A stored name that cannot be shown: the record's answer entry carries a name that is not text.
       const unreadableRun = await answerOne({ responded_by: 'ana' });
-      const rec = await runStore.get(unreadableRun);
+      const { record: rec } = await runStore.get(unreadableRun);
       const entry = rec.evidence.find(
         (x) => (x as unknown as Reply)['kind'] === 'gate_response',
       ) as unknown as Reply;
@@ -1017,7 +1015,7 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
       // A program takes `fetch`, and its process dies: the claim is past its time.
       await runStore.claimStep(runId, 'fetch', fan);
       await call('execute_step', { run_id: runId, command: 'approve', params: {} });
-      const rec = await runStore.get(runId);
+      const { record: rec } = await runStore.get(runId);
       rec.claims = {
         ...rec.claims,
         fetch: { ...rec.claims!['fetch']!, deadline: new Date(Date.now() - 60_000).toISOString() },
@@ -1043,12 +1041,12 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
   );
 
   it(
-    'guard_awaiting_settlement: ready when the run is created by start_run_batch or a program, when realm run resume opens it again at a failed guard, or in a store that does not settle in one write',
+    'guard_awaiting_settlement: ready when the run is created by start_run_batch or a program, or when realm run resume opens it again at a failed guard',
     { timeout: 60_000 },
     async () => {
       claim(
         PAGE,
-        'That is a guard that is ready when the run is created by `start_run_batch` or by a program, as here, or when `realm run resume` opens the run again at a failed guard, or a run kept in a store that does not settle in one write.',
+        'That is a guard that is ready when the run is created by `start_run_batch` or by a program, as here, or when `realm run resume` opens the run again at a failed guard.',
       );
       const home = await mkdtemp(join(tmpdir(), 'realm-pin-b-625-guard-'));
       const { call, workflowStore, runStore } = await connect({ home });
@@ -1073,7 +1071,7 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
         )['started'] as Array<{ run_id: string }>
       )[0]!.run_id;
       // A program.
-      const { run: made } = await runStore.create({
+      const { record: made } = await runStore.create({
         workflowId: 'limit',
         workflowVersion: 1,
         params: { amount: 5 },
@@ -1097,48 +1095,18 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
       await call('advance_run', { run_id: fRun });
       const failed = await call('get_run_state', { run_id: fRun });
       const resumed = realm(home, ['run', 'resume', fRun, '--from', 'check']);
-      // A store that does not settle in one write: the gate's answer and the guard after it.
-      const gateGuard = def('gg', {
-        confirm: {
-          description: 'Confirm.',
-          execution: 'agent',
-          trust: 'human_confirmed',
-          gate: { choices: ['approve', 'reject'] },
-        },
-        check: {
-          description: 'Check.',
-          execution: 'guard',
-          depends_on: ['confirm'],
-          abort_unless: ["confirm.choice == 'approve'"],
-        },
-        finish: { description: 'Finish.', execution: 'agent', depends_on: ['check'] },
-      });
-      await workflowStore.register(gateGuard);
-      const gRun = (await call('start_run', { workflow_id: 'gg' }))['run_id'] as string;
-      await call('execute_step', { run_id: gRun, command: 'confirm', params: {} });
-      const twoWrites = new Proxy(runStore, {
-        get(target, prop, receiver) {
-          if (prop === 'settleStep') return undefined;
-          const v = Reflect.get(target, prop, receiver) as unknown;
-          return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
-        },
-      }) as unknown as RunStore;
-      const gateId = (await runStore.get(gRun)).pending_gate!.gate_id;
-      await submitHumanResponse(twoWrites, gateGuard, { runId: gRun, gateId, choice: 'approve' });
-      // (a) red when any of the four ways leaves the guard ready without the finding, or the guard
+      // (a) red when any of the three ways leaves the guard ready without the finding, or the guard
       //     did not fail before the resume; (b) prints each run's findings and the resume's output.
       expect({
         batch: await finding(batched),
         program: await finding(made.id),
         failedBefore: [failed['run_phase'], failed['failed_steps']],
         resume: [resumed.code, await finding(fRun)],
-        twoWrites: await finding(gRun),
       }).toEqual({
         batch: ['guard_awaiting_settlement'],
         program: ['guard_awaiting_settlement'],
         failedBefore: ['failed', ['check']],
         resume: [0, ['guard_awaiting_settlement']],
-        twoWrites: ['guard_awaiting_settlement'],
       });
     },
   );

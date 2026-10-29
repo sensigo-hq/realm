@@ -69,7 +69,7 @@ describe('issue #759 — the cannot-run line is the same three-problem sentence 
       const reply = JSON.parse(raw.content[0]!.text) as { run_id: string; context_hint: string };
       await client.close();
 
-      const run = await runStore.get(reply.run_id);
+      const { record: run } = await runStore.get(reply.run_id);
       const entry = composeWaysAt(run, new Date(), {
         definition: refusedHead,
         registry: new ExtensionRegistry(),

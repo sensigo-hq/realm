@@ -501,7 +501,8 @@ export async function sweepStalePhases(
   },
   options: SweepStalePhasesOptions,
 ): Promise<SweepStalePhasesResult> {
-  const { records, unreadable } = await listRunsDiagnosed(store);
+  const { snapshots, unreadable } = await listRunsDiagnosed(store);
+  const records = snapshots.map((s) => s.record);
   if (unreadable.length > 0) {
     throw unreadableRunFilesError(
       options.command ?? `realm run gc --heal${options.force ? ' --force' : ''}`,

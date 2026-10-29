@@ -96,7 +96,7 @@ const gateThenAuto = def({
 describe('#729 PR-0 — the MCP door words what comes next (formerly core describeNext, C34/C57/C205/C207)', () => {
   it('gate→auto after the answer: the act names the owed step, last; the answer reply says so', async () => {
     await withStore(async (store) => {
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: gateThenAuto.id,
         workflowVersion: 1,
         params: {},
@@ -107,7 +107,7 @@ describe('#729 PR-0 — the MCP door words what comes next (formerly core descri
         input: {},
         dispatcher: echo,
       });
-      const gate = (await store.get(run.id)).pending_gate!;
+      const gate = (await store.get(run.id)).record.pending_gate!;
       const answered = out(
         await submitHumanResponse(store, gateThenAuto, {
           runId: run.id,
@@ -242,10 +242,14 @@ describe('#729 PR-0 — the MCP door words what comes next (formerly core descri
         by_source: 'derived' as const,
         channel: 'advance' as const,
       };
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await store.claimStep(run.id, 'a', d, other);
       await store.claimStep(run.id, 'b', d, other);
-      expect(nextSentenceOf(await store.get(run.id), d)).toBe(
+      expect(nextSentenceOf((await store.get(run.id)).record, d)).toBe(
         " No step is ready: 'a', 'b' are in flight elsewhere — wait for them, then call get_run_state.",
       );
     });
@@ -290,7 +294,11 @@ describe('#729 PR-0 — the MCP door words what comes next (formerly core descri
     has.register('handler', 'note', { id: 'note', execute: async () => ({ data: {} }) } as never);
     const answer = async (registry: ExtensionRegistry | undefined) =>
       withStore(async (store) => {
-        const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+        const { record: run } = await store.create({
+          workflowId: d.id,
+          workflowVersion: 1,
+          params: {},
+        });
         await advanceRun(store, d, { runId: run.id, registry: new ExtensionRegistry() });
         await executeStep(store, d, {
           runId: run.id,
@@ -299,7 +307,7 @@ describe('#729 PR-0 — the MCP door words what comes next (formerly core descri
           dispatcher: echo,
           registry: has,
         });
-        const gate = (await store.get(run.id)).pending_gate!;
+        const gate = (await store.get(run.id)).record.pending_gate!;
         return out(
           await submitHumanResponse(store, d, {
             runId: run.id,
@@ -337,7 +345,11 @@ describe('#729 PR-0 — the MCP door words what comes next (formerly core descri
       },
     });
     await withStore(async (store) => {
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const reply = out(
         await executeStep(store, d, {
           runId: run.id,
@@ -373,7 +385,11 @@ describe('#729 PR-0 — the MCP door words what comes next (formerly core descri
     it(`C51 ${member}: advance_run's nothing-ran reply names the step and ends with the tools' way out`, async () => {
       const d = def({ x: refusedStep[member] });
       await withStore(async (store: RunStore) => {
-        const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+        const { record: run } = await store.create({
+          workflowId: d.id,
+          workflowVersion: 1,
+          params: {},
+        });
         const reply = out(await advanceRun(store, d, { runId: run.id }));
         expect(reply.next_actions).toEqual([]);
         expect(
@@ -396,7 +412,11 @@ describe('#729 PR-0 — the MCP door words what comes next (formerly core descri
   it('D3.2/C205: when the only owed step is taken, nothing ran — the hint names the wait, then the race; `await` with its pace', async () => {
     const d = def({ x: { description: 'X', execution: 'auto', depends_on: [] } });
     await withStore(async (store) => {
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const realClaim = store.claimStep.bind(store);
       let first = true;
       store.claimStep = async (...args: Parameters<RunStore['claimStep']>) => {
@@ -452,7 +472,7 @@ describe('#729 PR-0 — the run_step and advance instructions an agent reads', (
             },
           },
         };
-        const { run } = await store.create({
+        const { record: run } = await store.create({
           workflowId: 'no-expected-timeout-agent-wf',
           workflowVersion: 1,
           params: {},
@@ -484,7 +504,7 @@ describe('#729 PR-0 — the run_step and advance instructions an agent reads', (
             },
           },
         };
-        const { run } = await store.create({
+        const { record: run } = await store.create({
           workflowId: 'no-expected-timeout-handler-wf',
           workflowVersion: 1,
           params: {},
@@ -515,7 +535,7 @@ describe('#729 PR-0 — the run_step and advance instructions an agent reads', (
           },
         };
 
-        const { run: run } = await store.create({
+        const { record: run } = await store.create({
           workflowId: 'agent-instr-wf',
           workflowVersion: 1,
           params: {},
@@ -564,7 +584,7 @@ describe('#729 PR-0 — the run_step and advance instructions an agent reads', (
           },
         };
 
-        const { run: run } = await store.create({
+        const { record: run } = await store.create({
           workflowId: 'auto-instr-wf',
           workflowVersion: 1,
           params: {},
@@ -600,7 +620,11 @@ describe("#729 PR-0 — C149/C148: a refusal's suggestion and hint, from the ren
     command: string,
     setup?: (runId: string) => Promise<unknown>,
   ) => {
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await setup?.(run.id);
     const reply = out(
       await executeStep(store, d, { runId: run.id, command, input: {}, dispatcher }),
@@ -681,7 +705,11 @@ describe("#729 PR-0 — C149/C148: a refusal's suggestion and hint, from the ren
       b: { description: 'B.', execution: 'agent', depends_on: [] },
     });
     await withStore(async (store) => {
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const echoIt = async (_s: string, input: Record<string, unknown>) => input;
       await executeStep(store, d, { runId: run.id, command: 'a', input: {}, dispatcher: echoIt });
       await executeStep(store, d, { runId: run.id, command: 's', input: {}, dispatcher: echoIt });
@@ -717,9 +745,13 @@ describe('#729 PR-0 — Amendment 16: the words name a way only where the agent 
         } as StepDefinition,
         after: { description: 'After.', execution: 'auto', depends_on: ['q'] },
       });
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await executeStep(store, d, { runId: run.id, command: 'q', input: {}, dispatcher: echo });
-      const open = await store.get(run.id);
+      const { record: open } = await store.get(run.id);
       const past = new Date(new Date(open.pending_gate!.expires_at!).getTime() + 5_000);
       // The engine's refusal of the wrong gate id, its ways re-judged as a program whose project
       // code failed to load judges them (A-5): advance listed (enactor_load_failed), not offered.
@@ -727,7 +759,6 @@ describe('#729 PR-0 — Amendment 16: the words name a way only where the agent 
         runId: run.id,
         gateId: 'not-the-gate',
         choice: 'approve',
-        now: new Date(open.pending_gate!.opened_at),
       });
       const failedLoad = composeWaysOn(writtenSnapshot(open, past), {
         definition: { ok: d },

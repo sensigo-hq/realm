@@ -3,9 +3,10 @@
 //
 // Every judge of the ways (`composeWaysOn`, `admitWay`) takes a `Snapshot` — one value, so a record
 // from one load is never judged at another load's reading (D6-17). The reading is taken BEFORE the
-// load (D6-16): every statement made about the loaded copy is true at its `at`. #715 later changes the
-// body of `loadSnapshot` (its store clock and `takeReading`), never the composers that take a
-// Snapshot. The source-text witness: no `Snapshot` value is built outside this module.
+// load (D6-16): every statement made about the loaded copy is true at its `at`. #715 (b): the store
+// takes that reading (`store.get` returns the Snapshot); `loadSnapshot` is `store.get`. The
+// source-text witness: no `{ record, at }` literal is built outside this module — every Snapshot is
+// built by `writtenSnapshot`.
 import type { RunRecord } from '../types/run-record.js';
 import type { RunStore } from '../store/store-interface.js';
 import type { DefinitionAbsence, LoadErrorCode } from './ways.js';
@@ -18,26 +19,19 @@ export interface Snapshot {
 }
 
 /**
- * Loads one run and the reading it is judged at (D3 A-9): the clock is read BEFORE `store.get`, so
- * every statement about the loaded copy holds at `at`. `now` is a caller's injectable clock (the
- * engine entries' `options.now`); absent, the system clock. #715 changes this body (its store clock),
- * never its callers.
+ * Loads one run and the reading it is judged at (D3 A-9; #715 (b), D-17): `store.get`, which takes
+ * the store's ONE raw reading BEFORE it loads and returns the `Snapshot` (D6-16) — so every statement
+ * about the loaded copy holds at `at`. No caller passes a clock: the store's clock decides.
  */
-export async function loadSnapshot(
-  store: Pick<RunStore, 'get'>,
-  runId: string,
-  opts: { now?: Date } = {},
-): Promise<Snapshot> {
-  const at = opts.now ?? new Date();
-  const record = await store.get(runId);
-  return { record, at };
+export async function loadSnapshot(store: Pick<RunStore, 'get'>, runId: string): Promise<Snapshot> {
+  return store.get(runId);
 }
 
 /**
- * The snapshot a write returns (PR0-CONTRACT §2, MA 8's condition: judgement words are judged "at the
- * settle's returned `{ record, at }`"; Amendment 13, Q2): the record as this call wrote it, and the
- * instant the settle returned — no clock is read here. The second of this module's two constructors;
- * a reply's ways speak of the record as written, never of a record read again.
+ * The ONE constructor of a `Snapshot` (PR0-CONTRACT §2; #715 (b), D-15): a record and the reading it
+ * is judged at — no clock is read here. A store builds every snapshot it returns through it (the
+ * reading its read or write took); the engine builds one from a write's returned `{ record, at }`.
+ * A reply's ways speak of the record as written, never of a record read again.
  */
 export function writtenSnapshot(record: RunRecord, at: Date): Snapshot {
   return { record, at };

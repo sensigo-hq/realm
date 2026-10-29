@@ -1490,7 +1490,7 @@ export async function replySubject(
 ): Promise<ReplySubject> {
   let run: RunRecord | undefined;
   if (ids.runId !== undefined && stores?.runStore !== undefined) {
-    run = await stores.runStore.get(ids.runId).catch(() => undefined);
+    run = (await stores.runStore.get(ids.runId).catch(() => undefined))?.record;
   }
   const workflowId = ids.workflowId ?? run?.workflow_id;
   let definition: WorkflowDefinition | undefined;

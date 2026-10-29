@@ -20,6 +20,7 @@ import { abandonRun } from './abandon-run.js';
 import { reclaimStep } from './reclaim-step.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import { WorkflowError } from '../types/workflow-error.js';
+import { writtenSnapshot } from './snapshot.js';
 import type { Attributed } from './holder.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { EngineReply } from '../types/response-envelope.js';
@@ -319,7 +320,11 @@ describe('#625 PR-2a, F7 — advanceRun meets each row as a real race and goes o
     act: Act | 'claimFake',
     opts: { handler?: 'missing'; tamperRead?: boolean } = {},
   ) {
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     if (def.steps['p'] !== undefined) {
       await executeStep(store, def, {
         runId: run.id,
@@ -346,13 +351,16 @@ describe('#625 PR-2a, F7 — advanceRun meets each row as a real race and goes o
                 // row 2d: the step's own read sees a precondition that fails (`p`'s answer changed
                 // for that read only) — the view the loop picked it from did not.
                 readHook = true;
-                const real = await target.get(id);
-                return {
-                  ...real,
-                  evidence: real.evidence.map((e) =>
-                    e.step_id === 'p' ? { ...e, output_summary: { go: false } } : e,
-                  ),
-                };
+                const { record: real, at } = await target.get(id);
+                return writtenSnapshot(
+                  {
+                    ...real,
+                    evidence: real.evidence.map((e) =>
+                      e.step_id === 'p' ? { ...e, output_summary: { go: false } } : e,
+                    ),
+                  },
+                  at,
+                );
               }
               await fire();
             }
@@ -409,7 +417,7 @@ describe('#625 PR-2a, F7 — advanceRun meets each row as a real race and goes o
         onNotRecorded: (step: string, kind: string) => notRecorded.push(`${step}:${kind}`),
       } as object),
     });
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     return { reply, taken, notRecorded, after, handlerRuns, readHook, runId: run.id };
   }
 
@@ -666,7 +674,11 @@ describe('#625 PR-2a, F7 — advanceRun meets each row as a real race and goes o
   });
 
   it('a store that refuses every claim of the step cannot loop the call: the step left owed is tried once more, then the reply names it owed', async () => {
-    const { run } = await store.create({ workflowId: DEF.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: DEF.id,
+      workflowVersion: 1,
+      params: {},
+    });
     let claims = 0;
     const refusing = new Proxy(store, {
       get(target, prop) {
@@ -724,7 +736,11 @@ describe('#625 PR-2a, F7 — execute_step’s chain (executeChain) composes its 
         s: { description: 'S', execution: 'auto', depends_on: ['a'] },
       },
     };
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     let settledA = false;
     let getsAfter = 0;
     const racing = new Proxy(store, {
@@ -756,7 +772,7 @@ describe('#625 PR-2a, F7 — execute_step’s chain (executeChain) composes its 
       dispatcher: async (_n, input) => ({ ...input }),
       caller: 'execute_step',
     });
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     // (a) red when the chain returns the named step's reply as the call first composed it (phase
     //     `running`, `advance_run` offered) after the race; (b) prints the reply's fields.
     expect({

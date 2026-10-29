@@ -148,7 +148,8 @@ export async function migrateStampSeals(
   const buckets = emptyBuckets();
   // issue #719 (R11): a run file that cannot be read as a run is residue — in `unclassifiable`, its
   // `why` the file's fault, printed and never written — so the shipped exit ladder applies.
-  const { records: all, unreadable } = await listRunsDiagnosed(runStore);
+  const { snapshots, unreadable } = await listRunsDiagnosed(runStore);
+  const all = snapshots.map((s) => s.record);
   for (const entry of unreadable) {
     buckets.unclassifiable.push({
       id: entry.file.slice(0, -'.json'.length),

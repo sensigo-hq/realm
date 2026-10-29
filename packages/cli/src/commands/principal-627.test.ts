@@ -48,13 +48,17 @@ async function opened(home: string) {
   const def = loadWorkflowFromString(YAML);
   await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(def);
   const store = new JsonFileStore(join(home, '.realm', 'runs'));
-  const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+  const { record: run } = await store.create({
+    workflowId: def.id,
+    workflowVersion: 1,
+    params: {},
+  });
   await advanceRun(store, def, { runId: run.id });
-  return { store, runId: run.id, gateId: (await store.get(run.id)).pending_gate!.gate_id };
+  return { store, runId: run.id, gateId: (await store.get(run.id)).record.pending_gate!.gate_id };
 }
 
 const principalOf = async (store: JsonFileStore, runId: string) =>
-  (await store.get(runId)).evidence.find((e) => e.kind === 'gate_response')?.principal;
+  (await store.get(runId)).record.evidence.find((e) => e.kind === 'gate_response')?.principal;
 
 describe('#627 W — cell 25: the principal each door stamps', () => {
   it('realm mcp (stdio): door_authenticates_no_principal', async () => {

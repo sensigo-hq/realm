@@ -56,7 +56,11 @@ async function heldRun(lease: 'live' | 'expired') {
   const runStore = new JsonFileStore(join(dir, 'runs'));
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
   await workflowStore.register(DEF);
-  const { run } = await runStore.create({ workflowId: DEF.id, workflowVersion: 1, params: {} });
+  const { record: run } = await runStore.create({
+    workflowId: DEF.id,
+    workflowVersion: 1,
+    params: {},
+  });
   await advanceRun(runStore, DEF, { runId: run.id, registry: new ExtensionRegistry() });
   await runStore.settleStep!(
     run.id,
@@ -64,7 +68,7 @@ async function heldRun(lease: 'live' | 'expired') {
     DEF,
   );
   if (lease === 'expired') {
-    const r = await runStore.get(run.id);
+    const { record: r } = await runStore.get(run.id);
     await runStore.update({
       ...r,
       finalizer_ledger: {
@@ -76,7 +80,7 @@ async function heldRun(lease: 'live' | 'expired') {
       },
     });
   }
-  const tidy = (await runStore.get(run.id)).finalizer_ledger!['tidy']!;
+  const tidy = (await runStore.get(run.id)).record.finalizer_ledger!['tidy']!;
   return { runStore, workflowStore, id: run.id, until: tidy.lease_deadline!, status: tidy.status };
 }
 

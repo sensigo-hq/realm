@@ -86,8 +86,12 @@ describe('#625 PR-2a, F2 — the CLI on a run an operator ended', { timeout: 60_
   /** A run whose step `a` failed, then an operator abandoned it with {@link REASON}. */
   async function abandoned(): Promise<RunRecord> {
     await workflowStore.register(TWO);
-    const { run } = await runStore.create({ workflowId: TWO.id, workflowVersion: 1, params: {} });
-    await runStore.update({ ...(await runStore.get(run.id)), failed_steps: ['a'] });
+    const { record: run } = await runStore.create({
+      workflowId: TWO.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    await runStore.update({ ...(await runStore.get(run.id)).record, failed_steps: ['a'] });
     return abandonRun(runStore, run.id, REASON);
   }
 
@@ -192,8 +196,12 @@ describe('#625 PR-2a, F2 — the CLI on a run an operator ended', { timeout: 60_
       'When an operator ended the run, that line is `  Ended:     An operator ended this run, with the reason "<reason>"; to run the work again, start a new run.`, never `realm run resume`, which would erase that ending and its reason.',
     );
     await workflowStore.register(TWO);
-    const { run } = await runStore.create({ workflowId: TWO.id, workflowVersion: 1, params: {} });
-    await runStore.update({ ...(await runStore.get(run.id)), failed_steps: ['a'] });
+    const { record: run } = await runStore.create({
+      workflowId: TWO.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    await runStore.update({ ...(await runStore.get(run.id)).record, failed_steps: ['a'] });
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.spyOn(console, 'log').mockImplementation(() => {});
     // The model is asked for step `b`; while it answers, an operator abandons the run.
@@ -213,8 +221,9 @@ describe('#625 PR-2a, F2 — the CLI on a run an operator ended', { timeout: 60_
       printed.filter((l) => l.includes('Ended:') || l.includes('Resume:')),
       printed.join('\n'),
     ).toEqual([`  Ended:     ${SENTENCE}`]);
-    expect((await runStore.get(run.id)).run_phase, 'fixture: the operator ended the run').toBe(
-      'abandoned',
-    );
+    expect(
+      (await runStore.get(run.id)).record.run_phase,
+      'fixture: the operator ended the run',
+    ).toBe('abandoned');
   });
 });

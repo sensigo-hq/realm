@@ -226,7 +226,7 @@ export async function sendQuestionForm(
   const poll = setInterval(() => {
     deps.runStore
       .get(runId)
-      .then((record: RunRecord) => {
+      .then(({ record }) => {
         if (record.terminal_state) withdrawWith(WITHDRAWN.ended);
         else if (record.pending_gate?.gate_id !== gateId) withdrawWith(WITHDRAWN.settled);
       })

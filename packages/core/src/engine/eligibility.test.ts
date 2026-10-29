@@ -1203,8 +1203,10 @@ describe('propagateSkips — skip_details behavioral (issue #111)', () => {
 // ---------------------------------------------------------------------------
 // Structural anti-recurrence guard (issue #111, S2) — models the atomicWriteFile grep-guard
 // from #132/#130: the set of source sites that GROW a persisted skipped_steps must equal the
-// sanctioned whitelist (2 abort direct-pushes in execution-loop.ts + propagateSkips' own 2
+// sanctioned whitelist (the guard-abort direct push in execution-loop.ts + propagateSkips' own 2
 // branches in eligibility.ts). A new grow-site outside this whitelist reddens this test.
+// #715 (b), C.1: the handler-abort direct push lived only in the legacy (no-`settleStep`) block and
+// was deleted with it; the handler abort now grows skipped_steps inside settlement.ts's transform.
 // ---------------------------------------------------------------------------
 
 describe('structural guard — skipped_steps grow-sites (issue #111)', () => {
@@ -1217,11 +1219,12 @@ describe('structural guard — skipped_steps grow-sites (issue #111)', () => {
     expect(src).toContain('const tempRun: RunRecord = { ...run, skipped_steps: skipped };');
   });
 
-  it('execution-loop.ts: exactly 2 skipped_steps spread-append grow-sites — the handler-abort and guard-abort direct pushes', async () => {
+  it('execution-loop.ts: exactly 1 skipped_steps spread-append grow-site — the guard-abort direct push', async () => {
     const src = await readFile(new URL('./execution-loop.ts', import.meta.url), 'utf8');
     const growSites = [...src.matchAll(/\[\.\.\.[\w.]+\.skipped_steps,\s*[^\]]+\]/g)];
-    expect(growSites).toHaveLength(2);
-    expect(src).toContain('skipped_steps: [...pendingRun.skipped_steps, options.command],');
+    expect(growSites).toHaveLength(1);
+    // #715 (b), C.1: the handler-abort push died with the legacy block that held it.
+    expect(src).not.toContain('skipped_steps: [...pendingRun.skipped_steps, options.command],');
     expect(src).toContain('skipped_steps: [...run.skipped_steps, stepName],');
     // No raw .push( on a skipped_steps-shaped array anywhere in this file — every mutation goes
     // through the sanctioned spread-append above or through propagateSkips.
@@ -1243,20 +1246,20 @@ describe('claimStep — double-claim prevention', () => {
   it('first claimStep adds the step to in_progress_steps', async () => {
     const store = new JsonFileStore(runDir);
     const definition = makeWorkflow({ 'step-a': { depends_on: [] } });
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'test-wf',
       workflowVersion: 1,
       params: {},
     });
 
-    const claimed = await store.claimStep(run.id, 'step-a', definition);
+    const { record: claimed } = await store.claimStep(run.id, 'step-a', definition);
     expect(claimed.in_progress_steps).toContain('step-a');
   });
 
   it('second claimStep on the same step throws STATE_STEP_ALREADY_CLAIMED', async () => {
     const store = new JsonFileStore(runDir);
     const definition = makeWorkflow({ 'step-a': { depends_on: [] } });
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'test-wf',
       workflowVersion: 1,
       params: {},
@@ -1272,12 +1275,12 @@ describe('claimStep — double-claim prevention', () => {
   it('claimStep on a completed step throws', async () => {
     const store = new JsonFileStore(runDir);
     const definition = makeWorkflow({ 'step-a': { depends_on: [] } });
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'test-wf',
       workflowVersion: 1,
       params: {},
     });
-    const claimed = await store.claimStep(run.id, 'step-a', definition);
+    const { record: claimed } = await store.claimStep(run.id, 'step-a', definition);
 
     // Move step-a to completed_steps.
     await store.update({
@@ -1660,7 +1663,7 @@ describe('buildSettlementNamespace — the $settlement mint (issue #220 §4c)', 
           error: 'Guard resolution error',
           output_summary: { error: 'Unresolvable path: x' },
         }),
-        // Mirrors buildFinalizedSeal's success captureEvidence call — no diagnostics.
+        // Mirrors drainFinalizers' success captureEvidence call — no diagnostics.
         snap({ step_id: 'finalizer_ok', output_summary: {} }),
       ],
     });

@@ -23,7 +23,13 @@
 // packages/core/src/engine (outside this file) or packages/mcp-server calls `applySettlement` or
 // a store's `settleStep`. PR-B migrates the three legacy seal sites to construct `SettlementDelta`
 // values and call `store.settleStep` instead of `store.update` directly.
-import type { RunRecord, SealArm, EvidenceSnapshot, StepDiagnostics } from '../types/run-record.js';
+import type {
+  RunRecord,
+  SealArm,
+  EvidenceSnapshot,
+  PendingGate,
+  StepDiagnostics,
+} from '../types/run-record.js';
 import type { WorkflowDefinition, FinalizerTrigger } from '../types/workflow-definition.js';
 import type {
   SettlementDelta,
@@ -37,6 +43,7 @@ import type {
   SettleGuardDelta,
   ReleaseStepDelta,
   ExpireGateDelta,
+  SealRunDelta,
 } from '../types/settlement.js';
 import {
   assertSealMarkersAgree,
@@ -48,13 +55,14 @@ import {
   propagateSkips,
   buildEvidenceByStep,
   evaluateWhenCondition,
+  sealRunLevel,
 } from './eligibility.js';
 import { deriveDefaultedSteps } from './defaulted-steps.js';
 import { captureEvidence } from '../evidence/snapshot.js';
 import { omitClaim } from './claim-liveness.js';
 import { judgeGateProof, type GateClaimVerdict } from './holder.js';
 import { DRAIN_LEASE_MAX } from './lifecycle.js';
-import { isPastDeadline } from './instants.js';
+import { parseStamp, isPastDeadline } from './instants.js';
 import { evaluateGuardConditions, type GuardConditionResult } from './precondition.js';
 import { boundWhole } from '../utils/redaction.js';
 
@@ -138,8 +146,9 @@ function pendingFinalizerNames(ledger: FinalizerLedger | undefined): string[] {
 
 // ---------------------------------------------------------------------------
 // Finalizer selection — extracted from execution-loop.ts's buildFinalizedSeal (the ONE
-// engine-file touch this PR makes). Behavior-preserving by construction: the legacy caller passes
-// the SAME (definition, settled-step-names, outcome) inputs and gets the SAME ordered name list
+// engine-file touch this PR makes; #715 (b) deleted buildFinalizedSeal with the legacy path).
+// Behavior-preserving by construction: the legacy caller passed
+// the SAME (definition, settled-step-names, outcome) inputs and got the SAME ordered name list
 // back that its own inline grouping loop used to compute.
 // ---------------------------------------------------------------------------
 
@@ -171,7 +180,8 @@ function finalizerTriggers(stepDef: {
  *    a singleton set; BYTE-IDENTICAL selection to the pre-widening behavior (pinned by the
  *    string-form compat test) and supported INDEFINITELY — this is not a deprecated compat shim.
  *  - a pre-derived `ReadonlySet<FinalizerTrigger>` (via {@link deriveEffectiveTriggers}) — the
- *    #302 call shape both engine chokepoints (`mintFresh`, `buildFinalizedSeal`) now use, letting
+ *    #302 call shape the engine chokepoint (`mintFresh`) uses (`buildFinalizedSeal`, the other,
+ *    was deleted with the legacy path in #715 (b)), letting
  *    a seal satisfy more than one trigger at once (e.g. `{'complete', 'completed_with_failed_steps'}`).
  * Semver: additive or (minor) — no existing call site's behavior changes.
  */
@@ -257,7 +267,7 @@ export function deriveEffectiveTriggers(
  * increment's design). Non-selected entries keep their status verbatim (history:
  * completed/failed/voided). Returns `record.finalizer_ledger` UNCHANGED (by reference) when
  * nothing is selected — the zero-finalizer / no-matching-trigger case falls out of this naturally,
- * without needing `buildFinalizedSeal`'s own explicit fast-path.
+ * without needing an explicit fast-path (the deleted `buildFinalizedSeal` had one).
  */
 function mintFresh(
   record: RunRecord,
@@ -659,8 +669,18 @@ function applyCompleteOrFailEdge(
 // (design record lens-2 F1).
 // ---------------------------------------------------------------------------
 
-function applyOpenGate(fresh: RunRecord, delta: OpenGateDelta): SettlementResult {
-  const { step, claimToken, pendingGate, evidence } = delta;
+function applyOpenGate(fresh: RunRecord, delta: OpenGateDelta, at: Date): SettlementResult {
+  const { step, claimToken, pendingGate: opening, evidence } = delta;
+  // #715 (b) (D-20, D6-12): the delta carries durations; the gate's instants are minted HERE from the
+  // write's one reading — `opened_at = at`, `expires_at = at + timeoutSeconds` — so no gate is ever
+  // born expired, and the opening reply (composed from the written record) agrees with the record.
+  const pendingGate: PendingGate = {
+    ...opening,
+    opened_at: at.toISOString(),
+    ...(delta.timeoutSeconds !== undefined
+      ? { expires_at: new Date(at.getTime() + delta.timeoutSeconds * 1000).toISOString() }
+      : {}),
+  };
 
   // Idempotence arm BEFORE terminal/claim (mirrors settleStepArms's own ordering, L21 ii).
   const existing = entryOf(fresh, step);
@@ -705,7 +725,7 @@ function applyOpenGate(fresh: RunRecord, delta: OpenGateDelta): SettlementResult
     return { applied: false, reason: 'claim_lost', run: fresh };
   }
 
-  // APPLY OPEN: pending_gate set (delta-carried verbatim); evidence append; CLAIM RETAINED + step
+  // APPLY OPEN: pending_gate set (the delta's gate, its instants minted from `at`); evidence append; CLAIM RETAINED + step
   // stays in_progress (execution-loop.ts:2958 — retention keeps isComplete sound, G-1). Never
   // terminalizes (design record §4.1) — run_phase still derives (§4.5: transform-owned uniformly).
   const withGate: RunRecord = {
@@ -851,26 +871,26 @@ function applySettleGate(
       delta.claimToken,
       storeKeepsClaims,
     );
-    // issue #291 ([F3] shape c, the expiry-WINS mechanism): a WRITE-FREE refusal when the live
-    // gate has expired unresolved AND has an enactable disposition (`on_expiry` frozen) —
-    // checked under the lock, with the injectable `now`, BEFORE choice_not_eligible. The caller
-    // (submitHumanResponse) reacts to this refusal by issuing its OWN `expire_gate` settleStep
-    // (this function never enacts anything itself — that stays applyExpireGate's job) and
-    // composing the honest envelope from the enactment result. This is exact-at-the-
-    // serialization-point-once-observed, uniform-fleet-only: a gate minted by an old binary (no
-    // `expires_at` frozen) can never trip this arm. The `on_expiry !== undefined` conjunct is
-    // load-bearing: a FINDING-ONLY gate (expires_at present, on_expiry absent) has NOTHING that
-    // could ever win this race — refusing the human here with no enactable disposition to
-    // compose an envelope from would strand the human's response forever (the exact
-    // undisposable dead-end this feature exists to cure), since expire_gate would just refuse
-    // `no_disposition` right back. A finding-only gate's human response always resolves
-    // normally, however overdue.
+    // issue #291 ([F3] shape c, the expiry-WINS mechanism) — #715 (b) (D6-9, D6-30, D6-61): when the
+    // live gate is DUE at the write's reading AND has an enactable disposition (`on_expiry` frozen),
+    // the answer is NOT recorded and the gate's frozen expiry is enacted INSIDE THIS WRITE — one
+    // write, one `at`, one version step (it used to be a write-free refusal followed by the caller's
+    // second `expire_gate` write). Checked under the lock, BEFORE choice_not_eligible. A gate minted
+    // by an old binary (no `expires_at` frozen) can never trip this arm. The `on_expiry !==
+    // undefined` conjunct is load-bearing: a FINDING-ONLY gate (expires_at present, on_expiry absent)
+    // has nothing to enact — refusing the human there would strand the response forever — so a
+    // finding-only gate's human response always resolves normally, however overdue.
     if (
       fresh.pending_gate.expires_at !== undefined &&
       fresh.pending_gate.on_expiry !== undefined &&
       isPastDeadline(fresh.pending_gate.expires_at, now)
     ) {
-      return { applied: false, reason: 'gate_expired_pending', run: fresh, gateClaim };
+      const expiresAt = fresh.pending_gate.expires_at;
+      const enacted = applyExpireGate(fresh, { kind: 'expire_gate', gateId }, definition, now);
+      // Unreachable by the conjuncts above (the gate is live, matches, is due and has a
+      // disposition); defensive: an expiry that did not apply is returned as it is.
+      if (!enacted.applied) return enacted;
+      return { ...enacted, lateAnswer: { gateId, choice, gateClaim, expiresAt } };
     }
     if (!fresh.pending_gate.choices.includes(choice)) {
       return {
@@ -1420,7 +1440,7 @@ function applyLeaseFinalizer(
 
   const nowMs = now.getTime();
   const eDeadlineMs =
-    e.lease_deadline !== undefined ? new Date(e.lease_deadline).getTime() : undefined;
+    e.lease_deadline !== undefined ? (parseStamp(e.lease_deadline) ?? NaN) : undefined;
   if (
     tokensEqual(e.lease_token, delta.leaseToken) &&
     eDeadlineMs !== undefined &&
@@ -1537,34 +1557,95 @@ function applyMarkFinalizer(fresh: RunRecord, delta: MarkFinalizerDelta): Settle
  * (never cached) — `lease_finalizer`/`mark_finalizer` deltas do not use it (their arms never
  * reference the workflow definition; only `settle_step`'s terminal-edge `mintFresh` does).
  *
+ * #715 (b) (D-19, D6-69): `options.at` is REQUIRED — the write's ONE reading, taken by the store
+ * after its lock. Every instant the transform mints derives from it, and an applied result's
+ * `run.updated_at` IS `at` (the store no longer overwrites it). No clock is read here.
+ *
+ * Amendment 1 (#715 (b)): a `seal_run` delta takes no definition (a seal must work when the workflow
+ * is gone) and is decided here, before `definition` is touched; any other kind that arrives without a
+ * definition is a programming-contract violation and throws a plain `Error`.
+ *
  * `result.run` on `applied: true` is the AS-APPLIED transform output — see
  * {@link SettlementResult}'s own doc for the never-a-re-read invariant this carries.
  */
 export function applySettlement(
   fresh: RunRecord,
   delta: SettlementDelta,
-  definition: WorkflowDefinition,
-  options?: { now?: Date; cascadeGuards?: boolean; storeKeepsClaims?: boolean },
+  definition: WorkflowDefinition | undefined,
+  options: { at: Date; cascadeGuards?: boolean; storeKeepsClaims?: boolean },
 ): SettlementResult {
-  const now = options?.now ?? new Date();
+  const at = options.at;
+  if (delta.kind === 'seal_run') return stampApplied(applySealRun(fresh, delta, at), at);
+  if (definition === undefined) {
+    throw new Error(`settleStep: delta kind '${delta.kind}' needs a workflow definition`);
+  }
   // issue #625 (holder slice): absent ⇒ false. A store's own `settleStep` passes
   // `this.persistsClaims === true`; the transform mints `store_keeps_no_claims` itself.
-  const storeKeepsClaims = options?.storeKeepsClaims === true;
+  const storeKeepsClaims = options.storeKeepsClaims === true;
   // issue #625: without the option the transform is exactly what it was — one delta, no guard
   // settled, and every throw it had. Only a store's own `settleStep` sets the option on a write
   // (plus the drain dry run, which predicts and never persists).
-  if (options?.cascadeGuards !== true || !CASCADING_KINDS.has(delta.kind)) {
-    return applyDelta(fresh, delta, definition, now, storeKeepsClaims);
+  if (options.cascadeGuards !== true || !CASCADING_KINDS.has(delta.kind)) {
+    return stampApplied(applyDelta(fresh, delta, definition, at, storeKeepsClaims), at);
   }
   // With the option set, a guard whose `when` cannot be evaluated must not make THIS write
   // unrecordable: the base arm, the loop's eligibility read and `applySettleGuard` all get a copy
   // of the definition in which such a guard has no `when`, so it reads as eligible and the loop
   // settles it as a resolution error.
   const total = totalGuardDefinition(definition, fresh);
-  const base = applyDelta(fresh, delta, total.definition, now, storeKeepsClaims);
+  const base = applyDelta(fresh, delta, total.definition, at, storeKeepsClaims);
   // Only an APPLIED delta cascades: a refusal or a no-op stays write-free.
   if (!base.applied) return base;
-  return settleEligibleGuards(base, total, now, fresh.version);
+  return stampApplied(settleEligibleGuards(base, total, at, fresh.version), at);
+}
+
+/**
+ * #715 (b) (D-19): an applied result's record is stamped `updated_at = at` — the write's one reading.
+ * A refusal is the fresh record, unchanged.
+ */
+function stampApplied(result: SettlementResult, at: Date): SettlementResult {
+  if (!result.applied) return result;
+  return { ...result, run: { ...result.run, updated_at: at.toISOString() } };
+}
+
+/**
+ * #715 (b) (D-21; D6-46, -56, -65, -66, -67): the `seal_run` arm. Reads the RECORD only.
+ * - `moved`: the stored version is not the one the writer judged — RETURNED here (a predicate
+ *   refusal); the store THROWS it as `STATE_SNAPSHOT_MISMATCH`, as `update()` does (D6-65).
+ * - `already_terminal`: nothing to seal; the fresh record, no write.
+ * - otherwise: seals through `sealRunLevel` with `at` as every seal-tier instant, releases every
+ *   claim when asked (`claims: {}` AND `in_progress_steps: []` together, D6-66), and appends the
+ *   identity entry verbatim (its `captured_at` untouched, D6-67).
+ */
+function applySealRun(fresh: RunRecord, delta: SealRunDelta, at: Date): SettlementResult {
+  if (fresh.version !== delta.expected_version) {
+    return {
+      applied: false,
+      reason: 'moved',
+      run: fresh,
+      expected: delta.expected_version,
+      stored: fresh.version,
+    };
+  }
+  if (fresh.terminal_state) return { applied: false, reason: 'already_terminal', run: fresh };
+  const withIdentity: RunRecord =
+    delta.identity_entry !== undefined
+      ? {
+          ...fresh,
+          extension_identity: [...(fresh.extension_identity ?? []), delta.identity_entry],
+        }
+      : fresh;
+  const released: RunRecord = delta.release_claims
+    ? { ...withIdentity, in_progress_steps: [], claims: {} }
+    : withIdentity;
+  const sealed = sealRunLevel(released, delta.arm, delta.reason, at);
+  const run: RunRecord = { ...sealed, run_phase: deriveRunPhase(sealed) };
+  return {
+    applied: true,
+    run,
+    transitioned: true,
+    pendingFinalizers: pendingFinalizerNames(run.finalizer_ledger),
+  };
 }
 
 /** The delta kinds after which an applied write settles the guards it made eligible (issue #625).
@@ -1876,7 +1957,7 @@ function settleEligibleGuards(
 
 function applyDelta(
   fresh: RunRecord,
-  delta: SettlementDelta,
+  delta: Exclude<SettlementDelta, SealRunDelta>,
   definition: WorkflowDefinition,
   now: Date,
   storeKeepsClaims: boolean,
@@ -1889,7 +1970,7 @@ function applyDelta(
     case 'mark_finalizer':
       return applyMarkFinalizer(fresh, delta);
     case 'open_gate':
-      return applyOpenGate(fresh, delta);
+      return applyOpenGate(fresh, delta, now);
     case 'settle_gate':
       return applySettleGate(fresh, delta, definition, now, storeKeepsClaims);
     case 'settle_guard':

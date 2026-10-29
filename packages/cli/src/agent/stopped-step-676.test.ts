@@ -96,7 +96,7 @@ async function drive(
   } as unknown as AgentDeps;
   await runAgent(deps, { definition, params: {} });
   vi.restoreAllMocks();
-  const runs = await store.list();
+  const runs = (await store.list()).snapshots.map((s) => s.record);
   return {
     store,
     runId: runs[0]!.id,
@@ -160,7 +160,7 @@ describe("realm agent names the step that stopped the call, when the engine ran 
         "✗ The drive stops: nothing else can run, and 'publish' cannot run (input_schema). ",
       ),
     ).toBe(true);
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     // (a) red when the entry's `step` is the drive's step; (b) prints every entry's step and class.
     expect(
       run.drive_failures?.entries.map((e) => ({ step: e.step, error_class: e.error_class })),

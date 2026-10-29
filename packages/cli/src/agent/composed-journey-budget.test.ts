@@ -99,8 +99,8 @@ describe('composed journey (budget) — a server-directed Retry-After is observe
       // still excluding the two-hour (7,200,000ms) Retry-After by a 480× margin.
       expect(elapsed).toBeLessThan(15_000);
 
-      const runId = (await store.list())[0]!.id;
-      const run = await store.get(runId);
+      const runId = (await store.list()).snapshots.map((s) => s.record)[0]!.id;
+      const { record: run } = await store.get(runId);
       const entry = run.drive_failures!.entries[0]!;
 
       // OBSERVED — all four discriminators, from real producers:

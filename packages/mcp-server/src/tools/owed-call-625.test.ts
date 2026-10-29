@@ -69,13 +69,13 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
     expect(first.deduped).toBe(false);
     expect(first.chained_auto_steps?.map((c) => c.step)).toEqual(['head']);
     // Make the run owe engine work again: a run whose head step is still owed.
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: owedDef.id,
       workflowVersion: 1,
       params: { a: 1 },
       idempotencyKey: 'k2',
     });
-    const updated = await runStore.update({
+    const { record: updated } = await runStore.update({
       ...run,
       completed_steps: ['write'],
       evidence: [
@@ -97,8 +97,8 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
     );
     expect(deduped.deduped).toBe(true);
     expect(deduped.chained_auto_steps).toBeUndefined();
-    expect((await runStore.get(run.id)).version).toBe(updated.version);
-    expect((await runStore.get(run.id)).completed_steps).toEqual(['write']);
+    expect((await runStore.get(run.id)).record.version).toBe(updated.version);
+    expect((await runStore.get(run.id)).record.completed_steps).toEqual(['write']);
     expect(deduped.next_actions.map((a) => a.instruction?.tool)).toEqual(['advance_run']);
   });
 
@@ -112,7 +112,7 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
   });
 
   it('get_run_state: advance_owed, the act alone, and engine_runnable', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: headDef.id,
       workflowVersion: 1,
       params: {},
@@ -125,7 +125,7 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
   });
 
   it('C8: with the server registry, a capability refusal withdraws the act; with none it is unknown', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: handlerDef.id,
       workflowVersion: 1,
       params: {},
@@ -168,14 +168,14 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
 
   it('C33: the capability check reads the freshest fact — this registry, else the run marker, else unknown', async () => {
     const { advanceRun } = await import('@sensigo/realm');
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: handlerDef.id,
       workflowVersion: 1,
       params: {},
     });
     // An earlier runner that lacked the handler attempted the step: the marker is on the record.
     await advanceRun(runStore, handlerDef, { runId: run.id, registry: new ExtensionRegistry() });
-    expect((await runStore.get(run.id)).capability_blocks?.['enrich']).toBeDefined();
+    expect((await runStore.get(run.id)).record.capability_blocks?.['enrich']).toBeDefined();
 
     // No registry: the marker is the freshest fact — refused, in the past tense, and no act.
     const noRegistry = await handleGetRunState({ run_id: run.id }, { runStore, workflowStore });
@@ -227,7 +227,7 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
 
   it('C46: a server that HAS the handler reports no capability_block finding for the step (the marker stays as history); one that lacks it, or passes none, keeps the finding', async () => {
     const { advanceRun } = await import('@sensigo/realm');
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: handlerDef.id,
       workflowVersion: 1,
       params: {},
@@ -325,12 +325,12 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
     );
     for (const entry of batch.started) {
       expect(entry.next_actions.map((a) => a.instruction?.tool)).toEqual(['advance_run']);
-      expect((await runStore.get(entry.run_id)).completed_steps).toEqual([]);
+      expect((await runStore.get(entry.run_id)).record.completed_steps).toEqual([]);
     }
   });
 
   it("C25: advance_run's reply ends with one clause per step another process claimed", async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: headDef.id,
       workflowVersion: 1,
       params: {},
@@ -357,7 +357,7 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
   });
 
   it('advance_run: continued_by is the absent form when the host passed no driver', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: headDef.id,
       workflowVersion: 1,
       params: {},
@@ -405,7 +405,7 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
     expect(r.next_actions.map((a) => a.instruction?.tool)).toEqual(['execute_step']);
     // The attempt was made and recorded: the marker is on the record, and the reply's version is
     // the record's.
-    const after = await runStore.get(r.run_id);
+    const { record: after } = await runStore.get(r.run_id);
     expect(after.capability_blocks?.['enrich']).toBeDefined();
     expect(r.run_version).toBe(after.version);
     expect(r.run_phase).toBe('running');
@@ -413,7 +413,7 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
 
   it('C52 control: advance_run on the same capability case still returns the error — its own attempt failed', async () => {
     await workflowStore.register(capHeadDef);
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: capHeadDef.id,
       workflowVersion: 1,
       params: {},
@@ -484,7 +484,7 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
       { workflow_id: gateDef.id, params: {} },
       { runStore, workflowStore, registry: lacking },
     );
-    const gate = (await runStore.get(s.run_id)).pending_gate!;
+    const gate = (await runStore.get(s.run_id)).record.pending_gate!;
     const answer = await handleSubmitHumanResponse(
       { run_id: s.run_id, gate_id: gate.gate_id, choice: 'approve' },
       { runStore, workflowStore, registry: lacking },
@@ -689,7 +689,7 @@ describe('#872 (a) — the hand-back hint and engine_runnable.requirement over t
     // marker per call, measured).
     await advanceRun(runStore, twoRoots, { runId, registry: new ExtensionRegistry() });
     await advanceRun(runStore, twoRoots, { runId, registry: new ExtensionRegistry() });
-    const marked = Object.keys((await runStore.get(runId)).capability_blocks ?? {});
+    const marked = Object.keys((await runStore.get(runId)).record.capability_blocks ?? {});
     const hint = String((await batch()).started[0]!.context_hint);
     // (a) red when the marker branch is dropped (the present tense and the way out appear) or the
     //     two steps are said one sentence each; (b) prints the markers and the hint.
@@ -711,7 +711,7 @@ describe('#872 (a) — the hand-back hint and engine_runnable.requirement over t
       },
     };
     await workflowStore.register(mixed);
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: mixed.id,
       workflowVersion: 1,
       params: {},

@@ -127,7 +127,11 @@ describe(
       expired = true,
     ): Promise<{ runId: string; gateId: string }> {
       await workflowStore.register(def);
-      const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runStore.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const opened = await executeStep(runStore, def, {
         runId: run.id,
         command: 'confirm',
@@ -136,7 +140,7 @@ describe(
       });
       if (opened.status !== 'confirm_required') throw new Error(`fixture: ${opened.status}`);
       if (expired) {
-        const record = await runStore.get(run.id);
+        const { record: record } = await runStore.get(run.id);
         await runStore.update({
           ...record,
           pending_gate: {
@@ -193,12 +197,12 @@ describe(
       const a = await atQuestion(gateThenAuto('dc-open-adv', 'settle_default'));
       const b = await atQuestion(gateThenAuto('dc-open-drain', 'settle_default'));
       // (a) red when an expired question is carried out with no call, or a listed call does not carry it out; (b) prints the record.
-      expect((await runStore.get(a.runId)).pending_gate?.gate_id).toBe(a.gateId);
+      expect((await runStore.get(a.runId)).record.pending_gate?.gate_id).toBe(a.gateId);
       expect(realm('run', 'advance', a.runId).code).toBe(0);
-      expect((await runStore.get(a.runId)).pending_gate).toBeUndefined();
+      expect((await runStore.get(a.runId)).record.pending_gate).toBeUndefined();
       const drained = realm('run', 'drain', b.runId, '--expired', '--force');
       expect(drained.code, drained.err.join('\n')).toBe(0);
-      expect((await runStore.get(b.runId)).pending_gate).toBeUndefined();
+      expect((await runStore.get(b.runId)).record.pending_gate).toBeUndefined();
     });
 
     it('C163 gates.md: the sweep `realm listen --sweep-expired-gates` runs on its interval carries an expired question out', async () => {
@@ -208,7 +212,7 @@ describe(
       const swept = await sweepExpiredGates({ runStore, workflowStore, logger } as never);
       // (a) red when the sweep leaves an expired, enactable question open; (b) prints its result.
       expect(swept.enacted).toBe(1);
-      expect((await runStore.get(runId)).pending_gate).toBeUndefined();
+      expect((await runStore.get(runId)).record.pending_gate).toBeUndefined();
     });
 
     it('C163 gates.md: realm run advance prints the expiry line first, after ⚠, naming advance — before the steps it runs', async () => {
@@ -332,7 +336,7 @@ describe(
           steps: { only: { description: 'O.', execution: 'auto', depends_on: [] } },
         } as WorkflowDefinition;
         await workflowStore.register(def);
-        const { run } = await runStore.create({
+        const { record: run } = await runStore.create({
           workflowId: def.id,
           workflowVersion: 1,
           params: {},
@@ -363,7 +367,11 @@ describe(
         },
       } as WorkflowDefinition;
       await workflowStore.register(def);
-      const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runStore.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await executeStep(runStore, def, {
         runId: run.id,
         command: 'a',
@@ -372,7 +380,7 @@ describe(
           throw new Error('the step broke');
         },
       });
-      const failed = await runStore.get(run.id);
+      const { record: failed } = await runStore.get(run.id);
       expect([failed.failed_steps, failed.run_phase], 'fixture').toEqual([['a'], 'running']);
       const refused = realm('run', 'resume', run.id, '--from', 'a');
       // (a) red when resume takes a running run, or no longer takes an abandoned one; (b) prints the output.
@@ -381,7 +389,7 @@ describe(
       expect(realm('run', 'abandon', run.id).code).toBe(0);
       const resumed = realm('run', 'resume', run.id, '--from', 'a');
       expect(resumed.code, resumed.err.join('\n')).toBe(0);
-      const after = await runStore.get(run.id);
+      const { record: after } = await runStore.get(run.id);
       expect([after.run_phase, after.failed_steps]).toEqual(['running', []]);
       const again = await executeStep(runStore, def, {
         runId: run.id,
@@ -406,7 +414,7 @@ describe(
         'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.',
       );
       // Nothing on the record tells a waiting process from none (it writes nothing while it waits).
-      const rec = await runStore.get(runId);
+      const { record: rec } = await runStore.get(runId);
       expect(Object.keys(rec).filter((k) => /attend|lease|watch/.test(k))).toEqual([]);
     });
 
@@ -416,7 +424,11 @@ describe(
         "Those read the workflow from the registry, so they act on the run only once it is registered (`realm workflow register <file>`): for a workflow never registered, `realm run respond`, `realm run advance` and `realm run drain` are refused with `Workflow '<id>' is not registered in this workflow store, …`, and `realm listen` skips the run.",
       );
       const def = gateThenAuto('dc-unregistered', 'settle_default');
-      const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runStore.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const opened = await executeStep(runStore, def, {
         runId: run.id,
         command: 'confirm',
@@ -425,7 +437,7 @@ describe(
       });
       const gateId = opened.gate!.gate_id;
       // The question's time is up, so `drain --expired` has something to act on.
-      const open = await runStore.get(run.id);
+      const { record: open } = await runStore.get(run.id);
       await runStore.update({
         ...open,
         pending_gate: { ...open.pending_gate!, expires_at: '2020-01-01T00:00:00.000Z' },
@@ -442,7 +454,7 @@ describe(
           `Workflow '${def.id}' is not registered in this workflow store, `,
         );
       }
-      expect((await runStore.get(run.id)).pending_gate?.gate_id).toBe(gateId);
+      expect((await runStore.get(run.id)).record.pending_gate?.gate_id).toBe(gateId);
       const logger = { info: () => {}, warn: () => {}, error: () => {} };
       const swept = await sweepExpiredGates({ runStore, workflowStore, logger } as never);
       expect([swept.enacted, swept.skipped_unregistered]).toEqual([0, 1]);
@@ -505,7 +517,7 @@ describe(
             },
           } as unknown as WorkflowDefinition;
           await workflowStore.register(def);
-          const { run } = await runStore.create({
+          const { record: run } = await runStore.create({
             workflowId: def.id,
             workflowVersion: 1,
             params: {},
@@ -525,15 +537,15 @@ describe(
             expect(realm('run', 'abandon', runId).code).toBe(0);
           }
         }
-        expect((await runStore.get(runId)).run_phase, 'fixture').toBe(kind);
+        expect((await runStore.get(runId)).record.run_phase, 'fixture').toBe(kind);
         // `realm run purge --force` on a copy of the ended run (purge refuses a run that goes on, so it
         // is tried while the run is still ended), then `resume` on the run itself.
-        const ended = await runStore.get(runId);
+        const { record: ended } = await runStore.get(runId);
         const copy = (
           await runStore.create({ workflowId: ended.workflow_id, workflowVersion: 1, params: {} })
-        ).run;
+        ).record;
         await runStore.update({ ...ended, id: copy.id, version: copy.version });
-        expect((await runStore.get(copy.id)).run_phase, 'fixture copy').toBe(kind);
+        expect((await runStore.get(copy.id)).record.run_phase, 'fixture copy').toBe(kind);
         const purged = realm('run', 'purge', copy.id, '--force');
         expect(purged.code, [...purged.out, ...purged.err].join('\n')).toBe(0);
         await expect(runStore.get(copy.id)).rejects.toMatchObject({ code: 'STATE_RUN_NOT_FOUND' });
@@ -577,11 +589,15 @@ describe(
           throw new Error('it broke');
         },
       });
-      const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runStore.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const runId = run.id;
       // `s` fails, the run seals failed, and its cleanup step runs and fails too.
       await advanceRun(runStore, def, { runId, registry });
-      const failed = await runStore.get(runId);
+      const { record: failed } = await runStore.get(runId);
       expect([failed.run_phase, failed.failed_steps], 'fixture').toEqual([
         'failed',
         ['s', 'clean'],
@@ -592,7 +608,7 @@ describe(
       const fromClean = realm('run', 'resume', runId, '--from', 'clean');
       const fromS = realm('run', 'resume', runId, '--from', 's');
       const abandoned = realm('run', 'abandon', runId);
-      const cleanOnly = await runStore.get(runId);
+      const { record: cleanOnly } = await runStore.get(runId);
       const second = respond();
       // F2: once an operator abandoned the run it is told that ending, never offered the undo.
       // (a) red when the refusal offers the cleanup step, offers no step while `s` failed, or offers
@@ -689,7 +705,11 @@ describe('#760 — a handler warning on `realm run inspect`, and the record in `
           },
         },
       } as unknown as WorkflowDefinition;
-      const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runStore.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await executeChain(runStore, def, {
         runId: run.id,
         command: 'extract',
@@ -702,7 +722,7 @@ describe('#760 — a handler warning on `realm run inspect`, and the record in `
         },
         dispatcher: async (_n, input) => ({ ...input }),
       });
-      const warn = (await runStore.get(run.id)).evidence.find(
+      const warn = (await runStore.get(run.id)).record.evidence.find(
         (e) => e.step_id === 'quote_check',
       )?.warn;
       const out = await inspectRun(

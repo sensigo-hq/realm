@@ -1,7 +1,7 @@
 // cleanup command — marks idle non-terminal runs as abandoned.
 import { Command } from 'commander';
 import type { RunStore, RunRecord, UnreadableRunFileEntry } from '@sensigo/realm';
-import { WAITING_PHASES, deriveRunPhase, sealRunLevel } from '@sensigo/realm';
+import { WAITING_PHASES, deriveRunPhase, readInstant } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
 import { listRunsDiagnosed, unreadableRunLines } from './list.js';
 
@@ -21,13 +21,13 @@ export async function cleanupRuns(
   runStore: RunStore,
 ): Promise<{ affected: RunRecord[] }> {
   const threshold = parseDuration(options.olderThan);
-  const now = Date.now();
   // issue #719 (B3): act on the readable runs; a damaged run file is reported, never acted on.
-  const { records: all, unreadable } = await listRunsDiagnosed(runStore);
+  // #715 (b) (D-26, D6-41): each run is judged at its OWN snapshot's reading.
+  const { snapshots: all, unreadable } = await listRunsDiagnosed(runStore);
   if (unreadable.length > 0) options.onUnreadable?.(unreadable);
 
   const affected: RunRecord[] = [];
-  for (const run of all) {
+  for (const { record: run, at } of all) {
     if (run.terminal_state) {
       continue;
     }
@@ -42,7 +42,12 @@ export async function cleanupRuns(
     if (run.pending_gate !== undefined || WAITING_PHASES.has(deriveRunPhase(run))) {
       continue;
     }
-    const idleMs = now - new Date(run.updated_at).getTime();
+    // #715 (b) (D-25, D6-29(k)): the idle age through the one stamp reader, at the snapshot's own
+    // reading — an unparseable stamp has no age (as its NaN never reached the threshold before), and a
+    // record stamped ahead of the reading is not idle until the clock passes its stamp.
+    const stamp = readInstant(run.updated_at, 'past_event', at);
+    if ('absent' in stamp) continue;
+    const idleMs = at.getTime() - stamp.ms;
     if (idleMs >= threshold) {
       affected.push(run);
     }
@@ -55,10 +60,15 @@ export async function cleanupRuns(
       // run_phase is retired (the store write tail derives it — the #282 class).
       // issue #558 PR-C: the sweep releases every claim in the same write, exactly as
       // `abandonRun` does — a swept run is abandoned, and an abandoned run holds no claim.
-      await runStore.update({
-        ...sealRunLevel(run, 'cleanup_sweep', 'Marked abandoned by realm cleanup'),
-        in_progress_steps: [],
-        claims: {},
+      // #715 (b) (D-21): through the `seal_run` settlement delta — `abandoned_at` is the write's own
+      // reading, and a run that moved since this sweep read it is thrown as STATE_SNAPSHOT_MISMATCH
+      // (the sweep aborts, as it did when update() threw). No definition (Amendment 1).
+      await runStore.settleStep(run.id, {
+        kind: 'seal_run',
+        arm: 'cleanup_sweep',
+        reason: 'Marked abandoned by realm cleanup',
+        expected_version: run.version,
+        release_claims: true,
       });
     }
   }

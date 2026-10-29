@@ -437,7 +437,7 @@ describe(
       const r = sh(register!);
       // The run asks for gather_input's answer, then for the gate's choice.
       const ran = await interactive(run!, ['{"summary":"A short summary."}', 'approve']);
-      const runs = await runStore.list();
+      const runs = (await runStore.list()).snapshots.map((s) => s.record);
       // (a) red when init fails or makes other files, the page's workflow does not load, validate or
       //     register fails, or the run does not end completed; (b) prints each exit and stderr.
       expect({
@@ -610,7 +610,7 @@ describe(
       expect(
         {
           status: reply['status'],
-          run: (await runStore.list()).length,
+          run: (await runStore.list()).snapshots.map((s) => s.record).length,
           list: [list.code, row?.split(/\s+/).slice(1, 4)],
         },
         JSON.stringify(reply) + list.out + list.err,
@@ -738,7 +738,7 @@ describe(
           command: 'draft',
           params: { subject: 'Office closed Friday', body: 'The office is closed this Friday.' },
         });
-        const gateId = (await runStore.get(runId)).pending_gate?.gate_id ?? '';
+        const gateId = (await runStore.get(runId)).record.pending_gate?.gate_id ?? '';
         expect(gateId, `fixture: no gate on the ${label} run`).not.toBe('');
         return { runId, gateId };
       } finally {
@@ -797,7 +797,7 @@ describe(
       const at = await atGate('limited');
       await new Promise((r) => setTimeout(r, 1_500));
       const drain = sh(fence(page, 'realm run drain').trim());
-      const after = await runStore.get(at.runId);
+      const { record: after } = await runStore.get(at.runId);
       // (a) red when the page's gate does not validate, or drain does not enact the expired gate with
       //     its default; (b) prints the exit, the output and the run.
       expect(
@@ -870,7 +870,7 @@ describe(
       });
       const owed = async (quantity: number) =>
         (await runStore.create({ workflowId: 'price', workflowVersion: 1, params: { quantity } }))
-          .run.id;
+          .record.id;
       const ran: Record<string, unknown> = {};
       const exit = (name: string, r: Ran) => {
         ran[name] = r.code;
@@ -918,7 +918,7 @@ describe(
             ['resumed', broken],
             ['abandoned', open],
           ].map(async ([k, id]) => {
-            const r = await runStore.get(id!);
+            const { record: r } = await runStore.get(id!);
             return [k, [r.run_phase, r.completed_steps]];
           }),
         ),
@@ -985,7 +985,7 @@ describe(
         workflow_id: 'price',
         params: { quantity: 4 },
       }).finally(() => c.close());
-      const total = (await runStore.get(s['run_id'] as string)).evidence.find(
+      const total = (await runStore.get(s['run_id'] as string)).record.evidence.find(
         (e) => e.step_id === 'total',
       );
       // (a) red when the handler does not end the three ways the page says, validate does not load it,
@@ -1042,7 +1042,7 @@ describe(
         env: env(),
         encoding: 'utf8',
       });
-      const runs = await runStore.list();
+      const runs = (await runStore.list()).snapshots.map((s) => s.record);
       // (a) red when the program does not run as written (e.g. `const run = await store.create(…)`,
       //     whose reply is `{ run, created }`), or does not take my_step; (b) prints its stderr.
       expect(
@@ -1096,7 +1096,7 @@ describe(
         env: env(),
         encoding: 'utf8',
       });
-      const runs = await runStore.list();
+      const runs = (await runStore.list()).snapshots.map((s) => s.record);
       // (a) red when the comment's call does not run as written (a wrong argument, a missing one), or
       //     does not run the step the run owes; (b) prints its stderr.
       expect(
@@ -1125,7 +1125,7 @@ describe(
         "    'steps:\\n  get:\\n    description: Get.\\n    execution: auto\\n    uses_service: api\\n    operation: things\\n    input_map:\\n      q: run.params.q\\n',",
         ');',
         'const store = new JsonFileStore();',
-        "const { run } = await store.create({ workflowId: 'api', workflowVersion: 1, params: { q: 'x' } });",
+        "const { record: run } = await store.create({ workflowId: 'api', workflowVersion: 1, params: { q: 'x' } });",
         "const response = await executeStep(store, definition, { runId: run.id, command: 'get', input: {}, registry });",
         'console.log(JSON.stringify([response.status, response.data]));',
         '',
@@ -1211,7 +1211,7 @@ describe(
           ].join('\n'),
         );
         const r = await shAsync(fence(page, '--provider-module ./').trim(), dir);
-        const runs = await runStore.list();
+        const runs = (await runStore.list()).snapshots.map((s) => s.record);
         // (a) red when the module does not load under the name the command gives, or does not drive
         //     the step through Ollama's generate endpoint; (b) prints the exit and stderr.
         expect(

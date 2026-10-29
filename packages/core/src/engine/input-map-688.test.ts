@@ -122,7 +122,7 @@ async function begin(
   registry: ExtensionRegistry,
   answer?: { step: string; output: Record<string, unknown> },
 ): Promise<RunRecord> {
-  const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params });
+  const { record: run } = await store.create({ workflowId: d.id, workflowVersion: 1, params });
   if (answer !== undefined) {
     await executeStep(store, d, {
       runId: run.id,
@@ -132,7 +132,7 @@ async function begin(
       registry,
     });
   }
-  return store.get(run.id);
+  return (await store.get(run.id)).record;
 }
 
 describe('#688 — the issue’s two shapes run, and the view agrees', () => {
@@ -141,7 +141,7 @@ describe('#688 — the issue’s two shapes run, and the view agrees', () => {
       const { registry, seen } = recording();
       const run = await begin(store, SHAPE_A, { num: 3 }, registry);
       const reply = await advanceRun(store, SHAPE_A, { runId: run.id, registry });
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       // (a) red when the schema checks the engine's input (the params `{num: 3}`, which lack `n`): the
       //     step is refused and the handler never called; (b) prints the hint, the steps, the input.
       expect({
@@ -161,7 +161,7 @@ describe('#688 — the issue’s two shapes run, and the view agrees', () => {
         output: { summary: 'hello' },
       });
       const reply = await advanceRun(store, SHAPE_B, { runId: run.id, registry });
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       // (a) red when the schema checks the engine's input (`{}` for a step with depends_on): refused,
       //     the handler never called; (b) prints the hint, the steps and the handler's input.
       expect({
@@ -395,7 +395,7 @@ describe('#688 cell 6 — a corrupted stored map whose schema refuses the engine
           dispatcher: echo,
           registry,
         });
-        const after = await store.get(run.id);
+        const { record: after } = await store.get(run.id);
         // (a) red when the check resolves the map inside its own catch, or checks the engine's
         //     input `{}` (before #688: refused before its claim, `input_schema`); (b) prints the
         //     view's entry, the reply's code, the failed steps and the handler's input.
@@ -436,7 +436,7 @@ describe('#688 cell 7 — each conjunct of the one rule', () => {
         dispatcher: echo,
         registry,
       });
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       // (a) red when an agent step counts as consuming its map (break: drop the kind conjunct): the
       //     map builds `text`, so the empty answer passes; (b) prints the reply's code and the steps.
       expect({ code: reply.error_code, completed: after.completed_steps }).toEqual({

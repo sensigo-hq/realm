@@ -192,7 +192,7 @@ describe(
         ]),
       );
       const outputs = async (id: string) =>
-        (await runStore.get(id)).evidence.map((e) => [
+        (await runStore.get(id)).record.evidence.map((e) => [
           e.step_id,
           e.output_summary,
           e.output_source,
@@ -388,7 +388,7 @@ describe(
       const other = await connect(h, capable);
       await other.call('advance_run', { run_id: id });
       const after = await other.call('get_run_state', { run_id: id });
-      const record = await runStore.get(id);
+      const { record: record } = await runStore.get(id);
       // (a) red when a refused step fails, is dispatched (gets an evidence entry), or runs on the
       //     capable program, or when that program does not run the step with the handler;
       //     (b) prints the record's facts.
@@ -577,7 +577,7 @@ describe(
       //     does not name the step; (b) prints the exit, the record and the line.
       expect({
         code: agent.code,
-        failures: (await runStore.get(id)).drive_failures?.entries.map((f) => [
+        failures: (await runStore.get(id)).record.drive_failures?.entries.map((f) => [
           f.step,
           f.error_class,
         ]),
@@ -593,7 +593,10 @@ describe(
       const advance = realm(h, ['run', 'advance', id]);
       // (a) red when the run does not pick up the corrected definition, or advance does not run the
       //     step; (b) prints advance's screen.
-      expect({ code: advance.code, completed: (await runStore.get(id)).completed_steps }).toEqual({
+      expect({
+        code: advance.code,
+        completed: (await runStore.get(id)).record.completed_steps,
+      }).toEqual({
         code: 0,
         completed: ['s'],
       });
@@ -631,7 +634,7 @@ describe(
       const def = await workflowStore.get('cap');
       const id = await batchRun(call, 'cap');
       // Neither extensions nor a record: unknown, and the act names it (the library and inspect).
-      const record = await runStore.get(id);
+      const { record: record } = await runStore.get(id);
       const fresh = describePending(def, record, undefined, new Date());
       // #729 PR-0: the act is the advance way, as the MCP door renders it from the ways composed by
       // a caller with neither extensions nor a record of them (an observer).
@@ -692,9 +695,9 @@ describe(
       });
       const drive = () => realm(h, ['agent', '--run-id', id, '--provider-module', './p.mjs']);
       const first = drive();
-      const once = await runStore.get(id);
+      const { record: once } = await runStore.get(id);
       const second = drive();
-      const twice = await runStore.get(id);
+      const { record: twice } = await runStore.get(id);
       const attempts = (r: typeof once) => r.evidence.filter((e) => e.step_id === 'h').length;
       // (a) red when a drive does not attempt the step exactly once, does not record the attempt in
       //     capability_blocks, does not judge with its own extensions, or does not end with the
@@ -757,7 +760,7 @@ describe(
         },
       } as never);
       const { call, workflowStore, runStore } = await connect(h, registry);
-      const done = async (id: string) => [...(await runStore.get(id)).completed_steps];
+      const done = async (id: string) => [...(await runStore.get(id)).record.completed_steps];
       await workflowStore.register(
         wf([
           'id: gated',
@@ -799,13 +802,13 @@ describe(
       });
       const afterMatch = await done(id);
       await call('advance_run', { run_id: id });
-      const gateId = (await runStore.get(id)).pending_gate!.gate_id;
+      const gateId = (await runStore.get(id)).record.pending_gate!.gate_id;
       await call('submit_human_response', { run_id: id, gate_id: gateId, choice: 'yes' });
       const afterAnswer = await done(id);
       await call('advance_run', { run_id: id });
       // The same answer from a shell: `realm run respond`.
       const shellRun = (await call('start_run', { workflow_id: 'gated' }))['run_id'] as string;
-      const shellGate = (await runStore.get(shellRun)).pending_gate!.gate_id;
+      const shellGate = (await runStore.get(shellRun)).record.pending_gate!.gate_id;
       const respond = realm(h, [
         'run',
         'respond',
@@ -869,7 +872,7 @@ describe(
       );
       // A step that fails: start_run runs `f`, which fails; `b` is left owed.
       const failed = (await call('start_run', { workflow_id: 'stops' }))['run_id'] as string;
-      const afterFail = [await done(failed), (await runStore.get(failed)).failed_steps];
+      const afterFail = [await done(failed), (await runStore.get(failed)).record.failed_steps];
       await call('advance_run', { run_id: failed });
       // A step that is refused: an answer the schema refuses, in a run where `b` is owed.
       const refused = await batchRun(call, 'refuses');
@@ -954,9 +957,9 @@ describe(
           review_comment: 'Approve. Small change.',
         },
       });
-      const atGate = await runStore.get(id);
+      const { record: atGate } = await runStore.get(id);
       const late = await call('execute_step', { run_id: id, command: 'post_approval', params: {} });
-      const stayed = await runStore.get(id);
+      const { record: stayed } = await runStore.get(id);
       const answer = await call(answerShown.tool!, {
         run_id: id,
         gate_id: atGate.pending_gate!.gate_id,
@@ -981,7 +984,7 @@ describe(
       });
       await call('advance_run', { run_id: id });
       // (a) red when advance_run does not run the owed step; (b) prints the completed steps.
-      expect((await runStore.get(id)).completed_steps).toContain('post_approval');
+      expect((await runStore.get(id)).record.completed_steps).toContain('post_approval');
     });
 
     it('how-a-run-moves.md: realm agent makes the advance_run call for you, and realm run advance runs the owed steps without a model', async () => {
@@ -1012,7 +1015,7 @@ describe(
       );
       const answered = async () => {
         const id = (await call('start_run', { workflow_id: 'owed' }))['run_id'] as string;
-        const gateId = (await runStore.get(id)).pending_gate!.gate_id;
+        const gateId = (await runStore.get(id)).record.pending_gate!.gate_id;
         const r = await call('submit_human_response', {
           run_id: id,
           gate_id: gateId,
@@ -1028,7 +1031,8 @@ describe(
       const agent = realm(h, ['agent', '--run-id', byAgent, '--provider-module', './p.mjs']);
       const shell = realm(h, ['run', 'advance', byShell]);
       await call('advance_run', { run_id: byClient });
-      const phase = async (id: string) => (await runStore.get(id)).completed_steps.includes('post');
+      const phase = async (id: string) =>
+        (await runStore.get(id)).record.completed_steps.includes('post');
       // (a) red when realm agent, realm run advance or advance_run leaves the owed step unrun, or
       //     the model is asked anything; (b) prints the exits and what ran.
       expect({

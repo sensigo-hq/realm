@@ -1158,10 +1158,8 @@ export const STEP_KEY_REGISTRY = {
     finalizer: {
       c: 'consumed',
       where: [
-        {
-          file: EL,
-          pattern: 'const timeoutMs = (step.timeout_seconds ?? DRAIN_CEILING_SECONDS) * 1000;',
-        },
+        // #715 (b), Amendment 2: buildFinalizedSeal's `timeoutMs` witness was deleted with that
+        // function; drainFinalizers' lease is the bound (`withTimeout(…, leaseSeconds * 1000)`).
         {
           file: EL,
           pattern: 'const leaseSeconds = stepDef.timeout_seconds ?? DRAIN_CEILING_SECONDS;',

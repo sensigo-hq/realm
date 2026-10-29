@@ -133,6 +133,7 @@ import { findCapabilityBlockedSteps } from './capability.js';
 import { findEligibleSteps, findEligibleGuardSteps, deriveRunPhase } from './eligibility.js';
 import { classifyStepTrust, buildTrustRefusal } from '../types/workflow-definition.js';
 import { cannotGoOnUntilCorrected, composeWaysAt, type Unavailable } from './ways.js';
+import { parseStamp } from './instants.js';
 
 /**
  * Default age threshold for the `never_claimed_idle` finding (issue #221) — 24 hours. Engine-
@@ -352,11 +353,11 @@ function findDriveFailing(run: RunRecord, now: Date): RunHealthFinding | undefin
   if (run.terminal_state) return undefined;
 
   const lastAt = new Date(lastEntry.at).getTime();
-  const floor = new Date(run.created_at).getTime();
+  const floor = parseStamp(run.created_at) ?? NaN;
   const gateOpened =
-    run.pending_gate !== undefined ? new Date(run.pending_gate.opened_at).getTime() : -Infinity;
+    run.pending_gate !== undefined ? (parseStamp(run.pending_gate.opened_at) ?? NaN) : -Infinity;
   const lastEvidence = run.evidence.reduce(
-    (max, snap) => Math.max(max, new Date(snap.completed_at).getTime()),
+    (max, snap) => Math.max(max, parseStamp(snap.completed_at) ?? NaN),
     -Infinity,
   );
   // NOTE the `<=`, and what it costs: a run created and failed inside the SAME MILLISECOND is
@@ -488,7 +489,7 @@ export function classifyRunHealth(
     for (const [name, entry] of Object.entries(run.finalizer_ledger ?? {})) {
       if (entry.status !== 'pending') continue;
       const isLeased = entry.lease_token !== undefined && entry.lease_deadline !== undefined;
-      const leaseExpired = isLeased && new Date(entry.lease_deadline!).getTime() <= now.getTime();
+      const leaseExpired = isLeased && (parseStamp(entry.lease_deadline!) ?? NaN) <= now.getTime();
       const reason = !isLeased ? 'never_leased' : leaseExpired ? 'lease_expired' : 'lease_held';
       pendingFindings.push({
         kind: 'terminal_pending_finalizer',
@@ -604,9 +605,9 @@ export function classifyRunHealth(
   if (
     run.pending_gate !== undefined &&
     run.pending_gate.expires_at !== undefined &&
-    now.getTime() >= new Date(run.pending_gate.expires_at).getTime()
+    now.getTime() >= (parseStamp(run.pending_gate.expires_at) ?? NaN)
   ) {
-    const overdueMs = now.getTime() - new Date(run.pending_gate.expires_at).getTime();
+    const overdueMs = now.getTime() - (parseStamp(run.pending_gate.expires_at) ?? NaN);
     findings.push({
       kind: 'gate_expired_awaiting_drive',
       step: run.pending_gate.step_name,
@@ -708,13 +709,13 @@ export function classifyRunHealth(
   if (
     derivedPhase === 'running' &&
     run.in_progress_steps.length === 0 &&
-    now.getTime() - new Date(run.updated_at).getTime() >= idleThresholdMs
+    now.getTime() - (parseStamp(run.updated_at) ?? NaN) >= idleThresholdMs
   ) {
     findings.push({
       kind: 'never_claimed_idle',
       reason: 'parked with no claimed step, idle',
       since: run.updated_at,
-      idle_ms: now.getTime() - new Date(run.updated_at).getTime(),
+      idle_ms: now.getTime() - (parseStamp(run.updated_at) ?? NaN),
       evidence: {
         idle_threshold_ms: idleThresholdMs,
         ...(opts?.definition !== undefined

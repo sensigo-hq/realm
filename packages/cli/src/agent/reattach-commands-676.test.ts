@@ -47,7 +47,7 @@ describe('realm run resume prints the model flags to fill in (issue #676)', () =
       // Built AFTER HOME is set: both stores resolve their folder at construction.
       const runStore = new JsonFileStore();
       await new JsonWorkflowStore().register(workflow);
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: workflow.id,
         workflowVersion: 1,
         params: {},
@@ -177,7 +177,7 @@ describe('a drive blocked by a missing handler repeats its own model flags (issu
     } as unknown as AgentDeps;
     await runAgent(deps, { definition: BLOCKED_WF, params: {} });
     vi.restoreAllMocks();
-    const runs = await store.list();
+    const runs = (await store.list()).snapshots.map((s) => s.record);
     const line = errors
       .join('\n')
       .split('\n')
@@ -373,7 +373,11 @@ describe('the Go on: line repeats a stated --prompt-cache (issue #600 PR 2)', ()
       steps: { write: { description: 'Write', execution: 'agent' } },
     };
     const store = new InMemoryStore();
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await store.claimStep(run.id, 'write', def, {
       by: 'someone-else',
       by_source: 'stated',

@@ -173,7 +173,7 @@ async function endedRun() {
   await h.workflowStore.register(gated('docs-ended'));
   const s = await h.call('start_run', { workflow_id: 'docs-ended' });
   const runId = s['run_id'] as string;
-  const gateId = (await h.runStore.get(runId)).pending_gate!.gate_id;
+  const gateId = (await h.runStore.get(runId)).record.pending_gate!.gate_id;
   await h.call('submit_human_response', { run_id: runId, gate_id: gateId, choice: 'approve' });
   const done = await h.call('advance_run', { run_id: runId });
   expect(done['run_phase'], 'fixture: the run did not complete').toBe('completed');
@@ -299,7 +299,7 @@ describe('#625 PR-2a, C163 — tools.md: the reply table, sentence by sentence, 
     });
     if (owner !== undefined) {
       expect(String((r['errors'] as string[])[0])).toContain(owner);
-      expect((await runStore.list()).length).toBe(1);
+      expect((await runStore.list()).snapshots.map((s) => s.record).length).toBe(1);
     }
   });
 
@@ -312,7 +312,7 @@ describe('#625 PR-2a, C163 — tools.md: the reply table, sentence by sentence, 
     await workflowStore.register(SCHEMA);
     const runId = (await call('start_run', { workflow_id: SCHEMA.id }))['run_id'] as string;
     const first = await call('execute_step', { run_id: runId, command: 'ask', params: { n: 'x' } });
-    const stored = (await runStore.get(runId)).version;
+    const stored = (await runStore.get(runId)).record.version;
     const second = await call('execute_step', {
       run_id: runId,
       command: 'ask',
@@ -344,7 +344,7 @@ describe('#625 PR-2a, C163 — tools.md: the reply table, sentence by sentence, 
     // (a) red when the exhausting refusal reports a number from before its writes; (b) prints it.
     expect({ code: r['error_code'], reply: r['run_version'] }).toEqual({
       code: 'VALIDATION_EXHAUSTED',
-      reply: (await runStore.get(runId)).version,
+      reply: (await runStore.get(runId)).record.version,
     });
   });
 
@@ -535,7 +535,7 @@ describe('#625 PR-2a, C154 — tools.md and gates.md: every tool on a run that h
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(gated('docs-abort', 'abort'));
     const runId = (await call('start_run', { workflow_id: 'docs-abort' }))['run_id'] as string;
-    const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
+    const gateId = (await runStore.get(runId)).record.pending_gate!.gate_id;
     await new Promise((resolve) => setTimeout(resolve, 1_100));
     const carried = await call('advance_run', { run_id: runId });
     expect(carried['run_phase'], 'fixture: the abort was not carried out').toBe('aborted');
@@ -626,7 +626,7 @@ describe('#625 PR-2a, C163 — tools.md: blocked and resolve_precondition, sente
         'The step you called does not run again if it has already completed or been skipped; one that has failed runs again only after [`realm run resume --from <step>`](../cli/realm-run-acting.md#resume) makes it runnable, and `resume` takes only a run that has ended (`failed` or `abandoned`): while the run goes on, end it first with `abandon_run`;',
       );
       const { call, runStore, runId } = await atB();
-      const before = await runStore.get(runId);
+      const { record: before } = await runStore.get(runId);
       const step = kind === 'completed' ? 'a' : kind === 'skipped' ? 'skipme' : 'fails';
       expect(
         kind === 'completed'
@@ -647,7 +647,7 @@ describe('#625 PR-2a, C163 — tools.md: blocked and resolve_precondition, sente
       expect(String(r['context_hint'])).toBe(
         `Step '${step}' cannot be called now: ${why}. Ready for the agent: 'b'.`,
       );
-      expect((await runStore.get(runId)).version).toBe(before.version);
+      expect((await runStore.get(runId)).record.version).toBe(before.version);
     },
   );
 
@@ -676,7 +676,7 @@ describe('#625 PR-2a, C163 — tools.md: blocked and resolve_precondition, sente
       },
     } as WorkflowDefinition;
     await c.workflowStore.register(withEngine);
-    const { run } = await c.runStore.create({
+    const { record: run } = await c.runStore.create({
       workflowId: withEngine.id,
       workflowVersion: 1,
       params: {},
@@ -697,7 +697,7 @@ describe('#625 PR-2a, C163 — tools.md: blocked and resolve_precondition, sente
         (again['blocked_reason'] as { eligible_steps: string[] }).eligible_steps,
       ],
       byName: [byName['status'], next(byName)],
-      ran: (await c.runStore.get(run.id)).completed_steps.includes('u'),
+      ran: (await c.runStore.get(run.id)).record.completed_steps.includes('u'),
     }).toEqual({
       again: ['blocked', ['u']],
       byName: ['blocked', ['advance_run:']],
@@ -727,7 +727,7 @@ describe('#625 PR-2a, C163 — tools.md: blocked and resolve_precondition, sente
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(gated('docs-act'));
     const runId = (await call('start_run', { workflow_id: 'docs-act' }))['run_id'] as string;
-    const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
+    const gateId = (await runStore.get(runId)).record.pending_gate!.gate_id;
     await call('submit_human_response', { run_id: runId, gate_id: gateId, choice: 'approve' });
     const r = await call('execute_step', { run_id: runId, command: 'confirm', params: {} });
     expect([
@@ -828,7 +828,7 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
     await workflowStore.register(gated('docs-shape'));
     const started = await call('start_run', { workflow_id: 'docs-shape' });
     const runId = started['run_id'] as string;
-    const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
+    const gateId = (await runStore.get(runId)).record.pending_gate!.gate_id;
     const r =
       tool === 'start_run'
         ? started
@@ -976,7 +976,7 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
       gate_id: 'g',
       choice: 'x',
     });
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'never-registered',
       workflowVersion: 1,
       params: {},
@@ -1077,7 +1077,7 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(gated('docs-owed'));
     const runId = (await call('start_run', { workflow_id: 'docs-owed' }))['run_id'] as string;
-    const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
+    const gateId = (await runStore.get(runId)).record.pending_gate!.gate_id;
     await call('submit_human_response', { run_id: runId, gate_id: gateId, choice: 'approve' });
     const r = await call('execute_step', { run_id: runId, command: 'confirm', params: {} });
     expect([
@@ -1089,7 +1089,7 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
     // #729 (the Q3 unit, D3): the engine step `eligible_steps` names is never run by name — the
     // agent's execute_step naming it is refused and told advance_run, which runs it.
     const byName = await call('execute_step', { run_id: runId, command: 'after', params: {} });
-    const notRun = (await runStore.get(runId)).completed_steps.includes('after');
+    const notRun = (await runStore.get(runId)).record.completed_steps.includes('after');
     await call('advance_run', { run_id: runId });
     // (a) red when execute_step naming the engine step runs it, or advance_run does not;
     //     (b) prints the status, the calls offered and whether the step ran.
@@ -1097,7 +1097,7 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
       byName['status'],
       next(byName),
       notRun,
-      (await runStore.get(runId)).completed_steps.includes('after'),
+      (await runStore.get(runId)).record.completed_steps.includes('after'),
     ]).toEqual(['blocked', ['advance_run:'], false, true]);
   });
 
@@ -1109,7 +1109,7 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(FORK);
     const runId = (await call('start_run', { workflow_id: FORK.id }))['run_id'] as string;
-    const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
+    const gateId = (await runStore.get(runId)).record.pending_gate!.gate_id;
     await call('submit_human_response', { run_id: runId, gate_id: gateId, choice: 'yes' });
     const r = await call('execute_step', { run_id: runId, command: 'g', params: {} });
     expect([next(r), (r['blocked_reason'] as { suggestion: string }).suggestion]).toEqual([
@@ -1178,7 +1178,7 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
     const runId = (await call('start_run', { workflow_id: STEPS.id, params: { path: '/x' } }))[
       'run_id'
     ] as string;
-    const before = (await runStore.get(runId)).version;
+    const before = (await runStore.get(runId)).record.version;
     const r = await call('execute_step', { run_id: runId, command: 'b', params: {} });
     expect([r['status'], r['agent_action'], next(r), r['context_hint']]).toEqual([
       'blocked',
@@ -1186,7 +1186,7 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
       ['execute_step:a'],
       "Step 'b' cannot be called now: its dependencies are not settled ('a'). Ready for the agent: 'a'.",
     ]);
-    expect((await runStore.get(runId)).version).toBe(before);
+    expect((await runStore.get(runId)).record.version).toBe(before);
   });
 
   it('C163 not ready: a step that waits on the question — its choices, answer it with submit_human_response, the answer in next_actions without a claim_token', async () => {
@@ -1418,7 +1418,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
       workflow_id: AGENT_THEN_AUTO.id,
       idempotency_key: 'k',
     });
-    const version = (await runStore.get(first['run_id'] as string)).version;
+    const version = (await runStore.get(first['run_id'] as string)).record.version;
     const again = await call('start_run', {
       workflow_id: AGENT_THEN_AUTO.id,
       idempotency_key: 'k',
@@ -1426,7 +1426,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     expect(again['context_hint']).toBe(
       `Matched existing run '${String(first['run_id'])}' (idempotent) in phase 'running'; no new run created. Ready for the agent: 'ask'.`,
     );
-    expect((await runStore.get(first['run_id'] as string)).version).toBe(version);
+    expect((await runStore.get(first['run_id'] as string)).record.version).toBe(version);
   });
 
   it("C163 start_run_batch: each entry's next_actions names its run's first call, its hint the creation sentence and what comes next", async () => {
@@ -1535,7 +1535,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     await workflowStore.register(gated('docs-wrong-exp', 'settle_default'));
     await workflowStore.register(STUCK);
     const open = (await call('start_run', { workflow_id: 'docs-wrong' }))['run_id'] as string;
-    const g = (await runStore.get(open)).pending_gate!.gate_id;
+    const g = (await runStore.get(open)).record.pending_gate!.gate_id;
     const r = await call('submit_human_response', {
       run_id: open,
       gate_id: 'x',
@@ -1549,7 +1549,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
       `Gate 'x' is not the open gate and matches no committed resolution. The open question is on step 'confirm' (gate '${g}') — answer it as next_actions says.`,
     ]);
     const exp = (await call('start_run', { workflow_id: 'docs-wrong-exp' }))['run_id'] as string;
-    const ge = (await runStore.get(exp)).pending_gate!.gate_id;
+    const ge = (await runStore.get(exp)).record.pending_gate!.gate_id;
     await new Promise((resolve) => setTimeout(resolve, 1_100));
     const late = await call('submit_human_response', {
       run_id: exp,
@@ -1591,7 +1591,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(gated('docs-late', 'settle_default'));
     const runId = (await call('start_run', { workflow_id: 'docs-late' }))['run_id'] as string;
-    const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
+    const gateId = (await runStore.get(runId)).record.pending_gate!.gate_id;
     await new Promise((resolve) => setTimeout(resolve, 1_100));
     const r = await call('submit_human_response', {
       run_id: runId,
@@ -1626,7 +1626,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(gated('docs-intime'));
     const runId = (await call('start_run', { workflow_id: 'docs-intime' }))['run_id'] as string;
-    const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
+    const gateId = (await runStore.get(runId)).record.pending_gate!.gate_id;
     const r = await call('submit_human_response', {
       run_id: runId,
       gate_id: gateId,
@@ -1675,7 +1675,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(gated('docs-adv', 'settle_default'));
     const runId = (await call('start_run', { workflow_id: 'docs-adv' }))['run_id'] as string;
-    const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
+    const gateId = (await runStore.get(runId)).record.pending_gate!.gate_id;
     await new Promise((resolve) => setTimeout(resolve, 1_100));
     const r = await call('advance_run', { run_id: runId });
     expect(lagless(r['warnings'])).toContain(
@@ -1701,7 +1701,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     const a = (await call('start_run', { workflow_id: 'docs-adv-abort' }))['run_id'] as string;
     const none = (await call('start_run', { workflow_id: 'docs-adv-none' }))['run_id'] as string;
     const notUp = await call('advance_run', { run_id: a });
-    expect([notUp['status'], (await runStore.get(a)).pending_gate !== undefined]).toEqual([
+    expect([notUp['status'], (await runStore.get(a)).record.pending_gate !== undefined]).toEqual([
       'ok',
       true,
     ]);
@@ -1713,10 +1713,10 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
       ),
     ).toBe(true);
     const untouched = await call('advance_run', { run_id: none });
-    expect([untouched['status'], (await runStore.get(none)).pending_gate !== undefined]).toEqual([
-      'ok',
-      true,
-    ]);
+    expect([
+      untouched['status'],
+      (await runStore.get(none)).record.pending_gate !== undefined,
+    ]).toEqual(['ok', true]);
   });
 
   it('C163 advance_run: at an open question — nothing ran, the answer offered without a claim_token; nothing owed is never an error', async () => {
@@ -1810,7 +1810,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     );
     expect(String(r['context_hint']).endsWith(WAY_OUT)).toBe(true);
     expect(next(r)).toEqual([]);
-    expect((await runStore.get(runId)).completed_steps).not.toContain('blk');
+    expect((await runStore.get(runId)).record.completed_steps).not.toContain('blk');
     const state = await call('get_run_state', { run_id: runId });
     expect(JSON.stringify(state['engine_runnable'])).toContain('"blk"');
   });
@@ -1871,7 +1871,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(FORK);
     const runId = (await call('start_run', { workflow_id: FORK.id }))['run_id'] as string;
-    const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
+    const gateId = (await runStore.get(runId)).record.pending_gate!.gate_id;
     const r = await call('submit_human_response', {
       run_id: runId,
       gate_id: gateId,
@@ -1954,7 +1954,7 @@ describe('#625 PR-2a, C163 — gates.md: what happens at expiry over MCP, senten
       'awaiting_human',
     ]);
     await call('advance_run', { run_id: none });
-    expect((await runStore.get(none)).pending_gate).toBeDefined();
+    expect((await runStore.get(none)).record.pending_gate).toBeDefined();
   });
 
   it('C163 gates.md: the status is claim_stale when another step’s claim is past its time', async () => {
@@ -1974,7 +1974,11 @@ describe('#625 PR-2a, C163 — gates.md: what happens at expiry over MCP, senten
     } as WorkflowDefinition;
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(def);
-    const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runStore.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const runId = run.id;
     await runStore.claimStep(runId, 'x', def);
     const opened = await executeStep(runStore, def, {
@@ -1984,7 +1988,7 @@ describe('#625 PR-2a, C163 — gates.md: what happens at expiry over MCP, senten
       dispatcher: async () => ({}),
     });
     expect(opened.status, 'fixture: the question opens beside the claim').toBe('confirm_required');
-    const rec = await runStore.get(runId);
+    const { record: rec } = await runStore.get(runId);
     expect(rec.pending_gate, 'fixture: the question is open').toBeDefined();
     await runStore.update({
       ...rec,
@@ -2001,7 +2005,7 @@ describe('#625 PR-2a, C163 — gates.md: what happens at expiry over MCP, senten
       'A server that cannot read the workflow says `workflow_unresolved` instead.',
     );
     const { call, runStore } = await connect();
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'never-registered',
       workflowVersion: 1,
       params: {},
@@ -2045,9 +2049,9 @@ describe('#625 PR-2a, C163 — gates.md: what happens at expiry over MCP, senten
     await new Promise((resolve) => setTimeout(resolve, 1_100));
     for (const tool of ['submit_human_response', 'execute_step', 'advance_run'] as const) {
       const runId = runs[tool]!;
-      const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
+      const gateId = (await runStore.get(runId)).record.pending_gate!.gate_id;
       expect(
-        (await runStore.get(runId)).pending_gate,
+        (await runStore.get(runId)).record.pending_gate,
         `${tool}: still open until a call acts`,
       ).toBeDefined();
       const r =
@@ -2119,7 +2123,11 @@ describe('#625 PR-2a, C163 — tools.md: each tool and case a sentence names tha
       },
     } as WorkflowDefinition;
     await workflowStore.register(def);
-    const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runStore.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await executeStep(runStore, def, {
       runId: run.id,
       command: 'ask',
@@ -2208,7 +2216,7 @@ describe('#625 PR-2a, C163 — tools.md: each tool and case a sentence names tha
     await call('execute_step', { run_id: runId, command: 'a', params: { go: false } });
     await call('abandon_run', { run_id: runId });
     const { applyResume } = await import('@sensigo/realm');
-    await runStore.update(applyResume(await runStore.get(runId), 'fails', STEPS).run);
+    await runStore.update(applyResume((await runStore.get(runId)).record, 'fails', STEPS).run);
     const state = await call('get_run_state', { run_id: runId });
     expect(next(state).at(-1)).toBe('advance_run:');
   });
@@ -2271,7 +2279,7 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
         await call('abandon_run', { run_id: runId });
       }
       const phase = kind === 'abandoned after a failed step' ? 'abandoned' : kind;
-      expect((await runStore.get(runId)).run_phase, 'fixture').toBe(phase);
+      expect((await runStore.get(runId)).record.run_phase, 'fixture').toBe(phase);
       const r = await call('submit_human_response', {
         run_id: runId,
         gate_id: 'other',
@@ -2280,7 +2288,7 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
       const purge = `'realm run purge ${runId}' previews what it would remove`;
       // F2: a run an operator ended (both abandoned kinds) is told the ending and its reason, never
       // offered `realm run resume`.
-      const reason = JSON.stringify((await runStore.get(runId)).terminal_reason);
+      const reason = JSON.stringify((await runStore.get(runId)).record.terminal_reason);
       const wayOut =
         kind === 'aborted'
           ? `an aborted run is never resumed; ${purge}.`
@@ -2339,7 +2347,7 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
     await call('execute_step', { run_id: runId, command: 'a', params: {} });
     // `one` fails in the chain `a` starts; advance_run runs `two`, which fails too — `last` can never run.
     await call('advance_run', { run_id: runId });
-    const run = await runStore.get(runId);
+    const { record: run } = await runStore.get(runId);
     expect([run.run_phase, [...run.failed_steps].sort()], 'fixture').toEqual([
       'failed',
       ['one', 'two'],
@@ -2384,11 +2392,15 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
         throw new Error('it broke');
       },
     });
-    const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runStore.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const runId = run.id;
     // `s` fails, the run seals failed, and its cleanup step runs and fails too.
     await advanceRun(runStore, def, { runId, registry });
-    const failed = await runStore.get(runId);
+    const { record: failed } = await runStore.get(runId);
     expect([failed.run_phase, failed.failed_steps], 'fixture').toEqual(['failed', ['s', 'clean']]);
     const answer = () =>
       call('submit_human_response', { run_id: runId, gate_id: 'other', choice: 'approve' });
@@ -2396,9 +2408,9 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
     const first = await answer();
     // Then only the cleanup step is failed: `s` resumed (it leaves `clean` listed), the run abandoned.
     const { applyResume } = await import('@sensigo/realm');
-    await runStore.update(applyResume(await runStore.get(runId), 's', def).run);
+    await runStore.update(applyResume((await runStore.get(runId)).record, 's', def).run);
     await call('abandon_run', { run_id: runId });
-    const cleanOnly = await runStore.get(runId);
+    const { record: cleanOnly } = await runStore.get(runId);
     expect([cleanOnly.run_phase, cleanOnly.failed_steps], 'fixture').toEqual([
       'abandoned',
       ['clean'],
@@ -2426,7 +2438,7 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(gated('r21-exp', 'settle_default'));
     const runId = (await call('start_run', { workflow_id: 'r21-exp' }))['run_id'] as string;
-    const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
+    const gateId = (await runStore.get(runId)).record.pending_gate!.gate_id;
     await new Promise((resolve) => setTimeout(resolve, 1_100));
     await call('advance_run', { run_id: runId });
     const r = await call('submit_human_response', {
@@ -2617,7 +2629,8 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
         },
       } as WorkflowDefinition);
       const runId = (await call('start_run', { workflow_id: id }))['run_id'] as string;
-      const { gate_id: gateId, expires_at: expiresAt } = (await runStore.get(runId)).pending_gate!;
+      const { gate_id: gateId, expires_at: expiresAt } = (await runStore.get(runId)).record
+        .pending_gate!;
       await new Promise((resolve) => setTimeout(resolve, 1_100));
       if (earlier) await call('advance_run', { run_id: runId });
       const r = await call('submit_human_response', {
@@ -2703,7 +2716,8 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
       },
     } as WorkflowDefinition);
     const runId = (await call('start_run', { workflow_id: 'r23-example' }))['run_id'] as string;
-    const { gate_id: gateId, expires_at: expiresAt } = (await runStore.get(runId)).pending_gate!;
+    const { gate_id: gateId, expires_at: expiresAt } = (await runStore.get(runId)).record
+      .pending_gate!;
     await new Promise((resolve) => setTimeout(resolve, 1_100));
     const r = await call('submit_human_response', {
       run_id: runId,
@@ -2907,7 +2921,11 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
     // renderer leaves out both the field and the sentence.
     const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-docs-c2-')));
     const def = loadWorkflowFromString(TRIAGE);
-    const { run } = await store.create({ workflowId: 'triage', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'triage',
+      workflowVersion: 1,
+      params: {},
+    });
     await executeStep(store, def, {
       runId: run.id,
       command: 'classify',
@@ -2979,7 +2997,7 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(gated('r22-exp', 'settle_default'));
     const runId = (await call('start_run', { workflow_id: 'r22-exp' }))['run_id'] as string;
-    const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
+    const gateId = (await runStore.get(runId)).record.pending_gate!.gate_id;
     await new Promise((resolve) => setTimeout(resolve, 1_100));
     await call('advance_run', { run_id: runId });
     const late = await call('submit_human_response', {
@@ -3083,7 +3101,11 @@ describe('#625 PR-2a, round 28 — C205: the replies on the states C202 did not 
       ].join('\n'),
     );
     await workflowStore.register(def);
-    const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runStore.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const first = await call('advance_run', { run_id: run.id });
     const second = await call('advance_run', { run_id: run.id });
     const offer = `To make the failed step runnable again: realm run resume ${run.id} --from s`;
@@ -3120,9 +3142,13 @@ describe('#625 PR-2a, round 28 — C205: the replies on the states C202 did not 
       ].join('\n'),
     );
     await workflowStore.register(def);
-    const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runStore.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await call('advance_run', { run_id: run.id });
-    const gateId = (await runStore.get(run.id)).pending_gate!.gate_id;
+    const gateId = (await runStore.get(run.id)).record.pending_gate!.gate_id;
     const r = await call('submit_human_response', {
       run_id: run.id,
       gate_id: gateId,
@@ -3158,7 +3184,7 @@ describe('#625 PR-2a, round 28 — C205: the replies on the states C202 did not 
       ].join('\n'),
     );
     await workflowStore.register(def);
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: def.id,
       workflowVersion: 1,
       params: {},
@@ -3200,10 +3226,14 @@ describe('#625 PR-2a, round 28 — C205: the replies on the states C202 did not 
       ].join('\n'),
     );
     await workflowStore.register(def);
-    const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runStore.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await runStore.claimStep(run.id, 'p', def, OTHER);
     await call('advance_run', { run_id: run.id });
-    const gateId = (await runStore.get(run.id)).pending_gate!.gate_id;
+    const gateId = (await runStore.get(run.id)).record.pending_gate!.gate_id;
     const r = await call('submit_human_response', {
       run_id: run.id,
       gate_id: gateId,
@@ -3302,14 +3332,14 @@ describe("#625 PR-2a, round 30 — C211 (the architect's addendum; walk c14 W2-2
         ...auto('s', 'boom', ['a']),
       ]),
     );
-    const { run: chained } = await runStore.create({
+    const { record: chained } = await runStore.create({
       workflowId: 'c211-exec',
       workflowVersion: 1,
       params: {},
     });
     const viaChain = await call('execute_step', { run_id: chained.id, command: 'a', params: {} });
     await workflowStore.register(steps('c211-own', [...auto('s', 'boom')]));
-    const { run: own } = await runStore.create({
+    const { record: own } = await runStore.create({
       workflowId: 'c211-own',
       workflowVersion: 1,
       params: {},
@@ -3336,7 +3366,11 @@ describe("#625 PR-2a, round 30 — C211 (the architect's addendum; walk c14 W2-2
   it('advance_run and submit_human_response: an ending that left a cleanup step pending ends with the command that runs it', async () => {
     const { call, runStore, workflowStore } = await connectWith();
     await workflowStore.register(steps('c211-p', [...auto('a', 'quick'), ...tidy]));
-    const { run } = await runStore.create({ workflowId: 'c211-p', workflowVersion: 1, params: {} });
+    const { record: run } = await runStore.create({
+      workflowId: 'c211-p',
+      workflowVersion: 1,
+      params: {},
+    });
     const advanced = await call('advance_run', { run_id: run.id });
     const again = await call('advance_run', { run_id: run.id });
     await workflowStore.register(
@@ -3355,13 +3389,13 @@ describe("#625 PR-2a, round 30 — C211 (the architect's addendum; walk c14 W2-2
         ...tidy,
       ]),
     );
-    const { run: q } = await runStore.create({
+    const { record: q } = await runStore.create({
       workflowId: 'c211-p-answer',
       workflowVersion: 1,
       params: {},
     });
     await call('advance_run', { run_id: q.id });
-    const gate = (await runStore.get(q.id)).pending_gate!.gate_id;
+    const gate = (await runStore.get(q.id)).record.pending_gate!.gate_id;
     const answered = await call('submit_human_response', {
       run_id: q.id,
       gate_id: gate,
@@ -3399,13 +3433,13 @@ describe("#625 PR-2a, round 30 — C211 (the architect's addendum; walk c14 W2-2
         '    abort_unless: ["nope.x == 1"]',
       ]),
     );
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'c211-late',
       workflowVersion: 1,
       params: {},
     });
     await call('advance_run', { run_id: run.id });
-    const r = await runStore.get(run.id);
+    const { record: r } = await runStore.get(run.id);
     await runStore.update({
       ...r,
       pending_gate: { ...r.pending_gate!, expires_at: new Date(Date.now() - 60_000).toISOString() },
@@ -3445,7 +3479,7 @@ describe("#625 PR-2a, round 30 — C211 (the architect's addendum; walk c14 W2-2
     );
     const { call, runStore, workflowStore } = await connectWith();
     await workflowStore.register(steps('c211-r', [...auto('s', 'boom'), ...tidy]));
-    const { run: failed } = await runStore.create({
+    const { record: failed } = await runStore.create({
       workflowId: 'c211-r',
       workflowVersion: 1,
       params: {},
@@ -3470,7 +3504,7 @@ describe("#625 PR-2a, round 30 — C211 (the architect's addendum; walk c14 W2-2
         ...auto('z', 'quick', ['g0']),
       ]),
     );
-    const { run: w } = await runStore.create({
+    const { record: w } = await runStore.create({
       workflowId: 'c211-w',
       workflowVersion: 1,
       params: {},
@@ -3478,7 +3512,7 @@ describe("#625 PR-2a, round 30 — C211 (the architect's addendum; walk c14 W2-2
     await call('advance_run', { run_id: w.id });
     await call('submit_human_response', {
       run_id: w.id,
-      gate_id: (await runStore.get(w.id)).pending_gate!.gate_id,
+      gate_id: (await runStore.get(w.id)).record.pending_gate!.gate_id,
       choice: 'go',
     });
     await call('advance_run', { run_id: w.id });
@@ -3516,7 +3550,11 @@ describe('#729 Q3 — tools.md: an automatic step called by name is the engine�
     d: WorkflowDefinition,
   ): Promise<string> {
     await c.workflowStore.register(d);
-    const { run } = await c.runStore.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await c.runStore.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await executeStep(c.runStore, d, {
       runId: run.id,
       command: 'a',
@@ -3546,7 +3584,7 @@ describe('#729 Q3 — tools.md: an automatic step called by name is the engine�
       params: { mine: 'AGENT' },
     });
     await c.call('advance_run', { run_id: runId });
-    const after = await c.runStore.get(runId);
+    const { record: after } = await c.runStore.get(runId);
     const b = after.evidence.find((e) => e.step_id === 'b');
     // (a) red when the step runs on the call, the hint or routing differ, or advance_run runs it on
     //     the caller's params; (b) prints the fields and whether the params reached the record.
@@ -3591,7 +3629,7 @@ describe('#729 Q3 — tools.md: an automatic step called by name is the engine�
     //     the input's key names and whether the step completed.
     expect({
       inputKeys: seen.map((p) => Object.keys(p)),
-      ran: (await ch.runStore.get(handlerRun)).completed_steps.includes('u'),
+      ran: (await ch.runStore.get(handlerRun)).record.completed_steps.includes('u'),
     }).toEqual({ inputKeys: [[]], ran: true });
   });
 
@@ -3609,9 +3647,9 @@ describe('#729 Q3 — tools.md: an automatic step called by name is the engine�
         k: { description: 'K.', execution: 'auto', depends_on: ['a'], handler: 'missing' },
       }),
     );
-    const before = await c.runStore.get(runId);
+    const { record: before } = await c.runStore.get(runId);
     const r = await c.call('execute_step', { run_id: runId, command: 'k', params: {} });
-    const after = await c.runStore.get(runId);
+    const { record: after } = await c.runStore.get(runId);
     // (a) red when the call claims the step or records the block, or names a call; (b) prints them.
     expect({
       next: next(r),
@@ -3686,7 +3724,10 @@ describe('#729 Q3 — tools.md: an automatic step called by name is the engine�
     // (a) red when an agent step's answer is not recorded, or an engine step is run by it; (b)
     //     prints the statuses and what completed.
     expect({
-      answer: [answer['status'], (await c.runStore.get(runId)).completed_steps.includes('a')],
+      answer: [
+        answer['status'],
+        (await c.runStore.get(runId)).record.completed_steps.includes('a'),
+      ],
       engineStep: engineStep['status'],
     }).toEqual({ answer: ['ok', true], engineStep: 'blocked' });
   });
@@ -3725,7 +3766,7 @@ describe('#729 Q3 — tools.md: an automatic step called by name is the engine�
     expect({
       first: next(entry),
       named: named['status'],
-      ran: (await c.runStore.get(runId)).completed_steps,
+      ran: (await c.runStore.get(runId)).record.completed_steps,
       agentFirst: next((agentBatch['started'] as Reply[])[0]!),
     }).toEqual({
       first: ['advance_run:'],

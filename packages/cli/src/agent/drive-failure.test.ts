@@ -21,6 +21,8 @@ import { setAdditionalRedactionValues } from './providers/agent-utils.js';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import { runAgent, type AgentDeps } from './run-agent.js';
 import { LlmProvider } from './providers/llm-provider.js';
+import { snap } from '../test-support/snapshot-double.js';
+import type { Snapshot } from '@sensigo/realm';
 
 function makeRun(over: Partial<RunRecord> = {}): RunRecord {
   return {
@@ -65,11 +67,11 @@ function makeStore(run: RunRecord, updateBehaviour: Array<'ok' | string> = ['ok'
       return current;
     },
     store: {
-      get: async (): Promise<RunRecord> => {
+      get: async (): Promise<Snapshot> => {
         calls.get++;
-        return current;
+        return snap(current);
       },
-      update: async (record: RunRecord): Promise<RunRecord> => {
+      update: async (record: RunRecord): Promise<Snapshot> => {
         calls.update++;
         const behaviour = updateBehaviour[i++] ?? 'ok';
         if (behaviour !== 'ok') {
@@ -81,7 +83,7 @@ function makeStore(run: RunRecord, updateBehaviour: Array<'ok' | string> = ['ok'
           });
         }
         current = { ...record, version: record.version + 1 };
-        return current;
+        return snap(current);
       },
     },
   };
@@ -142,8 +144,8 @@ describe('recordDriveFailure — the fence (issue #401)', () => {
   it('a NON-retryable throw also degrades to the loud line — distinct from exhaustion', async () => {
     // The other-throw arm: a disk error is not contention, so there is nothing to re-apply.
     const store = {
-      get: async (): Promise<RunRecord> => makeRun(),
-      update: async (): Promise<RunRecord> => {
+      get: async (): Promise<Snapshot> => snap(makeRun()),
+      update: async (): Promise<Snapshot> => {
         throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' });
       },
     };
@@ -161,7 +163,7 @@ describe('recordDriveFailure — the fence (issue #401)', () => {
 
   it('a vanished run is a SILENT skip — disposal is the visibility', async () => {
     const store = {
-      get: async (): Promise<RunRecord> => {
+      get: async (): Promise<Snapshot> => {
         throw new WorkflowError('gone', {
           code: 'STATE_RUN_NOT_FOUND',
           category: 'STATE',
@@ -169,7 +171,7 @@ describe('recordDriveFailure — the fence (issue #401)', () => {
           retryable: false,
         });
       },
-      update: async (): Promise<RunRecord> => makeRun(),
+      update: async (): Promise<Snapshot> => snap(makeRun()),
     };
     await expect(recordDriveFailure(store, 'r1', entry())).resolves.toBeUndefined();
     expect(errors).toEqual([]);
@@ -619,8 +621,8 @@ describe('#715 (a) — elapsed_ms is measured on the monotonic clock', () => {
         schemaRetries: 0,
       } as unknown as AgentDeps;
       await runAgent(deps, { definition: wf, params: {} });
-      const [run] = await store.list();
-      const entry = (await store.get(run!.id)).drive_failures?.entries[0];
+      const [run] = (await store.list()).snapshots.map((s) => s.record);
+      const entry = (await store.get(run!.id)).record.drive_failures?.entries[0];
       expect(entry?.error_class, 'the wedge').toBe('validation_rejected');
       expect(entry?.elapsed_ms, 'elapsed_ms').toBe(750);
     } finally {

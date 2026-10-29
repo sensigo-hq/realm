@@ -4,6 +4,7 @@
 // through the real scheduling call).
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { startListen, type ListenDeps, type Logger, type WorkflowEntry } from './listen.js';
+import { listing, noSettle } from '../test-support/snapshot-double.js';
 
 const silentLogger: Logger = { debug() {}, info() {}, warn() {}, error() {} };
 
@@ -25,10 +26,9 @@ function makeDeps(): ListenDeps {
       update: async () => {
         throw new Error('n/a');
       },
-      list: async () => [],
-      // `settleStep` is OMITTED, not set to undefined: `Pick<RunStore, …>` keeps it optional, and
-      // the sweeper's dormancy check is by value (`settleStep === undefined`, listen.ts), so an
-      // absent key and an explicit-undefined key are indistinguishable to the code under test.
+      list: async () => listing([]),
+      // #715 (b): `settleStep` is required on the listen store — this double's never settles.
+      settleStep: noSettle,
     },
     dedupStoreFor: () => ({
       // The real DedupStore contract is entirely SYNCHRONOUS (check/record/cleanup) and `check`

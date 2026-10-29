@@ -192,8 +192,8 @@ describe('runAgent', () => {
       expect(provider.callCount.value).toBe(1);
 
       // The failure is RECORDED, which is the whole reason the retry could be retired.
-      const runs = await deps.store.list();
-      const run = await deps.store.get(runs[0]!.id);
+      const runs = (await deps.store.list()).snapshots.map((s) => s.record);
+      const { record: run } = await deps.store.get(runs[0]!.id);
       expect(run.drive_failures?.entries).toHaveLength(1);
       expect(run.drive_failures?.total).toBe(1);
       expect(run.drive_failures?.entries[0]?.message).toContain('transient error');
@@ -222,7 +222,7 @@ describe('runAgent', () => {
   it('pauses at a gate and continues after the gateHandler resolves it', async () => {
     const provider = new MockLlmProvider([{ output: 'step done' }]);
     const gateHandler = vi.fn().mockImplementation(async (runId: string, gate: PendingGate) => {
-      const run = await deps.store.get(runId);
+      const { record: run } = await deps.store.get(runId);
       await submitHumanResponse(deps.store, gateWorkflow, {
         runId,
         gateId: gate.gate_id,
@@ -621,7 +621,7 @@ describe('manifest-secret redaction threading (fix holder)', () => {
     });
     const result = await runAgent(deps, { definition: agentOnlyWorkflow, params: {} });
     expect(result).toBe('completed');
-    const runs = await deps.store.list();
+    const runs = (await deps.store.list()).snapshots.map((s) => s.record);
     const evidence = runs[0]!.evidence.find((e) => e.step_id === 'summarize')!;
     const persisted = JSON.stringify(evidence.output_summary);
     expect(persisted).toContain('[REDACTED]');

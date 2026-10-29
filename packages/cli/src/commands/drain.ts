@@ -18,6 +18,7 @@ import type {
 } from '@sensigo/realm';
 import { CLI_COMMANDS, cannotGoOnLines, writerHost } from './ways-renderer.js';
 import {
+  parseStamp,
   describePending,
   owedList,
   owedWords,
@@ -27,6 +28,7 @@ import {
   type PendingView,
   WorkflowError,
   applySettlement,
+  overdueOf,
   deriveRunPhase,
   getWorkflowForRun,
   describeGuardLines,
@@ -158,39 +160,30 @@ export type GateExpiryClass =
 export function classifyGateExpiry(run: RunRecord, now: Date): GateExpiryClass {
   const gate = run.pending_gate;
   if (gate === undefined || gate.expires_at === undefined) return { kind: 'none' };
-  const overdueMs = now.getTime() - new Date(gate.expires_at).getTime();
-  if (overdueMs < 0) return { kind: 'not_expired' };
+  // #715 (b) (D-25): through core's one deadline reader. An unparseable `expires_at` is never past
+  // (nothing is carried out on a deadline the record does not state readably) — it used to read as
+  // NaN and fall through to `enactable`.
+  const overdue = overdueOf(gate.expires_at, now);
+  if (overdue === undefined || 'absent' in overdue) return { kind: 'not_expired' };
+  const overdueMs = overdue.ms;
   if (gate.on_expiry === undefined) return { kind: 'finding_only', overdueMs };
   return { kind: 'enactable', disposition: gate.on_expiry, overdueMs };
 }
 
 /**
- * Issue #291 ([F5]/[F4]): enacts an expired, enactable gate via the SAME dormancy-discriminated
- * pattern `submitHumanResponse`/`enactExpiredGateIfDue` use — `store.settleStep` when declared,
- * else the pure `applySettlement` transform + `store.update`'s CAS write. Returns the resulting
- * run (unchanged on a benign refusal/race) and whether it actually applied.
+ * Issue #291 ([F5]/[F4]): enacts an expired, enactable gate through the store's `settleStep`
+ * (`expire_gate`; #715 (b): the one path — the store's own clock decides it is due). Returns the
+ * resulting run (unchanged on a benign refusal/race) and whether it actually applied.
  */
 async function enactGateExpiry(
   runStore: RunStore,
   definition: WorkflowDefinition,
   run: RunRecord,
-  now: Date,
 ): Promise<{ run: RunRecord; applied: boolean; guardLines: string[] }> {
   const gateId = run.pending_gate!.gate_id;
-  const delta = { kind: 'expire_gate' as const, gateId };
-  let outcome: SettlementResult;
-  if (runStore.settleStep !== undefined) {
-    outcome = await runStore.settleStep(run.id, delta, definition, { now });
-  } else {
-    const pure = applySettlement(run, delta, definition, { now });
-    if (!pure.applied) return { run: pure.run, applied: false, guardLines: [] };
-    const persisted = await runStore.update(pure.run);
-    outcome = { ...pure, run: persisted };
-  }
-  // issue #625: on a store that declares `settleStep` the expiry's write also settled the guards
-  // its default made eligible — the ending sentence and its `Reason:` when one ended the run,
-  // otherwise a passed line per guard. The legacy branch above never sets the option (a store
-  // without `settleStep` settles no guard in this write), so it reports none.
+  const outcome = await runStore.settleStep(run.id, { kind: 'expire_gate', gateId }, definition);
+  // issue #625: the expiry's write also settled the guards its default made eligible — the ending
+  // sentence and its `Reason:` when one ended the run, otherwise a passed line per guard.
   return { run: outcome.run, applied: outcome.applied, guardLines: describeGuardLines(outcome) };
 }
 
@@ -206,24 +199,19 @@ function describeEnactment(run: RunRecord, disposition: 'settle_default' | 'abor
 /**
  * issue #625: what `--force` would do to this run's guards, one clause per guard — PREDICTED by
  * running the same pure transform the store's `settleStep` runs, and never persisted (the record
- * and its version are untouched). Empty when the expiry would settle no guard, when the store
- * declares no `settleStep` (there `--force` settles no guard, so none is predicted), or when the
+ * and its version are untouched). Empty when the expiry would settle no guard, or when the
  * prediction cannot be made.
  */
-function predictExpiryGuards(
-  runStore: RunStore,
-  definition: WorkflowDefinition,
-  run: RunRecord,
-  now: Date,
-): string[] {
-  if (runStore.settleStep === undefined || run.pending_gate === undefined) return [];
+function predictExpiryGuards(definition: WorkflowDefinition, run: RunRecord, now: Date): string[] {
+  if (run.pending_gate === undefined) return [];
   let predicted: SettlementResult;
   try {
+    // #715 (b) (D-19): the pure transform at the reading the run was judged at.
     predicted = applySettlement(
       run,
       { kind: 'expire_gate', gateId: run.pending_gate.gate_id },
       definition,
-      { now, cascadeGuards: true },
+      { at: now, cascadeGuards: true },
     );
   } catch {
     return [];
@@ -318,7 +306,7 @@ export function classifyDrainRankPass(
     const isHeld =
       entry.lease_token !== undefined &&
       entry.lease_deadline !== undefined &&
-      new Date(entry.lease_deadline).getTime() > now.getTime();
+      (parseStamp(entry.lease_deadline) ?? NaN) > now.getTime();
     if (isHeld) {
       result.push({
         name,
@@ -537,7 +525,7 @@ export async function runDrainAction(
       process.exit(1);
     }
     try {
-      const run = await runStore.get(runId);
+      const { record: run } = await runStore.get(runId);
       const entry = run.finalizer_ledger?.[opts.void];
       if (entry === undefined) {
         console.error(`No finalizer ledger entry named '${opts.void}' on run '${runId}'.`);
@@ -552,7 +540,7 @@ export async function runDrainAction(
       const isHeld =
         entry.lease_token !== undefined &&
         entry.lease_deadline !== undefined &&
-        new Date(entry.lease_deadline).getTime() > now.getTime();
+        (parseStamp(entry.lease_deadline) ?? NaN) > now.getTime();
       if (isHeld) {
         console.error(
           `Finalizer '${opts.void}' has an active drain lease (expires ` +
@@ -602,7 +590,7 @@ export async function runDrainAction(
     let runs: RunRecord[];
     try {
       const listing = await listRunsDiagnosed(runStore);
-      runs = listing.records;
+      runs = listing.snapshots.map((s) => s.record);
       for (const line of unreadableRunLines(
         listing.unreadable,
         '; realm run drain --all did not act on them.',
@@ -704,7 +692,7 @@ export async function runDrainAction(
           run: enactedRun,
           applied,
           guardLines,
-        } = await enactGateExpiry(runStore, workflow, r, now);
+        } = await enactGateExpiry(runStore, workflow, r);
         if (!applied) {
           console.log(`  • ${r.id}: gate expiry already resolved (race) — skipped`);
           continue;
@@ -751,7 +739,7 @@ export async function runDrainAction(
   }
 
   try {
-    const run = await runStore.get(runId);
+    const { record: run } = await runStore.get(runId);
     // issue #625 PR-2a: what the engine owes on a live run with no open question — a JSON read of
     // the registered copy; when it cannot be read, nothing is added to the line.
     const ownedWork = async (r: RunRecord): Promise<OwedView | undefined> => {
@@ -802,7 +790,7 @@ export async function runDrainAction(
             verb: 'drain',
             terminalOk: true,
           });
-          predictedGuards = predictExpiryGuards(runStore, workflowForGate, run, now);
+          predictedGuards = predictExpiryGuards(workflowForGate, run, now);
         } catch (err) {
           if (!(err instanceof WorkflowError)) throw err;
         }
@@ -843,7 +831,7 @@ export async function runDrainAction(
         run: enactedRun,
         applied,
         guardLines,
-      } = await enactGateExpiry(runStore, workflowForGate, run, now);
+      } = await enactGateExpiry(runStore, workflowForGate, run);
       if (applied) {
         console.log(
           `✓ gate enacted (${gateClass.kind === 'enactable' ? describeEnactment(run, gateClass.disposition) : ''}).`,

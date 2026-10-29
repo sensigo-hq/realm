@@ -60,7 +60,7 @@ describe('cleanupRuns', () => {
     expect(affected).toHaveLength(1);
     expect(affected[0]?.id).toBe(run.id);
 
-    const updated = await store.get(run.id);
+    const { record: updated } = await store.get(run.id);
     expect(updated.run_phase).toBe('abandoned');
     expect(updated.terminal_state).toBe(true);
     expect(updated.terminal_reason).toBe('Marked abandoned by realm cleanup');
@@ -79,7 +79,7 @@ describe('cleanupRuns', () => {
 
     expect(affected).toHaveLength(0);
 
-    const unchanged = await store.get(run.id);
+    const { record: unchanged } = await store.get(run.id);
     expect(unchanged.run_phase).toBe('running');
   });
 
@@ -97,7 +97,7 @@ describe('cleanupRuns', () => {
     expect(affected).toHaveLength(1);
 
     // State should NOT have changed because dryRun is true.
-    const unchanged = await store.get(run.id);
+    const { record: unchanged } = await store.get(run.id);
     expect(unchanged.run_phase).toBe('running');
     expect(unchanged.terminal_state).toBe(false);
   });
@@ -147,7 +147,7 @@ describe('cleanupRuns', () => {
 
     expect(affected).toHaveLength(0);
 
-    const unchanged = await store.get(gateRun.id);
+    const { record: unchanged } = await store.get(gateRun.id);
     expect(unchanged.terminal_state).toBe(false);
   });
 
@@ -177,7 +177,7 @@ describe('cleanupRuns', () => {
     const { affected } = await cleanupRuns({ olderThan: '1d' }, store);
     expect(affected).toHaveLength(0);
 
-    const unchanged = await store.get(staleGated.id);
+    const { record: unchanged } = await store.get(staleGated.id);
     expect(unchanged.terminal_state).toBe(false);
     expect(unchanged.sealed_by).toBeUndefined();
     expect(unchanged.pending_gate).toBeDefined();
@@ -205,7 +205,7 @@ describe('cleanupRuns', () => {
 
     const store = new JsonFileStore(dir);
     await cleanupRuns({ olderThan: '1d' }, store);
-    const swept = await store.get(idle.id);
+    const { record: swept } = await store.get(idle.id);
     expect(swept.sealed_by).toEqual({ arm: 'cleanup_sweep' });
     expect(swept.run_phase).toBe('abandoned');
     expect(swept.terminal_state).toBe(true);
@@ -225,7 +225,7 @@ describe('cleanupRuns', () => {
     const { affected } = await cleanupRuns({ olderThan: '1d' }, store);
     expect(affected).toHaveLength(1);
 
-    const updated = await store.get(run.id);
+    const { record: updated } = await store.get(run.id);
     expect(updated.abandoned_at).toBeDefined();
     expect(updated.run_phase).toBe('abandoned'); // authoritative marker beats failed_steps
     expect(updated.terminal_state).toBe(true);
@@ -248,10 +248,49 @@ describe('cleanupRuns', () => {
     const { affected } = await cleanupRuns({ olderThan: '1d' }, store);
     expect(affected).toHaveLength(1);
 
-    const updated = await store.get(run.id);
+    const { record: updated } = await store.get(run.id);
     expect(updated.run_phase).toBe('abandoned');
     expect(updated.in_progress_steps).toEqual([]);
     expect(updated.claims).toEqual({});
+  });
+
+  it('#715 (b) D-21: a run that moves between the sweep’s read and its seal — the sweep aborts with the STATE_SNAPSHOT_MISMATCH update() threw; the run stays live', async () => {
+    // (a) red when the seal ignores expected_version (the sweep seals over the other writer's write
+    //     and resolves); (b) prints the code, the message and the run's state afterwards.
+    const now = new Date('2024-06-01T12:00:00Z');
+    vi.setSystemTime(now);
+    const run = makeRun({ updated_at: new Date(now.getTime() - 2 * 86_400_000).toISOString() });
+    await injectRun(dir, run);
+    const store = new JsonFileStore(dir);
+    // Another writer lands between the sweep's read and its seal.
+    const moving = new Proxy(store, {
+      get(target, prop) {
+        if (prop === 'settleStep') {
+          return async (...a: Parameters<JsonFileStore['settleStep']>) => {
+            const { record } = await target.get(run.id);
+            await target.update(record);
+            return target.settleStep(...a);
+          };
+        }
+        const v = Reflect.get(target, prop, target) as unknown;
+        return typeof v === 'function' ? (v as (...x: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    let caught: { code: string | undefined; message: string | undefined } | undefined;
+    await cleanupRuns({ olderThan: '1d' }, moving).catch(
+      (e: { code?: string; message?: string }) => {
+        caught = { code: e.code, message: e.message };
+      },
+    );
+    const { record: after } = await store.get(run.id);
+    expect({ caught, terminal: after.terminal_state, version: after.version }).toEqual({
+      caught: {
+        code: 'STATE_SNAPSHOT_MISMATCH',
+        message: 'Version conflict — run was modified by another process',
+      },
+      terminal: false,
+      version: run.version + 1,
+    });
   });
 
   it('issue #558 PR-C: `realm run cleanup` prints the kill advisory — the THIRD surface of the one mint', async () => {

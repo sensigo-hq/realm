@@ -11,8 +11,16 @@ import {
   brandClass,
   systemClock,
   takeReading,
+  takeRawReading,
+  floorAtRecord,
   floorAtHolder,
+  parseStamp,
+  writtenSnapshot,
   type Clock,
+  type CreateResult,
+  type Listing,
+  type Snapshot,
+  type StoreSettlement,
   type RunStore,
   type SealedBy,
   type StampSealResult,
@@ -21,7 +29,6 @@ import {
   type WorkflowDefinition,
   type LoadBearingRunRecordField,
   type SettlementDelta,
-  type SettlementResult,
   type Attributed,
 } from '@sensigo/realm';
 import { REALM_TESTING_BRAND } from '../brand.js';
@@ -50,11 +57,11 @@ export class InMemoryStore implements RunStore {
   ]);
 
   /**
-   * The clock this store stamps its writes with (issue #715 (a); rule 10: an in-memory store may use
-   * any clock). What it governs: the write class — a write's `created_at` and `updated_at`, and a
-   * claim's `since` and deadline — read ONCE per `create`, `update` and `claimStep`. What it does
-   * not: instants minted outside a store, and durations. In this release of the store contract
-   * `settleStep`, `stampSeal` and every read do not use it.
+   * The clock this store reads the time from (issue #715; rule 10: an in-memory store may use any
+   * clock). What it governs (#715 (b), D-16): every call that returns spends ONE reading and returns
+   * it — `create`, `update`, `claimStep` and `settleStep` at the write, `get` and `list` BEFORE they
+   * read. `stampSeal` and this store's own internal reads spend none. What it does not govern:
+   * instants minted outside a store, and durations.
    */
   readonly clock: Clock;
 
@@ -68,7 +75,7 @@ export class InMemoryStore implements RunStore {
     this.clock = options?.clock ?? systemClock;
   }
 
-  async create(options: CreateRunOptions): Promise<{ run: RunRecord; created: boolean }> {
+  async create(options: CreateRunOptions): Promise<CreateResult> {
     // Idempotency: a key match applies the re-encounter policy, like JsonFileStore.
     // issue #558 PR-C: the id of the run this create SUPERSEDES, when it supersedes one — the
     // in-memory twin of JsonFileStore's `supersede()` parameter. Stays undefined when the mapped
@@ -96,7 +103,8 @@ export class InMemoryStore implements RunStore {
               options,
             ) === 'reuse'
           ) {
-            return { run: existing, created: false };
+            // #715 (b): the reading it spent, floored by the existing run's own stamp (pure).
+            return { ...writtenSnapshot(existing, floorAtRecord(r, existing)), created: false };
           }
           // Not `reuse` → this fresh create supersedes `existing`; stamp the link.
           supersededId = existing.id;
@@ -143,10 +151,15 @@ export class InMemoryStore implements RunStore {
     if (options.idempotencyKey !== undefined) {
       this.keyIndex.set(`${options.workflowId}\0${options.idempotencyKey}`, record.id);
     }
-    return { run: record, created: true };
+    return { ...writtenSnapshot(record, at), created: true };
   }
 
-  async get(runId: string): Promise<RunRecord> {
+  /**
+   * #715 (b) (D-15, D-16): ONE raw reading BEFORE the record is read (D6-16), then the record floored
+   * by its own `updated_at`. A run that does not exist has spent its reading, and throws.
+   */
+  async get(runId: string): Promise<Snapshot> {
+    const r = takeRawReading(this.clock);
     const record = this.runs.get(runId);
     if (record === undefined) {
       throw new WorkflowError(`Run '${runId}' not found`, {
@@ -156,10 +169,10 @@ export class InMemoryStore implements RunStore {
         retryable: false,
       });
     }
-    return record;
+    return writtenSnapshot(record, floorAtRecord(r, record));
   }
 
-  async update(record: RunRecord): Promise<RunRecord> {
+  async update(record: RunRecord): Promise<Snapshot> {
     const existing = this.runs.get(record.id);
     if (existing === undefined) {
       throw new WorkflowError(`Run '${record.id}' not found`, {
@@ -191,7 +204,7 @@ export class InMemoryStore implements RunStore {
       updated_at: at.toISOString(),
     };
     this.runs.set(updated.id, updated);
-    return updated;
+    return writtenSnapshot(updated, at);
   }
 
   /** issue #715 (a) (M4): the newest PARSEABLE `created_at` among this store's runs under the key. */
@@ -199,8 +212,8 @@ export class InMemoryStore implements RunStore {
     let newest: { ms: number; stamp: string } | undefined;
     for (const run of this.runs.values()) {
       if (run.workflow_id !== workflowId || run.idempotency_key !== key) continue;
-      const ms = Date.parse(run.created_at);
-      if (!Number.isFinite(ms)) continue;
+      const ms = parseStamp(run.created_at);
+      if (ms === undefined) continue;
       if (newest === undefined || ms > newest.ms) newest = { ms, stamp: run.created_at };
     }
     return newest?.stamp;
@@ -211,7 +224,7 @@ export class InMemoryStore implements RunStore {
     stepName: string,
     definition: WorkflowDefinition,
     claimant?: Attributed,
-  ): Promise<RunRecord> {
+  ): Promise<Snapshot> {
     // issue #188: read the record SYNCHRONOUSLY (a direct Map.get, not `await this.get(...)`) so
     // the read → eligibility-check → write below is one indivisible synchronous stretch. This is
     // what makes claimStep single-owner for concurrent same-process calls (the cross-cutting
@@ -283,12 +296,15 @@ export class InMemoryStore implements RunStore {
       updated_at: at.toISOString(),
     };
     this.runs.set(updated.id, updated);
-    return updated;
+    return writtenSnapshot(updated, at);
   }
 
   /**
-   * Atomically applies one `SettlementDelta` to this run's fresh state (issue #279, increment 1).
-   * DORMANT until PR-B — see `RunStore.settleStep`'s own JSDoc for the full contract.
+   * Atomically applies one `SettlementDelta` to this run's fresh state (issue #279) — see
+   * `RunStore.settleStep`'s own JSDoc for the full contract. #715 (b) (D-19): ONE reading
+   * `takeReading(clock, fresh, delta)` handed to the transform, which mints every instant from it
+   * (`updated_at` included); returned as `at`, applied or refused. A `seal_run` refused `moved` is
+   * THROWN as `STATE_SNAPSHOT_MISMATCH` (D6-65). A `seal_run` takes no definition (Amendment 1).
    *
    * NO `await` between the read (`this.runs.get`) and the write (`this.runs.set`) — mirrors
    * `claimStep`'s own documented no-await stretch above (issue #188's single-owner discipline):
@@ -300,9 +316,8 @@ export class InMemoryStore implements RunStore {
   async settleStep(
     runId: string,
     delta: SettlementDelta,
-    definition: WorkflowDefinition,
-    options?: { now?: Date },
-  ): Promise<SettlementResult> {
+    definition?: WorkflowDefinition,
+  ): Promise<StoreSettlement> {
     const fresh = this.runs.get(runId);
     if (fresh === undefined) {
       throw new WorkflowError(`Run '${runId}' not found`, {
@@ -314,15 +329,25 @@ export class InMemoryStore implements RunStore {
     }
     // issue #625: a store's own `settleStep` settles, in this SAME write, every guard the delta
     // makes eligible (the published law GUARD_CASCADE_ONE_WRITE).
+    const at = takeReading(this.clock, fresh, delta);
     const outcome = applySettlement(fresh, delta, definition, {
-      ...options,
+      at,
       cascadeGuards: true,
       // issue #625 (holder slice): the transform mints the proof verdict's `store_keeps_no_claims`
       // cause itself, from this one input.
       storeKeepsClaims: this.persistsClaims === true,
     });
     if (!outcome.applied) {
-      return outcome; // refusal/noop — fresh state, NO write (version unchanged)
+      if (outcome.reason === 'moved') {
+        throw new WorkflowError('Version conflict — run was modified by another process', {
+          code: 'STATE_SNAPSHOT_MISMATCH',
+          category: 'STATE',
+          agentAction: 'report_to_user',
+          retryable: true,
+          details: { runId, expected: outcome.expected, actual: outcome.stored },
+        });
+      }
+      return { ...outcome, at }; // refusal/noop — fresh state, NO write (version unchanged)
     }
     // issue #367: the boundary on the settle tail too (both stores, both tails).
     // `assertSealIntegrity` is pure and synchronous — the documented no-await stretch above holds.
@@ -331,10 +356,9 @@ export class InMemoryStore implements RunStore {
       ...outcome.run,
       run_phase: deriveRunPhase(outcome.run),
       version: fresh.version + 1,
-      updated_at: new Date().toISOString(),
     };
     this.runs.set(updated.id, updated);
-    return { ...outcome, run: updated };
+    return { ...outcome, run: updated, at };
   }
 
   /**
@@ -383,12 +407,20 @@ export class InMemoryStore implements RunStore {
     return { stamped: true, run: written };
   }
 
-  async list(workflowId?: string): Promise<RunRecord[]> {
+  /**
+   * #715 (b) (D-15, D-16): ONE raw reading `read_at` before the read; each snapshot's `at` is
+   * `read_at` floored by its own record. `consistent_snapshot: true` — one synchronous pass, one cut.
+   */
+  async list(workflowId?: string): Promise<Listing> {
+    const r = takeRawReading(this.clock);
     const all = [...this.runs.values()];
-    if (workflowId !== undefined) {
-      return all.filter((r) => r.workflow_id === workflowId);
-    }
-    return all;
+    const kept =
+      workflowId !== undefined ? all.filter((rec) => rec.workflow_id === workflowId) : all;
+    return {
+      snapshots: kept.map((rec) => writtenSnapshot(rec, floorAtRecord(r, rec))),
+      read_at: r,
+      consistent_snapshot: true,
+    };
   }
 }
 

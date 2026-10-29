@@ -8,6 +8,7 @@ import chalk from 'chalk';
 import { Command } from 'commander';
 import { isAbsolute, join } from 'node:path';
 import {
+  parseStamp,
   describePending,
   lastExecutionIdentity,
   pendingCleanupLine,
@@ -1106,7 +1107,7 @@ export async function inspectRun(
     priceSourceFor?: (definition: WorkflowDefinition | undefined) => Promise<PriceSource>;
   },
 ): Promise<string> {
-  const run: RunRecord = await store.get(runId);
+  const { record: run } = await store.get(runId);
 
   // Try to load workflow definition; gracefully handle missing definition. `definition` is
   // hoisted (issue #221) so classifyRunHealth below can reuse it when resolved — the try/catch
@@ -1466,7 +1467,7 @@ export async function inspectRun(
       gateLine += ` — EXPIRED ${formatGateAge(gate.expires_at!)} ago`;
     }
     if (due.next_reminder_due_at !== undefined) {
-      const overdueReminder = new Date(due.next_reminder_due_at).getTime() <= Date.now();
+      const overdueReminder = (parseStamp(due.next_reminder_due_at) ?? NaN) <= Date.now();
       gateLine += overdueReminder
         ? `, reminder overdue (was due ${formatGateAge(due.next_reminder_due_at)} ago)`
         : `, reminder due in ${formatGateAge(new Date().toISOString(), new Date(due.next_reminder_due_at))}`;
@@ -1971,7 +1972,7 @@ export const inspectCommand = new Command('inspect')
       try {
         // #729 PR-3 (L-4): the run's declared values join the writer's set before anything prints,
         // and the receipt line says what the law hid in this record for stdout's audience.
-        const run = await store.get(runId);
+        const { record: run } = await store.get(runId);
         const definition = await getWorkflowForRun(workflowStore, run, {
           retryVerb: 'inspect again',
           verb: 'inspect',

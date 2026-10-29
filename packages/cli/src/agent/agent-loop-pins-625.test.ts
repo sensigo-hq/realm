@@ -31,7 +31,11 @@ describe('#625 PR-2a — realm agent loop words', () => {
       steps: { review: { description: 'R', execution: 'agent', depends_on: [] } },
     };
     const store = new InMemoryStore();
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await store.update({
       ...run,
       in_progress_steps: ['review'],
@@ -104,7 +108,7 @@ describe('#625 PR-2a — realm agent loop words', () => {
     expect(out.split(line).length - 1).toBe(1);
     // The agent step on the other branch ran; the drive ends failed only because nothing else can run.
     expect(provider.callStep).toHaveBeenCalledTimes(1);
-    const runs = await store.list();
+    const runs = (await store.list()).snapshots.map((s) => s.record);
     expect(runs[0]!.completed_steps).toEqual(['review']);
     expect(result).toBe('failed');
     // decision C31: the stop's own line — the run did not end, so no `Run ended in phase:` line.

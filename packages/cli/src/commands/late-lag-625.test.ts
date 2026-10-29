@@ -100,14 +100,18 @@ describe(
     /** A run at its question, whose time was up `ago` ms before now. */
     async function lateQuestion(def: WorkflowDefinition, ago: number) {
       await workflowStore.register(def);
-      const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runStore.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await executeStep(runStore, def, {
         runId: run.id,
         command: 'approve',
         input: {},
         dispatcher: async () => ({}),
       });
-      const record = await runStore.get(run.id);
+      const { record: record } = await runStore.get(run.id);
       const expiresAt = Date.now() - ago;
       await runStore.update({
         ...record,

@@ -10,6 +10,7 @@ import { declared } from '../test-support/declared.js';
 import { describe, it, expect } from 'vitest';
 import type { DriveFailureRecord, RunRecord, RunStore, UsageRecord } from '@sensigo/realm';
 import { handleGetRunState } from './get-run-state.js';
+import { snap, doubleClock, noSettle } from '../test-support/snapshot-double.js';
 
 type DisclosureRoute =
   | { surface: 'rendered'; probe: (entry: DriveFailureRecord) => void }
@@ -71,8 +72,10 @@ const DRIVE_FAILURE_DISCLOSURE = {
 
 function makeStore(run: RunRecord): RunStore {
   return declared({
+    clock: doubleClock,
+    settleStep: noSettle,
     persistsClaims: true,
-    get: async () => run,
+    get: async () => snap(run),
     create: async () => {
       throw new Error('not exercised');
     },

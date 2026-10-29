@@ -16,11 +16,10 @@
 //     late-answer line reads from the record (`lateAnswerOutcome`).
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { declareReleaseLine } from '../release-line.js';
 import { describe, it, expect } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { JsonFileStore } from '../store/json-file-store.js';
 import {
   expiryCarriedOutLine,
@@ -40,16 +39,27 @@ import { applySettlement } from './settlement.js';
 import { captureEvidence } from '../evidence/snapshot.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type { StepHandler } from '../extensions/step-handler.js';
-import type {
-  RunStore,
-  CreateRunOptions,
-  LoadBearingRunRecordField,
-} from '../store/store-interface.js';
+import type { RunStore } from '../store/store-interface.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { StepDefinition, WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepDispatcher } from './execution-loop.js';
 import type { EngineReply } from '../types/response-envelope.js';
-import { nextCalls, owedOf } from '../test-support/ways-view.js';
+import { nextCalls } from '../test-support/ways-view.js';
+import { writeTestClockFile } from '../store/test-clock-file.js';
+
+/** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
+ *  runs folder sits beside the location's clock file (first set to the host's reading), which
+ *  `setClockOf` rewrites. */
+async function testLocationRuns(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  await writeTestClockFile(root, new Date());
+  return join(root, 'runs');
+}
+async function setClockOf(store: object, t: Date): Promise<void> {
+  const runsDir = (store as { runsDirPath?: string }).runsDirPath;
+  if (runsDir === undefined) throw new Error('setClockOf: this store is not a JSON store');
+  await writeTestClockFile(dirname(runsDir), t);
+}
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -138,7 +148,7 @@ const expiring = (defaultChoice: string): Partial<GateConfig> => ({
 });
 
 async function withStore<T>(fn: (store: JsonFileStore) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-guard-cascade-625-'));
+  const dir = await testLocationRuns('realm-guard-cascade-625-');
   try {
     return await fn(new JsonFileStore(dir));
   } finally {
@@ -152,7 +162,11 @@ async function openGate(
   store: RunStore,
   def: WorkflowDefinition,
 ): Promise<{ runId: string; gateId: string; afterExpiry: Date }> {
-  const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+  const { record: run } = await store.create({
+    workflowId: def.id,
+    workflowVersion: 1,
+    params: {},
+  });
   const opened = await executeStep(store, def, {
     runId: run.id,
     command: 'confirm',
@@ -162,7 +176,7 @@ async function openGate(
   if (opened.status !== 'confirm_required') {
     throw new Error(`fixture: the gate did not open (status ${opened.status})`);
   }
-  const gate = (await store.get(run.id)).pending_gate!;
+  const gate = (await store.get(run.id)).record.pending_gate!;
   const afterExpiry =
     gate.expires_at !== undefined
       ? new Date(new Date(gate.expires_at).getTime() + 60_000)
@@ -188,39 +202,6 @@ const offeredSteps = (reply: EngineReply): string[] =>
 /** The guard's own evidence entries on a record. */
 const guardEntries = (run: RunRecord, step = 'check') =>
   run.evidence.filter((e) => e.step_id === step);
-
-/**
- * A store that does NOT declare `settleStep` — the legacy shape every engine site falls back to
- * (wraps a real JsonFileStore; a core test cannot import realm-testing's in-memory store).
- */
-class NoSettleStepStore implements RunStore {
-  // issue #620 PR-C: a test double declares this realm's release line.
-  static {
-    declareReleaseLine(this);
-  }
-  readonly persistsClaims: boolean;
-  readonly persistedRunRecordFields?: ReadonlySet<LoadBearingRunRecordField>;
-  constructor(private readonly inner: JsonFileStore) {
-    this.persistsClaims = inner.persistsClaims;
-    this.persistedRunRecordFields = inner.persistedRunRecordFields;
-  }
-  create(options: CreateRunOptions): Promise<{ run: RunRecord; created: boolean }> {
-    return this.inner.create(options);
-  }
-  get(runId: string): Promise<RunRecord> {
-    return this.inner.get(runId);
-  }
-  update(record: RunRecord): Promise<RunRecord> {
-    return this.inner.update(record);
-  }
-  list(workflowId?: string): Promise<RunRecord[]> {
-    return this.inner.list(workflowId);
-  }
-  claimStep(runId: string, stepName: string, definition: WorkflowDefinition): Promise<RunRecord> {
-    return this.inner.claimStep(runId, stepName, definition);
-  }
-  // settleStep intentionally OMITTED.
-}
 
 // ---------------------------------------------------------------------------
 // The ANSWER path
@@ -262,7 +243,7 @@ describe('issue #625 — an answer settles the guard it makes eligible, in its o
       // (a) red when the command is rewritten to the guard; (b) prints the command.
       expect(reply.command).toBe('confirm');
 
-      const record = await store.get(runId);
+      const { record: record } = await store.get(runId);
       // ONE write: the answer and the guard's settlement share the same version bump.
       // (a) red when the guard is settled by a second write; (b) prints the reply's and the
       //     record's versions.
@@ -318,7 +299,7 @@ describe('issue #625 — an answer settles the guard it makes eligible, in its o
       });
       // (a) red when the phase is not the failed seal; (b) prints the phase.
       expect(reply.run_phase).toBe('failed');
-      const record = await store.get(runId);
+      const { record: record } = await store.get(runId);
       // (a) red when the seal sentence loses the path; (b) prints the sentence.
       expect(record.terminal_reason).toBe(
         "Guard step 'check' failed: unresolvable path 'nope.field'",
@@ -372,7 +353,7 @@ describe('issue #625 — an answer settles the guard it makes eligible, in its o
       expect(offeredSteps(reply)).toEqual(['finish']);
       // (a) red when the removed #279 advisory comes back; (b) prints the warnings.
       expect(reply.warnings.filter((w) => w.includes('converges'))).toEqual([]);
-      const record = await store.get(runId);
+      const { record: record } = await store.get(runId);
       // (a) red when the guard is left eligible; (b) prints its membership.
       expect(membershipOf(record, 'check')).toBe('completed');
       expect(record.terminal_state).toBe(false);
@@ -410,7 +391,7 @@ describe('issue #625 — an answer settles the guard it makes eligible, in its o
         choice: 'reject',
         registry,
       });
-      const record = await store.get(runId);
+      const { record: record } = await store.get(runId);
 
       // (a) red when the guard-caused ending does not drain the finalizer its outcome selects
       //     (the site drains when the write transitioned); (b) prints the call count.
@@ -454,7 +435,11 @@ describe("issue #625 — a finished step's own write settles the guard it makes 
   it("a guard that ABORTS: the step's reply says \"Guard step 'check' aborted the run.\" — never \"Run completed (phase: 'aborted')\"", async () => {
     await withStore(async (store) => {
       const def = stepThenGuard({ guard: { abort_message: 'Work was not ok.' } });
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
 
       const reply = await drive(store, def, run.id, { ok: false });
 
@@ -479,7 +464,7 @@ describe("issue #625 — a finished step's own write settles the guard it makes 
       // (a) red when the cascaded guard is not appended, or carries a phase other than the one
       //     it sealed; (b) prints the list.
       expect(reply.chained_auto_steps).toEqual([{ step: 'check', run_phase: 'aborted' }]);
-      const record = await store.get(run.id);
+      const { record: record } = await store.get(run.id);
       // (a) red when the step and its guard are two writes; (b) prints both versions.
       expect(record.version).toBe(reply.run_version);
       expect(guardEntries(record)).toHaveLength(1);
@@ -489,7 +474,11 @@ describe("issue #625 — a finished step's own write settles the guard it makes 
   it('a guard that cannot RESOLVE a path: "…failed with a resolution error. Run is terminated."', async () => {
     await withStore(async (store) => {
       const def = stepThenGuard({ guard: { abort_unless: ['work.missing == true'] } });
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
 
       const reply = await drive(store, def, run.id, { ok: true });
 
@@ -513,7 +502,11 @@ describe("issue #625 — a finished step's own write settles the guard it makes 
   it('a guard that PASSES and completes the run: "…passed and completed the run."', async () => {
     await withStore(async (store) => {
       const def = stepThenGuard();
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
 
       const reply = await drive(store, def, run.id, { ok: true });
 
@@ -530,7 +523,11 @@ describe("issue #625 — a finished step's own write settles the guard it makes 
   it('a guard that PASSES and lets the run go on: the step keeps its own output and sentence, and the next step is offered', async () => {
     await withStore(async (store) => {
       const def = stepThenGuard({ more: FINISH });
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
 
       const reply = await drive(store, def, run.id, { ok: true });
 
@@ -569,7 +566,11 @@ describe("issue #625 — a finished step's own write settles the guard it makes 
           },
         },
       };
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
 
       const reply = await executeChain(store, def, {
         runId: run.id,
@@ -594,7 +595,7 @@ describe("issue #625 — a finished step's own write settles the guard it makes 
       ]);
       // (a) red when `ended_by` names the first guard or the step; (b) prints the object.
       expect(reply.ended_by).toEqual({ arm: 'guard_abort', step: 'second' });
-      const record = await store.get(run.id);
+      const { record: record } = await store.get(run.id);
       // (a) red when the step and its two guards are more than one write; (b) prints versions.
       expect(record.version).toBe(reply.run_version);
     });
@@ -604,7 +605,11 @@ describe("issue #625 — a finished step's own write settles the guard it makes 
     await withStore(async (store) => {
       // `check` runs whether `work` succeeded or not (`all_done`) and has nothing to abort on.
       const def = stepThenGuard({ guard: { trigger_rule: 'all_done', abort_unless: [] } });
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
 
       const reply = await executeChain(store, def, {
         runId: run.id,
@@ -630,7 +635,7 @@ describe("issue #625 — a finished step's own write settles the guard it makes 
       // A non-ok reply builds no chained_auto_steps (the chain returns it as it is).
       // (a) red when the chain appends to a failed step's reply; (b) prints the value.
       expect(reply.chained_auto_steps).toBeUndefined();
-      const record = await store.get(run.id);
+      const { record: record } = await store.get(run.id);
       // (a) red when the guard is left eligible after the failed step; (b) prints the values.
       expect(membershipOf(record, 'check')).toBe('completed');
       expect(record.failed_steps).toEqual(['work']);
@@ -663,7 +668,7 @@ describe('issue #625 — a guard that cannot be evaluated is settled as a resolu
       expect(reply.errors).toEqual([]);
       // (a) red when the guard is skipped instead of settled; (b) prints `guards`.
       expect(reply.guards).toEqual([{ step: 'check', outcome: 'resolution_error' }]);
-      const record = await store.get(runId);
+      const { record: record } = await store.get(runId);
       // (a) red when the answer itself is lost; (b) prints the recorded choice.
       expect(record.settled?.['confirm']?.choice).toBe('approve');
       const [entry] = guardEntries(record);
@@ -697,7 +702,7 @@ describe('issue #625 — a guard that cannot be evaluated is settled as a resolu
       expect(reply.status).toBe('ok');
       expect(reply.errors).toEqual([]);
       expect(reply.guards).toEqual([{ step: 'check', outcome: 'resolution_error' }]);
-      const record = await store.get(runId);
+      const { record: record } = await store.get(runId);
       const [entry] = guardEntries(record);
       // (a) red when the cause names the wrong key; (b) prints the recorded error.
       expect(entry?.error).toMatch(/^its 'abort_unless' could not be evaluated: .+/);
@@ -744,7 +749,11 @@ describe('issue #625 — a guard that cannot be evaluated is settled as a resolu
           },
         },
       };
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await executeChain(store, def, {
         runId: run.id,
         command: 'work',
@@ -753,7 +762,7 @@ describe('issue #625 — a guard that cannot be evaluated is settled as a resolu
           throw new Error('work exploded');
         },
       });
-      const record = await store.get(run.id);
+      const { record: record } = await store.get(run.id);
       const cause = guardEntries(record)[0]?.error;
       // (a) red when the store's seal check refuses the cascade's own seal, or the multi-failure
       //     sentence drops the guard's cause; (b) prints the sentence.
@@ -793,8 +802,8 @@ describe('issue #625 — a guard that cannot be evaluated is settled as a resolu
     const now = new Date('2026-01-01T00:01:00.000Z');
     // (a) red when the totality is applied unconditionally — a store without `settleStep` would
     //     then stop throwing where it throws today; (b) prints whether the call threw.
-    expect(() => applySettlement(fresh, delta, def, { now })).toThrow();
-    const cascaded = applySettlement(fresh, delta, def, { now, cascadeGuards: true });
+    expect(() => applySettlement(fresh, delta, def, { at: now })).toThrow();
+    const cascaded = applySettlement(fresh, delta, def, { at: now, cascadeGuards: true });
     // (a) red when the option no longer makes the write recordable; (b) prints `applied`.
     expect(cascaded.applied).toBe(true);
     // The guard's evidence is stamped with the transform's own `now`, against the fresh version.
@@ -822,11 +831,11 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
       const def = aborting();
       const { runId, gateId, afterExpiry } = await openGate(store, def);
 
+      await setClockOf(store, afterExpiry);
       const reply = await submitHumanResponse(store, def, {
         runId,
         gateId,
         choice: 'reject',
-        now: afterExpiry,
       });
 
       expect(reply.status).toBe('ok');
@@ -845,7 +854,7 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
         reason: 'Not approved (timed out to reject).',
       });
       expect(reply.run_phase).toBe('aborted');
-      const record = await store.get(runId);
+      const { record: record } = await store.get(runId);
       // (a) red when the choice is attributed to the person; (b) prints the entry.
       expect(record.settled?.['confirm']).toMatchObject({
         choice: 'reject',
@@ -877,11 +886,11 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
       const def = aborting();
       const { runId, gateId, afterExpiry } = await openGate(store, def);
 
+      await setClockOf(store, afterExpiry);
       const reply = await submitHumanResponse(store, def, {
         runId,
         gateId,
         choice: 'approve',
-        now: afterExpiry,
       });
 
       const refusal = `Gate '${gateId}' was settled by timeout with choice 'reject' — your choice 'approve' was not recorded.`;
@@ -898,7 +907,7 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
         step: 'check',
         reason: 'Not approved (timed out to reject).',
       });
-      const record = await store.get(runId);
+      const { record: record } = await store.get(runId);
       expect(lateAnswerOutcome(reply, record)).toEqual({ choice: 'reject', phase: 'aborted' });
       // (a) red when the refused form's lines lose the refusal, the ending or the reason;
       //     (b) prints the lines.
@@ -922,11 +931,11 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
     await withStore(async (store) => {
       const def = passing();
       const same = await openGate(store, def);
+      await setClockOf(store, same.afterExpiry);
       const sameReply = await submitHumanResponse(store, def, {
         runId: same.runId,
         gateId: same.gateId,
         choice: 'approve',
-        now: same.afterExpiry,
       });
       // (a) red when the same-choice late reply drops the guard or the typed fact, or gains a
       //     guard sentence it has no reason to carry; (b) prints the values.
@@ -941,7 +950,7 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
         true,
         ['finish'],
       ]);
-      const sameRecord = await store.get(same.runId);
+      const { record: sameRecord } = await store.get(same.runId);
       expect(lateAnswerOutcome(sameReply, sameRecord)).toEqual({
         choice: 'approve',
         phase: 'running',
@@ -960,11 +969,11 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
       ]);
 
       const other = await openGate(store, def);
+      await setClockOf(store, other.afterExpiry);
       const otherReply = await submitHumanResponse(store, def, {
         runId: other.runId,
         gateId: other.gateId,
         choice: 'reject',
-        now: other.afterExpiry,
       });
       // (a) red when the REFUSED expiry reply drops `guards` — a person who wanted the other
       //     choice would not learn the guard passed; (b) prints the values.
@@ -972,7 +981,7 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
       expect(otherReply.answer_recorded).toBe(false);
       expect(otherReply.guards).toEqual([{ step: 'check', outcome: 'pass' }]);
       expect(otherReply.ended_by).toBeUndefined();
-      const otherRecord = await store.get(other.runId);
+      const { record: otherRecord } = await store.get(other.runId);
       expect(lateAnswerOutcome(otherReply, otherRecord)).toEqual({
         choice: 'approve',
         phase: 'running',
@@ -999,7 +1008,7 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
       const onTime = await submitHumanResponse(store, def, { runId, gateId, choice: 'approve' });
       // (a) red when the field is stamped on every answer; (b) prints whether the key exists.
       expect('answer_recorded' in onTime).toBe(false);
-      const record = await store.get(runId);
+      const { record: record } = await store.get(runId);
       expect(lateAnswerOutcome(onTime, record)).toBeUndefined();
 
       const replay = await submitHumanResponse(store, def, { runId, gateId, choice: 'approve' });
@@ -1019,24 +1028,23 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
       const def = passing();
       const { runId, gateId, afterExpiry } = await openGate(store, def);
       // The other writer: the same call `realm run drain --expired --force` and the timer make.
-      const enacted = await store.settleStep(runId, { kind: 'expire_gate', gateId }, def, {
-        now: afterExpiry,
-      });
+      await setClockOf(store, afterExpiry);
+      const enacted = await store.settleStep(runId, { kind: 'expire_gate', gateId }, def);
       // (a) red when the enacting write does not report the guard it settled; (b) prints it.
       expect(enacted.applied && enacted.guards).toEqual([{ step: 'check', outcome: 'pass' }]);
 
+      await setClockOf(store, afterExpiry);
       const same = await submitHumanResponse(store, def, {
         runId,
         gateId,
         choice: 'approve',
-        now: afterExpiry,
       });
       // (a) red when the already-resolved reply for a gate its expiry settled is not marked — a
       //     surface would print "Responded:"; (b) prints the values.
       expect(same.status).toBe('ok');
       expect(same.answer_recorded).toBe(false);
       expect(same.guards).toBeUndefined();
-      const record = await store.get(runId);
+      const { record: record } = await store.get(runId);
       expect(lateAnswerOutcome(same, record)).toEqual({ choice: 'approve', phase: 'running' });
       // (a) red when the composer prints nothing for this reply; (b) prints the lines.
       expect(
@@ -1048,11 +1056,11 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
         }),
       ).toEqual([LATE_SAME_CHOICE]);
 
+      await setClockOf(store, afterExpiry);
       const different = await submitHumanResponse(store, def, {
         runId,
         gateId,
         choice: 'reject',
-        now: afterExpiry,
       });
       // (a) red when the conflict reply for a gate its expiry settled is not marked;
       //     (b) prints the values.
@@ -1067,11 +1075,11 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
     await withStore(async (store) => {
       const def = gateThenGuard({ gate: { timeout_seconds: 1, on_expiry: 'abort' } });
       const { runId, gateId, afterExpiry } = await openGate(store, def);
+      await setClockOf(store, afterExpiry);
       const reply = await submitHumanResponse(store, def, {
         runId,
         gateId,
         choice: 'approve',
-        now: afterExpiry,
       });
       // (a) red when the abort disposition's reply is left unmarked; (b) prints the values.
       expect(reply.status).toBe('error');
@@ -1080,7 +1088,7 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
       expect(reply.guards).toBeUndefined();
       expect(reply.ended_by).toBeUndefined();
       // (a) red when a choice is invented for a gate whose expiry settled none; (b) prints it.
-      expect(lateAnswerOutcome(reply, await store.get(runId))).toBeUndefined();
+      expect(lateAnswerOutcome(reply, (await store.get(runId)).record)).toBeUndefined();
     });
   });
 
@@ -1092,12 +1100,12 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
       };
       const passingDef = gateThenGuard({ gate: expiring('approve'), more });
       const passed = await openGate(store, passingDef);
+      await setClockOf(store, passed.afterExpiry);
       const ran = await executeStep(store, passingDef, {
         runId: passed.runId,
         command: 'after',
         input: {},
         dispatcher: echo,
-        now: passed.afterExpiry,
       });
       // The guard passed in the expiry's own write, so `after` is eligible in this same call.
       // (a) red when the expiry's write leaves the guard unsettled — `after` is then refused as
@@ -1115,12 +1123,12 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
         more,
       });
       const aborted = await openGate(store, abortingDef);
+      await setClockOf(store, aborted.afterExpiry);
       const refused = await executeStep(store, abortingDef, {
         runId: aborted.runId,
         command: 'after',
         input: {},
         dispatcher: echo,
-        now: aborted.afterExpiry,
       });
       // (a) red when the disclosure line does not say the guard ended the run, or drops its
       //     reason; (b) prints the warnings that mention the enactment.
@@ -1129,101 +1137,7 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
           "Guard step 'check' aborted the run. Reason: Not approved (timed out to reject).",
         ),
       ]);
-      expect((await store.get(aborted.runId)).run_phase).toBe('aborted');
-    });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// A store WITHOUT settleStep
-// ---------------------------------------------------------------------------
-
-describe('issue #625 — a store WITHOUT settleStep settles no guard in the write (the legacy two-write shape is unchanged)', () => {
-  const withLegacyStore = <T>(fn: (store: RunStore) => Promise<T>): Promise<T> =>
-    withStore((inner) => fn(new NoSettleStepStore(inner)));
-
-  it('after an ANSWER: no guards on the reply, the guard still eligible, no seal', async () => {
-    await withLegacyStore(async (store) => {
-      const def = gateThenGuard({ guard: { abort_message: 'Not approved — stopping.' } });
-      const { runId, gateId } = await openGate(store, def);
-
-      const reply = await submitHumanResponse(store, def, { runId, gateId, choice: 'reject' });
-
-      // (a) red when the legacy answer path starts settling guards; (b) prints the values.
-      expect(reply.status).toBe('ok');
-      expect(reply.guards).toBeUndefined();
-      expect(reply.ended_by).toBeUndefined();
-      const record = await store.get(runId);
-      expect(membershipOf(record, 'check')).toBe('none');
-      expect(record.terminal_state).toBe(false);
-      expect(record.sealed_by).toBeUndefined();
-      expect(record.run_phase).toBe('running');
-    });
-  });
-
-  it('after an EXPIRY enacted by a late answer: no guards on the reply, the guard still eligible, no seal', async () => {
-    await withLegacyStore(async (store) => {
-      const def = gateThenGuard({
-        gate: expiring('reject'),
-        guard: { abort_message: 'Not approved (timed out to reject).' },
-      });
-      const { runId, gateId, afterExpiry } = await openGate(store, def);
-
-      const reply = await submitHumanResponse(store, def, {
-        runId,
-        gateId,
-        choice: 'reject',
-        now: afterExpiry,
-      });
-
-      // The legacy expiry leg calls the pure transform and persists its result — WITHOUT the
-      // option. With it, this write would seal the run through a guard on a store whose cleanup
-      // steps nothing here could then run.
-      // (a) red when that direct call sets `cascadeGuards`; (b) prints the values.
-      expect(reply.status).toBe('ok');
-      expect(reply.guards).toBeUndefined();
-      expect(reply.ended_by).toBeUndefined();
-      // (a) red when the guard's sentence is appended on a store that settled no guard;
-      //     (b) prints the sentence.
-      // decision C185: what the run owes follows (the guard, owed: this store settled none).
-      // #729 PR-0 (D-B): the door appends it (names_next); core carries the advance way's owed.
-      expect([reply.context_hint, reply.names_next, nextCalls(reply), owedOf(reply)]).toEqual([
-        LATE_SAME_CHOICE,
-        true,
-        ['advance'],
-        ['check'],
-      ]);
-      const record = await store.get(runId);
-      expect(record.settled?.['confirm']).toMatchObject({
-        choice: 'reject',
-        resolved_by: 'timeout',
-      });
-      expect(membershipOf(record, 'check')).toBe('none');
-      expect(record.terminal_state).toBe(false);
-      expect(record.sealed_by).toBeUndefined();
-      // The one additive field this store's late reply gains: the typed fact about the ANSWER.
-      // (a) red when a late answer on a store without settleStep is not marked; (b) prints it.
-      expect(reply.answer_recorded).toBe(false);
-    });
-  });
-
-  it('the same expiry on a store WITH settleStep settles the guard in that write (the control for the cell above)', async () => {
-    await withStore(async (store) => {
-      const def = gateThenGuard({
-        gate: expiring('reject'),
-        guard: { abort_message: 'Not approved (timed out to reject).' },
-      });
-      const { runId, gateId, afterExpiry } = await openGate(store, def);
-      const reply = await submitHumanResponse(store, def, {
-        runId,
-        gateId,
-        choice: 'reject',
-        now: afterExpiry,
-      });
-      // (a) red when the two fixtures stop differing only in the store — the cell above would
-      //     then prove nothing; (b) prints the values.
-      expect(reply.guards).toEqual([{ step: 'check', outcome: 'abort' }]);
-      expect(membershipOf(await store.get(runId), 'check')).toBe('skipped');
+      expect((await store.get(aborted.runId)).record.run_phase).toBe('aborted');
     });
   });
 });
@@ -1236,10 +1150,14 @@ describe("issue #625 — advanceRun (the chain's tail) called without the chain'
   it('on a record left with an eligible guard: it settles the guard and lists it, as executeChain does', async () => {
     await withStore(async (store) => {
       const def = stepThenGuard({ more: FINISH });
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       // `store.update` is a write that settles no guard — the record a resume or a run's
       // creation can also leave.
-      const leftover = await store.update({
+      const { record: leftover } = await store.update({
         ...run,
         completed_steps: ['work'],
         evidence: [
@@ -1264,14 +1182,18 @@ describe("issue #625 — advanceRun (the chain's tail) called without the chain'
       expect(reply.status).toBe('ok');
       expect(reply.chained_auto_steps).toEqual([{ step: 'check', run_phase: 'running' }]);
       expect(offeredSteps(reply)).toEqual(['finish']);
-      expect(membershipOf(await store.get(run.id), 'check')).toBe('completed');
+      expect(membershipOf((await store.get(run.id)).record, 'check')).toBe('completed');
     });
   });
 
   it('on a record with nothing for the engine to run: a neutral ok reply, no steps listed', async () => {
     await withStore(async (store) => {
       const def = stepThenGuard();
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
 
       const reply = await advanceRun(store, def, {
         runId: run.id,
@@ -1287,7 +1209,7 @@ describe("issue #625 — advanceRun (the chain's tail) called without the chain'
         ['work'],
       ]);
       expect(reply.chained_auto_steps).toBeUndefined();
-      expect((await store.get(run.id)).version).toBe(run.version);
+      expect((await store.get(run.id)).record.version).toBe(run.version);
     });
   });
 });
@@ -1345,7 +1267,7 @@ describe('issue #625 — guardEndingOf and the printed lines, from a settlement 
         ],
       },
       def,
-      { now: new Date('2026-01-01T00:01:00.000Z'), cascadeGuards },
+      { at: new Date('2026-01-01T00:01:00.000Z'), cascadeGuards },
     );
 
   it('a guard that ended the run: the ending, then its Reason line', () => {
@@ -1386,7 +1308,7 @@ describe('issue #625 — guardEndingOf and the printed lines, from a settlement 
       gateOpenRecord(gateThenGuard()),
       { kind: 'settle_gate', gateId: 'not-the-gate', choice: 'approve', evidence: [] },
       gateThenGuard(),
-      { cascadeGuards: true },
+      { at: new Date('2026-01-01T00:00:00.000Z'), cascadeGuards: true },
     );
     expect(refused.applied).toBe(false);
     expect(guardEndingOf(refused)).toBeUndefined();

@@ -161,7 +161,7 @@ export async function handleSubmitHumanResponse(
   // WorkflowError (issue #719: a damaged JSON-store run file is RESOURCE_FORMAT_INVALID,
   // STATE_LEGACY_FORMAT or ENGINE_STORE_FAILED, naming the file and its way out), or, for an
   // untyped throw, ENGINE_STORE_FAILED naming its cause — never ENGINE_INTERNAL.
-  const run = await runStore.get(args.run_id).catch((err: unknown) => {
+  const { record: run } = await runStore.get(args.run_id).catch((err: unknown) => {
     throw runReadError(err);
   });
   // issue #456: code-keyed one-time-register remedy. Verb "retry" — deliberately neutral: the
@@ -212,13 +212,15 @@ export async function handleSubmitHumanResponse(
   if (reply.run_phase === undefined || !TERMINAL_PHASES.has(reply.run_phase)) {
     return mcpReplyOf(renderReply(reply, host));
   }
-  const ended = await runStore.get(args.run_id).catch(() => undefined);
-  if (ended === undefined) return mcpReplyOf(renderReply(reply, host));
+  const endedSnap = await runStore.get(args.run_id).catch(() => undefined);
+  if (endedSnap === undefined) return mcpReplyOf(renderReply(reply, host));
+  const ended = endedSnap.record;
   // #729 PR-0: the ended run's ways back in follow the door's own sentence of what comes next, as
   // before PR-0 (withPendingCleanup's rule, kept whole): the cleanup sentence once — never when the
   // hint already names its command (F11) — and, when core's hint ends with the resume offer, the
   // offer after it, so its command ends the hint (F6). Both are said after the door's sentence.
-  const now = new Date();
+  // #715 (b): every statement about the ended run is judged at its snapshot's reading.
+  const now = endedSnap.at;
   const cleanup = pendingCleanupSentence(ended, now);
   const cleanupWay = pendingCleanupWay(ended, now);
   const named = cleanupWay !== undefined && reply.context_hint.includes(`'${cleanupWay.command}'`);

@@ -8,7 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import {
   advanceRun,
   executeChain,
@@ -19,6 +19,24 @@ import {
 import { JsonFileStore } from '../store/json-file-store.js';
 import type { EngineReply } from '../types/response-envelope.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
+import { writeTestClockFile } from '../store/test-clock-file.js';
+
+/** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
+ *  runs folder sits beside the location's clock file (first set to the host's reading), which
+ *  `setClockOf` rewrites. */
+async function testLocationRuns(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  await writeTestClockFile(root, new Date());
+  return join(root, 'runs');
+}
+async function clockedJsonStore(prefix: string): Promise<JsonFileStore> {
+  return new JsonFileStore(await testLocationRuns(prefix));
+}
+async function setClockOf(store: object, t: Date): Promise<void> {
+  const runsDir = (store as { runsDirPath?: string }).runsDirPath;
+  if (runsDir === undefined) throw new Error('setClockOf: this store is not a JSON store');
+  await writeTestClockFile(dirname(runsDir), t);
+}
 
 /** `q` (a question; settle_default 60 s after it opens), `after` (auto), `side` (auto, independent). */
 const D: WorkflowDefinition = {
@@ -47,15 +65,15 @@ const LAG_MS = 7_000;
 
 /** A run with its question open, and the instant `LAG_MS` after its deadline. */
 async function due() {
-  const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-receipt-729-')));
-  const { run } = await store.create({ workflowId: D.id, workflowVersion: 1, params: {} });
+  const store = await clockedJsonStore('realm-receipt-729-');
+  const { record: run } = await store.create({ workflowId: D.id, workflowVersion: 1, params: {} });
   await executeStep(store, D, {
     runId: run.id,
     command: 'q',
     input: {},
     dispatcher: async () => ({}),
   });
-  const open = await store.get(run.id);
+  const { record: open } = await store.get(run.id);
   const gateId = open.pending_gate!.gate_id;
   const deadline = open.pending_gate!.expires_at!;
   const now = new Date(new Date(deadline).getTime() + LAG_MS);
@@ -85,55 +103,58 @@ const CARRIED = (via: string) => ({
 describe('#729 PR-0 — T-2, A.3 #5: each enactor of one deadline names itself and the lag', () => {
   it('advanceRun', async () => {
     const { store, runId, now } = await due();
-    const reply = await advanceRun(store, D, { runId, now });
+    await setClockOf(store, now);
+    const reply = await advanceRun(store, D, { runId });
     // (a) red when the receipt drops the enactor or the lag; (b) prints the receipt.
     expect(receipt(reply)).toEqual(CARRIED('advanceRun'));
   });
 
   it('executeStep (a step named after the question)', async () => {
     const { store, runId, now } = await due();
+    await setClockOf(store, now);
     const reply = await executeStep(store, D, {
       runId,
       command: 'after',
       input: {},
       dispatcher: async () => ({}),
-      now,
     });
     expect(receipt(reply)).toEqual(CARRIED('executeStep'));
   });
 
   it('executeChain', async () => {
     const { store, runId, now } = await due();
+    await setClockOf(store, now);
     const reply = await executeChain(store, D, {
       runId,
       command: 'after',
       input: {},
       dispatcher: async () => ({}),
-      now,
     });
     expect(receipt(reply)).toEqual(CARRIED('executeChain'));
   });
 
   it('executeEngineStep', async () => {
     const { store, runId, now, open } = await due();
-    const reply = await executeEngineStep(store, D, { runId, step: 'side', run: open, now });
+    await setClockOf(store, now);
+    const reply = await executeEngineStep(store, D, { runId, step: 'side', run: open });
     expect(receipt(reply)).toEqual(CARRIED('executeEngineStep'));
   });
 
   it('submitHumanResponse (a late answer)', async () => {
     const { store, runId, gateId, now } = await due();
+    await setClockOf(store, now);
     const reply = await submitHumanResponse(store, D, {
       runId,
       gateId,
       choice: 'reject',
-      now,
     });
     expect(receipt(reply)).toEqual(CARRIED('submitHumanResponse'));
   });
 
   it('A.3 #13: the losing late answer is told the winning choice — outcome carries it, by the timeout', async () => {
     const { store, runId, gateId, now } = await due();
-    const reply = await submitHumanResponse(store, D, { runId, gateId, choice: 'reject', now });
+    await setClockOf(store, now);
+    const reply = await submitHumanResponse(store, D, { runId, gateId, choice: 'reject' });
     // (a) red when the losing answer is not told what won; (b) prints the outcome's choice and kind.
     expect([reply.answer_recorded, reply.outcome?.choice, reply.outcome?.by.kind]).toEqual([
       false,

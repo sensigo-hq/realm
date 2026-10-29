@@ -199,7 +199,7 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about MCP repli
       ),
     );
     const runId = (await call('start_run', { workflow_id: 'ann' }))['run_id'] as string;
-    const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
+    const gateId = (await runStore.get(runId)).record.pending_gate!.gate_id;
     const r = await call('submit_human_response', {
       run_id: runId,
       gate_id: gateId,
@@ -253,14 +253,14 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about MCP repli
       ),
     );
     const runId = (await call('start_run', { workflow_id: 'ann2' }))['run_id'] as string;
-    const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
+    const gateId = (await runStore.get(runId)).record.pending_gate!.gate_id;
     const r = await call('submit_human_response', {
       run_id: runId,
       gate_id: gateId,
       choice: 'send',
     });
     const ran = await call('advance_run', { run_id: runId });
-    const after = await runStore.get(runId);
+    const { record: after } = await runStore.get(runId);
     // (a) red when the reply's sentence reads as a promise that both run, or advance_run runs
     //     `notify` past the question; (b) prints them.
     expect({
@@ -550,7 +550,7 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about MCP repli
     // issue #688: (a) red when a bare step counts as consuming its map — its way out would name the
     //     input_map it never applies; (b) prints the hint.
     expect(String(r['context_hint'])).not.toContain('input_map');
-    expect((await runStore.get(runId)).completed_steps).toEqual(['order']);
+    expect((await runStore.get(runId)).record.completed_steps).toEqual(['order']);
   });
 
   it('#688: the same step with a handler runs — its schema checks what its input_map builds', async () => {
@@ -596,7 +596,7 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about MCP repli
     //     (b) prints the hint, the steps and the handler's input.
     expect({
       hint: r['context_hint'],
-      completed: (await runStore.get(runId)).completed_steps,
+      completed: (await runStore.get(runId)).record.completed_steps,
       received: seen,
     }).toMatchObject({ completed: ['order', 'show'], received: [{ sku: 'A-100' }] });
   });

@@ -66,7 +66,7 @@ async function run(
   thrown: unknown,
 ): Promise<{ code: string | undefined; message: string; details: unknown }> {
   const store = new JsonFileStore(dir);
-  const { run: r } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+  const { record: r } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
   const registry = createDefaultRegistry();
   registry.register('handler', 'h', {
     id: 'h',

@@ -162,14 +162,18 @@ async function session(
 /** A run opened at its question outside the session (the CLI, another process). */
 async function openedElsewhere(s: Session, timeout?: number, yaml?: string) {
   const def = loadWorkflowFromString(yaml ?? WORKFLOW(timeout));
-  const { run } = await s.runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+  const { record: run } = await s.runStore.create({
+    workflowId: def.id,
+    workflowVersion: 1,
+    params: {},
+  });
   await advanceRun(s.runStore, def, { runId: run.id });
-  const record = await s.runStore.get(run.id);
+  const { record: record } = await s.runStore.get(run.id);
   return { runId: run.id, gateId: record.pending_gate!.gate_id, def };
 }
 
 const answers = async (s: Session, runId: string) =>
-  (await s.runStore.get(runId)).evidence.filter((e) => e.kind === 'gate_response');
+  (await s.runStore.get(runId)).record.evidence.filter((e) => e.kind === 'gate_response');
 
 const hintOf = (r: Reply) => String(r['context_hint']);
 const firstEntry = (r: Reply) =>
@@ -296,7 +300,7 @@ describe('#627 W — the form path (cell 21)', () => {
       //     entry and the answers recorded.
       expect({
         recorded: (await answers(s, runId)).length,
-        open: (await s.runStore.get(runId)).pending_gate !== undefined,
+        open: (await s.runStore.get(runId)).record.pending_gate !== undefined,
         hint: hintOf(started),
         entry: firstEntry(started)?.human_readable,
       }).toEqual({
@@ -379,7 +383,7 @@ describe('#627 W — present_question', () => {
     const s = await session();
     const started = await s.call('start_run', { workflow_id: s.workflowId, params: {} });
     const runId = String(started['run_id']);
-    const gateId = String((await s.runStore.get(runId)).pending_gate!.gate_id);
+    const gateId = String((await s.runStore.get(runId)).record.pending_gate!.gate_id);
     for (let i = 0; i < 3; i++)
       await s.call('present_question', { run_id: runId, gate_id: gateId });
     const sentBeforeRead = s.elicited();
@@ -449,7 +453,9 @@ describe('#627 W — present_question', () => {
       params: {},
       idempotencyKey: 'k2',
     });
-    await advanceRun(s.runStore, loadWorkflowFromString(WORKFLOW()), { runId: elsewhere.run.id });
+    await advanceRun(s.runStore, loadWorkflowFromString(WORKFLOW()), {
+      runId: elsewhere.record.id,
+    });
     await s.call('start_run', { workflow_id: s.workflowId, params: {}, idempotency_key: 'k2' });
     // (a) red when a deduped start_run (of a run this session sent, or of one keyed elsewhere), the
     //     batch or abandon's refusal sends a form, or one call sends two; (b) prints the forms sent.
@@ -459,9 +465,9 @@ describe('#627 W — present_question', () => {
   it('no presentation record: a form sent and declined leaves the run record unchanged', async () => {
     const s = await session();
     const { runId, gateId } = await openedElsewhere(s);
-    const before = await s.runStore.get(runId);
+    const { record: before } = await s.runStore.get(runId);
     await s.call('present_question', { run_id: runId, gate_id: gateId });
-    const after = await s.runStore.get(runId);
+    const { record: after } = await s.runStore.get(runId);
     // (a) red when a presentation is appended to `evidence` or the record changes; (b) prints the
     //     versions and the entry counts.
     expect({ version: after.version, entries: after.evidence.length }).toEqual({
@@ -501,7 +507,7 @@ describe('#627 W — after the wait: a fresh read, four branches', () => {
       () =>
         new Promise<ElicitReply>(() => {
           void (async () => {
-            const run = await box.s!.runStore.list().then((runs) => runs[0]!);
+            const run = await box.s!.runStore.list().then((l) => l.snapshots[0]!.record);
             const def = loadWorkflowFromString(WORKFLOW());
             await submitHumanResponse(box.s!.runStore, def, {
               runId: run.id,
@@ -534,7 +540,7 @@ describe('#627 W — after the wait: a fresh read, four branches', () => {
   it('a form accepted after another route settled the question records nothing: W-f3 opens "Not recorded:", with the winner', async () => {
     const box: { s?: Session } = {};
     const s = await session({}, async () => {
-      const run = await box.s!.runStore.list().then((runs) => runs[0]!);
+      const run = await box.s!.runStore.list().then((l) => l.snapshots[0]!.record);
       await submitHumanResponse(box.s!.runStore, loadWorkflowFromString(WORKFLOW()), {
         runId: run.id,
         gateId: run.pending_gate!.gate_id,
@@ -590,7 +596,7 @@ describe('#627 W — after the wait: a fresh read, four branches', () => {
   it('the wait helper: an unparseable expires_at waits the cap alone and says so on stderr; a due question sends no form', async () => {
     const s = await session({ formWaitSeconds: 60 });
     const { runId, gateId } = await openedElsewhere(s);
-    const record = await s.runStore.get(runId);
+    const { record: record } = await s.runStore.get(runId);
     // Correction 2 (1.1): only a gate that declares `on_expiry` has its deadline read by the form path.
     await s.runStore.update({
       ...record,
@@ -633,13 +639,13 @@ async function direct(timeout?: number) {
   const dir = await mkdtemp(join(tmpdir(), 'realm-form-627-direct-'));
   const runStore = new JsonFileStore(join(dir, 'runs'));
   const definition = loadWorkflowFromString(WORKFLOW(timeout));
-  const { run } = await runStore.create({
+  const { record: run } = await runStore.create({
     workflowId: definition.id,
     workflowVersion: 1,
     params: {},
   });
   await advanceRun(runStore, definition, { runId: run.id });
-  const gateId = (await runStore.get(run.id)).pending_gate!.gate_id;
+  const gateId = (await runStore.get(run.id)).record.pending_gate!.gate_id;
   const answersSet = judgeGateAnswers({});
   const waitSet = judgeFormWait({});
   if (!answersSet.ok || !waitSet.ok) throw new Error('fixture: the defaults judge');
@@ -687,7 +693,7 @@ describe('#627 W — the form path’s own guards, on the function', () => {
       { started: d.door.monotonicNow() },
       false,
     );
-    const recorded = (await d.runStore.get(d.runId)).evidence.filter(
+    const recorded = (await d.runStore.get(d.runId)).record.evidence.filter(
       (e) => e.kind === 'gate_response',
     ).length;
     // (a) red when the form path submits a choice outside the gate's choices; (b) prints the
@@ -828,7 +834,7 @@ describe('#627 W correction 1 — the form path', () => {
       WITHDRAWN.settled,
       undefined as number | undefined,
       async (s: Session) => {
-        const run = (await s.runStore.list())[0]!;
+        const run = (await s.runStore.list()).snapshots.map((s) => s.record)[0]!;
         await submitHumanResponse(s.runStore, loadWorkflowFromString(WORKFLOW()), {
           runId: run.id,
           gateId: run.pending_gate!.gate_id,
@@ -945,7 +951,7 @@ describe('#627 W correction 1 — the form path', () => {
     const s = await session(
       {},
       async () => {
-        const run = (await box.s!.runStore.list())[0]!;
+        const run = (await box.s!.runStore.list()).snapshots.map((s) => s.record)[0]!;
         const def = loadWorkflowFromString(yaml);
         await submitHumanResponse(box.s!.runStore, def, {
           runId: run.id,
@@ -961,7 +967,7 @@ describe('#627 W correction 1 — the form path', () => {
     );
     box.s = s;
     const started = await s.call('start_run', { workflow_id: s.workflowId, params: {} });
-    const record = await s.runStore.get(String(started['run_id']));
+    const { record: record } = await s.runStore.get(String(started['run_id']));
     // (a) red when the door submits the fresh pending_gate's id (the stale form answers gate 2);
     //     (b) prints the open gate's step and the answers recorded per step.
     expect({
@@ -1037,7 +1043,7 @@ describe('#627 W correction 1 — the form path', () => {
     const s = await session(
       {},
       async () => {
-        const run = (await box.s!.runStore.list())[0]!;
+        const run = (await box.s!.runStore.list()).snapshots.map((s) => s.record)[0]!;
         const def = loadWorkflowFromString(yaml);
         const registry = new ExtensionRegistry();
         registry.register('handler', 'fails_627', {
@@ -1060,7 +1066,7 @@ describe('#627 W correction 1 — the form path', () => {
     );
     box.s = s;
     const started = await s.call('start_run', { workflow_id: s.workflowId, params: {} });
-    const record = await s.runStore.get(String(started['run_id']));
+    const { record: record } = await s.runStore.get(String(started['run_id']));
     // (a) red when the tail is read from the record before the wait; (b) prints the phase and hint.
     expect({ ended: record.terminal_state, hint: hintOf(started) }).toEqual({
       ended: true,
@@ -1114,7 +1120,7 @@ const FINDING_ONLY = (seconds: number) =>
 
 /** Moves the open gate's stored deadline into the past (a minute ago). */
 async function pastDeadline(s: Session, runId: string, onExpiry?: 'abort') {
-  const record = await s.runStore.get(runId);
+  const { record: record } = await s.runStore.get(runId);
   await s.runStore.update({
     ...record,
     pending_gate: {
@@ -1170,7 +1176,7 @@ describe('#627 W correction 2 — the form path', () => {
     await pastDeadline(s, runId);
     const reply = await s.call('present_question', { run_id: runId, gate_id: gateId });
     const d = await direct(600);
-    const rec = await d.runStore.get(d.runId);
+    const { record: rec } = await d.runStore.get(d.runId);
     await d.runStore.update({
       ...rec,
       pending_gate: {
@@ -1219,7 +1225,7 @@ describe('#627 W correction 2 — the form path', () => {
     const e = await session({}, async () => ({ action: 'decline' }), 600);
     const eo = await openedElsewhere(e, 600);
     const eReply = await e.call('present_question', { run_id: eo.runId, gate_id: eo.gateId });
-    const expires = (await e.runStore.get(eo.runId)).pending_gate!.expires_at!;
+    const expires = (await e.runStore.get(eo.runId)).record.pending_gate!.expires_at!;
     // (a) red when "until" prints for both; (b) prints both hints.
     expect({ finding: hintOf(fReply), onExpiry: hintOf(eReply) }).toEqual({
       finding:
@@ -1336,17 +1342,25 @@ describe('#627 W correction 2 — the form path', () => {
       { yaml },
     );
     box.s = s;
-    const { run } = await s.runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await s.runStore.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     box.runId = run.id;
-    const token = (await s.runStore.claimStep(run.id, 'aborter', def)).claims?.['aborter']?.token;
+    const token = (await s.runStore.claimStep(run.id, 'aborter', def)).record.claims?.['aborter']
+      ?.token;
     if (token !== undefined) box.token = token;
     await advanceRun(s.runStore, def, { runId: run.id });
-    const gateId = (await s.runStore.get(run.id)).pending_gate!.gate_id;
+    const gateId = (await s.runStore.get(run.id)).record.pending_gate!.gate_id;
     await s.call('present_question', { run_id: run.id, gate_id: gateId });
     await until(() => aborted, 5_000);
     // (a) red when the poll words an ended run as "settled elsewhere"; (b) prints the reasons and
     //     whether the run ended.
-    expect({ reasons: s.reasons(), ended: (await s.runStore.get(run.id)).terminal_state }).toEqual({
+    expect({
+      reasons: s.reasons(),
+      ended: (await s.runStore.get(run.id)).record.terminal_state,
+    }).toEqual({
       reasons: [WITHDRAWN.ended],
       ended: true,
     });
@@ -1355,7 +1369,7 @@ describe('#627 W correction 2 — the form path', () => {
   it('1.4b (a): an accepted answer another route beat is never worded as the caller’s refusal ("your choice")', async () => {
     const box: { s?: Session } = {};
     const s = await session({}, async () => {
-      const run = (await box.s!.runStore.list())[0]!;
+      const run = (await box.s!.runStore.list()).snapshots.map((s) => s.record)[0]!;
       await submitHumanResponse(box.s!.runStore, loadWorkflowFromString(WORKFLOW()), {
         runId: run.id,
         gateId: run.pending_gate!.gate_id,
@@ -1394,7 +1408,7 @@ describe('#627 W correction 2 — the form path', () => {
     const s = await session(
       {},
       async () => {
-        const run = (await box.s!.runStore.list())[0]!;
+        const run = (await box.s!.runStore.list()).snapshots.map((s) => s.record)[0]!;
         box.firstGate = run.pending_gate!.gate_id;
         await submitHumanResponse(box.s!.runStore, def, {
           runId: run.id,
@@ -1443,7 +1457,7 @@ describe('#627 W correction 2 — the form path', () => {
     const s = await session(
       {},
       async () => {
-        const run = (await box.s!.runStore.list())[0]!;
+        const run = (await box.s!.runStore.list()).snapshots.map((s) => s.record)[0]!;
         await submitHumanResponse(box.s!.runStore, loadWorkflowFromString(yaml), {
           runId: run.id,
           gateId: run.pending_gate!.gate_id,

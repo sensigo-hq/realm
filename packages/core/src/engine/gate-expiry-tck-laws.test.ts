@@ -89,7 +89,7 @@ describe('EXPIRE_ARM_MATRIX (issue #291, O7)', () => {
   it('refuses not_expired with the injectable now, never the caller-implied clock', () => {
     const run = makeRun({ pending_gate: makeGate({ expires_at: EXPIRES_AT, on_expiry: 'abort' }) });
     const delta: SettlementDelta = { kind: 'expire_gate', gateId: 'gate-1' };
-    const result = applySettlement(run, delta, def, { now: new Date('2026-01-01T00:00:30.000Z') });
+    const result = applySettlement(run, delta, def, { at: new Date('2026-01-01T00:00:30.000Z') });
     expect(result.applied).toBe(false);
     if (!result.applied) expect(result.reason).toBe('not_expired');
   });
@@ -103,10 +103,10 @@ describe('EXPIRE_ARM_MATRIX (issue #291, O7)', () => {
       }),
     });
     const delta: SettlementDelta = { kind: 'expire_gate', gateId: 'gate-1' };
-    const first = applySettlement(run, delta, def, { now: PAST_EXPIRY });
+    const first = applySettlement(run, delta, def, { at: PAST_EXPIRY });
     expect(first.applied).toBe(true);
     if (!first.applied) return;
-    const second = applySettlement(first.run, delta, def, { now: PAST_EXPIRY });
+    const second = applySettlement(first.run, delta, def, { at: PAST_EXPIRY });
     expect(second.applied).toBe(false);
     if (!second.applied) expect(second.reason).toBe('already_settled');
   });
@@ -114,10 +114,10 @@ describe('EXPIRE_ARM_MATRIX (issue #291, O7)', () => {
   it('replay ×2 (abort): the SECOND expire_gate attempt for an already-aborted gate NOOPs already_settled (terminal split)', () => {
     const run = makeRun({ pending_gate: makeGate({ expires_at: EXPIRES_AT, on_expiry: 'abort' }) });
     const delta: SettlementDelta = { kind: 'expire_gate', gateId: 'gate-1' };
-    const first = applySettlement(run, delta, def, { now: PAST_EXPIRY });
+    const first = applySettlement(run, delta, def, { at: PAST_EXPIRY });
     expect(first.applied).toBe(true);
     if (!first.applied) return;
-    const second = applySettlement(first.run, delta, def, { now: PAST_EXPIRY });
+    const second = applySettlement(first.run, delta, def, { at: PAST_EXPIRY });
     expect(second.applied).toBe(false);
     if (!second.applied) expect(second.reason).toBe('already_settled');
   });
@@ -130,7 +130,7 @@ describe('EXPIRE_ARM_MATRIX (issue #291, O7)', () => {
       terminal_reason: 'Workflow completed.',
     });
     const delta: SettlementDelta = { kind: 'expire_gate', gateId: 'gate-1' };
-    const result = applySettlement(run, delta, def, { now: PAST_EXPIRY });
+    const result = applySettlement(run, delta, def, { at: PAST_EXPIRY });
     expect(result.applied).toBe(false);
     if (!result.applied) expect(result.reason).toBe('run_terminal');
   });
@@ -140,7 +140,7 @@ describe('EXPIRE_ARM_MATRIX (issue #291, O7)', () => {
       pending_gate: makeGate({ gate_id: 'gate-OTHER', expires_at: EXPIRES_AT, on_expiry: 'abort' }),
     });
     const delta: SettlementDelta = { kind: 'expire_gate', gateId: 'gate-1' };
-    const result = applySettlement(run, delta, def, { now: PAST_EXPIRY });
+    const result = applySettlement(run, delta, def, { at: PAST_EXPIRY });
     expect(result.applied).toBe(false);
     if (!result.applied) expect(result.reason).toBe('gate_mismatch');
   });
@@ -148,7 +148,7 @@ describe('EXPIRE_ARM_MATRIX (issue #291, O7)', () => {
   it('finding-only (expires_at present, on_expiry absent) REFUSES no_disposition, arm-level, before APPLY', () => {
     const run = makeRun({ pending_gate: makeGate({ expires_at: EXPIRES_AT }) });
     const delta: SettlementDelta = { kind: 'expire_gate', gateId: 'gate-1' };
-    const result = applySettlement(run, delta, def, { now: PAST_EXPIRY });
+    const result = applySettlement(run, delta, def, { at: PAST_EXPIRY });
     expect(result.applied).toBe(false);
     if (!result.applied) expect(result.reason).toBe('no_disposition');
     expect(result.run.pending_gate).toBeDefined(); // never cleared
@@ -161,7 +161,7 @@ describe('EXPIRE_ABORT_CASCADE (issue #291, O7)', () => {
   it('clears pending_gate + claim, writes aborted_at, skip_details {gate_expired, gate_id} (day-one), and mints finalizers on the terminal edge — all in ONE write', () => {
     const run = makeRun({ pending_gate: makeGate({ expires_at: EXPIRES_AT, on_expiry: 'abort' }) });
     const delta: SettlementDelta = { kind: 'expire_gate', gateId: 'gate-1' };
-    const result = applySettlement(run, delta, def, { now: PAST_EXPIRY });
+    const result = applySettlement(run, delta, def, { at: PAST_EXPIRY });
     expect(result.applied).toBe(true);
     if (!result.applied) return;
     expect(result.run.pending_gate).toBeUndefined();
@@ -177,7 +177,7 @@ describe('EXPIRE_ABORT_CASCADE (issue #291, O7)', () => {
   it('the D-4 discriminator: a THIRD-variant gate_expired skip_detail is NEVER mistaken for gate_cancelled_by_abort', () => {
     const run = makeRun({ pending_gate: makeGate({ expires_at: EXPIRES_AT, on_expiry: 'abort' }) });
     const delta: SettlementDelta = { kind: 'expire_gate', gateId: 'gate-1' };
-    const result = applySettlement(run, delta, def, { now: PAST_EXPIRY });
+    const result = applySettlement(run, delta, def, { at: PAST_EXPIRY });
     expect(result.applied).toBe(true);
     if (!result.applied) return;
     expect(result.run.skip_details?.['gated']!.kind).toBe('gate_expired');
@@ -187,7 +187,7 @@ describe('EXPIRE_ABORT_CASCADE (issue #291, O7)', () => {
   it('never stamps defaulted_steps on the abort edge, even though it terminalizes (the FM-5/#232 guard)', () => {
     const run = makeRun({ pending_gate: makeGate({ expires_at: EXPIRES_AT, on_expiry: 'abort' }) });
     const delta: SettlementDelta = { kind: 'expire_gate', gateId: 'gate-1' };
-    const result = applySettlement(run, delta, def, { now: PAST_EXPIRY });
+    const result = applySettlement(run, delta, def, { at: PAST_EXPIRY });
     expect(result.applied).toBe(true);
     if (!result.applied) return;
     expect(result.run.defaulted_steps).toBeUndefined();
@@ -205,7 +205,7 @@ describe("EXPIRE_DEFAULT_RESOLVE (issue #291, O7 — incl. the FROZEN-BEATS-DEFI
       }),
     });
     const delta: SettlementDelta = { kind: 'expire_gate', gateId: 'gate-1' };
-    const result = applySettlement(run, delta, def, { now: PAST_EXPIRY });
+    const result = applySettlement(run, delta, def, { at: PAST_EXPIRY });
     expect(result.applied).toBe(true);
     if (!result.applied) return;
     expect(result.run.settled?.['gated']).toEqual({
@@ -232,7 +232,7 @@ describe("EXPIRE_DEFAULT_RESOLVE (issue #291, O7 — incl. the FROZEN-BEATS-DEFI
       }),
     });
     const delta: SettlementDelta = { kind: 'expire_gate', gateId: 'gate-1' };
-    const result = applySettlement(run, delta, def, { now: PAST_EXPIRY });
+    const result = applySettlement(run, delta, def, { at: PAST_EXPIRY });
     expect(result.applied).toBe(true);
     if (!result.applied) return;
     expect(result.run.terminal_state).toBe(false); // 'sibling' still in_progress
@@ -258,7 +258,7 @@ describe("EXPIRE_DEFAULT_RESOLVE (issue #291, O7 — incl. the FROZEN-BEATS-DEFI
       default_choice: 'reject',
     });
     const delta: SettlementDelta = { kind: 'expire_gate', gateId: 'gate-1' };
-    const result = applySettlement(run, delta, driftedDef, { now: PAST_EXPIRY });
+    const result = applySettlement(run, delta, driftedDef, { at: PAST_EXPIRY });
     expect(result.applied).toBe(true);
     if (!result.applied) return;
     // The FROZEN choice ('approve') wins — never the drifted definition's 'reject'.
@@ -276,7 +276,7 @@ describe("EXPIRE_DEFAULT_RESOLVE (issue #291, O7 — incl. the FROZEN-BEATS-DEFI
       }),
     });
     const delta: SettlementDelta = { kind: 'expire_gate', gateId: 'gate-1' };
-    const result = applySettlement(run, delta, def, { now: PAST_EXPIRY });
+    const result = applySettlement(run, delta, def, { at: PAST_EXPIRY });
     expect(result.applied).toBe(true);
     if (!result.applied) return;
     const snapshot = result.run.evidence.at(-1);

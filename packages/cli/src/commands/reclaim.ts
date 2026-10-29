@@ -11,6 +11,7 @@ import type { RunRecord, StepDefinition, InProgressClaimInfo, ReclaimResult } fr
 import { parseDuration } from '../lib/parse-duration.js';
 import { listRunsDiagnosed, unreadableRunLines } from './list.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
+import { parseStamp } from '@sensigo/realm';
 
 /**
  * Pure outcome→(glyph, message) renderer (issue #221 [M4]) — the SINGLE source of both reclaim
@@ -77,7 +78,7 @@ export function isAutoReclaimable(
   if (opts.olderThanMs !== undefined) {
     // §3.4b — a null deadline is NEVER "old enough" (defensive; claim_stale already implies concrete).
     if (claim.deadline === null) return false;
-    if (opts.now - new Date(claim.deadline).getTime() < opts.olderThanMs) return false;
+    if (opts.now - (parseStamp(claim.deadline) ?? NaN) < opts.olderThanMs) return false;
   }
   return true;
 }
@@ -154,7 +155,8 @@ export const reclaimCommand = new Command('reclaim')
         const selected: Array<{ runId: string; claim: InProgressClaimInfo }> = [];
         try {
           // issue #719 (B3): act on the readable runs; a damaged run file is reported, not acted on.
-          const { records: runs, unreadable } = await listRunsDiagnosed(store, opts.workflow);
+          const { snapshots, unreadable } = await listRunsDiagnosed(store, opts.workflow);
+          const runs = snapshots.map((s) => s.record);
           for (const line of unreadableRunLines(
             unreadable,
             '; realm run reclaim --all did not act on them.',
@@ -194,7 +196,7 @@ export const reclaimCommand = new Command('reclaim')
             `${selected.length} claim(s) WOULD be auto-reclaimed (idempotent ∧ past-deadline ∧ non-gated):`,
           );
           for (const { runId: rid, claim } of selected) {
-            const ageMin = Math.round((now - new Date(claim.deadline!).getTime()) / 60_000);
+            const ageMin = Math.round((now - (parseStamp(claim.deadline!) ?? NaN)) / 60_000);
             console.log(
               `  • ${rid} / ${claim.step}  (deadline ${claim.deadline}, ${ageMin}m past)`,
             );
@@ -252,7 +254,7 @@ export const reclaimCommand = new Command('reclaim')
       }
 
       try {
-        const run = await store.get(runId);
+        const { record: run } = await store.get(runId);
 
         // --- Reclaim path: --step (+ --force) ---
         if (opts.step !== undefined) {

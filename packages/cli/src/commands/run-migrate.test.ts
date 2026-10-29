@@ -20,6 +20,7 @@ import {
   runMigrateCommand,
   ORDERING_LINE,
 } from './run-migrate.js';
+import { doubleClock, noSettle } from '../test-support/snapshot-double.js';
 
 let dir: string;
 let store: JsonFileStore;
@@ -271,7 +272,11 @@ describe('#367 part 3 — the migration vehicle stamps every classifiable shape'
     // boundary's comparator abstains on abandon-marker records — a named blindness — so the store
     // takes this write. The vehicle's audit uses the FULL classifier, which does not abstain. That
     // is the observer observing.
-    const { run } = await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'wf',
+      workflowVersion: 1,
+      params: {},
+    });
     const stale: RunRecord = {
       ...run,
       terminal_state: true,
@@ -279,7 +284,7 @@ describe('#367 part 3 — the migration vehicle stamps every classifiable shape'
       abandoned_at: AT,
       sealed_by: { arm: 'complete' },
     };
-    await expect(store.update(stale)).resolves.toBeDefined(); // the boundary ACCEPTS it
+    await expect(store.update(stale).then((s) => s.record)).resolves.toBeDefined(); // the boundary ACCEPTS it
 
     const buckets = await migrateStampSeals(store, { force: true });
     expect(buckets.incoherent.map((e) => e.id)).toContain(run.id);
@@ -320,6 +325,8 @@ describe('#367 part 3 — the migration vehicle stamps every classifiable shape'
 
   it('a store without `stampSeal` refuses the batch and points at its own tooling', async () => {
     const nonDeclaring = {
+      clock: doubleClock,
+      settleStep: noSettle,
       persistsClaims: true,
       create: store.create.bind(store),
       get: store.get.bind(store),
@@ -482,6 +489,7 @@ describe('#367 part 3 — the report says no more than the branch it is printed 
       create: store.create.bind(store),
       update: store.update.bind(store),
       claimStep: store.claimStep.bind(store),
+      settleStep: store.settleStep.bind(store),
       // Someone else wrote between the sweep's read and this call.
       stampSeal: async (
         id: string,
@@ -744,7 +752,11 @@ describe("#367 part 5 — the operator's loop, end to end", () => {
     // The harder half. Here the operator does NOT correct the arm — they acknowledge it. The loop
     // has to close on "I know, leave it" too, or the tool keeps arguing with a decision already
     // made.
-    const { run } = await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'wf',
+      workflowVersion: 1,
+      params: {},
+    });
     const stale: RunRecord = {
       ...run,
       terminal_state: true,
@@ -752,7 +764,7 @@ describe("#367 part 5 — the operator's loop, end to end", () => {
       abandoned_at: AT,
       sealed_by: { arm: 'complete' },
     };
-    const written = await store.update(stale); // the boundary's comparator abstains on abandon markers
+    const { record: written } = await store.update(stale); // the boundary's comparator abstains on abandon markers
     const before = await migrateStampSeals(store, { force: true });
     expect(before.incoherent.map((e) => e.id)).toEqual([run.id]);
 

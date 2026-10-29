@@ -58,7 +58,7 @@ const TRUST_REFUSAL =
   "'trust: \"bogus_value\"' is not a recognized value — the engine will refuse this step at dispatch (VALIDATION_TRUST_VALUE). Accepts auto, human_confirmed, human_reviewed — correct the value and 'realm workflow register <path>'.";
 
 async function freshRun(store: JsonFileStore, d: WorkflowDefinition) {
-  const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+  const { record: run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
   return run;
 }
 
@@ -120,7 +120,7 @@ describe('#625 PR-2a, C82 — the view judges an agent step by its pre-claim che
           dispatcher: echo,
         });
         expect(r.status).toBe('ok');
-        const view = describePending(d, await store.get(run.id), undefined, new Date());
+        const view = describePending(d, (await store.get(run.id)).record, undefined, new Date());
         // (a) red when the agent check is dropped (ok:false) or refuses a passing step (ok:true);
         // (b) prints the two lists.
         expect({

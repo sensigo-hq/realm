@@ -29,13 +29,19 @@ function makeGate(overrides: Partial<PendingGate> = {}): PendingGate {
 }
 
 async function seedGatedRun(store: InMemoryStore, gate: PendingGate) {
-  const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
-  return store.update({
-    ...run,
-    in_progress_steps: ['approve'],
-    claims: { approve: { deadline: null } },
-    pending_gate: gate,
+  const { record: run } = await store.create({
+    workflowId: def.id,
+    workflowVersion: 1,
+    params: {},
   });
+  return (
+    await store.update({
+      ...run,
+      in_progress_steps: ['approve'],
+      claims: { approve: { deadline: null } },
+      pending_gate: gate,
+    })
+  ).record;
 }
 
 describe('scheduleGateExpiryTimer (issue #291)', () => {
@@ -58,7 +64,7 @@ describe('scheduleGateExpiryTimer (issue #291)', () => {
     await vi.advanceTimersByTimeAsync(1500);
     cancel();
 
-    const final = await store.get(run.id);
+    const { record: final } = await store.get(run.id);
     expect(final.pending_gate).toBeUndefined();
     expect(final.completed_steps).toContain('approve');
     expect(final.settled?.['approve']).toMatchObject({ resolved_by: 'timeout' });
@@ -75,7 +81,7 @@ describe('scheduleGateExpiryTimer (issue #291)', () => {
     await vi.advanceTimersByTimeAsync(1000);
     cancel();
 
-    const stillOpen = await store.get(run.id);
+    const { record: stillOpen } = await store.get(run.id);
     expect(stillOpen.pending_gate).toBeDefined();
   });
 
@@ -90,7 +96,7 @@ describe('scheduleGateExpiryTimer (issue #291)', () => {
     cancel();
     await vi.advanceTimersByTimeAsync(5000);
 
-    const stillOpen = await store.get(run.id);
+    const { record: stillOpen } = await store.get(run.id);
     expect(stillOpen.pending_gate).toBeDefined();
   });
 
@@ -106,7 +112,7 @@ describe('scheduleGateExpiryTimer (issue #291)', () => {
     expect(setTimeoutSpy).not.toHaveBeenCalled();
     cancel();
     await vi.advanceTimersByTimeAsync(5000);
-    const stillOpen = await store.get(run.id);
+    const { record: stillOpen } = await store.get(run.id);
     expect(stillOpen.pending_gate).toBeDefined();
   });
 
@@ -134,11 +140,11 @@ describe('scheduleGateExpiryTimer (issue #291)', () => {
 
     const cancel = scheduleGateExpiryTimer(run.id, gate, { store, definition: def });
 
-    // A DIFFERENT enactment point (e.g. drain --expired) wins the race first.
-    await store.settleStep!(run.id, { kind: 'expire_gate', gateId: gate.gate_id }, def, {
-      now: new Date(Date.now() + 1500),
-    });
-    const afterRace = await store.get(run.id);
+    // A DIFFERENT enactment point (e.g. drain --expired) wins the race first. #715 (b): the store's
+    // clock (the faked `Date` here) decides it is due — moved past the deadline without firing timers.
+    vi.setSystemTime(new Date(Date.now() + 1500));
+    await store.settleStep(run.id, { kind: 'expire_gate', gateId: gate.gate_id }, def);
+    const { record: afterRace } = await store.get(run.id);
     expect(afterRace.completed_steps).toContain('approve');
 
     // The timer firing afterward must not throw and must not double-apply.
@@ -181,9 +187,8 @@ describe('scheduleGateExpiryTimer (issue #291)', () => {
     const run = await seedGatedRun(store, gate);
     const onApplied = vi.fn();
     const cancel = scheduleGateExpiryTimer(run.id, gate, { store, definition: def, onApplied });
-    await store.settleStep!(run.id, { kind: 'expire_gate', gateId: gate.gate_id }, def, {
-      now: new Date(Date.now() + 1500),
-    });
+    vi.setSystemTime(new Date(Date.now() + 1500));
+    await store.settleStep(run.id, { kind: 'expire_gate', gateId: gate.gate_id }, def);
     await vi.advanceTimersByTimeAsync(2000);
     cancel();
     // (a) red when the timer reports a write it did not make; (b) prints the calls.
@@ -275,8 +280,13 @@ describe('issue #719 F6.4 — the expiry timer’s tail says what the error allo
         expires_at: new Date(Date.now() - 1000).toISOString(),
         on_expiry: 'abort',
       });
+      // #715 (b), C.1: the timer reaches the run only through settleStep (the legacy fallback's own
+      // `get` is gone) — the store's settle reads the file and throws the read error.
       const store = {
         get: async () => {
+          throw error;
+        },
+        settleStep: async () => {
           throw error;
         },
       } as unknown as Parameters<typeof scheduleGateExpiryTimer>[2]['store'];

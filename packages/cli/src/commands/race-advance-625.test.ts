@@ -25,7 +25,6 @@ import {
   executeStep,
   submitHumanResponse,
   type Attributed,
-  type RunRecord,
   type StepDefinition,
   type WorkflowDefinition,
 } from '@sensigo/realm';
@@ -85,7 +84,11 @@ async function advance(
     const runs = new JsonFileStore(join(home, 'runs'));
     const workflows = new JsonWorkflowStore(join(home, 'wf'));
     await workflows.register(def);
-    const { run } = await runs.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runs.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     let gets = 0;
     let fired = false;
     const store = new Proxy(runs, {
@@ -122,7 +125,7 @@ async function advance(
       (l) => lines.push(l),
       new ExtensionRegistry(),
     );
-    const after = await runs.get(run.id);
+    const { record: after } = await runs.get(run.id);
     const from = lines.findIndex((l) => l.startsWith('Owed to the engine:'));
     return {
       fired,
@@ -250,20 +253,24 @@ describe('#625 PR-2a, F7 (a) — the preview at an open question calls no writer
       const runs = new JsonFileStore(join(home, 'runs'));
       const workflows = new JsonWorkflowStore(join(home, 'wf'));
       await workflows.register(def);
-      const { run } = await runs.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await advanceRun(runs, def, { runId: run.id });
-      const gate = (await runs.get(run.id)).pending_gate!.gate_id;
+      const gate = (await runs.get(run.id)).record.pending_gate!.gate_id;
       let reads = 0;
       // The command's own read returns the run with its question open; then another program answers.
       const store = new Proxy(runs, {
         get(target, prop) {
           if (prop === 'get') {
-            return async (id: string): Promise<RunRecord> => {
-              const record = await target.get(id);
+            return async (id: string) => {
+              const snapshot = await target.get(id);
               if (++reads === 1) {
                 await submitHumanResponse(target, def, { runId: id, gateId: gate, choice: 'ok' });
               }
-              return record;
+              return snapshot;
             };
           }
           const v = Reflect.get(target, prop, target) as unknown;
@@ -280,7 +287,7 @@ describe('#625 PR-2a, F7 (a) — the preview at an open question calls no writer
         (l) => lines.push(l),
         new ExtensionRegistry(),
       );
-      const after = await runs.get(run.id);
+      const { record: after } = await runs.get(run.id);
       // (a) red when the preview calls the writer `advanceRun` (it runs `t` and `u` with no `→`
       //     line, and the record shows them completed); (b) prints the last line and the record.
       expect({

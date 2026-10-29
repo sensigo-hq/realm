@@ -412,7 +412,7 @@ e315bb67-091d-4283-aa74-3b85503ef109  fan v1  gate_waiting  10/2/2026, 2:38:47 A
 }
 ```
 
-A guard is decided inside the write that makes it ready: a step that finishes, an answer to a gate, or a gate whose time runs out. This finding is about a guard that became ready some other way. That is a guard that is ready when the run is created by `start_run_batch` or by a program, as here, or when `realm run resume` opens the run again at a failed guard, or a run kept in a store that does not settle in one write. Such a guard is decided by the run's next finished step or gate answer, or by `advance_run`, which `next_actions` names. A call to the guard or to the step after it is refused as not eligible. A run that `start_run` creates never has this finding: `start_run` decides such a guard itself. Both were added after version 0.46.0.
+A guard is decided inside the write that makes it ready: a step that finishes, an answer to a gate, or a gate whose time runs out. This finding is about a guard that became ready some other way. That is a guard that is ready when the run is created by `start_run_batch` or by a program, as here, or when `realm run resume` opens the run again at a failed guard. Such a guard is decided by the run's next finished step or gate answer, or by `advance_run`, which `next_actions` names. A call to the guard or to the step after it is refused as not eligible. A run that `start_run` creates never has this finding: `start_run` decides such a guard itself. Both were added after version 0.46.0.
 
 `trust_value_invalid`, for a workflow registered by version 0.38 with `trust: human_confirm`:
 

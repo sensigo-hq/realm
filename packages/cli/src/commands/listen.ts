@@ -46,7 +46,6 @@ import {
   JsonWorkflowStore,
   validateRunParams,
   WorkflowError,
-  sealRunLevel,
   renderLoaderWarning,
   describePending,
   owedNames,
@@ -107,8 +106,7 @@ export interface ListenDeps {
   // gate's workflow definition before it can construct an expire_gate delta.
   workflowStore: Pick<WorkflowRegistrar, 'register' | 'get'>;
   // issue #291 (Deliverable 4f): widened to add 'list' (the sweep's own store-scan) + 'settleStep'
-  // (the enactment write). Both OPTIONAL-shaped on the real RunStore interface already — Pick
-  // preserves that optionality, so a store that doesn't declare settleStep still satisfies this.
+  // (the enactment write) — required on `RunStore` since #715 (b).
   // issue #719 (B3): the JSON store's `listWithDiagnostics`, optional — when present the sweep acts
   // on the readable runs and logs each run file it cannot read instead of failing every pass.
   // #729 PR-3 correction 5 (J-5): `persistedRunRecordFields` (optional) says whether the start entry
@@ -652,7 +650,7 @@ export function makeListenHandler(
         // does not recognise the delivery; the run store's match on the idempotency key (= dedupId)
         // does. So listen reads `created`: a delivery that matched an existing run starts nothing
         // and writes nothing to it (below).
-        ({ run, created } = await deps.runStore.create({
+        ({ record: run, created } = await deps.runStore.create({
           workflowId: entry.definition.id,
           workflowVersion: entry.definition.version,
           params,
@@ -754,10 +752,18 @@ export function makeListenHandler(
           error: String(spawnResult.error),
         });
         try {
-          // issue #367: run-level seal through the ONE bypass-writer chokepoint — it stamps
-          // sealed_by {arm: 'spawn_failure'}; the fossil hand-written run_phase is retired (the
-          // store write tail derives it) and the field-assignment writer shape is gone.
-          await deps.runStore.update(sealRunLevel(run, 'spawn_failure', 'spawn_failed'));
+          // issue #367: run-level seal through the ONE bypass-writer chokepoint (`sealRunLevel`) — it
+          // stamps sealed_by {arm: 'spawn_failure'}. #715 (b) (D-21): through the `seal_run`
+          // settlement delta, so the seal's instant is the write's own reading; a run that moved
+          // since this webhook created it is thrown as STATE_SNAPSHOT_MISMATCH and logged below, as
+          // update() threw. No definition (Amendment 1).
+          await deps.runStore.settleStep(run.id, {
+            kind: 'seal_run',
+            arm: 'spawn_failure',
+            reason: 'spawn_failed',
+            expected_version: run.version,
+            release_claims: false,
+          });
         } catch (err) {
           // issue #367 residual: this catch used to swallow the store's throw anonymously. The
           // seal-integrity boundary throws TYPED codes (STATE_SEAL_*), so log the code explicitly
@@ -1013,15 +1019,15 @@ async function logSkippedRunFiles(
  * a terminalizing enactment logs an advisory pointing at `realm run drain --expired` (or plain
  * `drain`) instead. Multi-process safe: races with ANY other enactment point (submit/
  * execute_step/reclaim/drain --expired/another listen process/the attending timer) resolve via
- * the [F1] arm matrix's NOOPs — this function absorbs every refusal silently. Dormant when the
- * store declares no `settleStep` (nothing to enact with — a fast no-op). Pure I/O orchestration,
- * `now`-injectable for deterministic tests.
+ * the [F1] arm matrix's NOOPs — this function absorbs every refusal silently. Pure I/O
+ * orchestration. #715 (b) (D-26, D6-9, D6-41): each run is judged at its OWN snapshot's reading —
+ * no clock is passed in — and the store's own `settleStep` decides, at its reading, that the gate is
+ * due; a test sets the store's clock.
  */
 export async function sweepExpiredGates(
   deps: Pick<ListenDeps, 'runStore' | 'workflowStore' | 'logger'> & {
     sweepSeen?: SweepSeenFiles;
   },
-  now: Date = new Date(),
 ): Promise<SweepResult> {
   const result: SweepResult = {
     scanned: 0,
@@ -1030,19 +1036,18 @@ export async function sweepExpiredGates(
     skipped_locked: 0,
     errors: 0,
   };
-  if (deps.runStore.settleStep === undefined) return result;
 
   // issue #719 (B3): the readable runs are swept; a run file that cannot be read is logged, never
   // allowed to fail the whole pass.
-  const { records: runs, unreadable } = await listRunsDiagnosed(deps.runStore);
+  const { snapshots, unreadable } = await listRunsDiagnosed(deps.runStore);
   await logSkippedRunFiles(deps.logger, unreadable, deps.sweepSeen);
-  for (const run of runs) {
+  for (const { record: run, at } of snapshots) {
     if (run.terminal_state || run.pending_gate === undefined) continue;
     const gate = run.pending_gate;
     // Finding-only (no on_expiry) or no enforce clock at all — nothing this sweep can enact.
     if (gate.expires_at === undefined || gate.on_expiry === undefined) continue;
-    // #729 PR-0 (A2): core's one due test of a stored deadline.
-    if (!isPastDeadline(gate.expires_at, now)) continue;
+    // #729 PR-0 (A2): core's one due test of a stored deadline — at this row's own reading.
+    if (!isPastDeadline(gate.expires_at, at)) continue;
 
     result.scanned += 1;
 
@@ -1061,7 +1066,6 @@ export async function sweepExpiredGates(
         run.id,
         { kind: 'expire_gate', gateId: gate.gate_id },
         definition,
-        { now },
       );
       if (outcome.applied) {
         result.enacted += 1;
@@ -1069,14 +1073,14 @@ export async function sweepExpiredGates(
         // it — nothing else is attending a run the sweeper just moved on.
         const owedView = outcome.run.terminal_state
           ? undefined
-          : describePending(definition, outcome.run, undefined, now);
+          : describePending(definition, outcome.run, undefined, outcome.at);
         // decision C64: an expiry that leaves nothing able to run from here names the steps and the
         // way out — the CLI renderer's lines over the ways core composes (#729 PR-0, A-10).
         const cannotGoOn =
           owedView === undefined
             ? []
             : cannotGoOnLines(
-                composeWaysAt(outcome.run, now, { definition }),
+                composeWaysAt(outcome.run, outcome.at, { definition }),
                 outcome.run.id,
                 deriveRunPhase(outcome.run),
               );
@@ -1091,7 +1095,7 @@ export async function sweepExpiredGates(
           ...(cannotGoOn.length > 0
             ? {
                 cannot_go_on: cannotGoOnLines(
-                  composeWaysAt(outcome.run, now, { definition }),
+                  composeWaysAt(outcome.run, outcome.at, { definition }),
                   outcome.run.id,
                   deriveRunPhase(outcome.run),
                   writerCtx(),

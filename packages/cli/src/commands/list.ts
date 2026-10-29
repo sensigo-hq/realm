@@ -2,6 +2,7 @@
 import chalk from 'chalk';
 import { Command } from 'commander';
 import {
+  parseStamp,
   classifyRunHealth,
   deriveRunPhase,
   DEFAULT_IDLE_THRESHOLD_MS,
@@ -40,7 +41,8 @@ export async function listRunsDiagnosed(
   if (typeof store.listWithDiagnostics === 'function') {
     return store.listWithDiagnostics(workflowId);
   }
-  return { records: await store.list(workflowId), unreadable: [], copies: [] };
+  // #715 (b) (D-15, D-28): the same Listing shape, from `list()` — nothing more to say.
+  return { ...(await store.list(workflowId)), unreadable: [], copies: [] };
 }
 
 /**
@@ -318,7 +320,7 @@ export async function listRuns(
   workflowProbe?: (workflowId: string) => StuckDefinitionProbe | undefined,
   listing?: RunListing,
 ): Promise<string> {
-  const runs = listing !== undefined ? listing.records : await store.list(workflowId);
+  const runs = (listing ?? (await store.list(workflowId))).snapshots.map((s) => s.record);
   // issue #719 (C2): with damaged run files in the store, an empty result says "readable" — stdout
   // alone (piped, or with stderr gone) must not say no run matched when a damaged file may be one.
   const damaged = listing !== undefined && listing.unreadable.length > 0;
@@ -437,7 +439,7 @@ export async function listRuns(
       : 'No readable runs found.';
   }
 
-  filtered.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+  filtered.sort((a, b) => (parseStamp(b.updated_at) ?? NaN) - (parseStamp(a.updated_at) ?? NaN));
 
   const lines: string[] = [];
   if (stuck === true) {
@@ -574,7 +576,7 @@ export async function listRuns(
         line += `  EXPIRED ${formatGateAge(run.pending_gate.expires_at!)} ago`;
       }
       if (due.next_reminder_due_at !== undefined) {
-        const dueMs = new Date(due.next_reminder_due_at).getTime();
+        const dueMs = parseStamp(due.next_reminder_due_at) ?? NaN;
         const overdueReminder = dueMs <= Date.now();
         line += overdueReminder
           ? `  reminder overdue (was due ${formatGateAge(due.next_reminder_due_at)} ago)`

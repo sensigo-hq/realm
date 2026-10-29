@@ -57,8 +57,9 @@ export async function resumeRun(
     getWorkflowForRun,
     shellWord,
     quotedCommand,
+    parseStamp,
   } = await import('@sensigo/realm');
-  const run = await runStore.get(runId);
+  const { record: run } = await runStore.get(runId);
 
   // §5.1 — structural, phase-independent (RESUME_REFUSES_ABORTED pin): an aborted run is never
   // resumable, checked directly against aborted_at rather than relying on RESUMABLE_PHASES
@@ -148,7 +149,7 @@ export async function resumeRun(
   for (const [name, entry] of Object.entries(run.finalizer_ledger ?? {})) {
     if (entry.status !== 'pending') continue;
     if (entry.lease_token === undefined || entry.lease_deadline === undefined) continue;
-    if (new Date(entry.lease_deadline).getTime() <= now.getTime()) continue; // expired — not held
+    if ((parseStamp(entry.lease_deadline) ?? NaN) <= now.getTime()) continue; // expired — not held
     throw new WorkflowError(
       `Run ${runId} has an active drain lease on finalizer '${name}' (expires ` +
         `${entry.lease_deadline}) — a drainer is executing NOW. Wait for the lease to expire ` +
@@ -241,7 +242,7 @@ export const resumeCommand = new Command('resume')
           deriveRunPhase,
         } = await import('@sensigo/realm');
         const { cannotGoOnLines } = await import('./ways-renderer.js');
-        const resumed = await runStore.get(runId);
+        const { record: resumed } = await runStore.get(runId);
         const wf = await getWorkflowForRun(workflowStore, resumed, {
           retryVerb: 'resume again',
           verb: 'resume',

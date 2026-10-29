@@ -42,13 +42,19 @@ function gateThenGuard(guard?: Partial<StepDefinition>, finish = false): Workflo
 }
 
 async function seedGatedRun(store: InMemoryStore, def: WorkflowDefinition, gate: PendingGate) {
-  const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
-  return store.update({
-    ...run,
-    in_progress_steps: ['approve'],
-    claims: { approve: { deadline: null } },
-    pending_gate: gate,
+  const { record: run } = await store.create({
+    workflowId: def.id,
+    workflowVersion: 1,
+    params: {},
   });
+  return (
+    await store.update({
+      ...run,
+      in_progress_steps: ['approve'],
+      claims: { approve: { deadline: null } },
+      pending_gate: gate,
+    })
+  ).record;
 }
 
 const expiringGate = (defaultChoice: string): PendingGate => ({
@@ -88,7 +94,7 @@ describe('issue #625 — the attending-process expiry timer reports the guards i
       "⏰ gate 'gate-1' on 'approve' had expired <lag> before this call — this timer call first carried out its declared settle_default: the default choice 'reject' was recorded (enacted_via: timer). " +
         "Guard step 'check' aborted the run. Reason: Not approved — stopping the run.",
     ]);
-    const final = await store.get(run.id);
+    const { record: final } = await store.get(run.id);
     // (a) red when the guard is left eligible after the timer's write; (b) prints the phase and
     //     the seal.
     expect({ phase: deriveRunPhase(final), sealed_by: final.sealed_by }).toEqual({
@@ -116,7 +122,7 @@ describe('issue #625 — the attending-process expiry timer reports the guards i
         "Guard step 'check' passed.",
     ]);
     // (a) red when the guard is not on the record as passed; (b) prints the completed steps.
-    expect((await store.get(run.id)).completed_steps).toEqual(['approve', 'check']);
+    expect((await store.get(run.id)).record.completed_steps).toEqual(['approve', 'check']);
   });
 
   it('a gate with no guard behind it: the line is unchanged', async () => {

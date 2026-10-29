@@ -256,7 +256,7 @@ export async function buildExportBundle(
    *  patterns still apply, and the receipt says nothing was known. */
   set: DisclosureSet = emptyDisclosureSet('file', 'unknown', 'embedder_none'),
 ): Promise<ExportRunResult> {
-  const run = await stores.runStore.get(runId);
+  const { record: run } = await stores.runStore.get(runId);
 
   const artifactErrors: ExportArtifactError[] = [];
 
@@ -504,7 +504,7 @@ export const exportCommand = new Command('export')
     try {
       // #729 PR-3 (RECORD 01 #17; owner Q4): the run's declared secrets, read without the loader.
       const { JsonWorkflowStore, getWorkflowForRun } = await import('@sensigo/realm');
-      const record = await runStore.get(runId);
+      const { record: record } = await runStore.get(runId);
       const definition = await getWorkflowForRun(new JsonWorkflowStore(), record, {
         retryVerb: 'export again',
         verb: 'export',

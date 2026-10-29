@@ -61,7 +61,7 @@ async function setup(): Promise<{
   const home = mkdtempSync(join(tmpdir(), 'realm-owed-cli-625-'));
   const runs = new JsonFileStore(join(home, '.realm', 'runs'));
   await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(gateThenAuto);
-  const { run } = await runs.create({
+  const { record: run } = await runs.create({
     workflowId: gateThenAuto.id,
     workflowVersion: 1,
     params: {},
@@ -72,7 +72,7 @@ async function setup(): Promise<{
     input: {},
     dispatcher: async () => ({}),
   });
-  const gateId = (await runs.get(run.id)).pending_gate!.gate_id;
+  const gateId = (await runs.get(run.id)).record.pending_gate!.gate_id;
   return { home, runs, run, gateId };
 }
 
@@ -169,7 +169,11 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
       };
       await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(d);
       const runs = new JsonFileStore(join(home, '.realm', 'runs'));
-      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const advanced = realm(home, ['run', 'advance', run.id]);
       expect(advanced.status).toBe(1);
       expect(advanced.stdout).toContain('→ b');
@@ -226,7 +230,11 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
       };
       await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(d);
       const runs = new JsonFileStore(join(home, '.realm', 'runs'));
-      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await executeStep(runs, d, {
         runId: run.id,
         command: 'confirm',

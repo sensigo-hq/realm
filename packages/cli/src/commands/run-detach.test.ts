@@ -402,7 +402,7 @@ steps:
       const store = new JsonFileStore();
       const files = readdirSync(runsDir()).filter((f) => f.endsWith('.json'));
       const id = files[0]!.replace('.json', '');
-      const rec = await store.get(id);
+      const { record: rec } = await store.get(id);
       await store.update({
         ...rec,
         pending_gate: {
@@ -527,7 +527,7 @@ steps:
       const { JsonFileStore } = await import('@sensigo/realm');
       const store = new JsonFileStore();
       const files = readdirSync(runsDir()).filter((f) => f.endsWith('.json'));
-      return store.get(files[0]!.replace('.json', ''));
+      return (await store.get(files[0]!.replace('.json', ''))).record;
     };
 
     it("B1 a typo'd gate choice re-prompts the live gate instead of dying silently", async () => {
@@ -804,7 +804,7 @@ steps:
           const store = new JsonFileStore();
           const files = readdirSync(runsDir()).filter((f) => f.endsWith('.json'));
           const id = files[0]!.replace('.json', '');
-          const fresh = await store.get(id);
+          const { record: fresh } = await store.get(id);
           // Strip the gate by destructuring — never `pending_gate: undefined`, a TS2412 under this
           // repo's exactOptionalPropertyTypes.
           const { pending_gate: _gone, ...rest } = fresh;
@@ -848,7 +848,7 @@ steps:
       const { JsonFileStore } = await import('@sensigo/realm');
       const store = new JsonFileStore();
       const files = readdirSync(runsDir()).filter((f) => f.endsWith('.json'));
-      return store.get(files[0]!.replace('.json', ''));
+      return (await store.get(files[0]!.replace('.json', ''))).record;
     };
 
     it('R1 the agent site: bad JSON and every non-object re-ask, then the object settles', async () => {

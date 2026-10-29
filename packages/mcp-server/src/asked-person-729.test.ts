@@ -81,7 +81,7 @@ describe('#729 PR-4 — the MCP door mints a question with its set (B2)', () => 
     await door.workflowStore.register(def('a729', autoGate('Approve {{ run.params.token }}?')));
     const before = door.asked();
     const started = await door.call('start_run', { workflow_id: 'a729', params: { token: FAKE } });
-    const stored = (await door.runStore.get(started['run_id'] as string)).pending_gate
+    const stored = (await door.runStore.get(started['run_id'] as string)).record.pending_gate
       ?.resolved_message;
     // (a) red when the set is built after the engine call (the fake stored raw), or the reply's set
     //     is built again (the provider asked twice); (b) prints the stored question, the display,
@@ -116,7 +116,7 @@ describe('#729 PR-4 — the MCP door mints a question with its set (B2)', () => 
     const runId = started['run_id'] as string;
     await door.call('execute_step', { run_id: runId, command: 'ask', params: { v: FAKE } });
     // (a) red when execute_step's handler passes no set to executeChain; (b) prints the stored text.
-    expect((await door.runStore.get(runId)).pending_gate?.resolved_message).toBe(
+    expect((await door.runStore.get(runId)).record.pending_gate?.resolved_message).toBe(
       'Send [REDACTED]?',
     );
   });
@@ -124,7 +124,7 @@ describe('#729 PR-4 — the MCP door mints a question with its set (B2)', () => 
   it('advance_run: a gate the call opens mints its question with the set', async () => {
     const door = await connect();
     await door.workflowStore.register(def('v729', autoGate('Approve {{ run.params.token }}?')));
-    const { run } = await door.runStore.create({
+    const { record: run } = await door.runStore.create({
       workflowId: 'v729',
       workflowVersion: 1,
       params: { token: FAKE },
@@ -132,7 +132,7 @@ describe('#729 PR-4 — the MCP door mints a question with its set (B2)', () => 
     await door.call('advance_run', { run_id: run.id });
     // (a) red when advance_run's handler, or advanceRun's forwarding, drops the set; (b) prints the
     //     stored question.
-    expect((await door.runStore.get(run.id)).pending_gate?.resolved_message).toBe(
+    expect((await door.runStore.get(run.id)).record.pending_gate?.resolved_message).toBe(
       'Approve [REDACTED]?',
     );
   });
@@ -221,7 +221,7 @@ describe('#729 PR-4 — a gate with no message, whose prompt changed after it op
     const door = await connect();
     await door.workflowStore.register(def('m729', autoGate('Q'.repeat(700))));
     const started = await door.call('start_run', { workflow_id: 'm729', params: {} });
-    const stored = (await door.runStore.get(started['run_id'] as string)).pending_gate
+    const stored = (await door.runStore.get(started['run_id'] as string)).record.pending_gate
       ?.resolved_message;
     const display = (started['gate'] as { display: string }).display;
     // (a) red when `display` is re-rendered rather than the stored text, or the cut is lost; (b)

@@ -16,6 +16,7 @@ import type {
   RetryConfig,
 } from '../types/workflow-definition.js';
 import { computeBackoff } from './backoff.js';
+import { parseStamp } from './instants.js';
 
 /**
  * Default execution timeout (issue A3) enforced on every `execution: 'auto'` step that declares no
@@ -196,7 +197,7 @@ export type ClaimState = 'healthy' | 'claim_stale' | 'claim_unknown_age';
 /** Classifies a single claim record against `now`. Definition-free (reads only the stored deadline). */
 export function classifyClaim(claim: ClaimRecord | undefined, now: Date): ClaimState {
   if (claim === undefined || claim.deadline === null) return 'claim_unknown_age';
-  return now.getTime() > new Date(claim.deadline).getTime() ? 'claim_stale' : 'healthy';
+  return now.getTime() > (parseStamp(claim.deadline) ?? NaN) ? 'claim_stale' : 'healthy';
 }
 
 /** A classified in-progress claim: the step, its liveness state, and its stored deadline. */

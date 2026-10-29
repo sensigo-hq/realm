@@ -543,7 +543,11 @@ describe('get_run_state: both catches around getWorkflowForRun rethrow a release
   }
   async function makeRunIn(terminal: boolean): Promise<{ runStore: JsonFileStore; id: string }> {
     const runStore = new JsonFileStore(dir);
-    const { run } = await runStore.create({ workflowId: 'w', workflowVersion: 1, params: {} });
+    const { record: run } = await runStore.create({
+      workflowId: 'w',
+      workflowVersion: 1,
+      params: {},
+    });
     if (terminal) {
       await runStore.update({
         ...run,

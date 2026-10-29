@@ -35,6 +35,7 @@ import type {
   WorkflowRegistrar,
 } from '@sensigo/realm';
 import {
+  parseStamp,
   type ArtifactDeletionReport,
   WorkflowError,
   ReclaimVersionChanged,
@@ -237,7 +238,7 @@ export async function purgeRuns(
   const skipped: Array<{ runId: string; reason: string }> = [];
 
   if (options.runId !== undefined) {
-    const run = await anchorStore.get(options.runId);
+    const { record: run } = await anchorStore.get(options.runId);
     // explicit: true — the operator named this exact run, so a claim_unknown_age claim is an
     // eligible override, never a healthy one (issue #107 correction).
     const verdict = isPurgeEligible(run, { explicit: true, now });
@@ -250,7 +251,8 @@ export async function purgeRuns(
     const thresholdMs = options.olderThan !== undefined ? parseDuration(options.olderThan) : 0;
     // issue #719 (B3): the readable runs are candidates; a damaged run file is reported, never
     // purged.
-    const { records: all, unreadable } = await listRunsDiagnosed(anchorStore, options.workflow);
+    const { snapshots, unreadable } = await listRunsDiagnosed(anchorStore, options.workflow);
+    const all = snapshots.map((s) => s.record);
     if (unreadable.length > 0) options.onUnreadable?.(unreadable);
     for (const run of all) {
       // explicit: false — a batch/cron sweep cannot prove an indeterminate-age claim's runner is
@@ -265,7 +267,7 @@ export async function purgeRuns(
         }
         continue;
       }
-      const idleMs = now.getTime() - new Date(run.updated_at).getTime();
+      const idleMs = now.getTime() - (parseStamp(run.updated_at) ?? NaN);
       if (idleMs < thresholdMs) continue;
       candidates.push({ run, overriddenClaimStep: verdict.overriddenClaimStep });
     }
@@ -459,7 +461,7 @@ async function changedSinceSelected(
 > {
   let now: RunRecord;
   try {
-    now = await anchorStore.get(runId);
+    now = (await anchorStore.get(runId)).record;
   } catch (err) {
     if (err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND') {
       return { kind: 'already_purged' };

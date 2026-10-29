@@ -275,13 +275,13 @@ export const diffCommand = new Command('diff')
     let runA: RunRecord;
     let runB: RunRecord;
     try {
-      runA = await store.get(runIdA);
+      runA = (await store.get(runIdA)).record;
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
       process.exit(1);
     }
     try {
-      runB = await store.get(runIdB);
+      runB = (await store.get(runIdB)).record;
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
       process.exit(1);

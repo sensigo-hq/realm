@@ -200,7 +200,7 @@ describe('the zod 4 unit: through the door', () => {
     async () => {
       const { call, runStore } = await connect();
       const { wid } = await oneStep(call);
-      const runs = async () => (await runStore.list()).length;
+      const runs = async () => (await runStore.list()).snapshots.map((s) => s.record).length;
       const n0 = await runs();
       const over = await call('start_run_batch', {
         workflow_id: wid,
@@ -242,12 +242,12 @@ describe('the zod 4 unit: through the door', () => {
     const { call, runStore } = await connect();
     const wf = await call('create_workflow', { steps: [{ id: 's1', description: 'd' }] });
     const wid = (wf['data'] as { workflow_id: string }).workflow_id;
-    const n0 = (await runStore.list()).length;
+    const n0 = (await runStore.list()).snapshots.map((s) => s.record).length;
     const over = await call('start_run', {
       workflow_id: wid,
       params: { big: new Array(MAX_TOOL_INPUT_ELEMENTS + 1).fill(0) },
     });
-    const n1 = (await runStore.list()).length;
+    const n1 = (await runStore.list()).snapshots.map((s) => s.record).length;
     const under = await call('start_run', {
       workflow_id: wid,
       params: { big: new Array(MAX_TOOL_INPUT_ELEMENTS - 10).fill(0) },
@@ -541,7 +541,7 @@ describe('the zod 4 unit: through the door', () => {
         unknown
       >,
     );
-    const run = await runStore.get(prun['run_id'] as string);
+    const { record: run } = await runStore.get(prun['run_id'] as string);
     // (a) red when a required-only call is refused by the schema (a bare `z.unknown()` field: zod 4
     //     refuses a missing key), `params` stops defaulting to `{}`, a declared field leaves the
     //     schema without the allow-list (or the reverse), or `__proto__` reaches the handler or the
@@ -586,7 +586,7 @@ describe('the zod 4 unit: through the door', () => {
     const wid = (wf['data'] as { workflow_id: string }).workflow_id;
     const run = await call('start_run', { workflow_id: wid });
     const reply = await call('execute_step', { run_id: run['run_id'] as string, command: 's1' });
-    const record = await runStore.get(run['run_id'] as string);
+    const { record: record } = await runStore.get(run['run_id'] as string);
     // An ACCEPTANCE control, not a test of zod's `.default({})`: the handler also falls back to `{}`
     // (`execute-step.ts`: `args.params ?? {}`), so removing the schema's default alone leaves this
     // green (run once, logged); the default itself is pinned by C4 (`"default": {}` in `tools/list`).

@@ -206,7 +206,7 @@ describe(`${ENV_PAGE} — REALM_NOT_SECRET`, () => {
       writeFileSync(file, 'not json');
       const runs = new JsonFileStore(join(home, '.realm', 'runs'));
       const runId = (await runs.create({ workflowId: 'blockedwf', workflowVersion: 1, params: {} }))
-        .run.id;
+        .record.id;
       // A path under HOME in the run's reason, printed as text.
       const { abandonRun } = await import('@sensigo/realm');
       await abandonRun(runs, runId, `stopped: ${home}/data is gone`);
@@ -333,7 +333,11 @@ describe(`${RECORD_PAGE} — the export file and the guard's conditions`, () => 
 
   async function bundleOf(params: Record<string, unknown>, audience: DisclosureAudience = 'file') {
     const store = new JsonFileStore(join(dir, 'runs'));
-    const { run } = await store.create({ workflowId: 'docs-729', workflowVersion: 1, params });
+    const { record: run } = await store.create({
+      workflowId: 'docs-729',
+      workflowVersion: 1,
+      params,
+    });
     const { bundle } = await buildExportBundle(
       run.id,
       {
@@ -369,7 +373,7 @@ describe(`${RECORD_PAGE} — the export file and the guard's conditions`, () => 
       auth: 'Bearer FAKEtok9abc',
     });
     const asking = new JsonFileStore(join(dir, 'runs'));
-    const { run: open } = await asking.create({
+    const { record: open } = await asking.create({
       workflowId: 'docs-729',
       workflowVersion: 1,
       params: {},
@@ -511,14 +515,18 @@ describe(`${RECORD_PAGE} — the export file and the guard's conditions`, () => 
       },
     } as WorkflowDefinition;
     const store = new JsonFileStore(join(dir, 'runs'));
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await executeChain(store, def, {
       runId: run.id,
       command: 'a',
       input: {},
       dispatcher: async () => ({ text: 'ok' }),
     });
-    const now = await store.get(run.id);
+    const { record: now } = await store.get(run.id);
     const guard = now.evidence.find((e) => e.step_id === 'g')!;
     const oldOutput = { ...guard.output_summary, conditions: guard.diagnostics?.guard_conditions };
     const old: RunRecord = {
@@ -634,7 +642,7 @@ describe(`${READING_PAGE} — export`, () => {
       const home = join(root, 'home');
       mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
       // A run whose workflow copy cannot be read: its declared secrets are unknown.
-      const { run } = await new JsonFileStore(join(home, '.realm', 'runs')).create({
+      const { record: run } = await new JsonFileStore(join(home, '.realm', 'runs')).create({
         workflowId: 'not-registered',
         workflowVersion: 1,
         params: {},
@@ -721,7 +729,7 @@ describe(`${ACTING_PAGE} and ${WORKFLOW_PAGE} — the rerun, --params-from-run, 
       steps: { a: { description: 'a', execution: 'agent', depends_on: [] } },
       source_dir: dir,
     } as WorkflowDefinition);
-    const { run } = await new JsonFileStore(join(home, '.realm', 'runs')).create({
+    const { record: run } = await new JsonFileStore(join(home, '.realm', 'runs')).create({
       workflowId: 'pfr',
       workflowVersion: 1,
       params,
@@ -777,14 +785,14 @@ describe(`${ACTING_PAGE} and ${WORKFLOW_PAGE} — the rerun, --params-from-run, 
     const attempt = (args: string[]) =>
       runCommand.parseAsync([dir, ...args], { from: 'user' }).catch(() => undefined);
     await attempt(['--params', '{"a":1}', '--params-from-run', id]);
-    await attempt(['--params-from-run', another.run.id]);
+    await attempt(['--params-from-run', another.record.id]);
     // The mocked exit throws inside the command's own catch, which prints one more line a real exit
     // never reaches (`…: process.exit`); it is left out.
     // (a) red when either refusal's words change; (b) prints the two messages (fake ids).
     expect(errored.filter((e) => !e.endsWith(': process.exit'))).toEqual([
       both,
       other
-        .replace('<run-id>', another.run.id)
+        .replace('<run-id>', another.record.id)
         .replace('<other>', 'another')
         .replace('<this>', 'pfr'),
     ]);
@@ -816,7 +824,9 @@ describe(`${ACTING_PAGE} and ${WORKFLOW_PAGE} — the rerun, --params-from-run, 
     } finally {
       writerTestSeams.reset();
     }
-    const runs = await new JsonFileStore(join(home, '.realm', 'runs')).list();
+    const runs = (await new JsonFileStore(join(home, '.realm', 'runs')).list()).snapshots.map(
+      (s) => s.record,
+    );
     const plainHash = runs
       .flatMap((r) => r.evidence)
       .find((e) => (e.output_summary as Record<string, unknown>)['pin'] === 'open')
@@ -842,7 +852,9 @@ describe(`${ACTING_PAGE} and ${WORKFLOW_PAGE} — the rerun, --params-from-run, 
     );
     mocks.question.mockImplementation(async () => '{"k":"[REDACTED]"}');
     await runCommand.parseAsync([dir], { from: 'user' });
-    const [run] = await new JsonFileStore(join(home, '.realm', 'runs')).list();
+    const [run] = (await new JsonFileStore(join(home, '.realm', 'runs')).list()).snapshots.map(
+      (s) => s.record,
+    );
     // (a) red when the typed answer's warning gains `Warning:`, loses its indent or its words, or
     //     the answer is changed before it is recorded; (b) prints the warning (fixed) and a boolean.
     expect({
@@ -862,7 +874,9 @@ describe(`${ACTING_PAGE} and ${WORKFLOW_PAGE} — the rerun, --params-from-run, 
     );
     mocks.question.mockImplementation(async () => '{}');
     await runCommand.parseAsync([dir, '--params', '{"k":"[REDACTED]"}'], { from: 'user' });
-    const [run] = await new JsonFileStore(join(home, '.realm', 'runs')).list();
+    const [run] = (await new JsonFileStore(join(home, '.realm', 'runs')).list()).snapshots.map(
+      (s) => s.record,
+    );
     // (a) red when the warning's words change or the params are changed before they are recorded;
     //     (b) prints the warning text (fixed) and a boolean.
     expect({
@@ -1050,7 +1064,11 @@ describe(`${OPERATE_PAGE} — what the output hides`, () => {
       );
       // A piped inspect, with a user name of 8 or more characters and a step's program label.
       const store = new JsonFileStore(join(home, '.realm', 'runs'));
-      const { run } = await store.create({ workflowId: 'docs-or', workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: 'docs-or',
+        workflowVersion: 1,
+        params: {},
+      });
       const labelled = {
         ...run,
         completed_steps: ['a'],
@@ -1270,7 +1288,11 @@ describe(`${READING_PAGE} — inspect's new lines (correction 1)`, () => {
         },
       } as WorkflowDefinition;
       const store = new JsonFileStore(join(dir, 'runs'));
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await executeChain(store, def, {
         runId: run.id,
         command: 'a',
@@ -1284,7 +1306,7 @@ describe(`${READING_PAGE} — inspect's new lines (correction 1)`, () => {
       };
       const out = await inspectRun(run.id, store, workflowStore as never);
       const long = await (async () => {
-        const record = await store.get(run.id);
+        const { record: record } = await store.get(run.id);
         await store.update({
           ...record,
           aborted_at: { ...record.aborted_at!, abort_message: 'x'.repeat(600) },
@@ -1613,14 +1635,18 @@ describe(`${UPGRADE_PAGE} and the CHANGELOG — the sentences this correction ch
         },
       } as WorkflowDefinition;
       const store = new JsonFileStore(join(dir, 'runs'));
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await executeChain(store, def, {
         runId: run.id,
         command: 'a',
         input: {},
         dispatcher: async () => ({ ok: true }),
       });
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       const set = setFor('log', {
         PWD: '/srv/fake-work-0729',
         REALM_OPERATOR: 'fake-operator-0729',
@@ -1690,7 +1716,11 @@ describe('#729 PR-3 correction 2 — the pages this correction changes', () => {
         },
       } as WorkflowDefinition;
       const store = new JsonFileStore(join(dir, 'runs'));
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await executeChain(store, def, {
         runId: run.id,
         command: 'assess',
@@ -1739,7 +1769,7 @@ describe('#729 PR-3 correction 2 — the pages this correction changes', () => {
       const runs = new JsonFileStore(join(home, '.realm', 'runs'));
       const runId = (
         await runs.create({ workflowId: 'asks', workflowVersion: 1, params: { region: ENV_VALUE } })
-      ).run.id;
+      ).record.id;
       await executeChain(runs, def, {
         runId,
         command: 'g',
@@ -1799,10 +1829,11 @@ describe('#729 PR-3 correction 2 — the pages this correction changes', () => {
         steps: { a: { description: 'A.', execution: 'agent', depends_on: [] } },
       } as WorkflowDefinition);
       const runs = new JsonFileStore(join(home, '.realm', 'runs'));
-      const done = (await runs.create({ workflowId: 'words', workflowVersion: 1, params: {} })).run;
+      const done = (await runs.create({ workflowId: 'words', workflowVersion: 1, params: {} }))
+        .record;
       // A phase printed while another variable holds the same word.
       const ended = (await runs.create({ workflowId: 'words', workflowVersion: 1, params: {} }))
-        .run;
+        .record;
       await executeChain(runs, (await workflows.get('words'))!, {
         runId: ended.id,
         command: 'a',
@@ -1933,7 +1964,7 @@ async function c3Run(
   } as WorkflowDefinition;
   await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(definition);
   const store = new JsonFileStore(join(home, '.realm', 'runs'));
-  const { run } = await store.create({
+  const { record: run } = await store.create({
     workflowId: 'c3docs',
     workflowVersion: 1,
     params: { key: DECLARED },
@@ -1953,7 +1984,7 @@ async function c3Run(
   });
   if (state !== 'none') {
     const path = join(project, 'realm.yaml');
-    const recorded = await store.get(run.id);
+    const { record: recorded } = await store.get(run.id);
     await store.update({
       ...recorded,
       extension_identity: [
@@ -2211,7 +2242,7 @@ describe('#729 PR-3 correction 3 — the pages this correction changes', () => {
     await workflows.register(def('autowords', 'auto'));
     const runs = new JsonFileStore(join(home, '.realm', 'runs'));
     const create = async (id = 'words') =>
-      (await runs.create({ workflowId: id, workflowVersion: 1, params: {} })).run.id;
+      (await runs.create({ workflowId: id, workflowVersion: 1, params: {} })).record.id;
     const done = await create();
     await executeStep(runs, def('words', 'agent'), {
       runId: done,
@@ -2334,9 +2365,13 @@ async function c4Ended(
   const store = new JsonFileStore(join(home, '.realm', 'runs'));
   const path = join(project, 'realm.yaml');
   const create = async (): Promise<string> => {
-    const { run } = await store.create({ workflowId: 'c4docs', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'c4docs',
+      workflowVersion: 1,
+      params: {},
+    });
     await store.update({
-      ...(await store.get(run.id)),
+      ...(await store.get(run.id)).record,
       extension_identity: [
         {
           captured_at: '2024-01-01T00:00:00.000Z',
@@ -2686,7 +2721,9 @@ describe('#729 PR-3 correction 4 — the pages this correction changes', () => {
     const withheld = cli(held.home, ['run', 'inspect', held.runId]);
     const intact = await c3Run(base, 'intact', true);
     const shown = cli(intact.home, ['run', 'inspect', intact.runId]);
-    const stored = await new JsonFileStore(join(intact.home, '.realm', 'runs')).get(intact.runId);
+    const { record: stored } = await new JsonFileStore(join(intact.home, '.realm', 'runs')).get(
+      intact.runId,
+    );
     const masked = await c3Run(base, 'intact');
     const hidInside = cli(masked.home, ['run', 'inspect', masked.runId]);
     const hashLines = (text: string) =>
@@ -2745,7 +2782,9 @@ describe('#729 PR-3 correction 4 — the pages this correction changes', () => {
       "`realm run diff` reads each run's declared secrets the same way and takes the same flag.",
     );
     const held = await c3Run(base, 'invalid');
-    const stored = await new JsonFileStore(join(held.home, '.realm', 'runs')).get(held.runId);
+    const { record: stored } = await new JsonFileStore(join(held.home, '.realm', 'runs')).get(
+      held.runId,
+    );
     const hex = stored.evidence[0]!.evidence_hash.slice(0, 8);
     const withheld = cli(held.home, ['run', 'diff', held.runId, held.runId]);
     const accepted = cli(held.home, [
@@ -2789,7 +2828,7 @@ describe('#729 PR-3 correction 4 — the pages this correction changes', () => {
       steps: { a: { description: 'A.', execution: 'agent', depends_on: [] } },
     } as WorkflowDefinition);
     writeFileSync(join(home, '.realm', 'workflows', 'c4copy.json'), 'not json');
-    const { run } = await new JsonFileStore(join(home, '.realm', 'runs')).create({
+    const { record: run } = await new JsonFileStore(join(home, '.realm', 'runs')).create({
       workflowId: 'c4copy',
       workflowVersion: 1,
       params: {},

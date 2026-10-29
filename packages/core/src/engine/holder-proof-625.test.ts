@@ -8,13 +8,15 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { JsonFileStore } from '../store/json-file-store.js';
 import { declareReleaseLine } from '../release-line.js';
 import { executeChain, executeStep, submitHumanResponse } from './execution-loop.js';
 import { composeWaysAt } from './ways.js';
 import { proofOf } from '../test-support/ways-view.js';
 import type { StepDispatcher } from './execution-loop.js';
+import { writtenSnapshot } from './snapshot.js';
+import type { SettlementDelta } from '../types/settlement.js';
 import { applySettlement } from './settlement.js';
 import { classifyRunHealth } from './run-health.js';
 import type { Attributed } from './holder.js';
@@ -22,6 +24,25 @@ import type { RunStore, CreateRunOptions } from '../store/store-interface.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { EngineReply } from '../types/response-envelope.js';
 import type { StepDefinition, WorkflowDefinition } from '../types/workflow-definition.js';
+import type { Clock } from '../utils/clock.js';
+import { writeTestClockFile } from '../store/test-clock-file.js';
+
+/** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
+ *  runs folder sits beside the location's clock file (first set to the host's reading), which
+ *  `setClockOf` rewrites. */
+async function testLocationRuns(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  await writeTestClockFile(root, new Date());
+  return join(root, 'runs');
+}
+async function clockedJsonStore(prefix: string): Promise<JsonFileStore> {
+  return new JsonFileStore(await testLocationRuns(prefix));
+}
+async function setClockOf(store: object, t: Date): Promise<void> {
+  const runsDir = (store as { runsDirPath?: string }).runsDirPath;
+  if (runsDir === undefined) throw new Error('setClockOf: this store is not a JSON store');
+  await writeTestClockFile(dirname(runsDir), t);
+}
 
 const echo: StepDispatcher = async (_step, input) => ({ ...input });
 const PROGRAM: Attributed = { by: 'alice@host', by_source: 'derived', channel: 'agent' };
@@ -29,7 +50,7 @@ const PROGRAM: Attributed = { by: 'alice@host', by_source: 'derived', channel: '
 let dir: string;
 let store: JsonFileStore;
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'realm-holder-proof-625-'));
+  dir = await testLocationRuns('realm-holder-proof-625-');
   store = new JsonFileStore(dir);
 });
 afterEach(async () => {
@@ -81,7 +102,7 @@ async function open(
   def: WorkflowDefinition,
   driver: Attributed | undefined = PROGRAM,
 ): Promise<Opened> {
-  const { run } = await s.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+  const { record: run } = await s.create({ workflowId: def.id, workflowVersion: 1, params: {} });
   const reply = await executeStep(s, def, {
     runId: run.id,
     command: 'confirm',
@@ -91,7 +112,7 @@ async function open(
   });
   if (reply.status !== 'confirm_required')
     throw new Error(`fixture: gate not open (${reply.status})`);
-  const gate = (await s.get(run.id)).pending_gate!;
+  const gate = (await s.get(run.id)).record.pending_gate!;
   return {
     runId: run.id,
     gateId: gate.gate_id,
@@ -108,8 +129,13 @@ const entryOf = (run: RunRecord) => run.evidence.filter((e) => e.kind === 'gate_
 const occurrences = (haystack: unknown, needle: string): number =>
   JSON.stringify(haystack).split(needle).length - 1;
 
-/** A store that does NOT declare `settleStep` — the legacy two-write shape. */
-class LegacyStore implements RunStore {
+/** A store wrapping a JsonFileStore that can mint claims with no token (#715 (b): the no-`settleStep`
+ *  legacy shape is gone — `settleStep` delegates). */
+class TokenlessStore implements RunStore {
+  /** #715 (b): the store's clock is the wrapped store's. */
+  get clock(): Clock {
+    return this.inner.clock;
+  }
   // issue #620 PR-C: a test double declares this realm's release line.
   static {
     declareReleaseLine(this);
@@ -143,12 +169,22 @@ class LegacyStore implements RunStore {
     definition: WorkflowDefinition,
     claimant?: Attributed,
   ) {
-    const claimed = await this.inner.claimStep(runId, stepName, definition, claimant);
-    if (!this.stripToken) return claimed;
+    const { record: claimed, at } = await this.inner.claimStep(
+      runId,
+      stepName,
+      definition,
+      claimant,
+    );
+    if (!this.stripToken) return writtenSnapshot(claimed, at);
     const claim = claimed.claims?.[stepName];
-    if (claim === undefined) return claimed;
+    if (claim === undefined) return writtenSnapshot(claimed, at);
     const { token: _t, ...rest } = claim;
-    return { ...claimed, claims: { ...claimed.claims, [stepName]: rest } };
+    // #715 (b): a store that mints no token PERSISTS none — the answer's settle reads the stored
+    // claim (the legacy path wrote the stripped record back through its own update()).
+    return this.inner.update({ ...claimed, claims: { ...claimed.claims, [stepName]: rest } });
+  }
+  settleStep(runId: string, delta: SettlementDelta, definition?: WorkflowDefinition) {
+    return this.inner.settleStep(runId, delta, definition);
   }
 }
 
@@ -166,7 +202,7 @@ function storeKeepingNoClaims(): JsonFileStore {
 describe('CLAIM_TOKEN_ONE_DOOR — the token leaves the engine on the opening reply and nowhere else', () => {
   it("the fresh gate-opening reply carries it in EXACTLY one place: the respond way's proof (#729 PR-0, A-17)", async () => {
     const opened = await open(store, gateWorkflow());
-    const claimToken = (await store.get(opened.runId)).claims!['confirm']!.token!;
+    const claimToken = (await store.get(opened.runId)).record.claims!['confirm']!.token!;
     // (a) red when the token is not handed out, or is not the claim's own; (b) prints true/false,
     //     never the token.
     expect(proofOf(opened.reply) === claimToken).toBe(true);
@@ -179,27 +215,14 @@ describe('CLAIM_TOKEN_ONE_DOOR — the token leaves the engine on the opening re
     const opened = await open(store, gateWorkflow());
     expect(proofOf(opened.reply) !== undefined).toBe(true);
     // A store that minted no token: no proof — never a promise the reply cannot keep.
-    const bare = new LegacyStore(
-      new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-holder-bare-'))),
-      {
-        stripToken: true,
-      },
-    );
+    const bare = new TokenlessStore(await clockedJsonStore('realm-holder-bare-'), {
+      stripToken: true,
+    });
     const reply = (await open(bare, gateWorkflow())).reply;
     // (a) red when the proof is unconditional; (b) prints true/false.
     expect(proofOf(reply) === undefined).toBe(true);
     expect(reply.gate).not.toHaveProperty('claim_token');
     expect(JSON.stringify(reply).includes('claim_token')).toBe(false);
-  });
-
-  it('the legacy (no settleStep) opening reply hands it out too', async () => {
-    const legacy = new LegacyStore(
-      new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-holder-legacy-'))),
-    );
-    const opened = await open(legacy, gateWorkflow());
-    expect(opened.token !== '').toBe(true);
-    const claimToken = (await legacy.get(opened.runId)).claims!['confirm']!.token!;
-    expect(opened.token === claimToken).toBe(true);
   });
 
   it("executeChain / start_run's chained reply passes the same block through (not re-minted)", async () => {
@@ -218,7 +241,11 @@ describe('CLAIM_TOKEN_ONE_DOOR — the token leaves the engine on the opening re
         },
       },
     };
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const reply = await executeChain(store, def, {
       runId: run.id,
       command: 'prep',
@@ -226,7 +253,7 @@ describe('CLAIM_TOKEN_ONE_DOOR — the token leaves the engine on the opening re
       dispatcher: echo,
     });
     expect(reply.status).toBe('confirm_required');
-    const claimToken = (await store.get(run.id)).claims!['confirm']!.token!;
+    const claimToken = (await store.get(run.id)).record.claims!['confirm']!.token!;
     // (a) red when the chain re-mints, drops or doubles it; (b) prints the count.
     expect(proofOf(reply) === claimToken).toBe(true);
     expect(occurrences(reply, claimToken)).toBe(1);
@@ -254,7 +281,11 @@ describe('CLAIM_TOKEN_ONE_DOOR — the token leaves the engine on the opening re
         },
       },
     };
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const first = await executeStep(store, def, {
       runId: run.id,
       command: 'g1',
@@ -268,7 +299,7 @@ describe('CLAIM_TOKEN_ONE_DOOR — the token leaves the engine on the opening re
       input: {},
       dispatcher: echo,
     });
-    const claims = (await store.get(run.id)).claims ?? {};
+    const claims = (await store.get(run.id)).record.claims ?? {};
     // (a) red when the already_open arm renders a token (its own or the live gate's); (b) prints
     //     the count of each token in the reply.
     expect(occurrences(second, g1Token)).toBe(0);
@@ -331,7 +362,7 @@ describe('CLAIM_TOKEN_ONE_DOOR — the token leaves the engine on the opening re
   it('NEGATIVE: next actions built from the record, run-health findings and the settlement result carry no token', async () => {
     const def = gateWorkflow();
     const opened = await open(store, def);
-    const run = await store.get(opened.runId);
+    const { record: run } = await store.get(opened.runId);
     // #729 PR-0: the ways composed from the record (buildNextActions' successor) carry no proof.
     expect(occurrences(composeWaysAt(run, new Date(), { definition: def }), opened.token)).toBe(0);
     expect(occurrences(classifyRunHealth(run), opened.token)).toBe(0);
@@ -379,7 +410,7 @@ describe("the proof is judged in the answer's write — one verdict on the recor
       choice,
       ...(claimToken !== undefined ? { claimToken } : {}),
     });
-    const run = await s.get(o.runId);
+    const { record: run } = await s.get(o.runId);
     return { reply, run, entry: entryOf(run) };
   }
 
@@ -407,7 +438,7 @@ describe("the proof is judged in the answer's write — one verdict on the recor
 
   it('mismatch (a wrong token, and the EMPTY string): recorded as mismatch, answer recorded, never "another program took over"', async () => {
     for (const wrong of ['not-the-token', '']) {
-      const sub = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-holder-mm-')));
+      const sub = await clockedJsonStore('realm-holder-mm-');
       const def = gateWorkflow();
       const o = await open(sub, def);
       const { reply, entry, run } = await answer(sub, def, o, wrong);
@@ -426,7 +457,7 @@ describe("the proof is judged in the answer's write — one verdict on the recor
   it("unverifiable / no_claim: the gate step's claim is gone from the record", async () => {
     const def = gateWorkflow();
     const o = await open(store, def);
-    const planted = await store.get(o.runId);
+    const { record: planted } = await store.get(o.runId);
     const { confirm: _gone, ...rest } = planted.claims!;
     await store.update({ ...planted, claims: rest });
     const { reply, entry } = await answer(store, def, o, undefined);
@@ -445,7 +476,7 @@ describe("the proof is judged in the answer's write — one verdict on the recor
   it('unverifiable / claim_has_no_token (a planted claim without a token) — and the holder still shows', async () => {
     const def = gateWorkflow();
     const o = await open(store, def);
-    const planted = await store.get(o.runId);
+    const { record: planted } = await store.get(o.runId);
     const claim = planted.claims!['confirm']!;
     await store.update({
       ...planted,
@@ -471,7 +502,7 @@ describe("the proof is judged in the answer's write — one verdict on the recor
     const o = await open(noClaims, def);
     // On this store the gate step's claim exists on disk (the fixture is a real JsonFileStore), so
     // remove it as a store that keeps none would never have written it.
-    const planted = await noClaims.get(o.runId);
+    const { record: planted } = await noClaims.get(o.runId);
     const { confirm: _gone, ...rest } = planted.claims!;
     await noClaims.update({ ...planted, claims: rest });
     const { reply, entry } = await answer(noClaims, def, o, undefined);
@@ -515,7 +546,7 @@ describe("the proof is judged in the answer's write — one verdict on the recor
 
   it('the answer path adds at most ONE warning for the proof, in every verdict', async () => {
     for (const token of [undefined, 'wrong', '']) {
-      const sub = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-holder-one-')));
+      const sub = await clockedJsonStore('realm-holder-one-');
       const def = gateWorkflow();
       const o = await open(sub, def);
       const { reply } = await answer(sub, def, o, token);
@@ -535,7 +566,7 @@ describe("GATE_PROOF_NEVER_GATES_THE_ANSWER — the record differs only in the a
   it("for every verdict the transform can mint, applySettlement's record equals the token-less one except claim_proof", async () => {
     const def = gateWorkflow();
     const o = await open(store, def);
-    const fresh = await store.get(o.runId);
+    const { record: fresh } = await store.get(o.runId);
     const now = new Date();
     const entryTemplate = fresh.evidence.find((e) => e.step_id === 'confirm')!;
     const evidence = [{ ...entryTemplate, kind: 'gate_response' as const }];
@@ -550,7 +581,7 @@ describe("GATE_PROOF_NEVER_GATES_THE_ANSWER — the record differs only in the a
           ...(claimToken !== undefined ? { claimToken } : {}),
         },
         def,
-        { now, storeKeepsClaims: keeps },
+        { at: now, storeKeepsClaims: keeps },
       );
     const baseline = run(undefined);
     expect(baseline.applied).toBe(true);
@@ -631,7 +662,7 @@ describe('the verdict survives the guard cascade (mutant d)', () => {
     //     `gateClaim`; (b) prints both.
     expect(reply.guards).toEqual([{ step: 'check', outcome: 'pass' }]);
     expect(reply.gate_claim).toEqual({ proof: 'matched', opened_by: PROGRAM });
-    expect(entryOf(await store.get(o.runId)).map((e) => e.claim_proof)).toEqual([
+    expect(entryOf((await store.get(o.runId)).record).map((e) => e.claim_proof)).toEqual([
       { proof: 'matched' },
     ]);
   });
@@ -645,12 +676,12 @@ describe("a late answer — the verdict stands when the call's own expiry write 
   it('same-choice late answer (ok, answer_recorded false): the verdict earned when the gate id matched, the sentence says "not recorded"', async () => {
     const def = gateWorkflow(EXPIRING);
     const o = await open(store, def);
+    await setClockOf(store, o.afterExpiry);
     const reply = await submitHumanResponse(store, def, {
       runId: o.runId,
       gateId: o.gateId,
       choice: 'approve',
       claimToken: 'not-the-token',
-      now: o.afterExpiry,
     });
     expect(reply.status).toBe('ok');
     expect(reply.answer_recorded).toBe(false);
@@ -662,7 +693,7 @@ describe("a late answer — the verdict stands when the call's own expiry write 
     expect(reply.warnings).toContain("The claim_token passed is not this question's.");
     // The expiry's own entry is the one on the record; it carries NO claim_proof (the late
     // answer's verdict is on the reply only — #598).
-    const entries = entryOf(await store.get(o.runId));
+    const entries = entryOf((await store.get(o.runId)).record);
     expect(entries).toHaveLength(1);
     expect(entries[0]!.claim_proof).toBeUndefined();
     expect(entries[0]!.responded_by).toBe('timeout');
@@ -671,11 +702,11 @@ describe("a late answer — the verdict stands when the call's own expiry write 
   it('C6: a late answer with NO token: the expiry sentence and `No claim_token was passed.`, nothing that reads as if a token would have helped', async () => {
     const def = gateWorkflow(EXPIRING);
     const o = await open(store, def);
+    await setClockOf(store, o.afterExpiry);
     const reply = await submitHumanResponse(store, def, {
       runId: o.runId,
       gateId: o.gateId,
       choice: 'approve',
-      now: o.afterExpiry,
     });
     expect(reply.status).toBe('ok');
     expect(reply.answer_recorded).toBe(false);
@@ -691,12 +722,12 @@ describe("a late answer — the verdict stands when the call's own expiry write 
   it('a late answer that matches carries gate_claim matched and no sentence', async () => {
     const def = gateWorkflow(EXPIRING);
     const o = await open(store, def);
+    await setClockOf(store, o.afterExpiry);
     const reply = await submitHumanResponse(store, def, {
       runId: o.runId,
       gateId: o.gateId,
       choice: 'approve',
       claimToken: o.token,
-      now: o.afterExpiry,
     });
     expect(reply.gate_claim).toEqual({ proof: 'matched', opened_by: PROGRAM });
   });
@@ -704,14 +735,8 @@ describe("a late answer — the verdict stands when the call's own expiry write 
   it('a late answer whose expiry write finds the question ALREADY settled by the clock ⇒ spent/expired', async () => {
     const def = gateWorkflow(EXPIRING);
     const o = await open(store, def);
-    const enacted = await store.settleStep!(
-      o.runId,
-      { kind: 'expire_gate', gateId: o.gateId },
-      def,
-      {
-        now: o.afterExpiry,
-      },
-    );
+    await setClockOf(store, o.afterExpiry);
+    const enacted = await store.settleStep(o.runId, { kind: 'expire_gate', gateId: o.gateId }, def);
     expect(enacted.applied).toBe(true);
     const reply = await submitHumanResponse(store, def, {
       runId: o.runId,
@@ -731,12 +756,12 @@ describe("a late answer — the verdict stands when the call's own expiry write 
   it('a REFUSED late answer (a different choice than the expiry enacted) carries NO gate_claim', async () => {
     const def = gateWorkflow(EXPIRING);
     const o = await open(store, def);
+    await setClockOf(store, o.afterExpiry);
     const reply = await submitHumanResponse(store, def, {
       runId: o.runId,
       gateId: o.gateId,
       choice: 'reject',
       claimToken: o.token,
-      now: o.afterExpiry,
     });
     expect(reply.status).toBe('error');
     // (a) red when a refused reply carries the verdict; (b) prints the key.
@@ -779,69 +804,8 @@ describe('refused answers carry no gate_claim', () => {
 // The store without settleStep: the engine judges ONCE
 // ---------------------------------------------------------------------------------------------
 
-describe('a store without settleStep — one verdict serves the record, the ok reply and the expiry replies', () => {
-  function legacy(opts?: { persistsClaims?: boolean }) {
-    return new LegacyStore(new JsonFileStore(dir), opts);
-  }
-
-  it('matched / absent / mismatch on the record and the reply', async () => {
-    for (const [token, proof] of [
-      ['TOKEN', 'matched'],
-      [undefined, 'absent'],
-      ['wrong', 'mismatch'],
-    ] as const) {
-      const s = legacy();
-      const def = gateWorkflow();
-      const o = await open(s, def);
-      const reply = await submitHumanResponse(s, def, {
-        runId: o.runId,
-        gateId: o.gateId,
-        choice: 'approve',
-        ...(token === 'TOKEN'
-          ? { claimToken: o.token }
-          : token !== undefined
-            ? { claimToken: token }
-            : {}),
-      });
-      const run = await s.get(o.runId);
-      // (a) red when the legacy path skips the judgement or stamps a different verdict than the
-      //     reply carries; (b) prints both.
-      expect([proof, reply.gate_claim?.proof]).toEqual([proof, proof]);
-      expect([proof, entryOf(run).map((e) => e.claim_proof?.proof)]).toEqual([proof, [proof]]);
-    }
-  });
-
-  it('persistsClaims false ⇒ store_keeps_no_claims on the record AND the reply (claim removed)', async () => {
-    const s = legacy({ persistsClaims: false });
-    const def = gateWorkflow();
-    const o = await open(s, def);
-    const planted = await s.get(o.runId);
-    const { confirm: _c, ...rest } = planted.claims!;
-    await s.update({ ...planted, claims: rest });
-    const reply = await submitHumanResponse(s, def, {
-      runId: o.runId,
-      gateId: o.gateId,
-      choice: 'approve',
-    });
-    expect(reply.gate_claim?.cause).toBe('store_keeps_no_claims');
-    expect(entryOf(await s.get(o.runId))[0]!.claim_proof).toEqual({
-      proof: 'unverifiable',
-      cause: 'store_keeps_no_claims',
-    });
-  });
-
-  it('the late path on this store carries the one verdict (ok reply) and none on the refused one', async () => {
-    const s = legacy();
-    const def = gateWorkflow(EXPIRING);
-    const o = await open(s, def);
-    const reply = await submitHumanResponse(s, def, {
-      runId: o.runId,
-      gateId: o.gateId,
-      choice: 'approve',
-      claimToken: o.token,
-      now: o.afterExpiry,
-    });
-    expect(reply.status).toBe('ok');
-    expect(reply.gate_claim?.proof).toBe('matched');
-  });
-});
+// #715 (b), C.1: the describe "a store without settleStep — one verdict serves the record, the ok
+// reply and the expiry replies" (three cells) tested only the legacy (no-`settleStep`) path, deleted.
+// Each cell's settle-path twin stays above: matched / absent / mismatch (the "judged in the answer's
+// write" describe), store_keeps_no_claims ("record and reply AGREE on the cause"), the late answer
+// that matches ("a late answer — the verdict stands …").

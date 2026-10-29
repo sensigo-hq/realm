@@ -166,7 +166,7 @@ async function workflowRun(
   const id = readdirSync(join(home, '.realm', 'runs'))
     .filter((f) => f.endsWith('.json'))[0]!
     .replace('.json', '');
-  return runs.get(id);
+  return (await runs.get(id)).record;
 }
 
 /** One `realm agent` drive in-process; the gate handler reads the stored gate, then answers it. */
@@ -229,7 +229,7 @@ describe('#729 PR-4 — the set reaches the mint through the CLI doors (B2)', ()
     const def = definition({ handler: undefined });
     await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(def);
     const runs = new JsonFileStore(join(home, '.realm', 'runs'));
-    const { run } = await runs.create({
+    const { record: run } = await runs.create({
       workflowId: def.id,
       workflowVersion: 1,
       params: { token: FAKE },
@@ -240,7 +240,7 @@ describe('#729 PR-4 — the set reaches the mint through the CLI doors (B2)', ()
       if (!(err instanceof Error) || err.message !== 'process.exit') throw err;
     }
     // (a) red when `realm run advance` passes no set to advanceRun; (b) prints the stored question.
-    expect((await runs.get(run.id)).pending_gate?.resolved_message).toBe(MASKED);
+    expect((await runs.get(run.id)).record.pending_gate?.resolved_message).toBe(MASKED);
   });
 
   it('`realm agent` (the drive): the stored question is masked', async () => {
@@ -252,7 +252,7 @@ describe('#729 PR-4 — the set reaches the mint through the CLI doors (B2)', ()
   it('`realm agent --run-id`: the stored question is masked', async () => {
     const def = definition();
     const store = new JsonFileStore(join(home, '.realm', 'runs'));
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
       params: { token: FAKE },

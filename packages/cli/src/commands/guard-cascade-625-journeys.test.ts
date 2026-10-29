@@ -172,7 +172,7 @@ describe('issue #625 crown — gate → guard over real MCP stdio', () => {
         context_hint: "Guard step 'check' passed and completed the run.",
       });
 
-      const run = await storesOf(home).runs.get(runId);
+      const { record: run } = await storesOf(home).runs.get(runId);
       // (a) red when the stored run is not complete after the one call; (b) prints the derived
       //     phase and the completed steps.
       expect({
@@ -216,7 +216,7 @@ describe('issue #625 crown — gate → guard over real MCP stdio', () => {
         context_hint: "Guard step 'check' aborted the run.",
       });
 
-      const run = await storesOf(home).runs.get(runId);
+      const { record: run } = await storesOf(home).runs.get(runId);
       // (a) red when the record is not sealed by the guard; (b) prints the derived phase and the
       //     seal.
       expect({ phase: deriveRunPhase(run), sealed_by: run.sealed_by }).toEqual({
@@ -277,7 +277,7 @@ describe('issue #625 kill — no surviving record is "gate answered ∧ a guard 
       );
       const answerMs = Date.now() - startedAt;
       for (const { runId } of calibration) {
-        const run = await runs.get(runId);
+        const { record: run } = await runs.get(runId);
         // (a) red when an answerer left alone does not settle the guard; (b) prints the run's
         //     completed steps.
         expect(run.completed_steps).toEqual(['write', 'confirm', 'check']);
@@ -322,7 +322,7 @@ describe('issue #625 kill — no surviving record is "gate answered ∧ a guard 
             await new Promise((resolve) => setTimeout(resolve, delayMs));
             child.kill('SIGKILL');
             await exited;
-            const run = await runs.get(runId);
+            const { record: run } = await runs.get(runId);
             const gateAnswered = run.settled?.['confirm'] !== undefined;
             if (gateAnswered) {
               answered += 1;
@@ -397,7 +397,7 @@ describe('issue #625 two answerers — one answer, one guard entry, the loser to
             choice: 'reject',
           }),
         ]);
-        const run = await runs.get(runId);
+        const { record: run } = await runs.get(runId);
         const phase = deriveRunPhase(run);
         const winners = replies.filter((r) => r.status === 'ok');
         const losers = replies.filter((r) => r.status !== 'ok');
@@ -494,7 +494,7 @@ describe('issue #625 `realm agent --run-id` on a run an external answer moved pa
     expect(screen).not.toContain('Run ended in phase: running');
     // (a) red when the guard was not settled before the agent attached; (b) prints the record's
     //     completed steps.
-    expect((await runs.get(runId)).completed_steps).toEqual(['write', 'confirm', 'check']);
+    expect((await runs.get(runId)).record.completed_steps).toEqual(['write', 'confirm', 'check']);
     rmSync(home, { recursive: true, force: true });
   }, 120_000);
 
@@ -527,7 +527,7 @@ describe('issue #625 `realm agent --run-id` on a run an external answer moved pa
     // #729 PR-0 (E1 (d)): the run-a-step family's `run_ended`, naming who ended the run.
     expect(screen).toContain(`Run ${runId} has already ended (aborted): guard 'check' ended it.`);
     expect(screen).not.toContain('Run ended in phase: running');
-    expect(deriveRunPhase(await runs.get(runId))).toBe('aborted');
+    expect(deriveRunPhase((await runs.get(runId)).record)).toBe('aborted');
     rmSync(home, { recursive: true, force: true });
   }, 120_000);
 });

@@ -135,7 +135,11 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
 
   it('C94, J9-R1: execute_step on `a` (agent, precondition) and on `blk` (auto, precondition) beside the ready `b`', async () => {
     await workflowStore.register(J9R1);
-    const { run } = await runStore.create({ workflowId: J9R1.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runStore.create({
+      workflowId: J9R1.id,
+      workflowVersion: 1,
+      params: {},
+    });
     for (const command of ['a', 'blk']) {
       const reply = await handleExecuteStep(
         { run_id: run.id, command, params: {} },
@@ -162,7 +166,11 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       steps: { a: J9R1.steps['a']! },
     };
     await workflowStore.register(d);
-    const { run } = await runStore.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runStore.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const reply = await handleExecuteStep(
       { run_id: run.id, command: 'a', params: {} },
       { runStore, workflowStore },
@@ -181,14 +189,18 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
   /** A registered run at its open question, the question's time already up (stored `expires_at` moved back). */
   async function expiredGate(d: WorkflowDefinition, expired: boolean) {
     await workflowStore.register(d);
-    const { run } = await runStore.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runStore.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await executeStep(runStore, d, {
       runId: run.id,
       command: 'confirm',
       input: {},
       dispatcher: async () => ({}),
     });
-    const r = await runStore.get(run.id);
+    const { record: r } = await runStore.get(run.id);
     if (expired) {
       await runStore.update({
         ...r,
@@ -215,7 +227,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
         next: state.next_actions.map((a) => a.instruction?.tool),
       }).toEqual({ status: 'advance_owed', next: ['advance_run'] });
       const reply = await handleAdvanceRun({ run_id: runId }, { runStore, workflowStore });
-      const after = await runStore.get(runId);
+      const { record: after } = await runStore.get(runId);
       // (a) red when advance_run leaves the question open; (b) prints the phase and the gate.
       expect({ phase: after.run_phase, gate: after.pending_gate }).toEqual({
         phase,
@@ -250,7 +262,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       expect(JSON.stringify(state.next_actions)).not.toContain('"claim_token"');
       await handleAdvanceRun({ run_id: runId }, { runStore, workflowStore });
       // (a) red when advance_run settles or aborts this question; (b) prints the gate.
-      expect((await runStore.get(runId)).pending_gate?.gate_id).toBe(gateId);
+      expect((await runStore.get(runId)).record.pending_gate?.gate_id).toBe(gateId);
     });
   }
 
@@ -281,7 +293,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       { runStore, workflowStore },
     );
     expect(first.status).toBe('confirm_required');
-    const gateId = (await runStore.get(first.run_id)).pending_gate!.gate_id;
+    const gateId = (await runStore.get(first.run_id)).record.pending_gate!.gate_id;
     const again = await handleStartRun(
       { workflow_id: d.id, params: {}, idempotency_key: 'k1' },
       { runStore, workflowStore },
@@ -322,7 +334,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       },
     };
     await workflowStore.register(strand);
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: strand.id,
       workflowVersion: 1,
       params: {},
@@ -373,7 +385,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
     // (a) red when the refusal's act is not the view's (the one composition); (b) prints both.
     expect(reply.next_actions).toEqual(state.next_actions);
     // (a) red when the refusal carried the expiry out (it refuses; advance_run does that); (b) prints it.
-    expect((await runStore.get(runId)).pending_gate?.gate_id).toBe(gateId);
+    expect((await runStore.get(runId)).record.pending_gate?.gate_id).toBe(gateId);
   });
 
   it('C117 CONTROL: the same wrong gate id on an open question whose time is not up offers the answer — report_to_user (A-2 row 6), the question named', async () => {
@@ -429,7 +441,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
         phase: reply.run_phase,
       }).toEqual({ data: {}, evidence: [], ran: ['after'], phase: 'completed' });
       // (a) red when the run's own evidence is lost (the reply empties; the record keeps); (b) prints it.
-      expect((await runStore.get(runId)).evidence.map((e) => e.step_id)).toContain('after');
+      expect((await runStore.get(runId)).record.evidence.map((e) => e.step_id)).toContain('after');
       // (a) red when the core reply was empty anyway (the cell would prove nothing); (b) prints it.
       const core = await handleAdvanceRun(
         { run_id: (await expiredGate(d, true)).runId },

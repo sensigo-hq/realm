@@ -5,7 +5,7 @@
 // PendingGate fields — never the workflow definition (F2's doctrine, generalized to every
 // read-time consumer).
 import type { PendingGate } from '../types/run-record.js';
-import { isPastDeadline, overdueOf } from './instants.js';
+import { isPastDeadline, overdueOf, parseStamp } from './instants.js';
 
 /**
  * Read-time due/overdue state for a live gate. `overdue_ms` is present iff `expired`.
@@ -29,8 +29,10 @@ export function computeGateDueState(gate: PendingGate, now: Date): GateDueState 
   const expired = gate.expires_at !== undefined && isPastDeadline(gate.expires_at, now);
 
   let nextReminderDueAt: string | undefined;
-  if (gate.reminder_seconds !== undefined) {
-    const openedAtMs = new Date(gate.opened_at).getTime();
+  // #715 (b) (D-25): `opened_at` through the one stamp parser — an unparseable stamp yields NO
+  // occurrence (it used to throw RangeError from `new Date(NaN).toISOString()`).
+  const openedAtMs = parseStamp(gate.opened_at);
+  if (gate.reminder_seconds !== undefined && openedAtMs !== undefined) {
     const reminderMs = gate.reminder_seconds * 1000;
     const elapsedMs = Math.max(0, nowMs - openedAtMs);
     const n = Math.floor(elapsedMs / reminderMs) + 1; // next-undelivered occurrence number

@@ -5,11 +5,26 @@
 import { describe, it, expect } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { JsonFileStore } from '../store/json-file-store.js';
 import { executeStep } from './execution-loop.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepDispatcher } from './execution-loop.js';
+import { writeTestClockFile } from '../store/test-clock-file.js';
+
+/** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
+ *  runs folder sits beside the location's clock file (first set to the host's reading), which
+ *  `setClockOf` rewrites. */
+async function testLocationRuns(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  await writeTestClockFile(root, new Date());
+  return join(root, 'runs');
+}
+async function setClockOf(store: object, t: Date): Promise<void> {
+  const runsDir = (store as { runsDirPath?: string }).runsDirPath;
+  if (runsDir === undefined) throw new Error('setClockOf: this store is not a JSON store');
+  await writeTestClockFile(dirname(runsDir), t);
+}
 
 const echoDispatcher: StepDispatcher = async (_name, input) => ({ ...input });
 
@@ -39,7 +54,7 @@ function defWithGateThenDownstream(
 }
 
 async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-execute-step-expiry-'));
+  const dir = await testLocationRuns('realm-execute-step-expiry-');
   try {
     return await fn(dir);
   } finally {
@@ -56,30 +71,34 @@ describe('executeStep — pre-refusal enact-then-proceed (issue #291)', () => {
         on_expiry: 'settle_default',
         default_choice: 'approve',
       });
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await executeStep(store, def, {
         runId: run.id,
         command: 'approve',
         input: {},
         dispatcher: echoDispatcher,
       });
-      const gate = (await store.get(run.id)).pending_gate!;
+      const gate = (await store.get(run.id)).record.pending_gate!;
       const future = new Date(new Date(gate.expires_at!).getTime() + 1000);
 
       // Attempting 'after' directly — normally STATE_STEP_NOT_ELIGIBLE while the gate is open.
+      await setClockOf(store, future);
       const envelope = await executeStep(store, def, {
         runId: run.id,
         command: 'after',
         input: {},
         dispatcher: echoDispatcher,
-        now: future,
       });
 
       expect(envelope.status).toBe('ok');
       expect(envelope.command).toBe('after');
       expect(envelope.warnings?.some((w) => w.includes('(enacted_via: executeStep).'))).toBe(true);
 
-      const finalRun = await store.get(run.id);
+      const { record: finalRun } = await store.get(run.id);
       expect(finalRun.pending_gate).toBeUndefined();
       expect(finalRun.completed_steps).toEqual(expect.arrayContaining(['approve', 'after']));
       expect(finalRun.settled?.['approve']).toMatchObject({ resolved_by: 'timeout' });
@@ -93,22 +112,26 @@ describe('executeStep — pre-refusal enact-then-proceed (issue #291)', () => {
     await withDir(async (dir) => {
       const store = new JsonFileStore(dir);
       const def = defWithGateThenDownstream({ timeout_seconds: 1, on_expiry: 'abort' });
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await executeStep(store, def, {
         runId: run.id,
         command: 'approve',
         input: {},
         dispatcher: echoDispatcher,
       });
-      const gate = (await store.get(run.id)).pending_gate!;
+      const gate = (await store.get(run.id)).record.pending_gate!;
       const future = new Date(new Date(gate.expires_at!).getTime() + 1000);
 
+      await setClockOf(store, future);
       const envelope = await executeStep(store, def, {
         runId: run.id,
         command: 'after',
         input: {},
         dispatcher: echoDispatcher,
-        now: future,
       });
 
       // The run is now terminal (aborted) — 'after' is blocked, but for a DIFFERENT, honest
@@ -120,7 +143,7 @@ describe('executeStep — pre-refusal enact-then-proceed (issue #291)', () => {
         ),
       ).toBe(true);
 
-      const finalRun = await store.get(run.id);
+      const { record: finalRun } = await store.get(run.id);
       expect(finalRun.terminal_state).toBe(true);
       expect(finalRun.pending_gate).toBeUndefined();
       expect(finalRun.skip_details?.['approve']).toEqual({
@@ -134,27 +157,31 @@ describe('executeStep — pre-refusal enact-then-proceed (issue #291)', () => {
     await withDir(async (dir) => {
       const store = new JsonFileStore(dir);
       const def = defWithGateThenDownstream({ timeout_seconds: 1 }); // no on_expiry
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await executeStep(store, def, {
         runId: run.id,
         command: 'approve',
         input: {},
         dispatcher: echoDispatcher,
       });
-      const gate = (await store.get(run.id)).pending_gate!;
+      const gate = (await store.get(run.id)).record.pending_gate!;
       const future = new Date(new Date(gate.expires_at!).getTime() + 1000);
 
+      await setClockOf(store, future);
       const envelope = await executeStep(store, def, {
         runId: run.id,
         command: 'after',
         input: {},
         dispatcher: echoDispatcher,
-        now: future,
       });
 
       expect(envelope.status).toBe('blocked');
       expect(envelope.warnings ?? []).toEqual([]);
-      const finalRun = await store.get(run.id);
+      const { record: finalRun } = await store.get(run.id);
       expect(finalRun.pending_gate).toBeDefined(); // untouched — nothing to enact
     });
   });
@@ -167,7 +194,11 @@ describe('executeStep — pre-refusal enact-then-proceed (issue #291)', () => {
         on_expiry: 'settle_default',
         default_choice: 'approve',
       });
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await executeStep(store, def, {
         runId: run.id,
         command: 'approve',
@@ -181,7 +212,7 @@ describe('executeStep — pre-refusal enact-then-proceed (issue #291)', () => {
         dispatcher: echoDispatcher,
       });
       expect(envelope.status).toBe('blocked');
-      const finalRun = await store.get(run.id);
+      const { record: finalRun } = await store.get(run.id);
       expect(finalRun.pending_gate).toBeDefined();
     });
   });

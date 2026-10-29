@@ -57,16 +57,22 @@ describe('#625 PR-2a, F2 — a run an operator ended is never offered the undo',
 
   /** A run whose step `a` failed, then ended as `how`: an operator's abandon, or an engine failure. */
   async function ended(how: 'abandoned' | 'failed'): Promise<RunRecord> {
-    const { run } = await store.create({ workflowId: TWO.id, workflowVersion: 1, params: {} });
-    await store.update({ ...(await store.get(run.id)), failed_steps: ['a'] });
+    const { record: run } = await store.create({
+      workflowId: TWO.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    await store.update({ ...(await store.get(run.id)).record, failed_steps: ['a'] });
     if (how === 'abandoned') return abandonRun(store, run.id, REASON);
-    const open = await store.get(run.id);
-    return store.update({
-      ...open,
-      terminal_state: true,
-      run_phase: 'failed',
-      sealed_by: { arm: 'step_failure', step: 'a' },
-    } as RunRecord);
+    const { record: open } = await store.get(run.id);
+    return (
+      await store.update({
+        ...open,
+        terminal_state: true,
+        run_phase: 'failed',
+        sealed_by: { arm: 'step_failure', step: 'a' },
+      } as RunRecord)
+    ).record;
   }
 
   it('the escaped, bounded value renderer: one line, every control escaped, then capped (escaping first); undefined reads undefined', () => {

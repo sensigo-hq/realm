@@ -130,7 +130,11 @@ describe('#625 PR-2a, F6 — a printed command is safe to paste', { timeout: 60_
   async function atQuestion(choices: string[], id: string) {
     const def = asking(id, choices);
     await workflowStore.register(def);
-    const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runStore.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const opened = await executeStep(runStore, def, {
       runId: run.id,
       command: 'ask',
@@ -143,7 +147,7 @@ describe('#625 PR-2a, F6 — a printed command is safe to paste', { timeout: 60_
 
   /** What the question's answer recorded: the choice, or `<open>` while the question is still open. */
   const recorded = async (runId: string) => {
-    const run = await runStore.get(runId);
+    const { record: run } = await runStore.get(runId);
     return run.pending_gate !== undefined ? '<open>' : (run.settled?.['ask']?.choice ?? '<none>');
   };
 
@@ -161,7 +165,7 @@ describe('#625 PR-2a, F6 — a printed command is safe to paste', { timeout: 60_
       );
       // realm workflow run's hand-back (its map at a question).
       const h = await atQuestion([choice], `paste-map-${CHOICES.findIndex(([l]) => l === label)}`);
-      const record = await runStore.get(h.runId);
+      const { record: record } = await runStore.get(h.runId);
       lines['hand-back'] = commandOf(
         renderDetachMap(record, 'ask', {
           pending: describePending(h.def, record, undefined, new Date()),
@@ -269,9 +273,13 @@ describe('#625 PR-2a, F6 — a printed command is safe to paste', { timeout: 60_
       steps: { [step]: { description: 'S.', execution: 'agent', depends_on: [] } },
     };
     await workflowStore.register(def);
-    const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runStore.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await runStore.update({
-      ...(await runStore.get(run.id)),
+      ...(await runStore.get(run.id)).record,
       failed_steps: [step],
       terminal_state: true,
       run_phase: 'failed',
@@ -285,7 +293,7 @@ describe('#625 PR-2a, F6 — a printed command is safe to paste', { timeout: 60_
     expect({
       line,
       code: pasted.code,
-      phase: (await runStore.get(run.id)).run_phase,
+      phase: (await runStore.get(run.id)).record.run_phase,
       end: sentenceEnd(reason ?? '') === reason,
     }).toEqual({
       line: `realm run resume ${run.id} --from 'it'\\''s a step'`,
@@ -309,7 +317,7 @@ describe('#625 PR-2a, F6 — a printed command is safe to paste', { timeout: 60_
     );
     const def = asking('paste-abandon', ['ok']);
     await workflowStore.register(def);
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: def.id,
       workflowVersion: 1,
       params: { note: "it's" },

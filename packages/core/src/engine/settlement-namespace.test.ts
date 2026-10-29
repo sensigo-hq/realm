@@ -59,7 +59,11 @@ describe('issue #220 §4c (PR-3) — $settlement namespace, end-to-end', () => {
     };
 
     it('step1 settles NORMALLY (its own valid output) ⇒ $settlement.step1.settled_by_default === false ⇒ step2 becomes ELIGIBLE', async () => {
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await executeStep(store, def, {
         runId: run.id,
         command: 'step1',
@@ -73,12 +77,16 @@ describe('issue #220 §4c (PR-3) — $settlement namespace, end-to-end', () => {
         dispatcher: echoDispatcher,
       });
       expect(step2Envelope.status).toBe('ok');
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       expect(after.completed_steps).toContain('step2');
     });
 
     it('step1 DEFAULT-settles (exhaustion) ⇒ $settlement.step1.settled_by_default === true ⇒ step2 is NEVER eligible (skipped)', async () => {
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await store.update({
         ...run,
         validation_rejections: { step1: DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD - 1 },
@@ -97,7 +105,7 @@ describe('issue #220 §4c (PR-3) — $settlement namespace, end-to-end', () => {
         dispatcher: echoDispatcher,
       });
       expect(step2Envelope.status).toBe('blocked');
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       expect(after.completed_steps).not.toContain('step2');
       // propagateSkips: once step1 is settled and step2's when is false, step2 is provably
       // never-eligible and gets skipped (surfacing the run as complete).
@@ -127,7 +135,11 @@ describe('issue #220 §4c (PR-3) — $settlement namespace, end-to-end', () => {
         },
       },
     };
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await store.update({
       ...run,
       validation_rejections: { step1: DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD - 1 },
@@ -156,7 +168,7 @@ describe('issue #220 §4c (PR-3) — $settlement namespace, end-to-end', () => {
       dispatcher: echoDispatcher,
     });
     expect(step2Envelope.status).toBe('ok');
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.completed_steps).toContain('step2');
   });
 
@@ -179,14 +191,18 @@ describe('issue #220 §4c (PR-3) — $settlement namespace, end-to-end', () => {
         },
       },
     };
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await executeStep(store, def, {
       runId: run.id,
       command: 'step1',
       input: VALID_OUTPUT,
       dispatcher: echoDispatcher,
     });
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.skipped_steps).toContain('step2');
     const detail = after.skip_details?.['step2'];
     if (detail?.kind !== 'when_false') throw new Error('expected when_false detail');
@@ -213,7 +229,11 @@ describe('issue #220 §4c (PR-3) — $settlement namespace, end-to-end', () => {
         },
       },
     };
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await store.update({
       ...run,
       validation_rejections: { step1: DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD - 1 },
@@ -224,7 +244,7 @@ describe('issue #220 §4c (PR-3) — $settlement namespace, end-to-end', () => {
       input: INVALID_OUTPUT,
       dispatcher: echoDispatcher,
     });
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.run_phase).toBe('aborted');
     expect(after.terminal_state).toBe(true);
     expect(after.aborted_at?.step_id).toBe('guard_step');
@@ -250,14 +270,18 @@ describe('issue #220 §4c (PR-3) — $settlement namespace, end-to-end', () => {
         },
       },
     };
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await executeChain(store, def, {
       runId: run.id,
       command: 'step1',
       input: VALID_OUTPUT,
       dispatcher: echoDispatcher,
     });
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.run_phase).not.toBe('aborted');
     expect(after.completed_steps).toContain('guard_step');
   });
@@ -298,7 +322,11 @@ describe('issue #220 §4c (PR-3) — $settlement namespace, end-to-end', () => {
       def: WorkflowDefinition,
       opts: { failExtract: boolean },
     ): Promise<{ envelope: Awaited<ReturnType<typeof executeStep>>; runId: string }> {
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await executeStep(store, def, {
         runId: run.id,
         command: 'extract',
@@ -327,7 +355,7 @@ describe('issue #220 §4c (PR-3) — $settlement namespace, end-to-end', () => {
     it('(b2-fires) extract FAILED ⇒ the when is true ⇒ cleanup runs', async () => {
       const { envelope, runId } = await drive(routingDef(true), { failExtract: true });
       expect(envelope.status).toBe('ok');
-      const after = await store.get(runId);
+      const { record: after } = await store.get(runId);
       expect(after.failed_steps).toContain('extract');
       expect(after.completed_steps).toContain('cleanup');
     });
@@ -335,7 +363,7 @@ describe('issue #220 §4c (PR-3) — $settlement namespace, end-to-end', () => {
     it('(b2-skips) clean run ⇒ the SAME step skips with when_false — the condition is the sole discriminator', async () => {
       const { envelope, runId } = await drive(routingDef(true), { failExtract: false });
       expect(envelope.status).not.toBe('ok');
-      const after = await store.get(runId);
+      const { record: after } = await store.get(runId);
       expect(after.failed_steps).not.toContain('extract');
       expect(after.skipped_steps).toContain('cleanup');
       expect(after.skip_details?.['cleanup']?.kind).toBe('when_false');
@@ -347,7 +375,7 @@ describe('issue #220 §4c (PR-3) — $settlement namespace, end-to-end', () => {
       // this and watch their compensation silently never run.
       const { envelope, runId } = await drive(routingDef(false), { failExtract: true });
       expect(envelope.status).not.toBe('ok');
-      const after = await store.get(runId);
+      const { record: after } = await store.get(runId);
       expect(after.completed_steps).not.toContain('cleanup');
       // Skipped by TRIGGER RULE, not by the condition — a different mechanism from (b2-skips).
       expect(after.skip_details?.['cleanup']?.kind).not.toBe('when_false');

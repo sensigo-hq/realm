@@ -231,7 +231,7 @@ export async function respondToGate(
   // decision C209: what the command's load of the project read — the later advance's words.
   load?: ProjectLoad,
 ): Promise<RespondOutcome> {
-  const run = await runStore.get(runId);
+  const { record: run } = await runStore.get(runId);
   // issue #456: code-keyed one-time-register remedy, shared with every other run-context site.
   const workflow = await getWorkflowForRun(workflowStore, run, {
     retryVerb: 'respond again',
@@ -288,7 +288,7 @@ export async function respondToGate(
     const refusal = result.errors[0] ?? 'Gate response failed';
     let lines = [refusal, ...gateMismatchLines(result), ...describeEndedBy(result)];
     if (result.answer_recorded === false) {
-      const lateRun = await runStore.get(runId);
+      const { record: lateRun } = await runStore.get(runId);
       const late = lateAnswerOutcome(result, lateRun);
       // decision C146: the composer starts with which call carried out the question's expiry
       // (this one, or another), then the refusal and what the expiry's guards did.
@@ -321,7 +321,7 @@ export async function respondToGate(
     });
   }
 
-  const updatedRun = await runStore.get(runId);
+  const { record: updatedRun } = await runStore.get(runId);
   const lines = withCleanupLine(
     describeAnswerEnding(result, updatedRun, {
       gateId: options.gate,
@@ -429,7 +429,7 @@ export const respondCommand = new Command('respond')
         // respond's most common operator error, and it must never wear the extensions sentence
         // (the naked catch below is its home, #477). Only the extension resolution itself is
         // wrapped, in place, mirroring run.ts's exact arm.
-        const run = await runStore.get(runId);
+        const { record: run } = await runStore.get(runId);
         // issue #456: code-keyed one-time-register remedy, shared with every other run-context
         // site.
         const workflow = await getWorkflowForRun(workflowStore, run, {

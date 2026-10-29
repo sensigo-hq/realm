@@ -60,7 +60,7 @@ describe('#134 pre-flight capability warning', () => {
     const capWarnings = result.warnings.filter((w) => w.includes('block recoverably'));
     expect(capWarnings).toEqual([]);
     expect(result.run_id).toBeDefined();
-    await expect(runStore.get(result.run_id)).resolves.toBeDefined();
+    await expect(runStore.get(result.run_id).then((s) => s.record)).resolves.toBeDefined();
     // And crucially NOT a capability-block error (the requirement was met).
     expect(result.error_code).not.toBe('ENGINE_ADAPTER_NOT_REGISTERED');
   });
@@ -82,7 +82,7 @@ describe('#134 pre-flight capability warning', () => {
     // WARN, never REFUSE — the run is created (and persisted) regardless. start_run auto-drives the
     // first auto step, which recoverably blocks (error_code set, NOT a hard refusal); the run persists.
     expect(result.run_id).toBeDefined();
-    await expect(runStore.get(result.run_id)).resolves.toBeDefined();
+    await expect(runStore.get(result.run_id).then((s) => s.record)).resolves.toBeDefined();
     if (result.status === 'error') {
       expect(result.error_code).toBe('ENGINE_HANDLER_NOT_REGISTERED');
     }

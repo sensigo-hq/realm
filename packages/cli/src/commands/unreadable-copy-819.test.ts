@@ -41,7 +41,7 @@ describe('#819 U2 — a copy with no steps, on the CLI', () => {
   it('realm run inspect names the copy and its repair, with no internal error', async () => {
     const { JsonFileStore, JsonWorkflowStore } = await import('@sensigo/realm');
     const store = new JsonFileStore();
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'plain-gate',
       workflowVersion: 1,
       params: {},

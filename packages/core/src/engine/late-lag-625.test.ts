@@ -14,8 +14,25 @@ import { fileURLToPath } from 'node:url';
 import * as core from '../index.js';
 import { advanceRun, executeStep, submitHumanResponse } from './execution-loop.js';
 import { JsonFileStore } from '../store/json-file-store.js';
-import type { RunStore } from '../store/store-interface.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
+import { writeTestClockFile } from '../store/test-clock-file.js';
+
+/** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
+ *  runs folder sits beside the location's clock file (first set to the host's reading), which
+ *  `setClockOf` rewrites. */
+async function testLocationRuns(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  await writeTestClockFile(root, new Date());
+  return join(root, 'runs');
+}
+async function clockedJsonStore(prefix: string): Promise<JsonFileStore> {
+  return new JsonFileStore(await testLocationRuns(prefix));
+}
+async function setClockOf(store: object, t: Date): Promise<void> {
+  const runsDir = (store as { runsDirPath?: string }).runsDirPath;
+  if (runsDir === undefined) throw new Error('setClockOf: this store is not a JSON store');
+  await writeTestClockFile(dirname(runsDir), t);
+}
 
 const CHANGELOG = join(dirname(fileURLToPath(import.meta.url)), '../../../../CHANGELOG.md');
 
@@ -52,20 +69,19 @@ function gated(onExpiry: 'settle_default' | 'abort'): WorkflowDefinition {
   };
 }
 
-/** The store without `settleStep`: the legacy path of `submitHumanResponse`. */
-function legacyOf(store: JsonFileStore): JsonFileStore {
-  return Object.assign(Object.create(store) as JsonFileStore, { settleStep: undefined });
-}
-
 describe('#625 PR-2a, F1 — the late answer says how late it was', () => {
   let store: JsonFileStore;
   beforeEach(async () => {
-    store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-lag-625-')));
+    store = await clockedJsonStore('realm-lag-625-');
   });
 
   /** A run at its question; `at(ms)` is the instant `ms` after the question's time was up. */
   async function atQuestion(d: WorkflowDefinition) {
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const opened = await executeStep(store, d, {
       runId: run.id,
       command: 'q',
@@ -73,7 +89,7 @@ describe('#625 PR-2a, F1 — the late answer says how late it was', () => {
       dispatcher: async () => ({}),
     });
     if (opened.status !== 'confirm_required') throw new Error(`fixture: ${opened.status}`);
-    const gate = (await store.get(run.id)).pending_gate!;
+    const gate = (await store.get(run.id)).record.pending_gate!;
     const expiresAt = gate.expires_at!;
     const at = (ms: number) => new Date(new Date(expiresAt).getTime() + ms);
     return { runId: run.id, gateId: gate.gate_id, expiresAt, at };
@@ -112,14 +128,15 @@ describe('#625 PR-2a, F1 — the late answer says how late it was', () => {
       changelogSays(
         "A late answer's expiry is the reply's `expiry` receipt (`ExpiryReceipt`: `gate_id`, `step`, `on_expiry`, `choice`, `enacted_via`, `by_this_call`, `expired_at`, `overdue`); `error_details` no longer carries `expired_at` or `overdue_ms`.",
       );
-      for (const legacy of [false, true]) {
+      // #715 (b): the legacy store kind (no `settleStep`) is gone — one kind left.
+      for (const legacy of [false]) {
         const d = gated(onExpiry);
         const { runId, gateId, expiresAt, at } = await atQuestion(d);
-        const reply = await submitHumanResponse(legacy ? legacyOf(store) : store, d, {
+        await setClockOf(store, at(15_000));
+        const reply = await submitHumanResponse(store, d, {
           runId,
           gateId,
           choice,
-          now: at(15_000),
         });
         const did =
           onExpiry === 'settle_default'
@@ -148,41 +165,6 @@ describe('#625 PR-2a, F1 — the late answer says how late it was', () => {
     },
   );
 
-  it('the race: a late answer whose own expiry write found the question already settled names the lag to THIS call, and another call', async () => {
-    changelogSays(
-      'When another call had already carried the expiry out, it says so: `… had expired <how long> before this call — another call had already carried out its declared …`.',
-    );
-    const d = gated('settle_default');
-    const { runId, gateId, at } = await atQuestion(d);
-    const racing: RunStore = Object.assign(Object.create(store) as JsonFileStore, {
-      settleStep: async (...args: Parameters<NonNullable<RunStore['settleStep']>>) => {
-        const result = await store.settleStep(...args);
-        if (args[1].kind === 'settle_gate' && !result.applied) {
-          await store.settleStep(args[0], { kind: 'expire_gate', gateId }, args[2], {
-            now: at(1_000),
-          });
-        }
-        return result;
-      },
-    });
-    const reply = await submitHumanResponse(racing, d, {
-      runId,
-      gateId,
-      choice: 'reject',
-      now: at(42_000),
-    });
-    // (a) red when the race form drops the lag or measures it to the other call; (b) prints it.
-    expect({
-      line: reply.warnings[0],
-      overdue: reply.expiry?.overdue,
-      by_this_call: reply.expiry?.by_this_call,
-    }).toEqual({
-      line: `gate '${gateId}' on 'q' had expired 42s before this call — another call had already carried out its declared settle_default: the default choice 'approve' was recorded.`,
-      overdue: { ms: 42_000 },
-      by_this_call: false,
-    });
-  });
-
   it.each([
     ['advanceRun', 59_000, '59s'],
     ['executeStep', 61_000, '1m'],
@@ -195,15 +177,15 @@ describe('#625 PR-2a, F1 — the late answer says how late it was', () => {
       );
       const d = gated('settle_default');
       const { runId, gateId, at } = await atQuestion(d);
+      await setClockOf(store, at(lateBy));
       const reply =
         entry === 'advanceRun'
-          ? await advanceRun(store, d, { runId, now: at(lateBy) })
+          ? await advanceRun(store, d, { runId })
           : await executeStep(store, d, {
               runId,
               command: 'after',
               input: {},
               dispatcher: async () => ({}),
-              now: at(lateBy),
             });
       // (a) red when the call's line drops the lag or writes it in another form; (b) prints the
       //     reply's expiry lines.

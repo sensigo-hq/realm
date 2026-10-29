@@ -431,6 +431,9 @@ export type {
   SettlementResult,
   SettlementRefusalReason,
   SettlementNoopReason,
+  // #715 (b) (D-20, D-21): the opening gate without its instants, and the run-level seal delta.
+  OpeningGate,
+  SealRunDelta,
 } from './types/settlement.js';
 export {
   TERMINAL_PHASES,
@@ -466,6 +469,7 @@ export { computeGateDueState } from './engine/gate-timing.js';
 // stored deadline; ε, the one clock-skew constant.
 export {
   readInstant,
+  parseStamp,
   isPastDeadline,
   overdueOf,
   recordStampedAheadSentence,
@@ -477,7 +481,8 @@ export type { InstantClass, InstantReading } from './engine/instants.js';
 // the one place a store takes its reading for a write, and the per-key floor on that reading.
 export { createSystemClock, systemClock } from './utils/clock.js';
 export type { Clock } from './utils/clock.js';
-export { takeReading, floorAtHolder } from './store/take-reading.js';
+// #715 (b) (D-17): a read's raw reading (taken BEFORE the load) and the floor by a record's own stamp.
+export { takeReading, takeRawReading, floorAtRecord, floorAtHolder } from './store/take-reading.js';
 // issue #715 (a) (D6-1, D6-54): a test location's clock file. For `@sensigo/realm-testing`, not for
 // hosts: a lint rule (static imports) and a source scan (the names as text, in any import form;
 // `lint-test-location-715.test.ts`) keep `writeTestClockFile`, `fileClock` and `readTestClockFile`

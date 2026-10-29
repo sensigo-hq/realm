@@ -35,8 +35,12 @@ const DEFINITION: WorkflowDefinition = {
  * `run-attach.test.ts` does: a fresh-object terminal write is refused STATE_SEAL_UNSTAMPED.
  */
 async function endedRun(store: InMemoryStore, end: (run: RunRecord) => void): Promise<string> {
-  const { run } = await store.create({ workflowId: DEFINITION.id, workflowVersion: 1, params: {} });
-  const record = await store.get(run.id);
+  const { record: run } = await store.create({
+    workflowId: DEFINITION.id,
+    workflowVersion: 1,
+    params: {},
+  });
+  const { record: record } = await store.get(run.id);
   end(record);
   await store.update(record);
   return run.id;

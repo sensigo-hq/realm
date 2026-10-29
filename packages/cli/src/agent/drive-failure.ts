@@ -293,7 +293,7 @@ export async function recordDriveFailure(
             ) as UsageRecord[],
           };
     for (let i = 0; i < WRITE_ATTEMPTS; i++) {
-      const run = await store.get(runId);
+      const { record: run } = await store.get(runId);
       // A sealed run already tells its story; adding to it would be noise, and writing to it
       // would reopen a settled record.
       if (run.terminal_state) return;

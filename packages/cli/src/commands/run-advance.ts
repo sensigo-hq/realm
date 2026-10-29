@@ -392,15 +392,15 @@ export async function advanceRunFromShell(
   print: (line: string) => void,
   registryOverride?: ExtensionRegistry,
 ): Promise<0 | 1> {
-  const run = await runStore.get(runId);
+  // decision C95: the reading the view judges the run at, so an open question whose time is up and
+  // that declares `on_expiry` is named as owed — and `advanceRun` carries it out first. #715 (b):
+  // the store's own reading, taken before the load; `advanceRun` takes its own.
+  const { record: run, at: now } = await runStore.get(runId);
   const workflow = await getWorkflowForRun(workflowStore, run, {
     retryVerb: 'advance again',
     verb: 'advance',
   });
   const projectDir = opts.project ?? process.cwd();
-  // decision C95: the clock the view reads, so an open question whose time is up and that declares
-  // `on_expiry` is named as owed — and `advanceRun` carries it out first.
-  const now = new Date();
   const loaded =
     registryOverride === undefined
       ? await loadProjectExtensions(workflow, {
@@ -514,7 +514,6 @@ export async function advanceRunFromShell(
       runId,
       caller: 'advance',
       registry,
-      now,
       // #729 PR-4 (01): a question this call opens is minted with the writer's private set.
       ...((set) => (set !== undefined ? { disclosure: set } : {}))(writerSetFor('private')),
       ...(driver !== undefined ? { driver } : {}),
@@ -561,7 +560,7 @@ export async function advanceRunFromShell(
   const chainedGuards = (result.chained_auto_steps ?? [])
     .map((c) => c.step)
     .filter((step) => workflow.steps[step]?.execution === 'guard' && !guardsSaid.has(step));
-  const after = await runStore.get(runId);
+  const { record: after } = await runStore.get(runId);
   if (endingLines.length > 0) {
     // F13: a guard that passed in this call before the one that ended the run (not yet said before
     // a step's line) gets its passed line first, as below — also now that the loop's own guard

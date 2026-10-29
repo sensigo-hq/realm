@@ -22,7 +22,7 @@ import {
   expiryCarriedOutLine,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
 } from '@sensigo/realm';
-import type { RunRecord, WorkflowDefinition } from '@sensigo/realm';
+import type { WorkflowDefinition } from '@sensigo/realm';
 import { respondCommand } from './respond.js';
 import { inspectRun } from './inspect.js';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
@@ -98,7 +98,11 @@ describe('#625 PR-2a, C146/C147 — a late `realm run respond` says which call c
     def: WorkflowDefinition,
   ): Promise<{ runId: string; gateId: string }> {
     await workflowStore.register(def);
-    const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runStore.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const opened = await executeStep(runStore, def, {
       runId: run.id,
       command: 'confirm',
@@ -106,7 +110,7 @@ describe('#625 PR-2a, C146/C147 — a late `realm run respond` says which call c
       dispatcher: async () => ({}),
     });
     if (opened.status !== 'confirm_required') throw new Error(`fixture: ${opened.status}`);
-    const record: RunRecord = await runStore.get(run.id);
+    const { record: record } = await runStore.get(run.id);
     await runStore.update({
       ...record,
       pending_gate: {

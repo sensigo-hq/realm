@@ -384,7 +384,7 @@ describe("#729 PR-3 correction 5 (J-5), correction 6 (C6-1) — R41's marker nev
     } as WorkflowDefinition);
     const { JsonFileStore } = await import('@sensigo/realm');
     const runs = new JsonFileStore(join(home, '.realm', 'runs'));
-    const { run } = await runs.create({
+    const { record: run } = await runs.create({
       workflowId: 'c6noroot',
       workflowVersion: 1,
       params: {},
@@ -485,7 +485,9 @@ describe('#729 PR-3 correction 5 (J-5) — the in-process creators', () => {
     await handler(req, res as unknown as ServerResponse);
     // (a) red when the route keeps no start entry or the create is given none; (b) prints the
     //     run's entries.
-    expect((await runStore.list()).map(entriesOf)).toEqual([['start:<proj>/realm.yaml']]);
+    expect((await runStore.list()).snapshots.map((s) => s.record).map(entriesOf)).toEqual([
+      ['start:<proj>/realm.yaml'],
+    ]);
   }, 60_000);
 
   it("a store that does not keep 'extension_identity' is given no start entry, and the run is created", async () => {
@@ -552,7 +554,7 @@ describe('#729 PR-3 correction 5 (J-5) — the in-process creators', () => {
     //     whether the create was given an entry and how many runs exist.
     expect({
       given: create.mock.calls.some(([options]) => options.extensionIdentity !== undefined),
-      runs: (await store.list()).length,
+      runs: (await store.list()).snapshots.map((s) => s.record).length,
     }).toEqual({ given: false, runs: 1 });
   });
 });

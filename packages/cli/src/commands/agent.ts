@@ -529,7 +529,7 @@ export const agentCommand = new Command('agent')
           if (opts.promptCache !== undefined && opts.spawnedByListen !== true) {
             const stated = await store
               .get(opts.runId)
-              .then((run) =>
+              .then(({ record: run }) =>
                 getWorkflowForRun(workflowStore, run, {
                   retryVerb: 're-attach',
                   verb: 're-attach',
@@ -543,7 +543,7 @@ export const agentCommand = new Command('agent')
           // declared values, and shown as its type and size while they cannot all be read (no flag
           // here: the line names the command that takes it). A run re-attached, or one that cannot
           // be read, is left to resolveRunAttach.
-          const ended = await store.get(opts.runId).catch(() => undefined);
+          const ended = (await store.get(opts.runId).catch(() => undefined))?.record;
           if (ended !== undefined && ended.terminal_state && !reattachable(ended)) {
             const endedDefinition = await getWorkflowForRun(workflowStore, ended, {
               retryVerb: 're-attach',

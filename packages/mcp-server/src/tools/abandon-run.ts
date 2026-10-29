@@ -97,7 +97,7 @@ export async function handleAbandonRun(
   // a kill. Exact for the sequential case; if another writer abandons between these two lines this
   // call reports a fresh abandon for someone else's write, which is a rare and one-way misread of
   // WHOSE write it was, never of the run's state.
-  const before = await runStore.get(args.run_id);
+  const { record: before } = await runStore.get(args.run_id);
   const alreadyAbandoned = before.abandoned_at !== undefined;
   // issue #558 PR-C: the reason names THIS surface's verb; core's default is the neutral fallback.
   const run = await abandonRun(runStore, args.run_id, args.reason ?? 'Abandoned via abandon_run');

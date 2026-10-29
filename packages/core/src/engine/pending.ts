@@ -29,7 +29,7 @@ import {
 } from '../validation/validation-problems.js';
 import { consumesInputMap, resolveInputMap } from './input-map.js';
 import { capabilityRefusalWords, requirementForStep } from './capability.js';
-import { isPastDeadline } from './instants.js';
+import { parseStamp, isPastDeadline } from './instants.js';
 import { readDrivenBy, type Attributed, type ActorAbsent } from './holder.js';
 
 /** The checks that refuse a step before it is claimed, in the order `executeStep` runs them. */
@@ -663,7 +663,7 @@ export function pendingCleanupWay(
       (entry) =>
         entry.lease_token !== undefined &&
         entry.lease_deadline !== undefined &&
-        new Date(entry.lease_deadline).getTime() > now.getTime(),
+        (parseStamp(entry.lease_deadline) ?? NaN) > now.getTime(),
     )
     .map((entry) => entry.lease_deadline!)
     .sort();

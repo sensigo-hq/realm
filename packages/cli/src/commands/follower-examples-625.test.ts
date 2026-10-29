@@ -207,7 +207,7 @@ describe('#625 PR-2a — L4 Follower on examples 01–09 (realm mcp --project, r
             reply = await call(tool, args);
           }
           expect(reply.next_actions ?? [], JSON.stringify(reply)).toEqual([]);
-          const run = await new JsonFileStore(join(home, '.realm', 'runs')).get(runId);
+          const { record: run } = await new JsonFileStore(join(home, '.realm', 'runs')).get(runId);
           expect(run.run_phase, `${c.dir} calls=${calls.join(',')}`).toBe('completed');
           expect(calls.includes('advance_run'), calls.join(',')).toBe(c.advances === true);
         } finally {

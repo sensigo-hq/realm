@@ -287,7 +287,11 @@ export async function handleStartRun(
     RealmExtensionRegistry,
   );
 
-  const { run, created } = await runStore.create({
+  const {
+    record: run,
+    at: createdAt,
+    created,
+  } = await runStore.create({
     workflowId: definition.id,
     workflowVersion: definition.version,
     params,
@@ -386,7 +390,9 @@ export async function handleStartRun(
     // pre-flight warning (decision C58). A failed step is returned as is.
     // F7: the reply read by core's classifier (one rule for every host — no code list here).
     const afterAdvance =
-      result.status === 'error' ? await runStore.get(run.id).catch(() => run) : undefined;
+      result.status === 'error'
+        ? (await runStore.get(run.id).catch(() => writtenSnapshot(run, createdAt))).record
+        : undefined;
     if (
       afterAdvance !== undefined &&
       classifyStop(result, undefined, afterAdvance)?.kind === 'capability_missing'
@@ -395,7 +401,8 @@ export async function handleStartRun(
       createdRun = afterAdvance;
     } else if (ranSomething) {
       // decision C10: the phase is derived from the record advanceRun leaves.
-      const finalRun = await runStore.get(run.id).catch(() => run);
+      const finalSnap = await runStore.get(run.id).catch(() => writtenSnapshot(run, createdAt));
+      const finalRun = finalSnap.record;
       // decisions C205, C211 (the architect's addendum): a run this call ended — its own step
       // failed, or cleanup steps were left pending — says the ways back in.
       const ranReply: EngineReply = {
@@ -421,12 +428,13 @@ export async function handleStartRun(
       );
       // Correction 1 (B7): the ended run's ways back in are read from the record as it stands after
       // the form's wait — a run that ended during the form gets them.
-      const afterRun =
-        after === ranReply ? finalRun : await runStore.get(run.id).catch(() => finalRun);
+      const afterSnap =
+        after === ranReply ? finalSnap : await runStore.get(run.id).catch(() => finalSnap);
       const tail =
         finalRun.rerun_of !== undefined
           ? ` This run supersedes run '${finalRun.rerun_of}' under the same idempotency key (on_terminal_match).`
-          : endedRunWaysSentence(afterRun, definition, new Date());
+          : // #715 (b): judged at the snapshot's own reading.
+            endedRunWaysSentence(afterSnap.record, definition, afterSnap.at);
       return {
         ...mcpReplyOf(withHintTail(renderReply(after, mcpHostOf(stores)), tail)),
         deduped,

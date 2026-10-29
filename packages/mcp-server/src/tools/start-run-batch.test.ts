@@ -105,7 +105,7 @@ describe('handleStartRunBatch', () => {
         workflowStore: wfStore as unknown as import('@sensigo/realm').JsonWorkflowStore,
       },
     );
-    const run = await runStore.get(result.started[0]!.run_id);
+    const { record: run } = await runStore.get(result.started[0]!.run_id);
     expect(run.parent_run_id).toBe('parent-abc');
   });
 
@@ -229,7 +229,7 @@ describe('handleStartRunBatch', () => {
     } catch {
       // expected
     }
-    const runs = await runStore.list('wf-schema');
+    const runs = (await runStore.list('wf-schema')).snapshots.map((s) => s.record);
     expect(runs).toHaveLength(0);
   });
 });

@@ -49,7 +49,11 @@ describe('issue #759 — the refusal on the engine reply', () => {
     const d = def({
       extract: { description: 'E', execution: 'agent', output_schema: requiring(13) },
     });
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const reply = await executeStep(store, d, {
       runId: run.id,
       command: 'extract',
@@ -77,7 +81,11 @@ describe('issue #759 — the refusal on the engine reply', () => {
   it('an engine-built input is not counted: its facts carry the rows and the total, no countdown', async () => {
     const store = await freshStore();
     const d = def({ x: { description: 'X', execution: 'auto', input_schema: requiring(3) } });
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const reply = await executeStep(store, d, {
       runId: run.id,
       command: 'x',
@@ -96,7 +104,11 @@ describe('issue #759 — the refusal on the engine reply', () => {
     const d = def({
       extract: { description: 'E', execution: 'agent', output_schema: requiring(13) },
     });
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     let reply = await executeStep(store, d, {
       runId: run.id,
       command: 'extract',
@@ -146,7 +158,7 @@ describe('issue #759 — the refusal on the engine reply', () => {
         },
       },
     });
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: d.id,
       workflowVersion: 1,
       params: { a: 'one', b: 'two' },
@@ -239,7 +251,11 @@ describe('issue #759 — AC6: the end-to-end that gave the issue its name', () =
     const d = def({
       extract: { description: 'E', execution: 'agent', output_schema: requiring(9) },
     });
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const answer: Record<string, unknown> = {};
     const named: number[] = [];
     let last = '';
@@ -260,7 +276,7 @@ describe('issue #759 — AC6: the end-to-end that gave the issue its name', () =
         if (field !== undefined) answer[field] = 'v';
       }
     }
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect({
       namedPerRefusal: named,
       last,

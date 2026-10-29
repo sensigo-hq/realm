@@ -10,6 +10,7 @@
 import { describe, it, expect } from 'vitest';
 import type { DriveFailureRecord, RunRecord, UsageRecord } from '@sensigo/realm';
 import { inspectRun } from './inspect.js';
+import { listing, snap } from '../test-support/snapshot-double.js';
 
 type DisclosureRoute =
   { surface: 'rendered'; probe: (out: string) => void } | { surface: 'waived'; reason: string };
@@ -102,8 +103,8 @@ const run = {
 } as unknown as RunRecord;
 
 const store = {
-  get: async () => run,
-  list: async () => [run],
+  get: async () => snap(run),
+  list: async () => listing([run]),
 } as never;
 const workflowStore = {
   get: async () => {

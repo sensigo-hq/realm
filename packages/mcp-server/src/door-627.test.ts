@@ -152,9 +152,13 @@ async function registered(s: Session, opts: Parameters<typeof WORKFLOW>[0] = {})
 /** A run opened at its question OUTSIDE the session (as the CLI or another process would). */
 async function openedElsewhere(s: Session, opts: Parameters<typeof WORKFLOW>[0] = {}) {
   const def = await registered(s, opts);
-  const { run } = await s.runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+  const { record: run } = await s.runStore.create({
+    workflowId: def.id,
+    workflowVersion: 1,
+    params: {},
+  });
   await advanceRun(s.runStore, def, { runId: run.id });
-  const record = await s.runStore.get(run.id);
+  const { record: record } = await s.runStore.get(run.id);
   return { runId: run.id, gateId: record.pending_gate!.gate_id };
 }
 
@@ -221,7 +225,7 @@ describe('#627 W — which answer tool a session lists', () => {
     const s = await session({ gateAnswers: 'withheld' });
     const { runId, gateId } = await openedElsewhere(s);
     const forced = await s.raw(ANSWER, { run_id: runId, gate_id: gateId, choice: 'approve' });
-    const after = await s.runStore.get(runId);
+    const { record: after } = await s.runStore.get(runId);
     // (a) red when the tool is registered regardless of the value; (b) prints the call's error flag
     //     and whether the question is still open.
     expect({
@@ -361,12 +365,12 @@ describe('#627 W — asked’s fallback: the answer tool asks the app to have th
       a.human_readable.startsWith('Human review required'),
     );
     await fallback.call(ANSWER, { run_id: runId, gate_id: gateId, choice: 'approve' });
-    const recorded = (await fallback.runStore.get(runId)).evidence.find(
+    const recorded = (await fallback.runStore.get(runId)).record.evidence.find(
       (e) => e.kind === 'gate_response',
     );
     const o = await openedElsewhere(offered);
     await offered.call(ANSWER, { run_id: o.runId, gate_id: o.gateId, choice: 'approve' });
-    const offeredEntry = (await offered.runStore.get(o.runId)).evidence.find(
+    const offeredEntry = (await offered.runStore.get(o.runId)).record.evidence.find(
       (e) => e.kind === 'gate_response',
     );
     // (a) red when _meta or the guidance reaches every session, or the fallback answer does not
@@ -404,7 +408,9 @@ describe('#627 W — asked’s fallback: the answer tool asks the app to have th
       route: 'mcp_form',
       principal: { kind: 'api_key', id: 'forged' },
     });
-    const entry = (await s.runStore.get(runId)).evidence.find((e) => e.kind === 'gate_response');
+    const entry = (await s.runStore.get(runId)).record.evidence.find(
+      (e) => e.kind === 'gate_response',
+    );
     // (a) red when the route or the principal is read from the arguments; (b) prints the record's
     //     facts and the reply's warnings.
     expect({
@@ -651,7 +657,7 @@ describe('#627 W — the await entry: a question answered outside this conversat
     const opened = awaitOf(started)!;
     const later = awaitOf(read)!;
     const noMessage = awaitOf(bareRead)!;
-    const gate = (await s.runStore.get(runId)).pending_gate!;
+    const gate = (await s.runStore.get(runId)).record.pending_gate!;
     // (a) red when an answer call or a token reaches the reply, the gate's reply reads W-a2, the
     //     pace is missing on the reply that opened the question, or `until` is not the deadline;
     //     (b) prints the entries' texts and the pace.
@@ -799,7 +805,11 @@ describe('#627 W — the await entry: a question answered outside this conversat
     // the opening reply's ways plus an agent step's run_step way.
     const s = await session({ gateAnswers: 'withheld' });
     const def = await registered(s);
-    const { run } = await s.runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await s.runStore.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const opening = await advanceRun(s.runStore, def, { runId: run.id });
     const mixed = {
       ...opening,
@@ -899,7 +909,11 @@ describe('#627 W — Part I: a token for a handed-off question is held back', ()
   it('a constructed reply under withheld whose answer instruction would carry a token is replaced by W-e1, and W-e2 is logged', async () => {
     const s = await session({ gateAnswers: 'withheld' });
     const def = await registered(s);
-    const { run } = await s.runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await s.runStore.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const opening = await advanceRun(s.runStore, def, { runId: run.id });
     const planted = {
       ...opening,
@@ -943,7 +957,11 @@ describe('#627 W correction 1 (E4, E5) — the held-back reply by row, its arms,
   async function planted(gateAnswers: 'offered' | 'withheld') {
     const s = await session({ gateAnswers });
     const def = await registered(s);
-    const { run } = await s.runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await s.runStore.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const opening = await advanceRun(s.runStore, def, { runId: run.id });
     return {
       run,

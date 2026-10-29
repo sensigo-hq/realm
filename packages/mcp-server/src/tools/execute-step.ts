@@ -258,7 +258,7 @@ export async function handleExecuteStep(
   // WorkflowError (issue #719: a damaged JSON-store run file is RESOURCE_FORMAT_INVALID,
   // STATE_LEGACY_FORMAT or ENGINE_STORE_FAILED, naming the file and its way out), or, for an
   // untyped throw, ENGINE_STORE_FAILED naming its cause — never ENGINE_INTERNAL.
-  const run = await runStore.get(args.run_id).catch((err: unknown) => {
+  const { record: run } = await runStore.get(args.run_id).catch((err: unknown) => {
     throw runReadError(err);
   });
   // issue #456: code-keyed one-time-register remedy. Verb "retry" — deliberately neutral: the
@@ -376,7 +376,8 @@ export async function handleExecuteStep(
   let tail = '';
   if (reply.run_phase !== undefined && TERMINAL_PHASES.has(reply.run_phase)) {
     const ended = await runStore.get(args.run_id).catch(() => undefined);
-    if (ended !== undefined) tail = endedRunWaysSentence(ended, definition, new Date());
+    // #715 (b): judged at the snapshot's own reading.
+    if (ended !== undefined) tail = endedRunWaysSentence(ended.record, definition, ended.at);
   }
   return mcpReplyOf(withHintTail(renderReply(reply, mcpHostOf(stores)), tail));
 }

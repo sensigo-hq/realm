@@ -68,7 +68,7 @@ async function drive(
     },
     { definition: def, params: {} },
   );
-  const runs = await store.list();
+  const runs = (await store.list()).snapshots.map((s) => s.record);
   return runs[0]!.evidence.at(-1)?.diagnostics?.structured_output;
 }
 
@@ -261,7 +261,7 @@ describe('runAgent — OpenAI structured output (issue #313)', () => {
       { definition: def, params: {} },
     );
 
-    const runs = await store.list();
+    const runs = (await store.list()).snapshots.map((s) => s.record);
     for (const entry of runs[0]!.evidence) {
       const m = entry.diagnostics?.structured_output;
       if (m === undefined) continue;

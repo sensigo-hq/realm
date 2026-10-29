@@ -34,12 +34,23 @@ export type InstantClass = (typeof INSTANT_CLASSES)[number];
 export type InstantReading = { ms: number; ahead_ms?: number } | { absent: 'unparseable_stamp' };
 
 /**
+ * Parses one stored `RunRecord` stamp (#715 (b), D-25): its epoch milliseconds, or `undefined` when
+ * the stamp does not parse — never `NaN`. The ONE parser of a stored stamp: {@link readInstant} and
+ * every other production read of a stored instant go through it. Each caller states its own outcome
+ * for `undefined` (a comparator sorts it oldest, a floor ignores it, a schedule yields no occurrence).
+ */
+export function parseStamp(stamp: string): number | undefined {
+  const ms = Date.parse(stamp);
+  return Number.isFinite(ms) ? ms : undefined;
+}
+
+/**
  * Reads one stored instant (D4 P-8). `r` is the RAW reading — the clock reading a snapshot was taken
  * at, before its load (`loadSnapshot`) — and is required: the parser never reads a clock.
  */
 export function readInstant(stamp: string, cls: InstantClass, r: Date): InstantReading {
-  const ms = Date.parse(stamp);
-  if (!Number.isFinite(ms)) return { absent: 'unparseable_stamp' };
+  const ms = parseStamp(stamp);
+  if (ms === undefined) return { absent: 'unparseable_stamp' };
   const lead = ms - r.getTime();
   return cls === 'past_event' && lead > CLOCK_SKEW_EPSILON_MS ? { ms, ahead_ms: lead } : { ms };
 }

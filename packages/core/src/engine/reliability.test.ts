@@ -143,7 +143,7 @@ describe('reliability', () => {
 
   it('timeout fires — step returns error and run is marked failed', async () => {
     const store = new JsonFileStore(dir);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'timeout-wf',
       workflowVersion: 1,
       params: {},
@@ -163,13 +163,13 @@ describe('reliability', () => {
     expect(envelope.status).toBe('error');
     expect(envelope.errors[0]).toContain('timed out');
 
-    const updated = await store.get(run.id);
+    const { record: updated } = await store.get(run.id);
     expect(updated.run_phase).toBe('failed');
   });
 
   it('step without timeout completes normally', async () => {
     const store = new JsonFileStore(dir);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'no-timeout-wf',
       workflowVersion: 1,
       params: {},
@@ -185,13 +185,13 @@ describe('reliability', () => {
     });
 
     expect(envelope.status).toBe('ok');
-    const updated = await store.get(run.id);
+    const { record: updated } = await store.get(run.id);
     expect(updated.run_phase).toBe('completed');
   });
 
   it('retry succeeds on 2nd attempt — evidence has 2 entries with attempt numbers', async () => {
     const store = new JsonFileStore(dir);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'retry-wf',
       workflowVersion: 1,
       params: {},
@@ -222,7 +222,7 @@ describe('reliability', () => {
 
   it('retry exhaustion — returns STEP_RETRY_EXHAUSTED and run is marked failed', async () => {
     const store = new JsonFileStore(dir);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'retry-wf',
       workflowVersion: 1,
       params: {},
@@ -245,14 +245,14 @@ describe('reliability', () => {
     expect(envelope.errors[0]).toContain('failed after 3 attempts');
     expect(calls).toBe(3);
 
-    const updated = await store.get(run.id);
+    const { record: updated } = await store.get(run.id);
     expect(updated.run_phase).toBe('failed');
     expect(updated.evidence).toHaveLength(3);
   });
 
   it('non-retryable error — dispatcher called exactly once and run is failed', async () => {
     const store = new JsonFileStore(dir);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'retry-wf',
       workflowVersion: 1,
       params: {},
@@ -279,7 +279,7 @@ describe('reliability', () => {
 
   it('double-claim: two concurrent executeStep calls on the same step — second is blocked', async () => {
     const store = new JsonFileStore(dir);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'no-timeout-wf',
       workflowVersion: 1,
       params: {},
@@ -334,7 +334,7 @@ describe('reliability', () => {
 
   it('pending state is written to the store while dispatcher is running', async () => {
     const store = new JsonFileStore(dir);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'no-timeout-wf',
       workflowVersion: 1,
       params: {},
@@ -363,7 +363,7 @@ describe('reliability', () => {
     // Wait until the dispatcher has been called — by that point the pending state write
     // (step 3c) has already completed.
     await calledPromise;
-    const mid = await store.get(run.id);
+    const { record: mid } = await store.get(run.id);
     expect(mid.in_progress_steps).toContain('step-one');
 
     resolveDispatcher({});
@@ -373,7 +373,7 @@ describe('reliability', () => {
 
   it('failed run is marked terminal — terminal_state is true', async () => {
     const store = new JsonFileStore(dir);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'no-timeout-wf',
       workflowVersion: 1,
       params: {},
@@ -390,13 +390,13 @@ describe('reliability', () => {
       dispatcher: failDispatcher,
     });
 
-    const updated = await store.get(run.id);
+    const { record: updated } = await store.get(run.id);
     expect(updated.run_phase).toBe('failed');
   });
 
   it('AbortSignal is aborted when timeout fires', async () => {
     const store = new JsonFileStore(dir);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'timeout-wf',
       workflowVersion: 1,
       params: {},
@@ -425,7 +425,7 @@ describe('reliability', () => {
 
   it('LOAD-BEARING (A3 blocking-fix): auto step in a finalizer-bearing workflow still times out', async () => {
     const store = new JsonFileStore(dir);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'timeout-finalizer-wf',
       workflowVersion: 1,
       params: {},
@@ -449,7 +449,7 @@ describe('reliability', () => {
     expect(envelope.status).toBe('error');
     expect(envelope.errors[0]).toContain('timed out');
 
-    const updated = await store.get(run.id);
+    const { record: updated } = await store.get(run.id);
     // Non-terminal: the finalizer-bearing run is not yet sealed at the domain-step failure alone
     // (see finalizer.test.ts for the drain itself) — the point here is solely that the TIMEOUT fired.
     expect(updated.failed_steps).toContain('step-one');
@@ -457,7 +457,7 @@ describe('reliability', () => {
 
   it('a timeout on a step WITH a retry: block still fails terminally — consumes no retry attempt', async () => {
     const store = new JsonFileStore(dir);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'timeout-retry-wf',
       workflowVersion: 1,
       params: {},
@@ -481,14 +481,14 @@ describe('reliability', () => {
     expect(envelope.errors[0]).not.toContain('failed after'); // not wrapped as STEP_RETRY_EXHAUSTED
     expect(calls).toBe(1); // a timeout consumes no retry attempt — never called a 2nd time
 
-    const updated = await store.get(run.id);
+    const { record: updated } = await store.get(run.id);
     expect(updated.run_phase).toBe('failed');
     expect(updated.terminal_state).toBe(true);
   });
 
   it('issue A3: evidence surfaces effective_timeout_seconds — the default when undeclared', async () => {
     const store = new JsonFileStore(dir);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'no-timeout-wf',
       workflowVersion: 1,
       params: {},
@@ -509,7 +509,7 @@ describe('reliability', () => {
 
   it('issue A3: evidence surfaces effective_timeout_seconds — the declared value when present', async () => {
     const store = new JsonFileStore(dir);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'explicit-timeout-wf',
       workflowVersion: 1,
       params: {},
@@ -554,7 +554,7 @@ describe('reliability', () => {
       },
     };
     const store = new JsonFileStore(dir);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'optional-retry-wf',
       workflowVersion: 1,
       params: {},
@@ -593,7 +593,7 @@ describe('reliability', () => {
       },
     };
     const store = new JsonFileStore(dir);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'rate-limited-retry-wf',
       workflowVersion: 1,
       params: {},
@@ -619,7 +619,7 @@ describe('reliability', () => {
     expect(envelope.status).toBe('error');
     expect(envelope.errors[0]).toContain('failed after 2 attempts');
 
-    const updated = await store.get(run.id);
+    const { record: updated } = await store.get(run.id);
     expect(updated.terminal_state).toBe(true);
   });
 
@@ -687,7 +687,7 @@ describe('reliability', () => {
     };
 
     const store = new JsonFileStore(dir);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'rate-limit-integration-wf',
       workflowVersion: 1,
       params: {},
@@ -751,7 +751,11 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
       },
     };
     const store = new JsonFileStore(dir);
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
 
     let calls = 0;
     const dispatcher: StepDispatcher = () => {
@@ -800,7 +804,11 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
       },
     };
     const store = new JsonFileStore(dir);
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
 
     let calls = 0;
     const dispatcher: StepDispatcher = () => {
@@ -820,7 +828,7 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
     expect(envelope.errors[0]).not.toContain('failed after'); // not wrapped as STEP_RETRY_EXHAUSTED
     expect(calls).toBe(1); // a timeout consumes no retry attempt — never called a 2nd time
 
-    const updated = await store.get(run.id);
+    const { record: updated } = await store.get(run.id);
     expect(updated.run_phase).toBe('failed');
     expect(updated.terminal_state).toBe(true);
   });
@@ -842,7 +850,11 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
       },
     };
     const store = new JsonFileStore(dir);
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
 
     let calls = 0;
     const dispatcher: StepDispatcher = () => {
@@ -888,7 +900,11 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
       },
     };
     const store = new JsonFileStore(dir);
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
 
     let calls = 0;
     const dispatcher: StepDispatcher = () => {
@@ -936,7 +952,11 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
       },
     };
     const store = new JsonFileStore(dir);
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
 
     let calls = 0;
     const dispatcher: StepDispatcher = () => {
@@ -986,7 +1006,11 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
       },
     };
     const store = new JsonFileStore(dir);
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
 
     let calls = 0;
     const dispatcher: StepDispatcher = async () => {
@@ -1039,7 +1063,11 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
       },
     };
     const store = new JsonFileStore(dir);
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
 
     let calls = 0;
     const dispatcher: StepDispatcher = () => {
@@ -1087,7 +1115,11 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
       },
     };
     const store = new JsonFileStore(dir);
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
 
     let calls = 0;
     const dispatcher: StepDispatcher = () => {
@@ -1141,7 +1173,11 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
       },
     };
     const store = new JsonFileStore(dir);
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
 
     let calls = 0;
     const dispatcher: StepDispatcher = async () => {
@@ -1181,7 +1217,11 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
       },
     };
     const store = new JsonFileStore(dir);
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
 
     let calls = 0;
     const dispatcher: StepDispatcher = () => {
@@ -1230,7 +1270,11 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
       },
     };
     const store = new JsonFileStore(dir);
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
 
     let calls = 0;
     const dispatcher: StepDispatcher = () => {
@@ -1272,7 +1316,11 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
       },
     };
     const store = new JsonFileStore(dir);
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
 
     let calls = 0;
     const dispatcher: StepDispatcher = async () => {
@@ -1327,7 +1375,11 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
       },
     };
     const store = new JsonFileStore(dir);
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
 
     let calls = 0;
     const dispatcher: StepDispatcher = () => {
@@ -1373,7 +1425,11 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
       },
     };
     const store = new JsonFileStore(dir);
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
 
     let calls = 0;
     const dispatcher: StepDispatcher = async () => {
@@ -1409,7 +1465,11 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
       },
     };
     const store = new JsonFileStore(dir);
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
 
     const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
     try {
@@ -1455,7 +1515,11 @@ steps:
       base_delay_ms: 1000
 `);
     const store = new JsonFileStore(dir);
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
 
     let calls = 0;
     const dispatcher: StepDispatcher = () => {
@@ -1499,7 +1563,11 @@ steps:
         },
       };
       const store = new JsonFileStore(dir);
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
 
       let calls = 0;
       const dispatcher: StepDispatcher = () => {
@@ -1544,7 +1612,7 @@ steps:
           },
         },
       };
-      const { run: runA } = await store.create({
+      const { record: runA } = await store.create({
         workflowId: hangA.id,
         workflowVersion: 1,
         params: {},
@@ -1582,7 +1650,7 @@ steps:
           },
         },
       };
-      const { run: runEq } = await store.create({
+      const { record: runEq } = await store.create({
         workflowId: hangEq.id,
         workflowVersion: 1,
         params: {},
@@ -1619,7 +1687,11 @@ steps:
         },
       };
       const store = new JsonFileStore(dir);
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
 
       const start = Date.now();
       const envelope = await executeStep(store, def, {
@@ -1653,7 +1725,11 @@ steps:
       total_timeout_seconds: 50
 `);
       const store = new JsonFileStore(dir);
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
 
       const envelope = await executeStep(store, def, {
         runId: run.id,
@@ -1723,7 +1799,7 @@ steps:
 
     it('C1 — a frozen short read exhausts the cap by construction, not by comparing clocks after the fact (HANG_A; the red-first) (issue #573)', async () => {
       const store = new JsonFileStore(dir);
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: hangA573.id,
         workflowVersion: 1,
         params: {},
@@ -1771,7 +1847,7 @@ steps:
 
     it('C2 — the budget is read once, not twice a tick apart: no phantom clip at equality (HANG_EQ) (issue #573)', async () => {
       const store = new JsonFileStore(dir);
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: hangEq573.id,
         workflowVersion: 1,
         params: {},
@@ -1830,7 +1906,7 @@ steps:
       try {
         const store = new JsonFileStore(dir);
 
-        const { run: runA } = await store.create({
+        const { record: runA } = await store.create({
           workflowId: hangA573.id,
           workflowVersion: 1,
           params: {},
@@ -1852,7 +1928,7 @@ steps:
         expect(envelopeA.error_details?.['exhausted_by']).toBe('total_timeout');
         expect(envelopeA.evidence[0]?.clipped_to_ms).toBe(1000);
 
-        const { run: runEq } = await store.create({
+        const { record: runEq } = await store.create({
           workflowId: hangEq573.id,
           workflowVersion: 1,
           params: {},
@@ -1923,7 +1999,7 @@ steps:
       });
       try {
         const store = new JsonFileStore(dir);
-        const { run } = await store.create({
+        const { record: run } = await store.create({
           workflowId: hangA573.id,
           workflowVersion: 1,
           params: {},
@@ -1984,7 +2060,11 @@ steps:
         }
         return new Promise<Record<string, unknown>>(() => undefined);
       };
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const env = await executeStep(store, def, {
         runId: run.id,
         command: 'step-one',

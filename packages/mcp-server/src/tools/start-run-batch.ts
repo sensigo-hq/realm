@@ -231,7 +231,7 @@ export async function handleStartRunBatch(
     let run;
     let created;
     try {
-      ({ run, created } = await runStore.create({
+      ({ record: run, created } = await runStore.create({
         workflowId: definition.id,
         workflowVersion: definition.version,
         params: item.params,

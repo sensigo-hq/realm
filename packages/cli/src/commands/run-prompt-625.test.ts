@@ -179,7 +179,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
   /** The stored record, read with a store constructed while the scratch HOME is live. */
   async function readRecord() {
     const { JsonFileStore } = await import('@sensigo/realm');
-    return new JsonFileStore().get(runId());
+    return (await new JsonFileStore().get(runId())).record;
   }
 
   /**
@@ -1207,7 +1207,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
         workflowYaml({ id: 'prompt-625-c179-killed', finish: true }),
       );
       const store = new JsonFileStore();
-      const { run: created } = await store.create({
+      const { record: created } = await store.create({
         workflowId: def.id,
         workflowVersion: 1,
         params: {},
@@ -1226,7 +1226,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
         [cli, 'run', 'reclaim', created.id, '--step', 'finish', '--force'],
         { env, encoding: 'utf8' },
       );
-      const after = await store.get(created.id);
+      const { record: after } = await store.get(created.id);
       // (a) red when the left claim cannot be released this way; (b) prints the command's output.
       expect(
         {
@@ -1254,7 +1254,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
               // `realm run reclaim --force`'s effect: the claim and the in-flight mark removed.
               const { JsonFileStore } = await import('@sensigo/realm');
               const store = new JsonFileStore();
-              const record = await store.get(runId());
+              const { record: record } = await store.get(runId());
               const { finish: _gone, ...claims } = record.claims ?? {};
               await store.update({ ...record, in_progress_steps: [], claims });
             })();
@@ -1312,7 +1312,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
           const store = new JsonFileStore();
           if (kind === 'agent') {
             // The prompt's claim is removed first (as `realm run reclaim --force` would) …
-            const record = await store.get(runId());
+            const { record: record } = await store.get(runId());
             const { finish: _gone, ...claims } = record.claims ?? {};
             await store.update({ ...record, in_progress_steps: [], claims });
           }

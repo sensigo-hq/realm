@@ -56,7 +56,7 @@ describe(
       mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
       const runStore = new JsonFileStore(join(home, '.realm', 'runs'));
       await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(INJECT);
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: INJECT.id,
         workflowVersion: 1,
         params: { v: VALUE },

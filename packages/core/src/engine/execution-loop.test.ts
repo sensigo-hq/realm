@@ -1,5 +1,4 @@
 import { declared } from '../test-support/declared.js';
-import { declareReleaseLine } from '../release-line.js';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -22,8 +21,6 @@ import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepDispatcher } from './execution-loop.js';
 import type { ServiceAdapter } from '../extensions/service-adapter.js';
 import type { StepHandler, StepHandlerInputs, StepContext } from '../extensions/step-handler.js';
-import type { RunStore, CreateRunOptions } from '../store/store-interface.js';
-import type { RunRecord } from '../types/run-record.js';
 import { agentActionFor, nextCalls } from '../test-support/ways-view.js';
 import { composeWaysAt } from './ways.js';
 
@@ -69,7 +66,7 @@ describe('executeStep', () => {
   });
 
   it('successful step returns status ok and updates completed_steps', async () => {
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'test-wf',
       workflowVersion: 1,
       params: {},
@@ -91,13 +88,13 @@ describe('executeStep', () => {
     expect(envelope.context_hint).toBeDefined();
     expect(envelope.context_hint).not.toBe('');
 
-    const updated = await store.get(run.id);
+    const { record: updated } = await store.get(run.id);
     expect(updated.completed_steps).toContain('step-one');
     expect(updated.run_phase).toBe('running');
   });
 
   it('blocked state returns blocked envelope with blocked_reason', async () => {
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'test-wf',
       workflowVersion: 1,
       params: {},
@@ -141,7 +138,7 @@ describe('executeStep', () => {
       },
     };
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'blocked-wf',
       workflowVersion: 1,
       params: {},
@@ -164,7 +161,7 @@ describe('executeStep', () => {
   });
 
   it('dispatcher error returns error envelope with evidence', async () => {
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'test-wf',
       workflowVersion: 1,
       params: {},
@@ -185,7 +182,7 @@ describe('executeStep', () => {
   });
 
   it('completing final step sets run_phase to completed', async () => {
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'test-wf',
       workflowVersion: 1,
       params: {},
@@ -217,7 +214,7 @@ describe('executeStep', () => {
       run_id: run.id,
     });
 
-    const updated = await store.get(run.id);
+    const { record: updated } = await store.get(run.id);
     expect(updated.run_phase).toBe('completed');
   });
 
@@ -256,7 +253,7 @@ describe('executeStep', () => {
         },
       },
     };
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'test-wf',
       workflowVersion: 1,
       params: {},
@@ -290,7 +287,7 @@ describe('executeStep', () => {
         },
       },
     };
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'test-wf',
       workflowVersion: 1,
       params: {},
@@ -333,7 +330,7 @@ describe('executeStep', () => {
       },
     };
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'test-wf',
       workflowVersion: 1,
       params: {},
@@ -357,7 +354,7 @@ describe('executeStep', () => {
     // validation-exhaustion.test.ts).
     expect(nextCalls(envelope)).toHaveLength(1);
 
-    const runAfter = await store.get(run.id);
+    const { record: runAfter } = await store.get(run.id);
     expect(runAfter.in_progress_steps).not.toContain('step-one');
   });
 
@@ -378,7 +375,7 @@ describe('executeStep', () => {
       },
     };
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'test-wf',
       workflowVersion: 1,
       params: {},
@@ -412,7 +409,7 @@ describe('executeStep', () => {
       },
     };
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'test-wf',
       workflowVersion: 1,
       params: {},
@@ -445,7 +442,7 @@ describe('executeStep', () => {
       },
     };
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'test-wf',
       workflowVersion: 1,
       params: {},
@@ -509,7 +506,7 @@ describe('executeStep', () => {
       const registry = new ExtensionRegistry();
       registry.register('adapter', 'mock_adapter', adapter);
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'adapter-wf',
         workflowVersion: 1,
         params: {},
@@ -550,7 +547,7 @@ describe('executeStep', () => {
       };
       const registry = new ExtensionRegistry();
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'adapter-wf',
         workflowVersion: 1,
         params: {},
@@ -571,7 +568,7 @@ describe('executeStep', () => {
     it('returns error envelope when adapter is not registered in the registry', async () => {
       const registry = new ExtensionRegistry(); // empty — no adapter registered
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'adapter-wf',
         workflowVersion: 1,
         params: {},
@@ -593,7 +590,7 @@ describe('executeStep', () => {
     it('adapter-not-registered error carries the project-extensions hint when the definition declares no extensions', async () => {
       const registry = new ExtensionRegistry(); // empty — no adapter registered
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'adapter-wf',
         workflowVersion: 1,
         params: {},
@@ -616,7 +613,7 @@ describe('executeStep', () => {
     it('adapter-not-registered error omits the hint when the definition already declares extensions', async () => {
       const registry = new ExtensionRegistry(); // empty — no adapter registered
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'adapter-wf',
         workflowVersion: 1,
         params: {},
@@ -644,7 +641,7 @@ describe('executeStep', () => {
       const registry = new ExtensionRegistry();
       registry.register('adapter', 'mock_adapter', adapter);
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'adapter-wf',
         workflowVersion: 1,
         params: {},
@@ -667,7 +664,7 @@ describe('executeStep', () => {
       const registry = new ExtensionRegistry();
       registry.register('adapter', 'mock_adapter', adapter);
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'adapter-wf',
         workflowVersion: 1,
         params: {},
@@ -706,7 +703,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'adapter-wf',
         workflowVersion: 1,
         params: {},
@@ -745,7 +742,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'adapter-wf',
         workflowVersion: 1,
         params: {},
@@ -785,7 +782,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'adapter-wf',
         workflowVersion: 1,
         params: {},
@@ -825,7 +822,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'adapter-wf',
         workflowVersion: 1,
         params: {},
@@ -849,7 +846,7 @@ describe('executeStep', () => {
       const registry = new ExtensionRegistry();
       registry.register('adapter', 'mock_adapter', adapter);
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'adapter-wf',
         workflowVersion: 1,
         params: {},
@@ -886,7 +883,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'adapter-wf',
         workflowVersion: 1,
         params: {},
@@ -923,7 +920,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'adapter-wf',
         workflowVersion: 1,
         params: {},
@@ -955,7 +952,7 @@ describe('executeStep', () => {
       const registry = new ExtensionRegistry();
       registry.register('adapter', 'mock_adapter', adapter);
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'adapter-wf',
         workflowVersion: 1,
         params: {},
@@ -1013,7 +1010,7 @@ describe('executeStep', () => {
       const registry = new ExtensionRegistry();
       registry.register('handler', 'my_handler', handler);
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'handler-wf',
         workflowVersion: 1,
         params: { source: 'doc-1' },
@@ -1042,7 +1039,7 @@ describe('executeStep', () => {
     it('returns error envelope when handler is not registered', async () => {
       const registry = new ExtensionRegistry(); // empty
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'handler-wf',
         workflowVersion: 1,
         params: {},
@@ -1106,7 +1103,7 @@ describe('executeStep', () => {
       registry.register('adapter', 'mock_adapter', adapter);
       registry.register('handler', 'my_handler', handler);
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'two-step-wf',
         workflowVersion: 1,
         params: {},
@@ -1143,7 +1140,7 @@ describe('executeStep', () => {
       const registry = new ExtensionRegistry();
       registry.register('handler', 'my_handler', handler);
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'handler-wf',
         workflowVersion: 1,
         params: {},
@@ -1160,7 +1157,7 @@ describe('executeStep', () => {
       expect(envelope.status).toBe('ok');
       expect(nextCalls(envelope)).toHaveLength(0);
 
-      const updatedRun = await store.get(run.id);
+      const { record: updatedRun } = await store.get(run.id);
       expect(updatedRun.run_phase).toBe('aborted');
       expect(updatedRun.terminal_state).toBe(true);
       expect(updatedRun.aborted_at?.step_id).toBe('validate');
@@ -1196,7 +1193,7 @@ describe('executeStep', () => {
       const registry = new ExtensionRegistry();
       registry.register('handler', 'my_handler', handler);
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'abort-with-advisory-wf',
         workflowVersion: 1,
         params: {},
@@ -1241,7 +1238,7 @@ describe('executeStep', () => {
       const registry = new ExtensionRegistry();
       registry.register('handler', 'my_handler', handler);
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'two-step-handler-wf',
         workflowVersion: 1,
         params: {},
@@ -1255,7 +1252,7 @@ describe('executeStep', () => {
         registry,
       });
 
-      const updatedRun = await store.get(run.id);
+      const { record: updatedRun } = await store.get(run.id);
       expect(updatedRun.run_phase).toBe('aborted');
       expect(updatedRun.skipped_steps).toContain('check');
       expect(updatedRun.skipped_steps).toContain('process');
@@ -1290,7 +1287,7 @@ describe('executeStep', () => {
       const registry = new ExtensionRegistry();
       registry.register('handler', 'my_handler', handler);
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'two-step-handler-wf',
         workflowVersion: 1,
         params: {},
@@ -1304,7 +1301,7 @@ describe('executeStep', () => {
         registry,
       });
 
-      const updatedRun = await store.get(run.id);
+      const { record: updatedRun } = await store.get(run.id);
       expect(updatedRun.skip_details?.['check']).toEqual({ kind: 'handler_abort' });
       // The merge is load-bearing — the cascade detail for 'process' (skipped because its
       // all_success dep 'check' never completed) must survive alongside 'check''s own tag.
@@ -1319,7 +1316,7 @@ describe('executeStep', () => {
       const registry = new ExtensionRegistry();
       registry.register('handler', 'my_handler', handler);
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'handler-wf',
         workflowVersion: 1,
         params: {},
@@ -1333,7 +1330,7 @@ describe('executeStep', () => {
         registry,
       });
 
-      const updatedRun = await store.get(run.id);
+      const { record: updatedRun } = await store.get(run.id);
       const abortEntry = updatedRun.evidence.find((e) => e.step_id === 'validate');
       expect(abortEntry).toBeDefined();
       expect(abortEntry!.status).toBe('skipped');
@@ -1348,7 +1345,7 @@ describe('executeStep', () => {
       const registry = new ExtensionRegistry();
       registry.register('handler', 'my_handler', handler);
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'handler-wf',
         workflowVersion: 1,
         params: {},
@@ -1363,7 +1360,7 @@ describe('executeStep', () => {
       });
 
       expect(envelope.status).toBe('error');
-      const updatedRun = await store.get(run.id);
+      const { record: updatedRun } = await store.get(run.id);
       expect(updatedRun.run_phase).toBe('failed');
       expect(updatedRun.failed_steps).toContain('validate');
     });
@@ -1373,7 +1370,7 @@ describe('executeStep', () => {
       const registry = new ExtensionRegistry();
       registry.register('handler', 'my_handler', handler);
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'handler-wf',
         workflowVersion: 1,
         params: {},
@@ -1389,7 +1386,7 @@ describe('executeStep', () => {
 
       expect(envelope.status).toBe('ok');
       expect(envelope.data).toEqual({ processed: true });
-      const updatedRun = await store.get(run.id);
+      const { record: updatedRun } = await store.get(run.id);
       expect(updatedRun.run_phase).toBe('completed');
       expect(updatedRun.completed_steps).toContain('validate');
     });
@@ -1405,7 +1402,7 @@ describe('executeStep', () => {
       const registry = new ExtensionRegistry();
       registry.register('handler', 'my_handler', handler);
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'handler-wf',
         workflowVersion: 1,
         params: {},
@@ -1421,7 +1418,7 @@ describe('executeStep', () => {
 
       expect(envelope.status).toBe('ok');
       expect(nextCalls(envelope)).toHaveLength(0);
-      const updatedRun = await store.get(run.id);
+      const { record: updatedRun } = await store.get(run.id);
       expect(updatedRun.run_phase).toBe('aborted');
       expect(updatedRun.aborted_at?.abort_message).toBe('Abort wins');
     });
@@ -1452,7 +1449,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'prompt-wf',
         workflowVersion: 1,
         params: {},
@@ -1498,7 +1495,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'gate-prompt-wf',
         workflowVersion: 1,
         params: {},
@@ -1547,7 +1544,7 @@ describe('executeStep', () => {
           },
         },
       };
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'no-expected-timeout-agent-wf',
         workflowVersion: 1,
         params: {},
@@ -1577,7 +1574,7 @@ describe('executeStep', () => {
           'fetch-data': { description: 'Fetch', execution: 'auto', depends_on: [] },
         },
       };
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'agent-instr-wf',
         workflowVersion: 1,
         params: {},
@@ -1616,7 +1613,7 @@ describe('executeStep', () => {
           gate_step: { description: 'Gate step', execution: 'auto', trust, depends_on: [] },
         },
       };
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'gate-equiv-wf',
         workflowVersion: 1,
         params: { key: 'value' },
@@ -1678,7 +1675,7 @@ describe('executeStep', () => {
           },
         },
       };
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: def.id,
         workflowVersion: 1,
         params: {},
@@ -1689,7 +1686,7 @@ describe('executeStep', () => {
         input: {},
         dispatcher: echoDispatcher,
       });
-      const stored = await store.get(run.id);
+      const { record: stored } = await store.get(run.id);
       return { envelope, stored };
     }
 
@@ -1729,19 +1726,19 @@ describe('executeStep', () => {
           work: { description: 'work', execution: 'auto', trust: trust as never, depends_on: [] },
         },
       };
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'l2-508-wf',
         workflowVersion: 1,
         params: {},
       });
-      const before = await store.get(run.id);
+      const { record: before } = await store.get(run.id);
       const envelope = await executeStep(store, badDef, {
         runId: run.id,
         command: 'work',
         input: {},
         dispatcher: echoDispatcher,
       });
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       return { envelope, before, after };
     }
 
@@ -1844,7 +1841,7 @@ describe('executeStep', () => {
           work: { description: 'work', execution: 'auto', trust: 'nope' as never, depends_on: [] },
         },
       };
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'l2-508-repair-wf',
         workflowVersion: 1,
         params: {},
@@ -1873,7 +1870,7 @@ describe('executeStep', () => {
         dispatcher: echoDispatcher,
       });
       expect(secondAttempt.status).toBe('ok');
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       expect(after.completed_steps).toContain('work');
     });
 
@@ -1891,7 +1888,7 @@ describe('executeStep', () => {
           work: { description: 'work', execution: 'auto', trust: 'nope' as never, depends_on: [] },
         },
       };
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'l2-508-health-wf',
         workflowVersion: 1,
         params: {},
@@ -1899,7 +1896,7 @@ describe('executeStep', () => {
 
       // Before any attempt: the finding already fires (D's own "parked run" cell covers this
       // shape directly — reasserted here only as the baseline for the delta below).
-      const before = await store.get(run.id);
+      const { record: before } = await store.get(run.id);
       const findingsBefore = classifyRunHealth(before, { definition: badDef });
       expect(findingsBefore.some((f) => f.kind === 'trust_value_invalid')).toBe(true);
 
@@ -1914,7 +1911,7 @@ describe('executeStep', () => {
 
       // After the refusal: the finding STILL fires — the step was never claimed, so it is still
       // eligible, so run-health can still see and name it. This is the cell mutant (ii) breaks.
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       const findingsAfter = classifyRunHealth(after, { definition: badDef });
       const finding = findingsAfter.find((f) => f.kind === 'trust_value_invalid');
       expect(finding).toBeDefined();
@@ -1937,7 +1934,7 @@ describe('executeStep', () => {
           },
         },
       };
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'gate-nav-wf',
         workflowVersion: 1,
         params: {},
@@ -1990,7 +1987,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'gate-owner-wf',
         workflowVersion: 1,
         params: {},
@@ -2004,7 +2001,7 @@ describe('executeStep', () => {
       });
 
       expect(envelope.status).toBe('confirm_required');
-      const updatedRun = await store.get(run.id);
+      const { record: updatedRun } = await store.get(run.id);
       expect(updatedRun.pending_gate?.owner).toBe('@mihai.lupu');
     });
 
@@ -2024,7 +2021,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'gate-no-owner-wf',
         workflowVersion: 1,
         params: {},
@@ -2038,7 +2035,7 @@ describe('executeStep', () => {
       });
 
       expect(envelope.status).toBe('confirm_required');
-      const updatedRun = await store.get(run.id);
+      const { record: updatedRun } = await store.get(run.id);
       expect(updatedRun.pending_gate?.owner).toBeUndefined();
     });
   });
@@ -2057,7 +2054,7 @@ describe('executeStep', () => {
     // failure's message. Mocking store.update (the old target) would no longer even intercept
     // this path, since the migrated fail site never calls it.
     it('surfaces a hard ENGINE_STORE_FAILED error envelope when the migrated settleStep throws', async () => {
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'test-wf',
         workflowVersion: 1,
         params: {},
@@ -2106,7 +2103,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'chain-cmd-wf',
         workflowVersion: 1,
         params: {},
@@ -2148,7 +2145,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'profile-wf',
         workflowVersion: 1,
         params: {},
@@ -2168,7 +2165,7 @@ describe('executeStep', () => {
     });
 
     it('agent step without profile has no agent_profile on evidence', async () => {
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'test-wf',
         workflowVersion: 1,
         params: {},
@@ -2219,7 +2216,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'gate-msg-broken-wf',
         workflowVersion: 1,
         params: {},
@@ -2238,7 +2235,7 @@ describe('executeStep', () => {
       expect(envelope.errors[0]).toContain('context.resources.gate_step.missing_field');
 
       // Gate must not be written to the store.
-      const updatedRun = await store.get(run.id);
+      const { record: updatedRun } = await store.get(run.id);
       expect(updatedRun.pending_gate).toBeUndefined();
     });
 
@@ -2269,7 +2266,7 @@ describe('executeStep', () => {
           },
         },
       };
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'gate-msg-settlement-wf',
         workflowVersion: 1,
         params: {},
@@ -2291,7 +2288,7 @@ describe('executeStep', () => {
       expect(envelope.status).toBe('error');
       expect(envelope.errors[0]).toContain('gate.message has unresolvable references');
       expect(envelope.errors[0]).toContain('$settlement.step1.bogus_field');
-      const updatedRun = await store.get(run.id);
+      const { record: updatedRun } = await store.get(run.id);
       expect(updatedRun.pending_gate).toBeUndefined();
     });
 
@@ -2314,7 +2311,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'gate-msg-happy-wf',
         workflowVersion: 1,
         params: {},
@@ -2330,7 +2327,7 @@ describe('executeStep', () => {
       expect(envelope.status).toBe('confirm_required');
       expect(envelope.gate?.display).toBe('Found: 7');
 
-      const updatedRun = await store.get(run.id);
+      const { record: updatedRun } = await store.get(run.id);
       expect(updatedRun.pending_gate?.resolved_message).toBe('Found: 7');
     });
 
@@ -2353,7 +2350,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'gate-msg-evidence-wf',
         workflowVersion: 1,
         params: {},
@@ -2375,7 +2372,7 @@ describe('executeStep', () => {
         choice: 'approve',
       });
 
-      const finalRun = await store.get(run.id);
+      const { record: finalRun } = await store.get(run.id);
       const gateSnap = finalRun.evidence.find((e) => e.kind === 'gate_response');
       expect(gateSnap).toBeDefined();
       expect(gateSnap!.gate_message).toBe('Found: 7');
@@ -2401,7 +2398,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'gate-no-msg-wf',
         workflowVersion: 1,
         params: {},
@@ -2418,7 +2415,7 @@ describe('executeStep', () => {
       // (a) red when the prompt fallback returns; (b) prints the display.
       expect(envelope.gate?.display).toBeUndefined();
 
-      const updatedRun = await store.get(run.id);
+      const { record: updatedRun } = await store.get(run.id);
       expect(updatedRun.pending_gate?.resolved_message).toBeUndefined();
     });
 
@@ -2438,7 +2435,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'gate-no-msg-ev-wf',
         workflowVersion: 1,
         params: {},
@@ -2459,7 +2456,7 @@ describe('executeStep', () => {
         choice: 'approve',
       });
 
-      const finalRun = await store.get(run.id);
+      const { record: finalRun } = await store.get(run.id);
       const gateSnap = finalRun.evidence.find((e) => e.kind === 'gate_response');
       expect(gateSnap).toBeDefined();
       expect(gateSnap!.gate_message).toBeUndefined();
@@ -2485,7 +2482,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'gate-msg-over-prompt-wf',
         workflowVersion: 1,
         params: {},
@@ -2519,7 +2516,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'trace-agent-wf',
         workflowVersion: 1,
         params: {},
@@ -2549,7 +2546,7 @@ describe('executeStep', () => {
 
     it('non-agent step silently drops provided trace', async () => {
       // step-one is execution: 'auto' in the default definition
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'test-wf',
         workflowVersion: 1,
         params: {},
@@ -2579,7 +2576,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'trace-reserved-wf',
         workflowVersion: 1,
         params: {},
@@ -2612,7 +2609,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'trace-count-wf',
         workflowVersion: 1,
         params: {},
@@ -2645,7 +2642,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run1 } = await store.create({
+      const { record: run1 } = await store.create({
         workflowId: 'trace-hash-stable-wf',
         workflowVersion: 1,
         params: {},
@@ -2658,7 +2655,7 @@ describe('executeStep', () => {
         trace: [{ event: 'trace_a' }],
       });
 
-      const { run: run2 } = await store.create({
+      const { record: run2 } = await store.create({
         workflowId: 'trace-hash-stable-wf',
         workflowVersion: 1,
         params: {},
@@ -2685,7 +2682,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run1 } = await store.create({
+      const { record: run1 } = await store.create({
         workflowId: 'trace-digest-diff-wf',
         workflowVersion: 1,
         params: {},
@@ -2698,7 +2695,7 @@ describe('executeStep', () => {
         trace: [{ event: 'alpha' }],
       });
 
-      const { run: run2 } = await store.create({
+      const { record: run2 } = await store.create({
         workflowId: 'trace-digest-diff-wf',
         workflowVersion: 1,
         params: {},
@@ -2759,7 +2756,7 @@ describe('executeStep', () => {
         return echoDispatcher(step, input, run, signal);
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'trace-schema-wf',
         workflowVersion: 1,
         params: {},
@@ -2779,7 +2776,7 @@ describe('executeStep', () => {
       expect(dispatchCalled).not.toHaveBeenCalled();
       // Step not claimed — it is still eligible and in next_actions
       expect(nextCalls(envelope)).toHaveLength(1);
-      const runAfter = await store.get(run.id);
+      const { record: runAfter } = await store.get(run.id);
       expect(runAfter.in_progress_steps).not.toContain('step-one');
     });
 
@@ -2795,7 +2792,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'trace-schema-wf',
         workflowVersion: 1,
         params: {},
@@ -2834,7 +2831,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'trace-schema-wf',
         workflowVersion: 1,
         params: {},
@@ -2866,7 +2863,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'trace-schema-wf',
         workflowVersion: 1,
         params: {},
@@ -2896,7 +2893,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'trace-schema-wf',
         workflowVersion: 1,
         params: {},
@@ -2919,7 +2916,7 @@ describe('executeStep', () => {
 
     it('trace_schema default mode is warn when trace_schema set but mode omitted', async () => {
       // traceSchemaDefinitionBase has trace_schema but no trace_validation_mode
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'trace-schema-wf',
         workflowVersion: 1,
         params: {},
@@ -2950,7 +2947,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'trace-schema-wf',
         workflowVersion: 1,
         params: {},
@@ -2995,7 +2992,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'trace-schema-wf',
         workflowVersion: 1,
         params: {},
@@ -3029,7 +3026,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'trace-schema-wf',
         workflowVersion: 1,
         params: {},
@@ -3061,7 +3058,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'trace-schema-wf',
         workflowVersion: 1,
         params: {},
@@ -3110,7 +3107,7 @@ describe('executeStep', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'trace-schema-wf',
         workflowVersion: 1,
         params: {},
@@ -3166,7 +3163,7 @@ describe('WAL trace buffer integration (B-lite)', () => {
 
   it('WAL entries present + no execute_step.trace → evidence has trace from WAL', async () => {
     const bufferStore = new InMemoryTraceBufferStore(store);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'wal-test-wf',
       workflowVersion: 1,
       params: {},
@@ -3192,7 +3189,7 @@ describe('WAL trace buffer integration (B-lite)', () => {
 
   it('WAL entries + execute_step.trace entries → merged, WAL entries first', async () => {
     const bufferStore = new InMemoryTraceBufferStore(store);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'wal-test-wf',
       workflowVersion: 1,
       params: {},
@@ -3240,7 +3237,7 @@ describe('WAL trace buffer integration (B-lite)', () => {
     };
 
     const bufferStore = new InMemoryTraceBufferStore(store);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'wal-schema-wf',
       workflowVersion: 1,
       params: {},
@@ -3268,7 +3265,7 @@ describe('WAL trace buffer integration (B-lite)', () => {
 
   it('execute_step succeeds → WAL is deleted', async () => {
     const bufferStore = new InMemoryTraceBufferStore(store);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'wal-test-wf',
       workflowVersion: 1,
       params: {},
@@ -3291,7 +3288,7 @@ describe('WAL trace buffer integration (B-lite)', () => {
 
   it('execute_step dispatch fails → WAL is deleted', async () => {
     const bufferStore = new InMemoryTraceBufferStore(store);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'wal-test-wf',
       workflowVersion: 1,
       params: {},
@@ -3320,7 +3317,7 @@ describe('WAL trace buffer integration (B-lite)', () => {
   });
 
   it('no traceBufferStore configured → behaviour identical to pre-B-lite (regression)', async () => {
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'wal-test-wf',
       workflowVersion: 1,
       params: {},
@@ -3371,7 +3368,7 @@ describe('trace provenance — honest seal-at-claim (issue #185)', () => {
   describe('Finding 1 — budget-priority preserves the conclusion', () => {
     it('a WAL with more entries than the truncation budget still yields a canonical trace containing the execute_step conclusion, dropping the OLDEST buffer lines as overflow', async () => {
       const bufferStore = new InMemoryTraceBufferStore(store);
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'wal-test-wf',
         workflowVersion: 1,
         params: {},
@@ -3427,7 +3424,7 @@ describe('trace provenance — honest seal-at-claim (issue #185)', () => {
 
     it('the conclusion still survives when the WAL alone (no execute_step.trace overlap needed) pushes the merge past the byte budget', async () => {
       const bufferStore = new InMemoryTraceBufferStore(store);
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'wal-test-wf',
         workflowVersion: 1,
         params: {},
@@ -3468,7 +3465,7 @@ describe('trace provenance — honest seal-at-claim (issue #185)', () => {
   describe('Finding 2 — the post-claim re-read closes the silent-loss window', () => {
     it('a line appended in the window between the pre-claim read and the claim is captured, not silently lost before WAL delete()', async () => {
       const bufferStore = new InMemoryTraceBufferStore(store);
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'wal-test-wf',
         workflowVersion: 1,
         params: {},
@@ -3532,7 +3529,7 @@ describe('trace provenance — honest seal-at-claim (issue #185)', () => {
         },
       };
       const bufferStore = new InMemoryTraceBufferStore(store);
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'wal-test-wf',
         workflowVersion: 1,
         params: {},
@@ -3558,7 +3555,7 @@ describe('trace provenance — honest seal-at-claim (issue #185)', () => {
   describe('Fix 3 — the honest trace_summary caveat', () => {
     it('adopting any buffer/WAL line carries buffered_lines_adopted with the exact count', async () => {
       const bufferStore = new InMemoryTraceBufferStore(store);
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'wal-test-wf',
         workflowVersion: 1,
         params: {},
@@ -3585,7 +3582,7 @@ describe('trace provenance — honest seal-at-claim (issue #185)', () => {
 
     it('an execute_step.trace-only execution (no buffer contribution) carries NO caveat', async () => {
       const bufferStore = new InMemoryTraceBufferStore(store);
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'wal-test-wf',
         workflowVersion: 1,
         params: {},
@@ -3606,7 +3603,7 @@ describe('trace provenance — honest seal-at-claim (issue #185)', () => {
     });
 
     it('no traceBufferStore configured at all → no caveat (pre-#185 shape, still exact)', async () => {
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'wal-test-wf',
         workflowVersion: 1,
         params: {},
@@ -3629,7 +3626,7 @@ describe('trace provenance — honest seal-at-claim (issue #185)', () => {
   describe('Regression guard — off the overflow/race/foreign-line paths, output is unchanged', () => {
     it('a normal WAL contribution (buffer well under budget) + a conclusion produces the same merged trace shape as before #185', async () => {
       const bufferStore = new InMemoryTraceBufferStore(store);
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'wal-test-wf',
         workflowVersion: 1,
         params: {},
@@ -3657,7 +3654,7 @@ describe('trace provenance — honest seal-at-claim (issue #185)', () => {
     });
 
     it('an execute_step.trace-only step (no traceBufferStore) is byte-identical to before #185', async () => {
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'wal-test-wf',
         workflowVersion: 1,
         params: {},
@@ -3720,7 +3717,7 @@ describe('Step 5 dispatch-failure envelope', () => {
   };
 
   it('non-terminal failure with wait_for_service exposes recovery branch', async () => {
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'two-step-wf',
       workflowVersion: 1,
       params: {},
@@ -3751,7 +3748,7 @@ describe('Step 5 dispatch-failure envelope', () => {
   });
 
   it('non-terminal failure with provide_input is translated to report_to_user and exposes recovery branch', async () => {
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'two-step-wf',
       workflowVersion: 1,
       params: {},
@@ -3778,7 +3775,7 @@ describe('Step 5 dispatch-failure envelope', () => {
   });
 
   it('non-terminal failure with stop is translated to report_to_user and exposes recovery branch', async () => {
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'two-step-wf',
       workflowVersion: 1,
       params: {},
@@ -3818,7 +3815,7 @@ describe('Step 5 dispatch-failure envelope', () => {
       },
     };
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'single-step-wf',
       workflowVersion: 1,
       params: {},
@@ -3847,7 +3844,7 @@ describe('Step 5 dispatch-failure envelope', () => {
     const bufferStore = new InMemoryTraceBufferStore(store);
     vi.spyOn(bufferStore, 'delete').mockRejectedValue(new Error('disk contention'));
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'two-step-wf',
       workflowVersion: 1,
       params: {},
@@ -3879,7 +3876,7 @@ describe('Step 5 dispatch-failure envelope', () => {
   });
 
   it('a migrated settleStep failure suppresses next_actions and hard-stops (issue #279 PR-B)', async () => {
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'two-step-wf',
       workflowVersion: 1,
       params: {},
@@ -3915,7 +3912,7 @@ describe('Step 5 dispatch-failure envelope', () => {
   });
 
   it('run_version reflects persisted version not stale pre-persist version', async () => {
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'single-step-wf',
       workflowVersion: 1,
       params: {},
@@ -3998,7 +3995,7 @@ describe('retry_after on ResponseEnvelope', () => {
   };
 
   it('retry_after appears in ResponseEnvelope for wait_and_proceed dispatch failure', async () => {
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'two-step-retry-wf',
       workflowVersion: 1,
       params: {},
@@ -4025,7 +4022,7 @@ describe('retry_after on ResponseEnvelope', () => {
   });
 
   it('retry_after is absent from ResponseEnvelope when not set on the error', async () => {
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'two-step-retry-wf',
       workflowVersion: 1,
       params: {},
@@ -4068,6 +4065,8 @@ describe('retry_after on ResponseEnvelope', () => {
       update: store.update.bind(store),
       list: store.list.bind(store),
       claimStep: store.claimStep.bind(store),
+      settleStep: store.settleStep.bind(store),
+      clock: store.clock,
     });
 
     const envelope = await executeStep(mockStore, twoStepDef, {
@@ -4110,7 +4109,7 @@ describe('retry_after on ResponseEnvelope', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'retry-delay-wf',
         workflowVersion: 1,
         params: {},
@@ -4172,7 +4171,7 @@ describe('retry_after on ResponseEnvelope', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'retry-fallback-wf',
         workflowVersion: 1,
         params: {},
@@ -4276,7 +4275,7 @@ describe('min_retry_seconds floor', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'min-retry-floor-wf',
         workflowVersion: 1,
         params: {},
@@ -4354,7 +4353,7 @@ describe('min_retry_seconds floor', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'min-retry-fallback-wf',
         workflowVersion: 1,
         params: {},
@@ -4432,7 +4431,7 @@ describe('min_retry_seconds floor', () => {
         },
       };
 
-      const { run: run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'min-retry-regression-wf',
         workflowVersion: 1,
         params: {},
@@ -4493,7 +4492,7 @@ describe('guard step execution', () => {
   });
 
   it('guard passes — run continues with downstream agent step in next_actions', async () => {
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'guard-wf',
       workflowVersion: 1,
       params: {},
@@ -4512,13 +4511,13 @@ describe('guard step execution', () => {
     // step_c is the next eligible agent step
     expect(nextCalls(envelope).includes('run_step:step_c')).toBe(true);
 
-    const savedRun = await store.get(run.id);
+    const { record: savedRun } = await store.get(run.id);
     expect(savedRun.completed_steps).toContain('guard_b');
     expect(savedRun.run_phase).not.toBe('aborted');
   });
 
   it('guard aborts — run_phase becomes aborted, next_actions is empty, aborted_at set', async () => {
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'guard-wf',
       workflowVersion: 1,
       params: {},
@@ -4534,7 +4533,7 @@ describe('guard step execution', () => {
     expect(envelope.status).toBe('ok');
     expect(nextCalls(envelope)).toHaveLength(0);
 
-    const savedRun = await store.get(run.id);
+    const { record: savedRun } = await store.get(run.id);
     expect(savedRun.run_phase).toBe('aborted');
     expect(savedRun.terminal_state).toBe(true);
     expect(savedRun.skipped_steps).toContain('guard_b');
@@ -4545,7 +4544,7 @@ describe('guard step execution', () => {
   });
 
   it('guard abort skips downstream steps (step_c goes into skipped_steps)', async () => {
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'guard-wf',
       workflowVersion: 1,
       params: {},
@@ -4558,12 +4557,12 @@ describe('guard step execution', () => {
       dispatcher: async () => ({ status: 'closed' }),
     });
 
-    const savedRun = await store.get(run.id);
+    const { record: savedRun } = await store.get(run.id);
     expect(savedRun.skipped_steps).toContain('step_c');
   });
 
   it('a guard abort records a guard_abort skip_details entry, plus a cascade detail for the downstream step (issue #111)', async () => {
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'guard-wf',
       workflowVersion: 1,
       params: {},
@@ -4576,7 +4575,7 @@ describe('guard step execution', () => {
       dispatcher: async () => ({ status: 'closed' }),
     });
 
-    const savedRun = await store.get(run.id);
+    const { record: savedRun } = await store.get(run.id);
     expect(savedRun.skip_details?.['guard_b']).toEqual({ kind: 'guard_abort' });
     // The merge is load-bearing — the cascade detail for 'step_c' (skipped because its
     // all_success dep 'guard_b' never completed) must survive alongside 'guard_b''s own tag.
@@ -4584,7 +4583,7 @@ describe('guard step execution', () => {
   });
 
   it('guard resolution error — run_phase becomes failed, guard in failed_steps', async () => {
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'guard-wf',
       workflowVersion: 1,
       params: {},
@@ -4601,7 +4600,7 @@ describe('guard step execution', () => {
     expect(envelope.status).toBe('ok');
     expect(nextCalls(envelope)).toHaveLength(0);
 
-    const savedRun = await store.get(run.id);
+    const { record: savedRun } = await store.get(run.id);
     expect(savedRun.run_phase).toBe('failed');
     expect(savedRun.terminal_state).toBe(true);
     expect(savedRun.failed_steps).toContain('guard_b');
@@ -4624,7 +4623,7 @@ describe('guard step execution', () => {
       },
     };
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'guard-msg-wf',
       workflowVersion: 1,
       params: {},
@@ -4637,7 +4636,7 @@ describe('guard step execution', () => {
       dispatcher: async () => ({ status: 'closed' }),
     });
 
-    const savedRun = await store.get(run.id);
+    const { record: savedRun } = await store.get(run.id);
     expect(savedRun.aborted_at?.abort_message).toBe('Ticket is not open');
   });
 
@@ -4664,7 +4663,7 @@ describe('guard step execution', () => {
       },
     };
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'cascade-guard-wf',
       workflowVersion: 1,
       params: {},
@@ -4680,7 +4679,7 @@ describe('guard step execution', () => {
     expect(envelope.status).toBe('ok');
     expect(nextCalls(envelope).includes('run_step:step_d')).toBe(true);
 
-    const savedRun = await store.get(run.id);
+    const { record: savedRun } = await store.get(run.id);
     expect(savedRun.completed_steps).toContain('guard_b');
     expect(savedRun.completed_steps).toContain('guard_c');
     expect(savedRun.run_phase).not.toBe('aborted');
@@ -4709,7 +4708,7 @@ describe('guard step execution', () => {
       },
     };
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'cascade-abort-wf',
       workflowVersion: 1,
       params: {},
@@ -4725,7 +4724,7 @@ describe('guard step execution', () => {
     expect(envelope.status).toBe('ok');
     expect(nextCalls(envelope)).toHaveLength(0);
 
-    const savedRun = await store.get(run.id);
+    const { record: savedRun } = await store.get(run.id);
     expect(savedRun.run_phase).toBe('aborted');
     expect(savedRun.completed_steps).toContain('guard_b');
     expect(savedRun.aborted_at?.step_id).toBe('guard_c');
@@ -4767,7 +4766,7 @@ describe('handler warn result', () => {
     const registry = new ExtensionRegistry();
     registry.register('handler', 'warn_handler', handler);
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'warn-wf',
       workflowVersion: 1,
       params: {},
@@ -4783,7 +4782,7 @@ describe('handler warn result', () => {
     expect(envelope.status).toBe('ok');
     expect(envelope.warnings).toEqual(['quota near limit']);
 
-    const updatedRun = await store.get(run.id);
+    const { record: updatedRun } = await store.get(run.id);
     expect(updatedRun.completed_steps).toContain('validate');
     const snap = updatedRun.evidence.find((e) => e.step_id === 'validate');
     expect(snap?.warn).toBe('quota near limit');
@@ -4807,7 +4806,7 @@ describe('handler warn result', () => {
       },
     };
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'warn-wf',
       workflowVersion: 1,
       params: {},
@@ -4821,7 +4820,7 @@ describe('handler warn result', () => {
     });
 
     expect(handler.execute).toHaveBeenCalledTimes(1);
-    const snap = (await store.get(run.id)).evidence.find((e) => e.step_id === 'validate');
+    const snap = (await store.get(run.id)).record.evidence.find((e) => e.step_id === 'validate');
     expect(snap?.attempt).toBe(1);
   });
 
@@ -4854,7 +4853,7 @@ describe('handler warn result', () => {
       },
     };
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'warn-chain-wf',
       workflowVersion: 1,
       params: {},
@@ -4879,7 +4878,7 @@ describe('handler warn result', () => {
     const registry = new ExtensionRegistry();
     registry.register('handler', 'warn_handler', handler);
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'warn-wf',
       workflowVersion: 1,
       params: {},
@@ -4895,7 +4894,7 @@ describe('handler warn result', () => {
     expect(envelope.status).toBe('ok');
     expect(envelope.warnings).toEqual([]);
 
-    const snap = (await store.get(run.id)).evidence.find((e) => e.step_id === 'validate');
+    const snap = (await store.get(run.id)).record.evidence.find((e) => e.step_id === 'validate');
     expect(snap?.warn).toBeUndefined();
   });
 });
@@ -4947,7 +4946,7 @@ describe('when: run.params integration', () => {
     registry.register('handler', 'classify_handler', classifyHandler);
     registry.register('handler', 'post_handler', postHandler);
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'shadow-wf',
       workflowVersion: 1,
       params: { mode: 'shadow' },
@@ -4962,7 +4961,7 @@ describe('when: run.params integration', () => {
     });
 
     expect(envelope.status).toBe('ok');
-    const savedRun = await store.get(run.id);
+    const { record: savedRun } = await store.get(run.id);
     expect(savedRun.completed_steps).toContain('classify');
     expect(savedRun.skipped_steps).toContain('post_action');
     expect(savedRun.terminal_state).toBe(true);
@@ -5008,7 +5007,7 @@ describe('input_map on handler steps', () => {
       },
     };
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'inputmap-handler-wf',
       workflowVersion: 1,
       params: {},
@@ -5051,7 +5050,7 @@ describe('input_map on handler steps', () => {
       },
     };
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'inputmap-params-wf',
       workflowVersion: 1,
       params: { ticket_id: 'TKT-42' },
@@ -5094,7 +5093,7 @@ describe('input_map on handler steps', () => {
       },
     };
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'inputmap-evidence-wf',
       workflowVersion: 1,
       params: {},
@@ -5107,7 +5106,7 @@ describe('input_map on handler steps', () => {
       registry,
     });
 
-    const snap = (await store.get(run.id)).evidence.find((e) => e.step_id === 'fetch');
+    const snap = (await store.get(run.id)).record.evidence.find((e) => e.step_id === 'fetch');
     expect(snap?.resolved_params).toEqual({ table: 'CS_Macros' });
   });
 
@@ -5133,7 +5132,7 @@ describe('input_map on handler steps', () => {
       },
     };
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'no-inputmap-wf',
       workflowVersion: 1,
       params: {},
@@ -5186,7 +5185,7 @@ describe('_debug field capture', () => {
   };
 
   it('_debug passes schema validation and is stored as debug_output (not in output_summary)', async () => {
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'debug-wf',
       workflowVersion: 1,
       params: {},
@@ -5199,7 +5198,7 @@ describe('_debug field capture', () => {
       dispatcher: echoDispatcher,
     });
 
-    const updatedRun = await store.get(run.id);
+    const { record: updatedRun } = await store.get(run.id);
     const snap = updatedRun.evidence.find((e) => e.step_id === 'classify');
     expect(snap).toBeDefined();
     expect(snap?.debug_output).toBe('reasoning here');
@@ -5207,7 +5206,7 @@ describe('_debug field capture', () => {
   });
 
   it('_debug does not appear in output_summary', async () => {
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'debug-wf',
       workflowVersion: 1,
       params: {},
@@ -5220,12 +5219,12 @@ describe('_debug field capture', () => {
       dispatcher: echoDispatcher,
     });
 
-    const snap = (await store.get(run.id)).evidence.find((e) => e.step_id === 'classify');
+    const snap = (await store.get(run.id)).record.evidence.find((e) => e.step_id === 'classify');
     expect(Object.keys(snap?.output_summary as object)).not.toContain('_debug');
   });
 
   it('evidence_hash is the same whether or not _debug is present', async () => {
-    const { run: run1 } = await store.create({
+    const { record: run1 } = await store.create({
       workflowId: 'debug-wf',
       workflowVersion: 1,
       params: {},
@@ -5237,7 +5236,7 @@ describe('_debug field capture', () => {
       dispatcher: echoDispatcher,
     });
 
-    const { run: run2 } = await store.create({
+    const { record: run2 } = await store.create({
       workflowId: 'debug-wf',
       workflowVersion: 1,
       params: {},
@@ -5249,13 +5248,13 @@ describe('_debug field capture', () => {
       dispatcher: echoDispatcher,
     });
 
-    const snap1 = (await store.get(run1.id)).evidence.find((e) => e.step_id === 'classify');
-    const snap2 = (await store.get(run2.id)).evidence.find((e) => e.step_id === 'classify');
+    const snap1 = (await store.get(run1.id)).record.evidence.find((e) => e.step_id === 'classify');
+    const snap2 = (await store.get(run2.id)).record.evidence.find((e) => e.step_id === 'classify');
     expect(snap1?.evidence_hash).toBe(snap2?.evidence_hash);
   });
 
   it('step without _debug produces no debug_output field on the snapshot', async () => {
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'debug-wf',
       workflowVersion: 1,
       params: {},
@@ -5268,7 +5267,7 @@ describe('_debug field capture', () => {
       dispatcher: echoDispatcher,
     });
 
-    const updatedRun = await store.get(run.id);
+    const { record: updatedRun } = await store.get(run.id);
     const snap = updatedRun.evidence.find((e) => e.step_id === 'classify');
     expect(snap).toBeDefined();
     expect(Object.prototype.hasOwnProperty.call(snap, 'debug_output')).toBe(false);
@@ -5310,7 +5309,7 @@ describe('_debug stripping on direct auto-step invocation', () => {
       },
     };
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'debug-strip-handler-wf',
       workflowVersion: 1,
       params: {},
@@ -5329,7 +5328,7 @@ describe('_debug stripping on direct auto-step invocation', () => {
       expect.any(AbortSignal),
     );
 
-    const snap = (await store.get(run.id)).evidence.find((e) => e.step_id === 'process');
+    const snap = (await store.get(run.id)).record.evidence.find((e) => e.step_id === 'process');
     expect(snap?.debug_output).toBe('note');
     expect(Object.keys(snap?.input_summary as object)).not.toContain('_debug');
   });
@@ -5361,7 +5360,7 @@ describe('_debug stripping on direct auto-step invocation', () => {
       },
     };
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'debug-strip-adapter-wf',
       workflowVersion: 1,
       params: {},
@@ -5404,7 +5403,7 @@ describe('_debug stripping on direct auto-step invocation', () => {
       },
     };
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'debug-strip-abort-wf',
       workflowVersion: 1,
       params: {},
@@ -5417,7 +5416,7 @@ describe('_debug stripping on direct auto-step invocation', () => {
       registry,
     });
 
-    const snap = (await store.get(run.id)).evidence.find((e) => e.step_id === 'check');
+    const snap = (await store.get(run.id)).record.evidence.find((e) => e.step_id === 'check');
     expect(snap?.status).toBe('skipped');
     expect(Object.keys(snap?.input_summary as object)).not.toContain('_debug');
     expect(snap?.debug_output).toBe('note');
@@ -5438,7 +5437,7 @@ describe('executeChain — terminal-run entry guard (#91)', () => {
   });
 
   it('is a byte-unchanged no-op on a terminal aborted run (no step claimed)', async () => {
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'test-wf',
       workflowVersion: 1,
       params: {},
@@ -5451,7 +5450,7 @@ describe('executeChain — terminal-run entry guard (#91)', () => {
       terminal_reason: "Guard 'g' aborted the run",
       aborted_at: { step_id: 'step-one' },
     });
-    const before = await store.get(run.id);
+    const { record: before } = await store.get(run.id);
     const dispatcher = vi.fn(echoDispatcher);
 
     const envelope = await executeChain(store, definition, {
@@ -5467,12 +5466,12 @@ describe('executeChain — terminal-run entry guard (#91)', () => {
     expect(envelope.run_version).toBe(before.version);
     expect(envelope.run_phase).toBe('aborted'); // #92: signal present on the entry-guard envelope
     expect(dispatcher).not.toHaveBeenCalled(); // no step executed
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after).toEqual(before); // byte-unchanged (version, step sets, everything)
   });
 
   it('is a byte-unchanged no-op on a terminal completed run (no aborted_at)', async () => {
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'test-wf',
       workflowVersion: 1,
       params: {},
@@ -5485,7 +5484,7 @@ describe('executeChain — terminal-run entry guard (#91)', () => {
       terminal_reason: 'Workflow completed.',
       completed_steps: ['step-one', 'step-two'],
     });
-    const before = await store.get(run.id);
+    const { record: before } = await store.get(run.id);
     const dispatcher = vi.fn(echoDispatcher);
 
     const envelope = await executeChain(store, definition, {
@@ -5498,12 +5497,12 @@ describe('executeChain — terminal-run entry guard (#91)', () => {
     expect(envelope.status).toBe('ok');
     expect(agentActionFor(envelope)).toBe('stop');
     expect(dispatcher).not.toHaveBeenCalled();
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after).toEqual(before);
   });
 
   it('does NOT over-fire — a non-terminal (running) run is still driven', async () => {
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'test-wf',
       workflowVersion: 1,
       params: {},
@@ -5519,7 +5518,7 @@ describe('executeChain — terminal-run entry guard (#91)', () => {
     });
 
     expect(dispatcher).toHaveBeenCalled(); // the running run was driven
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.completed_steps).toContain('step-one');
     expect(after.version).toBeGreaterThan(createdVersion);
   });
@@ -5551,7 +5550,7 @@ describe('submitHumanResponse — terminal-run guard', () => {
   });
 
   it('a gate response on a terminal run is rejected with STATE_RUN_TERMINAL (no re-drive)', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'gate-terminal-wf',
       workflowVersion: 1,
       params: {},
@@ -5568,14 +5567,14 @@ describe('submitHumanResponse — terminal-run guard', () => {
 
     // Force the run terminal underneath the open gate (simulating a late abandon/completion path),
     // then attempt a late gate response.
-    const gated = await store.get(run.id);
+    const { record: gated } = await store.get(run.id);
     await store.update({
       ...gated,
       terminal_state: true,
       sealed_by: { arm: 'abandon_requested' as const },
       abandoned_at: new Date().toISOString(),
     });
-    const before = await store.get(run.id);
+    const { record: before } = await store.get(run.id);
 
     const envelope = await submitHumanResponse(store, gateWf, {
       runId: run.id,
@@ -5586,124 +5585,13 @@ describe('submitHumanResponse — terminal-run guard', () => {
     expect(envelope.status).toBe('error');
     expect(envelope.error_code).toBe('STATE_RUN_TERMINAL');
     // Run not re-driven by the late response.
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.version).toBe(before.version);
     expect(after.terminal_state).toBe(true);
   });
 
   it('cleanup', async () => {
     await rm(dir, { recursive: true, force: true });
-  });
-});
-
-// =================================================================================================
-// issue #373 — the LEGACY in-loop fail seal (execution-loop.ts's own site, the dormancy twin of
-// settlement.ts's). Reachable only through a store that does not declare `settleStep`, so the
-// double below is the instrument, not decoration: without it JsonFileStore takes the migrated path
-// and this site never executes.
-//
-// Cross-layer cells (byte-parity between the two seals, post-drain no-growth stability) live in
-// terminal-cause.test.ts beside their declaring-layer twins, where the comparison is visible.
-// =================================================================================================
-describe('#373 — the legacy fail seal names every failure', () => {
-  /** A real JsonFileStore with `settleStep` never implemented — own-property masking, so
-   *  `store.settleStep === undefined` holds and only the legacy path is reachable. */
-  class LegacyOnlyStore implements RunStore {
-    // issue #620 PR-C: a test double declares this realm's release line.
-    static {
-      declareReleaseLine(this);
-    }
-    readonly persistsClaims: boolean;
-    constructor(private readonly inner: JsonFileStore) {
-      this.persistsClaims = inner.persistsClaims;
-    }
-    create(options: CreateRunOptions): Promise<{ run: RunRecord; created: boolean }> {
-      return this.inner.create(options);
-    }
-    get(runId: string): Promise<RunRecord> {
-      return this.inner.get(runId);
-    }
-    update(record: RunRecord): Promise<RunRecord> {
-      return this.inner.update(record);
-    }
-    list(workflowId?: string): Promise<RunRecord[]> {
-      return this.inner.list(workflowId);
-    }
-    claimStep(runId: string, stepName: string, def: WorkflowDefinition): Promise<RunRecord> {
-      return this.inner.claimStep(runId, stepName, def);
-    }
-    // settleStep intentionally OMITTED.
-  }
-
-  const legacyDef: WorkflowDefinition = {
-    id: 'legacy-373-wf',
-    name: 'Legacy 373',
-    version: 1,
-    steps: {
-      fail_a: { description: 'A', execution: 'agent', depends_on: [] },
-      fail_b: { description: 'B', execution: 'agent', depends_on: [] },
-    },
-  };
-
-  async function driveLegacy(steps: readonly string[]): Promise<RunRecord> {
-    const legacyDir = await mkdtemp(join(tmpdir(), 'realm-legacy-373-'));
-    const store = new LegacyOnlyStore(new JsonFileStore(legacyDir));
-    const { run } = await store.create({
-      workflowId: legacyDef.id,
-      workflowVersion: 1,
-      params: {},
-    });
-    for (const step of steps) {
-      await executeStep(store, legacyDef, {
-        runId: run.id,
-        command: step,
-        input: {},
-        dispatcher: async () => {
-          throw new Error(`${step} exploded`);
-        },
-      });
-    }
-    return store.get(run.id);
-  }
-
-  it('two failures through the legacy path ⇒ both named, sorted, order-independent', async () => {
-    const forward = await driveLegacy(['fail_a', 'fail_b']);
-    const reverse = await driveLegacy(['fail_b', 'fail_a']);
-    expect(forward.failed_steps).toEqual(['fail_a', 'fail_b']);
-    expect(reverse.failed_steps).toEqual(['fail_b', 'fail_a']); // settle order still differs
-    expect(forward.terminal_reason).toBe(
-      '2 steps failed: fail_a ("Dispatcher failed: fail_a exploded"), ' +
-        'fail_b ("Dispatcher failed: fail_b exploded").',
-    );
-    expect(reverse.terminal_reason).toBe(forward.terminal_reason);
-  });
-
-  it('ONE failure through the legacy path keeps the per-site template verbatim', async () => {
-    const singleDef: WorkflowDefinition = {
-      id: 'legacy-373-single',
-      name: 'Legacy 373 Single',
-      version: 1,
-      steps: { only: { description: 'Only', execution: 'agent', depends_on: [] } },
-    };
-    const legacyDir = await mkdtemp(join(tmpdir(), 'realm-legacy-373-single-'));
-    const store = new LegacyOnlyStore(new JsonFileStore(legacyDir));
-    const { run } = await store.create({
-      workflowId: singleDef.id,
-      workflowVersion: 1,
-      params: {},
-    });
-    await executeStep(store, singleDef, {
-      runId: run.id,
-      command: 'only',
-      input: {},
-      dispatcher: async () => {
-        throw new Error('only exploded');
-      },
-    });
-    const record = await store.get(run.id);
-    // This site has never carried settlement.ts's `?? 'unknown error'` fallback, and does not gain
-    // one here — the single-failure branch is the no-regression control.
-    expect(record.terminal_reason).toBe("Step 'only' failed: Dispatcher failed: only exploded");
   });
 });
 
@@ -5738,13 +5626,14 @@ describe('#729 PR-4 — the mint takes the host’s disclosure set', () => {
       },
     },
   });
-  const stored = async (runId: string) => (await store.get(runId)).pending_gate?.resolved_message;
+  const stored = async (runId: string) =>
+    (await store.get(runId)).record.pending_gate?.resolved_message;
   const MESSAGE = 'Approve {{ run.params.token }} for release';
 
   it('every engine entry that opens a gate mints with the set: executeStep, executeChain, advanceRun, executeEngineStep', async () => {
     const d = def(MESSAGE);
     const open = async (how: string): Promise<string | undefined> => {
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: d.id,
         workflowVersion: 1,
         params: { token: FAKE },
@@ -5779,7 +5668,7 @@ describe('#729 PR-4 — the mint takes the host’s disclosure set', () => {
   it('a caller passing no set (an embedder; the async child; the testing runner) stores the rendered text whole, uncut — the control', async () => {
     const long = `${MESSAGE} ${'x'.repeat(700)}`;
     const d = def(long);
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: d.id,
       workflowVersion: 1,
       params: { token: FAKE },
@@ -5804,7 +5693,7 @@ describe('#729 PR-4 — the mint takes the host’s disclosure set', () => {
 
   it('masked before cut: a long substitution holding the declared value stores `[REDACTED]`, never a prefix', async () => {
     const d = def('Approve {{ run.params.token }} after {{ run.params.pad }}');
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: d.id,
       workflowVersion: 1,
       // The value straddles its cap's cut point (about 156 characters shown): masked first it
@@ -5832,8 +5721,12 @@ describe('#729 PR-4 — the mint takes the host’s disclosure set', () => {
     const ctx = def('Context: {{ workflow.context.missing }}');
     const refused: (string | undefined)[] = [];
     for (const d of [many, ctx]) {
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
-      await store.update({ ...(await store.get(run.id)), workflow_context_snapshots: {} });
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
+      await store.update({ ...(await store.get(run.id)).record, workflow_context_snapshots: {} });
       const reply = await executeStep(store, d, {
         runId: run.id,
         command: 'gate_step',
@@ -5842,7 +5735,7 @@ describe('#729 PR-4 — the mint takes the host’s disclosure set', () => {
         disclosure: set,
       });
       refused.push(reply.error_code ?? reply.status);
-      expect((await store.get(run.id)).pending_gate).toBeUndefined();
+      expect((await store.get(run.id)).record.pending_gate).toBeUndefined();
     }
     // (a) red when the hook is applied to an unresolved placeholder (cut away, the scan blinded, the
     //     gate opened); (b) prints the codes.

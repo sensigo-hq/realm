@@ -111,7 +111,7 @@ async function opened(
     },
   } as unknown as WorkflowDefinition;
   const store = new JsonFileStore(mkdtempSync(join(tmpdir(), 'realm-docs-729-')));
-  const { run } = await store.create({
+  const { record: run } = await store.create({
     workflowId: 'docs729',
     workflowVersion: 1,
     params: { x, ...more },
@@ -123,7 +123,7 @@ async function opened(
     dispatcher: async () => ({ summary: 'the output' }),
     ...(set !== undefined ? { disclosure: set } : {}),
   });
-  return (await store.get(run.id)).pending_gate!;
+  return (await store.get(run.id)).record.pending_gate!;
 }
 
 afterEach(() => {

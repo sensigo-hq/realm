@@ -14,6 +14,7 @@ import { agentCommand } from '../commands/agent.js';
 import { LlmProvider, ToolCapableLlmProvider } from './providers/llm-provider.js';
 import type { AgentDeps } from './run-agent.js';
 import { driveCreate, type LlmClock, type WireCounters } from './providers/agent-utils.js';
+import { listing, snap } from '../test-support/snapshot-double.js';
 
 /**
  * Extends the real base class rather than shaping an object literal: the base supplies
@@ -66,8 +67,8 @@ const UNDECLARED_SERVER_WF = {
 } as unknown as WorkflowDefinition;
 
 async function onlyRun(store: InMemoryStore): Promise<RunRecord> {
-  const runs = await store.list();
-  return store.get(runs[0]!.id);
+  const runs = (await store.list()).snapshots.map((s) => s.record);
+  return (await store.get(runs[0]!.id)).record;
 }
 
 describe('#401 chokepoint (3) — the last-resort catch', () => {
@@ -240,7 +241,7 @@ describe('#401 chokepoint (2) — issue #600 PR 1a (D9): usage on a thrown drive
 
     const out = await inspectRun(
       run.id,
-      { get: async () => run, list: async () => [run] } as never,
+      { get: async () => snap(run), list: async () => listing([run]) } as never,
       {
         get: async () => {
           throw new Error('not registered');
@@ -287,7 +288,7 @@ describe('#401 chokepoint (2) — issue #600 PR 1a (D9): usage on a thrown drive
 
     const out = await inspectRun(
       run.id,
-      { get: async () => run, list: async () => [run] } as never,
+      { get: async () => snap(run), list: async () => listing([run]) } as never,
       {
         get: async () => {
           throw new Error('not registered');
@@ -329,7 +330,7 @@ describe('#401 chokepoint (3) — the mid-loop throw carries the current step', 
       },
     } as unknown as WorkflowDefinition;
 
-    const { run: created } = await store.create({
+    const { record: created } = await store.create({
       workflowId: 'midloop-wf',
       workflowVersion: 1,
       params: {},
@@ -369,7 +370,7 @@ describe('#401 chokepoint (3) — the mid-loop throw carries the current step', 
     ).rejects.toThrow('store read exploded mid-loop');
 
     store.get = original;
-    const run = await store.get(created.id);
+    const { record: run } = await store.get(created.id);
     expect(run.drive_failures?.entries).toHaveLength(1);
     expect(run.drive_failures!.entries[0]!.step).toBe('classify');
     vi.restoreAllMocks();
@@ -963,7 +964,7 @@ describe('#401 PR-2 — which clock the step drives under', () => {
       workflow_version: 1,
       params: {},
     } as never);
-    await runAgent(deps, { existingRunId: created.run.id, definition: budgetWf(), params: {} });
+    await runAgent(deps, { existingRunId: created.record.id, definition: budgetWf(), params: {} });
     expect(provider.seen).toEqual([45_000]);
     vi.restoreAllMocks();
   });

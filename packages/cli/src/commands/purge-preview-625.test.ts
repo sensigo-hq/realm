@@ -69,19 +69,25 @@ describe(
 
     /** A run that ended as `how`: aborted, abandoned by an operator, or failed with no step to resume. */
     async function ended(how: 'aborted' | 'abandoned' | 'failed'): Promise<RunRecord> {
-      const { run } = await runStore.create({ workflowId: ONE.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runStore.create({
+        workflowId: ONE.id,
+        workflowVersion: 1,
+        params: {},
+      });
       if (how === 'abandoned') return abandonRun(runStore, run.id, 'stopped');
-      return runStore.update({
-        ...(await runStore.get(run.id)),
-        terminal_state: true,
-        run_phase: how,
-        ...(how === 'aborted'
-          ? {
-              aborted_at: { step_id: 'a', message: 'stopped' },
-              sealed_by: { arm: 'handler_abort', step: 'a' },
-            }
-          : { sealed_by: { arm: 'step_failure', step: 'a' } }),
-      } as RunRecord);
+      return (
+        await runStore.update({
+          ...(await runStore.get(run.id)).record,
+          terminal_state: true,
+          run_phase: how,
+          ...(how === 'aborted'
+            ? {
+                aborted_at: { step_id: 'a', message: 'stopped' },
+                sealed_by: { arm: 'handler_abort', step: 'a' },
+              }
+            : { sealed_by: { arm: 'step_failure', step: 'a' } }),
+        } as RunRecord)
+      ).record;
     }
 
     it.each(['aborted', 'abandoned', 'failed'] as const)(

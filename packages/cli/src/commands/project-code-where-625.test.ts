@@ -107,7 +107,7 @@ describe('#625 PR-2a, C98 and C95 — where the code comes from; advance carries
       join(home, '.realm', 'workflows'),
     ).get(`pcw-${onExpiry}`);
     const runs = new JsonFileStore(join(home, '.realm', 'runs'));
-    const { run } = await runs.create({
+    const { record: run } = await runs.create({
       workflowId: definition.id,
       workflowVersion: 1,
       params: {},
@@ -118,15 +118,17 @@ describe('#625 PR-2a, C98 and C95 — where the code comes from; advance carries
       input: {},
       dispatcher: async () => ({}),
     });
-    let r = await runs.get(run.id);
+    let { record: r } = await runs.get(run.id);
     if (expired) {
-      r = await runs.update({
-        ...r,
-        pending_gate: {
-          ...r.pending_gate!,
-          expires_at: new Date(Date.now() - 60_000).toISOString(),
-        },
-      });
+      r = (
+        await runs.update({
+          ...r,
+          pending_gate: {
+            ...r.pending_gate!,
+            expires_at: new Date(Date.now() - 60_000).toISOString(),
+          },
+        })
+      ).record;
     }
     return { runs, runId: run.id, gateId: r.pending_gate!.gate_id, definition };
   }
@@ -162,7 +164,7 @@ describe('#625 PR-2a, C98 and C95 — where the code comes from; advance carries
     );
     expect(advanced.stdout).not.toContain(elsewhere);
     // (a) red when another program's code ran the step; (b) prints the recorded output.
-    const entry = (await runs.get(runId)).evidence.find((e) => e.step_id === 'after');
+    const entry = (await runs.get(runId)).record.evidence.find((e) => e.step_id === 'after');
     expect(entry?.output_summary).toEqual({ from: 'the project' });
   }, 60_000);
 
@@ -230,7 +232,7 @@ describe('#625 PR-2a, C98 and C95 — where the code comes from; advance carries
     expect(lines.filter((l) => l.includes('had expired'))).toHaveLength(1);
     // (a) red when core prints the line itself (C109); (b) prints stderr.
     expect(advanced.stderr).not.toContain('had expired');
-    const after = await runs.get(runId);
+    const { record: after } = await runs.get(runId);
     // (a) red when the default is not settled, or the owed step does not run; (b) prints the record.
     expect({
       choice: after.settled?.['confirm']?.choice,
@@ -251,7 +253,7 @@ describe('#625 PR-2a, C98 and C95 — where the code comes from; advance carries
       'Stopped: the run has ended (aborted)',
       `Run ${runId}: phase 'aborted'`,
     ]);
-    expect((await runs.get(runId)).completed_steps).toEqual([]);
+    expect((await runs.get(runId)).record.completed_steps).toEqual([]);
   }, 60_000);
 
   it('C98, every member of the words: trust_root wins over the shell and --project; no trust_root: --project, else the shell; --extensions-module names its module and the root', () => {
@@ -321,14 +323,18 @@ describe('#625 PR-2a, C98 and C95 — where the code comes from; advance carries
       );
       const root = definition.trust_root!;
       const runs = new JsonFileStore(join(home, '.realm', 'runs'));
-      const { run } = await runs.create({ workflowId: 'pcw-bare', workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: 'pcw-bare',
+        workflowVersion: 1,
+        params: {},
+      });
       await executeStep(runs, definition, {
         runId: run.id,
         command: 'confirm',
         input: {},
         dispatcher: async () => ({}),
       });
-      const gateId = (await runs.get(run.id)).pending_gate!.gate_id;
+      const gateId = (await runs.get(run.id)).record.pending_gate!.gate_id;
       const responded = realm(elsewhere, [
         'run',
         'respond',
@@ -437,7 +443,7 @@ describe('#625 PR-2a, C98 and C95 — where the code comes from; advance carries
       );
       const root = definition.trust_root!;
       const runs = new JsonFileStore(join(home, '.realm', 'runs'));
-      const { run } = await runs.create({
+      const { record: run } = await runs.create({
         workflowId: 'pcw-bare2',
         workflowVersion: 1,
         params: {},
@@ -448,7 +454,7 @@ describe('#625 PR-2a, C98 and C95 — where the code comes from; advance carries
         input: {},
         dispatcher: async () => ({}),
       });
-      const gateId = (await runs.get(run.id)).pending_gate!.gate_id;
+      const gateId = (await runs.get(run.id)).record.pending_gate!.gate_id;
       const line = `--project ${elsewhere} was not used: workflow 'pcw-bare2' has its own project, ${root} (no project code there).`;
       const advanced = realm(elsewhere, ['run', 'advance', run.id, '--project', elsewhere]);
       // (a) red when the not-used line says "its code is loaded from there" beside "no project

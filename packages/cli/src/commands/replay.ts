@@ -157,7 +157,7 @@ export const replayCommand = new Command('replay')
 
     let run;
     try {
-      run = await runStore.get(runId);
+      run = (await runStore.get(runId)).record;
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
       process.exit(1);

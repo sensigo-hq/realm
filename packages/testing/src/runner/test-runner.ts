@@ -208,7 +208,7 @@ async function runSingleFixture(
       fixture.agent_errors,
     );
 
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: definition.version,
       params: fixture.params,
@@ -260,7 +260,7 @@ async function runSingleFixture(
             error: gateResult.errors[0] ?? 'Unknown gate response error',
           };
         }
-        currentRun = await store.get(runId);
+        currentRun = (await store.get(runId)).record;
         continue;
       }
 
@@ -315,7 +315,7 @@ async function runSingleFixture(
             error: advanced.errors[0] ?? 'Unknown error from step execution',
           };
         }
-        currentRun = await store.get(runId);
+        currentRun = (await store.get(runId)).record;
         continue;
       }
 
@@ -348,7 +348,7 @@ async function runSingleFixture(
         const resumesDone = stepResumeCount[nextStep] ?? 0;
         if (mockErrors !== undefined && resumesDone < mockErrors.length) {
           stepResumeCount[nextStep] = resumesDone + 1;
-          const failedRun = await store.get(runId);
+          const { record: failedRun } = await store.get(runId);
           // issue #367: `sealed_by` joins the strip — this simulated resume flips the run live
           // again, so the seal fact must leave in the same write (the ORPHANED boundary clause
           // would otherwise refuse the update below).
@@ -372,7 +372,7 @@ async function runSingleFixture(
             skipped_steps: newSkippedSteps,
             terminal_state: false,
           });
-          currentRun = await store.get(runId);
+          currentRun = (await store.get(runId)).record;
           continue;
         }
         return {
@@ -382,7 +382,7 @@ async function runSingleFixture(
         };
       }
 
-      currentRun = await store.get(runId);
+      currentRun = (await store.get(runId)).record;
     }
 
     // Assert final phase.

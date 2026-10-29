@@ -38,14 +38,18 @@ describe('gate mint-freeze (issue #291)', () => {
   it('a gate with no gate: block at all mints with none of the new fields (byte-identical to pre-#291)', async () => {
     const store = new JsonFileStore(dir);
     const def = defWithGate(undefined);
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await executeStep(store, def, {
       runId: run.id,
       command: 'step-one',
       input: {},
       dispatcher: echoDispatcher,
     });
-    const updated = await store.get(run.id);
+    const { record: updated } = await store.get(run.id);
     const gate = updated.pending_gate!;
     expect(gate.expires_at).toBeUndefined();
     expect(gate.on_expiry).toBeUndefined();
@@ -57,7 +61,11 @@ describe('gate mint-freeze (issue #291)', () => {
   it('timeout_seconds freezes expires_at = opened_at + timeout_seconds, exactly', async () => {
     const store = new JsonFileStore(dir);
     const def = defWithGate({ timeout_seconds: 300, on_expiry: 'abort' });
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const before = Date.now();
     await executeStep(store, def, {
       runId: run.id,
@@ -66,7 +74,7 @@ describe('gate mint-freeze (issue #291)', () => {
       dispatcher: echoDispatcher,
     });
     const after = Date.now();
-    const updated = await store.get(run.id);
+    const { record: updated } = await store.get(run.id);
     const gate = updated.pending_gate!;
     expect(gate.expires_at).toBeDefined();
     const openedAtMs = new Date(gate.opened_at).getTime();
@@ -81,14 +89,18 @@ describe('gate mint-freeze (issue #291)', () => {
   it('timeout_seconds WITHOUT on_expiry freezes expires_at alone — finding-only mode, legal', async () => {
     const store = new JsonFileStore(dir);
     const def = defWithGate({ timeout_seconds: 120 });
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await executeStep(store, def, {
       runId: run.id,
       command: 'step-one',
       input: {},
       dispatcher: echoDispatcher,
     });
-    const updated = await store.get(run.id);
+    const { record: updated } = await store.get(run.id);
     const gate = updated.pending_gate!;
     expect(gate.expires_at).toBeDefined();
     expect(gate.on_expiry).toBeUndefined();
@@ -101,14 +113,18 @@ describe('gate mint-freeze (issue #291)', () => {
       on_expiry: 'settle_default',
       default_choice: 'approve',
     });
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await executeStep(store, def, {
       runId: run.id,
       command: 'step-one',
       input: {},
       dispatcher: echoDispatcher,
     });
-    const updated = await store.get(run.id);
+    const { record: updated } = await store.get(run.id);
     const gate = updated.pending_gate!;
     expect(gate.on_expiry).toBe('settle_default');
     expect(gate.default_choice).toBe('approve');
@@ -117,14 +133,18 @@ describe('gate mint-freeze (issue #291)', () => {
   it('reminder_seconds freezes with reminder_max DEFAULTED to 3 when the author declared none', async () => {
     const store = new JsonFileStore(dir);
     const def = defWithGate({ reminder_seconds: 90 });
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await executeStep(store, def, {
       runId: run.id,
       command: 'step-one',
       input: {},
       dispatcher: echoDispatcher,
     });
-    const updated = await store.get(run.id);
+    const { record: updated } = await store.get(run.id);
     const gate = updated.pending_gate!;
     expect(gate.reminder_seconds).toBe(90);
     expect(gate.reminder_max).toBe(3);
@@ -135,14 +155,18 @@ describe('gate mint-freeze (issue #291)', () => {
   it('reminder_max freezes the AUTHORED value verbatim when declared (never silently overridden)', async () => {
     const store = new JsonFileStore(dir);
     const def = defWithGate({ reminder_seconds: 90, reminder_max: 7 });
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await executeStep(store, def, {
       runId: run.id,
       command: 'step-one',
       input: {},
       dispatcher: echoDispatcher,
     });
-    const updated = await store.get(run.id);
+    const { record: updated } = await store.get(run.id);
     expect(updated.pending_gate!.reminder_max).toBe(7);
   });
 
@@ -153,7 +177,7 @@ describe('gate mint-freeze (issue #291)', () => {
       on_expiry: 'settle_default',
       default_choice: 'approve',
     });
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: originalDef.id,
       workflowVersion: 1,
       params: {},
@@ -164,7 +188,7 @@ describe('gate mint-freeze (issue #291)', () => {
       input: {},
       dispatcher: echoDispatcher,
     });
-    const mintedGate = (await store.get(run.id)).pending_gate!;
+    const mintedGate = (await store.get(run.id)).record.pending_gate!;
 
     // Simulate a re-registered definition with DIFFERENT gate config — the record must never
     // reflect it (it was never re-read from a definition after mint in the first place; this
@@ -174,7 +198,7 @@ describe('gate mint-freeze (issue #291)', () => {
       on_expiry: 'abort',
     });
     expect(changedDef.steps['step-one']!.gate?.on_expiry).toBe('abort');
-    const stillFrozenGate = (await store.get(run.id)).pending_gate!;
+    const stillFrozenGate = (await store.get(run.id)).record.pending_gate!;
     expect(stillFrozenGate).toEqual(mintedGate);
     expect(stillFrozenGate.on_expiry).toBe('settle_default');
     expect(stillFrozenGate.default_choice).toBe('approve');

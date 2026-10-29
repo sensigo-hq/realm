@@ -1,6 +1,6 @@
 // listen-sweep-expired-gates.test.ts — issue #291, Deliverable 4f: the `realm listen` opt-in
 // store-wide expired-gate sweeper. sweepExpiredGates is exercised directly (pure I/O
-// orchestration, now-injectable) — no HTTP server needed.
+// orchestration) — no HTTP server needed. #715 (b): the store's clock decides (a settable clock at NOW).
 import { describe, it, expect, vi } from 'vitest';
 import {
   mkdtempSync,
@@ -14,7 +14,8 @@ import {
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, settableClock } from '@sensigo/realm-testing';
+import { listing } from '../test-support/snapshot-double.js';
 import { WorkflowError, CURRENT_WORKFLOW_SCHEMA_VERSION, JsonFileStore } from '@sensigo/realm';
 import type { WorkflowDefinition, PendingGate, WorkflowRegistrar } from '@sensigo/realm';
 import {
@@ -81,20 +82,26 @@ async function seedGatedRun(
   def: WorkflowDefinition,
   gate: PendingGate,
 ) {
-  const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
-  return store.update({
-    ...run,
-    in_progress_steps: ['approve'],
-    claims: { approve: { deadline: null } },
-    pending_gate: gate,
+  const { record: run } = await store.create({
+    workflowId: def.id,
+    workflowVersion: 1,
+    params: {},
   });
+  return (
+    await store.update({
+      ...run,
+      in_progress_steps: ['approve'],
+      claims: { approve: { deadline: null } },
+      pending_gate: gate,
+    })
+  ).record;
 }
 
 const NOW = new Date('2020-01-01T01:00:00.000Z'); // well past the fixture expires_at above
 
 describe('sweepExpiredGates (issue #291, Deliverable 4f)', () => {
   it('enacts an expired, enactable (settle_default) gate', async () => {
-    const runStore = new InMemoryStore();
+    const runStore = new InMemoryStore({ clock: settableClock(NOW) });
     const def = wf();
     const workflowStore = makeWorkflowStore([def]);
     const gate = makeGate({ on_expiry: 'settle_default', default_choice: 'approve' });
@@ -105,17 +112,17 @@ describe('sweepExpiredGates (issue #291, Deliverable 4f)', () => {
       workflowStore,
       logger: silentLogger,
     };
-    const result = await sweepExpiredGates(deps, NOW);
+    const result = await sweepExpiredGates(deps);
 
     expect(result).toMatchObject({ scanned: 1, enacted: 1, skipped_unregistered: 0, errors: 0 });
-    const final = await runStore.get(run.id);
+    const { record: final } = await runStore.get(run.id);
     expect(final.pending_gate).toBeUndefined();
     expect(final.completed_steps).toContain('approve');
     expect(final.settled?.['approve']).toMatchObject({ resolved_by: 'timeout' });
   });
 
   it('enacts an expired abort disposition, terminalizing the run — logs the drain advisory, never drains itself', async () => {
-    const runStore = new InMemoryStore();
+    const runStore = new InMemoryStore({ clock: settableClock(NOW) });
     const def = wf();
     const workflowStore = makeWorkflowStore([def]);
     const gate = makeGate({ on_expiry: 'abort' });
@@ -127,16 +134,16 @@ describe('sweepExpiredGates (issue #291, Deliverable 4f)', () => {
       workflowStore,
       logger: { ...silentLogger, info: infoSpy },
     };
-    await sweepExpiredGates(deps, NOW);
+    await sweepExpiredGates(deps);
 
-    const final = await runStore.get(run.id);
+    const { record: final } = await runStore.get(run.id);
     expect(final.terminal_state).toBe(true);
     expect(final.skip_details?.['approve']).toEqual({ kind: 'gate_expired', gate_id: 'gate-1' });
     expect(infoSpy.mock.calls.some((c) => String(c[0]).includes('drain --expired'))).toBe(true);
   });
 
   it('a non-expired gate is never touched', async () => {
-    const runStore = new InMemoryStore();
+    const runStore = new InMemoryStore({ clock: settableClock(NOW) });
     const def = wf();
     const workflowStore = makeWorkflowStore([def]);
     const gate = makeGate({
@@ -145,14 +152,14 @@ describe('sweepExpiredGates (issue #291, Deliverable 4f)', () => {
     });
     const run = await seedGatedRun(runStore, def, gate);
 
-    const result = await sweepExpiredGates({ runStore, workflowStore, logger: silentLogger }, NOW);
+    const result = await sweepExpiredGates({ runStore, workflowStore, logger: silentLogger });
     expect(result).toMatchObject({ scanned: 0, enacted: 0 });
-    const final = await runStore.get(run.id);
+    const { record: final } = await runStore.get(run.id);
     expect(final.pending_gate).toBeDefined();
   });
 
   it('a finding-only gate (no on_expiry) is never touched', async () => {
-    const runStore = new InMemoryStore();
+    const runStore = new InMemoryStore({ clock: settableClock(NOW) });
     const def = wf();
     const workflowStore = makeWorkflowStore([def]);
     // makeGate's base carries NO on_expiry, so omitting the override yields the same finding-only
@@ -160,22 +167,22 @@ describe('sweepExpiredGates (issue #291, Deliverable 4f)', () => {
     const gate = makeGate();
     const run = await seedGatedRun(runStore, def, gate);
 
-    const result = await sweepExpiredGates({ runStore, workflowStore, logger: silentLogger }, NOW);
+    const result = await sweepExpiredGates({ runStore, workflowStore, logger: silentLogger });
     expect(result).toMatchObject({ scanned: 0, enacted: 0 });
-    const final = await runStore.get(run.id);
+    const { record: final } = await runStore.get(run.id);
     expect(final.pending_gate).toBeDefined();
   });
 
   it('unregistered-workflow skip arm: a run whose workflow this listen process never mounted is skipped, not thrown', async () => {
-    const runStore = new InMemoryStore();
+    const runStore = new InMemoryStore({ clock: settableClock(NOW) });
     const def = wf();
     const workflowStore = makeWorkflowStore([]); // deliberately empty — 'sweep-wf' unregistered
     const gate = makeGate({ on_expiry: 'abort' });
     const run = await seedGatedRun(runStore, def, gate);
 
-    const result = await sweepExpiredGates({ runStore, workflowStore, logger: silentLogger }, NOW);
+    const result = await sweepExpiredGates({ runStore, workflowStore, logger: silentLogger });
     expect(result).toMatchObject({ scanned: 1, enacted: 0, skipped_unregistered: 1, errors: 0 });
-    const final = await runStore.get(run.id);
+    const { record: final } = await runStore.get(run.id);
     expect(final.pending_gate).toBeDefined(); // untouched
   });
 
@@ -207,59 +214,37 @@ describe('sweepExpiredGates (issue #291, Deliverable 4f)', () => {
       .mockRejectedValueOnce(busyErr)
       .mockResolvedValueOnce({ applied: true, transitioned: true, run: {}, pendingFinalizers: [] });
     const runStore: Pick<ListenDeps['runStore'], 'list' | 'settleStep'> = {
+      // #715 (b): a listing is snapshots (each row judged at its own reading — here the host's).
       list: async () =>
-        [runA, runB].map((r) => ({
-          ...r,
-          workflow_version: 1,
-          completed_steps: [],
-          in_progress_steps: ['approve'],
-          failed_steps: [],
-          skipped_steps: [],
-          run_phase: 'gate_waiting' as const,
-          version: 1,
-          params: {},
-          evidence: [],
-          created_at: '2020-01-01T00:00:00.000Z',
-          updated_at: '2020-01-01T00:00:00.000Z',
-          terminal_state: false,
-        })),
+        listing(
+          [runA, runB].map((r) => ({
+            ...r,
+            workflow_version: 1,
+            completed_steps: [],
+            in_progress_steps: ['approve'],
+            failed_steps: [],
+            skipped_steps: [],
+            run_phase: 'gate_waiting' as const,
+            version: 1,
+            params: {},
+            evidence: [],
+            created_at: '2020-01-01T00:00:00.000Z',
+            updated_at: '2020-01-01T00:00:00.000Z',
+            terminal_state: false,
+          })),
+        ),
       settleStep,
     };
 
-    const result = await sweepExpiredGates(
-      {
-        runStore: runStore as ListenDeps['runStore'],
-        workflowStore,
-        logger: silentLogger,
-      },
-      NOW,
-    );
+    const result = await sweepExpiredGates({
+      runStore: runStore as ListenDeps['runStore'],
+      workflowStore,
+      logger: silentLogger,
+    });
     expect(result.scanned).toBe(2);
     expect(result.skipped_locked).toBe(1);
     expect(result.enacted).toBe(1);
     expect(settleStep).toHaveBeenCalledTimes(2);
-  });
-
-  it('dormant when the store declares no settleStep at all — a fast no-op', async () => {
-    const def = wf();
-    const workflowStore = makeWorkflowStore([def]);
-    // `settleStep` OMITTED (the Pick keeps it optional) — the store genuinely "declares no
-    // settleStep at all", which is exactly what the dormancy check reads.
-    const runStore: Pick<ListenDeps['runStore'], 'list' | 'settleStep'> = {
-      list: vi.fn(),
-    };
-    const result = await sweepExpiredGates(
-      { runStore: runStore as ListenDeps['runStore'], workflowStore, logger: silentLogger },
-      NOW,
-    );
-    expect(result).toEqual({
-      scanned: 0,
-      enacted: 0,
-      skipped_unregistered: 0,
-      skipped_locked: 0,
-      errors: 0,
-    });
-    expect(runStore.list).not.toHaveBeenCalled();
   });
 });
 
@@ -291,16 +276,16 @@ describe('issue #719 — the expiry sweeper on a store with a damaged run file (
       const sweepSeen: SweepSeenFiles = new Map();
       const deps = { runStore, workflowStore: makeWorkflowStore([def]), logger, sweepSeen };
       const passes = [];
-      for (let i = 0; i < 3; i++) passes.push(await sweepExpiredGates(deps, NOW));
+      for (let i = 0; i < 3; i++) passes.push(await sweepExpiredGates(deps));
       const warnedAfterThree = warns.length;
       utimesSync(bad, new Date('2030-01-01T00:00:00Z'), new Date('2030-01-01T00:00:00Z'));
-      await sweepExpiredGates(deps, NOW);
+      await sweepExpiredGates(deps);
       // (a) red when the damaged file fails the pass, is logged every pass, is not logged again
       //     once it changed, or hides the readable run; (b) prints the enactments, the warn lines
       //     (path, class, reason — no content) and the debug counts.
       expect({
         enacted: passes.map((p) => p.enacted),
-        gateSettled: (await runStore.get(run.id)).pending_gate === undefined,
+        gateSettled: (await runStore.get(run.id)).record.pending_gate === undefined,
         warnedAfterThree,
         warns: warns.map((w) => [w.msg, w.data]),
         debugs: debugs.map((d) => [d.msg, d.data]),
@@ -344,13 +329,13 @@ describe('issue #719 — the expiry sweeper on a store with a damaged run file (
         logger,
         sweepSeen,
       };
-      await sweepExpiredGates(deps, NOW);
+      await sweepExpiredGates(deps);
       renameSync(bad, aside); // repaired: no damaged file on the next pass
-      await sweepExpiredGates(deps, NOW);
+      await sweepExpiredGates(deps);
       const remembered = sweepSeen.size;
       renameSync(aside, bad); // damaged again — same class, size and mtime
       utimesSync(bad, at, at);
-      await sweepExpiredGates(deps, NOW);
+      await sweepExpiredGates(deps);
       // (a) red when a clean pass keeps the repaired file's entry (pruned only on a pass that
       //     skipped a file), so its return is never warned; (b) prints the warn count and the map's
       //     size after the clean pass.
@@ -471,15 +456,12 @@ describe('issue #719 — the expiry sweeper on a store with a damaged run file (
     try {
       writeFileSync(join(runsDir, 'bad.json'), '{"params":{"token": ghp_FAKE719}}');
       const { logger, warns } = capture();
-      await sweepExpiredGates(
-        {
-          runStore: new JsonFileStore(runsDir),
-          workflowStore: makeWorkflowStore([]),
-          logger,
-          sweepSeen: new Map(),
-        },
-        NOW,
-      );
+      await sweepExpiredGates({
+        runStore: new JsonFileStore(runsDir),
+        workflowStore: makeWorkflowStore([]),
+        logger,
+        sweepSeen: new Map(),
+      });
       const leaked = JSON.stringify(warns).includes('ghp_FAKE7');
       // (a) red when the parser's text reaches the log; (b) prints booleans only.
       expect({ warned: warns.length === 1, leaked }).toEqual({ warned: true, leaked: false });
@@ -495,7 +477,7 @@ describe('issue #719 — the expiry sweeper on a store with a damaged run file (
     const runsDir = mkdtempSync(join(tmpdir(), 'realm-719-sweep-'));
     try {
       const runStore = new JsonFileStore(runsDir);
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'sweep-wf',
         workflowVersion: 1,
         params: {},
@@ -512,11 +494,11 @@ describe('issue #719 — the expiry sweeper on a store with a damaged run file (
         logger,
         sweepSeen: new Map() as SweepSeenFiles,
       };
-      await sweepExpiredGates(deps, NOW);
+      await sweepExpiredGates(deps);
       const warnedWhileCopy = warns.length;
       rmSync(own);
-      await sweepExpiredGates(deps, NOW);
-      await sweepExpiredGates(deps, NOW);
+      await sweepExpiredGates(deps);
+      await sweepExpiredGates(deps);
       // (a) red when a copy is logged, or when its first damaged sighting is missed or repeated;
       //     (b) prints the counts, the warned paths, the advice's opening and the unchanged-bytes
       //     check.
@@ -541,7 +523,7 @@ describe('issue #719 — the expiry sweeper on a store with a damaged run file (
     const runsDir = mkdtempSync(join(tmpdir(), 'realm-719-sweep-'));
     try {
       const runStore = new JsonFileStore(runsDir);
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'sweep-wf',
         workflowVersion: 1,
         params: {},
@@ -557,10 +539,10 @@ describe('issue #719 — the expiry sweeper on a store with a damaged run file (
         logger,
         sweepSeen: new Map() as SweepSeenFiles,
       };
-      await sweepExpiredGates(deps, NOW);
+      await sweepExpiredGates(deps);
       writeFileSync(own, '{ not json'); // the copy's class, size and mtime are unchanged
-      await sweepExpiredGates(deps, NOW);
-      await sweepExpiredGates(deps, NOW);
+      await sweepExpiredGates(deps);
+      await sweepExpiredGates(deps);
       const copyWarns = warns.filter((w) => (w.data as { path: string }).path === copy);
       // (a) red when the seen-map compares class, size and mtime only, so the rename advice stays
       //     the last word (following it overwrites a run file), or when the new advice repeats; (b)

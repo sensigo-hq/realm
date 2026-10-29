@@ -247,7 +247,11 @@ describe('#729 PR-0 — the MCP door’s laws', () => {
 
   it('Amendment 9: the published field set — the ways, the engine’s routing fields and error.remedy never leave the door', async () => {
     const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-door-729-')));
-    const { run } = await store.create({ workflowId: LEVER.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: LEVER.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const replies = [
       await executeStep(store, LEVER, {
         runId: run.id,
@@ -302,7 +306,11 @@ describe('#729 PR-0 — the MCP door’s laws', () => {
     const damaged = buildPreExecutionErrorEnvelope('x', 'r', 0, unreadableRunFileError(facts));
     const envelope = renderReply(damaged, {}).envelope;
     const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-door-729-')));
-    const { run } = await store.create({ workflowId: LEVER.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: LEVER.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const refused = await executeStep(store, LEVER, {
       runId: run.id,
       command: 'm',
@@ -351,7 +359,11 @@ describe('#729 PR-0 — the MCP door’s laws', () => {
         side: { description: 'side', execution: 'agent', depends_on: [] },
       },
     } as WorkflowDefinition;
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const opening = await executeStep(store, d, {
       runId: run.id,
       command: 'q',
@@ -468,7 +480,11 @@ describe('#729 PR-0 — the MCP door’s laws', () => {
         },
       },
     } as WorkflowDefinition;
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const opened = await executeStep(store, d, {
       runId: run.id,
       command: 'q',
@@ -482,7 +498,7 @@ describe('#729 PR-0 — the MCP door’s laws', () => {
     // (a) red when the way or its instruction carries other choices than the gate's; (b) prints
     //     the three lists.
     expect({
-      gate: (await store.get(run.id)).pending_gate?.choices,
+      gate: (await store.get(run.id)).record.pending_gate?.choices,
       way: respond?.verb === 'respond' ? respond.choice.one_of : undefined,
       instruction: answer?.instruction?.call_with['choice'],
     }).toEqual({

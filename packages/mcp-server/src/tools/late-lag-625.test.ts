@@ -75,7 +75,7 @@ describe('#625 PR-2a, F1 — over MCP the expiry line says how late; the late an
     const { call, runStore, workflowStore } = await connect();
     await workflowStore.register(gated(id, onExpiry));
     const runId = (await call('start_run', { workflow_id: id }))['run_id'] as string;
-    const record = await runStore.get(runId);
+    const { record: record } = await runStore.get(runId);
     const at = Date.now() - 15_000;
     const expiresAt = new Date(at).toISOString();
     await runStore.update({

@@ -17,7 +17,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import {
   advanceRun,
   executeStep,
@@ -29,6 +29,24 @@ import { describePending } from './pending.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import { agentActionFor, nextCalls, owedOf, proofOf } from '../test-support/ways-view.js';
+import { writeTestClockFile } from '../store/test-clock-file.js';
+
+/** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
+ *  runs folder sits beside the location's clock file (first set to the host's reading), which
+ *  `setClockOf` rewrites. */
+async function testLocationRuns(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  await writeTestClockFile(root, new Date());
+  return join(root, 'runs');
+}
+async function clockedJsonStore(prefix: string): Promise<JsonFileStore> {
+  return new JsonFileStore(await testLocationRuns(prefix));
+}
+async function setClockOf(store: object, t: Date): Promise<void> {
+  const runsDir = (store as { runsDirPath?: string }).runsDirPath;
+  if (runsDir === undefined) throw new Error('setClockOf: this store is not a JSON store');
+  await writeTestClockFile(dirname(runsDir), t);
+}
 
 /** `q` (a question, 60 s, `on_expiry` as given), then `after` (a bare `auto` step). */
 function gated(onExpiry: 'settle_default' | 'abort' | undefined): WorkflowDefinition {
@@ -54,19 +72,18 @@ function gated(onExpiry: 'settle_default' | 'abort' | undefined): WorkflowDefini
   };
 }
 
-/** The store without `settleStep`: the legacy path of `submitHumanResponse`. */
-function legacyOf(store: JsonFileStore): JsonFileStore {
-  return Object.assign(Object.create(store) as JsonFileStore, { settleStep: undefined });
-}
-
 describe('#625 PR-2a, C133/C134/C135/C136 — the caller, the opener, what a refused answer leaves owed, the act', () => {
   let store: JsonFileStore;
   beforeEach(async () => {
-    store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-co-625-')));
+    store = await clockedJsonStore('realm-co-625-');
   });
 
   async function atQuestion(d: WorkflowDefinition) {
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const opened = await executeStep(store, d, {
       runId: run.id,
       command: 'q',
@@ -74,7 +91,7 @@ describe('#625 PR-2a, C133/C134/C135/C136 — the caller, the opener, what a ref
       dispatcher: async () => ({}),
     });
     if (opened.status !== 'confirm_required') throw new Error(`fixture: ${opened.status}`);
-    const gate = (await store.get(run.id)).pending_gate!;
+    const gate = (await store.get(run.id)).record.pending_gate!;
     const past = new Date(new Date(gate.expires_at!).getTime() + 5_000);
     return { runId: run.id, gateId: gate.gate_id, past, token: proofOf(opened) };
   }
@@ -82,7 +99,7 @@ describe('#625 PR-2a, C133/C134/C135/C136 — the caller, the opener, what a ref
   it('C133, W3-R1: an unknown caller throws before anything is read or written — the value named, the five listed (as a plain-JS program passes it)', async () => {
     const d = gated('settle_default');
     const { runId, past } = await atQuestion(d);
-    const before = JSON.stringify(await store.get(runId));
+    const before = JSON.stringify((await store.get(runId)).record);
     const calls: string[] = [];
     const watched = Object.create(store) as JsonFileStore;
     for (const m of ['get', 'update', 'settleStep', 'claimStep', 'create', 'list'] as const) {
@@ -97,10 +114,10 @@ describe('#625 PR-2a, C133/C134/C135/C136 — the caller, the opener, what a ref
       let lines: string[] = [];
       // (a) red when the caller is not checked (the call runs and writes "this undefined call"),
       // the check runs after a read, or the message drops the value or the five; (b) prints it.
+      await setClockOf(watched, past);
       await expect(
         advanceRun(watched, d, {
           runId,
-          now: past,
           caller: given as never,
           onExpiry: (line) => lines.push(line),
         }),
@@ -115,7 +132,7 @@ describe('#625 PR-2a, C133/C134/C135/C136 — the caller, the opener, what a ref
       lines = [];
     }
     // (a) red when the run changed (the expiry was carried out); (b) prints the record.
-    expect(JSON.stringify(await store.get(runId))).toBe(before);
+    expect(JSON.stringify((await store.get(runId)).record)).toBe(before);
   });
 
   it.each(ADVANCE_CALLERS.map((c) => [c]))(
@@ -123,7 +140,8 @@ describe('#625 PR-2a, C133/C134/C135/C136 — the caller, the opener, what a ref
     async (caller) => {
       const d = gated('settle_default');
       const { runId, gateId, past } = await atQuestion(d);
-      const reply = await advanceRun(store, d, { runId, now: past, caller });
+      await setClockOf(store, past);
+      const reply = await advanceRun(store, d, { runId, caller });
       // (a) red when a member of the five is refused or renamed; (b) prints the reply's fields.
       expect({
         status: reply.status,
@@ -188,15 +206,16 @@ describe('#625 PR-2a, C133/C134/C135/C136 — the caller, the opener, what a ref
 
   it('C135, W2-Y1: a late answer the expiry beat keeps report_to_user and its hint ends with what the run owes — on both store kinds', async () => {
     const d = gated('settle_default');
-    for (const legacy of [false, true]) {
+    // #715 (b): the legacy store kind (no `settleStep`) is gone — one kind left.
+    for (const legacy of [false]) {
       const { runId, gateId, past } = await atQuestion(d);
-      const reply = await submitHumanResponse(legacy ? legacyOf(store) : store, d, {
+      await setClockOf(store, past);
+      const reply = await submitHumanResponse(store, d, {
         runId,
         gateId,
         choice: 'reject',
-        now: past,
       });
-      const run = await store.get(runId);
+      const { record: run } = await store.get(runId);
       // (a) red when the reply does not name what the run owes, names it differently from the view,
       // the routing changes, or the ways are not the view's; (b) prints the reply.
       expect({
@@ -236,11 +255,11 @@ describe('#625 PR-2a, C133/C134/C135/C136 — the caller, the opener, what a ref
   it('C135 CONTROL: a late answer to a question whose expiry ends the run — the hint says nothing owed, nothing offered', async () => {
     const d = gated('abort');
     const { runId, gateId, past } = await atQuestion(d);
+    await setClockOf(store, past);
     const reply = await submitHumanResponse(store, d, {
       runId,
       gateId,
       choice: 'reject',
-      now: past,
     });
     // (a) red when a run that has ended is said to owe something; (b) prints the reply.
     expect({
@@ -281,18 +300,18 @@ describe('#625 PR-2a, C133/C134/C135/C136 — the caller, the opener, what a ref
       next: ['advance'],
       owed: ['after'],
     });
-    expect(describePending(d, await store.get(runId), undefined, now).owed.length).toBe(1);
+    expect(describePending(d, (await store.get(runId)).record, undefined, now).owed.length).toBe(1);
   });
 
   it("C136, W5-Y3: execute_step on the question's own step after its expiry was carried out by that call — the suggestion says to call advance_run, as next_actions holds only that", async () => {
     const d = gated('settle_default');
     const { runId, gateId, past } = await atQuestion(d);
+    await setClockOf(store, past);
     const reply = await executeStep(store, d, {
       runId,
       command: 'q',
       input: {},
       dispatcher: async () => ({}),
-      now: past,
     });
     // (a) red when the suggestion names steps next_actions does not hold, or the list changes;
     // (b) prints the reply.

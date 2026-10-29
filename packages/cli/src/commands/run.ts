@@ -358,7 +358,7 @@ async function recordChange(
   const end = performance.now() + withinMs;
   while (performance.now() < end) {
     await new Promise((resolve) => setTimeout(resolve, questionWatchMs));
-    const fresh = await store.get(runId).catch(() => undefined);
+    const fresh = (await store.get(runId).catch(() => undefined))?.record;
     if (fresh !== undefined && fresh.version !== version) return fresh;
   }
   return undefined;
@@ -398,7 +398,7 @@ function watchRun(
   let stopped = false;
   const timer = setInterval(() => {
     void store.get(runId).then(
-      (r) => {
+      ({ record: r }) => {
         if (stopped) return;
         if (closed(r)) {
           stopped = true;
@@ -517,7 +517,7 @@ async function holdStepClaim(
 > {
   let claimed: RunRecord;
   try {
-    claimed = await store.claimStep(runId, step, definition, driver);
+    claimed = (await store.claimStep(runId, step, definition, driver)).record;
   } catch (err) {
     if (
       err instanceof WorkflowError &&
@@ -686,7 +686,7 @@ export const runCommand = new Command('run')
           process.exit(1);
         }
         try {
-          const earlier = await new JsonFileStore().get(options.paramsFromRun);
+          const { record: earlier } = await new JsonFileStore().get(options.paramsFromRun);
           if (earlier.workflow_id !== definition.id) {
             console.error(
               `Error: run '${options.paramsFromRun}' is a run of workflow '${earlier.workflow_id}', not '${definition.id}'; its params are not this workflow's.`,
@@ -761,7 +761,7 @@ export const runCommand = new Command('run')
       // predicate is evaluated against it inside the trace buffer's own critical section.
       const traceBufferStore = new JsonTraceBufferStore(store.runsDirPath, store);
 
-      const { run: initialRecord } = await store.create({
+      const { record: initialRecord } = await store.create({
         workflowId: definition.id,
         workflowVersion: definition.version,
         params,
@@ -804,7 +804,7 @@ export const runCommand = new Command('run')
       });
 
       // 5. Execution loop
-      let run = await store.get(runId);
+      let { record: run } = await store.get(runId);
 
       // issue #447: which step the operator was answering for, assigned immediately before each
       // question. The block-scoped names below are not visible from the catch, and the catch is
@@ -871,7 +871,7 @@ export const runCommand = new Command('run')
             } catch (err) {
               // Not this close: the operator's cancel (#447), handled below as before.
               if (!settledElsewhere.signal.aborted) throw err;
-              run = await store.get(runId);
+              run = (await store.get(runId)).record;
               // readline ends the prompt's line when the question is closed.
               console.log(`  ${questionClosedLine(run, g.step_name, writerCtx())}`);
               continue;
@@ -908,7 +908,7 @@ export const runCommand = new Command('run')
               principal: { absent: 'not_a_server_door' },
             });
             if (respondResult.status === 'ok') {
-              run = await store.get(runId);
+              run = (await store.get(runId)).record;
               // issue #625: what the answer's write settled is said BEFORE the state line — the
               // guard that ended the run (its sentence, `Reason:`, each finalizer's outcome) or
               // one passed line per guard; for an answer the gate's expiry beat, the expiry
@@ -932,7 +932,7 @@ export const runCommand = new Command('run')
               // members that are NOT retryable (the gate/run moved or terminalized elsewhere) are
               // exactly what this read converges: the next iteration sees the real state and
               // either re-prompts honestly or reaches the stall/tail. Mirrors the ok arm above.
-              run = await store.get(runId);
+              run = (await store.get(runId)).record;
               // issue #625: a refused LATE answer (the expiry settled the other choice, or ended the
               // run) says what the run is doing now — which call carried out the expiry (decision
               // C146), the refusal, what the expiry's guards did, then the state.
@@ -1000,7 +1000,7 @@ export const runCommand = new Command('run')
             // decision C188: the watch ended with the record unchanged — C173's own hand-back, never
             // the stall branch below (the run is in flight, not stalled). A last read: a record that
             // changed after the watch's last read goes on, as a change inside the watch does.
-            const record = await store.get(runId);
+            const { record: record } = await store.get(runId);
             if (record.version !== run.version) {
               run = record;
               continue;
@@ -1027,7 +1027,7 @@ export const runCommand = new Command('run')
           if (eligibleSteps.length === 0 && cannotPrompt.size > 0) {
             // The steps that cannot run, and the way out — the CLI renderer's lines over the ways
             // core composes (decision C64; #729 PR-0, A-10).
-            const record = await store.get(runId);
+            const { record: record } = await store.get(runId);
             const cannotGoOn = cannotGoOnLines(
               composeWaysAt(record, new Date(), {
                 definition,
@@ -1053,7 +1053,7 @@ export const runCommand = new Command('run')
             // since the last read reached this branch in the same iteration), but the fresh read
             // is the doctrine this file already keeps for every detach point (#447) — kept for
             // consistency, not because a staleness gap is constructible in this spot.
-            const record = await store.get(runId);
+            const { record: record } = await store.get(runId);
             const pending = describePending(definition, record, registry, new Date());
             // F16 (review G1-R1): with engine work owed — a guard, for one: this command runs only the
             // steps it prompts — the run is not stalled. The headline says what the engine owes, which
@@ -1088,7 +1088,7 @@ export const runCommand = new Command('run')
             if (hold === undefined) {
               // Another process took or ran the step first: said as the house says it. Anything else
               // that made the step not ready (the run ended, a question opened) the next pass shows.
-              run = await store.get(runId);
+              run = (await store.get(runId)).record;
               const keeps = store.persistsClaims === true;
               const ran = ranElsewherePhrase(run, stepName, writerCtx());
               if (run.in_progress_steps.includes(stepName)) {
@@ -1153,7 +1153,7 @@ export const runCommand = new Command('run')
           } catch (err) {
             if (!stepGone.signal.aborted) throw err;
             await releaseHeldClaim();
-            run = await store.get(runId);
+            run = (await store.get(runId)).record;
             console.log(
               `  ${stepClosedLine(run, stepName, store.persistsClaims === true, ownToken, writerCtx())}\n`,
             );
@@ -1192,7 +1192,7 @@ export const runCommand = new Command('run')
           const keeps = store.persistsClaims === true;
           const replyRecord =
             result.status === 'blocked' || result.status === 'error'
-              ? await store.get(runId)
+              ? (await store.get(runId)).record
               : undefined;
           const stop =
             replyRecord === undefined ? undefined : classifyStop(result, stepName, replyRecord);
@@ -1217,7 +1217,7 @@ export const runCommand = new Command('run')
           ) {
             // decision C165: the run ended before this answer reached the engine (another process
             // finished it) — the call ran nothing, so no `✓`: the engine's own words say why.
-            run = await store.get(runId);
+            run = (await store.get(runId)).record;
             console.log(`  Not run here: ${result.context_hint}\n`);
           } else if (notRun !== undefined) {
             // decision C179: another process took or ran the step before the engine's own claim for
@@ -1238,7 +1238,7 @@ export const runCommand = new Command('run')
               );
             }
           } else if (result.status === 'ok') {
-            run = await store.get(runId);
+            run = (await store.get(runId)).record;
             const ev = result.evidence[0];
             // #729 PR-3 correction 4 (I-9b): the hash of an output the law hid anything inside is
             // shown as its type and size.
@@ -1252,7 +1252,7 @@ export const runCommand = new Command('run')
             );
           } else if (result.status === 'confirm_required' && result.gate !== undefined) {
             // Gate opened as part of this step — it will be handled at loop top.
-            run = await store.get(runId);
+            run = (await store.get(runId)).record;
             console.log(`  Gate opened for '${result.gate.step_name}'.\n`);
           } else if (
             stop?.kind === 'capability_missing' &&
@@ -1264,7 +1264,7 @@ export const runCommand = new Command('run')
             // as completed; the next pass names the blocked step (it is never offered at the prompt).
             // Keyed on `stopped_step` (decision C73): a value other than this step means the engine
             // ran that step after this one, so this one settled — no record is read to guess it.
-            run = await store.get(runId);
+            run = (await store.get(runId)).record;
             const ev = [...run.evidence].reverse().find((e) => e.step_id === stepName);
             // I-9b, as above.
             const hash =
@@ -1282,7 +1282,7 @@ export const runCommand = new Command('run')
             // run just terminalized in the store, and only a fresh read lets the while condition
             // see that and exit to the tail — a bare continue would re-ask a dead run forever
             // (verified: the mock chain exhausts and the answer never lands anywhere real).
-            run = await store.get(runId);
+            run = (await store.get(runId)).record;
           }
         }
         // Loop-head invariant (issue #468): exactly two exits from here — the while condition
@@ -1331,7 +1331,7 @@ export const runCommand = new Command('run')
           // the #291 race. The map is only as good as the state it forks on.
           let record: RunRecord;
           try {
-            record = await store.get(runId);
+            record = (await store.get(runId)).record;
           } catch (getErr) {
             // The same concurrent-writer reality that makes the fresh read necessary can also
             // make it FAIL — a record purged from another terminal mid-prompt. Without this arm

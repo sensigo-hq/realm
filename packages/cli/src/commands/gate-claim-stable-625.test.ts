@@ -76,7 +76,11 @@ let gateId: string;
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'realm-gate-claim-stable-cli-'));
   store = new JsonFileStore(dir);
-  const { run } = await store.create({ workflowId: definition.id, workflowVersion: 1, params: {} });
+  const { record: run } = await store.create({
+    workflowId: definition.id,
+    workflowVersion: 1,
+    params: {},
+  });
   runId = run.id;
   const reply = await executeStep(store, definition, {
     runId,
@@ -87,7 +91,7 @@ beforeEach(async () => {
   });
   if (reply.status !== 'confirm_required')
     throw new Error(`fixture: gate not open (${reply.status})`);
-  const open = await store.get(runId);
+  const { record: open } = await store.get(runId);
   before = open.claims!['confirm']!;
   gateId = open.pending_gate!.gate_id;
 });
@@ -98,7 +102,7 @@ afterEach(async () => {
 
 /** The claim and the open question must be exactly what the fixture opened. */
 async function expectStable(): Promise<RunRecord> {
-  const after = await store.get(runId);
+  const { record: after } = await store.get(runId);
   // (a) red when the command replaced, re-minted or removed the claim; (b) prints the claim
   //     before and after — synthetic values only.
   expect(after.claims?.['confirm']).toEqual(before);
@@ -169,7 +173,7 @@ describe('GATE_CLAIM_STABLE_WHILE_OPEN — the commands', () => {
   });
 
   it('reclaim --all --force: the batch selector never selects the open gate’s claim (a gated step is per-step only)', async () => {
-    const open = await store.get(runId);
+    const { record: open } = await store.get(runId);
     const claims = classifyInProgressClaims(open, new Date(Date.now() + 10 * 24 * 3600_000));
     const claim = claims.find((c) => c.step === 'confirm');
     expect(claim).toBeDefined();

@@ -157,7 +157,7 @@ beforeAll(async () => {
     prompt_key: `Bearer ${canary('ANCH', 'PROMPT')} api_token=${canary('NAME', 'PROMPT')}`,
   };
   // An open question: params, a step's output, the gate's preview and question.
-  gateRun = (await store.create({ workflowId: 'canary', workflowVersion: 1, params })).run.id;
+  gateRun = (await store.create({ workflowId: 'canary', workflowVersion: 1, params })).record.id;
   await executeStep(store, definition, {
     runId: gateRun,
     command: 'a',
@@ -171,7 +171,7 @@ beforeAll(async () => {
     dispatcher: async () => planted('PREVIEW'),
   });
   // A failed step: its error.
-  failedRun = (await store.create({ workflowId: 'canary', workflowVersion: 1, params })).run.id;
+  failedRun = (await store.create({ workflowId: 'canary', workflowVersion: 1, params })).record.id;
   await executeStep(store, definition, {
     runId: failedRun,
     command: 'a',
@@ -184,7 +184,7 @@ beforeAll(async () => {
     },
   }).catch(() => undefined);
   // An agent step ready: the prompt.
-  agentRun = (await store.create({ workflowId: 'canary-agent', workflowVersion: 1, params })).run
+  agentRun = (await store.create({ workflowId: 'canary-agent', workflowVersion: 1, params })).record
     .id;
 }, 60_000);
 
@@ -371,7 +371,7 @@ describe('#729 PR-3 — no canary leaves any door', () => {
         ]),
         undefined,
       );
-      const run = await new JsonFileStore(join(home, '.realm', 'runs')).get(gateRun);
+      const { record: run } = await new JsonFileStore(join(home, '.realm', 'runs')).get(gateRun);
       await postGateViaApi('xoxb-fake', 'C1', run.pending_gate!, gateRun, true);
       // (a) red when the post composes from the raw gate; (b) prints the labels.
       expect({
@@ -462,8 +462,8 @@ describe('#729 PR-3 — no canary leaves any door', () => {
     } as WorkflowDefinition;
     await new JsonWorkflowStore(join(ciHome, '.realm', 'workflows')).register(ci);
     const store = new JsonFileStore(join(ciHome, '.realm', 'runs'));
-    const runId = (await store.create({ workflowId: 'ci-env', workflowVersion: 1, params: {} })).run
-      .id;
+    const runId = (await store.create({ workflowId: 'ci-env', workflowVersion: 1, params: {} }))
+      .record.id;
     for (const [step, v] of Object.entries(values)) {
       await executeStep(store, ci, {
         runId,
@@ -591,7 +591,7 @@ describe('#729 PR-3 — no canary leaves any door', () => {
     } as WorkflowDefinition;
     await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(abortDef);
     const store = new JsonFileStore(join(home, '.realm', 'runs'));
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'canary-abort',
       workflowVersion: 1,
       params: {},
@@ -632,7 +632,11 @@ describe('#729 PR-3 — no canary leaves any door', () => {
     const LOAD_ANCH = 'FAKECANANCHLOAD0729';
     const LOAD_NAME = 'FAKECANNAMELOAD0729';
     const store = new JsonFileStore(join(home, '.realm', 'runs'));
-    const { run } = await store.create({ workflowId: 'canary', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'canary',
+      workflowVersion: 1,
+      params: {},
+    });
     await store.update({
       ...run,
       extension_identity: [
@@ -672,7 +676,7 @@ describe('#729 PR-3 — no canary leaves any door', () => {
         workflowVersion: 1,
         params: {},
       })
-    ).run.id;
+    ).record.id;
     const stub = await startAnthropicStub({ finalContent: { summary: 'done' } });
     try {
       const out = await cliAsync(
@@ -715,7 +719,7 @@ describe('#729 PR-3 — no canary leaves any door', () => {
         workflowVersion: 1,
         params: { q_env: Q_ENV, q_decl: Q_DECL },
       })
-    ).run.id;
+    ).record.id;
     await executeStep(store, definition, {
       runId,
       command: 'a',
@@ -728,7 +732,7 @@ describe('#729 PR-3 — no canary leaves any door', () => {
       input: {},
       dispatcher: async () => planted('PREVIEW'),
     });
-    const gateId = (await store.get(runId)).pending_gate!.gate_id;
+    const gateId = (await store.get(runId)).record.pending_gate!.gate_id;
     // The drive waits at the question; once it has printed it, another process answers, and the
     // drive goes on to its end and its Disclosure line.
     const out = await new Promise<string>((resolve, reject) => {
@@ -806,14 +810,14 @@ describe('#729 PR-3 — no canary leaves any door', () => {
     const store = new JsonFileStore(join(home, '.realm', 'runs'));
     const runId = (
       await store.create({ workflowId: 'canary-display', workflowVersion: 1, params: {} })
-    ).run.id;
+    ).record.id;
     await executeStep(store, displayed, {
       runId,
       command: 'g',
       input: {},
       dispatcher: async () => planted('PREVIEW'),
     });
-    const gateId = (await store.get(runId)).pending_gate!.gate_id;
+    const gateId = (await store.get(runId)).record.pending_gate!.gate_id;
     const out = await new Promise<string>((resolve, reject) => {
       const child = spawn(
         process.execPath,
@@ -941,7 +945,7 @@ describe('#729 PR-3 — no canary leaves any door', () => {
         workflowVersion: 1,
         params: {},
       })
-    ).run.id;
+    ).record.id;
     const stub = await startAnthropicStub({ finalContent: { summary: 'done' } });
     try {
       const out = await cliAsync(
@@ -1065,9 +1069,9 @@ describe('#729 PR-3 — no canary leaves any door', () => {
       ) {
         await new Promise((r) => setTimeout(r, 200));
       }
-      const stored = (await new JsonFileStore(join(home, '.realm', 'runs')).list()).find(
-        (r) => r.workflow_id === 'canary-listen',
-      );
+      const stored = (await new JsonFileStore(join(home, '.realm', 'runs')).list()).snapshots
+        .map((s) => s.record)
+        .find((r) => r.workflow_id === 'canary-listen');
       // (a) red when the drive's result line loses both its walk (the output shown as its shapes,
       //     masked) and the writer's broadcast pass: either one alone hides the output canaries it
       //     carries; red too when the prompt reaches the model raw; (b) prints the status, the
@@ -1203,10 +1207,14 @@ describe(
         writeFileSync(join(p.cwd, '.env'), 'SVC_TOKEN=FAKE-F2-TOKEN-0001\n', 'utf8');
         const registered = p.realm(['workflow', 'register', 'wf/workflow.yaml']);
         const runs = new JsonFileStore(join(p.home, '.realm', 'runs'));
-        const { run } = await runs.create({ workflowId: 'wf', workflowVersion: 1, params: {} });
+        const { record: run } = await runs.create({
+          workflowId: 'wf',
+          workflowVersion: 1,
+          params: {},
+        });
         // A run that recorded a secret the manifest no longer names: its declared part changed.
         await runs.update({
-          ...(await runs.get(run.id)),
+          ...(await runs.get(run.id)).record,
           extension_identity: [
             {
               manifest: { path: join(p.cwd, 'realm.yaml'), content_hash: 'recorded-before' },
@@ -1234,7 +1242,7 @@ describe(
       for (const placement of PLACEMENTS) {
         const p = project(placement);
         const runs = new JsonFileStore(join(p.home, '.realm', 'runs'));
-        const { run } = await runs.create({
+        const { record: run } = await runs.create({
           workflowId: 'not-registered-f2',
           workflowVersion: 1,
           params: { note: `${p.cwd}/notes.txt` },

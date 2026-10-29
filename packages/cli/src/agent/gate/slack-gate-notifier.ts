@@ -3,6 +3,7 @@
 // and bidirectional resolution via Events API or Socket Mode.
 // Internal to the CLI package — not exported from the package's public index.
 import {
+  parseStamp,
   submitHumanResponse,
   describeAnswerEnding,
   describeEndedBy,
@@ -545,7 +546,7 @@ export function startGateReminderTimers(
   // AUTHORED cycle (reminder_max is frozen alongside reminder_seconds — always defined together).
   const reminderMax = authored ? (gate.reminder_max ?? 3) : 1;
   const expiresAtMs =
-    gate.expires_at !== undefined ? new Date(gate.expires_at).getTime() : undefined;
+    gate.expires_at !== undefined ? (parseStamp(gate.expires_at) ?? NaN) : undefined;
 
   let reminderTimer: ReturnType<typeof setTimeout> | undefined;
   let occurrence = 0;
@@ -615,7 +616,7 @@ export function checkDeadNotificationAdvisory(
   escalationThresholdMs: number,
 ): string | undefined {
   if (gate.reminder_seconds !== undefined || gate.expires_at === undefined) return undefined;
-  const windowMs = new Date(gate.expires_at).getTime() - new Date(gate.opened_at).getTime();
+  const windowMs = (parseStamp(gate.expires_at) ?? NaN) - (parseStamp(gate.opened_at) ?? NaN);
   const deadReminder = reminderIntervalMs >= windowMs;
   const deadEscalation = escalationThresholdMs >= windowMs;
   if (!deadReminder && !deadEscalation) return undefined;
@@ -790,11 +791,11 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
           // another call), the refusal or the same-choice sentence, what the expiry's guards did.
           let lateLines: string[];
           try {
-            lateLines = describeAnswerEnding(result, await store.get(runId), {
+            lateLines = describeAnswerEnding(result, (await store.get(runId)).record, {
               gateId: gate.gate_id,
               via: 'agent',
               workflow: definition,
-              before: before ?? {},
+              before: before?.record ?? {},
               now: new Date(),
             });
           } catch {
@@ -805,7 +806,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
           // #729 PR-4 (02): the operator's lines stay on this console; the thread gets the person's
           // words for what the question met (`answer_late`), naming no command.
           for (const line of lateLines) console.log(line);
-          const after = await store.get(runId).catch(() => undefined);
+          const after = (await store.get(runId).catch(() => undefined))?.record;
           const outcome =
             result.outcome ??
             (after !== undefined
@@ -842,11 +843,11 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
           if (result.ended_by !== undefined) {
             let endingLines: string[];
             try {
-              endingLines = describeAnswerEnding(result, await store.get(runId), {
+              endingLines = describeAnswerEnding(result, (await store.get(runId)).record, {
                 gateId: gate.gate_id,
                 via: 'agent',
                 workflow: definition,
-                before: before ?? {},
+                before: before?.record ?? {},
                 now: new Date(),
               });
             } catch {
@@ -1037,7 +1038,7 @@ async function closedNotice(
   gate: PendingGate,
 ): Promise<PersonNotice | undefined> {
   try {
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     return composePersonNotice({
       kind: 'question_closed',
       run_id: runId,
@@ -1075,7 +1076,7 @@ async function pollUntilGateResolved(
       }
     });
     if (signal?.aborted) break;
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     if (run.terminal_state) break;
     if (run.pending_gate === undefined || run.pending_gate.gate_id !== gateId) break;
   }
@@ -1157,7 +1158,7 @@ export function createSlackGateHandler(
       const intervalMs = config.pollIntervalMs ?? 3000;
       for (;;) {
         await new Promise<void>((resolve) => setTimeout(resolve, intervalMs));
-        const run = await config.store.get(runId);
+        const { record: run } = await config.store.get(runId);
         if (run.terminal_state) break;
         if (run.pending_gate === undefined || run.pending_gate.gate_id !== gate.gate_id) break;
       }

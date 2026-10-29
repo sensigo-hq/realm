@@ -6,7 +6,7 @@ import type { RunRecord } from '../types/run-record.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import { respondWayOfGate } from './ways.js';
 import { admitEntry } from '../admission.js';
-import { deriveRunPhase, sealRunLevel } from './eligibility.js';
+import { deriveRunPhase } from './eligibility.js';
 
 /**
  * The unconditional abandon advisory (issue #222's documented kill contract), minted ONCE here and
@@ -53,7 +53,7 @@ export async function abandonRun(
   reason?: string,
 ): Promise<RunRecord> {
   admitEntry('abandonRun', { store, storeKind: 'run store', parts: { runId, reason } });
-  const run = await store.get(runId);
+  const { record: run } = await store.get(runId);
 
   // Already abandoned → idempotent no-op.
   if (run.abandoned_at !== undefined) {
@@ -117,19 +117,24 @@ export async function abandonRun(
   // tool for a CLI kill is a false statement about who killed the run (issue #558 PR-C).
   const abandonedReason = reason ?? 'Abandoned';
   try {
-    // issue #367: run-level seal through the ONE bypass-writer chokepoint — it stamps
-    // sealed_by {arm: 'abandon_requested'} alongside abandoned_at and terminal_state in the same
-    // object literal.
+    // issue #367: run-level seal through the ONE bypass-writer chokepoint (`sealRunLevel`) — it
+    // stamps sealed_by {arm: 'abandon_requested'} alongside abandoned_at and terminal_state.
+    // #715 (b) (D-21): through the `seal_run` settlement delta, so `abandoned_at` is the write's own
+    // reading; a run that moved since the read above is thrown as STATE_SNAPSHOT_MISMATCH, as
+    // update() threw. No definition: a seal works when the workflow is gone (Amendment 1).
     // issue #558 PR-C: release every claim in the SAME write (see the JSDoc bullet above).
-    return await store.update({
-      ...sealRunLevel(run, 'abandon_requested', abandonedReason),
-      in_progress_steps: [],
-      claims: {},
+    const sealed = await store.settleStep(runId, {
+      kind: 'seal_run',
+      arm: 'abandon_requested',
+      reason: abandonedReason,
+      expected_version: run.version,
+      release_claims: true,
     });
+    return sealed.run;
   } catch (err) {
     if (err instanceof WorkflowError && err.code === 'STATE_SNAPSHOT_MISMATCH') {
       // The run changed under us — reload once.
-      const reloaded = await store.get(runId);
+      const { record: reloaded } = await store.get(runId);
       if (reloaded.abandoned_at !== undefined) {
         return reloaded; // someone else abandoned it concurrently → idempotent success
       }

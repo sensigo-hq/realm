@@ -182,7 +182,7 @@ const registry = new ExtensionRegistry();
 registry.register('adapter', 'orders_api', orders);
 const dispatcher = createAgentDispatcher(definition, registry, { decide: { refund: true } });
 
-const { run } = await store.create({
+const { record: run } = await store.create({
   workflowId: definition.id,
   workflowVersion: definition.version,
   params: { order: 'A-17' },
@@ -546,11 +546,11 @@ Types: `FencedTraceBufferContractAdapter`, `FencedTraceBufferContractCase`, `Fen
 
 The laws of the time a run store writes (added after version 0.48.0). Each case builds its own store, on a clock it moves.
 
-| Adapter field        | Holds                                                                                                                                                                                                                                                                |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `storeName`          | A name for the store, at the start of each case's `name`.                                                                                                                                                                                                            |
-| `route`              | `{ kind: 'clock', makeStore({ clock }) }` for a store built with a clock it is given, such as `InMemoryStore`; `{ kind: 'location', makeStore({ location }) }` for a store opened on a test location, such as `JsonFileStore` on `location.runsDir`.                 |
-| `seedLegacyTerminal` | If the store has `stampSeal`: writes an ended run that has no record of how it ended into the store the route built for the case, past the store's own checks, and returns it; without it, the `READS_SPEND_NO_READING` case fails, saying that the hook is missing. |
+| Adapter field        | Holds                                                                                                                                                                                                                                                           |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `storeName`          | A name for the store, at the start of each case's `name`.                                                                                                                                                                                                       |
+| `route`              | `{ kind: 'clock', makeStore({ clock }) }` for a store built with a clock it is given, such as `InMemoryStore`; `{ kind: 'location', makeStore({ location }) }` for a store opened on a test location, such as `JsonFileStore` on `location.runsDir`.            |
+| `seedLegacyTerminal` | If the store has `stampSeal`: writes an ended run that has no record of how it ended into the store the route built for the case, past the store's own checks, and returns it; without it, the `READS_ONE_READING` case fails, saying that the hook is missing. |
 
 | Law                                | A case fails when                                                                                                                                                                                                                                                 |
 | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -558,9 +558,15 @@ The laws of the time a run store writes (added after version 0.48.0). Each case 
 | `MONOTONE_CAPPED`                  | a write after the clock stepped back behind a record is not stamped with the record's time, or with the clock's time plus 5 seconds when the record is further ahead                                                                                              |
 | `KEYED_CREATE_ORDERS_AFTER_HOLDER` | a run started again under an idempotency key after the clock stepped back less than 5 seconds is not stamped after the run it replaces. At a step back of exactly 5 seconds the 5-second cap wins: that run is stamped equal to the run it replaces, not after it |
 | `KEYED_CREATE_FLOOR_CAPPED`        | that run's time is lifted more than 5 seconds                                                                                                                                                                                                                     |
-| `READS_SPEND_NO_READING`           | `get`, `list` or `stampSeal` reads the clock (on the `clock` route only)                                                                                                                                                                                          |
+| `READS_ONE_READING`                | `get`, `list` or `listWithDiagnostics` reads the clock other than once, or `stampSeal`, `listRunIds`, `statAllForRun` or `deleteAllForRun` reads it (on the `clock` route only)                                                                                   |
+| `SNAPSHOT_AT_SOUND`                | a `get` reads the clock after it loads the record, so a write at the reading is missing from the record it returns (on the `clock` route only)                                                                                                                    |
+| `SETTLE_ONE_READING`               | a `settleStep` reads the clock other than once, applied or refused, or does not return the reading as `at` and stamp `updated_at` with it                                                                                                                         |
+| `OPEN_GATE_MINTS_AT_AT`            | a gate opened by `settleStep` gets an `opened_at` other than the write's reading, or an `expires_at` other than that reading plus the gate's timeout                                                                                                              |
+| `LATE_ANSWER_ONE_WRITE`            | an answer to a gate whose time is up and that declares `on_expiry` is not refused and the gate's expiry carried out in that same write                                                                                                                            |
+| `SEAL_RUN_ONE_WRITE`               | a `seal_run` change does not seal at the write's reading, leaves a claim or a step in progress when asked to release them, changes the identity entry's `captured_at`, writes over a run that changed, or writes an ended run again                               |
+| `KEYED_FIRST_CREATE_ONE_READING`   | a `create` with a new idempotency key, or one that returns a live run, reads the clock other than once (on the `clock` route only)                                                                                                                                |
 
-A failing case's message starts with its law's name. On the `location` route the reads cannot be counted, so a file running that route names `READS_SPEND_NO_READING` in its `NOT_RUN`.
+A failing case's message starts with its law's name. On the `location` route the reads cannot be counted, so a file running that route names `READS_ONE_READING`, `KEYED_FIRST_CREATE_ONE_READING` and `SNAPSHOT_AT_SOUND` in its `NOT_RUN`.
 
 Types: `StoreClockContractAdapter`, `StoreClockContractCase`, `StoreClockLaw`, `StoreRoute`.
 

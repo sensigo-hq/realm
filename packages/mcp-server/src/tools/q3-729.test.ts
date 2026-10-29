@@ -172,7 +172,7 @@ async function answeredRun(
   d: WorkflowDefinition,
   runParams: Record<string, unknown> = { x: 'from-params' },
 ): Promise<string> {
-  const { run } = await c.runStore.create({
+  const { record: run } = await c.runStore.create({
     workflowId: d.id,
     workflowVersion: 1,
     params: runParams,
@@ -209,13 +209,13 @@ describe('#729 Q3 — the agent’s execute_step naming an engine step', () => {
     async (step) => {
       const c = await connect();
       const runId = await answeredRun(c, W3);
-      const before = await c.runStore.get(runId);
+      const { record: before } = await c.runStore.get(runId);
       const r = await c.call('execute_step', {
         run_id: runId,
         command: step,
         params: AGENT_PARAMS,
       });
-      const after = await c.runStore.get(runId);
+      const { record: after } = await c.runStore.get(runId);
       // (a) red when the party conjunct is dropped (the step runs on the agent's params) or the
       //     reply's words or routing change; (b) prints the reply's fields and the record's facts.
       expect({
@@ -263,7 +263,7 @@ describe('#729 Q3 — the agent’s execute_step naming an engine step', () => {
           claim_token: params['claim_token'],
         });
       }
-      const after = await c.runStore.get(runId);
+      const { record: after } = await c.runStore.get(runId);
       const entry = after.evidence.find((e) => e.step_id === step && e.kind !== 'gate_response');
       // (a) red when advance_run does not run the step, or the step ran on the agent's params, or the
       //     mapped step's input is not its map's; (b) prints the step's state and whether the agent's
@@ -286,19 +286,24 @@ describe('#729 Q3 — the agent’s execute_step naming an engine step', () => {
 
   it('cell 11: the agent step by name → admitted, as today', async () => {
     const c = await connect();
-    const { run } = await c.runStore.create({ workflowId: W3.id, workflowVersion: 1, params: {} });
+    const { record: run } = await c.runStore.create({
+      workflowId: W3.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const r = await c.call('execute_step', { run_id: run.id, command: 'first', params: {} });
     // (a) red when the arm refuses the agent's own step; (b) prints the status and what completed.
     // Admitted, its chain then runs the engine's owed steps and opens Q's gate (confirm_required).
-    expect([r['status'], (await c.runStore.get(run.id)).completed_steps.includes('first')]).toEqual(
-      ['confirm_required', true],
-    );
+    expect([
+      r['status'],
+      (await c.runStore.get(run.id)).record.completed_steps.includes('first'),
+    ]).toEqual(['confirm_required', true]);
   });
 
   it('cell 12: a guard by name → today’s reply: blocked, the guard’s sentence and the door’s tail, advance_run, nothing written', async () => {
     const c = await connect();
     const runId = await answeredRun(c, W3);
-    const before = await c.runStore.get(runId);
+    const { record: before } = await c.runStore.get(runId);
     const r = await c.call('execute_step', { run_id: runId, command: 'g', params: {} });
     // (a) red when the guard's reply moves; (b) prints its fields.
     expect({
@@ -309,7 +314,7 @@ describe('#729 Q3 — the agent’s execute_step naming an engine step', () => {
       action: r['agent_action'],
       also: (r['also'] as Array<{ verb: string }>).map((a) => a.verb),
       suggestion: (r['blocked_reason'] as { suggestion?: string }).suggestion,
-      version: (await c.runStore.get(runId)).version === before.version,
+      version: (await c.runStore.get(runId)).record.version === before.version,
     }).toEqual({
       status: 'blocked',
       error_code: undefined,
@@ -326,7 +331,11 @@ describe('#729 Q3 — the agent’s execute_step naming an engine step', () => {
   // never the engine’s'
   it('cell 13: a step refused before its claim (its input_schema) → that refusal, on the engine’s input, never the engine-decided one; routed as a refusal, with its own way out', async () => {
     const c = await connect();
-    const { run } = await c.runStore.create({ workflowId: W2.id, workflowVersion: 1, params: {} });
+    const { record: run } = await c.runStore.create({
+      workflowId: W2.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const r = await c.call('execute_step', { run_id: run.id, command: 'publish', params: {} });
     // (a) red when the pre-claim refusal is replaced by the engine-decided one (conjunct (iii)), or
     //     routed `provide_input` (the caller's input judged — before Q3 correction 1); (b) prints
@@ -347,9 +356,9 @@ describe('#729 Q3 — the agent’s execute_step naming an engine step', () => {
   it('cell 14: K (this server lacks its handler) by name → blocked, nothing to call, report_to_user, the capability words; no claim, no capability block written', async () => {
     const c = await connect();
     const runId = await answeredRun(c, WK);
-    const before = await c.runStore.get(runId);
+    const { record: before } = await c.runStore.get(runId);
     const r = await c.call('execute_step', { run_id: runId, command: 'k', params: AGENT_PARAMS });
-    const after = await c.runStore.get(runId);
+    const { record: after } = await c.runStore.get(runId);
     const state = await c.call('get_run_state', { run_id: runId });
     // (a) red when the call claims the step and writes the capability block (as before the unit),
     //     names next_actions, or routes otherwise; (b) prints the reply's fields and the record's.
@@ -378,7 +387,11 @@ describe('#729 Q3 — the agent’s execute_step naming an engine step', () => {
 describe('#729 Q3, Part C — the dispatch-time capability block names no door word in core', () => {
   it('cell 15: the chain reaches a step this server lacks the code for → error; the hint without "follow next_actions", ending with the capability sentence advance_run prints', async () => {
     const c = await connect();
-    const { run } = await c.runStore.create({ workflowId: WA.id, workflowVersion: 1, params: {} });
+    const { record: run } = await c.runStore.create({
+      workflowId: WA.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const r = await c.call('execute_step', { run_id: run.id, command: 'first', params: {} });
     const advanced = await c.call('advance_run', { run_id: run.id });
     const CAPABILITY =
@@ -407,9 +420,9 @@ describe('#729 Q3 correction 1 — at the agent’s door an engine step’s inpu
   ) {
     const c = await connect();
     const runId = await answeredRun(c, d, runParams);
-    const before = await c.runStore.get(runId);
+    const { record: before } = await c.runStore.get(runId);
     const r = await c.call('execute_step', { run_id: runId, command: step, params });
-    const after = await c.runStore.get(runId);
+    const { record: after } = await c.runStore.get(runId);
     return {
       r,
       record: {
@@ -528,7 +541,7 @@ describe('#729 Q3 correction 1 — at the agent’s door an engine step’s inpu
       dispatcher: async (_s, input) => ({ got: input }),
       registry: registry(),
     });
-    const after = await c.runStore.get(runId);
+    const { record: after } = await c.runStore.get(runId);
     // (a) red when the substitution applies to every caller (the party conjunct dropped) — the
     //     library's lever would be refused; (b) prints the status and whether the step completed on
     //     the given input.
@@ -563,7 +576,7 @@ describe('#729 Q3 correction 1 — at the agent’s door an engine step’s inpu
 
   it('F1-g: an AGENT step’s answer is its own input — one that fits its schema is admitted although the run’s params do not fit', async () => {
     const c = await connect();
-    const { run } = await c.runStore.create({
+    const { record: run } = await c.runStore.create({
       workflowId: F1_AGENT.id,
       workflowVersion: 1,
       params: { x: 'from-params' },
@@ -571,7 +584,7 @@ describe('#729 Q3 correction 1 — at the agent’s door an engine step’s inpu
     const r = await c.call('execute_step', { run_id: run.id, command: 'first', params: FITS });
     // (a) red when the `execution === 'auto'` conjunct is dropped (the agent's own answer judged on
     //     the run's params); (b) prints the status and whether the step completed.
-    expect([r['status'], (await c.runStore.get(run.id)).completed_steps]).toEqual([
+    expect([r['status'], (await c.runStore.get(run.id)).record.completed_steps]).toEqual([
       'ok',
       ['first'],
     ]);
@@ -593,7 +606,7 @@ describe('#729 Q3 correction 1, C2 — no agent-step telemetry for an engine ste
       const autoLines = spy.mock.calls.slice(nAuto).map((a) => String(a[0]));
       const agentRun = (
         await c.runStore.create({ workflowId: F1_AGENT.id, workflowVersion: 1, params: {} })
-      ).run.id;
+      ).record.id;
       const nAgent = spy.mock.calls.length;
       const agentReply = await c.call('execute_step', {
         run_id: agentRun,
@@ -673,7 +686,11 @@ describe('#872 (a) correction 1 (C5) — the attempt’s error reply counts ever
 
   it('AC6 (ii): an agent step whose chain attempts one of two such steps → execute_step’s error reply counts both', async () => {
     const c = await connect();
-    const { run } = await c.runStore.create({ workflowId: WK2.id, workflowVersion: 1, params: {} });
+    const { record: run } = await c.runStore.create({
+      workflowId: WK2.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const r = await c.call('execute_step', { run_id: run.id, command: 'first', params: {} });
     // (a) red when the dispatch branch says only the attempted step's own clause; (b) prints the
     //     status, the step attempted and the hint.

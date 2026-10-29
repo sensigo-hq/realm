@@ -7,7 +7,7 @@
 // slack-gate-notifier.ts's `handleBidirectionalGate`, run-agent.ts's non-Slack poll loop, and
 // run.ts's interactive prompt.
 import {
-  applySettlement,
+  parseStamp,
   describeGuardLines,
   drainFinalizers,
   expiryCarriedOutLine,
@@ -22,7 +22,6 @@ import type {
   WorkflowDefinition,
   PendingGate,
   ExtensionRegistry,
-  SettlementResult,
   Attributed,
 } from '@sensigo/realm';
 
@@ -72,7 +71,7 @@ export function scheduleGateExpiryTimer(
   if (gate.expires_at === undefined || gate.on_expiry === undefined) {
     return (): void => {};
   }
-  const expiresAtMs = new Date(gate.expires_at).getTime();
+  const expiresAtMs = parseStamp(gate.expires_at) ?? NaN;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let cancelled = false;
 
@@ -85,21 +84,12 @@ export function scheduleGateExpiryTimer(
     }
     try {
       const delta = { kind: 'expire_gate' as const, gateId: gate.gate_id };
-      let outcome: SettlementResult;
-      const firedAt = new Date();
-      if (deps.store.settleStep !== undefined) {
-        outcome = await deps.store.settleStep(runId, delta, deps.definition, { now: firedAt });
-      } else {
-        const fresh = await deps.store.get(runId);
-        const pure = applySettlement(fresh, delta, deps.definition, { now: firedAt });
-        outcome = pure.applied ? { ...pure, run: await deps.store.update(pure.run) } : pure;
-      }
+      // #715 (b): the store's clock decides the gate is due, and the settle returns its reading.
+      const outcome = await deps.store.settleStep(runId, delta, deps.definition);
       if (outcome.applied) {
-        // issue #625: on a store that declares `settleStep` the expiry's write also settled the
-        // guards its default made eligible. This timer logs ONE line, so what they did is
-        // appended to it: the ending sentence and its `Reason:` when a guard ended the run,
-        // otherwise a passed line per guard. (The legacy branch above never sets the option, so
-        // it reports none.)
+        // issue #625: the expiry's write also settled the guards its default made eligible. This
+        // timer logs ONE line, so what they did is appended to it: the ending sentence and its
+        // `Reason:` when a guard ended the run, otherwise a passed line per guard.
         const guardLines = describeGuardLines(outcome);
         // #729 PR-0 (T-2, G7-18): the timer's line is the expiry receipt's — core's ONE line
         // composer, the same words every enactor's line carries (no second composer here).
@@ -115,7 +105,7 @@ export function scheduleGateExpiryTimer(
           { gate_id: gate.gate_id, step: gate.step_name, expires_at: gate.expires_at },
           carried,
           TIMER_VIA,
-          firedAt,
+          outcome.at,
           true,
         );
         console.log(

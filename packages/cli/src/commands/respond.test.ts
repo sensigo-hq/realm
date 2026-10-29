@@ -73,7 +73,7 @@ describe('respondToGate', () => {
   });
 
   it('advances a gate-waiting run to completed on valid choice', async () => {
-    const { run: run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'respond-test-wf',
       workflowVersion: 1,
       params: {},
@@ -99,7 +99,7 @@ describe('respondToGate', () => {
     expect(choice).toBe('approve');
     expect(newState).toBe('completed');
 
-    const updated = await runStore.get(run.id);
+    const { record: updated } = await runStore.get(run.id);
     expect(updated.run_phase).toBe('completed');
   });
 
@@ -109,7 +109,7 @@ describe('respondToGate', () => {
     const missingWfStore = new JsonWorkflowStore(
       await mkdtemp(join(tmpdir(), 'realm-respond-missing-wf-')),
     );
-    const { run: run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'dev456',
       workflowVersion: 1,
       params: {},
@@ -148,7 +148,7 @@ describe('respondToGate', () => {
   });
 
   it('throws WorkflowError when gate_id does not match', async () => {
-    const { run: run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'respond-test-wf',
       workflowVersion: 1,
       params: {},
@@ -211,7 +211,7 @@ describe('respondToGate — fires finalizers on gate completion (registry thread
   });
 
   async function openGate(): Promise<{ runId: string; gateId: string }> {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'respond-finalizer-wf',
       workflowVersion: 1,
       params: {},
@@ -249,7 +249,7 @@ describe('respondToGate — fires finalizers on gate completion (registry thread
 
     expect(newState).toBe('completed');
     expect(ran).toHaveBeenCalledTimes(1);
-    const updated = await runStore.get(runId);
+    const { record: updated } = await runStore.get(runId);
     expect(updated.completed_steps).toContain('record_outcome');
     expect(updated.evidence.some((e) => e.step_id === 'record_outcome')).toBe(true);
   });
@@ -273,7 +273,7 @@ describe('respondToGate — fires finalizers on gate completion (registry thread
     );
 
     expect(newState).toBe('completed');
-    const updated = await runStore.get(runId);
+    const { record: updated } = await runStore.get(runId);
     expect(updated.failed_steps).not.toContain('record_outcome');
     expect(updated.completed_steps).not.toContain('record_outcome');
     expect(updated.finalizer_ledger?.['record_outcome']?.status).toBe('pending');
@@ -345,7 +345,7 @@ describe('respondCommand — `Error loading extensions:` (issue #466)', () => {
       },
     };
     await workflowStore.register(gateWorkflow);
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: gateWorkflow.id,
       workflowVersion: 1,
       params: {},
@@ -410,7 +410,7 @@ describe('respondCommand — `Error loading extensions:` (issue #466)', () => {
       },
     };
     await workflowStore.register(gateWorkflow);
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: gateWorkflow.id,
       workflowVersion: 1,
       params: {},
@@ -476,7 +476,7 @@ describe('respondCommand — `Error loading extensions:` (issue #466)', () => {
     // it, matching the dev-run scenario exactly.
     const { JsonFileStore } = await import('@sensigo/realm');
     const runStore = new JsonFileStore();
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'dev456',
       workflowVersion: 1,
       params: {},
@@ -531,7 +531,7 @@ describe('the answerer clause reads the record (#706 walk W8-R1)', () => {
     );
     await workflowStore.register(answererWorkflow);
     registry = new ExtensionRegistry();
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: answererWorkflow.id,
       workflowVersion: 1,
       params: {},
@@ -562,7 +562,9 @@ describe('the answerer clause reads the record (#706 walk W8-R1)', () => {
 
   /** The record's answers to the question, as the step view reads them — what a failure prints. */
   async function recordedAnswers(): Promise<string> {
-    return JSON.stringify(composeStepViews(await runStore.get(runId))['decide']?.answers ?? []);
+    return JSON.stringify(
+      composeStepViews((await runStore.get(runId)).record)['decide']?.answers ?? [],
+    );
   }
 
   const respondedLine = (clause: string): string =>
@@ -615,7 +617,9 @@ describe('the answerer clause reads the record (#706 walk W8-R1)', () => {
       'ok',
     );
     expect(
-      composeStepViews(await runStore.get(runId))['decide']?.answers?.map((a) => a.answered_by),
+      composeStepViews((await runStore.get(runId)).record)['decide']?.answers?.map(
+        (a) => a.answered_by,
+      ),
       `the record's answers: ${before}`,
     ).toEqual([{ by: null, absent_cause: 'name_unreadable' }]);
     const bob = await respond('bob');
@@ -640,8 +644,9 @@ describe('the answerer clause reads the record (#706 walk W8-R1)', () => {
     const read = bobStore.get.bind(bobStore);
     const reads: RunRecord[] = [];
     let aliceStatus: string | undefined;
-    bobStore.get = async (id: string): Promise<RunRecord> => {
-      const record = await read(id);
+    bobStore.get = async (id: string) => {
+      const snapshot = await read(id);
+      const record = snapshot.record;
       reads.push(record);
       if (reads.length === 1) {
         const alice = await submitHumanResponse(runStore, answererWorkflow, {
@@ -654,10 +659,11 @@ describe('the answerer clause reads the record (#706 walk W8-R1)', () => {
         });
         aliceStatus = alice.status;
       }
-      return record;
+      return snapshot;
     };
     const bob = await respond('bob', bobStore);
-    const answersAfter = composeStepViews(await runStore.get(runId))['decide']?.answers ?? [];
+    const answersAfter =
+      composeStepViews((await runStore.get(runId)).record)['decide']?.answers ?? [];
     // (b) what every assertion here prints: bob's reads (question open? record version), alice's
     //     reply status, bob's line and the record's answers.
     const shown =
@@ -772,7 +778,7 @@ describe('#729 PR-0 correction (C5) — a wrong gate id: the refusal names its w
 
   it('a question open: the line after the message answers the open question, its command last', async () => {
     const { runStore, workflowStore } = await stores();
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: gateWorkflow.id,
       workflowVersion: 1,
       params: {},
@@ -783,7 +789,7 @@ describe('#729 PR-0 correction (C5) — a wrong gate id: the refusal names its w
       input: {},
       dispatcher: async () => ({}),
     });
-    const gateId = (await runStore.get(run.id)).pending_gate?.gate_id;
+    const gateId = (await runStore.get(run.id)).record.pending_gate?.gate_id;
     expect(gateId, 'fixture: the question is open').toBeDefined();
     // (a) red when the refusal prints no way on (the core message alone, as before the correction),
     //     or the answer's command is not the open gate's; (b) prints the lines.
@@ -795,7 +801,7 @@ describe('#729 PR-0 correction (C5) — a wrong gate id: the refusal names its w
 
   it('no question open: the line after the message reads the run', async () => {
     const { runStore, workflowStore } = await stores();
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: gateWorkflow.id,
       workflowVersion: 1,
       params: {},
@@ -809,7 +815,7 @@ describe('#729 PR-0 correction (C5) — a wrong gate id: the refusal names its w
 
   it('the open question’s time is up: the line after the message carries out its expiry (Q18 (a))', async () => {
     const { runStore, workflowStore } = await stores();
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: dueWorkflow.id,
       workflowVersion: 1,
       params: {},
@@ -821,7 +827,7 @@ describe('#729 PR-0 correction (C5) — a wrong gate id: the refusal names its w
       dispatcher: async () => ({}),
     });
     expect(
-      (await runStore.get(run.id)).pending_gate,
+      (await runStore.get(run.id)).record.pending_gate,
       'fixture: the question is open',
     ).toBeDefined();
     await new Promise((resolve) => setTimeout(resolve, 1_100));

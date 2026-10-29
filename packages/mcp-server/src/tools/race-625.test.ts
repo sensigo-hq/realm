@@ -83,7 +83,11 @@ describe('#625 PR-2a, F7 — MCP advance_run and execute_step reply from the rec
     moment: 'read' | 'claim',
     act: (runId: string) => Promise<void>,
   ) {
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     // `advance_run` reads the run (1), `advanceRun` reads it (2), and `s`'s call reads it (3).
     let gets = 0;
     let fired = false;
@@ -115,7 +119,7 @@ describe('#625 PR-2a, F7 — MCP advance_run and execute_step reply from the rec
       { run_id: run.id },
       { runStore: racing, workflowStore, registry: new ExtensionRegistry() },
     );
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     return { reply, after, fired, runId: run.id };
   }
   const otherRunsIt = (def: WorkflowDefinition) => async (runId: string) => {
@@ -230,7 +234,11 @@ describe('#625 PR-2a, F7 — MCP advance_run and execute_step reply from the rec
       },
     };
     await workflowStore.register(def);
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     let settledA = false;
     let fired = false;
     const racing = new Proxy(store, {

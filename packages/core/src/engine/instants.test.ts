@@ -10,10 +10,14 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect } from 'vitest';
+import { readdirSync, readFileSync } from 'node:fs';
+import { dirname, join, relative, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   CLOCK_SKEW_EPSILON_MS,
   isPastDeadline,
   overdueOf,
+  parseStamp,
   readInstant,
   recordStampedAheadSentence,
 } from './instants.js';
@@ -117,10 +121,64 @@ describe('#729 PR-0 — isPastDeadline and overdueOf (A-15, T-2, Q10)', () => {
       version: 1,
       steps: { q: { description: 'q', execution: 'agent', depends_on: [] } },
     };
-    const settled = applySettlement(run, { kind: 'expire_gate', gateId: 'g' }, def, { now: R });
+    const settled = applySettlement(run, { kind: 'expire_gate', gateId: 'g' }, def, { at: R });
     expect({
       view: dueExpiry(gate, R),
       settlement: settled.applied ? 'applied' : settled.reason,
     }).toEqual({ view: undefined, settlement: 'not_expired' });
   });
 });
+
+// #715 (b) A.2 (D-25): the ONE parser of a stored stamp. `readInstant` and every production read of a
+// stored instant call `parseStamp`; the source cell below keeps the rest of core from parsing one.
+describe('#715 (b) A.2 — parseStamp, the one stamp parser', () => {
+  it('a parseable stamp gives its epoch ms; an unparseable one gives undefined — never NaN', () => {
+    // (a) red when NaN leaks (Date.parse returned bare) or a valid stamp is refused; (b) prints both.
+    expect([parseStamp(at(0)), parseStamp('garbage'), parseStamp('')]).toEqual([
+      R.getTime(),
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it('source: core parses stored stamps only in instants.ts — Date.parse elsewhere is a named non-stamp parser, and no hand-rolled new Date(<stamp>).getTime() remains', () => {
+    // (a) red when a production file outside instants.ts parses a stored stamp itself (a new
+    //     Date.parse site, or a `new Date(x_at|deadline|since).getTime()`); (b) prints the sites.
+    const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+    const files = sourceFiles(join(root, 'core', 'src'))
+      .concat(sourceFiles(join(root, 'cli', 'src')))
+      .concat(sourceFiles(join(root, 'mcp-server', 'src')))
+      .concat(sourceFiles(join(root, 'testing', 'src')));
+    const dateParse: string[] = [];
+    const handRolled: string[] = [];
+    for (const f of files) {
+      const rel = relative(root, f).split(sep).join('/');
+      readFileSync(f, 'utf8')
+        .split('\n')
+        .forEach((line, i) => {
+          if (rel.startsWith('core/') && line.includes('Date.parse(')) dateParse.push(rel);
+          if (/new Date\([^)]*(_at|deadline|since)[^)]*\)\.getTime\(\)/.test(line))
+            handRolled.push(`${rel}:${i + 1}`);
+        });
+    }
+    expect(dateParse.sort()).toEqual([
+      'core/src/economics/cache-economics.ts', // a price-file `at` (config), not a run's stamp
+      'core/src/economics/price-source.ts', // the same, validated at load
+      'core/src/engine/instants.ts', // parseStamp itself
+      'core/src/store/test-clock-file.ts', // a test location's clock file, not a run's stamp
+    ]);
+    expect(handRolled).toEqual([]);
+  });
+});
+
+/** Every non-test, non-declaration .ts/.mjs source file under `dir`, recursively. */
+function sourceFiles(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...sourceFiles(full));
+    else if (/\.(ts|mjs)$/.test(entry.name) && !/\.test\.ts$|\.d\.ts$/.test(entry.name))
+      out.push(full);
+  }
+  return out;
+}

@@ -9,7 +9,6 @@
 // Nothing pinned ANY of this before now. The measurement is on record: maximal mutants at all six
 // mint sites left the whole 3791-test suite green. So every cell here is new ground, and each was
 // written VERIFY-FIRST — run against the real engine, then pinned to what it actually does.
-import { declareReleaseLine } from '../release-line.js';
 import { describe, it, expect } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -20,43 +19,10 @@ import { applyResume } from './apply-resume.js';
 import { captureEvidence } from '../evidence/snapshot.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
-import type { RunStore, CreateRunOptions } from '../store/store-interface.js';
+import type { RunStore } from '../store/store-interface.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepHandler } from '../extensions/step-handler.js';
-
-/**
- * Delegates every `RunStore` method to a real `JsonFileStore` EXCEPT `settleStep`, which is never
- * implemented at all — so `store.settleStep === undefined` holds by construction and the legacy
- * `buildFinalizedSeal` / in-loop seal is the only reachable path. Precedent:
- * `finalizer-matrix-302.test.ts`, narrowed to this file's one concern.
- */
-class NonDeclaringStoreDouble implements RunStore {
-  // issue #620 PR-C: a test double declares this realm's release line.
-  static {
-    declareReleaseLine(this);
-  }
-  readonly persistsClaims: boolean;
-  constructor(private readonly inner: JsonFileStore) {
-    this.persistsClaims = inner.persistsClaims;
-  }
-  create(options: CreateRunOptions): Promise<{ run: RunRecord; created: boolean }> {
-    return this.inner.create(options);
-  }
-  get(runId: string): Promise<RunRecord> {
-    return this.inner.get(runId);
-  }
-  update(record: RunRecord): Promise<RunRecord> {
-    return this.inner.update(record);
-  }
-  list(workflowId?: string): Promise<RunRecord[]> {
-    return this.inner.list(workflowId);
-  }
-  claimStep(runId: string, stepName: string, definition: WorkflowDefinition): Promise<RunRecord> {
-    return this.inner.claimStep(runId, stepName, definition);
-  }
-  // settleStep intentionally OMITTED.
-}
 
 const explode = (message: string) => async (): Promise<Record<string, unknown>> => {
   throw new Error(message);
@@ -111,7 +77,7 @@ async function driveFailures(
   steps: readonly string[],
   registry?: ExtensionRegistry,
 ): Promise<RunRecord> {
-  const { run } = await store.create({
+  const { record: run } = await store.create({
     workflowId: definition.id,
     workflowVersion: 1,
     params: {},
@@ -125,7 +91,7 @@ async function driveFailures(
       ...(registry !== undefined ? { registry } : {}),
     });
   }
-  return store.get(run.id);
+  return (await store.get(run.id)).record;
 }
 
 describe('#373 — the multi-failure cause is order-independent', () => {
@@ -195,7 +161,7 @@ describe('#373 — the single-failure shape is untouched (the no-regression cont
       },
     };
     const store = await freshStore();
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: 1,
       params: {},
@@ -207,7 +173,7 @@ describe('#373 — the single-failure shape is untouched (the no-regression cont
       input: {},
       dispatcher: succeed,
     });
-    const record = await store.get(run.id);
+    const { record: record } = await store.get(run.id);
     expect(record.failed_steps).toEqual(['g']);
     expect(record.terminal_reason).toBe("Guard step 'g' failed: unresolvable path '$.nope.field'");
   });
@@ -237,17 +203,17 @@ describe('#373 — the sentence agrees with the record after the finalizer drain
     // The honesty conjunct of the growth gate. A no-growth re-render would rebuild the sentence
     // without the seal site's in-hand overlay, which is how the guard sites would lose their path
     // text; it must therefore not happen at all.
+    // #715 (b): on the settlement layer — the legacy layer this cell first ran on is gone.
     const withFinalizer = await driveFailures(
-      new NonDeclaringStoreDouble(await freshStore()),
+      await freshStore(),
       fanoutDef({ on_outcome: 'fail' }),
       ['fail_a', 'fail_b'],
       finalizerRegistry(false),
     );
-    const withoutFinalizer = await driveFailures(
-      new NonDeclaringStoreDouble(await freshStore()),
-      fanoutDef(),
-      ['fail_a', 'fail_b'],
-    );
+    const withoutFinalizer = await driveFailures(await freshStore(), fanoutDef(), [
+      'fail_a',
+      'fail_b',
+    ]);
     expect(withFinalizer.completed_steps).toContain('fin'); // the finalizer really ran
     expect(withFinalizer.failed_steps).toEqual(['fail_a', 'fail_b']);
     expect(withFinalizer.terminal_reason).toBe(withoutFinalizer.terminal_reason);
@@ -298,7 +264,7 @@ describe('#373 — messages', () => {
       },
     };
     const store = await freshStore();
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: 1,
       params: {},
@@ -317,9 +283,9 @@ describe('#373 — messages', () => {
         input: {},
         dispatcher: succeed,
       });
-      if ((await store.get(run.id)).terminal_state) break;
+      if ((await store.get(run.id)).record.terminal_state) break;
     }
-    const record = await store.get(run.id);
+    const { record: record } = await store.get(run.id);
     expect(record.terminal_reason).toBe(
       '2 steps failed: fail_a ("Dispatcher failed: a exploded"), ' +
         `v ("Step 'v' exhausted its validation-rejection budget (6/6)").`,
@@ -478,7 +444,7 @@ it('(6c) a guard message longer than the cap is replaced whole by its marker (B0
   };
   const store = await freshStore();
   const registry = finalizerRegistry(true);
-  const { run } = await store.create({
+  const { record: run } = await store.create({
     workflowId: definition.id,
     workflowVersion: 1,
     params: {},
@@ -498,7 +464,7 @@ it('(6c) a guard message longer than the cap is replaced whole by its marker (B0
     registry,
   });
 
-  const record = await store.get(run.id);
+  const { record: record } = await store.get(run.id);
   const guardError = record.evidence
     .filter((e) => e.step_id === 'g' && e.error !== undefined)
     .at(-1)!.error!;
@@ -530,7 +496,7 @@ describe('#373 — the guard resolution_error site', () => {
       },
     };
     const store = await freshStore();
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: 1,
       params: {},
@@ -547,7 +513,7 @@ describe('#373 — the guard resolution_error site', () => {
       input: {},
       dispatcher: succeed,
     });
-    const record = await store.get(run.id);
+    const { record: record } = await store.get(run.id);
     expect(record.failed_steps).toEqual(['fail_a', 'g']);
     expect(record.terminal_reason).toBe(
       '2 steps failed: fail_a ("Dispatcher failed: a exploded"), ' +
@@ -560,35 +526,6 @@ describe('#373 — the guard resolution_error site', () => {
     expect(guardEvidence.at(-1)!.error).toBe(
       "Guard resolution error: unresolvable path '$.nope.field' (condition: $.nope.field == true)",
     );
-  });
-});
-
-describe('#373 — the two layers agree', () => {
-  it('(9) declaring and non-declaring stores emit BYTE-IDENTICAL sentences', async () => {
-    const declaring = await driveFailures(await freshStore(), fanoutDef(), ['fail_a', 'fail_b']);
-    const legacy = await driveFailures(
-      new NonDeclaringStoreDouble(await freshStore()),
-      fanoutDef(),
-      ['fail_a', 'fail_b'],
-    );
-    expect(legacy.terminal_reason).toBe(declaring.terminal_reason);
-
-    // And through the post-drain re-render, which is a DIFFERENT site in each layer
-    // (applyMarkFinalizer vs buildFinalizedSeal) — the pair most likely to drift.
-    const declaringDrained = await driveFailures(
-      await freshStore(),
-      fanoutDef({ on_outcome: 'fail' }),
-      ['fail_a', 'fail_b'],
-      finalizerRegistry(true),
-    );
-    const legacyDrained = await driveFailures(
-      new NonDeclaringStoreDouble(await freshStore()),
-      fanoutDef({ on_outcome: 'fail' }),
-      ['fail_a', 'fail_b'],
-      finalizerRegistry(true),
-    );
-    expect(legacyDrained.terminal_reason).toBe(declaringDrained.terminal_reason);
-    expect(legacyDrained.terminal_reason).toContain('3 steps failed:');
   });
 });
 
@@ -623,7 +560,7 @@ describe('#373 — a guard-sealed run whose finalizer ALSO fails keeps the path 
 
   it('(D1) settlement layer: fail + guard resolution_error + failing finalizer ⇒ the path survives the drain', async () => {
     const store = await freshStore();
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: guardDef.id,
       workflowVersion: 1,
       params: {},
@@ -631,7 +568,7 @@ describe('#373 — a guard-sealed run whose finalizer ALSO fails keeps the path 
 
     // A real claim, so the settle carries a matching token — an unclaimed settle refuses with
     // `claim_lost` and the whole fixture would silently prove nothing.
-    const claimed = await store.claimStep(run.id, 'fail_a', guardDef);
+    const { record: claimed } = await store.claimStep(run.id, 'fail_a', guardDef);
     const claimToken = claimed.claims!['fail_a']!.token!;
     const failed = await store.settleStep!(
       run.id,
@@ -706,7 +643,7 @@ describe('#373 — a guard-sealed run whose finalizer ALSO fails keeps the path 
     );
     if (!marked.applied) throw new Error(`fixture: mark refused — ${marked.reason}`);
 
-    const record = await store.get(run.id);
+    const { record: record } = await store.get(run.id);
     expect(record.failed_steps).toEqual(['fail_a', 'g', 'fin']);
     expect(record.terminal_reason).toContain('3 steps failed:');
     for (const step of ['fail_a', 'g', 'fin']) expect(record.terminal_reason).toContain(step);
@@ -715,65 +652,13 @@ describe('#373 — a guard-sealed run whose finalizer ALSO fails keeps the path 
     // what must not happen is the path disappearing.)
     expect(record.terminal_reason).toContain("unresolvable path '$.nope.field'");
   });
-
-  it('(D2) legacy layer: the same composition through the real chain ⇒ the path survives the drain', async () => {
-    // Byte-parity with (D1) is NOT asserted — the inputs are not identical (this one runs a real
-    // handler, that one hand-builds the deltas). What must match is the polarity.
-    //
-    // The fixture carries an extra SUCCEEDING step, and that is not decoration: `executeChain`
-    // reaches its inline guard loop only after a step returns ok, so a chain driven by the failing
-    // step alone never runs the guard at all — the first draft of this cell proved exactly that,
-    // with `failed_steps` holding `fail_a` and nothing else.
-    const chainDef: WorkflowDefinition = {
-      ...guardDef,
-      id: 'guard-drain-chain-wf',
-      steps: {
-        ...guardDef.steps,
-        ok: { description: 'OK', execution: 'agent', depends_on: [] },
-        g: { ...guardDef.steps['g']!, depends_on: ['ok'] },
-      },
-    };
-    const store = new NonDeclaringStoreDouble(await freshStore());
-    const { run } = await store.create({
-      workflowId: chainDef.id,
-      workflowVersion: 1,
-      params: {},
-    });
-    const registry = finalizerRegistry(true);
-    await executeStep(store, chainDef, {
-      runId: run.id,
-      command: 'fail_a',
-      input: {},
-      dispatcher: explode('a exploded'),
-      registry,
-    });
-    // `ok` succeeds ⇒ the chain reaches the guard, whose resolution_error seals the run, and
-    // buildFinalizedSeal then drains `fin`, which throws and grows failed_steps.
-    await executeChain(store, chainDef, {
-      runId: run.id,
-      command: 'ok',
-      input: {},
-      dispatcher: succeed,
-      registry,
-    });
-
-    const record = await store.get(run.id);
-    expect(record.failed_steps).toContain('g');
-    expect(record.failed_steps).toContain('fin');
-    expect(record.terminal_reason).toContain('3 steps failed:');
-    expect(record.terminal_reason).toContain(`Finalizer 'fin' failed:`);
-    expect(record.terminal_reason).toContain("unresolvable path '$.nope.field'");
-    // And the enriched evidence really is minted by PRODUCTION here — not hand-shaped as in (D1).
-    const guardEvidence = record.evidence.filter((e) => e.step_id === 'g' && e.error !== undefined);
-    expect(guardEvidence.at(-1)!.error).toContain("unresolvable path '$.nope.field'");
-  });
 });
 
 describe('#373 — across resume epochs', () => {
   it('(10) after resume + re-fail the sentence renders the CURRENT failures, with the new message', async () => {
     const definition = fanoutDef();
     const store = await freshStore();
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: 1,
       params: {},
@@ -786,7 +671,7 @@ describe('#373 — across resume epochs', () => {
         dispatcher: explode(`${step} v1`),
       });
     }
-    const sealed = await store.get(run.id);
+    const { record: sealed } = await store.get(run.id);
     expect(sealed.terminal_reason).toContain('fail_a ("Dispatcher failed: fail_a v1")');
 
     const { run: resumed } = applyResume(sealed, 'fail_a', definition);
@@ -798,7 +683,7 @@ describe('#373 — across resume epochs', () => {
       dispatcher: explode('fail_a v2'),
     });
 
-    const record = await store.get(run.id);
+    const { record: record } = await store.get(run.id);
     // Settle order flipped across the epoch; the sentence did not.
     expect(record.failed_steps).toEqual(['fail_b', 'fail_a']);
     expect(record.terminal_reason).toBe(
@@ -816,7 +701,7 @@ describe('#373 — across resume epochs', () => {
     const definition = fanoutDef({ on_outcome: 'always' });
     const store = await freshStore();
     const registry = finalizerRegistry(true);
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: 1,
       params: {},
@@ -830,7 +715,7 @@ describe('#373 — across resume epochs', () => {
         registry,
       });
     }
-    const sealed = await store.get(run.id);
+    const { record: sealed } = await store.get(run.id);
     expect(sealed.failed_steps).toEqual(['fail_a', 'fail_b', 'fin']);
 
     const { run: resumed } = applyResume(sealed, 'fail_a', definition);
@@ -844,7 +729,7 @@ describe('#373 — across resume epochs', () => {
       registry,
     });
 
-    const record = await store.get(run.id);
+    const { record: record } = await store.get(run.id);
     expect(record.failed_steps).toEqual(['fail_b', 'fin', 'fail_a']);
     expect(record.failed_steps.length).toBe(new Set(record.failed_steps).size); // no duplicate
     // The count matches the DEDUPED set — the property that holds whether or not a duplicate ever

@@ -114,7 +114,11 @@ describe(
 
     async function started(def: WorkflowDefinition, params: Record<string, unknown> = {}) {
       await workflowStore.register(def);
-      const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params });
+      const { record: run } = await runStore.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params,
+      });
       return run.id;
     }
     const inspect = (id: string): string[] => realm(home, ['run', 'inspect', id]).out;
@@ -286,7 +290,7 @@ describe(
       const ready = await started(needsN('n-ready'));
       // A step in flight: 'ask' taken and not finished.
       const flying = await started(needsN('n-flying'));
-      const flyingRecord = await runStore.get(flying);
+      const { record: flyingRecord } = await runStore.get(flying);
       await runStore.update({ ...flyingRecord, in_progress_steps: ['ask'] });
       // Something owed that can run: 'other', an `auto` step with nothing refusing it.
       const owedDef = needsN('n-owed', [
@@ -394,9 +398,9 @@ describe(
         {
           reg: reg.code,
           adv: adv.code,
-          pre: (await runStore.get(pre)).run_phase,
+          pre: (await runStore.get(pre)).record.run_phase,
           ab: ab.code,
-          stuck: (await runStore.get(stuck)).run_phase,
+          stuck: (await runStore.get(stuck)).record.run_phase,
         },
         [...reg.err, ...adv.out, ...adv.err, ...ab.out, ...ab.err].join('\n'),
       ).toEqual({ reg: 0, adv: 0, pre: 'completed', ab: 0, stuck: 'abandoned' });
@@ -430,7 +434,7 @@ describe(
           input: {},
           dispatcher: async () => ({}),
         });
-        const record = await runStore.get(id);
+        const { record: record } = await runStore.get(id);
         if (expired) {
           await runStore.update({
             ...record,
@@ -554,7 +558,7 @@ describe(
       }
     };
     async function readRecord(id: string) {
-      return new JsonFileStore(join(home, '.realm', 'runs')).get(id);
+      return (await new JsonFileStore(join(home, '.realm', 'runs')).get(id)).record;
     }
 
     /** Runs `realm workflow run <file>`; returns the exit code (0 for a natural return). */
@@ -1534,7 +1538,7 @@ describe('issue #729 — realm-run-reading.md, `--stuck` names a run that cannot
       ]);
       const runStore = new JsonFileStore(join(home, '.realm', 'runs'));
       await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(W2);
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'w2-crown',
         workflowVersion: 1,
         params: {},

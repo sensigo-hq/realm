@@ -1,11 +1,13 @@
 // Tests for abandonRun — the shared run-abandonment primitive (#92 follow-up / 0.10.0).
 import { declared } from '../test-support/declared.js';
+import { doubleClock, snap } from '../test-support/snapshot-double.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ABANDON_KILL_ADVISORY, abandonRun } from './abandon-run.js';
 import { JsonFileStore } from '../store/json-file-store.js';
+import { writeTestClockFile } from '../store/test-clock-file.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { RunStore } from '../store/store-interface.js';
 import type { RunRecord } from '../types/run-record.js';
@@ -55,7 +57,11 @@ describe('abandonRun (JsonFileStore)', () => {
   });
 
   async function freshRunning(): Promise<RunRecord> {
-    const { run } = await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'wf',
+      workflowVersion: 1,
+      params: {},
+    });
     return run;
   }
 
@@ -68,7 +74,7 @@ describe('abandonRun (JsonFileStore)', () => {
     expect(result.terminal_reason).toBe('operator cleanup');
     expect(result.version).toBe(run.version + 1);
     // Persisted.
-    const reloaded = await store.get(run.id);
+    const { record: reloaded } = await store.get(run.id);
     expect(reloaded.run_phase).toBe('abandoned');
     expect(reloaded.abandoned_at).toBe(result.abandoned_at);
   });
@@ -76,7 +82,7 @@ describe('abandonRun (JsonFileStore)', () => {
   it('running WITH failed_steps → abandoned (NOT failed) — the key correctness case', async () => {
     const run = await freshRunning();
     // Drive the run to carry a failed step while still running (terminal_state stays false).
-    const withFailed = await store.update({ ...run, failed_steps: ['step_a'] });
+    const { record: withFailed } = await store.update({ ...run, failed_steps: ['step_a'] });
     expect(withFailed.run_phase).toBe('running'); // not terminal yet
     const result = await abandonRun(store, run.id);
     expect(result.run_phase).toBe('abandoned'); // authoritative marker beats failed_steps
@@ -95,7 +101,7 @@ describe('abandonRun (JsonFileStore)', () => {
   // ── issue #558 PR-C ─────────────────────────────────────────────────────────────────────────
   it('releases every claim in the seal write (in_progress_steps + claims both emptied)', async () => {
     const run = await freshRunning();
-    const claimed = await store.update({
+    const { record: claimed } = await store.update({
       ...run,
       in_progress_steps: ['analyze'],
       claims: {
@@ -112,7 +118,7 @@ describe('abandonRun (JsonFileStore)', () => {
     expect(abandoned.claims).toEqual({});
     expect(abandoned.sealed_by?.arm).toBe('abandon_requested');
     // …and it is PERSISTED, not just returned.
-    const reloaded = await store.get(run.id);
+    const { record: reloaded } = await store.get(run.id);
     expect(reloaded.in_progress_steps).toEqual([]);
     expect(reloaded.claims).toEqual({});
   });
@@ -270,7 +276,7 @@ describe('abandonRun (JsonFileStore)', () => {
       abandonRun(store, run.id),
     ]);
     expect(results.filter((r) => r.status === 'fulfilled').length).toBeGreaterThanOrEqual(1);
-    const reloaded = await store.get(run.id);
+    const { record: reloaded } = await store.get(run.id);
     expect(reloaded.run_phase).toBe('abandoned');
     expect(reloaded.abandoned_at).toBeDefined();
   });
@@ -287,11 +293,13 @@ describe('abandonRun — CAS concurrency branch (deterministic stub store)', () 
     });
     let getCalls = 0;
     const stub: Partial<RunStore> = declared({
+      clock: doubleClock,
       get: async () => {
         getCalls++;
-        return getCalls === 1 ? runningRecord() : reloaded; // 1st: running; reload: abandoned
+        return snap(getCalls === 1 ? runningRecord() : reloaded); // 1st: running; reload: abandoned
       },
-      update: async () => {
+      // #715 (b) (D-21): the seal is a `seal_run` settle — a moved run is thrown, as update() threw.
+      settleStep: async () => {
         throw snapshotMismatch(); // a competing writer bumped the version
       },
     });
@@ -303,14 +311,15 @@ describe('abandonRun — CAS concurrency branch (deterministic stub store)', () 
   it('update mismatch then reload shows a non-abandoned (live) run → propagates STATE_SNAPSHOT_MISMATCH', async () => {
     let getCalls = 0;
     const stub: Partial<RunStore> = declared({
+      clock: doubleClock,
       get: async () => {
         getCalls++;
         // 1st: running; reload: still running but advanced by a live writer (version bumped).
-        return getCalls === 1
-          ? runningRecord()
-          : runningRecord({ version: 1, failed_steps: ['x'] });
+        return snap(
+          getCalls === 1 ? runningRecord() : runningRecord({ version: 1, failed_steps: ['x'] }),
+        );
       },
-      update: async () => {
+      settleStep: async () => {
         throw snapshotMismatch();
       },
     });
@@ -318,5 +327,74 @@ describe('abandonRun — CAS concurrency branch (deterministic stub store)', () 
       code: 'STATE_SNAPSHOT_MISMATCH',
     });
     expect(getCalls).toBe(2); // reloaded exactly once, then propagated (no loop)
+  });
+});
+
+// #715 (b) A.8 (ii) (D-21): abandon seals through the `seal_run` delta on a REAL store — the store's
+// transform refuses a moved run (`moved`) and the store throws it exactly as `update()` threw.
+describe('#715 (b) D-21 — abandon’s seal_run on a JSON store', () => {
+  const sealRoots: string[] = [];
+  afterEach(async () => {
+    for (const root of sealRoots.splice(0)) await rm(root, { recursive: true, force: true });
+  });
+  async function storeAt(t: Date): Promise<JsonFileStore> {
+    const root = await mkdtemp(join(tmpdir(), 'realm-715b-abandon-'));
+    sealRoots.push(root);
+    await writeTestClockFile(root, t);
+    return new JsonFileStore(join(root, 'runs'));
+  }
+
+  it('a run that moves between abandon’s read and its seal: abandon reloads once and loses with the STATE_SNAPSHOT_MISMATCH update() threw; the run stays live', async () => {
+    // (a) red when the seal ignores expected_version (it seals over the other writer's write and
+    //     abandon resolves); (b) prints the code, the message and the run's state afterwards.
+    const store = await storeAt(new Date());
+    const { record: run } = await store.create({
+      workflowId: 'wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    // Another writer lands between abandon's read and its seal.
+    const moving = new Proxy(store, {
+      get(target, prop) {
+        if (prop === 'settleStep') {
+          return async (...a: Parameters<JsonFileStore['settleStep']>) => {
+            const { record } = await target.get(run.id);
+            await target.update(record);
+            return target.settleStep(...a);
+          };
+        }
+        const v = Reflect.get(target, prop, target) as unknown;
+        return typeof v === 'function' ? (v as (...x: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    let caught: { code?: string; message?: string } | undefined;
+    await abandonRun(moving, run.id).catch((e: WorkflowError) => {
+      caught = { code: e.code, message: e.message };
+    });
+    const { record: after } = await store.get(run.id);
+    expect({ caught, terminal: after.terminal_state, version: after.version }).toEqual({
+      caught: {
+        code: 'STATE_SNAPSHOT_MISMATCH',
+        message: 'Version conflict — run was modified by another process',
+      },
+      terminal: false,
+      version: run.version + 1,
+    });
+  });
+
+  it('a seal at a test location a year behind the wall stamps abandoned_at (and updated_at) from the store’s reading', async () => {
+    // (a) red when the seal's instant comes from the host's clock (a year later); (b) prints both.
+    const T = new Date(Math.floor(Date.now() / 1000) * 1000 - 365 * 86_400_000);
+    const store = await storeAt(T);
+    const { record: run } = await store.create({
+      workflowId: 'wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    const sealed = await abandonRun(store, run.id);
+    expect({ abandoned_at: sealed.abandoned_at, updated_at: sealed.updated_at }).toEqual({
+      abandoned_at: T.toISOString(),
+      updated_at: T.toISOString(),
+    });
   });
 });

@@ -11,6 +11,7 @@ import type {
   WorkflowDefinition,
   PendingGate,
 } from '@sensigo/realm';
+import { snap, listing, doubleClock, noSettle } from '../test-support/snapshot-double.js';
 
 function makeRun(overrides: Partial<RunRecord> = {}): RunRecord {
   return {
@@ -47,10 +48,12 @@ function makeGate(overrides: Partial<PendingGate> = {}): PendingGate {
 function makeRunStore(run: RunRecord): RunStore {
   return {
     persistsClaims: true,
-    get: async () => run,
-    create: async () => ({ run, created: true }),
-    update: async () => run,
-    list: async () => [run],
+    clock: doubleClock,
+    settleStep: noSettle,
+    get: async () => snap(run),
+    create: async () => ({ ...snap(run), created: true }),
+    update: async () => snap(run),
+    list: async () => listing([run]),
     // inspect.ts (the sole consumer under test here) never claims a step — this mock never needs
     // a real implementation, only a type-complete stub.
     claimStep: async () => {

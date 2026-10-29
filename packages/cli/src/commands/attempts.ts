@@ -82,7 +82,7 @@ export const attemptsCommand = new Command('attempts')
       // unless the flag is given. A run this store does not hold reads nothing.
       let run: RunRecord | undefined;
       try {
-        run = await runs.get(runId);
+        run = (await runs.get(runId)).record;
       } catch (err) {
         // Correction 4 (I-4): a record this store holds and cannot read is a failed read — its
         // declared values could not be read, so the attempts' values are withheld as for a failed
