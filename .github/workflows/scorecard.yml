@@ -21,12 +21,12 @@ jobs:
         with:
           persist-credentials: false # Scorecard best practice — reduces credential exposure
       - name: Run Scorecard analysis
-        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4 (PEELED commit, not the tag-object)
+        uses: ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e # v2.4.4 (PEELED commit, not the tag-object)
         with:
           results_file: results.sarif
           results_format: sarif
           publish_results: true # publishes the score for the badge + REST API (needs id-token:write; default branch only)
       - name: Upload SARIF to code-scanning
-        uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6 (reuse codeql.yml's pin)
+        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.37.6 (reuse codeql.yml's pin)
         with:
           sarif_file: results.sarif
