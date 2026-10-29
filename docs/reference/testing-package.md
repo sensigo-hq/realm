@@ -151,7 +151,7 @@ A fixture stalled this way fails with `Workflow stalled: nothing else can run.` 
 
 ```text
 Workflow stalled: nothing else can run.
-'compute' cannot run (precondition): Precondition failed for step 'compute'. Precondition failed: 'run.params.ok == true'. Resolved value: undefined.
+'compute' cannot run (precondition): Precondition failed for step 'compute'. Precondition failed: 'check.ok == true'. Resolved value: false.
 ```
 
 [`realm workflow test`](cli/realm-workflow.md#test) prints the second and later lines indented under the fixture's `FAIL` line.

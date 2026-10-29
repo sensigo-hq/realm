@@ -21,7 +21,7 @@ Each field takes one condition, or a list. In a list, every condition must be tr
 <path>
 ```
 
-- **Path.** A step's name, a dot, and a field of that step's output: `classify.category`. Deeper fields and list items follow with more dots: `order.customer.name`, `order.items.0.sku`. Two other roots exist: `run.params.<name>` for the run's parameters, and `$settlement.<step>.<field>`, described [below](#settlement).
+- **Path.** A step's name, a dot, and a field of that step's output: `classify.category`. Deeper fields and list items follow with more dots: `order.customer.name`, `order.items.0.sku`. Two other roots exist: `run.params.<name>` for the run's parameters (read by `when` only: in `preconditions` or `abort_unless` it is refused when the file is loaded), and `$settlement.<step>.<field>`, described [below](#settlement).
 - **Operator.** One of `==`, `!=`, `>`, `>=`, `<`, `<=`.
 - **Value.** Text in single or double quotes, a number, `true`, `false` or `null`.
 - **A path alone** is true when its value counts as true. `preconditions` does not accept this form.
@@ -29,7 +29,7 @@ Each field takes one condition, or a list. In a list, every condition must be tr
 Paths here are shorter than in `input_map` and in template expressions. There, a step's output is `context.resources.classify.category`. In a condition that form is refused:
 
 ```text
-Invalid workflow: Step 'c': 'when' references step 'context' which is not in its depends_on [a]. Add it to depends_on or use 'run.params.*'. (step at line 11)
+Invalid workflow: Step 'c': 'when' reads 'context.resources.classify.category', the form input_map uses. A condition names a step's output as '<step>.<field>', so the path always reads as missing, whatever that step outputs. Write it as 'classify.category', then register the workflow again. (step at line 8)
 ```
 
 There is no `and`, `or` or `not`. For "and", use a list:
@@ -148,13 +148,14 @@ Each condition below was the `when` of its own step. `true` means that step ran;
 
 The table above is for `when`. The same conditions were run as `preconditions` and as `abort_unless`. They agree except here:
 
-| Condition form                       | `when`                           | `preconditions`                  | `abort_unless`                                |
-| ------------------------------------ | -------------------------------- | -------------------------------- | --------------------------------------------- |
-| A path alone                         | Accepted                         | Refused when the file is loaded  | Accepted                                      |
-| `<path> == null`                     | True for a missing or null value | False                            | False                                         |
-| `run.params.<name>`                  | Read                             | Not read: the condition is false | Not read: the run fails                       |
-| A path that finds nothing            | The condition is false           | The condition is false           | The run fails. It is not recorded as aborted. |
-| A path to a step not in `depends_on` | Refused when the file is loaded  | Accepted                         | Accepted                                      |
+| Condition form                                     | `when`                                                | `preconditions`                 | `abort_unless`                                |
+| -------------------------------------------------- | ----------------------------------------------------- | ------------------------------- | --------------------------------------------- |
+| A path alone                                       | Accepted                                              | Refused when the file is loaded | Accepted                                      |
+| `<path> == null`                                   | True for a missing or null value                      | False                           | False                                         |
+| `run.params.<name>`                                | Read                                                  | Refused when the file is loaded | Refused when the file is loaded               |
+| A field the step did not output                    | The condition is false                                | The condition is false          | The run fails. It is not recorded as aborted. |
+| A path whose first part is no step of the workflow | Refused when the file is loaded (not in `depends_on`) | Refused when the file is loaded | Refused when the file is loaded               |
+| A path to a step not in `depends_on`               | Refused when the file is loaded                       | Accepted                        | Accepted                                      |
 
 So a test for a missing value belongs in `when`. In `preconditions` and `abort_unless`, `null` is not understood: `== null` is false even when the value is null.
 
@@ -234,6 +235,14 @@ Because a skipped step has no entry, `$settlement.<step>.failed == null` in a `w
 ## Rules the loader applies
 
 - A `when` path must start with `run.params`, or with a step listed in the step's own `depends_on`. A `$settlement` path must name such a step too: `'$settlement' paths must reference a direct dependency (one-hop rule)`.
+- A `preconditions` or `abort_unless` path must start with a step of the workflow, or with `$settlement`. A `run.…` path, a `context.…` path and a name that is no step are refused, each with what to write instead.
+
+  ```text
+  Invalid workflow: Step 'c': precondition 'run.params.mode == 'live'' reads 'run.params.mode', the run's input. A precondition reads only what the workflow's steps recorded, never the run's input, so it could never be true and the step could never run. To skip the step when the input says so, put the condition under 'when'; to refuse a run whose input does not fit, declare it in params_schema. Then register the workflow again. (step at line 8)
+  ```
+
+  On a step with no `depends_on`, the refusal names only `params_schema`: a first step whose `when` is false leaves the run with nothing to run.
+
 - `preconditions` must be a list: `'preconditions' must be an array of strings`.
 - A `when` list must not be empty: `'when' array must not be empty`.
 - A step cannot be named `run`, `context` or `$settlement`: `Step name 'run' is reserved and cannot be used as a step identifier`.

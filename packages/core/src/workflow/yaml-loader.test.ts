@@ -9,6 +9,9 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
 } from './yaml-loader.js';
 import { WorkflowError } from '../types/workflow-error.js';
+import { JsonFileStore } from '../store/json-file-store.js';
+import { advanceRun } from '../engine/execution-loop.js';
+import { validateRunParams } from '../validation/input-schema.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type { ServiceAdapter } from '../extensions/service-adapter.js';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -2443,6 +2446,443 @@ ${abortBlock}
     ).not.toThrow();
     const block = '    abort_unless:\n      - "classify.a == 1"\n      - "classify.b != null"';
     expect(() => loadWorkflowFromString(guardWf(block))).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// issue #933 — a precondition or a guard reads only what the workflow's steps recorded: a path whose
+// first part is no step of the workflow is refused when the file is loaded, with what to write
+// instead. Four arms, keyed on the path's first segment: A the run's input (`run.params…`), B any
+// other path on the run, C the `input_map` form (`context.…`, also under `when`), D a name that is
+// no step. Each cell asserts its text word for word at its line; on a failing host it prints each
+// fixture's refusals (step names and the message's clauses, never a value of a run).
+// ---------------------------------------------------------------------------
+
+describe('issue #933 — a precondition or a guard whose path starts outside the steps is refused at load', () => {
+  /** A workflow from its step lines: `steps:` is line 4, so the first step's key is on line 5. */
+  const flow = (...lines: string[]): string =>
+    ['id: r933', 'name: r933', 'version: 1', ...lines, ''].join('\n');
+  /** The loader's refusals for a fixture, one per item; [] when it loads. */
+  function refusals(yaml: string): readonly string[] {
+    try {
+      loadWorkflowFromStringWithDiagnostics(yaml);
+    } catch (err) {
+      return (err as WorkflowError).errors ?? [(err as Error).message];
+    }
+    return [];
+  }
+  /** Arm A on a precondition. A step that depends on another is told both fields that read the
+   *  input; a step with none only `params_schema`: there a false `when` leaves the run with nothing
+   *  ready, never skipped (the architect's ruling on #933, 2026-10-29). */
+  const ARM_A_PRE = (leaf: string, path: string, line: number, dependent: boolean): string =>
+    `Step 's': precondition '${leaf}' reads '${path}', the run's input. A precondition reads only ` +
+    `what the workflow's steps recorded, never the run's input, so it could never be true and the ` +
+    `step could never run. ` +
+    (dependent
+      ? `To skip the step when the input says so, put the condition under 'when'; to refuse a run ` +
+        `whose input does not fit, declare it in params_schema. `
+      : `To refuse a run whose input does not fit, declare it in params_schema. `) +
+    `Then register the workflow again. (step at line ${line})`;
+  const ARM_A_GUARD = (leaf: string, path: string): string =>
+    `Step 'g': abort_unless '${leaf}' reads '${path}', the run's input. A guard reads only what ` +
+    `the workflow's steps recorded, never the run's input, so whenever the guard runs, this check ` +
+    `fails the run. To refuse a run whose input does not fit, declare it in params_schema; to skip ` +
+    `the steps that should not run on that input, put the condition under their 'when'. Then ` +
+    `register the workflow again. (step at line 5)`;
+  /** The T2 workflow: a guard on the run's input before a step that pays. */
+  const guarded = (abortUnless: string): string =>
+    flow(
+      'steps:',
+      '  g:',
+      '    description: G.',
+      '    execution: guard',
+      `    abort_unless: "${abortUnless}"`,
+      '  pay:',
+      '    description: Pay.',
+      '    execution: auto',
+      '    depends_on: [g]',
+    );
+  const lone = (kind: string, field: string, leaf: string): string =>
+    flow(
+      'steps:',
+      '  s:',
+      '    description: S.',
+      `    execution: ${kind}`,
+      `    ${field}: ["${leaf}"]`,
+    );
+
+  /** `start`, then `s` depending on it and reading the caller's field: `s`'s key is on line 8. */
+  const afterStart = (kind: string, field: string, leaf: string): string =>
+    flow(
+      'steps:',
+      '  start:',
+      '    description: Start.',
+      '    execution: auto',
+      '  s:',
+      '    description: S.',
+      `    execution: ${kind}`,
+      '    depends_on: [start]',
+      `    ${field}: ["${leaf}"]`,
+    );
+
+  // T1, a step that depends on another. (a) red when a precondition on the run's input loads, or is
+  // refused with other words (the `when` remedy left out), on either kind that evaluates
+  // preconditions; (b) prints each kind's refusals.
+  it("T1 (arm A, precondition): `run.params.mode == 'go'` on a step after another is refused, naming `when` and params_schema, on auto and on agent", () => {
+    const leaf = "run.params.mode == 'go'";
+    expect({
+      auto: refusals(afterStart('auto', 'preconditions', leaf)),
+      agent: refusals(afterStart('agent', 'preconditions', leaf)),
+    }).toEqual({
+      auto: [ARM_A_PRE(leaf, 'run.params.mode', 8, true)],
+      agent: [ARM_A_PRE(leaf, 'run.params.mode', 8, true)],
+    });
+  });
+
+  // T1, a first step (no `depends_on`): a false `when` would leave the run with nothing ready, so
+  // the refusal names only params_schema. (a) red when it is told to use `when`, or loads; (b) prints
+  // each kind's refusals.
+  it("T1 (arm A, precondition): `run.params.mode == 'go'` on a first step is refused, naming only params_schema, on auto and on agent", () => {
+    const leaf = "run.params.mode == 'go'";
+    expect({
+      auto: refusals(lone('auto', 'preconditions', leaf)),
+      agent: refusals(lone('agent', 'preconditions', leaf)),
+    }).toEqual({
+      auto: [ARM_A_PRE(leaf, 'run.params.mode', 5, false)],
+      agent: [ARM_A_PRE(leaf, 'run.params.mode', 5, false)],
+    });
+  });
+
+  // T2. (a) red when a guard's comparison on the run's input loads, or is refused with other words;
+  // (b) prints the refusals.
+  it('T2 (arm A, guard): the comparison `run.params.amount <= 1000` is refused', () => {
+    expect(refusals(guarded('run.params.amount <= 1000'))).toEqual([
+      ARM_A_GUARD('run.params.amount <= 1000', 'run.params.amount'),
+    ]);
+  });
+
+  // T2. (a) red when a guard's bare path on the run's input loads, or is refused with other words;
+  // (b) prints the refusals.
+  it('T2 (arm A, guard): the bare path `run.params.ok` is refused', () => {
+    expect(refusals(guarded('run.params.ok'))).toEqual([
+      ARM_A_GUARD('run.params.ok', 'run.params.ok'),
+    ]);
+  });
+
+  const ARM_B = (opening: string, reader: string, consequence: string): string =>
+    `${opening}, which no condition can read: of the run, only 'run.params.*' is readable, and ` +
+    `only under 'when'. ${reader} reads only what the workflow's steps recorded, ${consequence} ` +
+    `Read a step's output instead, then register the workflow again. (step at line 5)`;
+  const PRE_NEVER = 'so it could never be true and the step could never run.';
+  const GUARD_FAILS = 'so whenever the guard runs, this check fails the run.';
+
+  // T3, the conjunct `path === 'run.params'`. (a) red when `run.params` itself is not read as the
+  // run's input (arm B, or no refusal); (b) prints the refusals.
+  it("T3 (arm A vs B): `run.params == null` as a precondition is the run's input (arm A)", () => {
+    const leaf = 'run.params == null';
+    expect(refusals(lone('auto', 'preconditions', leaf))).toEqual([
+      ARM_A_PRE(leaf, 'run.params', 5, false),
+    ]);
+  });
+
+  // T3, the conjunct `startsWith('run.params.')` with its dot. (a) red when `run.paramsX.y` is read
+  // as the run's input (arm A); (b) prints the refusals.
+  it('T3 (arm A vs B): `run.paramsX.y == 1` is no path of the run a condition reads (arm B)', () => {
+    const leaf = 'run.paramsX.y == 1';
+    expect(refusals(lone('auto', 'preconditions', leaf))).toEqual([
+      ARM_B(`Step 's': precondition '${leaf}' reads 'run.paramsX.y'`, 'A precondition', PRE_NEVER),
+    ]);
+  });
+
+  // T3, arm B's other members. (a) red when `run.id` or `run` alone is read as the run's input, or
+  // loads; (b) prints both fixtures' refusals.
+  it("T3 (arm A vs B): `run.id == 'x'` as a precondition and `run` alone as a guard are arm B", () => {
+    expect({
+      precondition: refusals(lone('auto', 'preconditions', "run.id == 'x'")),
+      guard: refusals(guarded('run')),
+    }).toEqual({
+      precondition: [
+        ARM_B("Step 's': precondition 'run.id == 'x'' reads 'run.id'", 'A precondition', PRE_NEVER),
+      ],
+      guard: [ARM_B("Step 'g': abort_unless 'run' reads 'run'", 'A guard', GUARD_FAILS)],
+    });
+  });
+
+  /** A step `fetch` (or `a`), then `s` reading it on the caller's field. */
+  const afterFetch = (first: string, field: string, leaf: string): string =>
+    flow(
+      'steps:',
+      `  ${first}:`,
+      `    description: First.`,
+      '    execution: auto',
+      '  s:',
+      '    description: S.',
+      '    execution: auto',
+      `    depends_on: [${first}]`,
+      `    ${field}: ["${leaf}"]`,
+    );
+  const ARM_C = (opening: string, consequence: string, fix: string, line: number): string =>
+    `${opening}, the form input_map uses. A condition names a step's output as '<step>.<field>', ` +
+    `${consequence} Write it as '${fix}', then register the workflow again. (step at line ${line})`;
+  const WHEN_MISSING = 'so the path always reads as missing, whatever that step outputs.';
+
+  // T4, arm C on a precondition and a guard. (a) red when the `input_map` form loads in either, or
+  // its fix is not the path without `context.resources.` (or the literal `<step>.<field>` when no
+  // field follows the step); (b) prints both fixtures' refusals.
+  it('T4 (arm C): `context.resources.fetch.ok` in a precondition and `context.foo` in a guard are refused with how to write the path', () => {
+    expect({
+      precondition: refusals(
+        afterFetch('fetch', 'preconditions', 'context.resources.fetch.ok == true'),
+      ),
+      guard: refusals(guarded('context.foo')),
+    }).toEqual({
+      precondition: [
+        ARM_C(
+          "Step 's': precondition 'context.resources.fetch.ok == true' reads 'context.resources.fetch.ok'",
+          PRE_NEVER,
+          'fetch.ok',
+          8,
+        ),
+      ],
+      guard: [
+        ARM_C(
+          "Step 'g': abort_unless 'context.foo' reads 'context.foo'",
+          GUARD_FAILS,
+          '<step>.<field>',
+          5,
+        ),
+      ],
+    });
+  });
+
+  // T4, arm C under `when` (`== null` too: a missing value `== null` is TRUE under `when`, so the
+  // consequence says the path reads as missing, never "never true"). (a) red when either gives
+  // today's "add it to depends_on" text, whose remedy is a dead end; (b) prints both refusals.
+  it('T4 (arm C, when): `context.resources.a.ok == true` and `== null` on an auto step say how to write the path, not to add `context` to depends_on', () => {
+    const opening = "Step 's': 'when' reads 'context.resources.a.ok'";
+    expect({
+      isTrue: refusals(afterFetch('a', 'when', 'context.resources.a.ok == true')),
+      isNull: refusals(afterFetch('a', 'when', 'context.resources.a.ok == null')),
+    }).toEqual({
+      isTrue: [ARM_C(opening, WHEN_MISSING, 'a.ok', 8)],
+      isNull: [ARM_C(opening, WHEN_MISSING, 'a.ok', 8)],
+    });
+  });
+
+  // T4, the `when` gate. On a finalizer `when` is prohibited and never evaluated, so today's two
+  // texts stay, unchanged (the same on the base). (a) red when the finalizer is given arm C's text;
+  // (b) prints its refusals.
+  it("T4 (arm C, when): on a finalizer, where `when` is prohibited, the refusals are exactly today's", () => {
+    const yaml = flow(
+      'steps:',
+      '  c:',
+      '    description: C.',
+      '    execution: auto',
+      '  f:',
+      '    description: F.',
+      '    execution: finalizer',
+      '    on_outcome: always',
+      '    handler: h',
+      '    when: ["context.resources.c.ok == true"]',
+    );
+    expect(refusals(yaml)).toEqual([
+      "Step 'f': 'when' is not valid on execution: finalizer steps — step eligibility evaluates it before a step may run, and a finalizer is selected by the run's outcome at settlement, never by eligibility, so here it would route nothing. Route the finalizer with 'on_outcome' instead, or remove it. 'on_outcome' matches run outcomes only — a condition (run params, step evidence) branches inside the handler, whose context carries run_params and resources['$settlement'].<step>.failed (issue #360 tracks widening finalizers with a mint-time 'when'). (line 13)",
+      "Step 'f': 'when' references step 'context' which is not in its depends_on []. Use 'run.params.*' — 'depends_on' is not valid on this step's kind. (step at line 8)",
+    ]);
+  });
+
+  const ARM_D = (
+    opening: string,
+    root: string,
+    reader: string,
+    consequence: string,
+    guess: string,
+    line: number,
+  ): string =>
+    `${opening}, but '${root}' is not a step of this workflow. ${reader} reads only what the ` +
+    `workflow's steps recorded, ${consequence}${guess} Name a step of this workflow, then register ` +
+    `the workflow again. (step at line ${line})`;
+
+  // T5. (a) red when a name that is no step loads, or the guess is offered when nothing is close
+  // (or left out when a step is); (b) prints the three fixtures' refusals.
+  it("T5 (arm D): a typo'd step, a name that is nothing, and `true == true` are refused, with a guess only when a step is close", () => {
+    expect({
+      typo: refusals(afterFetch('fetch', 'preconditions', 'fecth.ok == true')),
+      nothing: refusals(guarded('nothing.ok == true')),
+      dotless: refusals(lone('auto', 'preconditions', 'true == true')),
+    }).toEqual({
+      typo: [
+        ARM_D(
+          "Step 's': precondition 'fecth.ok == true' reads 'fecth.ok'",
+          'fecth',
+          'A precondition',
+          PRE_NEVER,
+          " Did you mean 'fetch'?",
+          8,
+        ),
+      ],
+      nothing: [
+        ARM_D(
+          "Step 'g': abort_unless 'nothing.ok == true' reads 'nothing.ok'",
+          'nothing',
+          'A guard',
+          GUARD_FAILS,
+          '',
+          5,
+        ),
+      ],
+      dotless: [
+        ARM_D(
+          "Step 's': precondition 'true == true' reads 'true'",
+          'true',
+          'A precondition',
+          PRE_NEVER,
+          '',
+          5,
+        ),
+      ],
+    });
+  });
+
+  // T6. A precondition is checked only where the registry's cell consumes it: on a finalizer it is
+  // inert (#509) and the file loads as today; on a guard it is prohibited, and its kind refusal is
+  // the one message. (a) red when the finalizer is refused, or the guard gets a second error;
+  // (b) prints both fixtures' refusals.
+  it('T6 (the precondition gate): a finalizer with `run.params.ok == true` loads; a guard with it gets only its kind refusal', () => {
+    const finalizer = flow(
+      'steps:',
+      '  c:',
+      '    description: C.',
+      '    execution: auto',
+      '  f:',
+      '    description: F.',
+      '    execution: finalizer',
+      '    on_outcome: always',
+      '    handler: h',
+      '    preconditions: ["run.params.ok == true"]',
+    );
+    const guard = flow(
+      'steps:',
+      '  g:',
+      '    description: G.',
+      '    execution: guard',
+      '    abort_unless: "g.ok == true"',
+      '    preconditions: ["run.params.ok == true"]',
+    );
+    expect({ finalizer: refusals(finalizer), guard: refusals(guard) }).toEqual({
+      finalizer: [],
+      guard: [
+        "Step 'g': 'preconditions' is not valid on execution: guard steps — the engine never evaluates it there (a guard's execution evaluates only 'abort_unless'), so the run would LOOK guarded while the declared check never ran. Move the condition into 'abort_unless'. Whether guards gain a live condition surface is an open design question (issue #366) — if admitted later, existing workflows are unaffected. (line 9)",
+      ],
+    });
+  });
+
+  // T7. One refusal per leaf: a bare precondition keeps its one "must be a comparison" refusal.
+  // (a) red when it gets a second error from the root check; (b) prints its refusals.
+  it('T7 (one refusal per leaf): a bare `run.params.ok` precondition gets only "must be a comparison"', () => {
+    expect(refusals(lone('auto', 'preconditions', 'run.params.ok'))).toEqual([
+      `Step 's': precondition 'run.params.ok' must be a comparison (e.g. "step.field >= 1"). (step at line 5)`,
+    ]);
+  });
+
+  // T8. Nothing else changed: `when` still reads the run's input. (a) red when the root check
+  // fires on `when`; (b) prints its refusals.
+  it('T8 (nothing else changed): `when: ["run.params.mode == \'go\'"]` loads', () => {
+    expect(refusals(lone('auto', 'when', "run.params.mode == 'go'"))).toEqual([]);
+  });
+
+  // T8. A root that is a step of the workflow is accepted wherever it is declared: before the step
+  // or after it (a step declared later may have run earlier). (a) red when either is refused;
+  // (b) prints both fixtures' refusals.
+  it('T8 (nothing else changed): a precondition reading a step before it, and one reading a step declared later, load', () => {
+    const later = flow(
+      'steps:',
+      '  s:',
+      '    description: S.',
+      '    execution: auto',
+      '    preconditions: ["later.ok == true"]',
+      '  later:',
+      '    description: Later.',
+      '    execution: auto',
+    );
+    expect({
+      before: refusals(afterFetch('fetch', 'preconditions', 'fetch.ok == true')),
+      later: refusals(later),
+    }).toEqual({ before: [], later: [] });
+  });
+
+  // T8. A `$settlement` leaf returns from its own branch first and never reaches the root check.
+  // (a) red when it is refused; (b) prints its refusals.
+  it('T8 (nothing else changed): a `$settlement` precondition loads', () => {
+    expect(refusals(afterFetch('a', 'preconditions', '$settlement.a.failed == false'))).toEqual([]);
+  });
+
+  // T9, the `when` remedy (guardrail 7(d)): T1's condition moved under `when` loads, and a run
+  // whose input says otherwise skips the step. The step comes after another (`start`): the engine
+  // records a `when` skip once the step's dependencies have settled, so a FIRST step whose `when`
+  // is false is not skipped — the run stays open with nothing ready (realm-workflow.md, "a first
+  // step whose `when` is never true"; the build's verify-first probe). (a) red when the
+  // step runs, or is not recorded as skipped for its `when`; (b) prints the run's skipped and
+  // completed steps and its phase.
+  it("T9 (the remedy leads somewhere): T1's condition under `when` loads, and a run with mode 'stop' skips the step", async () => {
+    const definition = loadWorkflowFromString(
+      afterStart('auto', 'when', "run.params.mode == 'go'"),
+    );
+    const dir = mkdtempSync(join(tmpdir(), 'realm-933-when-'));
+    try {
+      const store = new JsonFileStore(dir);
+      const { run } = await store.create({
+        workflowId: definition.id,
+        workflowVersion: 1,
+        params: { mode: 'stop' },
+      });
+      await advanceRun(store, definition, { runId: run.id });
+      const after = await store.get(run.id);
+      expect({
+        skipped: after.skipped_steps,
+        why: after.skip_details?.['s']?.kind,
+        completed: after.completed_steps,
+        phase: after.run_phase,
+      }).toEqual({ skipped: ['s'], why: 'when_false', completed: ['start'], phase: 'completed' });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // T9, the `params_schema` remedy: the T2 workflow with `amount` declared (`maximum: 1000`) and its
+  // guard removed loads, and a run with `amount: 5000` is refused at start by `validateRunParams`,
+  // which every door that creates a run calls. (a) red when the run is not refused, or 500 is;
+  // (b) prints the refusal's code and message.
+  it('T9 (the remedy leads somewhere): `amount` declared in params_schema, the guard removed, loads; a run with amount 5000 is refused at start', () => {
+    const definition = loadWorkflowFromString(
+      flow(
+        'params_schema:',
+        '  type: object',
+        '  properties:',
+        '    amount:',
+        '      type: number',
+        '      maximum: 1000',
+        'steps:',
+        '  pay:',
+        '    description: Pay.',
+        '    execution: auto',
+      ),
+    );
+    const refusal = (amount: number): { code: string; message: string } | undefined => {
+      try {
+        validateRunParams({ amount }, definition.params_schema!, definition.id);
+      } catch (err) {
+        return { code: (err as WorkflowError).code, message: (err as WorkflowError).message };
+      }
+      return undefined;
+    };
+    expect({ over: refusal(5000), under: refusal(500) }).toEqual({
+      over: {
+        code: 'VALIDATION_INPUT_SCHEMA',
+        message: "Invalid params for workflow 'r933': /amount must be <= 1000",
+      },
+      under: undefined,
+    });
   });
 });
 

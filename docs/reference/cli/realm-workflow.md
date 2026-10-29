@@ -411,7 +411,7 @@ An `auto` step's answer is the one you type, so a step whose input its schema re
 
 ```text
 Workflow stalled: nothing else can run.
-'compute' cannot run (precondition): Precondition failed for step 'compute'. Precondition failed: 'run.params.ok == true'. Resolved value: undefined.
+'compute' cannot run (precondition): Precondition failed for step 'compute'. Precondition failed: 'check.ok == true'. Resolved value: false.
 Run 2a319588-0843-41c4-b28b-44f88ecb0752 stays open (phase 'running'): correct the workflow, register it again, then realm run advance 2a319588-0843-41c4-b28b-44f88ecb0752 — or end it: realm run abandon 2a319588-0843-41c4-b28b-44f88ecb0752
 ```
 
@@ -447,7 +447,7 @@ When a fixture's error takes several lines, the second and later lines are inden
 ```text
 Realm Test — flow
   FAIL one: Workflow stalled: nothing else can run.
-    'compute' cannot run (precondition): Precondition failed for step 'compute'. Precondition failed: 'run.params.ok == true'. Resolved value: undefined.
+    'compute' cannot run (precondition): Precondition failed for step 'compute'. Precondition failed: 'check.ok == true'. Resolved value: false.
 
 0/1 passed
 ```

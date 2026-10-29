@@ -3115,7 +3115,7 @@ describe('#625 PR-2a, round 28 — C205: the replies on the states C202 did not 
         '    description: Check.',
         '    execution: guard',
         '    depends_on: [g]',
-        '    abort_unless: ["nope.field == true"]',
+        '    abort_unless: ["g.field == true"]',
         '',
       ].join('\n'),
     );
@@ -3396,7 +3396,7 @@ describe("#625 PR-2a, round 30 — C211 (the architect's addendum; walk c14 W2-2
         '    description: Check.',
         '    execution: guard',
         '    depends_on: [g]',
-        '    abort_unless: ["nope.x == 1"]',
+        '    abort_unless: ["g.x == 1"]',
       ]),
     );
     const { run } = await runStore.create({
