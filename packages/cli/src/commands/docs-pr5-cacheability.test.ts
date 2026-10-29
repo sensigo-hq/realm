@@ -1446,17 +1446,23 @@ describe("correction 3, I-10 and I-11: what each provider's page says, dated", (
 
   // I-11: after the example-05 transcript, the page quotes Anthropic's prompt-caching page of
   // 2026-10-28 (fetched 16:11Z, 162,386 bytes, its line 614) and says what it means for two steps
-  // that share a fixed part. It claims nothing about when Realm sends requests. The dated fetch is
-  // the evidence (registry row C3-ANTH-CONC-01). (a) red when the paragraph is dropped, moved off
-  // the example-05 transcript, or reworded; (b) prints the page and the paragraph.
+  // that share a fixed part. The dated fetch is the evidence (registry row C3-ANTH-CONC-01).
+  // Follow-up C-4: the paragraph then says when Realm sends them: one `realm agent` drive takes the
+  // ready steps one after the other (run in `agent/drive-one-request-at-a-time-600.test.ts`, its
+  // first arm), and two drives at once can send them together (its second arm); a host that sends
+  // the steps itself is not run. (a) red when the paragraph is dropped, moved off the example-05
+  // transcript, or reworded; (b) prints the page and the paragraph.
   it("I-11: on Anthropic, two steps that share a fixed part read each other's entry only after the first response starts", () => {
     const paragraph =
       'Anthropic\'s page says (2026-10-28) that "a cache entry only becomes available after the first response starts", and advises waiting for the first response before sending parallel requests that need hits. On Anthropic, two steps that share a fixed part, like these two, read each other\'s entry only if the second request is sent after the first response has started.';
+    const drives =
+      'One `realm agent` drive takes the ready steps one after the other, so it sends these two in turn, the second after the first response. Two drives running at once (several runs started together, for example by `realm listen`), or a host that sends the two steps itself, can send them together.';
     claim(WORKFLOW_PAGE, paragraph);
+    claim(WORKFLOW_PAGE, drives);
     expect(
       flat(read(WORKFLOW_PAGE)).includes(
         flat(
-          `— shares its whole fixed part with review_performance\n\`\`\`\n\n${paragraph}\n\nAfter the step lines come`,
+          `— shares its whole fixed part with review_performance\n\`\`\`\n\n${paragraph} ${drives}\n\nAfter the step lines come`,
         ),
       ),
       'the paragraph does not follow the example-05 transcript',
