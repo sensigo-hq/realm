@@ -60,7 +60,19 @@ const DOOR: Record<
   register: {
     command: () => workflowCommands.find((c) => c.name() === 'register'),
     map: { path: '<path>' },
-    extras: { '--strict': 'refuse on a loader warning (this host’s policy)' },
+    extras: {
+      '--strict': 'refuse on a loader warning (this host’s policy)',
+      // issue #600 caching PR 5: the cache lines' four flags, each this host's report option, never
+      // reaching the verb.
+      '--provider':
+        "the provider whose request the cache lines describe (this host's report, caching PR 5)",
+      '--model':
+        "the model whose minimum the cache lines judge against (this host's report, caching PR 5)",
+      '--floor':
+        "the author's own minimum for the cache verdict (this host's report, caching PR 5)",
+      '--ratio':
+        "the author's own chars-per-token for the cache estimate (this host's report, caching PR 5)",
+    },
   },
 };
 

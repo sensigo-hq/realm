@@ -88,6 +88,10 @@ export type ErrorCode =
   | 'STATE_RUN_DIVERGED'
   | 'STATE_RUN_ALREADY_ACTIVE'
   | 'STATE_IDEMPOTENCY_KEY_USED'
+  // issue #715 (a) (D6-53): a run store was opened on a directory whose test clock file was created
+  // for ANOTHER location (a copied test location) — refused at construction, so a copy never runs on
+  // another location's test clock.
+  | 'STATE_TEST_CLOCK_FOREIGN'
   | 'RUN_ABORTING'
   // VALIDATION
   | 'VALIDATION_INPUT_SCHEMA'
@@ -123,6 +127,9 @@ export type ErrorCode =
   // the definition, a `run` that is not a run record, the dispatcher a step needs). Every defect
   // of those parts is named at once; refused before anything is read or written.
   | 'VALIDATION_OPTION_INVALID'
+  // #872 (b1): `get_run_state`'s `cursor` refused — given without the steps it pages, or naming no
+  // step the run has attempted. The agent fixes its own call (`provide_input`); the same call fails again.
+  | 'VALIDATION_CURSOR'
   | 'STEP_HANDLER_ERROR'
   // ENGINE
   | 'ENGINE_INTERNAL'
@@ -339,7 +346,6 @@ export class WorkflowError extends Error {
   /** issue #729 PR-0: the ways that lead on from this error (a reply's `error.remedy`). */
   readonly remedy?: readonly WayOn[];
   readonly stepId?: string;
-  readonly timestamp: string;
   readonly attempt: number;
   readonly retry_after?: number;
   /**
@@ -381,7 +387,6 @@ export class WorkflowError extends Error {
     if (options.about !== undefined) this.about = options.about;
     if (options.remedy !== undefined) this.remedy = options.remedy;
     if (options.stepId !== undefined) this.stepId = options.stepId;
-    this.timestamp = new Date().toISOString();
     this.attempt = options.attempt ?? 1;
     if (options.retry_after !== undefined) this.retry_after = options.retry_after;
     if (options.warnings !== undefined) this.warnings = options.warnings;

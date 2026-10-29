@@ -794,3 +794,102 @@ describe('F2 — the working directory (B2, render-reply environmentSet :1396 an
     }
   });
 });
+
+describe('#872 (a) — the hand-back hint: two or more steps that cannot run here are said once', () => {
+  const auto = (handler: string): StepDefinition => ({
+    description: 'S',
+    execution: 'auto',
+    depends_on: [],
+    handler,
+  });
+  const viaService = (service: string): StepDefinition => ({
+    description: 'S',
+    execution: 'auto',
+    depends_on: [],
+    uses_service: service,
+  });
+  const TAIL =
+    ' — load the missing extensions, or run these steps on a runner that has them. See engine_runnable in get_run_state.';
+  // correction 1 (C4): one missing handler or adapter takes the singular way out.
+  const TAIL_ONE =
+    ' — load the missing extension, or run these steps on a runner that has it. See engine_runnable in get_run_state.';
+  const here = (s: string) => s.split('cannot run here').length - 1;
+
+  it('B3: two steps needing one handler — the count first, one group, the way out once; no way out of the workflow', () => {
+    const s = nextSentenceOf(
+      openRun(),
+      def({ s1: auto('h'), s2: auto('h') }),
+      new ExtensionRegistry(),
+    );
+    // (a) red when two or more steps are said one sentence each (the count absent, `cannot run here`
+    //     twice), or the workflow's way out is added to a capability-only set; (b) prints the
+    //     sentence and the counts.
+    expect({ s, here: here(s), wayOut: s.includes('Correct the workflow') }).toEqual({
+      s: ` 2 steps cannot run here (capability): handler 'h' ('s1', 's2')${TAIL_ONE}`,
+      here: 1,
+      wayOut: false,
+    });
+  });
+
+  it('B4: twelve steps on three requirements — groups in the order of their first step, three names each, exact counts, `and 1 more`', () => {
+    const d = def(
+      {
+        z1: auto('zeta'),
+        m1: viaService('mid'),
+        z2: auto('zeta'),
+        z3: auto('zeta'),
+        m2: viaService('mid'),
+        a1: auto('alpha'),
+        z4: auto('zeta'),
+        m3: viaService('mid'),
+        z5: auto('zeta'),
+        z6: auto('zeta'),
+        m4: viaService('mid'),
+        z7: auto('zeta'),
+      },
+      { services: { mid: { adapter: 'mid', trust: 'engine_delivered' } } },
+    );
+    const s = nextSentenceOf(openRun(), d, new ExtensionRegistry());
+    // (a) red when the groups are ordered by name (alpha, mid, zeta), a count is wrong, or the
+    //     singular is not said; (b) prints the sentence.
+    expect(s).toBe(
+      ` 12 steps cannot run here (capability): handler 'zeta' ('z1', 'z2', 'z3' and 4 more); adapter 'mid' ('m1', 'm2', 'm3' and 1 more); handler 'alpha' ('a1')${TAIL}`,
+    );
+  });
+
+  it('B5: at most ten requirements are named, then how many more — plural and singular', () => {
+    const stepsOn = (n: number): WorkflowDefinition =>
+      def(Object.fromEntries(Array.from({ length: n }, (_, i) => [`s${i}`, auto(`h${i}`)])));
+    const ten = Array.from({ length: 10 }, (_, i) => `handler 'h${i}' ('s${i}')`).join('; ');
+    // (a) red when the cap is removed (twelve or eleven groups named) or the count's words change;
+    //     (b) prints both sentences.
+    expect([
+      nextSentenceOf(openRun(), stepsOn(12), new ExtensionRegistry()),
+      nextSentenceOf(openRun(), stepsOn(11), new ExtensionRegistry()),
+    ]).toEqual([
+      ` 12 steps cannot run here (capability): ${ten}; and 2 more handlers or adapters (12 in all)${TAIL}`,
+      ` 11 steps cannot run here (capability): ${ten}; and 1 more handler or adapter (11 in all)${TAIL}`,
+    ]);
+  });
+
+  it('B6b: beside a step refused before its claim — the summary in the place of the first capability step, the refusal after it, then the way out once', () => {
+    const d = def({
+      c1: auto('h1'),
+      t: { description: 'T', execution: 'auto', depends_on: [], trust: 'nope' as never },
+      c2: auto('h2'),
+    });
+    const s = nextSentenceOf(openRun(), d, new ExtensionRegistry());
+    const at = (needle: string) => s.indexOf(needle);
+    // (a) red when the summary moves after the refusal, the refusal is dropped, or the way out is
+    //     said twice or not at all; (b) prints the sentence's parts' positions and the sentence.
+    expect({
+      opens: s.startsWith(
+        ` 2 steps cannot run here (capability): handler 'h1' ('c1'); handler 'h2' ('c2')${TAIL} 't' cannot run (trust): `,
+      ),
+      order: at('2 steps cannot run here') < at("'t' cannot run (trust)"),
+      wayOut: s.split(TOOLS_WAY_OUT_TEXT).length - 1,
+      ends: s.endsWith(` ${TOOLS_WAY_OUT_TEXT}`),
+      s,
+    }).toEqual({ opens: true, order: true, wayOut: 1, ends: true, s: expect.any(String) });
+  });
+});

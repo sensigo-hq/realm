@@ -655,7 +655,7 @@ describe('#625 PR-2a, C163 — tools.md: blocked and resolve_precondition, sente
     claim('mcp/tools.md', '`Call one of the steps indicated in next_actions instead.` for steps');
     claim(
       'mcp/tools.md',
-      "`eligible_steps`, the steps that are ready and can run here (agent steps and the engine's — an engine step is run by `advance_run`, never by name), and a `suggestion`.",
+      "`eligible_steps`, the steps that are ready and can run here (agent steps and the engine's — an engine step is run by `advance_run`, never by name) — at most ten, then `eligible_steps_more` (added after version 0.48.0) — and a `suggestion`.",
     );
     claim('mcp/tools.md', 'On a run that has ended, each tool replies as follows:');
     const { call, runId } = await atB();
@@ -1072,7 +1072,7 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
     );
     claim(
       'mcp/tools.md',
-      "`blocked_reason.eligible_steps` lists the steps that are ready — agent steps and the engine's alike; an engine step is run by `advance_run`, never by name. It may differ from `next_actions`: for example, when the engine owes an `auto` step it can run, `next_actions` offers `advance_run` and `eligible_steps` names the step.",
+      "`blocked_reason.eligible_steps` lists the steps that are ready — agent steps and the engine's alike; an engine step is run by `advance_run`, never by name — at most ten, then `eligible_steps_more` (added after version 0.48.0). It may differ from `next_actions`: for example, when the engine owes an `auto` step it can run, `next_actions` offers `advance_run` and `eligible_steps` names the step.",
     );
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(gated('docs-owed'));
@@ -1318,9 +1318,12 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
   });
 
   it('C163 start_run: a new run that cannot go on — the step that cannot run, then the way out', async () => {
+    // The ways for input refusals, one per group and at most ten, then a count: bounded-sentences-872
+    // .test.ts ('input refusals: … their ways shared — one way') and reply-ceiling-correction-2-872
+    // .test.ts D1 (the count after ten) (correction 2, D).
     claim(
       'mcp/tools.md',
-      "When nothing else is ready and the new run's only owed steps are refused before their claim, the hint ends with the way out `advance_run`'s reply gives (below): `Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.` for a refused `trust` or precondition, and each step's own way for a step refused for its input.",
+      "When nothing else is ready and the new run's only owed steps are refused before their claim, the hint ends with the way out `advance_run`'s reply gives (below): `Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.` for a refused `trust` or precondition, and, for steps refused for their input, one way for each group of steps that share it — at most ten, then a count.",
     );
     const { call, workflowStore } = await connect();
     await workflowStore.register(CANNOT_GO_ON);
@@ -1333,8 +1336,10 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
   it('C163 start_run: a step needing a handler this server lacks — status ok, the hint names it, the block in warnings in place of its pre-flight warning', async () => {
     claim(
       'mcp/tools.md',
-      "When the step it attempts needs a handler or adapter this server lacks, the reply is still the one that created the run (`status: ok`): its `context_hint` names the step (`'<step>' cannot run here (capability): handler '<name>' is not registered here — load the missing extension, or run the step on a runner that has it.`), and the block's own message (`Step '<step>' is blocked: …`) is in `warnings`, in place of that step's pre-flight warning (`… If reached it will block …`): the step was reached.",
+      "When the step it attempts needs a handler or adapter this server lacks, the reply is still the one that created the run (`status: ok`): its `context_hint` names the step (`'<step>' cannot run here (capability): handler '<name>' is not registered here — load the missing extension, or run the step on a runner that has it.`; with two or more such steps, the one sentence above), and the block's own message (`Step '<step>' is blocked: …`) is in `warnings`, in place of that step's pre-flight warning (`… If reached it will block …`): the step was reached.",
     );
+    // #872 (a): the clause on two or more steps is pinned by owed-call-625.test.ts's B3 (door) and
+    // docs-pages-625-reference.test.ts's #872 (a) cell (the sentence above and its example).
     const { call, workflowStore } = await connect();
     await workflowStore.register(NEEDS_HANDLER);
     const r = await call('start_run', { workflow_id: NEEDS_HANDLER.id });
@@ -1430,7 +1435,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
   it("C163 start_run_batch: each entry's next_actions names its run's first call, its hint the creation sentence and what comes next", async () => {
     claim(
       'mcp/tools.md',
-      "Each entry's `next_actions` names its run's first call — empty when what the run owes needs a handler or adapter this server lacks (its `context_hint` then names the step: `'<step>' cannot run here (capability): …`) — and its `context_hint` is the sentence `start_run`'s reply carries for a run on which nothing ran: `Run '<id>' created for workflow '<workflow>'.` (or `Matched existing run …` for a repeat), then what comes next",
+      "Each entry's `next_actions` names its run's first call — empty when what the run owes needs a handler or adapter this server lacks (its `context_hint` then names the step: `'<step>' cannot run here (capability): …`; with two or more such steps it gives the one sentence that counts them, as `start_run`'s hint does — added after version 0.48.0) — and its `context_hint` is the sentence `start_run`'s reply carries for a run on which nothing ran: `Run '<id>' created for workflow '<workflow>'.` (or `Matched existing run …` for a repeat), then what comes next",
     );
     const { call, workflowStore } = await connect();
     await workflowStore.register(AGENT_THEN_AUTO);
@@ -1757,6 +1762,37 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     expect(r['context_hint']).toBe(`Run '${runId}': nothing ran. Ready for the agent: 'ask'.`);
   });
 
+  it('#872 (a) correction 1 (AC7b): advance_run — two or more steps that cannot run here are said in the one sentence that counts them', async () => {
+    claim(
+      'mcp/tools.md',
+      "two or more steps that cannot run here are said in the one sentence that counts them, as `start_run`'s hint does — added after version 0.48.0); `No step is ready.` only when none of these holds",
+    );
+    const { call, workflowStore } = await connect();
+    await workflowStore.register({
+      id: 'docs-two-roots-872',
+      name: 'two roots',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        s1: { description: 'S1.', execution: 'auto', depends_on: [], handler: 'h' },
+        s2: { description: 'S2.', execution: 'auto', depends_on: [], handler: 'h' },
+      },
+    } as WorkflowDefinition);
+    const runId = (await call('start_run', { workflow_id: 'docs-two-roots-872' }))[
+      'run_id'
+    ] as string;
+    // start_run attempted `s1`; this call attempts `s2` (its error reply); the next runs nothing.
+    const attempt = await call('advance_run', { run_id: runId });
+    const r = await call('advance_run', { run_id: runId });
+    // (a) red when advance_run's reply says the steps one sentence each, or loses the pointer;
+    //     (b) prints both statuses and the hint.
+    expect({ attempt: attempt['status'], status: r['status'], hint: r['context_hint'] }).toEqual({
+      attempt: 'error',
+      status: 'ok',
+      hint: `Run '${runId}': nothing ran. 2 steps cannot run here (capability): handler 'h' ('s1', 's2') — load the missing extension, or run these steps on a runner that has it. See engine_runnable in get_run_state.`,
+    });
+  });
+
   it('C163 advance_run: a run that cannot go on — the step that cannot run, then the way out; the step is not run and the act is not offered for it', async () => {
     claim(
       'mcp/tools.md',
@@ -1785,7 +1821,9 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
   it('C163 advance_run: a handler that is not registered is attempted once — an error reply, and the act is no longer offered for that step', async () => {
     claim(
       'mcp/tools.md',
-      'A handler or adapter that is not registered is attempted once, after every other owed step, so the run records which one is missing; that reply is an error, and its `next_actions` no longer offer the act for that step.',
+      "A handler or adapter that is not registered is attempted once, after every other owed step, so the run records which one is missing; that reply is an error: its `context_hint` says the step is blocked (`Step '<step>' is blocked: …`) and names it as a step that cannot run here — or, with two or more such steps, gives the one sentence that counts them all (added after version 0.48.0) — and its `next_actions` no longer offer the act for that step.",
+      // #872 (a) correction 1: the one-step reply is pinned by q3-729.test.ts cell 15, the counted one
+      // by its AC6 (i) and (ii).
     );
     const { call, workflowStore } = await connect();
     await workflowStore.register({ ...NEEDS_HANDLER, id: 'docs-handler-2' } as WorkflowDefinition);
@@ -3398,7 +3436,7 @@ describe("#625 PR-2a, round 30 — C211 (the architect's addendum; walk c14 W2-2
     );
     say(
       RUN_STATE,
-      "| `resumable` | An engine failure ended the run (`failed`) with a failed step `realm run resume` takes | `steps`, those steps (never a cleanup step), and `command`, `realm run resume <id> --from <step>`. Never for a run an operator ended (`abandoned`): resuming it would erase the operator's ending and its reason, which `terminal_reason` and `sealed_by_arm` give. Added after version 0.46.0. |",
+      "| `resumable` | An engine failure ended the run (`failed`) with a failed step `realm run resume` takes | `steps`, those steps (never a cleanup step) — at most ten, then `steps_more`, how many more — and `command`, `realm run resume <id> --from <step>`, its `<one of: …>` naming at most ten, then how many more (both added after version 0.48.0). Never for a run an operator ended (`abandoned`): resuming it would erase the operator's ending and its reason, which `terminal_reason` and `sealed_by_arm` give. Added after version 0.46.0. |",
     );
     say(
       RUN_STATE,
@@ -3565,7 +3603,7 @@ describe('#729 Q3 — tools.md: an automatic step called by name is the engine�
   it('D1: an auto step this server cannot run, called by name — the capability words, nothing claimed, no capability block; next_actions names what else can be called (an agent step, advance_run), else nothing and report_to_user', async () => {
     claim(
       'mcp/tools.md',
-      "When this server cannot run the step (its handler or adapter is not loaded here), the hint ends with `'<step>' cannot run here (capability): …`, nothing is claimed and no capability block is recorded by your call; `next_actions` names what else can be called — an agent step that is ready, or `advance_run` when the engine owes a step it can run — and is empty, with `agent_action: report_to_user`, when nothing can be.",
+      "When this server cannot run the step (its handler or adapter is not loaded here), the hint carries `'<step>' cannot run here (capability): …` (with two or more steps that cannot run here, the one sentence that counts them, as `start_run`'s hint gives it: `<N> steps cannot run here (capability): …`; added after version 0.48.0), nothing is claimed and no capability block is recorded by your call; `next_actions` names what else can be called — an agent step that is ready, or `advance_run` when the engine owes a step it can run — and is empty, with `agent_action: report_to_user`, when nothing can be.",
     );
     const c = await connect();
     const runId = await answered(

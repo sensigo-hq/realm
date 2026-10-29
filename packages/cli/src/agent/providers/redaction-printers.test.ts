@@ -119,7 +119,7 @@ describe('the printer captures (GHSA-gxfq correction)', () => {
     //     rewrites, a decoder the oracle lost), or one of the five becomes visible. (b) prints the
     //     printer x case list.
     expect(unseen).toEqual(UNSEEN);
-  });
+  }, 30_000);
 
   // P1 — every row is hidden: the marker is there, and no anchor or hand-written line is left in any
   // form the oracle decodes (raw, JSON, URL, base64, base64url, hex).

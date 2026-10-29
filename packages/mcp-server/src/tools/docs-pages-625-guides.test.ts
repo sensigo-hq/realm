@@ -814,10 +814,10 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     ]);
   });
 
-  it('error-codes.md: 89 codes defined — 74 raised, 15 that nothing raises', () => {
+  it('error-codes.md: 91 codes defined — 76 raised, 15 that nothing raises', () => {
     claim(
       'docs/reference/error-codes.md',
-      'This page lists all 89 codes that Realm defines: the 74 it raises, with when each is raised and what it tells the caller to do, and the 15 that nothing raises.',
+      'This page lists all 91 codes that Realm defines: the 76 it raises, with when each is raised and what it tells the caller to do, and the 15 that nothing raises.',
     );
     const types = readFileSync(join(ROOT, 'packages/core/src/types/workflow-error.ts'), 'utf8');
     const lines = types.slice(types.indexOf('export type ErrorCode')).split('\n');
@@ -869,8 +869,8 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       unraisedWritten: listedUnraised.filter(written),
       raisedNowhere: listedRaised.filter((c) => !written(c)),
     }).toEqual({
-      defined: 89,
-      raised: 74,
+      defined: 91,
+      raised: 76,
       unraised: 15,
       cover: [...defined].sort(),
       unraisedWritten: [],
@@ -1034,5 +1034,45 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       'completed',
       undefined,
     ]);
+  });
+});
+
+describe('#872 (b1) B11 — error-codes.md, agent-created-workflows.md, connect-an-mcp-client.md', () => {
+  it('error-codes.md: the VALIDATION_CURSOR row', () => {
+    // Pinned by execution in get-run-state-cursor-872.test.ts (B6: its code, action and words).
+    claim(
+      'docs/reference/error-codes.md',
+      "| `VALIDATION_CURSOR` | `get_run_state` was given a `cursor` without `include_steps: true` or `step_names`, or a `cursor` that names no step the run has attempted. The reply's `errors[0]` says which, and how to call again. Added after version 0.48.0. | `provide_input` | No |",
+    );
+  });
+  it('agent-created-workflows.md: one line per fault — the page’s example is the real line', async () => {
+    // Correction 1 (C4): the grouping only of the same fault, the 8,000-character cap and the closing
+    // line (three of the rest's steps named) are pinned by execution in
+    // create-workflow-faults-872.test.ts (AC4, :116; correction 2, D).
+    claim(
+      'docs/guides/agent-created-workflows.md',
+      "The refusal names each fault once: steps with the same fault share one line — the first step's message, then the other steps' names, `Step 'a': description must be non-empty (also 'b', 'c' and 4 more)`, two more names, then how many more. Steps share a line only when their fault is the same, so every fault shows at once; past about 8,000 characters, the last line counts the rest and names three of their steps (added after version 0.48.0).",
+    );
+    const { handleCreateWorkflow } = await import('./create-workflow.js');
+    const dir = await mkdtemp(join(tmpdir(), 'realm-guides-872-'));
+    const reply = await handleCreateWorkflow(
+      { steps: ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((id) => ({ id, description: '' })) },
+      {
+        workflowStore: new JsonWorkflowStore(join(dir, 'wf')),
+        runStore: new JsonFileStore(join(dir, 'runs')),
+      },
+    );
+    // (a) red when the page's example and the real line part; (b) prints the line.
+    expect(reply.errors).toEqual([
+      "Step 'a': description must be non-empty (also 'b', 'c' and 4 more)",
+    ]);
+  });
+  it('connect-an-mcp-client.md: "## Other clients" — Codex’s per-tool limit (a third-party fact, pinned as text with its checked note)', () => {
+    // Realm's half — the guarantee, and the three tools that shorten nothing yet — is pinned by
+    // execution in reply-ceiling-correction-872.test.ts (AC3, the guard arm).
+    claim(
+      'docs/guides/connect-an-mcp-client.md',
+      "Codex keeps only the first and the last part of a long tool reply unless that tool's limit is raised: set `mcp_servers.<id>.tools.<tool>.output_token_limit` in its config (checked against Codex's source at 73bdd06f, 2026-10-27). The limit is set per tool as `output_token_limit`, in tokens; without it, Codex applies its own default, as little as 10,000 bytes. Realm keeps a reply at or under 40,000 characters when shortening its lists can make it fit (three tools shorten nothing yet — see [The reply](../reference/mcp/tools.md#the-reply)).",
+    );
   });
 });

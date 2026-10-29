@@ -11,6 +11,8 @@
 import {
   cannotGoOnFrom,
   cannotGoOnUntilCorrected,
+  cannotRunParts,
+  libraryCannotRunWords,
   oneOf,
   preconditionHint,
   preconditionRefusal,
@@ -138,68 +140,32 @@ export function cannotRunEntries(composed: Pick<ComposedWays, 'unavailable'>): U
 }
 
 /**
- * The parts of a step-that-cannot-run entry, as every line names them: its step, the check that
- * refuses it (`trust`, `precondition`, `input_schema`, `capability`), the refusal's own words (a
- * capability's: what this program lacks, or what the runner that last attempted it lacked — C41),
- * and whether it was judged from the run's marker.
+ * The parts of a step-that-cannot-run entry, as every line names them: core's one bounded renderer
+ * (#872 (a); every step and requirement name through `capText`), re-exported for `inspect`.
  */
-export function cannotRunParts(
-  entry: Unavailable,
-): { step: string; check: string; refusal: string; marker: boolean } | undefined {
-  if (entry.code === 'capability_missing') {
-    const { kind, name } = entry.facts.requirement;
-    const marker = entry.facts.basis === 'marker';
-    return {
-      step: entry.facts.step,
-      check: 'capability',
-      refusal: marker
-        ? `${kind} '${name}' was not registered in the runner that last attempted it`
-        : `${kind} '${name}' is not registered here`,
-      marker,
-    };
-  }
-  if (entry.code === 'refused_before_claim') {
-    return {
-      step: entry.facts.step,
-      check: entry.facts.check,
-      refusal: entry.facts.refusal,
-      marker: false,
-    };
-  }
-  return undefined;
-}
+export { cannotRunParts };
 
 /**
  * `'<s>' cannot run (<check>): <refusal>` — one step that cannot run, as every line names it (C36):
- * `cannot run here (capability)` for a capability this program's registry lacks, with its way out
- * (C53: load the missing extension, or run the step on a runner that has it); `could not run
- * (capability)` judged from the run's own marker (C41).
+ * core's one clause (`libraryCannotRunWords` — the capability's present tense with its way out
+ * (C53), or its past tense judged from the run's own marker (C41)); #872 (a) correction 1 (C3): this
+ * door composes only a precondition's line, whose value it renders per context.
  */
 export function cannotRunClause(entry: Unavailable, ctx: RenderCtx = PLAIN): string {
-  const parts = cannotRunParts(entry);
-  if (parts === undefined) return `'${entry.step ?? ''}' cannot run`;
   // #729 PR-3 (R3-3, D3/08 S1): a precondition's line is core's one sentence, composed from its
   // facts with the value as this context renders it (a shape on broadcast) — never the stored
   // `refusal`, which carries the value as text.
   if (
     entry.code === 'refused_before_claim' &&
-    parts.check === 'precondition' &&
+    entry.facts.check === 'precondition' &&
     entry.facts.precondition !== undefined
   ) {
+    const step = cannotRunParts(entry)!.step;
     const { expression, value } = entry.facts.precondition;
     // F27: the fact holds the value escaped and bounded; a shape describes the value it escapes.
-    return `'${parts.step}' cannot run (precondition): ${preconditionRefusal(preconditionHint(parts.step), expression, ctx.escaped(value))}`;
+    return `'${step}' cannot run (precondition): ${preconditionRefusal(preconditionHint(step), expression, ctx.escaped(value))}`;
   }
-  const words =
-    parts.check !== 'capability'
-      ? `cannot run (${parts.check})`
-      : parts.marker
-        ? 'could not run (capability)'
-        : 'cannot run here (capability)';
-  const clause = `'${parts.step}' ${words}: ${parts.refusal}`;
-  return parts.check === 'capability' && !parts.marker
-    ? `${clause} — load the missing extension, or run the step on a runner that has it`
-    : clause;
+  return libraryCannotRunWords(entry) ?? `'${entry.step ?? ''}' cannot run`;
 }
 
 /**

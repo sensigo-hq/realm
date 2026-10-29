@@ -200,7 +200,7 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
     async () => {
       claim(
         PAGE,
-        '| `engine_runnable` | The run is open and owes `auto` steps | Each such step and `runnable_here` (`true`, `false` or `"unknown"`). When `false`: `refused_by` (`trust`, `precondition`, `input_schema` or `capability`), `refusal`, and for `capability` a `basis` (`registry` or `marker`). Added after version 0.46.0. |',
+        '| `engine_runnable` | The run is open and owes `auto` steps | Each such step and `runnable_here` (`true`, `false` or `"unknown"`). When `false`: `refused_by` (`trust`, `precondition`, `input_schema` or `capability`), `refusal`, and for `capability` a `basis` (`registry` or `marker`) and the `requirement` the step lacks: its `kind` (`handler` or `adapter`) and `name` (added after version 0.48.0). Added after version 0.46.0. |',
       );
       const { call, workflowStore, runStore } = await connect();
       const d = def('er', {
@@ -237,6 +237,16 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
           .filter((e) => e['runnable_here'] === false)
           .every((e) => typeof e['refusal'] === 'string' && (e['refusal'] as string).length > 0),
       ).toBe(true);
+      // #872 (a) (the row's `requirement`, added after version 0.48.0): (a) red when a capability
+      //     refusal lacks the handler it names, or another refusal carries one; (b) prints each
+      //     entry's step and requirement.
+      expect(entries.map((e) => [e['step'], e['requirement']])).toEqual([
+        ['fine', undefined],
+        ['t', undefined],
+        ['p', undefined],
+        ['s', undefined],
+        ['c', { kind: 'handler', name: 'order_total' }],
+      ]);
       // "unknown" and basis marker: a caller that passes no extensions (the tool's own handler, as a
       // program embeds it). A fresh run has no marker: the capability check is unknown.
       const fresh = await handleGetRunState({ run_id: runId }, { runStore, workflowStore });
@@ -423,7 +433,7 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
       );
       claim(
         PAGE,
-        "| `get_run_state` | The findings of a run that is open, judged with this server's extensions: a `capability_block` finding only when this server lacks the code too. (added after version 0.46.0) For a run that has ended, `run_health` is absent. |",
+        "| `get_run_state` | The findings of a run that is open, judged with this server's extensions: a `capability_block` finding only when this server lacks the code too. (added after version 0.46.0) At most ten of each kind, in their order; `run_health_more` gives, per kind, how many more there are, and a list in a finding's `evidence` holds at most ten entries, with `<key>_more` beside it (added after version 0.48.0). The warning counts every finding. For a run that has ended, `run_health` is absent. |",
       );
       claim(
         PAGE,
@@ -819,6 +829,8 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
         refused_by: 'capability',
         refusal: "handler 'order_total' is not registered here",
         basis: 'registry',
+        // #872 (a) (add-only): the handler or adapter refused, as data.
+        requirement: { kind: 'handler', name: 'order_total' },
       });
     },
   );
@@ -878,6 +890,8 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
           refused_by: 'capability',
           refusal: "handler 'order_total' was not registered in the runner that last attempted it",
           basis: 'marker',
+          // #872 (a) (add-only): the handler or adapter refused, as data.
+          requirement: { kind: 'handler', name: 'order_total' },
         },
         neither: { step: 'total', runnable_here: 'unknown' },
       });
@@ -1252,4 +1266,55 @@ describe('issue #729 — cannot_go_on on run-state-and-health.md', () => {
       });
     },
   );
+});
+
+describe('#872 (b1) B11 — run-state-and-health.md: the ceiling, the cursor, step_names', () => {
+  it('the rows: params omitted, terminal_reason bounded, steps for step_names, the counts and the cursor', () => {
+    // Pinned by execution: reply-ceiling.test.ts B5 (params' omitted form — both conditions: phase 1
+    // before steps, phase 2 after every list before it is at its floor — the counts),
+    // bounded-echoes-872.test.ts B8 (the reason), get-run-state-cursor-872.test.ts B4 (steps,
+    // steps_more, next_cursor), reply-ceiling-correction-872.test.ts HC4 (the run's lists' counts),
+    // bounded-sentences-872.test.ts HC5 (run_health_more), HC7 (resumable, usage_more);
+    // `params: {}` never omitted, since omitting it would add characters ("when that is shorter"):
+    // reply-ceiling-correction-2-872.test.ts A2 (correction 2, B).
+    claim(
+      PAGE,
+      'When the reply would pass the 40,000-character ceiling, `{ "omitted": true, "chars": <N> }` instead when that is shorter — when no list before it can make the reply fit by itself and leaving `params` out does, or when every list before it is already down to one item (the steps\' detail is cut after it) — N their length as JSON ([the ceiling](tools.md#the-reply); added after version 0.48.0).',
+    );
+    claim(
+      PAGE,
+      'What ended it, as a sentence. A reason over 500 characters is shown as `‹<N> characters, not kept›` (added after version 0.48.0).',
+    );
+    claim(
+      PAGE,
+      '| `steps` | `include_steps` was `true`, or `step_names` named a step the run has attempted |',
+    );
+    claim(
+      PAGE,
+      "| `steps_more`, `next_cursor` | The reply ceiling left asked steps out | How many asked steps after the last one shown were left out, and that step's id: pass it as `cursor` for the next page. See [`include_steps`](#include_steps). Added after version 0.48.0. |",
+    );
+    claim(
+      PAGE,
+      '| `defaulted_steps_more`, `skipped_steps_more`, `completed_steps_more`, `skip_details_more`, `waiting_on_answer_more`, `pending_guards_more`, `step_claims_more`, `stuck_claims_more`, `in_progress_steps_more`, `failed_steps_more`, `engine_runnable_more`, `agent_refused_more`, `capability_blocks_more`, `next_actions_more` | The reply ceiling shortened that list | How many entries it left out; the list keeps its first ones ([the ceiling](tools.md#the-reply)). Added after version 0.48.0. |',
+    );
+    claim(
+      PAGE,
+      '| `run_health_more` | More than ten findings of a kind | For each such kind, how many of its findings were left out: `run_health` shows ten of each kind, in their order. Added after version 0.48.0. |',
+    );
+    claim(
+      PAGE,
+      'The failures: the time, the step, the provider, the kind, and what was billed — at most three billed requests per failure, then `usage_more`, how many more (added after version 0.48.0).',
+    );
+    claim(
+      PAGE,
+      "The findings — at most ten of each kind, then `run_health_more`; a list in a finding's `evidence` at most ten entries, then `<key>_more` beside it (added after version 0.48.0). See [Health findings](#health-findings).",
+    );
+  });
+  it('"## include_steps": the step_names, cursor and empty-page paragraph', () => {
+    // Pinned by execution in get-run-state-cursor-872.test.ts (B4, B6).
+    claim(
+      PAGE,
+      "`step_names` and `cursor` were added after version 0.48.0. With `step_names`, `steps` holds only the named steps that ran; a name the run has not attempted is named in `warnings` (`'<name>' is not a step this run has attempted`, ten named, then how many more). When the reply would pass the 40,000-character ceiling and no list before the steps' detail, nor leaving out `params`, can make it fit by itself — the steps' detail is cut last ([the ceiling](tools.md#the-reply)) — `steps` keeps its first steps in the order they were first attempted, `steps_more` says how many it left out and `next_cursor` names the last one shown: call again with `cursor` set to it, and the same `include_steps` or `step_names`, for the next page. The cursor is a place in the run's order of first attempts, and `step_names` picks from what follows it. A page with nothing after the cursor has no `steps` and no `next_cursor`. A `cursor` without `include_steps: true` or `step_names`, or naming no step the run has attempted, is refused with `VALIDATION_CURSOR`.",
+    );
+  });
 });

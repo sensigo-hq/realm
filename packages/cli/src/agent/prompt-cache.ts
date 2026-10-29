@@ -27,8 +27,8 @@ export function parsePromptCache(value: string): PromptCacheSetting {
 /**
  * The workflow's agent steps (`execution: 'agent'`), split by path: `singleShot` sends its
  * instructions in one request (no tools, or an empty list — `run-agent.ts`'s path test), and
- * `withTools` calls tools. The drive's start line and `realm agent`'s refusal of a setting with
- * nothing to apply to both read this one function.
+ * `withTools` calls tools. The drive's start line reads both counts, and `realm agent`'s refusal
+ * of a setting with nothing to apply to reads their sum.
  */
 export function cacheableStepCounts(definition: Pick<WorkflowDefinition, 'steps'>): {
   singleShot: number;
@@ -178,7 +178,7 @@ function readableLifetime(asked: unknown): asked is { lifetime_s: number } {
  * - F2, a provider without the capability: Realm asks it for no caching (and a `realm listen` child
  *   given the flag says that listen's flag applies only to Anthropic);
  * - F3, `off`;
- * - F4a / F4b, on, but no agent step sends its instructions in one request;
+ * - F4b, on, but the workflow has no agent step;
  * - F5, on, with the steps it applies to.
  * `promptCache` is absent for a provider module and for a host that calls `runAgent` itself; then
  * F3 and F5 leave out their parenthetical.
@@ -211,12 +211,13 @@ export function promptCacheStartLine(input: {
   const source = promptCache === undefined ? '' : ` (${reasonText(promptCache)})`;
   if (asked === 'off') return `Caching: off; Anthropic is asked to cache nothing${source}.`;
   const counts = cacheableStepCounts(input.definition);
-  if (counts.singleShot === 0) {
-    return counts.withTools > 0
-      ? 'Caching: no step is cached; every agent step in this workflow calls tools, and steps that call tools are not cached yet.'
-      : 'Caching: no step is cached; this workflow has no agent step.';
+  if (counts.singleShot + counts.withTools === 0) {
+    return 'Caching: no step is cached; this workflow has no agent step.';
   }
-  const tools = counts.withTools > 0 ? ' Steps that call tools are not cached yet.' : '';
+  const tools =
+    counts.withTools > 0
+      ? ' On a step that calls tools, it is also asked to cache the conversation so far, at each turn.'
+      : '';
   return `Caching: Anthropic is asked to cache each step's fixed instructions for ${lifetimeText(asked.lifetime_s)}${source}.${tools}`;
 }
 

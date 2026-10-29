@@ -118,7 +118,13 @@ It prints:
 
 ```text
 Registered: triage v1 (1 step)
+cache: classify — anthropic 1,047 chars ≈ 430–949 tokens, with Anthropic's tool text · openai 637 chars ≈ 128–255 tokens (estimates: 2.5–5 chars/token, with margin)
+anthropic: when realm agent or realm listen drives a step, realm marks its fixed part for caching, and on steps with tools the conversation at each turn, unless --prompt-cache turns it off; below the model's minimum nothing is cached, silently
+openai: realm sends no cache marker; the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)
+anthropic: the cache is kept per workspace (per organization on Bedrock and Google Cloud), as Anthropic's page said on 2026-10-09: drives from different workspaces each pay the write
 ```
+
+The `cache:` lines are explained under [The cache lines](../reference/cli/realm-workflow.md#the-cache-lines).
 
 The profile's text is copied into the registered workflow at this moment. If you edit the profile file later, register again, or the old text is still used.
 

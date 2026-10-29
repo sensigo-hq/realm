@@ -423,6 +423,8 @@ describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
           refusal: "handler 'missing_h' is not registered here",
           // decision C41: judged from the server's own (empty) registry.
           basis: 'registry',
+          // #872 (a) (add-only): the handler or adapter refused, as data.
+          requirement: { kind: 'handler', name: 'missing_h' },
         },
       ]);
       expect(state['next_actions']).toEqual([]);

@@ -187,7 +187,7 @@ describe('#107/#184 PerRunArtifactStore.deleteAllForRun — declarer enumeration
     const loopStart = purgeSrc.indexOf('for (const store of artifactStores)');
     const fencedCall = purgeSrc.indexOf('store.deleteAllForRunFenced(');
     const anchorDeleteCall = purgeSrc.indexOf(
-      'await anchorStore.deleteAllForRun(run.id, dirEntries);',
+      'await anchorStore.deleteAllForRun(run.id, dirEntries, {',
     );
     expect(loopStart, 'expected to find the per-run artifactStores loop').toBeGreaterThan(-1);
     expect(fencedCall, 'expected to find a store.deleteAllForRunFenced( call site').toBeGreaterThan(

@@ -96,6 +96,7 @@ describe('issue #719 — realm run list: the readable runs on stdout, each damag
         err: [badLine(), `⚠ 1 run file(s) in '${runs}' could not be read and are not listed.`],
       });
     },
+    60_000,
   );
 
   it('every file damaged: stdout says No readable runs found.', () => {
@@ -106,7 +107,7 @@ describe('issue #719 — realm run list: the readable runs on stdout, each damag
       out: 'No readable runs found.',
       lines: 2,
     });
-  });
+  }, 60_000);
 
   it.each([
     [['--workflow', 'other'], "No readable runs found for workflow 'other'."],
@@ -125,6 +126,7 @@ describe('issue #719 — realm run list: the readable runs on stdout, each damag
       //     drops the filter; (b) prints the exit and stdout.
       expect({ code: r.code, out: r.out.trim() }).toEqual({ code: 0, out: text });
     },
+    60_000,
   );
 
   it('guard: no damaged file and a filter that matches nothing: the shipped text', async () => {
@@ -134,7 +136,7 @@ describe('issue #719 — realm run list: the readable runs on stdout, each damag
       code: 0,
       out: "No runs found for workflow 'other'.",
     });
-  });
+  }, 60_000);
 });
 
 describe('issue #719 — the commands that act on runs act on the readable ones and name the rest', () => {
@@ -219,30 +221,34 @@ describe('issue #719 — the commands that act on runs act on the readable ones 
       2,
     ],
   ];
-  it.each(BATCH)('%s', async (_label, seed, args, actedLine, command, code) => {
-    const id = (await seed()) as string;
-    writeFileSync(badPath(), '{ not json');
-    const before = hashOf(badPath());
-    const r = realm(args);
-    // (a) red when the command fails or crashes on the damaged file, stops acting on the readable
-    //     run once a file is damaged, touches the damaged file, or does not name it; (b) prints the
-    //     exit, whether stdout says it acted on the readable run, whether the damaged file's bytes
-    //     are unchanged (hashes compared, never shown) and stderr.
-    expect({
-      code: r.code,
-      acted: r.out.split('\n').some((l) => l.startsWith(actedLine(id))),
-      untouched: hashOf(badPath()) === before,
-      err: r.err,
-    }).toEqual({
-      code,
-      acted: true,
-      untouched: true,
-      err: [
-        badLine(),
-        `⚠ 1 run file(s) in '${runs}' could not be read; ${command} did not act on them.`,
-      ],
-    });
-  });
+  it.each(BATCH)(
+    '%s',
+    async (_label, seed, args, actedLine, command, code) => {
+      const id = (await seed()) as string;
+      writeFileSync(badPath(), '{ not json');
+      const before = hashOf(badPath());
+      const r = realm(args);
+      // (a) red when the command fails or crashes on the damaged file, stops acting on the readable
+      //     run once a file is damaged, touches the damaged file, or does not name it; (b) prints the
+      //     exit, whether stdout says it acted on the readable run, whether the damaged file's bytes
+      //     are unchanged (hashes compared, never shown) and stderr.
+      expect({
+        code: r.code,
+        acted: r.out.split('\n').some((l) => l.startsWith(actedLine(id))),
+        untouched: hashOf(badPath()) === before,
+        err: r.err,
+      }).toEqual({
+        code,
+        acted: true,
+        untouched: true,
+        err: [
+          badLine(),
+          `⚠ 1 run file(s) in '${runs}' could not be read; ${command} did not act on them.`,
+        ],
+      });
+    },
+    60_000,
+  );
 
   it('migrate: the damaged file in its own group, and the residue counts no file as a terminal run (C2)', async () => {
     await runWith(DONE);
@@ -265,7 +271,7 @@ describe('issue #719 — the commands that act on runs act on the readable ones 
       residue:
         'Residue: 1 terminal run(s) still without a recorded seal arm; 1 run file(s) could not be read.',
     });
-  });
+  }, 60_000);
 
   it('guard: migrate on a store with no damaged file keeps its residue line', async () => {
     await runWith(DONE);
@@ -273,7 +279,7 @@ describe('issue #719 — the commands that act on runs act on the readable ones 
     expect(r.out.split('\n').find((l) => l.startsWith('Residue:'))).toBe(
       'Residue: 1 terminal run(s) still without a recorded seal arm.',
     );
-  });
+  }, 60_000);
 });
 
 describe('issue #719 — a command that reads one run by its id: the message, exit 1', () => {
@@ -293,18 +299,22 @@ describe('issue #719 — a command that reads one run by its id: the message, ex
   ];
   // `realm workflow run` names no existing run: its read of a run by id is of the run it has just
   // created, so no operator can point it at a damaged file (stated, not a cell).
-  it.each(BY_ID)('%s', (_label, args) => {
-    writeFileSync(badPath(), '{ not json');
-    const r = realm(args(BAD));
-    const text = r.err.join('\n');
-    // (a) red when the command prints the parser's text, rewords or swallows the message, or exits
-    //     otherwise; (b) prints the exit and whether stderr carries the fault and the way out.
-    expect({
-      code: r.code,
-      fault: text.includes(`The run file '${badPath()}' is not JSON.`),
-      wayOut: text.includes(wayOut(BAD)),
-    }).toEqual({ code: 1, fault: true, wayOut: true });
-  });
+  it.each(BY_ID)(
+    '%s',
+    (_label, args) => {
+      writeFileSync(badPath(), '{ not json');
+      const r = realm(args(BAD));
+      const text = r.err.join('\n');
+      // (a) red when the command prints the parser's text, rewords or swallows the message, or exits
+      //     otherwise; (b) prints the exit and whether stderr carries the fault and the way out.
+      expect({
+        code: r.code,
+        fault: text.includes(`The run file '${badPath()}' is not JSON.`),
+        wayOut: text.includes(wayOut(BAD)),
+      }).toEqual({ code: 1, fault: true, wayOut: true });
+    },
+    60_000,
+  );
 
   it('realm agent --run-id (a stub provider: the provider is built before the run is read)', () => {
     writeFileSync(badPath(), '{ not json');
@@ -326,7 +336,7 @@ describe('issue #719 — a command that reads one run by its id: the message, ex
       fault: text.includes(`The run file '${badPath()}' is not JSON.`),
       wayOut: text.includes(wayOut(BAD)),
     }).toEqual({ code: 1, fault: true, wayOut: true });
-  });
+  }, 60_000);
 
   // A guard: `purge <id> --force` already refused a damaged file before deleting (F719-CB-15);
   // green before #719 and after (red-first run: reports/fix-719.flips.log, F6).
@@ -334,7 +344,7 @@ describe('issue #719 — a command that reads one run by its id: the message, ex
     writeFileSync(badPath(), '{ not json');
     const r = realm(['run', 'purge', BAD, '--force']);
     expect({ code: r.code, kept: existsSync(badPath()) }).toEqual({ code: 1, kept: true });
-  });
+  }, 60_000);
 
   it('the leak cell (CLI stderr): a fault AT a token never reaches the output', () => {
     writeFileSync(badPath(), '{"params":{"token": ghp_FAKE719}}');
@@ -342,7 +352,7 @@ describe('issue #719 — a command that reads one run by its id: the message, ex
     const leaked = `${r.out}\n${r.err.join('\n')}`.includes('ghp_FAKE7');
     // (a) red when the parser's text reaches the terminal; (b) prints a boolean only.
     expect(leaked).toBe(false);
-  });
+  }, 60_000);
 });
 
 describe('issue #719 — a decision over every run fails closed, naming every damaged file, exit 1', () => {
@@ -373,6 +383,7 @@ describe('issue #719 — a decision over every run fails closed, naming every da
         keys: false,
       });
     },
+    60_000,
   );
 
   it('realm run gc --heal --force: one error naming both, nothing healed', async () => {
@@ -398,7 +409,7 @@ describe('issue #719 — a decision over every run fails closed, naming every da
       ],
       unchanged: readFileSync(file, 'utf8') === before,
     }).toEqual({ code: 1, named: [true, true, true, true], unchanged: true });
-  });
+  }, 60_000);
 });
 
 describe('issue #719 F5 — a copy of a run whose own file reads is not a damaged run', () => {
@@ -432,23 +443,27 @@ describe('issue #719 F5 — a copy of a run whose own file reads is not a damage
       ],
       untouched: true,
     });
-  });
+  }, 60_000);
 
   it.each([
     [['run', 'reconcile'], 'reconcile'],
     [['run', 'gc', '--heal'], 'gc --heal'],
-  ])('%j runs past a copy, exit 0', async (args) => {
-    const { copy } = await runAndCopy();
-    const before = hashOf(copy);
-    const r = realm(args);
-    // (a) red when a copy makes a decision over every run fail closed; (b) prints the exit, whether
-    //     stderr names the copy, and the unchanged-bytes check.
-    expect({
-      code: r.code,
-      namesCopy: r.err.join('\n').includes(copy),
-      untouched: hashOf(copy) === before,
-    }).toEqual({ code: 0, namesCopy: false, untouched: true });
-  });
+  ])(
+    '%j runs past a copy, exit 0',
+    async (args) => {
+      const { copy } = await runAndCopy();
+      const before = hashOf(copy);
+      const r = realm(args);
+      // (a) red when a copy makes a decision over every run fail closed; (b) prints the exit, whether
+      //     stderr names the copy, and the unchanged-bytes check.
+      expect({
+        code: r.code,
+        namesCopy: r.err.join('\n').includes(copy),
+        untouched: hashOf(copy) === before,
+      }).toEqual({ code: 0, namesCopy: false, untouched: true });
+    },
+    60_000,
+  );
 
   it('migrate --detailed-exitcode: a copy is not in the damaged group and does not set the exit code', async () => {
     const { copy } = await runAndCopy({
@@ -466,7 +481,7 @@ describe('issue #719 F5 — a copy of a run whose own file reads is not a damage
       damagedGroup: r.out.includes('could not be read and were left untouched'),
       untouched: hashOf(copy) === before,
     }).toEqual({ code: 0, damagedGroup: false, untouched: true });
-  });
+  }, 60_000);
 
   it.each([
     ['absent', (id: string) => rmSync(join(runs, `${id}.json`))],
@@ -485,5 +500,6 @@ describe('issue #719 F5 — a copy of a run whose own file reads is not a damage
         reconcileNamesIt: reconciled.err.join('\n').includes(copy),
       }).toEqual({ counted: true, reconcileExit: 1, reconcileNamesIt: true });
     },
+    60_000,
   );
 });

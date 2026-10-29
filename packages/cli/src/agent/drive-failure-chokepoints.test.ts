@@ -225,9 +225,18 @@ describe('#401 chokepoint (2) — issue #600 PR 1a (D9): usage on a thrown drive
 
     const run = await onlyRun(store);
     const entry = run.drive_failures!.entries[0]!;
-    // Persisted exactly as the provider reported it — buildEntry's array-typed pick, not a
-    // reshaping.
-    expect(entry.usage).toEqual(billedThenThrown.driveCall.usage);
+    // Persisted as the provider reported it — buildEntry's array-typed pick, not a reshaping — with
+    // one addition: the identity realm mints for each request where the thrown usage enters its
+    // records (#715 (R), D6-28). (a) red when `buildEntry` does not mint; (b) prints the stored
+    // usage (counts, times and the ids).
+    expect(entry.usage).toEqual(
+      billedThenThrown.driveCall.usage.map((r) => ({
+        ...r,
+        request_id: expect.stringMatching(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+        ),
+      })),
+    );
 
     const out = await inspectRun(
       run.id,
@@ -1291,5 +1300,85 @@ describe('#401 DQ5 — a flag nobody passed is not a declaration', () => {
     expect(opt.defaultValue).toBeUndefined();
     expect(opt.parseArg).toBeDefined();
     expect(opt.description).toContain('Default 600.');
+  });
+});
+
+// ═══ issue #715 (R) — the single-shot catch: the thrown usage is minted in `buildEntry` (F1) ═══
+describe('#715 (R) — R3b: the single-shot catch records minted ids, and the prepend mints none', () => {
+  it('attempt 1 billed 2 and was refused by the schema, the repair call threw with 1 — the entry’s 3 ids are the 3 minted, in order', async () => {
+    let n = 0;
+    const provider = new (class extends LlmProvider {
+      callStep = vi.fn();
+      async callStepWithMeta() {
+        n += 1;
+        if (n === 1)
+          return {
+            output: { status: 'BAD' },
+            usage: [
+              { request_index: 0, request_start: '2026-10-28T00:00:00.000Z', prompt_tokens: 10 },
+              { request_index: 1, request_start: '2026-10-28T00:00:01.000Z', prompt_tokens: 20 },
+            ],
+          } as never;
+        throw Object.assign(new Error('upstream exploded'), {
+          driveCall: {
+            usage: [
+              { request_index: 0, request_start: '2026-10-28T00:00:02.000Z', prompt_tokens: 30 },
+            ],
+          },
+        });
+      }
+    })();
+    const store = new InMemoryStore();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const wf = {
+      id: 'r715-single-shot',
+      name: 'R715',
+      version: 1,
+      schema_version: 1,
+      steps: {
+        draft: {
+          description: 'Draft',
+          execution: 'agent',
+          depends_on: [],
+          output_schema: {
+            type: 'object',
+            properties: { status: { type: 'string', enum: ['OK'] } },
+            required: ['status'],
+          },
+        },
+      },
+    } as unknown as WorkflowDefinition;
+    // The spy sees every UUID minted in the drive, and the stores mint their own
+    // (`InMemoryStore.create` a run's id, `claimStep` a claim's; verify-first). So it keeps only
+    // the calls made through `mintRequestIds` (read off the call's stack): those must be exactly
+    // the requests billed, and the entry's ids those values, in order.
+    const minted: string[] = [];
+    const real = crypto.randomUUID.bind(crypto);
+    const spy = vi.spyOn(crypto, 'randomUUID').mockImplementation(() => {
+      const id = real();
+      if (/\bmintRequestIds\b/.test(new Error().stack ?? '')) minted.push(id);
+      return id;
+    });
+    try {
+      expect(await runAgent(makeDeps({ store, provider }), { definition: wf, params: {} })).toBe(
+        'failed',
+      );
+    } finally {
+      spy.mockRestore();
+      vi.restoreAllMocks();
+    }
+    const run = await onlyRun(store);
+    const ids = (run.drive_failures?.entries.at(-1)?.usage ?? []).map((r) => r.request_id);
+    const requestMints = minted;
+    // (a) red when the funnel is not in `buildEntryUnsafe` (no ids) or the prepend re-mints (more
+    //     mints than the 3 requests billed); (b) prints the provider calls, the counts and whether
+    //     the ids match.
+    expect({
+      calls: n,
+      requestMints: requestMints.length,
+      stored: ids.length,
+      sameInOrder: ids.join() === requestMints.join(),
+    }).toEqual({ calls: 2, requestMints: 3, stored: 3, sameInOrder: true });
   });
 });

@@ -230,6 +230,10 @@ export {
   cannotGoOnUntilCorrected,
   LIBRARY_WORDS,
   libraryCannotRunWords,
+  // #872 (a): the one bounded renderer of a cannot-run entry's parts, and the hand-back hint's
+  // grouped summary (door-neutral: the MCP door adds its pointer).
+  cannotRunParts,
+  cannotRunSummary,
   // #627 W: the door's gate answers, the condition its fallback carries, `present`.
   COND_TAGS,
   GATE_ANSWERS_VALUES,
@@ -469,6 +473,22 @@ export {
   INSTANT_CLASSES,
 } from './engine/instants.js';
 export type { InstantClass, InstantReading } from './engine/instants.js';
+// issue #715 (a) (D5 §1.1, §2.1; D6-3, D6-4, D6-6, D6-7, D6-14, D6-35): the clock a run store holds,
+// the one place a store takes its reading for a write, and the per-key floor on that reading.
+export { createSystemClock, systemClock } from './utils/clock.js';
+export type { Clock } from './utils/clock.js';
+export { takeReading, floorAtHolder } from './store/take-reading.js';
+// issue #715 (a) (D6-1, D6-54): a test location's clock file. For `@sensigo/realm-testing`, not for
+// hosts: a lint rule (static imports) and a source scan (the names as text, in any import form;
+// `lint-test-location-715.test.ts`) keep `writeTestClockFile`, `fileClock` and `readTestClockFile`
+// out of production code (D6-52).
+export {
+  TEST_CLOCK_FILE_NAME,
+  testClockFilePath,
+  writeTestClockFile,
+  readTestClockFile,
+  fileClock,
+} from './store/test-clock-file.js';
 // issue #600 PR 1b: one cost view per step, derived once and rendered by inspect + get_run_state.
 export {
   composeCostView,
@@ -501,13 +521,34 @@ export {
   CACHE_ECONOMICS_JSON_SCHEMA,
   parseCacheEconomics,
   priceFromEconomics,
+  matchModel,
+  minCacheableTokensFor,
 } from './economics/cache-economics.js';
 export type {
   CacheEconomics,
+  CacheEconomicsModel,
   CacheEconomicsPrice,
   CacheEconomicsRates,
   CacheEconomicsTier,
 } from './economics/cache-economics.js';
+// issue #600 caching PR 5: at admission, each agent step's fixed part — its size, what it shares,
+// and whether it can cache against a stated minimum.
+export {
+  cacheVerdict,
+  describeCacheability,
+  DEFAULT_CHARS_PER_TOKEN_HIGH,
+  DEFAULT_CHARS_PER_TOKEN_LOW,
+} from './economics/cacheability.js';
+export type {
+  CacheBlock,
+  CacheBlockSegment,
+  CacheVerdict,
+  CacheNotJudgedCause,
+  CacheabilityStepInput,
+  CacheabilityOptions,
+  CacheShare,
+  CacheabilityStep,
+} from './economics/cacheability.js';
 export { NOT_PRICED_CAUSES, priceRequest } from './economics/price-source.js';
 export type {
   NotPricedCause,
@@ -523,6 +564,8 @@ export {
   unmetCapabilities,
   findCapabilityBlockedSteps,
   capabilityWarning,
+  // #872 (a): the one spelling of a capability refusal (correction 1, C2: its home is this leaf).
+  capabilityRefusalWords,
 } from './engine/capability.js';
 export type { Requirement, CapabilityBlockInfo } from './engine/capability.js';
 export {
@@ -723,6 +766,8 @@ export {
   REALM_CREDENTIAL_VARIABLES,
   notKeptMarker,
   boundWhole,
+  // #872 (b1): the one bounded renderer of a name or a reason an MCP reply echoes (500 characters).
+  capText,
   tierFor,
   compileDisclosure,
   emptyDisclosureSet,
@@ -738,6 +783,8 @@ export {
   markersIn,
   inboundMarkerWarning,
 } from './utils/redaction.js';
+// #872 (b1) correction 1 (H1): the one producer of a bounded list in words.
+export { listWords, quotedNames, NAMES_SHOWN } from './utils/list-words.js';
 export type {
   DisclosureAudience,
   DisclosureTier,
@@ -944,6 +991,7 @@ export {
   stepNotEligibleError,
   runNotFoundError,
   ReclaimVersionChanged,
+  noLongerTerminalReason,
 } from './store/fence-predicate.js';
 // #627 W (§5.9): the separation check's evidence, typed once (the CLI measures it).
 export {

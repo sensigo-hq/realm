@@ -12,6 +12,16 @@ import {
   loadWorkflowForAdmission,
   ExtensionLoadError,
 } from '../lib/load-workflow-for-admission.js';
+import { parseProvider } from './agent.js';
+import type { ProviderName } from '../agent/providers/llm-provider.js';
+import {
+  CACHE_FLAG_HELP,
+  buildCacheabilityReport,
+  checkCacheFlags,
+  printCacheabilityLines,
+  renderCacheabilityLines,
+  type CacheFlags,
+} from '../lib/cacheability.js';
 import {
   renderLoadFailure,
   renderEscalationLine,
@@ -68,11 +78,17 @@ function printWarningsBlock(
  * the next save, which is the whole point of a dev loop.
  * @param filePath Path to the workflow YAML file.
  * @param store    The registrar to register into.
+ * @param cache    Issue #600 caching PR 5: the cache flags, and the last cache block printed — a save
+ *                 prints the block only when it differs from that one (compared without the times).
  */
-async function registerFile(filePath: string, store: WorkflowRegistrar): Promise<void> {
+async function registerFile(
+  filePath: string,
+  store: WorkflowRegistrar,
+  cache: { flags: CacheFlags; last?: string },
+): Promise<void> {
   const timestamp = new Date().toISOString();
   try {
-    const { definition, warnings } = await loadWorkflowForAdmission(filePath, {
+    const { definition, warnings, cacheEconomicsPath } = await loadWorkflowForAdmission(filePath, {
       surface: 'watch',
     });
     if (rejectOnErrorSeverity(warnings)) {
@@ -96,6 +112,21 @@ async function registerFile(filePath: string, store: WorkflowRegistrar): Promise
     console.log(
       `[${timestamp}] Registered: ${definition.id} v${definition.version} (${stepCount} ${stepCount === 1 ? 'step' : 'steps'})${extensionTail}`,
     );
+    // issue #600 caching PR 5 (Δ10): watch prints no description line, so the cache block follows the
+    // Registered line, each line with the same time; on the first save, and afterwards only when it
+    // changed.
+    const lines = renderCacheabilityLines(
+      await buildCacheabilityReport(
+        definition,
+        cache.flags,
+        cacheEconomicsPath !== undefined ? { cacheEconomicsPath } : {},
+      ),
+    );
+    const key = JSON.stringify(lines);
+    if (key !== cache.last) {
+      cache.last = key;
+      printCacheabilityLines(lines, `[${timestamp}] `);
+    }
   } catch (err) {
     if (err instanceof ExtensionLoadError) {
       // issue #451 — the sentence run, validate and register print for this class. The
@@ -210,14 +241,17 @@ function renderProfilesGone(): string {
  * @param signal      Optional AbortSignal; when aborted the watcher stops and the promise resolves.
  * @param profilesDir Optional override for the profiles directory path. Defaults to
  *                    `<workflow-dir>/profiles` (or `profiles_dir` declared in the YAML).
+ * @param cacheFlags  Issue #600 caching PR 5: `--provider`, `--model`, `--floor`, `--ratio`.
  */
 export async function watchWorkflow(
   filePath: string,
   store: WorkflowRegistrar,
   signal?: AbortSignal,
   profilesDir?: string,
+  cacheFlags: CacheFlags = {},
 ): Promise<void> {
-  await registerFile(filePath, store);
+  const cache: { flags: CacheFlags; last?: string } = { flags: cacheFlags };
+  await registerFile(filePath, store, cache);
 
   // Derive the profiles directory: caller override → YAML profiles_dir → default.
   let resolvedProfilesDir = profilesDir;
@@ -354,7 +388,7 @@ export async function watchWorkflow(
     // (d) Fall through. Runs on the re-arm and 'gone' paths alike — a profiles-deletion burst
     // still re-registers once (today's census behaviour, kept); the death path already returned
     // above and never reaches here.
-    void registerFile(filePath, store);
+    void registerFile(filePath, store, cache);
   }
 
   // ONE coalescer shared by both watchers' 'change' handlers, funneling into the discriminate-first
@@ -492,22 +526,38 @@ export async function watchWorkflow(
 
 export const watchCommand = new Command('watch')
   .argument('<path>', 'Path to workflow directory or workflow.yaml file')
+  .option('--provider <name>', CACHE_FLAG_HELP.provider, parseProvider)
+  .option('--model <id>', CACHE_FLAG_HELP.model)
+  .option('--floor <tokens>', CACHE_FLAG_HELP.floor)
+  .option('--ratio <chars-per-token>', CACHE_FLAG_HELP.ratio)
   .description('Watch a workflow YAML file and re-register it on every change')
-  .action(async (inputPath: string) => {
-    const filePath =
-      inputPath.endsWith('.yaml') || inputPath.endsWith('.yml')
-        ? inputPath
-        : join(inputPath, 'workflow.yaml');
+  .action(
+    async (
+      inputPath: string,
+      opts: { provider?: ProviderName; model?: string; floor?: string; ratio?: string },
+    ) => {
+      // issue #600 caching PR 5 — the cache flags, checked first (validate's usage-error precedent).
+      const cacheChecked = checkCacheFlags(opts);
+      if (!cacheChecked.ok) {
+        console.error(cacheChecked.message);
+        process.exit(1);
+        return;
+      }
+      const filePath =
+        inputPath.endsWith('.yaml') || inputPath.endsWith('.yml')
+          ? inputPath
+          : join(inputPath, 'workflow.yaml');
 
-    const { JsonWorkflowStore } = await import('@sensigo/realm');
-    const store = new JsonWorkflowStore();
+      const { JsonWorkflowStore } = await import('@sensigo/realm');
+      const store = new JsonWorkflowStore();
 
-    console.log(`Watching ${filePath} — press Ctrl+C to stop`);
-    try {
-      await watchWorkflow(filePath, store);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`Error: ${message}`);
-      process.exit(1);
-    }
-  });
+      console.log(`Watching ${filePath} — press Ctrl+C to stop`);
+      try {
+        await watchWorkflow(filePath, store, undefined, undefined, cacheChecked.flags);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`Error: ${message}`);
+        process.exit(1);
+      }
+    },
+  );

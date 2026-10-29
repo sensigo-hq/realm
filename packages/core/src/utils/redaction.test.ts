@@ -770,27 +770,32 @@ describe('#729 PR-3 correction 1 — D-2, D-3, D-4: comparisons, references and 
 });
 
 describe('#729 PR-3 correction 1 — F21: the high-water mark', () => {
-  it('repeated separators stay linear: 40,000 characters take under 8× the time of 10,000, and under 2 s', () => {
-    const time = (n: number): number => {
+  it('repeated separators stay linear: an 8× input takes under 22× the time (10,000 → 80,000 characters)', () => {
+    // The linear pass costs about 8× on an 8× input (6.3–8.1× measured as the minimum of several
+    // samples); the pass the mark replaced — each separator's value read from its own start again
+    // — about 70× (0.3 s at 10,000 and 23 s at 80,000 characters here; 64× in theory). The bound 22
+    // is the geometric midpoint of 8 and 64. The estimator is the minimum, because noise only ever adds time: seven
+    // samples at the small size, whose single samples are a few milliseconds, three at the large.
+    const time = (n: number, samples: number): number => {
       const text = 'token:'.repeat(Math.ceil(n / 6));
-      const runs: number[] = [];
-      for (let i = 0; i < 3; i++) {
+      let min = Infinity;
+      for (let i = 0; i < samples; i++) {
         const t0 = performance.now();
         disclose(text, NONE, 'all');
-        runs.push(performance.now() - t0);
+        min = Math.min(min, performance.now() - t0);
       }
-      return runs.sort((a, b) => a - b)[1]!;
+      return min;
     };
-    time(10_000);
-    const small = Math.max(time(10_000), 1);
-    const large = time(40_000);
-    // (a) red when each separator's value is read from its own start again (quadratic: about
-    //     16×, seconds at 40,000); (b) prints two booleans.
-    expect({ under8x: large < 8 * small, under2s: large < 2000 }).toEqual({
-      under8x: true,
-      under2s: true,
-    });
-  });
+    time(10_000, 3);
+    const small = Math.max(time(10_000, 7), 1);
+    const large = time(80_000, 3);
+    // (a) red when each separator's value is read from its own start again (`start = from` in
+    //     place of the mark: quadratic, about 70× here); (b) prints the two times and the ratio.
+    expect(
+      large,
+      `small ${small.toFixed(1)} ms, large ${large.toFixed(1)} ms, ratio ${(large / small).toFixed(1)} (bound 22)`,
+    ).toBeLessThan(22 * small);
+  }, 240_000);
 
   it('a value that runs past the previous value is still hidden whole: a quoted value, an Authorization value', () => {
     // The second credential name sits inside the first value's run; its value ends past that run.
@@ -1193,26 +1198,39 @@ describe('#729 PR-3 correction 2 — E-7: speed without loosening', () => {
     });
   });
 
-  it('the URL rule is linear: a doubled input takes under 3× the time (R2-L1-06)', () => {
+  // The cell's own timeout: the red run scans quadratically for about 25 s, and the clock must not
+  // be what fails it.
+  it('the URL rule is linear: an 8× input takes under 22× the time (R2-L1-06)', () => {
+    // A timing threshold, so the two hypotheses are kept far apart and the estimator is the
+    // minimum (noise only ever adds time): an 8× input costs the linear rule about 8× (8.4–8.9×
+    // measured, the whole pass at 40k being about 40 ms) and the quadratic scan it replaced 64×;
+    // the bound is their geometric midpoint. The first form of this cell (2× input, bound 3×, the
+    // median of three) went red on CI twice with the rule linear (2026-10-27, 2026-10-28): its
+    // margin was 1.5× and seven samples here spread 1.7×.
     const time = (n: number): number => {
       const text = 'a://'.repeat(Math.ceil(n / 4));
-      const runs: number[] = [];
-      for (let i = 0; i < 3; i++) {
+      let least = Infinity;
+      for (let i = 0; i < 5; i++) {
         const t0 = performance.now();
         disclose(text, NONE, 'all');
-        runs.push(performance.now() - t0);
+        least = Math.min(least, performance.now() - t0);
       }
-      return runs.sort((a, b) => a - b)[1]!;
+      return least;
     };
-    time(80_000);
-    // A floor on the baseline: the linear pass takes a few milliseconds, where a bare ratio is
-    // noise.
-    const small = Math.max(time(80_000), 5);
-    const large = time(160_000);
-    // (a) red when the last `@` is looked for backwards over the whole text (about 4×, seconds);
-    //     (b) prints a boolean.
-    expect({ under3x: large < 3 * small }).toEqual({ under3x: true });
-  });
+    time(40_000);
+    // A floor on the baseline, for a machine where the small pass is within the timer's grain.
+    const small = Math.max(time(40_000), 5);
+    const large = time(320_000);
+    // (a) red when the last `@` is looked for backwards over the whole text from every `://`
+    //     (`text.lastIndexOf('@', regionStop)` in place of the pass's own `regionLastAt`: 64× in
+    //     theory, 47× measured, the large pass about 5 s a sample); (b) prints the large time
+    //     against its bound, and the two times with their ratio in the message (a matched object
+    //     elides them).
+    expect(
+      large,
+      `small ${small.toFixed(1)} ms, large ${large.toFixed(1)} ms, ratio ${(large / small).toFixed(1)} (bound 22)`,
+    ).toBeLessThan(22 * small);
+  }, 60_000);
 });
 
 describe('#729 PR-3 correction 3 — the law (H-1’’, H-2, H-4, H-6)', () => {

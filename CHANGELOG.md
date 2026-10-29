@@ -8,6 +8,24 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- **An MCP reply is kept at or under 40,000 characters when shortening its lists can make it fit
+  (issue #872).** `get_workflow_protocol`, `list_workflows` and `start_run_batch` shorten nothing
+  yet, and a step's prompt or schema is never shortened. When a reply would pass the ceiling, its
+  longer lists are shortened — `next_actions` beyond the first, and on `get_run_state` the run's own
+  lists and its other lists, then `params`, replaced by its size, then the steps' detail it was
+  asked for — and each says how many it left out (`next_actions_more`, `steps_more`, …); the head an
+  agent acts on and every other field stay as they are. When nothing can make it fit, everything
+  Realm can shorten in it is cut to its least, and the reply says so: a text reply in its first
+  line, any other in the first item of `warnings` — which part is too long, that nothing in it is
+  shortened, or how long it still is. Names in a reply's sentences stop at ten, then say how many
+  more; steps refused the same way share one clause (at most ten clauses, then a count);
+  `run_health` keeps ten findings of a kind and counts the rest; a failed drive's request list keeps
+  three. `get_run_state` takes `step_names` (only the named steps' detail) and `cursor` (the next
+  page of steps, from `next_cursor`); a refused cursor is `VALIDATION_CURSOR`. `create_workflow`'s
+  refusal says each fault once: steps with the same fault share one line, and each other fault has
+  its own line until the lines reach 8,000 characters; one last line then counts the rest and names
+  three of their steps. A terminal reason or an unknown key over 500 characters is named by its
+  length. The store contract gains `EVIDENCE_WRITE_ORDER`.
 - **One composer for a gate's question, on every surface (issue #729 PR-4).** `realm run`,
   `realm run inspect`, `realm agent`, Slack, and the MCP replies and form now show a gate's question
   through core's one composer (`composeQuestionView`), over the gate disclosed for who reads it.
@@ -22,9 +40,36 @@ All notable changes to this project are documented here.
   as written in Slack (`<`, `>` and `&` are escaped); an `owner` written as a Slack mention still
   pings.
 - **`WorkflowCopyFault` is exported from `@sensigo/realm`.**
+- **Each model request `realm agent` records carries a `request_id` (issue #715).** It is a random
+  UUID that Realm mints for the request, stored with it in the step's evidence and in a failed
+  drive's `usage`. It is not the model service's own request id: Realm replaces any `request_id` a
+  provider module returns. The store TCK's `USAGE_RECORD_ROUNDTRIP` law now holds every store to
+  round-tripping it, so a store that drops a request field it does not know fails the law.
+- **`realm workflow validate`, `register` and `watch` say how big each agent step's fixed part is, which steps share it, and whether it can be cached (issue #600).** Each agent step gets a `cache:` line: the size of the text it sends ahead of its input on every call, the other steps with the same fixed text, and, with a minimum, whether it is long enough to be cached at all. No model is called and no key is read. Four flags: `--provider`, `--model` (it needs `--provider`, and its minimum is read from your economics file), `--floor` (a minimum of your own) and `--ratio` (your own characters per token). `validate --json` gains `cacheability`.
+- **A run store's clock (issue #715).** `@sensigo/realm` exports `Clock`, `createSystemClock`,
+  `systemClock`, `takeReading` and `floorAtHolder`. `JsonFileStore` and `InMemoryStore` have a
+  `clock`, the time they stamp their writes with; `InMemoryStore` takes one:
+  `new InMemoryStore({ clock })`.
+- **Test clocks and test locations (issue #715).** `@sensigo/realm-testing` exports
+  `settableClock`, `steppingClock`, `countingClock`, `createTestLocation`, and the store contract
+  `storeClockContract` with its laws `STORE_CLOCK_LAWS`. A test location's clock is the file
+  `.realm-test-clock` beside its `runs/` folder. A store opened on a copy of a test location in
+  another folder refuses with the new code `STATE_TEST_CLOCK_FOREIGN`.
+- **When `realm agent` or `realm listen` drives a step that calls tools, it now asks Anthropic to cache the step's fixed instructions and the conversation so far at each turn, so a turn can read what the turn before wrote once that part reaches the model's minimum.** The request a step makes after using up its tool calls is sent with no cache marker. `--prompt-cache off` sends what it sent before. A workflow whose every agent step calls tools no longer refuses `--prompt-cache`. **Upgrading:** a gateway or proxy that rejects `cache_control` now also fails steps that call tools, which worked before; run with `--prompt-cache off`. (#899)
 
 ### Changed
 
+- **Two or more steps that cannot run here for a missing handler or adapter are said in one sentence
+  (issue #872).** The MCP replies' `context_hint` gives their count first, then each missing handler
+  or adapter with at most three of the steps that need it and how many more (at most ten, then how
+  many more), the way out once — `load the missing extension` when one handler or adapter is
+  missing, `load the missing extensions` when several are — and `See engine_runnable in
+get_run_state.` It repeated one whole sentence, way out included, for every step. One step keeps
+  its sentence. The error reply of the call that attempts one such step counts them too. Each
+  `engine_runnable` entry refused for a handler or adapter (`get_run_state`,
+  `describePending`) carries `requirement` (`kind`, `name`) beside `basis`. A step or handler name
+  over 500 characters is named by its length in these sentences and in the CLI's lines for a step
+  that cannot run.
 - **BREAKING — a gate's question is cut to the view budget when it opens (issue #729 PR-4).** A
   gate's question longer than the view budget is cut when it opens, with a line saying so; the
   step's whole output still goes ahead on approval. The budget is 600 characters for the message and
@@ -48,7 +93,22 @@ All notable changes to this project are documented here.
 - **The engine takes the host's disclosure set (`disclosure`) on `executeStep`, `executeChain`,
   `advanceRun` and `executeEngineStep` (issue #729 PR-4).** Realm's own commands and MCP server pass
   theirs; without it, a gate's question is stored as rendered and never cut.
+- **The economics file may carry `min_cacheable_tokens` in a model's entry (issue #600). This is a one-way door.** A realm older than this release refuses a file carrying it, on every run's price line: upgrade every realm that reads the folder before adding it.
 - **`realm run export`'s third line says what it counts, and names `--accept-partial-disclosure` once (issue #879).** It opens `masked in the file:` (it was `masked:`): its counts are what the file hides, not what the lines printed above it hide. When the flag wrote a run that export refuses without it, the line ends `; written on --accept-partial-disclosure (refused without it)`; it ended `; shown on --accept-partial-disclosure`, and a run with no project said nothing of the flag. Where the run's manifest changed or could not be read, a question's clause before it reads `question: shown with what is known`; it named the flag too.
+
+- **`PerRunArtifactStore.deleteAllForRun` takes an optional `{ expectVersion }` (issue #715).** The
+  store that holds the run record refuses a run whose version differs with
+  `STATE_SNAPSHOT_MISMATCH`, and deletes nothing.
+- **BREAKING — `WorkflowError.timestamp` is removed (issue #715).** A library caller that read it
+  gets `undefined`.
+- **`realm run purge` reports a run that changed after it was selected as blocked, and keeps its
+  run file (issue #715).** A resumed run keeps its sentence; any other change reads
+  `changed_since_selected`. Files that an artifact store had already deleted stay deleted. The
+  run's line then ends with
+  `(<bytes> across <n> of its artifact stores were already freed before the refusal)`. A resumed
+  run's line then leaves out "refusing to purge its trace buffer". As in 0.48.0, a run that owes a
+  cleanup step is blocked as `drain_pending` after its trace files and refused answers were deleted,
+  and a dry run lists it among the runs that would be purged.
 
 ### Fixed
 
@@ -73,6 +133,14 @@ All notable changes to this project are documented here.
   attempt's. `realm run inspect`, `get_run_state` and the run's `Cost:` line show it. Until this
   release such a step recorded nothing (the 0.46.0 notes said so). A provider module's
   `callStepWithTools` may return the new optional `usage` list on its result.
+- **Two different model requests with the same start time and token counts are no longer taken
+  for one (issue #715).** When a drive failed, `realm agent` decided whether a request was already
+  on the step's record by its start time and token counts, so a second request that matched them
+  was not attached to the failure and its cost was lost. It now compares the request's
+  `request_id`.
+- **A run started again under an idempotency key is stamped after the run it replaces when the
+  clock stepped back by less than 5 seconds, and each `create`, `update` and `claimStep` of a store
+  stamps from one reading of the clock (issue #715).**
 - Hardening: a declared secret or an environment value that a step prints in pieces, or relays
   from a child program chunk by chunk, is hidden in a log as one value — when the pieces arrive
   within 200 ms, and unless another hidden value inside it ends before the pieces split.

@@ -225,6 +225,12 @@ function runResurrectedError(runId: string): WorkflowError {
   });
 }
 
+/** The reason purge reports for a run resumed since it was selected (issue #715 (a): one sentence,
+ *  shared by this fence's refusal and purge's own classification of a version refusal). */
+export function noLongerTerminalReason(runId: string): string {
+  return `run '${runId}' is no longer terminal (resumed since selection) — refusing to purge its trace buffer`;
+}
+
 function runNoLongerTerminalError(runId: string): WorkflowError {
   return new WorkflowError(
     `Run '${runId}' is no longer terminal — refusing to purge its trace buffer`,
@@ -233,10 +239,7 @@ function runNoLongerTerminalError(runId: string): WorkflowError {
       category: 'STATE',
       agentAction: 'report_to_user',
       retryable: true,
-      details: {
-        runId,
-        reason: `run '${runId}' is no longer terminal (resumed since selection) — refusing to purge its trace buffer`,
-      },
+      details: { runId, reason: noLongerTerminalReason(runId) },
     },
   );
 }
