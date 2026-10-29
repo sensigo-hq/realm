@@ -74,10 +74,13 @@ const C = REPLY_CEILING_CHARS;
 const n = (x: number) => x.toLocaleString('en-US');
 const GUARD_LEAD = (m: number, wayOut = '') =>
   `This reply was ${n(m)} characters before this line, past the 40,000-character ceiling; nothing in this reply is shortened.${wayOut}`;
-const FIELD_LEAD = (m: number, field: string, size: number) =>
-  `This reply was ${n(m)} characters before this line, past the 40,000-character ceiling: ${field} alone is ${n(size)}. No list was shortened for it.`;
+// correction 2 (C): the field and floor arms send the floor-cut reply; N is its size before the line.
+const LEAST =
+  'Everything Realm can shorten in it is cut to its least (each list to one item, with the count of the rest)';
+const FIELD_LEAD = (m: number, field: string, size: number, floor: number) =>
+  `This reply was ${n(m)} characters, past the 40,000-character ceiling: ${field} alone is ${n(size)}. ${LEAST}; without this line it is now ${n(floor)}.`;
 const FLOOR_LEAD = (m: number, floor: number) =>
-  `This reply was ${n(m)} characters before this line, past the 40,000-character ceiling; cutting everything this reply can cut would still leave ${n(floor)}. Nothing was cut; tell the user.`;
+  `This reply was ${n(m)} characters, past the 40,000-character ceiling. ${LEAST}; without this line it is now ${n(floor)}. Tell the user.`;
 
 /** A run state's head: what every get_run_state reply carries. */
 const runState = (over: Reply = {}): Reply => ({
@@ -204,7 +207,7 @@ describe('#872 (b1) correction 1 AC3 (C3) — the overflow line: one arm per rep
     }).toEqual({ planless: false, first: 'warnings', line: GUARD_LEAD(m) });
   });
 
-  it('FIELD: context_hint, pending_gate and next_actions[0].human_readable — each named when it alone is over, the reply sent uncut', () => {
+  it('FIELD: context_hint, pending_gate and next_actions[0].human_readable — each named when it alone is over, the floor-cut reply sent (correction 2, C)', () => {
     const big = 'f'.repeat(40_100);
     const cases: Array<[string, Reply, ClassTable, string, (shown: Reply) => number]> = [
       [
@@ -243,23 +246,33 @@ describe('#872 (b1) correction 1 AC3 (C3) — the overflow line: one arm per rep
     const got = cases.map(([name, reply, table, field, size]) => {
       const shown = walked(reply, table);
       const m = sseJsonStringify(shown).length;
+      // N: the floor-cut reply, built here — `next_actions` at one item with its count (a run
+      // state's `params: { a: 1 }` stays: omitting it would add characters).
+      const floor = sizeOf(
+        {
+          ...reply,
+          next_actions: (reply['next_actions'] as unknown[]).slice(0, 1),
+          next_actions_more: 1,
+        },
+        table,
+      );
       const plan = table === RUN_STATE_SUMMARY_TABLE ? RUN_STATE_PLAN : undefined;
       const { json } = shownOf(reply, table, plan);
       return {
         name,
-        line: (json['warnings'] as string[])[0] === FIELD_LEAD(m, field, size(shown)),
+        line: (json['warnings'] as string[])[0] === FIELD_LEAD(m, field, size(shown), floor),
         first: firstKey(json),
-        uncut: (json['next_actions'] as unknown[]).length === 2,
+        floored: [(json['next_actions'] as unknown[]).length, json['next_actions_more']],
       };
     });
-    // (a) red when only #916's three fixed fields are measured (no line names these parts), a list
-    //     is cut for a part no cut can shorten, or the key is not first; (b) prints each case.
+    // (a) red when only #916's three fixed fields are measured (no line names these parts), the
+    //     uncut reply is sent (correction 1), or the key is not first; (b) prints each case.
     expect(got).toEqual(
-      cases.map(([name]) => ({ name, line: true, first: 'warnings', uncut: true })),
+      cases.map(([name]) => ({ name, line: true, first: 'warnings', floored: [1, 1] })),
     );
   });
 
-  it('FIELD (the door): a 1,000-item batch failing params_schema — VALIDATION_BATCH_ITEMS names error_details, sent whole', async () => {
+  it('FIELD (the door): a 1,000-item batch failing params_schema — VALIDATION_BATCH_ITEMS names error_details; nothing in it can be cut, so the floor-cut reply is the whole one (N = M)', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'realm-ac3-872-'));
     const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
     await workflowStore.register({
@@ -294,15 +307,18 @@ describe('#872 (b1) correction 1 AC3 (C3) — the overflow line: one arm per rep
     const { warnings, ...rest } = json;
     const m = sseJsonStringify({ ...rest, warnings: (warnings as string[]).slice(1) }).length;
     // (a) red when the floor arm claims what one item per list would leave (#916: N 146,462 while
-    //     error_details is the part over), or the line is missing; (b) prints the code and line.
+    //     error_details is the part over), the line is missing, or a part is cut; (b) prints the
+    //     code, the line and the counts' keys.
     expect({
       code: json['error_code'],
       first: firstKey(json),
       line: (warnings as string[])[0],
+      cut: Object.keys(json).filter((k) => k.endsWith('_more')),
     }).toEqual({
       code: 'VALIDATION_BATCH_ITEMS',
       first: 'warnings',
-      line: FIELD_LEAD(m, 'error_details', inPlace(json['error_details'], 1)),
+      line: FIELD_LEAD(m, 'error_details', inPlace(json['error_details'], 1), m),
+      cut: [],
     });
   });
 
@@ -326,22 +342,27 @@ describe('#872 (b1) correction 1 AC3 (C3) — the overflow line: one arm per rep
     const tiePlan = replyPlanOf([{ kind: 'list', key: 'l', moreKey: 'l_more' }]);
     const tie = { a: 'x'.repeat(41_000), b: 'y'.repeat(41_000), l: ['1', '2'] };
     const tieJson = shownOf(tie, { a: 'fact', b: 'fact', l: 'fact' }, tiePlan).json;
-    // (a) red when the first oversized part is named instead of the largest, or a tie goes to the
-    //     later key; (b) prints the two lines.
+    // The run state has nothing to cut (N = M). The tie's floor floors `l`, a list of two short
+    // ids, which GROWS by its marker: N > M, pinned as reality (correction 2, C's verify-first; the
+    // plan's floors stay as they are).
+    const tieTable = { a: 'fact', b: 'fact', l: 'fact' } as const;
+    const tieM = sseJsonStringify(walked(tie, tieTable)).length;
+    const tieN = sseJsonStringify(walked({ ...tie, l: ['1'], l_more: 1 }, tieTable)).length;
+    // (a) red when the first oversized part is named instead of the largest, a tie goes to the
+    //     later key, or the uncut reply is sent; (b) prints the two lines and the tie's sizes.
     expect({
       big: (big['warnings'] as string[])[0],
       tie: (tieJson['warnings'] as string[])[0],
+      tieGrows: [tieM, tieN, tieN > tieM],
     }).toEqual({
       big: FIELD_LEAD(
         sseJsonStringify(shown).length,
         'pending_gate',
         inPlace(shown['pending_gate'], 1),
+        sseJsonStringify(shown).length,
       ),
-      tie: FIELD_LEAD(
-        sseJsonStringify(walked(tie, { a: 'fact', b: 'fact', l: 'fact' })).length,
-        'a',
-        inPlace(tie.a, 1),
-      ),
+      tie: FIELD_LEAD(tieM, 'a', inPlace(tie.a, 1), tieN),
+      tieGrows: [tieM, tieN, true],
     });
   });
 
@@ -375,7 +396,7 @@ describe('#872 (b1) correction 1 AC3 (C3) — the overflow line: one arm per rep
     });
   });
 
-  it('FLOOR: parts no plan cuts, each under the ceiling but together over it at the floor — the floor arm, N recomputed', () => {
+  it('FLOOR: parts no plan cuts, each under the ceiling but together over it at the floor — the floor arm, the floor-cut reply sent, N recomputed', () => {
     const reply = envelope({
       context_hint: 'c'.repeat(25_000),
       error_details: { note: 'd'.repeat(25_000) },
@@ -384,32 +405,30 @@ describe('#872 (b1) correction 1 AC3 (C3) — the overflow line: one arm per rep
     });
     const m = sizeOf(reply, MCP_ENVELOPE_TABLE);
     // N: every planned list at its floor, built here (not by the plan under test).
-    const floor = sizeOf(
-      {
-        ...reply,
-        next_actions: (reply['next_actions'] as unknown[]).slice(0, 1),
-        next_actions_more: 5,
-      },
-      MCP_ENVELOPE_TABLE,
-    );
+    const floorReply = {
+      ...reply,
+      next_actions: (reply['next_actions'] as unknown[]).slice(0, 1),
+      next_actions_more: 5,
+    };
+    const floor = sizeOf(floorReply, MCP_ENVELOPE_TABLE);
     const { json } = shownOf(reply, MCP_ENVELOPE_TABLE);
     const keys = Object.keys(json);
-    // (a) red when N is M (#916's guard-only false claim), the floor-cut reply is sent, or the
-    //     existing warnings move or reorder; (b) prints the line, the counts and the keys.
+    // (a) red when N is M (#916's guard-only false claim), the uncut reply is sent (correction 1),
+    //     or the existing warnings move or reorder; (b) prints the line, the counts and the keys.
     expect({
       over: floor > C,
       line: (json['warnings'] as string[])[0],
       warnings: (json['warnings'] as string[]).slice(1),
-      actions: (json['next_actions'] as unknown[]).length,
+      actions: [(json['next_actions'] as unknown[]).length, json['next_actions_more']],
       keys: [keys[0], keys.slice(1).join(',')],
     }).toEqual({
       over: true,
       line: FLOOR_LEAD(m, floor),
       warnings: ['an existing warning', 'a second one'],
-      actions: 6,
+      actions: [1, 5],
       keys: [
         'warnings',
-        Object.keys(walked(reply, MCP_ENVELOPE_TABLE))
+        Object.keys(walked(floorReply, MCP_ENVELOPE_TABLE))
           .filter((k) => k !== 'warnings')
           .join(','),
       ],

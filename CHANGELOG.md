@@ -9,20 +9,23 @@ All notable changes to this project are documented here.
 ### Added
 
 - **An MCP reply is kept at or under 40,000 characters when shortening its lists can make it fit
-  (issue #872).** `get_workflow_protocol`, `list_workflows` and `start_run_batch` shorten nothing yet,
-  and a step's prompt or schema and a gate's question are never shortened. When a reply would pass
-  the ceiling, its longer lists are shortened — `next_actions` beyond the first, and on
-  `get_run_state` the run's own lists and its other lists, then `params`, replaced by its size, then
-  the steps' detail it was asked for — and each says how many it left out (`next_actions_more`,
-  `steps_more`, …); the head an agent acts on and every other field stay as they are. When nothing
-  can make it fit, the first item of `warnings` says which part is too long, or that nothing in the
-  reply is shortened. Names in a reply's sentences stop at ten, then say how many more; steps refused
-  the same way share one clause; `run_health` keeps ten findings of a kind and counts the rest; a
-  failed drive's request list keeps three. `get_run_state` takes `step_names` (only the named steps'
-  detail) and `cursor` (the next page of steps, from `next_cursor`); a refused cursor is
-  `VALIDATION_CURSOR`. `create_workflow`'s refusal says each fault once: steps with the same fault
-  share one line, and each other fault has its own. A terminal reason or an unknown key over 500
-  characters is named by its length. The store contract gains `EVIDENCE_WRITE_ORDER`.
+  (issue #872).** `get_workflow_protocol`, `list_workflows` and `start_run_batch` shorten nothing
+  yet, and a step's prompt or schema is never shortened. When a reply would pass the ceiling, its
+  longer lists are shortened — `next_actions` beyond the first, and on `get_run_state` the run's own
+  lists and its other lists, then `params`, replaced by its size, then the steps' detail it was
+  asked for — and each says how many it left out (`next_actions_more`, `steps_more`, …); the head an
+  agent acts on and every other field stay as they are. When nothing can make it fit, everything
+  Realm can shorten in it is cut to its least, and the reply says so: a text reply in its first
+  line, any other in the first item of `warnings` — which part is too long, that nothing in it is
+  shortened, or how long it still is. Names in a reply's sentences stop at ten, then say how many
+  more; steps refused the same way share one clause (at most ten clauses, then a count);
+  `run_health` keeps ten findings of a kind and counts the rest; a failed drive's request list keeps
+  three. `get_run_state` takes `step_names` (only the named steps' detail) and `cursor` (the next
+  page of steps, from `next_cursor`); a refused cursor is `VALIDATION_CURSOR`. `create_workflow`'s
+  refusal says each fault once: steps with the same fault share one line, and each other fault has
+  its own line until the lines reach 8,000 characters; one last line then counts the rest and names
+  three of their steps. A terminal reason or an unknown key over 500 characters is named by its
+  length. The store contract gains `EVIDENCE_WRITE_ORDER`.
 - **One composer for a gate's question, on every surface (issue #729 PR-4).** `realm run`,
   `realm run inspect`, `realm agent`, Slack, and the MCP replies and form now show a gate's question
   through core's one composer (`composeQuestionView`), over the gate disclosed for who reads it.

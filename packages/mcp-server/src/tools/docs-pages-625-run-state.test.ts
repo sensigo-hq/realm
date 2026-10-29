@@ -1274,10 +1274,12 @@ describe('#872 (b1) B11 — run-state-and-health.md: the ceiling, the cursor, st
     // before steps, phase 2 after every list before it is at its floor — the counts),
     // bounded-echoes-872.test.ts B8 (the reason), get-run-state-cursor-872.test.ts B4 (steps,
     // steps_more, next_cursor), reply-ceiling-correction-872.test.ts HC4 (the run's lists' counts),
-    // bounded-sentences-872.test.ts HC5 (run_health_more), HC7 (resumable, usage_more).
+    // bounded-sentences-872.test.ts HC5 (run_health_more), HC7 (resumable, usage_more);
+    // `params: {}` never omitted, since omitting it would add characters ("when that is shorter"):
+    // reply-ceiling-correction-2-872.test.ts A2 (correction 2, B).
     claim(
       PAGE,
-      'When the reply would pass the 40,000-character ceiling, `{ "omitted": true, "chars": <N> }` instead — when no list before it can make the reply fit by itself and leaving `params` out does, or when every list before it is already down to one item (the steps\' detail is cut after it) — N their length as JSON ([the ceiling](tools.md#the-reply); added after version 0.48.0).',
+      'When the reply would pass the 40,000-character ceiling, `{ "omitted": true, "chars": <N> }` instead when that is shorter — when no list before it can make the reply fit by itself and leaving `params` out does, or when every list before it is already down to one item (the steps\' detail is cut after it) — N their length as JSON ([the ceiling](tools.md#the-reply); added after version 0.48.0).',
     );
     claim(
       PAGE,

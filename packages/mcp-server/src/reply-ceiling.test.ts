@@ -108,10 +108,13 @@ const TEXT_LEAD = (m: number) =>
   `This reply was ${m.toLocaleString('en-US')} characters, past the 40,000-character ceiling; it is sent whole.`;
 const GUARD_LEAD = (m: number, wayOut = '') =>
   `This reply was ${m.toLocaleString('en-US')} characters before this line, past the 40,000-character ceiling; nothing in this reply is shortened.${wayOut}`;
+// correction 2 (C): the field and floor arms send the floor-cut reply; N is its size before the line.
+const LEAST =
+  'Everything Realm can shorten in it is cut to its least (each list to one item, with the count of the rest)';
 const FLOOR_LEAD = (m: number, n: number) =>
-  `This reply was ${m.toLocaleString('en-US')} characters before this line, past the 40,000-character ceiling; cutting everything this reply can cut would still leave ${n.toLocaleString('en-US')}. Nothing was cut; tell the user.`;
-const FIELD_LEAD = (m: number, field: string, n: number) =>
-  `This reply was ${m.toLocaleString('en-US')} characters before this line, past the 40,000-character ceiling: ${field} alone is ${n.toLocaleString('en-US')}. No list was shortened for it.`;
+  `This reply was ${m.toLocaleString('en-US')} characters, past the 40,000-character ceiling. ${LEAST}; without this line it is now ${n.toLocaleString('en-US')}. Tell the user.`;
+const FIELD_LEAD = (m: number, field: string, p: number, n: number) =>
+  `This reply was ${m.toLocaleString('en-US')} characters, past the 40,000-character ceiling: ${field} alone is ${p.toLocaleString('en-US')}. ${LEAST}; without this line it is now ${n.toLocaleString('en-US')}.`;
 
 describe('#872 (b1) B1 — the composer: one fit loop, the overflow line', () => {
   it('(i) a reply that fits is sent as it is: the plan is never asked', () => {
@@ -167,7 +170,7 @@ describe('#872 (b1) B1 — the composer: one fit loop, the overflow line', () =>
     }).toEqual({ steps: 48, stepsMore: undefined, fits: true, more: 466 - shown, calls: 1 });
   });
 
-  it('(iv, viii) a 39 K prompt and five 1 K lists: every list at its floor is still over — the UNCUT reply and the floor arm, M and N measured', () => {
+  it('(iv, viii) a 39 K prompt and five 1 K lists: every list at its floor is still over — the FLOOR-CUT reply and the floor arm, M and N measured', () => {
     const list = (n: number) =>
       Array.from({ length: n }, (_, i) => ({ step: `l${i}`, note: 'x'.repeat(150) }));
     const reply = runState({
@@ -200,25 +203,26 @@ describe('#872 (b1) B1 — the composer: one fit loop, the overflow line', () =>
     };
     const n = sizeOf(floor, RUN_STATE_SUMMARY_TABLE);
     const { json } = shownOf(reply, RUN_STATE_SUMMARY_TABLE, RUN_STATE_PLAN);
-    // (a) red when the floor-cut reply is sent, a list is cut, or M or N is not what was measured;
-    //     (b) prints the sizes and every list's count.
+    const { warnings, ...sent } = json;
+    // (a) red when the uncut reply is sent (correction 1), a list is left whole, or M or N is not
+    //     what was measured; (b) prints the sizes, every list's count and the keys that differ.
     expect({
       over: n > REPLY_CEILING_CHARS,
-      line: (json['warnings'] as string[])[0],
+      line: (warnings as string[])[0],
       counts: ['next_actions', 'engine_runnable', 'agent_refused', 'capability_blocks'].map(
         (k) => (json[k] as unknown[]).length,
       ),
       steps: Object.keys(json['steps'] as object).length,
       params: json['params'],
-      marks: Object.keys(json).filter((k) => k.endsWith('_more') || k === 'next_cursor'),
     }).toEqual({
       over: true,
       line: FLOOR_LEAD(m, n),
-      counts: [2, 5, 5, 5],
-      steps: 5,
-      params: reply['params'],
-      marks: [],
+      counts: [1, 1, 1, 1],
+      steps: 1,
+      params: { omitted: true, chars: JSON.stringify(reply['params']).length },
     });
+    // The reply sent, without its line, IS the floor copy built here, walked.
+    expect(sent).toEqual(discloseReply(floor, set, 'agent', RUN_STATE_SUMMARY_TABLE));
   });
 
   it('(v) a 41 K text reply gets the text arm as its first line', () => {
@@ -253,7 +257,7 @@ describe('#872 (b1) B1 — the composer: one fit loop, the overflow line', () =>
     });
   });
 
-  it('(vii, viii) the field arm on each carrier it reaches — prompt and input_schema on the envelope and on get_run_state, gate on the envelope; the LARGEST part wins', () => {
+  it('(vii, viii) the field arm on each carrier it reaches — prompt and input_schema on the envelope and on get_run_state, gate on the envelope; the LARGEST part wins; the floor-cut reply is sent', () => {
     const big = 'f'.repeat(40_100);
     const envelope = (first: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
       command: 'execute_step',
@@ -321,21 +325,33 @@ describe('#872 (b1) B1 — the composer: one fit loop, the overflow line', () =>
         field === 'gate' ? shown['gate'] : first[field.slice('next_actions[0].'.length)];
       const depth = field === 'gate' ? 1 : 3;
       const text = sseJsonStringify(value);
-      const n = text.length + (text.split('\n').length - 1) * 2 * depth;
+      const p = text.length + (text.split('\n').length - 1) * 2 * depth;
+      // Correction 2 (C): N is the floor-cut reply's size — here `next_actions` at one item, built
+      // here (the run state's `params: { a: 1 }` stays: omitting it would add characters).
+      const total = (reply['next_actions'] as unknown[]).length;
+      const n = sizeOf(
+        {
+          ...reply,
+          next_actions: (reply['next_actions'] as unknown[]).slice(0, 1),
+          next_actions_more: total - 1,
+        },
+        table,
+      );
       const plan = table === RUN_STATE_SUMMARY_TABLE ? RUN_STATE_PLAN : undefined;
       const json = shownOf(reply, table, plan).json;
       return {
         name,
-        line: (json['warnings'] as string[])[0] === FIELD_LEAD(m, field, n),
-        uncut:
-          (json['next_actions'] as unknown[]).length ===
-          (reply['next_actions'] as unknown[]).length,
+        line: (json['warnings'] as string[])[0] === FIELD_LEAD(m, field, p, n),
+        floored: [(json['next_actions'] as unknown[]).length, json['next_actions_more']],
+        total,
       };
     });
-    // (a) red when an arm's words, its M or N, or its field are wrong, a smaller part is named
-    //     before the largest, or a list is cut for a field no cut can shorten; (b) prints each
-    //     case's booleans.
-    expect(got).toEqual(cases.map(([name]) => ({ name, line: true, uncut: true })));
+    // (a) red when an arm's words, its M, P or N, or its field are wrong, a smaller part is named
+    //     before the largest, or the uncut reply is sent (correction 1); (b) prints each case's
+    //     booleans and counts.
+    expect(got).toEqual(
+      got.map(({ name, total }) => ({ name, line: true, floored: [1, total - 1], total })),
+    );
   });
 
   it('(ix) the person block is read once from the original: a cut reply keeps it unchanged as the second block', () => {
@@ -696,14 +712,22 @@ describe("#872 (b1) B5 — get_run_state's plan: the order (correction 1, C1: st
         .map((k) => [k, json[k]]),
     );
 
-  it('only steps can close the gap → only steps are cut', () => {
-    const json = shownOf(
+  it('only steps can close the gap alone → the earlier list is floored first, then steps are cut (correction 2, A: the payload last)', () => {
+    const { text, json } = shownOf(
       runState({ steps: steps(160, 290), engine_runnable: list(20, 200) }),
       RUN_STATE_SUMMARY_TABLE,
       RUN_STATE_PLAN,
-    ).json;
-    // (a) red when a later list is cut too; (b) prints the marks.
-    expect(Object.keys(marksOf(json)).sort()).toEqual(['next_cursor', 'steps_more']);
+    );
+    // (a) red when steps are cut while an earlier list can still shed (correction 1's order:
+    //     only steps cut), or the reply does not fit; (b) prints the marks and the size.
+    expect({ fits: text.length <= REPLY_CEILING_CHARS, marks: marksOf(json) }).toEqual({
+      fits: true,
+      marks: {
+        engine_runnable_more: 19,
+        steps_more: 160 - Object.keys(json['steps'] as object).length,
+        next_cursor: Object.keys(json['steps'] as object).at(-1),
+      },
+    });
   });
 
   it('steps and an act-on-later list can each close it → the act-on-later list is cut, steps stay whole (C1: steps last)', () => {

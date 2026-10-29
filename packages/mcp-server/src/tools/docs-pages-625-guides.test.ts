@@ -1047,10 +1047,11 @@ describe('#872 (b1) B11 — error-codes.md, agent-created-workflows.md, connect-
   });
   it('agent-created-workflows.md: one line per fault — the page’s example is the real line', async () => {
     // Correction 1 (C4): the grouping only of the same fault, the 8,000-character cap and the closing
-    // line are pinned by execution in create-workflow-faults-872.test.ts (AC4).
+    // line (three of the rest's steps named) are pinned by execution in
+    // create-workflow-faults-872.test.ts (AC4, :116; correction 2, D).
     claim(
       'docs/guides/agent-created-workflows.md',
-      "The refusal names each fault once: steps with the same fault share one line — the first step's message, then the other steps' names, `Step 'a': description must be non-empty (also 'b', 'c' and 4 more)`, two more names, then how many more. Steps share a line only when their fault is the same, so every fault shows at once; past about 8,000 characters, the last line counts the rest and names their steps (added after version 0.48.0).",
+      "The refusal names each fault once: steps with the same fault share one line — the first step's message, then the other steps' names, `Step 'a': description must be non-empty (also 'b', 'c' and 4 more)`, two more names, then how many more. Steps share a line only when their fault is the same, so every fault shows at once; past about 8,000 characters, the last line counts the rest and names three of their steps (added after version 0.48.0).",
     );
     const { handleCreateWorkflow } = await import('./create-workflow.js');
     const dir = await mkdtemp(join(tmpdir(), 'realm-guides-872-'));

@@ -865,7 +865,10 @@ const runList = (key: string) => ({ kind: 'list' as const, key, moreKey: `${key}
  * on later (`engine_runnable`, `agent_refused`, `capability_blocks`), `next_actions` beyond the
  * first, `params` replaced whole by its size (the caller's own input; never a prefix — I4), and LAST
  * `steps` — present only when the call asked for it (`include_steps` or `step_names`): that call's
- * payload, read page by page with `next_cursor`.
+ * payload, read page by page with `next_cursor`. Correction 2 (A): it is marked `payload`, so it is
+ * cut only once no part before it can shed at all — never while an earlier part could still be
+ * floored (correction 1's order alone let phase 1 cut `steps` whenever an earlier part could not
+ * close the gap by itself).
  */
 export const RUN_STATE_PLAN = replyPlanOf([
   runList('defaulted_steps'),
@@ -893,6 +896,8 @@ export const RUN_STATE_PLAN = replyPlanOf([
     moreKey: 'steps_more',
     marks: (ids) => (ids.length > 0 ? { next_cursor: ids[ids.length - 1] } : {}),
     markKeys: ['next_cursor'],
+    // Correction 2 (A): the call's payload — shed only once nothing before it can shed.
+    payload: true,
   },
 ]);
 

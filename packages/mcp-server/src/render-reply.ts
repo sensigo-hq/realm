@@ -1568,6 +1568,11 @@ export type PlanPart =
       marks?: (keptIds: readonly string[]) => Record<string, unknown>;
       /** correction 1 (C3): the keys `marks` sets — the plan's own keys. */
       markKeys?: readonly string[];
+      /**
+       * correction 2 (A): the call's payload — what it was asked for. It takes no part in either phase
+       * while any other part that can still shed comes before it in the plan ({@link replyPlanOf}).
+       */
+      payload?: true;
     }
   | { kind: 'omit'; key: string; omitted: (raw: unknown) => Record<string, unknown> };
 
@@ -1609,6 +1614,13 @@ function idsOf(list: unknown, k: number): string[] {
  * passes). Phase 2, when no part can close it alone: the first part not yet cut, to its floor. A cut
  * part is never cut again (its marker is on the reply), so a reply takes at most one walk per part
  * after the first.
+ *
+ * Correction 2 (A): a PAYLOAD part (`payload: true`, the call's own answer) is shed last, truly. It
+ * takes no part in phase 1 or phase 2 while any other SHEDDABLE part comes before it — a list not yet
+ * cut with more than one item, or an omit part not yet omitted whose omission saves characters
+ * (omitting `params: {}` would add them, so it never counts). Every earlier part is shed first: in
+ * phase 1 when one alone closes the gap, else floored in phase 2. Then the payload is treated like
+ * any other part: the largest count that fits, else its floor, last.
  */
 export function replyPlanOf(parts: readonly PlanPart[]): ReplyPlan {
   const keys = parts.flatMap((part) =>
@@ -1631,6 +1643,19 @@ export function replyPlanOf(parts: readonly PlanPart[]): ReplyPlan {
         const n = countOf(reply[part.key]);
         return n !== undefined && n > 1;
       });
+      // Correction 2 (A): what an omit part sheds, and SHEDDABLE — defined once, for phase 2 and the
+      // payload rule alike.
+      const omitShed = (part: PlanPart & { kind: 'omit' }): number =>
+        sizeInPlace(shown[part.key], 1) - sizeInPlace(part.omitted(reply[part.key]), 1);
+      const sheddable = (part: PlanPart): boolean =>
+        open.includes(part) && (part.kind === 'list' || omitShed(part) > 0);
+      // A payload part waits while any sheddable part comes before it in the plan.
+      const active = open.filter(
+        (part) =>
+          part.kind !== 'list' ||
+          part.payload !== true ||
+          !parts.slice(0, parts.indexOf(part)).some(sheddable),
+      );
       const cutOf = (part: PlanPart, k?: number): Record<string, unknown> => {
         if (part.kind === 'omit') return { ...reply, [part.key]: part.omitted(reply[part.key]) };
         const raw = reply[part.key];
@@ -1652,11 +1677,9 @@ export function replyPlanOf(parts: readonly PlanPart[]): ReplyPlan {
           0,
         );
       // Phase 1: the first part that can close the gap alone.
-      for (const part of open) {
+      for (const part of active) {
         if (part.kind === 'omit') {
-          const shed =
-            sizeInPlace(shown[part.key], 1) - sizeInPlace(part.omitted(reply[part.key]), 1);
-          if (shed >= over) return cutOf(part);
+          if (omitShed(part) >= over) return cutOf(part);
           continue;
         }
         const n = countOf(reply[part.key])!;
@@ -1678,12 +1701,7 @@ export function replyPlanOf(parts: readonly PlanPart[]): ReplyPlan {
         return cutOf(part, k);
       }
       // Phase 2: the first part not yet cut that has something to shed, to its floor.
-      for (const part of open) {
-        if (part.kind === 'list') return cutOf(part, 1);
-        const shed =
-          sizeInPlace(shown[part.key], 1) - sizeInPlace(part.omitted(reply[part.key]), 1);
-        if (shed > 0) return cutOf(part);
-      }
+      for (const part of active) if (sheddable(part)) return cutOf(part, 1);
       return undefined;
     },
   };
@@ -1747,14 +1765,15 @@ function fieldOver(
 export type OverflowCause =
   | { arm: 'text' }
   | { arm: 'guard'; wayOut?: string }
-  | { arm: 'field'; field: string; size: number }
+  | { arm: 'field'; field: string; size: number; floor: number }
   | { arm: 'floor'; floor: number };
 
 /**
  * #872 (b1): the overflow line. Correction 1 (C3), its four arms, each true of its reply: a text
  * reply (sent whole); a reply with no plan (nothing in it is shortened, with the tool's own way out
  * when it passes one); a part no plan cuts, alone over the ceiling (named, with its size); every
- * part a plan can cut at its floor and still over (what that would leave).
+ * part a plan can cut at its floor and still over. Correction 2 (C): the last two send the
+ * floor-cut reply and say its size before the line.
  */
 export function overflowLine(size: number, cause: OverflowCause): string {
   const ceiling = `past the ${countWords(REPLY_CEILING_CHARS)}-character ceiling`;
@@ -1762,13 +1781,16 @@ export function overflowLine(size: number, cause: OverflowCause): string {
     return `This reply was ${countWords(size)} characters, ${ceiling}; it is sent whole.`;
   }
   const lead = `This reply was ${countWords(size)} characters before this line, ${ceiling}`;
+  // Correction 2 (C): the FIELD and FLOOR arms send the floor-cut reply; N is its size before the line.
+  const least =
+    'Everything Realm can shorten in it is cut to its least (each list to one item, with the count of the rest)';
   switch (cause.arm) {
     case 'guard':
       return `${lead}; nothing in this reply is shortened.${cause.wayOut ?? ''}`;
     case 'field':
-      return `${lead}: ${cause.field} alone is ${countWords(cause.size)}. No list was shortened for it.`;
+      return `This reply was ${countWords(size)} characters, ${ceiling}: ${cause.field} alone is ${countWords(cause.size)}. ${least}; without this line it is now ${countWords(cause.floor)}.`;
     case 'floor':
-      return `${lead}; cutting everything this reply can cut would still leave ${countWords(cause.floor)}. Nothing was cut; tell the user.`;
+      return `This reply was ${countWords(size)} characters, ${ceiling}. ${least}; without this line it is now ${countWords(cause.floor)}. Tell the user.`;
   }
 }
 
@@ -1782,8 +1804,9 @@ export function overflowLine(size: number, cause: OverflowCause): string {
  * when shortening its lists can make it fit. Over it, the reply's plan (`plan`, else the one it
  * carries under {@link REPLY_PLAN}) cuts copies of it until it fits; every key the plan does not cut
  * leaves as the tool set it. Correction 1 (C3): when nothing can make it fit — no plan, a part no
- * plan cuts alone over the ceiling, or every planned part at its floor — the UNCUT reply leaves with
- * the overflow line as the first item of `warnings`, its first key ({@link overflowLine}'s arms;
+ * plan cuts alone over the ceiling, or every planned part at its floor — the reply leaves with the
+ * overflow line as the first item of `warnings`, its first key: uncut when it has no plan; correction
+ * 2 (C): floor-cut for the other two ({@link overflowLine}'s arms;
  * `guardWayOut` is a plan-less tool's own way out, appended to its line). A text reply: its first
  * line.
  *
@@ -1839,9 +1862,10 @@ export function toolContentOf(
 }
 
 /**
- * #872 (b1) correction 1 (C3): the uncut walked reply with the overflow line as `warnings[0]`, and
- * `warnings` — created or existing — as its FIRST key; every other key in its order (the line is
- * Realm's own fact text, added after the walk).
+ * #872 (b1) correction 1 (C3): a walked reply (the uncut one for the guard arm; correction 2 (C): the
+ * floor-cut one for the field and floor arms) with the overflow line as `warnings[0]`, and `warnings`
+ * — created or existing — as its FIRST key; every other key in its order (the line is Realm's own
+ * fact text, added after the walk).
  */
 function withOverflowLine(shown: Readonly<Record<string, unknown>>, line: string): string {
   const { warnings, ...rest } = shown;
@@ -1850,10 +1874,12 @@ function withOverflowLine(shown: Readonly<Record<string, unknown>>, line: string
 }
 
 /**
- * #872 (b1): the fit loop — the reply cut by its plan until it fits; else the uncut reply with the
- * overflow line ({@link withOverflowLine}). Correction 1 (C3): the arm is the first that holds — no
- * plan (guard), a part no plan cuts alone over the ceiling (field), else the plan run to its end
- * (floor). M is the size of the walked reply before the line.
+ * #872 (b1): the fit loop — the reply cut by its plan until it fits; else the overflow line
+ * ({@link withOverflowLine}). Correction 1 (C3): the arm is the first that holds — no plan (guard),
+ * a part no plan cuts alone over the ceiling (field), else the plan run to its end (floor). M is the
+ * size of the uncut walked reply. Correction 2 (C): the guard arm sends the uncut reply (nothing can
+ * be cut); the field and floor arms send the FLOOR-CUT reply — every part the plan can still shed at
+ * its floor, the payload included ({@link floorOf}) — and say its size, N, before the line joins.
  */
 function fitted(
   reply: Record<string, unknown>,
@@ -1874,7 +1900,11 @@ function fitted(
   }
   const field = fieldOver(shown, plan);
   if (field !== undefined) {
-    return withOverflowLine(shown, overflowLine(size, { arm: 'field', ...field }));
+    const floor = floorOf(reply, shown, size, walk, plan);
+    return withOverflowLine(
+      floor.shown,
+      overflowLine(size, { arm: 'field', ...field, floor: floor.size }),
+    );
   }
   let held = reply;
   let heldShown = shown;
@@ -1888,27 +1918,29 @@ function fitted(
     if (text.length <= REPLY_CEILING_CHARS) return text;
     heldSize = text.length;
   }
-  return withOverflowLine(
-    shown,
-    overflowLine(size, { arm: 'floor', floor: floorSize(reply, shown, size, walk, plan) }),
-  );
+  const floor = floorOf(reply, shown, size, walk, plan);
+  return withOverflowLine(floor.shown, overflowLine(size, { arm: 'floor', floor: floor.size }));
 }
 
-/** #872 (b1): the reply's size with every part its plan holds at its floor (the plan's phase 2). */
-function floorSize(
+/**
+ * #872 (b1): the reply with every part its plan holds at its floor (the plan's phase 2, in its
+ * order, the payload last), walked, and its size. Correction 2 (C): the field and floor arms SEND
+ * this walk — never a re-cut.
+ */
+function floorOf(
   reply: Record<string, unknown>,
   shown: Record<string, unknown>,
   size: number,
   walk: (r: Readonly<Record<string, unknown>>) => Record<string, unknown>,
   plan: ReplyPlan,
-): number {
+): { shown: Record<string, unknown>; size: number } {
   let held = reply;
   let heldShown = shown;
   let heldSize = size;
   for (;;) {
     // An over no part can close alone: phase 2 only, every part to its floor in order.
     const cut = plan.next(held, heldShown, Number.POSITIVE_INFINITY);
-    if (cut === undefined) return heldSize;
+    if (cut === undefined) return { shown: heldShown, size: heldSize };
     held = cut;
     heldShown = walk(held);
     heldSize = sseJsonStringify(heldShown).length;

@@ -220,13 +220,15 @@ describe('#872 (b1) correction 1 HC3 (H3) — steps refused the same way share o
         "'p00' cannot run (precondition): Precondition failed for step 'p00'.",
       ),
     }).toEqual({ clauses: 1, also: true, first: true });
+    // The ten clauses and the counting sentence: the cell '12 distinct clauses → ten, …' below
+    // (correction 2, D).
     claim(
       'docs/reference/mcp/tools.md',
-      "and each step that cannot run (`'<step>' cannot run (<check>): <why>.` — steps refused the same way share one clause, with the others named) — an `auto` step,",
+      "and each step that cannot run (`'<step>' cannot run (<check>): <why>.` — steps refused the same way share one clause, naming two of the others and counting the rest; after ten such clauses, one sentence counts the steps of any others, names three of them (one: `1 more step`), and points to `get_run_state`) — an `auto` step,",
     );
     claim(
       'docs/reference/mcp/tools.md',
-      "and each step that cannot run (`'<step>' cannot run (<check>): <why>.` — steps refused the same way share one clause, with the others named — or `cannot run here (capability)`",
+      "and each step that cannot run (`'<step>' cannot run (<check>): <why>.` — steps refused the same way share one clause, naming two of the others and counting the rest; after ten such clauses, one sentence counts the steps of any others, names three of them (one: `1 more step`), and points to `get_run_state` — or `cannot run here (capability)`",
     );
   });
 

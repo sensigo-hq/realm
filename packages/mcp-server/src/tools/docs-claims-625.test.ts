@@ -1318,9 +1318,12 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
   });
 
   it('C163 start_run: a new run that cannot go on — the step that cannot run, then the way out', async () => {
+    // The ways for input refusals, one per group and at most ten, then a count: bounded-sentences-872
+    // .test.ts ('input refusals: … their ways shared — one way') and reply-ceiling-correction-2-872
+    // .test.ts D1 (the count after ten) (correction 2, D).
     claim(
       'mcp/tools.md',
-      "When nothing else is ready and the new run's only owed steps are refused before their claim, the hint ends with the way out `advance_run`'s reply gives (below): `Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.` for a refused `trust` or precondition, and each step's own way for a step refused for its input.",
+      "When nothing else is ready and the new run's only owed steps are refused before their claim, the hint ends with the way out `advance_run`'s reply gives (below): `Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.` for a refused `trust` or precondition, and, for steps refused for their input, one way for each group of steps that share it — at most ten, then a count.",
     );
     const { call, workflowStore } = await connect();
     await workflowStore.register(CANNOT_GO_ON);
