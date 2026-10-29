@@ -5,7 +5,6 @@
 // `@sensigo/realm-mcp`'s one reader, uncached, and nothing else: no key, no environment, no model
 // table. The floor is the runner's (its economics file) or the author's (`--floor`), never realm's.
 import {
-  cacheVerdict,
   describeCacheability,
   minCacheableTokensFor,
   type CacheabilityStep,
@@ -122,10 +121,8 @@ type EconomicsAnswer =
       detail?: string;
     };
 
-/** A sharing clause as printed: its kind, the shared length, and the steps, in definition order. */
+/** A sharing clause as printed: the steps that share the whole fixed part, in definition order. */
 interface ShareClause {
-  kind: 'whole' | 'schemas';
-  chars: number;
   steps: string[];
 }
 
@@ -181,74 +178,24 @@ async function economicsFor(model: string, path: string | undefined): Promise<Ec
 }
 
 /**
- * Where a step's profile ends in its fixed text (the stable blocks in wire order, as core joins them),
- * its `\n\n` included; 0 when the step carries no profile text.
- */
-function profileEnd(blocks: Block[]): number {
-  let offset = 0;
-  for (const block of blocks) {
-    if (!block.stable) continue;
-    const profile = block.segments.find((s) => s.name === 'profile');
-    if (profile !== undefined) return profile.end - profile.start > 2 ? offset + profile.end : 0;
-    offset += block.text.length;
-  }
-  return 0;
-}
-
-/**
- * The sharing a step's line names, grouped. A line names only a share that can produce a read (MA 2,
- * the design authority, 2026-10-27):
+ * The sharing a step's line names. A line names only a share that can produce a read (MA 2, the
+ * design authority, 2026-10-27):
  * - nothing for a step whose verdict on this layout is below the floor: it writes no cache entry, so
  *   no share can produce a read (MA 2, 2026-10-28; correction 2, F-4). The one exception is a layout
  *   whose size realm does not count in full (`sizeCounted` false: OpenAI's strict rung, where the
- *   provider adds its own schema text): there `below` does not rule a read out, and the clauses stay;
+ *   provider adds its own schema text): there `below` does not rule a read out, and the clause stays;
  * - otherwise, a whole shared fixed part, on every layout;
- * - on Anthropic nothing else: Anthropic writes its cache entry only at the marked block, and a read
- *   needs every byte up to and including it, so a pair that parts earlier shares no entry;
- * - on OpenAI, a pair that parts in a schema after the whole of a profile both steps carry: the
- *   author's own text, which leads the system prompt. Realm's own text alone is never named, and the
- *   strict rung, whose schema comes first, never shares a whole profile. With a floor in force, such
- *   a pair is named only when its shared start's estimate reaches the floor or comes near it:
- *   OpenAI's cache matches a prefix only past its minimum (C-7). With no floor, Realm, which ships no
- *   minimum, cannot judge the length, and the line states a fact about the text.
- * `ends` holds each step's `profileEnd` on this layout; `floor` is the floor in force, in tokens;
- * `sizeCounted` is false when realm does not count the whole fixed part (OpenAI's strict rung).
- * Exported for its cells (correction 2, F-9), which pin each condition with a hand-built step; it is
- * internal to the CLI package, not a public interface.
+ * - nothing else. On Anthropic the cache entry is written only at the marked block, and a read needs
+ *   every byte up to and including it. On OpenAI, realm sends the profile, its instructions and the
+ *   schema in one system message, and a start two steps shared inside that message was not read on
+ *   gpt-5.6-luna (#918).
+ * Returns `[]` or one clause. Exported for its cells (#918, N2), which pin each condition with a
+ * hand-built step; it is internal to the CLI package, not a public interface.
  */
-export function shareClauses(
-  step: CacheabilityStep,
-  adapter: RequestAdapter,
-  ends: Map<string, number>,
-  floor: number | undefined,
-  sizeCounted: boolean,
-): ShareClause[] {
+export function shareClauses(step: CacheabilityStep, sizeCounted: boolean): ShareClause[] {
   if (step.verdict === 'below_floor' && sizeCounted) return [];
-  const own = ends.get(step.step) ?? 0;
-  const groups = new Map<string, ShareClause>();
-  for (const share of step.shares_with) {
-    let kind: ShareClause['kind'] | undefined;
-    if (share.divergence_at === null) kind = 'whole';
-    else if (
-      isOpenAi(adapter) &&
-      own > 0 &&
-      ends.get(share.step) === own &&
-      share.chars >= own &&
-      share.divergence_at === 'schema_line' &&
-      (floor === undefined || cacheVerdict(share.tokens, floor) !== 'below_floor')
-    )
-      kind = 'schemas';
-    if (kind === undefined) continue;
-    const key = `${kind}:${kind === 'whole' ? 0 : share.chars}`;
-    const group = groups.get(key);
-    if (group !== undefined) group.steps.push(share.step);
-    else groups.set(key, { kind, chars: share.chars, steps: [share.step] });
-  }
-  return [...groups.values()].sort((a, b) =>
-    a.kind === 'whole' || b.kind === 'whole'
-      ? (a.kind === 'whole' ? 0 : 1) - (b.kind === 'whole' ? 0 : 1)
-      : b.chars - a.chars,
-  );
+  const steps = step.shares_with.filter((share) => share.divergence_at === null).map((s) => s.step);
+  return steps.length > 0 ? [{ steps }] : [];
 }
 
 /**
@@ -355,7 +302,6 @@ export async function buildCacheabilityReport(
         ...(flags.ratio !== undefined ? { ratio: { chars_per_token: flags.ratio } } : {}),
       },
     );
-    const ends = new Map(inputs.map((input) => [input.name, profileEnd(input.blocks)]));
     inputs.forEach((input, k) => {
       const result = results.find((r) => r.step === input.name)!;
       const step = measured[k]!;
@@ -377,7 +323,7 @@ export async function buildCacheabilityReport(
           noSchemaAnthropic: input.noSchemaAnthropic,
           openaiStrictSchema: input.openaiStrictSchema,
           strictRung: input.strictRung,
-          clauses: shareClauses(step, adapter, ends, floor?.tokens, !input.openaiStrictSchema),
+          clauses: shareClauses(step, !input.openaiStrictSchema),
         },
       });
     });
@@ -497,10 +443,7 @@ function namesText(steps: string[]): string {
 }
 
 function clauseText(clause: ShareClause): string {
-  const steps = namesText(clause.steps);
-  return clause.kind === 'whole'
-    ? `shares its whole fixed part with ${steps}`
-    : `shares its first ${n(clause.chars)} chars with ${steps}: the schemas differ`;
+  return `shares its whole fixed part with ${namesText(clause.steps)}`;
 }
 
 /** ` — <clauses>`, once when every layout says the same, else per layout; '' when none says any. */
@@ -636,9 +579,10 @@ export function cacheabilityJson(report: CacheabilityReport): Record<string, unk
                 blocks: sized.blocks
                   .filter((b) => b.stable)
                   .map((b) => ({ name: b.name, chars: b.text.length, segments: b.segments })),
-                shares_with: sized.step.shares_with.filter((w) =>
-                  sized.clauses.some((c) => c.steps.includes(w.step)),
-                ),
+                // #918: each step the clause names, as `{ step }` (its size is `prefix`'s).
+                shares_with: sized.step.shares_with
+                  .filter((w) => sized.clauses.some((c) => c.steps.includes(w.step)))
+                  .map((w) => ({ step: w.step })),
                 ...(sized.banded
                   ? {
                       extra_tokens: {
