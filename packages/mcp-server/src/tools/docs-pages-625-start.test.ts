@@ -648,7 +648,8 @@ describe(
       }).toEqual({
         view: [{ step: 'h', runnable_here: 'unknown' }],
         act: "Run is active. Engine work is owed: 'h'.",
-        inspect: `Owed to the engine: 'h' — realm run advance ${id}`,
+        // issue #923: inspect loads no project code, so it names the handler `h` needs.
+        inspect: `Owed to the engine: 'h' — from a program that has handler 'missing_h': realm run advance ${id}`,
       });
       // `realm mcp` (no project extensions) judges with its empty set: not registered here.
       const transport = new StdioClientTransport({

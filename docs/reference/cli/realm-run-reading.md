@@ -161,6 +161,8 @@ Evidence (3 steps):
 | `Cannot run`, `Could not run`                             | When an owed `auto` step, or an agent step, is refused before its claim    | The step, the check that refused it, and why. Added after version 0.46.0.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `Run <id> stays open`                                     | When the run cannot go on until its workflow is corrected                  | The way out: correct the workflow, register it again, then `realm run advance`; or `realm run abandon`. Added after version 0.46.0.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
+In the `Owed to the engine` line, when an owed step needs a handler or adapter that Realm does not build in, `from a program that has handler '<name>'` (or `adapter '<name>'`) comes before the command: `inspect` loads no project code, so it cannot check. Added after version 0.48.0.
+
 Under `In Progress`, one line for each step in progress says who took it, how long ago, and how Realm knows the name. Added in 0.46.0:
 
 ```text
@@ -191,10 +193,12 @@ For a run an operator ended (`abandoned`), the `Resumable:` line goes on `— re
 What the engine owes, and steps that cannot run, from three runs (these lines were added after version 0.46.0). `inspect` loads no extensions, so a missing handler or adapter is judged by the run's record of the last attempt and said in the past tense (`Could not run`), with the way out — a program that has it runs the step:
 
 ```text
-Owed to the engine: 'process', 'notify' — realm run advance b178179a-998d-457e-85e6-6d38439d0585 runs them until a step opens a question, fails or ends the run
+Owed to the engine: 'process', 'notify' — from a program that has handler 'stamp': realm run advance b178179a-998d-457e-85e6-6d38439d0585 runs them until a step opens a question, fails or ends the run
 Cannot run 'compute' (input_schema): Invalid input for step 'compute': the input must have required property 'n'
 Could not run 'process' (capability): handler 'stamp' was not registered in the runner that last attempted it — from a program that has it: realm run advance 31ddb305-989b-42bf-8b63-fcb558ed1c23
 ```
+
+A step that has not been attempted is listed as owed, with the handler or adapter it needs before the command.
 
 When nothing else can run — no agent step ready, nothing owed that can run, nothing in flight — and a step is refused before its claim (an invalid `trust`, a failed precondition, an input its schema refuses), the way out follows the `Cannot run` lines — correct the workflow and register it again for a refused `trust` or precondition, and each step's own way for an input its schema refuses (a new run with params that fit, or a corrected `input_schema`; for a step that builds its input with an `input_map`, a corrected `input_map` or `input_schema`, or a new run with params that fit when the key its schema refuses is built from `run.params`):
 

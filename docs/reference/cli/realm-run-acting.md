@@ -239,8 +239,10 @@ When the step that is ready again is one only the engine runs, one line names it
 
 ```text
 Resumed run '8bc06d55-77fb-43f4-937f-8d166fad20cf': step 'a' re-enabled and run reset to 'running'.
-To run the step the engine owes ('a') without a model: realm run advance 8bc06d55-77fb-43f4-937f-8d166fad20cf
+To run the step the engine owes ('a') without a model, from a program that has handler 'boom': realm run advance 8bc06d55-77fb-43f4-937f-8d166fad20cf
 ```
+
+When a step it names needs a handler or adapter that Realm does not build in, `, from a program that has handler '<name>'` comes before the `:` (resume loads no project code, so it cannot check).
 
 When the step that is ready again cannot run — the workflow was registered again with a check the step fails — and nothing else can run, driving the run would only stop on that step: the step and the way out take the place of the `Drive it with:` lines. Added after version 0.46.0, which prints the `Drive it with:` lines in this case too:
 
@@ -518,6 +520,8 @@ When the enacted gate leaves `auto` steps only the engine runs, one more line na
 Run 'daeede5e-c0dd-4b88-9caf-6efa089902dd' is not terminal (phase: 'running') — nothing further to drain.
 To run the step the engine owes ('after'): realm run advance daeede5e-c0dd-4b88-9caf-6efa089902dd
 ```
+
+When a step it names needs a handler or adapter that Realm does not build in, `, from a program that has handler '<name>'` comes before the `:` (drain loads no project code, so it cannot check).
 
 When it leaves nothing that can run from here, the steps that cannot run and the way out follow instead. Added after version 0.46.0:
 

@@ -6,9 +6,16 @@
 // the deployment manifest (`<deployment root>/realm.yaml`) via the CLI loader's built-in
 // catalog — the previous env-read SlackAdapter registration (SLACK_WEBHOOK_URL) is gone.
 // Issue #760 adds the one config-less built-in handler, `check_quotes`.
+//
+// Issue #923 (PR0-CONTRACT Amendment 26): the names come from `built-in-requirements.ts`, the one
+// table of the built-ins, so the table and this registry cannot name different things.
 import { ExtensionRegistry } from './registry.js';
 import { FileSystemAdapter } from '../adapters/file-adapter.js';
 import { CheckQuotesHandler } from '../handlers/check-quotes.js';
+import {
+  BUILT_IN_CHECK_QUOTES_HANDLER,
+  BUILT_IN_FILESYSTEM_ADAPTER,
+} from './built-in-requirements.js';
 
 /**
  * Returns an ExtensionRegistry pre-populated with Realm's config-less built-ins: the adapter
@@ -22,7 +29,9 @@ import { CheckQuotesHandler } from '../handlers/check-quotes.js';
  */
 export function createDefaultRegistry(): ExtensionRegistry {
   const r = new ExtensionRegistry();
-  r.register('adapter', 'filesystem', new FileSystemAdapter('filesystem'));
-  r.register('handler', 'check_quotes', new CheckQuotesHandler());
+  const fs = BUILT_IN_FILESYSTEM_ADAPTER;
+  const quotes = BUILT_IN_CHECK_QUOTES_HANDLER;
+  r.register(fs.kind, fs.name, new FileSystemAdapter(fs.name));
+  r.register(quotes.kind, quotes.name, new CheckQuotesHandler());
   return r;
 }
