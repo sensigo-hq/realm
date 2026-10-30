@@ -410,7 +410,8 @@ const USAGE_DISCLOSURE = {
     surface: 'rendered',
     probe: (out, _partial, mismatch) => {
       expect(mismatch).toContain(
-        "; auto: the last 2 gaps between this workflow's triggers were about 7 minutes and 12 minutes)",
+        // #898: the fixture predates priced auto (gaps, no prices).
+        "; auto: the last 2 gaps between this workflow's triggers were about 7 minutes and 12 minutes; price source not recorded (this request was recorded before Realm priced auto from the price file))",
       );
       expect(out).not.toContain('auto: ');
     },

@@ -521,6 +521,7 @@ export {
   CACHE_ECONOMICS_JSON_SCHEMA,
   parseCacheEconomics,
   priceFromEconomics,
+  selectEconomicsRates,
   matchModel,
   minCacheableTokensFor,
 } from './economics/cache-economics.js';
@@ -583,16 +584,24 @@ export type { StepDiagnostics } from './types/run-record.js';
 // #600 PR 2's vocabularies — PROMPT_CACHE_SETTINGS, CACHE_REQUESTS, CACHE_REQUEST_SOURCES,
 // REQUEST_ENDPOINTS, REQUEST_FACT_ABSENT_CAUSES and their types — and the lifetime unit's
 // CACHE_AUTO_BASES are re-exported the same way, beside CACHE_STATES.
-// issue #600 (the lifetime unit): which cache lifetime `--prompt-cache auto` asks for — pure, the
-// prices are the caller's (an adapter's `CacheTiers`).
+// issue #600 (the lifetime unit): which cache lifetime `--prompt-cache auto` asks for — pure. Issue
+// #898: priced from the runner's price file (`chooseAutoLifetime`), else the owner's fallback.
 export {
   AUTO_GAPS_KEPT,
   AUTO_LIFETIME_MARGIN,
   CACHE_GAP_MAX_S,
   chooseCacheLifetime,
+  chooseAutoLifetime,
+  keptCacheGaps,
   normalizeCacheAuto,
 } from './economics/cache-lifetime.js';
-export type { CacheTier, CacheTiers, CacheChoice } from './economics/cache-lifetime.js';
+export type {
+  CacheTier,
+  CacheTiers,
+  CacheChoice,
+  CacheLifetimes,
+  AutoPriceInput,
+} from './economics/cache-lifetime.js';
 export { VERSION } from './version.js';
 // The release mark (issue #620 PR-B): every class a realm package exports carries one, so copies of
 // the same release recognise each other's objects.

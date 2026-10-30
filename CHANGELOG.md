@@ -59,6 +59,19 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- **`--prompt-cache auto` now chooses from the prices in the runner's price file
+  (`runner.cache.economics`); Realm uses no price of its own for the choice.** On a drive `realm
+listen` starts, with measured gaps, each cached lifetime is costed only when the file states its
+  rates, and an option the file cannot cost is never chosen. When the file cannot price the choice —
+  no file, a file that cannot be read or is not valid, no entry for the model, an input price of 0,
+  or no read rate or no write rate for either lifetime — `auto` asks for 1 hour when any of the last
+  five gaps is under 54 minutes, and for no caching otherwise. Each request's record
+  (`cache_auto.prices`), the start line, `realm run inspect` and `get_run_state` say which happened
+  and why. **Upgrading:** with no usable price file, such a drive no longer asks for 5 minutes, and
+  it asks for 1 hour on some gap patterns where it asked for no caching before. A file without a
+  1-hour write rate never asks for 1 hour, and one without a 5-minute write rate never asks for 5
+  minutes. A file that gives only a single `cache_write` rate, or prices input at 0, is treated as
+  not able to price the choice. Key the file by the id you pass to `--model`. (#898)
 - **Two or more steps that cannot run here for a missing handler or adapter are said in one sentence
   (issue #872).** The MCP replies' `context_hint` gives their count first, then each missing handler
   or adapter with at most three of the steps that need it and how many more (at most ten, then how
@@ -142,6 +155,9 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
 - **A run started again under an idempotency key is stamped after the run it replaces when the
   clock stepped back by less than 5 seconds, and each `create`, `update` and `claimStep` of a store
   stamps from one reading of the clock (issue #715).**
+- Hardening: a declared secret or an environment value that a step prints in pieces, or relays
+  from a child program chunk by chunk, is hidden in a log as one value — when the pieces arrive
+  within 200 ms, and unless another hidden value inside it ends before the pieces split.
 
 ## [0.48.0] — 2026-10-26
 

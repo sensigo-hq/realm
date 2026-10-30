@@ -190,7 +190,7 @@ describe('resolveProvider routing for reasoning models', () => {
   // 8. o1-mini routes to OpenAIReasoningProvider
   // -----------------------------------------------------------------------
   it('resolveProvider routes o1-mini to OpenAIReasoningProvider', async () => {
-    const provider = await resolveProvider({
+    const { provider } = await resolveProvider({
       provider: 'openai',
       model: 'o1-mini',
       promptCache: TEST_PROMPT_CACHE,
@@ -204,7 +204,7 @@ describe('resolveProvider routing for reasoning models', () => {
   // -----------------------------------------------------------------------
   it('resolveProvider routes o3 to OpenAIProvider, not OpenAIReasoningProvider', async () => {
     const { OpenAIProvider } = await import('./openai-provider.js');
-    const provider = await resolveProvider({
+    const { provider } = await resolveProvider({
       provider: 'openai',
       model: 'o3',
       promptCache: TEST_PROMPT_CACHE,
@@ -219,7 +219,7 @@ describe('resolveProvider routing for reasoning models', () => {
   // -----------------------------------------------------------------------
   it('resolveProvider routes o3-mini to OpenAIProvider, not OpenAIReasoningProvider', async () => {
     const { OpenAIProvider } = await import('./openai-provider.js');
-    const provider = await resolveProvider({
+    const { provider } = await resolveProvider({
       provider: 'openai',
       model: 'o3-mini',
       promptCache: TEST_PROMPT_CACHE,
@@ -234,7 +234,7 @@ describe('resolveProvider routing for reasoning models', () => {
   // -----------------------------------------------------------------------
   it('resolveProvider routes o4-mini to OpenAIProvider, not OpenAIReasoningProvider', async () => {
     const { OpenAIProvider } = await import('./openai-provider.js');
-    const provider = await resolveProvider({
+    const { provider } = await resolveProvider({
       provider: 'openai',
       model: 'o4-mini',
       promptCache: TEST_PROMPT_CACHE,
@@ -249,7 +249,7 @@ describe('resolveProvider routing for reasoning models', () => {
   // -----------------------------------------------------------------------
   it('resolveProvider routes gpt-4o to OpenAIProvider (regression guard)', async () => {
     const { OpenAIProvider } = await import('./openai-provider.js');
-    const provider = await resolveProvider({
+    const { provider } = await resolveProvider({
       provider: 'openai',
       model: 'gpt-4o',
       promptCache: TEST_PROMPT_CACHE,
