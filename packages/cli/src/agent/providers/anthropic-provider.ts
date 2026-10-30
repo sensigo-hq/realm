@@ -3,12 +3,14 @@
 import {
   WorkflowError,
   validateAgentSubmission,
-  chooseCacheLifetime,
+  chooseAutoLifetime,
+  keptCacheGaps,
   normalizeCacheAuto,
-  type CacheAutoBasis,
+  type AutoPriceInput,
+  type CacheAuto,
+  type CacheAutoPrices,
   type CacheChoice,
   type CacheRequestSource,
-  type CacheTiers,
   type JsonSchema,
   type PromptCacheSetting,
   type StructuredOutputMeta,
@@ -88,19 +90,21 @@ export const MAX_NONSTREAMING_TOKENS = 21_333;
 export const ANTHROPIC_DEFAULT_BASE_URL = 'https://api.anthropic.com';
 
 /**
- * Issue #600 (the lifetime unit) — Anthropic's cache prices and lifetimes, as multiples of its input
- * price, for `chooseCacheLifetime` (core holds no price and names no provider; the adapter declares
- * them). The lifetimes are Anthropic's two: 5 minutes (the default, sent without a `ttl`) and 1 hour
- * (sent with `ttl: '1h'`). The writes are Anthropic's published 1.25× and 2× of input (vendored doc
- * `plans/issue-558/axes/sources/framework-decisions/anthropic-prompt-caching.md:259-260`). Reads cost
- * 0.025× to 0.1× by model, and the choice barely moves across that range, so the highest is used —
- * the provider's rules, not a per-model table.
+ * Issue #600 (the lifetime unit), #898 — Anthropic's two cache lifetimes: 5 minutes (the default,
+ * sent without a `ttl`) and 1 hour (sent with `ttl: '1h'`). The provider's rules, never a price:
+ * `auto` takes its prices from the runner's price file (`chooseAutoLifetime`).
  */
-export const ANTHROPIC_CACHE_TIERS: CacheTiers = {
-  read: 0.1,
-  short: { lifetime_s: 300, write: 1.25 },
-  long: { lifetime_s: 3600, write: 2 },
+export const ANTHROPIC_CACHE_TIERS: {
+  short: { lifetime_s: number };
+  long: { lifetime_s: number };
+} = {
+  short: { lifetime_s: 300 },
+  long: { lifetime_s: 3600 },
 };
+
+/** Issue #898 — thrown when a request or `capabilities()` reads an `auto` choice not yet settled. */
+const AUTO_CHOICE_PENDING =
+  'AnthropicProvider: the auto cache choice is not settled; call settleAutoChoice first';
 
 /**
  * Issue #899 — the one `cache_control` shape a request's markers carry: `short` sends no `ttl` (the
@@ -405,18 +409,24 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     value: PromptCacheSetting;
     source?: CacheRequestSource;
     by?: string;
-    auto?: { basis: CacheAutoBasis; gaps_s?: number[] };
+    auto?: CacheAuto;
   };
-  /** Issue #600 (the lifetime unit) — the ONE choice this instance asks for, resolved at build. */
-  private readonly cacheChoice: CacheChoice;
+  /**
+   * Issue #600 (the lifetime unit) — the ONE choice this instance asks for. Issue #898: settled at
+   * build, except `auto` with kept gaps, which is `'pending'` until {@link settleAutoChoice} prices
+   * it. Read only through {@link settledChoice}.
+   */
+  private cacheChoice: CacheChoice | 'pending';
+  /** Issue #898 — where the settled `auto` choice took its prices; absent when none was needed. */
+  private autoPrices: CacheAutoPrices | undefined;
 
   /**
    * `promptCache` (issue #600): what it asks to cache on each request it marks: a single-shot
    * request, and every main turn of a tool step. Without it the provider asks for nothing (`off`) —
-   * the request is byte-for-byte the one before caching. `off`, `short`
-   * and `long` ask for that; `auto` asks for what `chooseCacheLifetime` chooses from `auto.gaps_s`
-   * and {@link ANTHROPIC_CACHE_TIERS}, with the short lifetime as the prior for a drive with no
-   * measurement and the long one for a drive `realm listen` started.
+   * the request is byte-for-byte the one before caching. `off`, `short` and `long` ask for that.
+   * `auto` with no kept gap asks for its prior: the short lifetime for a drive with no measurement,
+   * the long one for a drive `realm listen` started. `auto` with kept gaps (#898) is PENDING until
+   * {@link settleAutoChoice} chooses from the runner's price file.
    */
   constructor(
     private readonly model: string,
@@ -425,21 +435,62 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         value: PromptCacheSetting;
         source?: CacheRequestSource;
         by?: string;
-        auto?: { basis: CacheAutoBasis; gaps_s?: number[] };
+        auto?: CacheAuto;
       };
     },
   ) {
     super();
     this.promptCache = opts?.promptCache ?? { value: 'off' };
-    const { value, auto } = this.promptCache;
+    const { value } = this.promptCache;
     this.cacheChoice =
-      value === 'auto'
-        ? chooseCacheLifetime(
-            auto?.gaps_s,
-            ANTHROPIC_CACHE_TIERS,
-            auto === undefined || auto.basis === 'no_measurement' ? 'short' : 'long',
-          )
-        : value;
+      value !== 'auto'
+        ? value
+        : keptCacheGaps(this.promptCache.auto?.gaps_s).length === 0
+          ? this.autoPrior()
+          : 'pending';
+  }
+
+  /** Issue #600 (the lifetime unit) — `auto`'s prior: short with no measurement, else long. */
+  private autoPrior(): 'short' | 'long' {
+    const { auto } = this.promptCache;
+    return auto === undefined || auto.basis === 'no_measurement' ? 'short' : 'long';
+  }
+
+  /** Issue #898 — the one way to read the choice: it throws while an `auto` choice is pending. */
+  private settledChoice(): CacheChoice {
+    if (this.cacheChoice === 'pending') throw new Error(AUTO_CHOICE_PENDING);
+    return this.cacheChoice;
+  }
+
+  /** Issue #898 — whether an `auto` choice waits for {@link settleAutoChoice}. */
+  isAutoChoicePending(): boolean {
+    return this.cacheChoice === 'pending';
+  }
+
+  /**
+   * Issue #898 — settles a pending `auto` choice from the runner's price file (`AutoPriceInput`:
+   * its base rates for the model, or the cause it gave none) by `chooseAutoLifetime`, over
+   * Anthropic's two lifetimes. Returns the choice and where its prices came from. Throws when no
+   * choice is pending — which also covers a second call.
+   */
+  settleAutoChoice(prices: AutoPriceInput): { choice: CacheChoice; prices?: CacheAutoPrices } {
+    if (this.cacheChoice !== 'pending') {
+      throw new Error(
+        'AnthropicProvider: no auto cache choice is pending; settleAutoChoice runs once, for an auto choice with measured gaps',
+      );
+    }
+    const outcome = chooseAutoLifetime({
+      gapsS: this.promptCache.auto?.gaps_s,
+      lifetimes: {
+        short_s: ANTHROPIC_CACHE_TIERS.short.lifetime_s,
+        long_s: ANTHROPIC_CACHE_TIERS.long.lifetime_s,
+      },
+      prior: this.autoPrior(),
+      prices,
+    });
+    this.cacheChoice = outcome.choice;
+    this.autoPrices = outcome.prices;
+    return outcome;
   }
 
   /**
@@ -455,15 +506,15 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
   capabilities(): ProviderCapabilities {
     // issue #600 PR 2 (B2): what it asks to cache on each request it marks: a single-shot request,
     // and every main turn of a tool step; always — `off` included;
-    // the lifetime unit: the one resolved choice, as `'off'` or its lifetime in seconds.
+    // the lifetime unit: the one resolved choice, as `'off'` or its lifetime in seconds (#898: a
+    // pending `auto` choice throws).
+    const choice = this.settledChoice();
     return {
       jsonMode: false,
       toolArgsStrict: true,
       providerId: 'anthropic',
       promptCache:
-        this.cacheChoice === 'off'
-          ? 'off'
-          : { lifetime_s: ANTHROPIC_CACHE_TIERS[this.cacheChoice].lifetime_s },
+        choice === 'off' ? 'off' : { lifetime_s: ANTHROPIC_CACHE_TIERS[choice].lifetime_s },
     };
   }
 
@@ -474,15 +525,23 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
    * or `off`), its source and runner when given, the endpoint, and that Anthropic reports a
    * lifetime split. Never `provider`: `realm agent` stamps that. The lifetime unit: when the setting
    * is `auto`, also `cache_auto` — the basis of the choice and the gaps it read (`no_measurement`
-   * when none was given) — whatever it chose, `off` included.
+   * when none was given), and (#898) where its prices came from when it needed any — whatever it
+   * chose, `off` included.
    */
   private requestFacts(response: unknown, client: unknown): Partial<UsageRecord> {
     const { value, source, by, auto } = this.promptCache;
-    const choice = this.cacheChoice;
+    const choice = this.settledChoice();
     const model = responseModel(response);
     const endpoint = endpointOf(client, ANTHROPIC_DEFAULT_BASE_URL);
+    const basis = auto ?? { basis: 'no_measurement' as const };
     const cacheAuto =
-      value === 'auto' ? normalizeCacheAuto(auto ?? { basis: 'no_measurement' }) : undefined;
+      value === 'auto'
+        ? normalizeCacheAuto({
+            basis: basis.basis,
+            ...(basis.gaps_s !== undefined ? { gaps_s: basis.gaps_s } : {}),
+            ...(this.autoPrices !== undefined ? { prices: this.autoPrices } : {}),
+          })
+        : undefined;
     return {
       ...(model !== undefined ? { model } : {}),
       ...(choice === 'off'
@@ -642,7 +701,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         const opts: Record<string, unknown> = {
           model: this.model,
           max_tokens: resolveMaxTokens(this.model),
-          system: systemWithCache(systemPrompt, this.cacheChoice),
+          system: systemWithCache(systemPrompt, this.settledChoice()),
           messages: [{ role: 'user', content: userContent }],
         };
         if (submitTool !== undefined) {
@@ -1051,7 +1110,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       // that needs nothing removed is byte-for-byte what it was before issue #677.
       // Issue #899: unless the choice is `off`, the turn asks to cache `system` and the
       // conversation so far — a marker on a COPY of the last message, never on `history`.
-      const choice = this.cacheChoice;
+      const choice = this.settledChoice();
       const opts: Record<string, unknown> = {
         model: this.model,
         max_tokens: resolveMaxTokens(this.model),
