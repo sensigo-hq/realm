@@ -154,6 +154,9 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
 - **A run started again under an idempotency key is stamped after the run it replaces when the
   clock stepped back by less than 5 seconds, and each `create`, `update` and `claimStep` of a store
   stamps from one reading of the clock (issue #715).**
+- Hardening: a declared secret or an environment value that a step prints in pieces, or relays
+  from a child program chunk by chunk, is hidden in a log as one value — when the pieces arrive
+  within 200 ms, and unless another hidden value inside it ends before the pieces split.
 - `realm run inspect`, `realm run drain` and `realm run resume` no longer list work as something
   `realm run advance` runs without saying what it needs: when a step needs a handler or adapter
   Realm does not build in, the line names it before the command (issue #923).
