@@ -45,6 +45,9 @@ function claimWorkflowPage(sentence: string): void {
 }
 const PROMPT_CLOSES =
   "A gate's prompt closes when its question is settled while it waits: by its time running out, when the gate declares an `on_expiry` (this process carries the expiry out and prints its own `⏰` line), or by another process — `realm run respond` from another terminal, `realm run advance`, `realm run drain --expired` or `realm listen`.";
+/** C158: the two closers can print their lines in either order (realm-workflow.md). */
+const PROMPT_CLOSE_ORDER =
+  "When that read and this process's own timer settle the same question within a few milliseconds, the `⏰` line and the `This prompt is closed:` line can appear in either order.";
 /** C173: the wait for a step another process holds (realm-workflow.md). */
 const IN_FLIGHT_WAIT =
   "While another process holds a step and nothing else is ready, it waits for that process, as `realm agent` does, and says so: `• Step '<step>' is in flight, taken by <program> since <time>: waiting up to 60s for the run's record to change.` When the record changes it runs what is ready; when the record has not changed for 60 seconds it prints `• Step '<step>' has been in flight since <time>, taken by <program>; the record has not changed for 60s. If the program that took it is gone: realm run reclaim <run> --step <step> --force` and hands the run back at that step, with the ways on that fit a step another program is still running: `realm run advance`, once the step is no longer in flight, runs what the engine then owes and names an agent step or a question that is ready.";
@@ -431,6 +434,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
 
     it('the attending timer settles the default while the prompt waits: the prompt closes, prints the answer the expiry recorded, and the run goes on — no `was not recorded`', async () => {
       claimWorkflowPage(PROMPT_CLOSES);
+      claimWorkflowPage(PROMPT_CLOSE_ORDER);
       const prompts = waitAtPrompt();
 
       const code = await run(
@@ -443,9 +447,14 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       expect(after.filter((l) => l.startsWith('  This prompt is closed:'))).toEqual([
         "  This prompt is closed: the question on 'confirm' is no longer open — Answer: approve · settled by the gate's expiry (no answer in time).",
       ]);
-      expect(after.findIndex((l) => l.startsWith('⏰ gate '))).toBeLessThan(
-        after.findIndex((l) => l.startsWith('  This prompt is closed:')),
-      );
+      // The ⏰ line is asserted PRESENT, not ordered before the close line: this prompt has two
+      // closers — the timer's `onApplied` after its ⏰ line, and the record watch (every
+      // QUESTION_WATCH_MS) — and the store's `update` releases its lock in an `await` AFTER the file
+      // is on disk (`json-file-store.ts`, `finally { await release(); }`), so the watch can read the
+      // settled record and close the prompt before the timer's own line prints (CI run 41066460626,
+      // 2026-10-30, once; the docs say the two lines can come in either order). The timer-only order
+      // is pinned by "C158, finding 10" below, with the watch neutralised.
+      expect(after.filter((l) => l.startsWith('⏰ gate ')).length).toBe(1);
       expect(
         [...after, ...errored()].filter(
           (l) => l.includes('was not recorded') || l.includes('not recorded —'),
