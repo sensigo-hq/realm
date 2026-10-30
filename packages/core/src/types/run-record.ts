@@ -414,6 +414,59 @@ export const CACHE_AUTO_BASES = [
 export type CacheAutoBasis = (typeof CACHE_AUTO_BASES)[number];
 
 /**
+ * Issue #898 — why `--prompt-cache auto` chose without prices (`CacheAuto.prices.cause`, `from:
+ * 'none'`). Each member's producer:
+ * - `no_file` — `runner.cache.economics` is not set (the CLI's `readAutoPrices`);
+ * - `economics_unreachable` — the file could not be read (`readCacheEconomics`);
+ * - `economics_unreadable` — the file is not a valid price file (`readCacheEconomics`);
+ * - `model_unknown` — the file has no entry for the requested model (`selectEconomicsRates`);
+ * - `input_zero` — the row prices input at 0, or at no finite positive number
+ *   (`chooseAutoLifetime`, row 3);
+ * - `rate_missing` — the row has no read rate, or no write rate for either lifetime
+ *   (`chooseAutoLifetime`, row 4; `missing` names them).
+ */
+export const CACHE_AUTO_PRICE_CAUSES = [
+  'no_file',
+  'economics_unreachable',
+  'economics_unreadable',
+  'model_unknown',
+  'input_zero',
+  'rate_missing',
+] as const;
+export type CacheAutoPriceCause = (typeof CACHE_AUTO_PRICE_CAUSES)[number];
+
+/** Issue #898 — the price-file rates `auto`'s choice reads, in the order a `missing` list names them. */
+export const CACHE_AUTO_RATES = ['cache_read', 'cache_write_5m', 'cache_write_1h'] as const;
+export type CacheAutoRate = (typeof CACHE_AUTO_RATES)[number];
+
+/**
+ * Issue #898 — where `auto`'s choice took its prices: from the runner's price file (`economics`,
+ * with the one lifetime it could not cost excluded), or from none (the owner's fallback, by its
+ * cause). Closed-set words only: no model id, no path.
+ */
+export type CacheAutoPrices =
+  | { from: 'economics'; excluded?: ['short'] | ['long']; missing?: [CacheAutoRate] }
+  | { from: 'none'; cause: CacheAutoPriceCause; missing?: CacheAutoRate[] };
+
+/**
+ * Issue #600 (the lifetime unit), #898 — the record's `cache_auto`: the basis of the choice, the
+ * gaps it read, and (#898) where its prices came from — absent when no price was needed (no kept
+ * gap). Normalised where it enters the record (`normalizeCacheAuto`).
+ */
+export interface CacheAuto {
+  basis: CacheAutoBasis;
+  gaps_s?: number[];
+  prices?: CacheAutoPrices;
+}
+
+/**
+ * Issue #898 — a view's `cache_auto.prices`: the stored value, or `not_recorded` for a request
+ * recorded before Realm priced `auto` from the price file (gaps kept, no `prices`). A view word,
+ * never stored.
+ */
+export type CacheAutoPricesView = CacheAutoPrices | { from: 'not_recorded' };
+
+/**
  * Issue #600 PR 2 — which kind of endpoint a request went to (`UsageRecord.endpoint`): the
  * provider SDK's own default address (`default`) or another one (`custom`: `--base-url`,
  * `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`). Produced by each adapter from its SDK client's
@@ -511,10 +564,11 @@ export interface UsageRecord {
   /**
    * Issue #600 (the lifetime unit) — present iff the setting was `auto`: the basis of the choice,
    * and the gaps it read. `gaps_s` is present iff `basis` is `listen_trigger_gaps`: 0 to 5 whole
-   * seconds, each from 0 to 604 800, oldest first. Normalised where it enters the record
+   * seconds, each from 0 to 604 800, oldest first. Issue #898: `prices` says where the choice took
+   * its prices, present only when gaps were kept. Normalised where it enters the record
    * (`boundRequestFacts` → `normalizeCacheAuto`).
    */
-  cache_auto?: { basis: CacheAutoBasis; gaps_s?: number[] };
+  cache_auto?: CacheAuto;
   /**
    * Issue #600 PR 2 — the provider that served the request. Stamped by `realm agent` from its one
    * provider fact (`anthropic`, `openai`, `openai-reasoning`, `module:<file>`), never by an adapter.

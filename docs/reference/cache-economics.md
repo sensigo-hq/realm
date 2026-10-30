@@ -162,6 +162,20 @@ Realm also prices the request as if nothing had been cached: the whole prompt at
 
 A model with one price prints `current price`. A model with several prices prints `at the call's date`. A figure over both kinds says how many of each: `1 at the call's date, 1 current`.
 
+## What `--prompt-cache auto` reads from it
+
+On a drive `realm listen` starts with Anthropic, `--prompt-cache auto` chooses which cache lifetime to ask for from the gaps between the workflow's recent triggers, priced from this file. This section was added after version 0.48.0.
+
+- `realm agent` reads the file once, when the drive starts, after the workflow and `realm.yaml` load. A drive with no measured gap reads no file: a drive `realm agent` starts on its own, and a workflow's first trigger since `realm listen` started. So do `--prompt-cache short`, `long` and `off`, OpenAI and a provider module.
+- The choice reads the entry of the id you pass to `--model`, as a request is priced: that id, else the id without a date at its end. Key your price file by the id you pass to `--model`: an entry keyed only by a dated id does not match an undated `--model`.
+- The choice reads the price row in force when the drive starts, on the base tier: the price's own rates, never a tier's.
+- Each rate is divided by `input`. 5 minutes is costed only when the row states `cache_read` and `cache_write_5m`, and 1 hour only when it states `cache_read` and `cache_write_1h`. A lifetime the row cannot cost is never chosen, no rate is filled from another, and a single `cache_write` is not read as either lifetime's write.
+- Over the last five gaps, a lifetime costs `cache_read` for a gap under 90% of it, else its write rate; no caching costs `input`. `auto` asks for the cheapest; on a tie, the longer lifetime.
+- When the file cannot price the choice — `runner.cache.economics` is not set, the file cannot be read or is not a valid price file, it has no entry for the model, it prices `input` at 0, or it has no `cache_read` or no write rate for either lifetime — `auto` asks for 1 hour when any of the last five gaps is under 54 minutes, and for no caching otherwise.
+- `auto` reads only this file, never the installed price list. Realm ships no prices, for the choice either.
+- The drive's `Caching:` line, `realm run inspect`, `get_run_state` and each request's record (`cache_auto.prices`) say whether the choice was priced from your file, and why not when it was not.
+- The file decides which lifetime `auto` asks for, so a login that can change it can change that choice. The separation check's economics line shows whether this login can.
+
 ## What Realm prints
 
 From `realm run inspect`, at the end of the step's `Diagnostics` line:
