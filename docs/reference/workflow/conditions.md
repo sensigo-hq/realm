@@ -148,14 +148,14 @@ Each condition below was the `when` of its own step. `true` means that step ran;
 
 The table above is for `when`. The same conditions were run as `preconditions` and as `abort_unless`. They agree except here:
 
-| Condition form                                     | `when`                                                | `preconditions`                 | `abort_unless`                                |
-| -------------------------------------------------- | ----------------------------------------------------- | ------------------------------- | --------------------------------------------- |
-| A path alone                                       | Accepted                                              | Refused when the file is loaded | Accepted                                      |
-| `<path> == null`                                   | True for a missing or null value                      | False                           | False                                         |
-| `run.params.<name>`                                | Read                                                  | Refused when the file is loaded | Refused when the file is loaded               |
-| A field the step did not output                    | The condition is false                                | The condition is false          | The run fails. It is not recorded as aborted. |
-| A path whose first part is no step of the workflow | Refused when the file is loaded (not in `depends_on`) | Refused when the file is loaded | Refused when the file is loaded               |
-| A path to a step not in `depends_on`               | Refused when the file is loaded                       | Accepted                        | Accepted                                      |
+| Condition form                                                 | `when`                           | `preconditions`                 | `abort_unless`                                |
+| -------------------------------------------------------------- | -------------------------------- | ------------------------------- | --------------------------------------------- |
+| A path alone                                                   | Accepted                         | Refused when the file is loaded | Accepted                                      |
+| `<path> == null`                                               | True for a missing or null value | False                           | False                                         |
+| `run.params.<name>`                                            | Read                             | Refused when the file is loaded | Refused when the file is loaded               |
+| A field the step did not output                                | The condition is false           | The condition is false          | The run fails. It is not recorded as aborted. |
+| A path that starts with no step, `run.params` or `$settlement` | Refused when the file is loaded  | Refused when the file is loaded | Refused when the file is loaded               |
+| A path to a step not in `depends_on`                           | Refused when the file is loaded  | Accepted                        | Accepted                                      |
 
 So a test for a missing value belongs in `when`. In `preconditions` and `abort_unless`, `null` is not understood: `== null` is false even when the value is null.
 
@@ -235,13 +235,13 @@ Because a skipped step has no entry, `$settlement.<step>.failed == null` in a `w
 ## Rules the loader applies
 
 - A `when` path must start with `run.params`, or with a step listed in the step's own `depends_on`. A `$settlement` path must name such a step too: `'$settlement' paths must reference a direct dependency (one-hop rule)`.
-- A `preconditions` or `abort_unless` path must start with a step of the workflow, or with `$settlement`. A `run.…` path, a `context.…` path and a name that is no step are refused, each with what to write instead.
+- On an `auto` or `agent` step, a `preconditions` path, and on a guard, an `abort_unless` path, must start with a step of the workflow, or with `$settlement`. A `run.…` path, a `context.…` path and a name that is no step are refused, each with what to write instead.
 
   ```text
   Invalid workflow: Step 'c': precondition 'run.params.mode == 'live'' reads 'run.params.mode', the run's input. A precondition reads only what the workflow's steps recorded, never the run's input, so it could never be true and the step could never run. To skip the step when the input says so, put the condition under 'when'; to refuse a run whose input does not fit, declare it in params_schema. Then register the workflow again. (step at line 8)
   ```
 
-  On a step with no `depends_on`, the refusal names only `params_schema`: a first step whose `when` is false leaves the run with nothing to run.
+  On a step with no `depends_on`, the refusal names only `params_schema`: a first step whose `when` is false leaves the run with nothing to run. A guard that reads the run's input is told to declare it in `params_schema`, which refuses such a run when `start_run` or `realm workflow run` starts it; `realm workflow test` does not check it yet.
 
 - `preconditions` must be a list: `'preconditions' must be an array of strings`.
 - A `when` list must not be empty: `'when' array must not be empty`.

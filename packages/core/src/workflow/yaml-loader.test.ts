@@ -2483,12 +2483,14 @@ describe('issue #933 — a precondition or a guard whose path starts outside the
         `whose input does not fit, declare it in params_schema. `
       : `To refuse a run whose input does not fit, declare it in params_schema. `) +
     `Then register the workflow again. (step at line ${line})`;
-  const ARM_A_GUARD = (leaf: string, path: string): string =>
+  /** Arm A on a guard: only `params_schema`, wherever the guard stands (the review of PR #942, F1:
+   *  a guard on the run's input is usually a first step, and once it is removed a false `when` on
+   *  the steps after it leaves the run with nothing ready). */
+  const ARM_A_GUARD = (leaf: string, path: string, line = 5): string =>
     `Step 'g': abort_unless '${leaf}' reads '${path}', the run's input. A guard reads only what ` +
     `the workflow's steps recorded, never the run's input, so whenever the guard runs, this check ` +
-    `fails the run. To refuse a run whose input does not fit, declare it in params_schema; to skip ` +
-    `the steps that should not run on that input, put the condition under their 'when'. Then ` +
-    `register the workflow again. (step at line 5)`;
+    `fails the run. To refuse a run whose input does not fit, declare it in params_schema. Then ` +
+    `register the workflow again. (step at line ${line})`;
   /** The T2 workflow: a guard on the run's input before a step that pays. */
   const guarded = (abortUnless: string): string =>
     flow(
@@ -2567,6 +2569,34 @@ describe('issue #933 — a precondition or a guard whose path starts outside the
     expect(refusals(guarded('run.params.ok'))).toEqual([
       ARM_A_GUARD('run.params.ok', 'run.params.ok'),
     ]);
+  });
+
+  // T2, a guard that depends on another step (the shape no other #933 cell has): the same text,
+  // naming only params_schema. (a) red when it is told to use `when`, or is refused with other words,
+  // or loads; (b) prints the refusals and whether each names `when`.
+  it('T2 (arm A, guard): `run.params.amount <= 1000` on a guard after another step is refused, naming only params_schema', () => {
+    const leaf = 'run.params.amount <= 1000';
+    const seen = refusals(
+      flow(
+        'steps:',
+        '  start:',
+        '    description: Start.',
+        '    execution: auto',
+        '  g:',
+        '    description: G.',
+        '    execution: guard',
+        '    depends_on: [start]',
+        `    abort_unless: "${leaf}"`,
+        '  pay:',
+        '    description: Pay.',
+        '    execution: auto',
+        '    depends_on: [g]',
+      ),
+    );
+    expect({ seen, namesWhen: seen.map((e) => e.includes("'when'")) }).toEqual({
+      seen: [ARM_A_GUARD(leaf, 'run.params.amount', 8)],
+      namesWhen: [false],
+    });
   });
 
   const ARM_B = (opening: string, reader: string, consequence: string): string =>

@@ -158,15 +158,13 @@ const REFUSE_UNFIT_RUN = 'refuse a run whose input does not fit, declare it in p
  * names `when` only on a step that depends on another: the engine records a `when` skip once the
  * step's dependencies have settled, so on a step with no `depends_on` a false `when` leaves the run
  * with nothing ready, never skipped (the architect's ruling on #933, from the build's verify-first
- * probe). A guard's names the `when` of the steps after it.
+ * probe). A guard's names only `params_schema`, wherever the guard stands: a guard refuses an unfit
+ * run, which `params_schema` does at start; and a guard on the run's input is usually a workflow's
+ * first step, so once it is removed the steps after it have no `depends_on` left, and a false
+ * `when` there would leave the run with nothing ready (the review of PR #942, F1).
  */
 function runInputRemedy(surface: StepsReadSurface, stepHasDependency: boolean): string {
-  if (surface === 'abort_unless')
-    return (
-      `To ${REFUSE_UNFIT_RUN}; to skip the steps that should not run on that input, put the ` +
-      `condition under their 'when'.`
-    );
-  return stepHasDependency
+  return surface !== 'abort_unless' && stepHasDependency
     ? `To skip the step when the input says so, put the condition under 'when'; to ${REFUSE_UNFIT_RUN}.`
     : `To ${REFUSE_UNFIT_RUN}.`;
 }

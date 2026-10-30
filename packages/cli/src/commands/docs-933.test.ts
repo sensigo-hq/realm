@@ -12,9 +12,12 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
+  loadWorkflowFromString,
   loadWorkflowFromStringWithDiagnostics,
+  validateRunParams,
   type WorkflowError,
 } from '@sensigo/realm';
+import { runFixtureTests } from '@sensigo/realm-testing';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..', '..', '..');
@@ -134,9 +137,9 @@ describe('issue #933 — conditions.md: a precondition or a guard reads only wha
       preconditions: refusals(reading('preconditions', leaf)).map((e) => e.includes(fix)),
       abort_unless: refusals(reading('abort_unless', leaf)).map((e) => e.includes(fix)),
     }).toEqual({ preconditions: [true], abort_unless: [true] });
-  });
+  }, 60_000);
 
-  it('the table under "Where the three fields differ": the `run.params.<name>` row, "A field the step did not output" and "A path whose first part is no step of the workflow"', () => {
+  it('the table under "Where the three fields differ": the `run.params.<name>` row, "A field the step did not output" and "A path that starts with no step, `run.params` or `$settlement`"', () => {
     claim(
       PAGE,
       '| `run.params.<name>` | Read | Refused when the file is loaded | Refused when the file is loaded |',
@@ -147,7 +150,7 @@ describe('issue #933 — conditions.md: a precondition or a guard reads only wha
     );
     claim(
       PAGE,
-      '| A path whose first part is no step of the workflow | Refused when the file is loaded (not in `depends_on`) | Refused when the file is loaded | Refused when the file is loaded |',
+      '| A path that starts with no step, `run.params` or `$settlement` | Refused when the file is loaded | Refused when the file is loaded | Refused when the file is loaded |',
     );
     const loads = (yaml: string): boolean => refusals(yaml).length === 0;
     // (a) red when a row's load-time cell is false: the run's input read by a precondition or a
@@ -184,7 +187,7 @@ describe('issue #933 — conditions.md: a precondition or a guard reads only wha
   it('"Rules the loader applies": a precondition or guard path starts with a step or `$settlement`; the printed refusal is realm\'s; a step with no `depends_on` is told only `params_schema`', () => {
     claim(
       PAGE,
-      'A `preconditions` or `abort_unless` path must start with a step of the workflow, or with `$settlement`. A `run.…` path, a `context.…` path and a name that is no step are refused, each with what to write instead.',
+      'On an `auto` or `agent` step, a `preconditions` path, and on a guard, an `abort_unless` path, must start with a step of the workflow, or with `$settlement`. A `run.…` path, a `context.…` path and a name that is no step are refused, each with what to write instead.',
     );
     claim(
       PAGE,
@@ -230,6 +233,69 @@ describe('issue #933 — conditions.md: a precondition or a guard reads only wha
       settlement: [],
       step: [],
       remedies: [[true], [true], [true]],
+    });
+  }, 60_000);
+
+  it('"Rules the loader applies": a guard on the run\'s input is told only `params_schema`, which refuses such a run at start; `realm workflow test` does not check it yet', async () => {
+    claim(
+      PAGE,
+      "A guard that reads the run's input is told to declare it in `params_schema`, which refuses such a run when `start_run` or `realm workflow run` starts it; `realm workflow test` does not check it yet.",
+    );
+    // The guard's half: (a) red when a guard on the run's input is told to use `when`, or not
+    // params_schema, or loads; (b) prints whether each refusal names each field.
+    const guard = refusals(reading('abort_unless', 'run.params.amount <= 1000')).map((e) => [
+      e.includes("'when'"),
+      e.includes('declare it in params_schema'),
+    ]);
+    // The text followed: the guard removed, `amount` declared in params_schema.
+    const definition = loadWorkflowFromString(
+      flow(
+        'params_schema:',
+        '  type: object',
+        '  properties:',
+        '    amount:',
+        '      type: number',
+        '      maximum: 1000',
+        'steps:',
+        '  pay:',
+        '    description: Pay.',
+        '    execution: auto',
+      ),
+    );
+    // The start's half: `validateRunParams`, which every door that starts a run calls (`start_run`,
+    // `realm workflow run`). (a) red when an unfit run is not refused, or a fit one is; (b) prints the
+    // refusal's code only.
+    const atStart = (amount: number): string | undefined => {
+      try {
+        validateRunParams({ amount }, definition.params_schema!, definition.id);
+      } catch (err) {
+        return (err as WorkflowError).code;
+      }
+      return undefined;
+    };
+    // The test door's half: `runFixtureTests`, which `realm workflow test` calls with the definition
+    // it loaded, does not apply params_schema, so the unfit fixture runs to completion. This pins
+    // today's gap (933-WK-08, proposed for its own issue): when the fixture runner applies
+    // params_schema, this half flips by design, and the page's sentence changes with it.
+    // (a) red when the fixture runner refuses the unfit fixture; (b) prints the fixture's result.
+    const dir = join(work, 'flow');
+    mkdirSync(join(dir, 'fixtures'), { recursive: true });
+    writeFileSync(
+      join(dir, 'fixtures', 'over.yaml'),
+      ['name: over', 'params: { amount: 5000 }', 'expected: { final_state: completed }', ''].join(
+        '\n',
+      ),
+      'utf8',
+    );
+    const results = await runFixtureTests({
+      workflowPath: dir,
+      fixturesPath: join(dir, 'fixtures'),
+      definition,
+    });
+    expect({ guard, atStart: [atStart(5000), atStart(500)], test: results }).toEqual({
+      guard: [[false, true]],
+      atStart: ['VALIDATION_INPUT_SCHEMA', undefined],
+      test: [{ name: 'over', passed: true }],
     });
   });
 });
@@ -296,5 +362,5 @@ describe('issue #933 — the CHANGELOG entry', () => {
         ),
       ),
     }).toEqual({ code: 1, refused: true });
-  });
+  }, 60_000);
 });
