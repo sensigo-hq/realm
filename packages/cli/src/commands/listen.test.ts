@@ -1437,7 +1437,7 @@ describe('issue #600 PR 2 — the listen: caching line', () => {
   // (a) red when the openai field is dropped.
   it("no --provider: Anthropic's setting, who set it, and OpenAI asked for no caching", () => {
     expect([line(undefined, undefined), line(undefined, 'short')]).toEqual([
-      'listen: caching {"anthropic":"auto: off, 5 minutes or 1 hour for each workflow, by the gaps between its recent triggers","set_by":"realm listen\'s default","openai":"asked for no caching"}',
+      'listen: caching {"anthropic":"auto: off, 5 minutes or 1 hour for each workflow, by the gaps between its recent triggers and the prices in runner.cache.economics","set_by":"realm listen\'s default","openai":"asked for no caching"}',
       'listen: caching {"anthropic":"5 minutes","set_by":"--prompt-cache short","openai":"asked for no caching"}',
     ]);
   });
@@ -1448,8 +1448,8 @@ describe('issue #600 PR 2 — the listen: caching line', () => {
     expect(
       [undefined, 'auto', 'short', 'long', 'off'].map((w) => line('anthropic', w as never)),
     ).toEqual([
-      'listen: caching {"anthropic":"auto: off, 5 minutes or 1 hour for each workflow, by the gaps between its recent triggers","set_by":"realm listen\'s default"}',
-      'listen: caching {"anthropic":"auto: off, 5 minutes or 1 hour for each workflow, by the gaps between its recent triggers","set_by":"--prompt-cache auto"}',
+      'listen: caching {"anthropic":"auto: off, 5 minutes or 1 hour for each workflow, by the gaps between its recent triggers and the prices in runner.cache.economics","set_by":"realm listen\'s default"}',
+      'listen: caching {"anthropic":"auto: off, 5 minutes or 1 hour for each workflow, by the gaps between its recent triggers and the prices in runner.cache.economics","set_by":"--prompt-cache auto"}',
       'listen: caching {"anthropic":"5 minutes","set_by":"--prompt-cache short"}',
       'listen: caching {"anthropic":"1 hour","set_by":"--prompt-cache long"}',
       'listen: caching {"anthropic":"off","set_by":"--prompt-cache off"}',
@@ -1694,10 +1694,11 @@ describe("issue #600 (the lifetime unit) — listen measures each workflow's tri
     ]);
   });
 
-  // Cell 12. (a) red when the option's description differs from B4's words; (b) prints it.
+  // Cell 12; #898 S11. (a) red when the option's description differs from B4's words, or (#898) it
+  // keeps the old words, with no price file and no fallback; (b) prints it.
   it("the help: listen's --prompt-cache description", () => {
     expect(listenCommand.options.find((o) => o.long === '--prompt-cache')?.description).toBe(
-      'Passed to each realm agent it starts: auto, short, long or off. auto (the default): each agent asks Anthropic for off, 5 minutes or 1 hour, by the gaps between the recent triggers of its workflow. short: 5 minutes. long: 1 hour. off: nothing. Other providers are asked for no caching.',
+      'Passed to each realm agent it starts: auto, short, long or off. auto (the default): each agent asks Anthropic for off, 5 minutes or 1 hour, by the gaps between the recent triggers of its workflow, priced from runner.cache.economics (with no usable prices: 1 hour when a recent gap is under 54 minutes, else off). short: 5 minutes. long: 1 hour. off: nothing. Other providers are asked for no caching.',
     );
   });
 });

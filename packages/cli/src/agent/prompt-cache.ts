@@ -3,14 +3,17 @@
 // transport; core keeps the vocabularies and stores classes, never the flag's words.
 import { InvalidArgumentError } from 'commander';
 import {
+  AUTO_LIFETIME_MARGIN,
   CACHE_GAP_MAX_S,
   PROMPT_CACHE_SETTINGS,
-  type CacheAutoBasis,
+  type CacheAuto,
+  type CacheAutoPricesView,
   type CacheRequestSource,
   type PromptCacheSetting,
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import type { ProviderCapabilities } from './providers/llm-provider.js';
+import { ANTHROPIC_CACHE_TIERS } from './providers/anthropic-provider.js';
 
 /**
  * Commander argParser for `--prompt-cache`, used by `realm agent` and `realm listen` (the
@@ -46,13 +49,14 @@ export function cacheableStepCounts(definition: Pick<WorkflowDefinition, 'steps'
 
 /**
  * The setting a drive asks Anthropic for, where it came from, which runner chose it and — when the
- * setting is `auto` — on what basis the adapter chooses (`UsageRecord.cache_auto`).
+ * setting is `auto` — on what basis the adapter chooses (`UsageRecord.cache_auto`). Issue #898: after
+ * a settle, `realm agent` adds `auto.prices` from its outcome for the start line.
  */
 export interface ResolvedPromptCache {
   value: PromptCacheSetting;
   source: CacheRequestSource;
   by: 'realm agent' | 'realm listen';
-  auto?: { basis: CacheAutoBasis; gaps_s?: number[] };
+  auto?: CacheAuto;
 }
 
 /** `--cache-gaps`' words: one to five whole numbers of at most six digits, comma-separated. */
@@ -83,10 +87,7 @@ export function resolvePromptCache(input: {
 }
 
 /** What `auto` reads, from the drive's start (B2). */
-function autoBasis(
-  spawnedByListen: boolean,
-  cacheGaps: string | undefined,
-): { basis: CacheAutoBasis; gaps_s?: number[] } {
+function autoBasis(spawnedByListen: boolean, cacheGaps: string | undefined): CacheAuto {
   if (!spawnedByListen) return { basis: 'no_measurement' };
   if (cacheGaps === undefined) return { basis: 'listen_trigger_gaps', gaps_s: [] };
   if (CACHE_GAPS_PATTERN.test(cacheGaps)) {
@@ -124,7 +125,7 @@ export function gapsText(gaps: readonly number[]): string {
 }
 
 /** What `auto` chose on, in words (the start line, `realm run inspect`). */
-export function autoEvidence(auto: { basis: CacheAutoBasis; gaps_s?: number[] }): string {
+export function autoEvidence(auto: Pick<CacheAuto, 'basis' | 'gaps_s'>): string {
   switch (auto.basis) {
     case 'no_measurement':
       return 'a drive realm agent starts on its own has no trigger history';
@@ -140,15 +141,77 @@ export function autoEvidence(auto: { basis: CacheAutoBasis; gaps_s?: number[] })
   }
 }
 
-/** The reason clause of the start line (`R`): where the setting came from, and what `auto` read. */
-function reasonText(promptCache: ResolvedPromptCache): string {
+/** Issue #898 — the long lifetime in words (`1 hour`), from the provider's constant. */
+export function autoLongText(): string {
+  return lifetimeText(ANTHROPIC_CACHE_TIERS.long.lifetime_s);
+}
+
+/**
+ * Issue #898 — the fallback's window in words (`54 minutes`): a gap under it is read under the long
+ * lifetime ({@link AUTO_LIFETIME_MARGIN} × the long lifetime).
+ */
+export function autoFallbackWindowText(): string {
+  return lifetimeText(AUTO_LIFETIME_MARGIN * ANTHROPIC_CACHE_TIERS.long.lifetime_s);
+}
+
+/**
+ * Issue #898 — where `auto`'s choice took its prices, in words: the start line, `realm run inspect`
+ * and every other render. `asked` is the lifetime asked, in seconds, or `'off'`; a fallback's words
+ * end by what that ask was. Total: never throws, for any `asked` a stored record can hold.
+ */
+export function autoPricesText(prices: CacheAutoPricesView, asked: number | 'off'): string {
+  const short = lifetimeText(ANTHROPIC_CACHE_TIERS.short.lifetime_s);
+  const longS = ANTHROPIC_CACHE_TIERS.long.lifetime_s;
+  const tail =
+    asked === longS
+      ? `, so ${autoLongText()} without prices`
+      : asked === 'off'
+        ? `, and no gap was under ${autoFallbackWindowText()}, so no caching`
+        : '';
+  switch (prices.from) {
+    case 'economics':
+      if (prices.excluded?.[0] === 'long') {
+        return `priced from your price file without ${autoLongText()}: it has no cache_write_1h rate for this model`;
+      }
+      if (prices.excluded?.[0] === 'short') {
+        return `priced from your price file without ${short}: it has no cache_write_5m rate for this model`;
+      }
+      return 'priced from your price file';
+    case 'not_recorded':
+      return 'price source not recorded (this request was recorded before Realm priced auto from the price file)';
+    case 'none':
+      switch (prices.cause) {
+        case 'no_file':
+          return `no price file (runner.cache.economics is not set)${tail}`;
+        case 'economics_unreachable':
+          return `the price file could not be read${tail}`;
+        case 'economics_unreadable':
+          return `the price file is not a valid price file${tail}`;
+        case 'model_unknown':
+          return `the price file does not price this model${tail}`;
+        case 'input_zero':
+          return `the price file prices input at 0 for this model${tail}`;
+        case 'rate_missing':
+          return `the price file has no ${(prices.missing ?? []).join(' or ')} rate for this model${tail}`;
+      }
+  }
+}
+
+/**
+ * The reason clause of the start line (`R`): where the setting came from, and what `auto` read —
+ * and (#898) where its prices came from, after the evidence. `asked` is what the provider asks.
+ */
+function reasonText(promptCache: ResolvedPromptCache, asked: number | 'off'): string {
   const v = promptCache.value;
   const listen = promptCache.by === 'realm listen';
   if (v !== 'auto') {
     // eslint-disable-next-line no-restricted-syntax -- prose naming the setting's source, not a command to copy (#729 PR-3, L-2).
     return listen ? `set by realm listen --prompt-cache ${v}` : `set by --prompt-cache ${v}`;
   }
-  const evidence = `auto: ${autoEvidence(promptCache.auto ?? { basis: 'no_measurement' })}; `;
+  const prices = promptCache.auto?.prices;
+  const evidence =
+    `auto: ${autoEvidence(promptCache.auto ?? { basis: 'no_measurement' })}; ` +
+    (prices !== undefined ? `${autoPricesText(prices, asked)}; ` : '');
   if (promptCache.source === 'stated') {
     return (
       evidence + (listen ? 'set by realm listen --prompt-cache auto' : 'set by --prompt-cache auto')
@@ -208,7 +271,10 @@ export function promptCacheStartLine(input: {
         : '';
     return `Caching: Realm asks ${providerName(caps, 'this provider')} for no caching; any caching it does is its own.${notice}`;
   }
-  const source = promptCache === undefined ? '' : ` (${reasonText(promptCache)})`;
+  const source =
+    promptCache === undefined
+      ? ''
+      : ` (${reasonText(promptCache, asked === 'off' ? 'off' : asked.lifetime_s)})`;
   if (asked === 'off') return `Caching: off; Anthropic is asked to cache nothing${source}.`;
   const counts = cacheableStepCounts(input.definition);
   if (counts.singleShot + counts.withTools === 0) {
