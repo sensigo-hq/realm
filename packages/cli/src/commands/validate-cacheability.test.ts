@@ -1623,18 +1623,22 @@ describe(
       expect({ code: v.code, notes: v.notes }).toEqual({ code: 0, notes: [] });
     });
 
-    // (4) Break: compare against the stored entry unguarded, or against nothing (`b` then named).
+    // (4) Breaks: read the stored entry unguarded (it throws after the lines: the exit code shows it),
+    // or compare against nothing (`b` then named).
     it("G-5 (4): the copy lacks `b`'s text, the folder present: G-2's row on b's steps, `b` in no note", () => {
       drift();
       editCopy('drift', (copy) => {
         delete (copy['resolved_profiles'] as Record<string, unknown>)['b'];
       });
       const v = validate();
+      // The exit code too: an unguarded read of `b`'s stored entry throws after the cache lines are
+      // printed, so the lines alone would not show it (the red-first run found that).
       expect({
+        code: v.code,
         rows: v.lines.filter((l) => l.includes('profile text not stored in the registered copy'))
           .length,
         notes: v.notes,
-      }).toEqual({ rows: 2, notes: [] });
+      }).toEqual({ code: 0, rows: 2, notes: [] });
     });
 
     // (5) Break: read the raw stored map unguarded (it throws when `resolved_profiles` is absent).
