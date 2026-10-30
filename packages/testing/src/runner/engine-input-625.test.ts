@@ -98,7 +98,7 @@ describe('#625 PR-2a, C70 — the testing runner drives an auto step as the engi
         '    description: Compute.',
         '    execution: auto',
         '    depends_on: [ask]',
-        '    preconditions: ["run.params.ok == true"]',
+        '    preconditions: ["ask.ok == true"]',
       ],
       [
         'name: one',
@@ -118,7 +118,7 @@ describe('#625 PR-2a, C70 — the testing runner drives an auto step as the engi
       passed: false,
       lines: [
         'Workflow stalled: nothing else can run.',
-        "'compute' cannot run (precondition): Precondition failed for step 'compute'. Precondition failed: 'run.params.ok == true'. Resolved value: undefined.",
+        "'compute' cannot run (precondition): Precondition failed for step 'compute'. Precondition failed: 'ask.ok == true'. Resolved value: undefined.",
       ],
     });
     // (a) red when any `realm run …` command comes back into the error: the run lives only in the
@@ -260,7 +260,7 @@ describe("#625 PR-2a, C75 — a missing stand-in fails with the engine's own mes
         '    description: Compute.',
         '    execution: auto',
         '    depends_on: []',
-        '    preconditions: ["run.params.ok == true"]',
+        '    preconditions: ["compute.ok == true"]',
         '  fetch:',
         '    description: Fetch.',
         '    execution: auto',
@@ -280,7 +280,7 @@ describe("#625 PR-2a, C75 — a missing stand-in fails with the engine's own mes
       passed: false,
       lines: [
         'Workflow stalled: nothing else can run.',
-        "'compute' cannot run (precondition): Precondition failed for step 'compute'. Precondition failed: 'run.params.ok == true'. Resolved value: undefined.",
+        "'compute' cannot run (precondition): Precondition failed for step 'compute'. Precondition failed: 'compute.ok == true'. Resolved value: undefined.",
         "'fetch' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it.",
       ],
     });
@@ -315,7 +315,7 @@ describe("#625 PR-2a, C80 — the runner's pick skips a step refused before its 
         '    description: Compute.',
         '    execution: auto',
         '    depends_on: []',
-        '    preconditions: ["run.params.ok == true"]',
+        '    preconditions: ["compute.ok == true"]',
         '    handler: rec_compute',
         '  file:',
         '    description: File.',
@@ -338,7 +338,7 @@ describe("#625 PR-2a, C80 — the runner's pick skips a step refused before its 
       passed: false,
       lines: [
         'Workflow stalled: nothing else can run.',
-        "'compute' cannot run (precondition): Precondition failed for step 'compute'. Precondition failed: 'run.params.ok == true'. Resolved value: undefined.",
+        "'compute' cannot run (precondition): Precondition failed for step 'compute'. Precondition failed: 'compute.ok == true'. Resolved value: undefined.",
       ],
     });
     // (a) red when 'file' does not run, runs twice, or the refused 'compute' runs its handler; the
@@ -425,17 +425,11 @@ describe('#625 PR-2a, C82 — the runner never picks an agent step refused befor
     `'ask' cannot run (precondition): ${refusal}`,
   ];
   const PRE_REFUSAL =
-    "Precondition failed for step 'ask'. Precondition failed: 'run.params.ok == true'. Resolved value: undefined.";
+    "Precondition failed for step 'ask'. Precondition failed: 'ask.ok == true'. Resolved value: undefined.";
 
   it('head: the stall names the agent step (before C82: the iteration cap)', async () => {
     const result = await runOne(
-      [
-        'id: c82-head',
-        'name: c82-head',
-        'version: 1',
-        'steps:',
-        ...ASK('', 'run.params.ok == true'),
-      ],
+      ['id: c82-head', 'name: c82-head', 'version: 1', 'steps:', ...ASK('', 'ask.ok == true')],
       [
         'name: one',
         'params: {}',
@@ -461,7 +455,7 @@ describe('#625 PR-2a, C82 — the runner never picks an agent step refused befor
         'name: c82-beside',
         'version: 1',
         'steps:',
-        ...ASK('', 'run.params.ok == true'),
+        ...ASK('', 'ask.ok == true'),
         '  file:',
         '    description: File.',
         '    execution: auto',

@@ -205,12 +205,17 @@ describe(
           'name: compute',
           'version: 1',
           'steps:',
+          '  check:',
+          '    description: Check.',
+          '    execution: auto',
           '  compute:',
           '    description: Compute.',
           '    execution: auto',
-          "    preconditions: ['run.params.ok == true']",
+          '    depends_on: [check]',
+          "    preconditions: ['check.ok == true']",
         ],
-        { a: ['name: stalls', 'expected: { final_state: completed }'] },
+        // `check` has no handler and depends on nothing, so it records the run's params: ok false.
+        { a: ['name: stalls', 'params: { ok: false }', 'expected: { final_state: completed }'] },
       );
       const [result] = await runFixtureTests({
         workflowPath: join(dir, 'flow'),
@@ -295,7 +300,7 @@ describe(
           '  compute:',
           '    description: Compute.',
           '    execution: auto',
-          "    preconditions: ['run.params.ok == true']",
+          "    preconditions: ['compute.ok == true']",
           '  call:',
           '    description: Call.',
           '    execution: auto',
@@ -312,7 +317,7 @@ describe(
       //     (b) prints the error.
       expect(lines).toEqual([
         'Workflow stalled: nothing else can run.',
-        "'compute' cannot run (precondition): Precondition failed for step 'compute'. Precondition failed: 'run.params.ok == true'. Resolved value: undefined.",
+        "'compute' cannot run (precondition): Precondition failed for step 'compute'. Precondition failed: 'compute.ok == true'. Resolved value: undefined.",
         "'call' cannot run here (capability): handler 'nope_h' is not registered here — load the missing extension, or run the step on a runner that has it.",
       ]);
       const dev = realmOnATerminal(dir, ['workflow', 'run', 'flow']);

@@ -98,12 +98,12 @@ describe('#625 PR-2a, C64 — realm workflow run: a step no typed output can unb
 
   it('a precondition refusal: the step is never offered; the stall names it and the way out, exit 1', async () => {
     mocks.question.mockResolvedValue('');
-    const code = await run(yaml('c64-run-pre', ['    preconditions: ["run.params.ok == true"]']));
+    const code = await run(yaml('c64-run-pre', ['    preconditions: ["ask.ok == true"]']));
     expect(code).toBe(1);
     expect(asked()).toEqual(['  Agent output JSON (Enter for {}): ']);
     expect(errored()).toEqual([
       '\nWorkflow stalled: nothing else can run.',
-      "'compute' cannot run (precondition): Precondition failed for step 'compute'. Precondition failed: 'run.params.ok == true'. Resolved value: undefined.",
+      "'compute' cannot run (precondition): Precondition failed for step 'compute'. Precondition failed: 'ask.ok == true'. Resolved value: undefined.",
       wayOut(runId()),
     ]);
   });

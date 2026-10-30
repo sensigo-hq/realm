@@ -348,7 +348,7 @@ describe(
           '    execution: auto',
           ...step,
         ]);
-      const preDef = lone('pre', ['    preconditions: ["run.params.ok == true"]']);
+      const preDef = lone('pre', ['    preconditions: ["compute.ok == true"]']);
       const pre = await started(preDef);
       const trustDef = lone('bad-trust', []);
       (trustDef.steps['compute'] as { trust?: unknown }).trust = 'bogus_value';
@@ -721,10 +721,26 @@ describe(
         '    execution: auto',
         ...step,
       ];
-      // A failed precondition: the page's screen.
-      const preCode = await run(
-        lone('stall-pre', ['    preconditions: ["run.params.ok == true"]']),
-      );
+      // A failed precondition: the page's screen. `check` comes first and is answered `ok: false`;
+      // `compute`, whose precondition reads it, is never asked for.
+      mocks.question.mockImplementationOnce(async (prompt: string) => {
+        if (prompt.startsWith('  Mock output')) return '{"ok": false}';
+        throw new Error(`fixture: an unexpected prompt: ${prompt}`);
+      });
+      const preCode = await run([
+        'id: stall-pre',
+        'name: stall-pre',
+        'version: 1',
+        'steps:',
+        '  check:',
+        '    description: Check.',
+        '    execution: auto',
+        '  compute:',
+        '    description: Compute.',
+        '    execution: auto',
+        '    depends_on: [check]',
+        '    preconditions: ["check.ok == true"]',
+      ]);
       const pre = runIds()[0]!;
       const preAsked = asked();
       const preErr = errored()
@@ -733,7 +749,7 @@ describe(
       // (a) red when the step is asked for, the screen differs from the page's (the id aside), or
       //     the run does not stop with exit 1; (b) prints the prompts, stderr and the exit.
       expect({ asked: preAsked, err: preErr, code: preCode }).toEqual({
-        asked: [],
+        asked: ['  Mock output (auto) — JSON (Enter for {}): '],
         err: put(block(WF_PAGE, 'Workflow stalled: nothing else can run.'), {
           '2a319588-0843-41c4-b28b-44f88ecb0752': pre,
         }),
@@ -828,7 +844,7 @@ describe(
         '  compute:',
         '    description: Compute.',
         '    execution: auto',
-        '    preconditions: ["run.params.ok == true"]',
+        '    preconditions: ["compute.ok == true"]',
       ]);
       // A left prompt: readline rejects with ABORT_ERR on Ctrl+C and on Ctrl+D.
       mocks.question.mockImplementation(async () => {
@@ -888,16 +904,23 @@ describe(
           'name: flow',
           'version: 1',
           'steps:',
+          '  check:',
+          '    description: Check.',
+          '    execution: auto',
           '  compute:',
           '    description: Compute.',
           '    execution: auto',
-          '    preconditions: ["run.params.ok == true"]',
+          '    depends_on: [check]',
+          '    preconditions: ["check.ok == true"]',
           '',
         ].join('\n'),
       );
+      // `check` has no handler and depends on nothing, so it records the run's params: ok false.
       writeFileSync(
         join(project, 'flow', 'fixtures', 'one.yaml'),
-        ['name: one', 'params: {}', 'expected:', '  final_state: completed', ''].join('\n'),
+        ['name: one', 'params: { ok: false }', 'expected:', '  final_state: completed', ''].join(
+          '\n',
+        ),
       );
       const r = realm(home, ['workflow', 'test', 'flow', '-f', 'flow/fixtures'], { cwd: project });
       rmSync(project, { recursive: true, force: true });
