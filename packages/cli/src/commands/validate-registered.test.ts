@@ -101,6 +101,39 @@ describe('validate --registered (issue #427)', () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
+  it("issue #933, T10 — a copy registered before the change, with a precondition on the run's input: the audit prints the refusal without a line, exit 1", async () => {
+    // Written straight into the store: the new build will not register it. The stored JSON has no
+    // source lines, so the refusal carries no "(step at line N)".
+    plant(
+      'stored-wf',
+      stored({
+        steps: {
+          s: { description: 's', execution: 'auto', preconditions: ["run.params.mode == 'go'"] },
+        },
+      }),
+    );
+
+    await expect(
+      validateCommand.parseAsync(['--registered', 'stored-wf'], { from: 'user' }),
+    ).rejects.toThrow('process.exit');
+
+    const lines = out().split('\n');
+    // (a) red when the audit does not show the refusal, shows it with a line, or exits 0;
+    //     (b) prints the lines that name the step and the exit.
+    expect({
+      refusal: lines.filter((l) => l.includes("Step 's':")),
+      exit: exitSpy.mock.calls[0]?.[0],
+    }).toEqual({
+      refusal: [
+        "Invalid workflow: Step 's': precondition 'run.params.mode == 'go'' reads 'run.params.mode', " +
+          "the run's input. A precondition reads only what the workflow's steps recorded, never the " +
+          "run's input, so it could never be true and the step could never run. To refuse a run " +
+          'whose input does not fit, declare it in params_schema. Then register the workflow again.',
+      ],
+      exit: 1,
+    });
+  });
+
   it('R2 warnings-only — the header, the warnings, Valid, exit 0', async () => {
     // The fixture's warning MUST be non-escalating. #170 is LIVE: an unknown-key fixture
     // resolves to ERROR under the default policy and refuses, flipping this cell to exit 1 and

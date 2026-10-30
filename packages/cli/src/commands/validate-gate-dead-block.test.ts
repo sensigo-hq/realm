@@ -31,7 +31,7 @@ steps:
   check:
     description: check
     execution: guard
-    abort_unless: ["true == true"]
+    abort_unless: ["check.ok == true"]
     gate:
 ${gateBlock}
 `,
