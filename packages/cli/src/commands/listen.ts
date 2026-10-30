@@ -79,6 +79,7 @@ import {
 import { extractParams, extractDedupId, resolveDotPath } from '../lib/webhook-params.js';
 import { FileDedupStore, InMemoryDedupStore, type DedupStore } from '../lib/dedup-store.js';
 import { parseHost, parseOneOf, parseWholeNumber } from '../lib/option-parsers.js';
+import { bindFailureLine } from '../lib/bind-failure.js';
 import { listRunsDiagnosed } from './list.js';
 import {
   loadProjectExtensions,
@@ -1822,20 +1823,32 @@ export const listenCommand = new Command('listen')
       }
 
       const sweepExpiredGatesSeconds = opts['sweepExpiredGates'];
-      const handle = await startListen(
-        routes,
-        {
-          port: opts.port ?? 3000,
-          host,
-          bodyTimeoutMs: opts['bodyTimeoutMs'] ?? 5000,
-          maxBodyBytes: opts['maxBodyBytes'] ?? 1048576,
-          maxConcurrent: opts['maxConcurrent'] ?? 20,
-          ...(sweepExpiredGatesSeconds !== undefined
-            ? { sweepExpiredGatesIntervalMs: sweepIntervalMs(sweepExpiredGatesSeconds) }
-            : {}),
-        },
-        deps,
-      );
+      // issue #949: a failure to listen (the port in use, permission denied, an address that is not
+      // this machine's, a name that does not resolve) is one line naming the host and the port, in
+      // place of a stack; any other error propagates as before.
+      let handle: ListenHandle;
+      try {
+        handle = await startListen(
+          routes,
+          {
+            port: opts.port ?? 3000,
+            host,
+            bodyTimeoutMs: opts['bodyTimeoutMs'] ?? 5000,
+            maxBodyBytes: opts['maxBodyBytes'] ?? 1048576,
+            maxConcurrent: opts['maxConcurrent'] ?? 20,
+            ...(sweepExpiredGatesSeconds !== undefined
+              ? { sweepExpiredGatesIntervalMs: sweepIntervalMs(sweepExpiredGatesSeconds) }
+              : {}),
+          },
+          deps,
+        );
+      } catch (err) {
+        const line = bindFailureLine(err, host, opts.port ?? 3000);
+        if (line === undefined) throw err;
+        console.error(line);
+        process.exit(1);
+        return;
+      }
 
       // issue #600 PR 2 (D2): what each provider's agents are asked to cache.
       logger.info('listen: caching', listenCachingFacts(opts.provider, opts.promptCache));

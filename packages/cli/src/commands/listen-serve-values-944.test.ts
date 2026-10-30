@@ -1,12 +1,14 @@
 // listen-serve-values-944.test.ts — issues #944 and #949, through the built `realm`: `realm listen`
 // and `realm serve` refuse a bad value of `--port`, `--host`, `--dedup-store`, `--log-level` or
 // `--sweep-expired-gates` when the command line is read, and accept the good ones; the sweeper's
-// interval is seconds, never milliseconds.
+// interval is seconds, never milliseconds; a failure to listen is one line; `serve`'s start line
+// names the port the server is on, with an IPv6 host in brackets.
 // On a failing host each cell prints the run's exit code, standard error and standard output, with
 // the scratch folder written `<dir>`; the values printed are the test's own (fake key, fixture
 // names), never the environment.
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { connect, createServer, type AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,6 +23,7 @@ import {
   type RunStore,
 } from '@sensigo/realm';
 import { sweepIntervalMs } from './listen.js';
+import { serveStartLine } from './serve.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLI = join(HERE, '..', '..', 'dist', 'index.js');
@@ -322,4 +325,231 @@ describe('issue #944 — the sweeper waits the seconds it is given', () => {
       JSON.stringify({ delay, lines: seen.lines }),
     ).toEqual({ started: true, swept: true, quietFor3s: true });
   }, 30_000);
+});
+
+// ---------------------------------------------------------------------------------------------
+// issue #949 (C-2): a failure to listen is one line naming the host and the port, then exit 1.
+// ---------------------------------------------------------------------------------------------
+
+/** What a test can see of a bind failure: the exit, the last line on standard error, how many
+ *  lines say "cannot listen", and whether any line is a stack frame (`at …`, the real ones are
+ *  indented). Earlier stderr lines may be warnings (dev mode, `auth.mode: none`, a non-loopback
+ *  host), so "one line on stderr" is not asserted. */
+const bindShape = (
+  r: Done,
+): { code: number | null; last: string | undefined; said: number; stack: boolean } => ({
+  code: r.code,
+  last: r.err.at(-1),
+  said: r.err.filter((l) => l.startsWith('Error: cannot listen on')).length,
+  stack: r.err.some((l) => l.trimStart().startsWith('at ')),
+});
+const IN_USE = (a: string): string =>
+  `Error: cannot listen on ${a}: the port is already in use. Stop the program using it, or choose another --port.`;
+const DENIED = (a: string): string =>
+  `Error: cannot listen on ${a}: permission denied. A port below 1024 usually needs extra rights, and on Windows the system can reserve a port. Choose another --port.`;
+const NOT_HERE = (a: string, host: string): string =>
+  `Error: cannot listen on ${a}: ${host} is not an address of this machine. Check --host.`;
+const NO_NAME = (a: string, host: string): string =>
+  `Error: cannot listen on ${a}: the name ${host} cannot be resolved. Check --host.`;
+
+/** Whether this machine fails a listen on `host:port` with `want`, decided once when the file is
+ *  collected; the reason is printed in the title of a cell it skips. */
+function probeListen(
+  port: number,
+  host: string,
+  want: string,
+): Promise<{ ok: boolean; reason: string }> {
+  return new Promise((resolve) => {
+    const s = createServer();
+    s.once('error', (e: NodeJS.ErrnoException) => {
+      resolve({
+        ok: e.code === want,
+        reason: `a listen on ${host}:${port} here fails with ${String(e.code)}, not ${want}`,
+      });
+    });
+    s.listen(port, host, () => {
+      s.close();
+      resolve({ ok: false, reason: `a listen on ${host}:${port} here succeeds` });
+    });
+  });
+}
+const EACCES_PROBE = await probeListen(80, '127.0.0.1', 'EACCES');
+const NOT_HERE_PROBE = await probeListen(0, '192.0.2.1', 'EADDRNOTAVAIL');
+const skipped = (probe: { ok: boolean; reason: string }): string =>
+  probe.ok ? '' : ` (skipped: ${probe.reason})`;
+
+describe('issue #949 — realm listen and realm serve say a failure to listen in one line', () => {
+  // A port held by a throwaway server in the test. (a) red when the bind failure is a stack again,
+  // or the line changes; (b) prints the exit, the last line, the count and whether a stack was seen.
+  it.each([
+    ['listen', (port: number): string[] => [...LISTEN, '--port', String(port)]],
+    ['serve --dev', (port: number): string[] => ['serve', '--dev', '--port', String(port)]],
+  ] as const)(
+    '%s on a port in use: the EADDRINUSE line, exit 1, no stack',
+    async (_cmd, args) => {
+      const busy = createServer();
+      await new Promise<void>((r) => busy.listen(0, '127.0.0.1', () => r()));
+      const { port } = busy.address() as AddressInfo;
+      try {
+        const r = await runToEnd(args(port));
+        expect(bindShape(r), JSON.stringify(r)).toEqual({
+          code: 1,
+          last: IN_USE(`127.0.0.1:${port}`),
+          said: 1,
+          stack: false,
+        });
+      } finally {
+        await new Promise<void>((r) => busy.close(() => r()));
+      }
+    },
+    30_000,
+  );
+
+  // `.invalid` is reserved (RFC 6761) and never resolves. (a) red when the ENOTFOUND failure is a
+  // stack (listen) or serve's old `realm serve: getaddrinfo …` line again; (b) as above.
+  it.each([
+    ['listen', [...LISTEN, '--host', 'no-such-host.invalid', '--port', '0']],
+    ['serve --dev', ['serve', '--dev', '--host', 'no-such-host.invalid', '--port', '0']],
+  ] as const)(
+    '%s --host no-such-host.invalid: the line for a name that cannot be resolved, exit 1, no stack',
+    async (_cmd, args) => {
+      const r = await runToEnd([...args]);
+      expect(bindShape(r), JSON.stringify(r)).toEqual({
+        code: 1,
+        last: NO_NAME('no-such-host.invalid:0', 'no-such-host.invalid'),
+        said: 1,
+        stack: false,
+      });
+    },
+    30_000,
+  );
+
+  // Permission denied: port 80 without the rights to bind it. Runs only where a probe listen on
+  // 127.0.0.1:80 fails with EACCES (not as root, not on Windows, not where port 80 is busy).
+  // (a) red when the EACCES failure is a stack again or the line changes; (b) as above.
+  it.skipIf(!EACCES_PROBE.ok).each([
+    ['listen', [...LISTEN, '--port', '80']],
+    ['serve --dev', ['serve', '--dev', '--port', '80']],
+  ] as const)(
+    `%s --port 80: the permission-denied line, exit 1, no stack${skipped(EACCES_PROBE)}`,
+    async (_cmd, args) => {
+      const r = await runToEnd([...args]);
+      expect(bindShape(r), JSON.stringify(r)).toEqual({
+        code: 1,
+        last: DENIED('127.0.0.1:80'),
+        said: 1,
+        stack: false,
+      });
+    },
+    30_000,
+  );
+
+  // An address that is not this machine's: 192.0.2.1 (TEST-NET-1, RFC 5737). Runs only where a
+  // probe listen on it fails with EADDRNOTAVAIL. (a) red when that failure is a stack again or the
+  // line changes; (b) as above.
+  it.skipIf(!NOT_HERE_PROBE.ok).each([
+    ['listen', [...LISTEN, '--host', '192.0.2.1', '--port', '0']],
+    ['serve --dev', ['serve', '--dev', '--host', '192.0.2.1', '--port', '0']],
+  ] as const)(
+    `%s --host 192.0.2.1: the line for an address that is not this machine's, exit 1, no stack${skipped(NOT_HERE_PROBE)}`,
+    async (_cmd, args) => {
+      const r = await runToEnd([...args]);
+      expect(bindShape(r), JSON.stringify(r)).toEqual({
+        code: 1,
+        last: NOT_HERE('192.0.2.1:0', '192.0.2.1'),
+        said: 1,
+        stack: false,
+      });
+    },
+    30_000,
+  );
+});
+
+// ---------------------------------------------------------------------------------------------
+// C-2 items 6 and 7: `serve`'s start line names the port the server is on, and writes an IPv6
+// host in brackets.
+// ---------------------------------------------------------------------------------------------
+
+describe('realm serve — the start line', () => {
+  // (a) red when the line prints the requested 0 (no positive port, and nothing listens on 0) or a
+  //     port the server is not on (the connection fails); (b) prints the matched line and the
+  //     connection's error code, both the test's own values; with no line, the run's output.
+  it('serve --dev --port 0: the start line names the port the system picked, and the server is on it', async () => {
+    const LINE = /^Realm MCP server listening on http:\/\/127\.0\.0\.1:(\d+)\/$/;
+    const child = spawn(process.execPath, [CLI, 'serve', '--dev', '--port', '0'], {
+      cwd: root,
+      env: { PATH: process.env['PATH'] ?? '', HOME: home },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = '';
+    let err = '';
+    child.stderr.on('data', (c: Buffer) => (err += c.toString()));
+    const exited = new Promise<void>((r) => child.once('exit', () => r()));
+    try {
+      const line = await new Promise<string>((resolve, reject) => {
+        const timer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                `no start line in 20 s:\n${lines(out).join('\n')}\n${lines(err).join('\n')}`,
+              ),
+            ),
+          20_000,
+        );
+        child.stdout.on('data', (c: Buffer) => {
+          out += c.toString();
+          const hit = out.split('\n').find((l) => LINE.test(l));
+          if (hit !== undefined) {
+            clearTimeout(timer);
+            resolve(hit);
+          }
+        });
+        child.once('exit', () => {
+          clearTimeout(timer);
+          reject(
+            new Error(`serve exited early:\n${lines(out).join('\n')}\n${lines(err).join('\n')}`),
+          );
+        });
+      });
+      const port = Number(LINE.exec(line)![1]);
+      const connected = await new Promise<{ ok: boolean; code?: string }>((resolve) => {
+        const sock = connect(port, '127.0.0.1');
+        sock.once('connect', () => {
+          sock.destroy();
+          resolve({ ok: true });
+        });
+        sock.once('error', (e: NodeJS.ErrnoException) => {
+          sock.destroy();
+          resolve({ ok: false, code: String(e.code) });
+        });
+      });
+      expect(
+        { portIsPositive: port > 0, connected: connected.ok },
+        JSON.stringify({ line, connected }),
+      ).toEqual({
+        portIsPositive: true,
+        connected: true,
+      });
+    } finally {
+      // The test's socket is already destroyed (a silent open connection keeps `serve` from
+      // exiting); then SIGTERM, up to 5 s for the exit, and SIGKILL if it is still alive.
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill('SIGTERM');
+        await Promise.race([exited, new Promise<void>((r) => setTimeout(r, 5_000))]);
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      }
+    }
+  }, 30_000);
+
+  // (a) red when the brackets are dropped for an IPv6 host or added for another; (b) prints the
+  //     host, the port and the line.
+  it.each([
+    ['127.0.0.1', 'http://127.0.0.1:3001/'],
+    ['localhost', 'http://localhost:3001/'],
+    ['0.0.0.0', 'http://0.0.0.0:3001/'],
+    ['::1', 'http://[::1]:3001/'],
+    ['fe80::1%eth0', 'http://[fe80::1%eth0]:3001/'],
+  ])('serveStartLine(%j, 3001) ends with %s', (host, url) => {
+    expect(serveStartLine(host, 3001), `${host} 3001`).toBe(`Realm MCP server listening on ${url}`);
+  });
 });
