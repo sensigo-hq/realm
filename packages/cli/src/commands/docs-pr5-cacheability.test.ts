@@ -964,8 +964,12 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
   // come again only when they differ from the last block printed, and that each provider's lines come
   // once. Run in the cell "I-5: the provider lines come in the first block that shows a size; …"
   // below: a first save with no agent step prints `Registered:` alone, the save that adds one prints
-  // the lines. (a) red when the old sentence returns or the new one is dropped; (b) prints the page's
-  // sentence.
+  // the lines. The once-lines also come for a step that calls tools (#899): `validate`, `register` and
+  // `watch` all render them through `renderCacheabilityLines`, and validate-cacheability.test.ts's M12
+  // cells execute that case (a workflow whose agent steps all call tools prints the once-lines).
+  // (a) red when the old sentence returns or the new one is dropped, or the sentence loses the tools
+  // case that the page's "After the step lines come" paragraph and the `watch` paragraph state;
+  // (b) prints the page's sentence.
   it('register: after the description line; watch: after a Registered line, from the first save with an agent step, and again only when the lines differ', async () => {
     claim(
       WORKFLOW_PAGE,
@@ -973,7 +977,7 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
     );
     claim(
       WORKFLOW_PAGE,
-      'It prints the [cache lines](#the-cache-lines) after a `Registered` line, starting with the first save that has an agent step, and again only when they differ from the last block printed. The lines for each provider are printed once, in the first block that shows a size for that provider.',
+      'It prints the [cache lines](#the-cache-lines) after a `Registered` line, starting with the first save that has an agent step, and again only when they differ from the last block printed. The lines for each provider are printed once, in the first block that shows a size for that provider or a step that calls tools.',
     );
     expect(read(WORKFLOW_PAGE), 'the page keeps the old watch sentence').not.toContain(
       'after the first `Registered` line, and again only when they change.',

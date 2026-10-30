@@ -246,7 +246,7 @@ Registers the workflow, then registers it again each time the file or one of its
 | `--floor <tokens>`          | A minimum of your own to judge each agent step against, in tokens.                                                                      |
 | `--ratio <chars-per-token>` | Your own count of characters per token, in place of the estimate's range.                                                               |
 
-It prints the [cache lines](#the-cache-lines) after a `Registered` line, starting with the first save that has an agent step, and again only when they differ from the last block printed. The lines for each provider are printed once, in the first block that shows a size for that provider.
+It prints the [cache lines](#the-cache-lines) after a `Registered` line, starting with the first save that has an agent step, and again only when they differ from the last block printed. The lines for each provider are printed once, in the first block that shows a size for that provider or a step that calls tools.
 
 ```text
 Watching invoice-check/workflow.yaml — press Ctrl+C to stop
