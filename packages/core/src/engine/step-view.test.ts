@@ -679,7 +679,13 @@ describe('composeCostView — the request facts (issue #600 PR 2)', () => {
           ttl_sent: true,
           source: 'runner_default',
           by: 'realm listen',
-          auto: { basis: 'listen_trigger_gaps', gaps_s: [420, 720] },
+          // #898 (A.6): a record with kept gaps and no `prices` predates priced auto; the view says
+          // so, deterministically, so the two key orders still make one ask.
+          auto: {
+            basis: 'listen_trigger_gaps',
+            gaps_s: [420, 720],
+            prices: { from: 'not_recorded' },
+          },
         },
         {
           value: 'lifetime',

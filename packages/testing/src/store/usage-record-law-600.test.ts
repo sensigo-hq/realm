@@ -4,7 +4,9 @@
 // for EACH of the eleven fields, against a store written here that drops that one field (the
 // `output-source-law-625.test.ts` pattern). The lifetime unit adds the tenth, `cache_auto`, an
 // object: the law compares it by deep equality, so a store that keeps its keys in another order
-// passes. Issue #715 (R) adds the eleventh, `request_id`, the request's identity realm mints.
+// passes. Issue #715 (R) adds the eleventh, `request_id`, the request's identity realm mints. Issue
+// #898: `cache_auto` carries a nested `prices`; a store that drops it fails (S6), and one that keeps
+// its keys in another order, at both levels, passes.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: the
 // law's message, which names the field, where it was, and the test values written and read back.
@@ -57,15 +59,32 @@ function dropping(field: string) {
   });
 }
 
-/** Keeps `cache_auto` with its keys in reverse order, in both places — every value unchanged. */
+/** Keeps `cache_auto` with its keys in reverse order, and (#898) its `prices`' keys too, in both
+ *  places — every value unchanged. */
 function reordering() {
+  const reversed = (o: object): Record<string, unknown> =>
+    Object.fromEntries(Object.entries(o).reverse());
   return changing((r) => {
     const auto = r['cache_auto'];
     if (auto === null || typeof auto !== 'object') return r;
+    const prices = (auto as { prices?: unknown }).prices;
     return {
       ...r,
-      cache_auto: Object.fromEntries(Object.entries(auto as object).reverse()),
+      cache_auto: reversed({
+        ...auto,
+        ...(prices !== null && typeof prices === 'object' ? { prices: reversed(prices) } : {}),
+      }),
     };
+  });
+}
+
+/** #898 (S6): keeps `cache_auto` but drops its `prices`, in both places. */
+function droppingPrices() {
+  return changing((r) => {
+    const auto = r['cache_auto'];
+    if (auto === null || typeof auto !== 'object') return r;
+    const { prices: _gone, ...rest } = auto as Record<string, unknown>;
+    return { ...r, cache_auto: rest };
   });
 }
 
@@ -134,7 +153,19 @@ describe('issue #600 PR 2 — USAGE_RECORD_ROUNDTRIP', () => {
     const stored = runs
       .flatMap((r) => r.evidence)
       .flatMap((e) => e.diagnostics?.cache?.requests ?? [])
-      .map((r) => Object.keys(r.cache_auto ?? {}));
-    expect(stored).toContainEqual(['gaps_s', 'basis']);
+      .map((r) => [Object.keys(r.cache_auto ?? {}), Object.keys(r.cache_auto?.prices ?? {})]);
+    expect(stored).toContainEqual([
+      ['prices', 'gaps_s', 'basis'],
+      ['missing', 'excluded', 'from'],
+    ]);
+  });
+
+  // #898 S6. (a) red when the TCK value carries no `prices`, or the law stops comparing
+  // `cache_auto` whole; (b) prints the law's own failure line.
+  it('fails for a store that drops cache_auto.prices (issue #898)', async () => {
+    const Lossy = droppingPrices();
+    await expect(lawOf(new Lossy()).run()).rejects.toThrow(
+      /round-trip a request record's cache_auto /,
+    );
   });
 });
