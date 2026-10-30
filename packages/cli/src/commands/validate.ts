@@ -8,7 +8,7 @@
 // workflows parsed from string, skipping every file-context check) is gone; `--registered`
 // runs the same rules on the stored copy and supplies-or-declares the context-dependent ones.
 import { Command } from 'commander';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import {
   loadWorkflowFromStringWithDiagnostics,
@@ -724,6 +724,9 @@ async function validateRegistered(
     trust_root: typeof stored.trust_root === 'string' ? stored.trust_root : undefined,
   };
   const storedExtensions = stored.extensions;
+  // #600 D1 (G-1): the profile texts the copy holds, read before the strip removes them — what a run
+  // of this copy sends (run-agent reads `definition.resolved_profiles[…].content`).
+  const storedProfiles = storedProfileTexts(stored.resolved_profiles);
 
   const clone = { ...stored } as Record<string, unknown>;
   for (const key of RUNTIME_ONLY_WORKFLOW_KEYS) delete clone[key];
@@ -861,13 +864,27 @@ async function validateRegistered(
     ...findRetryWithoutExplicitTimeout(definition),
     ...wrapSentinelWarnings(sentinelWarnings),
   ];
-  // issue #600 caching PR 5: a check that did not run leaves the cache lines what it could not supply
-  // — the profiles (sizes), or the economics file (the floor) — said with the existing reason.
-  const profilesNotRun = notRun.find((x) => x.id === 'agent_profile_resolution')?.reason;
+  // #600 D1 (G-5): the folder's profile texts, kept for the note below, when the loader audit read them
+  // from the folder the copy records. A recorded folder that is not an absolute path on this machine
+  // (a Windows-style path read elsewhere) is resolved by the audit against the shell's working folder,
+  // so the files read may be another folder's: no note then.
+  const auditReadProfiles =
+    applicable.some((c) => c.id === 'agent_profile_resolution') &&
+    !notRun.some((n) => n.id === 'agent_profile_resolution') &&
+    recorded.source_dir !== undefined &&
+    isAbsolute(recorded.source_dir);
+  const folderProfiles = auditReadProfiles ? definition.resolved_profiles : undefined;
+  // #600 D1 (G-1): the cache lines describe the registered copy, so they size the profile text it
+  // holds, not the files in the folder (which the loader audit above read for its own checks). The
+  // swap comes after the audit and before the report; nothing after the report reads the field.
+  // An unusable stored value deletes the field, so every profile step shows as missing.
+  if (storedProfiles !== undefined) definition.resolved_profiles = storedProfiles;
+  else delete definition.resolved_profiles;
+  // issue #600 caching PR 5: the project-extensions check that did not run leaves the cache lines
+  // without the economics file (the floor).
   const economicsNotRun = notRun.find((x) => x.id === 'project_extensions')?.reason;
   const cache = await buildCacheabilityReport(definition, cacheFlags, {
     ...(cacheEconomicsPath !== undefined ? { cacheEconomicsPath } : {}),
-    ...(profilesNotRun !== undefined ? { profilesNotRun } : {}),
     ...(economicsNotRun !== undefined ? { economicsNotRun } : {}),
   });
   if (json) {
@@ -920,9 +937,64 @@ async function validateRegistered(
   );
   // issue #600 caching PR 5: the last block (no nudge in this mode), before a --strict exit.
   printCacheabilityLines(renderCacheabilityLines(cache));
+  // #600 D1 (G-5): information, not a warning: never in the accumulator, so it moves no exit code and
+  // no --strict; human mode only (the --json arm returned above); silenced like the other ℹ notes.
+  const drift = profileDriftNote(definition, folderProfiles, storedProfiles);
+  if (drift !== undefined && process.env['REALM_NO_NUDGE'] !== '1') console.log(drift);
   if (strictFailed) {
     process.exit(1);
   }
+}
+
+/**
+ * #600 D1 (G-1): the profile texts a registered copy holds (`resolved_profiles`), shape-checked. An
+ * entry is kept when it is an object with a string `content` (its `content_hash` is not needed: only
+ * the text is sized or compared); a stored value that is not an object gives `undefined`, and every
+ * profile step then shows as missing. `Object.fromEntries` defines each name as an own property, so a
+ * profile named `__proto__` stays a name.
+ */
+function storedProfileTexts(
+  value: unknown,
+): Record<string, { content: string; content_hash: string }> | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      ([, entry]) =>
+        typeof entry === 'object' &&
+        entry !== null &&
+        typeof (entry as { content?: unknown }).content === 'string',
+    ),
+  ) as Record<string, { content: string; content_hash: string }>;
+}
+
+/**
+ * #600 D1 (G-5): one `ℹ` line naming every profile whose file in the copy's folder differs from the
+ * text the copy holds, once each, in the order its first step appears in the workflow; `undefined`
+ * when there is none. Text against text, line endings included (an entry with no `content_hash` is a
+ * valid stored shape). Nothing when either side is missing: the audit did not read the folder, the
+ * stored map is unusable, or it lacks the name (the cache line's not-stored row says so).
+ */
+function profileDriftNote(
+  definition: WorkflowDefinition,
+  folder: Record<string, { content: string }> | undefined,
+  stored: Record<string, { content: string }> | undefined,
+): string | undefined {
+  if (folder === undefined || stored === undefined) return undefined;
+  const names: string[] = [];
+  for (const step of Object.values(definition.steps)) {
+    const name = step.agent_profile;
+    if (name !== undefined && !names.includes(name)) names.push(name);
+  }
+  const text = (map: Record<string, { content: string }>, name: string): string | undefined =>
+    Object.hasOwn(map, name) ? map[name]!.content : undefined;
+  const differing = names.filter((name) => {
+    const fromFolder = text(folder, name);
+    const fromCopy = text(stored, name);
+    return fromFolder !== undefined && fromCopy !== undefined && fromFolder !== fromCopy;
+  });
+  return differing.length > 0
+    ? `ℹ profile text differs from the registered copy for: ${differing.join(', ')} — this check used the copy's text; register again to update it`
+    : undefined;
 }
 
 export const validateCommand = new Command('validate')

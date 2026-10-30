@@ -109,6 +109,13 @@ function project(opts: {
   }
   return dir;
 }
+/** A registered copy's file in the scratch registry, read and rewritten as JSON (D1). */
+function editCopy(id: string, edit: (copy: Record<string, unknown>) => void): void {
+  const file = join(home, '.realm', 'workflows', `${id}.json`);
+  const copy = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+  edit(copy);
+  writeFileSync(file, JSON.stringify(copy, null, 2));
+}
 const economics = (model: string, min?: number): string =>
   [
     'version: 1',
@@ -558,12 +565,14 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
       '| `economics unreachable: <reason>`, `your economics file: <reason>` | The economics file cannot be read, or does not parse. |',
       '| `no entry for <model> in your economics file` | The economics file has no entry for the model. |',
       "| `no minimum stated for <model> in your economics file` | The model's entry has no `min_cacheable_tokens`. |",
-      '| `economics not checked (<reason>)` | `--registered`, and the copy records no project folder, or the one it records is gone. |',
-      '| `profile file not read (<reason>): sizes not computed` | `--registered`, the step names a profile, and the copy records no workflow folder, or the one it records is gone. |',
+      '| `economics not checked (no project folder to read it from)` | `--registered` with `--model`, and the copy records no project folder, or the one it records is gone. The reason is on the line above the cache lines that starts `1 check not run:` or `N checks not run:`. |',
+      '| `profile text not stored in the registered copy: sizes not computed — register the workflow again to store it` | `--registered`, the step names a profile, and the registered copy holds no text for it. |',
     ]) {
       claim(WORKFLOW_PAGE, row.replace(/ +\|/g, ' |'));
     }
-    // The two --registered rows, by their route: the copy's folder deleted.
+    // The two --registered rows, by their routes (D1): the copy's folder deleted, which prints the
+    // economics row only with --model (G-3) and sizes the profile step from the stored text (G-1); and
+    // a copy that holds no text for the profile (G-2).
     const dir = project({
       workflow:
         'id: gone-tree\nname: gone-tree\nversion: 1\nsteps:\n' +
@@ -573,15 +582,26 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
     });
     expect(realm(['workflow', 'register', dir]).code).toBe(0);
     rmSync(dir, { recursive: true, force: true });
-    const registered = cacheLines(
-      realm(['workflow', 'validate', '--registered', 'gone-tree']).stdout,
-    );
-    expect([
-      registered[0]!.includes(
-        '— profile file not read (source_dir <dir>/proj no longer exists): sizes not computed',
-      ),
-      registered[1]!.endsWith('— economics not checked (trust_root <dir>/proj no longer exists)'),
-    ]).toEqual([true, true]);
+    const lines = (flags: string[]): string[] =>
+      cacheLines(realm(['workflow', 'validate', '--registered', 'gone-tree', ...flags]).stdout);
+    const flagless = lines([]);
+    const withModel = lines(['--provider', 'anthropic', '--model', 'm']);
+    editCopy('gone-tree', (copy) => {
+      delete copy['resolved_profiles'];
+    });
+    const noText = lines([]);
+    expect({ flagless, withModel, noText: noText[0] }).toEqual({
+      flagless: [
+        'cache: with_profile — anthropic 173 chars ≈ 35–69 tokens (no schema: realm sends no tool) · openai 173 chars ≈ 35–69 tokens (estimates: 2.5–5 chars/token, with margin)',
+        'cache: without_profile — anthropic 155 chars ≈ 31–62 tokens (no schema: realm sends no tool) · openai 155 chars ≈ 31–62 tokens (estimates: 2.5–5 chars/token, with margin)',
+      ],
+      withModel: [
+        'cache: with_profile — 173 chars ≈ 35–69 tokens (estimate) (no schema: realm sends no tool) — economics not checked (no project folder to read it from)',
+        'cache: without_profile — 155 chars ≈ 31–62 tokens (estimate) (no schema: realm sends no tool) — economics not checked (no project folder to read it from)',
+      ],
+      noText:
+        'cache: with_profile — profile text not stored in the registered copy: sizes not computed — register the workflow again to store it',
+    });
   });
 
   // Correction 2 (F-4): the page says a step below the minimum names no sharing, the OpenAI strict
@@ -1263,24 +1283,36 @@ describe(
   'correction 2, F-10: the profile row says what the command did',
   { timeout: 60_000 },
   () => {
-    // The page says what `profile file not read` means and what to do, and where `--registered`'s
-    // sizes come from. Each runtime claim is run here on a scratch registration: the sizes follow the
-    // profile file on disk while the copy's stored text stays as registered; with the folder gone, the
-    // copy still holds the text, the row reads `profile file not read`, and the `N checks not run:`
-    // line names the same reason. That runs send the stored text is pinned in
+    // The page says what the profile row means and what to do, and where `--registered`'s sizes come
+    // from. Each runtime claim is run here on a scratch registration: with the folder gone, the copy
+    // still holds the text, the step is sized from it (D1, G-1; that the sizes stay the stored text's
+    // when a file is edited is run in validate-cacheability.test.ts, "G-1 (2)"), and the line that
+    // starts `1 check not run:` or `N checks not run:` is printed. That runs send the stored text is pinned in
     // `agent/profile-reaches-the-model.test.ts` ("travels from the definition, through the drive, onto
     // the wire"). (a) red when the page drops a sentence, the old words return, or the sizes stop
     // following the file; (b) prints the page's sentence, or the lines, the scratch folder written
     // `<dir>`.
     it('F-10: the row, what to do, and where the --registered sizes come from', () => {
+      // D1 (G-4): the row's meaning and what to do, where the sizes come from, and the note. Each runs:
+      // the row in "no verdict: each reason in the table" (a copy with no text for the profile); the
+      // sizes from the stored text in validate-cacheability "G-1 (1)", "G-1 (2)"; the note, its line
+      // endings, --json, REALM_NO_NUDGE, the exit code and --strict in "G-5 (1)", (7), (8), (9), (11);
+      // the folders read: the workflow's for the loader's checks in "G-1 (3)", the project's for the
+      // economics file only with --model in "G-3 (1)", "G-3 (3)". The note's line is run below.
       for (const sentence of [
-        "`profile file not read` means the command could not read the step's profile file, because the registered copy records no workflow folder, or the one it records is gone.",
-        "The copy still holds the profile's text, and runs use it.",
+        "`profile text not stored in the registered copy` means the registered copy holds no text for the step's profile, so the step is not sized.",
         "What to do: register again from the workflow's folder, with `realm workflow register <path>`.",
-        'The line above the cache lines that starts `1 check not run:` or `N checks not run:` names the same reason.',
-        "With `--registered`, the sizes come from the profile files now in the workflow's folder, which is what registering again would store, not from the text the copy holds.",
+        "With `--registered`, the sizes come from the profile text stored in the copy, not from the profile files now in the workflow's folder.",
+        'After you edit a profile, register again to update the copy.',
+        "When a profile file in the folder differs from the copy's text, `validate --registered` prints one line after the cache lines, naming each such profile once:",
+        'A difference in line endings counts.',
+        'The line is not in `--json`, `REALM_NO_NUDGE=1` leaves it out, and it changes neither the exit code nor `--strict`.',
+        "The command reads the workflow's folder for the loader's checks, and the project's folder for the project-extension check and, when `--model` is given, for the economics file.",
+        // The line's start, worded as correction 3 (I-4) made the page word it; the runs below print
+        // both forms.
+        '| `economics not checked (no project folder to read it from)` | `--registered` with `--model`, and the copy records no project folder, or the one it records is gone. The reason is on the line above the cache lines that starts `1 check not run:` or `N checks not run:`. |',
       ])
-        claim(WORKFLOW_PAGE, sentence);
+        claim(WORKFLOW_PAGE, sentence.replace(/ +\|/g, ' |'));
       const dir = project({
         workflow:
           'id: moved\nname: moved\nversion: 1\nsteps:\n' +
@@ -1294,20 +1326,18 @@ describe(
             resolved_profiles: Record<string, { content: string }>;
           }
         ).resolved_profiles['p']!.content.length;
-      const chars = (): number => {
-        const line = cacheLines(
-          realm(['workflow', 'validate', '--registered', 'moved']).stdout,
-        )[0]!;
-        return Number(/ — anthropic ([\d,]+) chars/.exec(line)?.[1]?.replace(/,/g, '') ?? -1);
-      };
-      const before = [chars(), stored()];
+      // D1 (G-1): the run where the registered size followed the edited file is inverted in
+      // validate-cacheability.test.ts, "G-1 (2)": the copy's lines keep the stored text's size.
+      // D1 (G-5): the page's note line, as the command prints it for this copy once `p.md` is edited.
+      // (a) red when the printed note differs from the page's line; (b) prints the page and the line.
       writeFileSync(join(dir, 'profiles', 'p.md'), 'You are careful.' + 'x'.repeat(326));
-      const after = [chars(), stored()];
-      expect({ before, after, grew: after[0]! - before[0]! }).toEqual({
-        before: [before[0], 16],
-        after: [after[0], 16],
-        grew: 326,
-      });
+      const note = hide(
+        realm(['workflow', 'validate', '--registered', 'moved'], { REALM_NO_NUDGE: '0' }).stdout,
+      )
+        .split('\n')
+        .filter((l) => l.startsWith('ℹ'));
+      expect(note).toHaveLength(1);
+      claimLine(WORKFLOW_PAGE, note[0]!);
       rmSync(dir, { recursive: true, force: true });
       const out = hide(realm(['workflow', 'validate', '--registered', 'moved']).stdout).split('\n');
       const reason = 'source_dir <dir>/proj no longer exists';
@@ -1322,7 +1352,8 @@ describe(
         out.join('\n'),
       ).toEqual({
         held: 16,
-        row: `cache: with_profile — profile file not read (${reason}): sizes not computed`,
+        // D1 (G-1): the copy holds the text, so the step is sized and no profile row prints.
+        row: 'cache: with_profile — anthropic 173 chars ≈ 35–69 tokens (no schema: realm sends no tool) · openai 173 chars ≈ 35–69 tokens (estimates: 2.5–5 chars/token, with margin)',
         notRun: true,
       });
       // Correction 3 (I-4): one check left out reads `1 check not run:`. A workflow in a subfolder of
@@ -1352,7 +1383,8 @@ describe(
         one.join('\n'),
       ).toEqual({
         notRun: `1 check not run: agent-profile file resolution (${oneReason})`,
-        row: `cache: with_profile — profile file not read (${oneReason}): sizes not computed`,
+        // D1 (G-1): sized from the stored text, as above.
+        row: 'cache: with_profile — anthropic 173 chars ≈ 35–69 tokens (no schema: realm sends no tool) · openai 173 chars ≈ 35–69 tokens (estimates: 2.5–5 chars/token, with margin)',
       });
     });
   },
