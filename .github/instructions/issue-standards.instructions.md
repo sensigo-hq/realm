@@ -53,19 +53,19 @@ Use a concise, descriptive imperative phrase prefixed with a type label:
 
 ## Issue Body
 
-Always write the body to a temp file and pass it with `--body-file`:
+Pass the body to `gh` on standard input, with `--body-file -` and a quoted heredoc:
 
 ```bash
-cat > /tmp/issue-body.md << 'BODY'
-<content>
-BODY
-
 gh issue create \
   --title "[type] description" \
-  --body-file /tmp/issue-body.md \
   --label "bug" \
-  --repo owner/repo
+  --repo owner/repo \
+  --body-file - <<'BODY'
+<content>
+BODY
 ```
+
+The same goes for `gh issue edit` and for `gh api … -F body=@-`. **Never** pass the body through a shared fixed file such as `/tmp/issue-body.md`: many sessions share one machine, and another session can overwrite that file between your write and your `gh` call, so the issue gets someone else's text (this happened on 2026-10-30). If a file is truly needed, put it in your own session's scratch folder.
 
 **Never** use `--body "..."` inline — multiline content becomes unreadable and escaping errors are common.
 
@@ -146,6 +146,6 @@ Before running `gh issue create`, verify:
 2. Acceptance criteria are numbered and verifiable — not vague
 3. Severity is set for bugs and security issues
 4. The title uses the correct type prefix and imperative mood
-5. `--body-file` is used, not `--body "..."`
+5. The body goes in on standard input (`--body-file -`), not `--body "..."` and not a shared fixed file
 
 An issue body that is missing sections, uses vague acceptance criteria, or omits severity for a security finding is not acceptable.
