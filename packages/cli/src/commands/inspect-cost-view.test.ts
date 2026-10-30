@@ -940,7 +940,8 @@ describe('#600 PR 2 — the model and the ask on the cost lines', () => {
   });
 
   // Cell 11 (the lifetime unit): the auto clause, one row per basis, then the `off` an auto chose,
-  // then a record whose `cache_auto` is not one the record keeps (no clause). (a) red when inspect
+  // then a record whose `cache_auto` is not one the record keeps (no clause). #898: a record with
+  // kept gaps and no `prices` predates priced auto, so its clause ends `price source not recorded`. (a) red when inspect
   // drops the auto clause, renders it outside the parentheses, or prints a malformed one; (b)
   // prints each line's ask (test values only).
   it('the auto clause per basis, and the off auto chose; a malformed cache_auto adds nothing', async () => {
@@ -1001,12 +1002,12 @@ describe('#600 PR 2 — the model and the ask on the cost lines', () => {
         }),
       ),
     ]).toEqual([
-      "; asked for 1 hour (sent as 1 hour; realm listen's default; auto: the last 2 gaps between this workflow's triggers were about 7 minutes and 12 minutes)",
+      "; asked for 1 hour (sent as 1 hour; realm listen's default; auto: the last 2 gaps between this workflow's triggers were about 7 minutes and 12 minutes; price source not recorded (this request was recorded before Realm priced auto from the price file))",
       "; asked for 1 hour (sent as 1 hour; realm listen's default; auto: no earlier trigger of this workflow since realm listen started)",
       "; asked for 1 hour (sent as 1 hour; realm listen's default; auto: realm listen's measurement could not be read)",
       "; asked for 5 minutes (the provider's default lifetime; realm agent's default; auto: a drive realm agent starts on its own has no trigger history)",
-      "; asked for no caching (realm listen's default; auto: the last gap between this workflow's triggers was about 2 hours)",
-      "; asked for no caching (realm listen's default; auto: the last 3 gaps between this workflow's triggers were about 2 hours, 2 hours and 2 hours)",
+      "; asked for no caching (realm listen's default; auto: the last gap between this workflow's triggers was about 2 hours; price source not recorded (this request was recorded before Realm priced auto from the price file))",
+      "; asked for no caching (realm listen's default; auto: the last 3 gaps between this workflow's triggers were about 2 hours, 2 hours and 2 hours; price source not recorded (this request was recorded before Realm priced auto from the price file))",
       "; asked for 5 minutes (the provider's default lifetime; realm agent's default)",
     ]);
   });

@@ -12,7 +12,12 @@
 // these functions — a non-array, `null` entries, non-object entries, `evidence` or
 // `drive_failures` shaped wrong — makes any of them throw. A malformed record degrades to an
 // absence or an `'unknown'` field, never an exception that takes the whole render down with it.
-import type { CacheAutoBasis, RequestFactAbsentCause, RunRecord } from '../types/run-record.js';
+import type {
+  CacheAuto,
+  CacheAutoPricesView,
+  RequestFactAbsentCause,
+  RunRecord,
+} from '../types/run-record.js';
 import { normalizeCacheAuto } from '../economics/cache-lifetime.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import {
@@ -181,6 +186,10 @@ export type CostModels =
  * `lifetime_s` (kept when a number, of any value — the render judges it), `ttl_sent` (kept when a
  * boolean), `source` (verbatim when a string), `by` (read through `readStoredName`) and — the
  * lifetime unit — `auto` (what `--prompt-cache auto` chose on, read through `normalizeCacheAuto`).
+ * Issue #898: `auto.prices` is where the choice took its prices; a request with kept gaps that
+ * recorded none (written before Realm priced `auto` from the price file) reads `{ from:
+ * 'not_recorded' }`, derived here once for every carrier. No `prices` with no kept gaps means "not
+ * needed".
  */
 export interface CacheRequestedEntry {
   value: string;
@@ -188,7 +197,7 @@ export interface CacheRequestedEntry {
   ttl_sent?: boolean;
   source?: string;
   by?: string;
-  auto?: { basis: CacheAutoBasis; gaps_s?: number[] };
+  auto?: Omit<CacheAuto, 'prices'> & { prices?: CacheAutoPricesView };
 }
 
 /**
@@ -302,6 +311,23 @@ function composeModels(requests: readonly unknown[]): CostModels {
   return { names, reported, of: requests.length };
 }
 
+/**
+ * Issue #898 — the view's typed absence (framework §5 E1): a stored `cache_auto` with kept gaps and
+ * no `prices` was written before Realm priced `auto` from the price file, so its view says
+ * `{ from: 'not_recorded' }`. Every other value passes as stored.
+ */
+function withPricesAbsence(auto: CacheAuto | undefined): CacheRequestedEntry['auto'] | undefined {
+  if (
+    auto !== undefined &&
+    auto.basis === 'listen_trigger_gaps' &&
+    (auto.gaps_s?.length ?? 0) > 0 &&
+    auto.prices === undefined
+  ) {
+    return { ...auto, prices: { from: 'not_recorded' } };
+  }
+  return auto;
+}
+
 /** Issue #600 PR 2 — the distinct asks the requests recorded. */
 function composeCacheRequested(requests: readonly unknown[]): CostCacheRequested {
   const entries: CacheRequestedEntry[] = [];
@@ -315,7 +341,7 @@ function composeCacheRequested(requests: readonly unknown[]): CostCacheRequested
     const ttlSent = fieldOf(r, 'cache_ttl_sent');
     const source = fieldOf(r, 'cache_requested_source');
     const by = readStoredName(fieldOf(r, 'cache_requested_by'));
-    const auto = normalizeCacheAuto(fieldOf(r, 'cache_auto'));
+    const auto = withPricesAbsence(normalizeCacheAuto(fieldOf(r, 'cache_auto')));
     const entry: CacheRequestedEntry = {
       value,
       ...(typeof lifetime === 'number' ? { lifetime_s: lifetime } : {}),
@@ -324,8 +350,9 @@ function composeCacheRequested(requests: readonly unknown[]): CostCacheRequested
       ...(by !== undefined ? { by } : {}),
       ...(auto !== undefined ? { auto } : {}),
     };
-    // `auto` is normalised (its keys in one order), so two requests with the same basis and gaps
-    // make one entry whatever key order the store returned.
+    // `auto` is normalised (its keys in one order) and its typed absence derived deterministically
+    // (#898), so two requests with the same basis, gaps and prices make one entry whatever key
+    // order the store returned.
     const key = JSON.stringify([
       entry.value,
       entry.lifetime_s,

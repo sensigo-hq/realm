@@ -237,15 +237,28 @@ describe('provider conformance — promptCache is a promise about the wire (issu
       // The lifetime unit: `auto` keeps the promise for what it chose — off, and a lifetime.
       {
         name: 'anthropic auto (chose off)',
-        make: () =>
-          new AnthropicProvider('claude-sonnet-4-5', {
+        // #898: gaps make the choice pending; settled at today's Anthropic ratios it is off, as
+        // the shipped multiples chose.
+        make: () => {
+          const p = new AnthropicProvider('claude-sonnet-4-5', {
             promptCache: {
               value: 'auto',
               source: 'stated',
               by: 'realm agent',
               auto: { basis: 'listen_trigger_gaps', gaps_s: [7200, 7200, 7200] },
             },
-          }),
+          });
+          p.settleAutoChoice({
+            rates: {
+              input: 3,
+              output: 15,
+              cache_read: 0.3,
+              cache_write_5m: 3.75,
+              cache_write_1h: 6,
+            },
+          });
+          return p;
+        },
         sent: () => anthropicCreate.mock.calls[0]![0],
       },
       {
