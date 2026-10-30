@@ -22,7 +22,8 @@ const NAME_FIELDS = [
  * `cache_requested`, `cache_requested_source`, `cache_requested_by` and `provider` go through
  * `readStoredName`, and a field it refuses is dropped. A valid word (`lifetime`, `stated`) is
  * unchanged. An entry's own `cache_auto` is replaced by its normalised form (`normalizeCacheAuto`:
- * `{ basis }` or `{ basis, gaps_s }`, extra keys gone) or deleted when that is `undefined`.
+ * `{ basis }`, `{ basis, gaps_s }` or (#898) `{ basis, gaps_s, prices }` with `prices` in one of its
+ * five shapes, other keys gone) or deleted when that is `undefined`.
  * Every other field, and every entry that is not an object (a `null`, a number), passes through
  * unchanged. Total: it never throws, because it runs inside `recordDriveFailure`'s fence, where a
  * throw loses the record. It returns new objects; the input is not changed.
