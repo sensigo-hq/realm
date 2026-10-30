@@ -20,7 +20,7 @@ export interface GuardedOption {
 }
 
 /**
- * The options whose value is refused when it is a flag-like word typed as the next word (30). Keyed by
+ * The options whose value is refused when it is a flag-like word typed as the next word (31). Keyed by
  * the leaf command's name (a command parsed on its own has no parent, so a path cannot be read) and
  * the long flag. Each takes any word without a check of its own (the census, `plans/issue-920/census/`).
  * `option-value-guard-classes.test.ts` holds the other class: the options that already refuse such a
@@ -33,7 +33,7 @@ export const GUARDED_OPTIONS: readonly GuardedOption[] = [
   { command: 'watch', option: '--model' },
   { command: 'agent', option: '--model' },
   { command: 'listen', option: '--model' },
-  // C-2: the other options that take any word without a check of their own (25). Each accepts the word
+  // C-2: the other options that take any word without a check of their own (26). Each accepts the word
   // and goes on, and a dropped flag changes what the command does (`reconcile --workflow --dry-run`
   // writes; `drain <id> --extensions-module --force` drains nothing) or its message misleads.
   { command: 'run', option: '--project' }, // realm workflow run
@@ -63,6 +63,7 @@ export const GUARDED_OPTIONS: readonly GuardedOption[] = [
   { command: 'advance', option: '--project' },
   { command: 'abandon', option: '--reason' }, // realm run abandon
   { command: 'respond', option: '--by' }, // realm run respond
+  { command: 'reclaim', option: '--step' }, // realm run reclaim
 ];
 
 /** A string of two or more characters that starts with `-` (Commander's option-looking token). A lone

@@ -362,7 +362,7 @@ When a step starts, Realm marks it in progress and, where it can, records a time
 | `--workflow <id>`         | With `--all`: only runs of this workflow.                                                                                 |
 | `--older-than <duration>` | With `--all`: only steps that are past their time by at least this long.                                                  |
 
-`--workflow` refuses a value that starts with `-`, except a lone `-`; write `--option=value` for one.
+`--step` and `--workflow` refuse a value that starts with `-`, except a lone `-`; write `--option=value` for one.
 
 With a run ID alone, it lists the steps in progress and the state of each:
 

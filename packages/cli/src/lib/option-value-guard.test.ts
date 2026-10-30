@@ -395,7 +395,7 @@ function guardLines(flags: string, long: string, word: string): string[] {
   ];
 }
 
-describe('#920 C-2 — the other 25 options, one command family each (the built realm)', () => {
+describe('#920 C-2 — the other 26 options, one command family each (the built realm)', () => {
   // Each: the option typed with a real flag of the command after it, as the typo; the run exits 1
   // with the guard's two lines, prints nothing on standard output and does nothing. (a) red when the
   // family's row is missing from the guarded table (the command then runs: it writes, drains, starts
@@ -641,6 +641,34 @@ describe('#920 C-2 — the other 25 options, one command family each (the built 
       `${e.shown}; store: open ${String(answered.pending_gate?.gate_id === meant.gate)}, stated ${JSON.stringify(stated(answered))}`,
     ).toEqual({ code: 0, open: false, stated: ['--project'] });
   }, 45_000);
+
+  it('run reclaim <live run> --force --step --help: refused, no `Reclaiming` line; --step=--help passes the guard', async () => {
+    // (a) red when the `reclaim --step` row is missing (the typo then reaches the command: exit 0
+    // and a `Reclaiming '--help'` line), and — separately — when the adjacency test is dropped
+    // (`--step=--help` is then refused: `guardRefused` true); (b) prints the run. The `=` call pins
+    // only that the guard lets it through: what reclaim then answers for a step with no claim is the
+    // unit #922's, which changes it.
+    const { id } = await liveRun();
+    const r = realm(['run', 'reclaim', id, '--force', '--step', '--help']);
+    expect(
+      {
+        code: r.code,
+        stdout: r.stdout,
+        lines: r.stderr.split('\n').slice(0, 2),
+        reclaiming: r.stderr.includes('Reclaiming'),
+      },
+      r.shown,
+    ).toEqual({
+      code: 1,
+      stdout: '',
+      lines: guardLines('--step <name>', '--step', '--help'),
+      reclaiming: false,
+    });
+    const e = realm(['run', 'reclaim', id, '--force', '--step=--help']);
+    expect({ guardRefused: e.stderr.includes('is ambiguous') }, e.shown).toEqual({
+      guardRefused: false,
+    });
+  }, 45_000);
 });
 
 describe('#920 C-2 — the pages name every guarded option', () => {
@@ -661,14 +689,16 @@ describe('#920 C-2 — the pages name every guarded option', () => {
     claim(ACTING, two('--project', '--extensions-module'));
     claim(ACTING, two('--by', '--project'));
     claim(ACTING, one('--reason'));
+    claim(ACTING, two('--step', '--workflow'));
     claim(MCP, two('--project', '--extensions-module'));
     claim(
       MCP,
       '`--port`, `--project` and `--extensions-module` refuse a value that starts with `-`, except a lone `-`; write `--option=value` for one.',
     );
     // On realm-run-acting.md the --project single-option sentence stands after one section
-    // (advance) and the --workflow one after three (reclaim, purge, reconcile); respond holds the
-    // two-option sentence for --by and --project, abandon the single --reason one.
+    // (advance) and the --workflow one after two (purge, reconcile); reclaim holds the two-option
+    // sentence for --step and --workflow, respond the one for --by and --project, abandon the
+    // single --reason one.
     const acting = flat(read(ACTING));
     const count = (text: string): number => acting.split(flat(text)).length - 1;
     expect(
@@ -676,12 +706,13 @@ describe('#920 C-2 — the pages name every guarded option', () => {
         project: count(one('--project')),
         workflow: count(one('--workflow')),
         reason: count(one('--reason')),
+        stepAndWorkflow: count(two('--step', '--workflow')),
       },
-      `${ACTING}: the single-option sentences`,
-    ).toEqual({ project: 1, workflow: 3, reason: 1 });
+      `${ACTING}: the single-option sentences, and reclaim's two-option one`,
+    ).toEqual({ project: 1, workflow: 2, reason: 1, stepAndWorkflow: 1 });
     expect(flat(unreleased()), 'the CHANGELOG [Unreleased] #920 bullet, C-2 clause').toContain(
       flat(
-        'The same now holds for 25 other options that took any word: `--project` (on `workflow run`, `agent`, `run drain`, `run respond`, `run advance`, `mcp` and `serve`), `--extensions-module` (`run drain`, `mcp`, `serve`), `--workflow` (`run list`, `reclaim`, `purge`, `reconcile`), `run export --out`, `run abandon --reason`, `run respond --by`, `agent --params` and `--base-url`, `serve --port`, and `listen --port`, `--host`, `--dedup-store`, `--log-level` and `--sweep-expired-gates`.',
+        'The same now holds for 26 other options that took any word: `--project` (on `workflow run`, `agent`, `run drain`, `run respond`, `run advance`, `mcp` and `serve`), `--extensions-module` (`run drain`, `mcp`, `serve`), `--workflow` (`run list`, `reclaim`, `purge`, `reconcile`), `run export --out`, `run abandon --reason`, `run respond --by`, `run reclaim --step`, `agent --params` and `--base-url`, `serve --port`, and `listen --port`, `--host`, `--dedup-store`, `--log-level` and `--sweep-expired-gates`.',
       ),
     );
   });

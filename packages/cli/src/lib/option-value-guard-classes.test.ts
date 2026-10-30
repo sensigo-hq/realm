@@ -3,7 +3,7 @@
 // cannot ship unclassified:
 //   - GUARDED (production, `option-value-guard.ts`): takes any word without a check of its own; the
 //     guard refuses a flag-like word typed after it;
-//   - OWN_CHECK (here): already refuses such a word with its own message (13 by an `argParser`, 37 by
+//   - OWN_CHECK (here): already refuses such a word with its own message (13 by an `argParser`, 36 by
 //     a check in the action or, for `serve --host`, by the name lookup that names the word).
 // Rule for a new option: it already refuses → OWN_CHECK; otherwise → GUARDED. Prints only the
 // (leaf, flag) pairs that break the law.
@@ -14,7 +14,7 @@ import { GUARDED_OPTIONS } from './option-value-guard.js';
 
 type Pair = `${string} ${string}`;
 
-/** The 50 that already refuse a flag-like word with their own message (do NOT guard). */
+/** The 49 that already refuse a flag-like word with their own message (do NOT guard). */
 const OWN_CHECK: readonly Pair[] = [
   // by an argParser (13)
   'validate --provider',
@@ -30,7 +30,7 @@ const OWN_CHECK: readonly Pair[] = [
   'listen --body-timeout-ms',
   'listen --max-body-bytes',
   'listen --max-concurrent',
-  // in the action, or by the operating system's name lookup for `serve --host` (37)
+  // in the action, or by the operating system's name lookup for `serve --host` (36)
   'validate --registered',
   'validate --extensions-module',
   'validate --floor',
@@ -48,7 +48,6 @@ const OWN_CHECK: readonly Pair[] = [
   'list --older-than',
   'replay --with',
   'resume --from',
-  'reclaim --step',
   'reclaim --older-than',
   'respond --gate',
   'respond --choice',
@@ -90,7 +89,7 @@ function derived(): Map<Pair, Command[]> {
 }
 
 describe('#920 C-2 — every value-taking option is classified exactly once', () => {
-  it('1. the two tables and the command tree agree (30 + 50 = 80)', () => {
+  it('1. the two tables and the command tree agree (31 + 49 = 80)', () => {
     // (a) red when a guarded row is deleted, an option is added to a command, or a row is in two
     // tables; (b) prints the unclassified, extra and duplicated (leaf, flag) pairs only.
     const tree = derived();
@@ -116,7 +115,7 @@ describe('#920 C-2 — every value-taking option is classified exactly once', ()
       },
       JSON.stringify({ inTwo, unclassified, notInTree, shared }),
     ).toEqual({
-      counts: { guarded: 30, ownCheck: 50 },
+      counts: { guarded: 31, ownCheck: 49 },
       tree: 80,
       inTwo: [],
       unclassified: [],
