@@ -30,26 +30,33 @@ export default defineConfig({
     // unchanged by this re-grounding; only the justification is.
     pool: 'forks',
     isolate: true,
-    // Kept at the default 5s DELIBERATELY: once the pool is bounded, pure tests finish in ms
-    // (100× margin). Raising the global would only delay the loud-failure signal for a true hang.
-    // Explicit to document intent + guard a flip.
+    // 30 s default for every test. It was 5 s DELIBERATELY (once the pool is bounded, pure tests finish
+    // in ms, 100x margin, and a true hang then fails loudly and fast); the owner decided on 2026-10-30
+    // to raise it: he said "yes" (session aaefd3da, uuid 359abf57-54f1-4af3-b7e5-2df4b96e18d0,
+    // 2026-10-30T11:45:06Z) to "raise the default from 5 to 30 s in one config line" (the orchestrator's
+    // words for the question). Why: under load the 5 s floor voided counted runs in cells that no
+    // guard reaches (an in-process ESLint cell, the glossary sweeps of docs-claims-625, a docs example
+    // that runs the CLI in process: plans/issue-938-census/second-step-slow-cells.txt), and a clean
+    // full run already had 61 cells over 5 s (56 in cli; measured on reports/fix-918-*.suite2-final-A).
+    // The cost, named: a hung cell now takes 30 s to fail, and #371's tight floor for the pure majority
+    // is gone. KEPT: every written per-cell budget (they override this global), and the spawn-budget
+    // guard (`packages/cli/src/spawn-budget-guard.test.ts`, the owner's yes uuid 37bb7e82-5e97-43a6-9603-74d1182addf2),
+    // which still fails a cell that starts a child process without a budget of its own. No slow-test
+    // report is turned on (a 5 s `slowTestThreshold` would list those 61 cells in every clean run).
     //
     // CLASS RULE (issue #371 — the surgical-budget doctrine): heavy cells — child-spawn (`node
     // dist` cold start), a heavy dynamic import of a built server, concurrency hammers, real-sleep
-    // retry fixtures — carry surgical 15-25s per-`it()` budgets AT BIRTH (which override this
-    // global); the 5s default stays the tight floor for the pure majority. The stale predecessor
-    // of this rule named "3 genuinely-spawning CLI tests" as self-protecting — the population grew
-    // without inheriting budgets, which is exactly how #371's starvation flakes happened. A new
-    // heavy cell that skips its budget re-arms the class loudly (a 5s timeout, not a silent pass).
-    // 2026-10-29: 31 of 478 spawning cells had drifted that way and voided counted runs under load,
-    // so the loud failure is no longer the only enforcement: `packages/cli/src/spawn-budget-guard.test.ts`
-    // fails when a cell that starts a child process has no declared budget (the owner's yes, session
-    // aaefd3da, uuid 37bb7e82-5e97-43a6-9603-74d1182addf2: "add the narrow time-limit check"). It is
-    // narrow on purpose — spawning cells only; its header says what counts as declared and what it
-    // cannot see.
+    // retry fixtures — carry surgical per-`it()` budgets AT BIRTH (which override this global; one
+    // above 30 s is how a cell asks for more). The stale predecessor of this rule named "3
+    // genuinely-spawning CLI tests" as self-protecting — the population grew without inheriting
+    // budgets, which is exactly how #371's starvation flakes happened; 2026-10-29: 31 of 478
+    // spawning cells had drifted that way, and the guard above now fails the build for the next one
+    // (the owner's yes, session aaefd3da, uuid 37bb7e82-5e97-43a6-9603-74d1182addf2: "add the narrow
+    // time-limit check"). It is narrow on purpose — spawning cells only; its header says what counts
+    // as declared and what it cannot see.
     // `turbo.json`'s `concurrency` key (also #371) now carries the other half of the de-starvation
     // pairing this config's `maxWorkers` comment describes below.
-    testTimeout: 5000,
+    testTimeout: 30_000,
     // No retry, as policy: the flakiness is 100% owned defects (starvation here; the slack race in
     // PR-B), removed by construction. Retry would only mask a genuine future regression
     // (fails-then-passes is still broken). Quarantine a specific test if ever mid-fix — never a
