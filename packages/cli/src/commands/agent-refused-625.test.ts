@@ -252,7 +252,7 @@ describe('#625 PR-2a, C82 — realm workflow run never prompts for a refused age
 
   it('head: no prompt for the step; the stall names it and the way out, exit 1', async () => {
     mocks.question.mockResolvedValue('');
-    const code = await run(yaml('c82-run-head', ASK('', 'run.params.ok == true')));
+    const code = await run(yaml('c82-run-head', ASK('', 'ask.ok == true')));
     // (a) red when dev-run's prompt set reads engine steps only (it would prompt for `ask` forever);
     // (b) prints the code, the prompts and the screen.
     expect({ code, asked: asked(), errored: errored() }).toEqual({
@@ -260,7 +260,7 @@ describe('#625 PR-2a, C82 — realm workflow run never prompts for a refused age
       asked: [],
       errored: [
         '\nWorkflow stalled: nothing else can run.',
-        `'ask' cannot run (precondition): ${PRE_REFUSAL}`,
+        "'ask' cannot run (precondition): Precondition failed for step 'ask'. Precondition failed: 'ask.ok == true'. Resolved value: undefined.",
         wayOut(runId()),
       ],
     });
