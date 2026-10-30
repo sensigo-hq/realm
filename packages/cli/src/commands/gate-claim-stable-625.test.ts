@@ -39,6 +39,7 @@ import { purgeRuns } from './purge.js';
 import { sweepStalePhases } from './gc.js';
 import { migrateStampSeals } from './run-migrate.js';
 import { isAutoReclaimable } from './reclaim.js';
+import { writtenSnapshot } from '@sensigo/realm';
 
 const echo: StepDispatcher = async (_step, input) => ({ ...input });
 const PROGRAM: Attributed = { by: 'alice@host', by_source: 'derived', channel: 'agent' };
@@ -174,7 +175,9 @@ describe('GATE_CLAIM_STABLE_WHILE_OPEN — the commands', () => {
 
   it('reclaim --all --force: the batch selector never selects the open gate’s claim (a gated step is per-step only)', async () => {
     const { record: open } = await store.get(runId);
-    const claims = classifyInProgressClaims(open, new Date(Date.now() + 10 * 24 * 3600_000));
+    const claims = classifyInProgressClaims(
+      writtenSnapshot(open, new Date(Date.now() + 10 * 24 * 3600_000)),
+    );
     const claim = claims.find((c) => c.step === 'confirm');
     expect(claim).toBeDefined();
     expect(
@@ -183,7 +186,7 @@ describe('GATE_CLAIM_STABLE_WHILE_OPEN — the commands', () => {
         claim!,
         { ...definition.steps['confirm']!, idempotent: true },
         {
-          now: Date.now() + 10 * 24 * 3600_000,
+          at: new Date(Date.now() + 10 * 24 * 3600_000),
         },
       ),
     ).toBe(false);

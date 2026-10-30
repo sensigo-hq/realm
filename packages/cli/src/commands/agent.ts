@@ -11,7 +11,6 @@ import { pathToFileURL } from 'node:url';
 import {
   validateRunParams,
   loadWorkflowFromFile,
-  JsonFileStore,
   JsonWorkflowStore,
   WorkflowError,
   describeUnrecognised,
@@ -62,6 +61,7 @@ import {
   writerMode,
   writerReceiptLine,
 } from '../output/writer.js';
+import { openRunStore } from '../lib/run-store.js';
 
 /**
  * Builds the Slack gate handler from the deployment manifest's `notifiers.slack_gate`
@@ -395,7 +395,7 @@ export const agentCommand = new Command('agent')
       let exitCode: number;
       try {
         const workflowStore = new JsonWorkflowStore();
-        const store = new JsonFileStore();
+        const store = openRunStore();
         // issue #207 PR-2 (D3 §5, mixed-wiring gap): construct the trace-buffer store beside the
         // concrete JsonFileStore (same runsDir), mirroring reclaim.ts's own wiring shape — without
         // this, `realm agent`'s driver never adopted/fenced a step's streamed WAL trace at all.

@@ -29,6 +29,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { createRealmMcpServer } from '../server.js';
 import { renderWaysOf } from '../render-reply.js';
+import { writtenSnapshot } from '@sensigo/realm';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const CLI = join(ROOT, 'packages/cli/dist/index.js');
@@ -635,7 +636,7 @@ describe(
       const id = await batchRun(call, 'cap');
       // Neither extensions nor a record: unknown, and the act names it (the library and inspect).
       const { record: record } = await runStore.get(id);
-      const fresh = describePending(def, record, undefined, new Date());
+      const fresh = describePending(def, writtenSnapshot(record, new Date()), undefined);
       // #729 PR-0: the act is the advance way, as the MCP door renders it from the ways composed by
       // a caller with neither extensions nor a record of them (an observer).
       const act = renderWaysOf(
@@ -721,7 +722,7 @@ describe(
         secondExit: 1,
       });
       // A caller that passes no extensions now judges by the record, in the past tense.
-      const marked = describePending(def, twice, undefined, new Date());
+      const marked = describePending(def, writtenSnapshot(twice, new Date()), undefined);
       const inspected = realm(h, ['run', 'inspect', id]).out;
       // (a) red when a caller with no extensions does not judge by the record in the past tense, or
       //     inspect does not print the page's line; (b) prints the view, the sentence and the screen.

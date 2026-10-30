@@ -23,6 +23,7 @@ import type { ServiceAdapter } from '../extensions/service-adapter.js';
 import type { StepHandler, StepHandlerInputs, StepContext } from '../extensions/step-handler.js';
 import { agentActionFor, nextCalls } from '../test-support/ways-view.js';
 import { composeWaysAt } from './ways.js';
+import { writtenSnapshot } from './snapshot.js';
 
 // Two-step workflow: step-one (auto) → step-two (agent).
 const definition: WorkflowDefinition = {
@@ -1897,7 +1898,9 @@ describe('executeStep', () => {
       // Before any attempt: the finding already fires (D's own "parked run" cell covers this
       // shape directly — reasserted here only as the baseline for the delta below).
       const { record: before } = await store.get(run.id);
-      const findingsBefore = classifyRunHealth(before, { definition: badDef });
+      const findingsBefore = classifyRunHealth(writtenSnapshot(before, new Date()), {
+        definition: badDef,
+      });
       expect(findingsBefore.some((f) => f.kind === 'trust_value_invalid')).toBe(true);
 
       // One executeStep attempt — refused, per the cells above.
@@ -1912,7 +1915,9 @@ describe('executeStep', () => {
       // After the refusal: the finding STILL fires — the step was never claimed, so it is still
       // eligible, so run-health can still see and name it. This is the cell mutant (ii) breaks.
       const { record: after } = await store.get(run.id);
-      const findingsAfter = classifyRunHealth(after, { definition: badDef });
+      const findingsAfter = classifyRunHealth(writtenSnapshot(after, new Date()), {
+        definition: badDef,
+      });
       const finding = findingsAfter.find((f) => f.kind === 'trust_value_invalid');
       expect(finding).toBeDefined();
       expect(finding?.step).toBe('work');

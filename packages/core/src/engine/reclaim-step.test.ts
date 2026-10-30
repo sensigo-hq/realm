@@ -20,6 +20,7 @@ import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { TraceBufferStore } from '../store/trace-buffer-store.js';
 import type { StepHandler } from '../extensions/step-handler.js';
 import { snap, doubleClock, noSettle } from '../test-support/snapshot-double.js';
+import { writtenSnapshot } from './snapshot.js';
 
 const autoWf: WorkflowDefinition = {
   id: 'reclaim-wf',
@@ -451,7 +452,7 @@ describe('reclaimStep — finalizer-wedge recovery (headline)', () => {
     // never settled — the buildFinalizedSeal crash-wedge. It is a claim_unknown_age wedge.
     const { record: claimed } = await store.claimStep(run.id, 'work', finalizerWf);
     expect(claimed.in_progress_steps).toContain('work');
-    expect(classifyInProgressClaims(claimed)[0]).toMatchObject({
+    expect(classifyInProgressClaims(writtenSnapshot(claimed, new Date()))[0]).toMatchObject({
       step: 'work',
       state: 'claim_unknown_age',
     });

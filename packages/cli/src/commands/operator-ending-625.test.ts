@@ -25,6 +25,7 @@ import {
 import { renderDetachMap } from './run.js';
 import { runAgent } from '../agent/run-agent.js';
 import { LlmProvider } from '../agent/providers/llm-provider.js';
+import { writtenSnapshot } from '@sensigo/realm';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../../../..');
@@ -175,12 +176,15 @@ describe('#625 PR-2a, F2 — the CLI on a run an operator ended', { timeout: 60_
       sealed_by: { arm: 'step_failure', step: 'a' },
       abandoned_at: undefined,
     } as unknown as RunRecord;
-    const ways = { pending: describePending(TWO, run, undefined, new Date()), workflow: TWO };
+    const ways = {
+      pending: describePending(TWO, writtenSnapshot(run, new Date()), undefined),
+      workflow: TWO,
+    };
     // (a) red when the map offers the undo for the operator's ending, or drops `Resume:` for an engine
     //     failure; (b) prints both maps' lines after the headline.
     expect({
-      abandoned: renderDetachMap(run, 'b', ways).split('\n').slice(1),
-      failed: renderDetachMap(failed, 'b', ways).split('\n').slice(1),
+      abandoned: renderDetachMap(run, new Date(), 'b', ways).split('\n').slice(1),
+      failed: renderDetachMap(failed, new Date(), 'b', ways).split('\n').slice(1),
     }).toEqual({
       abandoned: [`  Ended:     ${SENTENCE}`, `  Inspect:   realm run inspect ${run.id}`],
       failed: [

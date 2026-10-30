@@ -4,6 +4,7 @@ import type { RunRecord, WorkflowDefinition } from '@sensigo/realm';
 import { checkPreconditions, buildSettlementNamespace, getWorkflowForRun } from '@sensigo/realm';
 import { formatPrecondColumn } from './replay-format.js';
 import type { ReplayStore } from '../store/replay-store.js';
+import { openRunStore } from '../lib/run-store.js';
 
 export interface ReplayOverride {
   step: string;
@@ -151,8 +152,8 @@ export const replayCommand = new Command('replay')
   .option('--save', 'Persist the replay result and print the replay ID')
   .description('Re-evaluate preconditions with modified step outputs (read-only)')
   .action(async (runId: string, opts: { with?: string[]; save?: boolean }) => {
-    const { JsonFileStore, JsonWorkflowStore } = await import('@sensigo/realm');
-    const runStore = new JsonFileStore();
+    const { JsonWorkflowStore } = await import('@sensigo/realm');
+    const runStore = openRunStore();
     const workflowStore = new JsonWorkflowStore();
 
     let run;

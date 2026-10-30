@@ -10,6 +10,7 @@ import {
   buildPreExecutionErrorEnvelope,
   getWorkflowForRun,
   endedRunWaysSentence,
+  judgedSnapshotOf,
   TERMINAL_PHASES,
   type Attributed,
   type ActorAbsent,
@@ -123,9 +124,13 @@ export async function handleAdvanceRun(
   // call's own step failed, or the run had ended before it — ends with the way back in.
   // decision C211: a run that ended with cleanup steps left pending says the command that runs
   // them too — any ending.
+  // #715 (b) (D6-17, Amendment 4): the snapshot the engine judged its reply on — no second load;
+  // after a form's wait (a new reply) the wait's own read, as a deliberate wait prints from its own.
   const ended =
     reply.run_phase !== undefined && TERMINAL_PHASES.has(reply.run_phase)
-      ? await runStore.get(args.run_id).catch(() => undefined)
+      ? reply === result
+        ? judgedSnapshotOf(result)
+        : await runStore.get(args.run_id).catch(() => undefined)
       : undefined;
   // #729 PR-0: the MCP door's one renderer (next_actions, agent_action, the way sentence); the ended
   // run's ways back in follow the door's next sentence, as before — judged at the snapshot's reading

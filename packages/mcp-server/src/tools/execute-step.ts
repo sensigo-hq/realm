@@ -12,6 +12,7 @@ import {
   serializeFailedAttemptLine,
   getWorkflowForRun,
   endedRunWaysSentence,
+  judgedSnapshotOf,
   TERMINAL_PHASES,
   type StepDispatcher,
   type EngineReply,
@@ -375,8 +376,12 @@ export async function handleExecuteStep(
   // The ended run's ways back in follow the door's next sentence, as before.
   let tail = '';
   if (reply.run_phase !== undefined && TERMINAL_PHASES.has(reply.run_phase)) {
-    const ended = await runStore.get(args.run_id).catch(() => undefined);
-    // #715 (b): judged at the snapshot's own reading.
+    // #715 (b) (D6-17, Amendment 4): the snapshot the engine judged its reply on — no second load;
+    // after a form's wait (a new reply) the wait's own read, as a deliberate wait prints from its own.
+    const ended =
+      reply === result
+        ? judgedSnapshotOf(result)
+        : await runStore.get(args.run_id).catch(() => undefined);
     if (ended !== undefined) tail = endedRunWaysSentence(ended.record, definition, ended.at);
   }
   return mcpReplyOf(withHintTail(renderReply(reply, mcpHostOf(stores)), tail));

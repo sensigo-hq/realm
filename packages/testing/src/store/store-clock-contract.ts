@@ -29,6 +29,11 @@ import { createTestLocation, type TestLocation } from '../clock/test-location.js
  *   for a run that does not exist spends none (the counts on the clock route only).
  * - `MONOTONE_CAPPED` — after the clock stepped back behind a record's `updated_at`, the next write
  *   is stamped `min(updated_at, clock + ε)`; behind the clock, the clock.
+ * - `READ_AT_CAPPED` (#715 (b), D6-34, Amendment 7) — a read judges its record at
+ *   `max(r, min(updated_at, r + ε))`: a record stamped more than ε ahead of the clock is read at
+ *   `clock + ε`, one up to ε ahead at its own stamp, one behind at the clock (`get` and `list`; clock
+ *   route only). Core's `record_stamped_ahead` finding reads the raw reading back from that `at`: a
+ *   store whose reads do not cap is not supported by that finding.
  * - `KEYED_CREATE_ORDERS_AFTER_HOLDER` — a superseding keyed create after a backward step below ε, or
  *   at a frozen instant, is stamped at least 1 ms after the run it supersedes.
  * - `KEYED_CREATE_FLOOR_CAPPED` — that floor lifts the stamp by at most ε.
@@ -63,6 +68,7 @@ import { createTestLocation, type TestLocation } from '../clock/test-location.js
 export const STORE_CLOCK_LAWS = [
   'WRITE_ONE_READING',
   'MONOTONE_CAPPED',
+  'READ_AT_CAPPED',
   'KEYED_CREATE_ORDERS_AFTER_HOLDER',
   'KEYED_CREATE_FLOOR_CAPPED',
   'READS_ONE_READING',
@@ -322,6 +328,28 @@ export function storeClockContract(adapter: StoreClockContractAdapter): StoreClo
         const missingClaim = await spent(c, () => c.store.claimStep(gone, STEP, DEFINITION));
         check(law, missingClaim.error !== undefined, 'a claim on a missing run resolved');
         counted('a claimStep on a missing run', missingClaim, 0);
+      },
+    ),
+    L(
+      'READ_AT_CAPPED',
+      'a read judges a record stamped ahead at most ε ahead of the clock: +1 h → clock + ε; exactly +ε and +3 s → its own stamp; −1 h → the clock',
+      T,
+      async (c) => {
+        const got: string[] = [];
+        for (const lead of [3_600_000, EPS, 3_000, -3_600_000]) {
+          await c.clock.set(new Date(T + lead));
+          const { record: run } = await c.store.create(plain);
+          await c.clock.set(new Date(T));
+          const viaGet = (await c.store.get(run.id)).at.toISOString();
+          const row = (await c.store.list()).snapshots.find((x) => x.record.id === run.id);
+          got.push(`${viaGet}|${row?.at.toISOString() ?? 'no row'}`);
+        }
+        const want = [T + EPS, T + EPS, T + 3_000, T].map((ms) => `${iso(ms)}|${iso(ms)}`);
+        check(
+          'READ_AT_CAPPED',
+          got.join() === want.join(),
+          `reads (get|list) of records stamped +1 h, +ε, +3 s, −1 h were judged at ${got.join(', ')}, not ${want.join(', ')}`,
+        );
       },
     ),
     L(

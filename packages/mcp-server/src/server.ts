@@ -8,6 +8,7 @@ import {
   ExtensionRegistry,
   JsonWorkflowStore,
   JsonFileStore,
+  withTestClockNotice,
   FailedAttemptStore,
   WorkflowError,
   createDefaultRegistry,
@@ -391,7 +392,14 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
   // WAL entries written by append_trace are visible when execute_step finalizes the step. #729 PR-3
   // correction 2 (E-10): it rides `effectiveOptions` too, so every reply reads its run from the same
   // store — the masking's subject (`replySubject`) included, on a fresh process's first call.
-  const effectiveRunStore: RunStore = options?.runStore ?? new JsonFileStore();
+  // #715 (b) (02 §C.3, D6-53): a store at a test location says so once per process on stderr (the
+  // MCP stdio transport's free channel), at its first read.
+  const effectiveRunStore: RunStore = withTestClockNotice(
+    options?.runStore ?? new JsonFileStore(),
+    (line) => {
+      process.stderr.write(`${line}\n`);
+    },
+  );
   const effectiveOptions = {
     ...options,
     registry: effectiveRegistry,

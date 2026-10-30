@@ -20,6 +20,7 @@ import { agentActionFor } from '../test-support/ways-view.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type { WorkflowDefinition, StepDefinition } from '../types/workflow-definition.js';
 import type { RunRecord } from '../types/run-record.js';
+import { writtenSnapshot } from './snapshot.js';
 
 const echo: StepDispatcher = async (_name, input) => ({ ...input });
 
@@ -184,9 +185,11 @@ describe('#688 — the issue’s two shapes run, and the view agrees', () => {
         step: 'summarize',
         output: { summary: 'hello' },
       });
-      const entry = describePending(SHAPE_B, run, registry, new Date()).engine_runnable.find(
-        (e) => e.step === 'publish',
-      );
+      const entry = describePending(
+        SHAPE_B,
+        writtenSnapshot(run, new Date()),
+        registry,
+      ).engine_runnable.find((e) => e.step === 'publish');
       // (a) red when the view checks the engine's input: `runnable_here: false`, refused
       //     `input_schema`; (b) prints the view's entry.
       expect(entry).toEqual({ step: 'publish', runnable_here: true });
@@ -202,7 +205,7 @@ describe('#688 — a mapped input that does not fit: refused, report_to_user, th
         step: 'summarize',
         output: { other: 'x' },
       });
-      const view = describePending(SHAPE_B, run, registry, new Date());
+      const view = describePending(SHAPE_B, writtenSnapshot(run, new Date()), registry);
       const entry = view.engine_runnable.find((e) => e.step === 'publish');
       const reply = await executeStep(store, SHAPE_B, {
         runId: run.id,
@@ -385,9 +388,11 @@ describe('#688 cell 6 — a corrupted stored map whose schema refuses the engine
           },
         });
         const run = await begin(store, d, { t: 'x' }, registry, { step: 'first', output: {} });
-        const entry = describePending(d, run, registry, new Date()).engine_runnable.find(
-          (e) => e.step === 'publish',
-        );
+        const entry = describePending(
+          d,
+          writtenSnapshot(run, new Date()),
+          registry,
+        ).engine_runnable.find((e) => e.step === 'publish');
         const reply = await executeStep(store, d, {
           runId: run.id,
           command: 'publish',
@@ -463,7 +468,7 @@ describe('#688 cell 7 — each conjunct of the one rule', () => {
         step: 'order',
         output: {},
       });
-      const view = describePending(d, run, registry, new Date());
+      const view = describePending(d, writtenSnapshot(run, new Date()), registry);
       // (a) red when a bare step counts as consuming its map (break: drop the handler/service
       //     conjunct): the map builds `sku`, so the step is runnable; (b) prints the entry's check
       //     and the way out.

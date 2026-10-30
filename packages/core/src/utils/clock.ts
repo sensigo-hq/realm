@@ -105,3 +105,27 @@ export const systemClock: Clock = {
     );
   },
 };
+
+/**
+ * #715 (b) (02 §C.1, D-24, D6-53): every TEST clock, private to core — a `WeakSet`, so a clock is
+ * marked by identity and nothing on the clock object says so. `@sensigo/realm-testing`'s
+ * `settableClock` and `steppingClock` mark theirs, a test location's clock is marked where it is
+ * built, and `countingClock(inner)` marks its result iff `inner` is marked. A host-built clock
+ * (a plain `{ now, at }` object, a realm-cloud port's) is never marked.
+ */
+const TEST_CLOCKS = new WeakSet<Clock>();
+
+/** #715 (b) (02 §C.1): marks `clock` as a test clock; returns it. For `@sensigo/realm-testing`. */
+export function markTestClock<C extends Clock>(clock: C): C {
+  TEST_CLOCKS.add(clock);
+  return clock;
+}
+
+/**
+ * #715 (b) (02 §C.1, D6-59): what a reply's instant stands on — `'test_clock'` for a marked test
+ * clock, `undefined` for every other clock, a host-built one included. A reply carries it as
+ * `as_of_basis` (absent ⇒ the store's ordinary clock).
+ */
+export function clockBasis(clock: Clock): 'test_clock' | undefined {
+  return TEST_CLOCKS.has(clock) ? 'test_clock' : undefined;
+}

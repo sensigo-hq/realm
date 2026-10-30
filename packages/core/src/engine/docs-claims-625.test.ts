@@ -46,6 +46,7 @@ import { agentActionFor, nextCalls, owedOf } from '../test-support/ways-view.js'
 import { composeWaysAt, stepBrief } from './ways.js';
 import { compareStrings } from '../handlers/primitives/compare-strings.js';
 import { writeTestClockFile } from '../store/test-clock-file.js';
+import { writtenSnapshot } from './snapshot.js';
 
 /** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
  *  runs folder sits beside the location's clock file (first set to the host's reading), which
@@ -635,7 +636,8 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
         status: opened.status,
         entryIsPreview:
           JSON.stringify(entry?.output_summary) === JSON.stringify(record.pending_gate?.preview),
-        question: pendingGateQuestion(d, record),
+        // #715 (b) (02 §D.4): the fallback renders at a read's reading.
+        question: pendingGateQuestion(d, writtenSnapshot(record, new Date())),
         display: opened.gate?.display,
       }).toEqual({
         status: 'confirm_required',
@@ -1033,13 +1035,17 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
   });
 
   it('C163 line 103: describePending says what a run waits for, with every field the row names', async () => {
-    claim('`registry` may be `undefined`; `now` is required — pass `new Date()`.');
+    // #715 (b) (02 §A.1): the row names the snapshot `store.get` returns, in place of `run` and `now`.
+    claim(
+      '`registry` may be `undefined`; `snapshot` is what `store.get(runId)` returns, `{ record, at }`, and the run is judged at its `at` (added after version 0.48.0, in place of `run` and `now`).',
+    );
     claim(
       'Says what a run is waiting for, as an object with: `agent_steps` (the agent steps ready for an answer), `agent_refused` (the ready agent steps the run refuses before their claim, and why), `pending_guards` (the guard steps ready to be decided), `engine_runnable` (the `auto` steps it owes, each with `runnable_here`), `cannot_run` (every step that cannot run, and why),',
     );
     const d = gated();
     const { runId, gateId } = await atQuestion(d);
-    const p = describePending(d, (await store.get(runId)).record, undefined, new Date());
+    // The row's own call: the snapshot `store.get` returns.
+    const p = describePending(d, await store.get(runId), undefined);
     // (a) red when a field the row names is dropped; (b) prints the keys.
     for (const k of [
       'agent_steps',
@@ -1057,17 +1063,23 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       choices: ['approve', 'reject'],
     });
     expect(
-      describePending(d, (await store.get(runId)).record, undefined, LATER()).expiry_due,
+      describePending(d, writtenSnapshot((await store.get(runId)).record, LATER()), undefined)
+        .expiry_due,
     ).toBeDefined();
     // #729 PR-0 (D-L): what the engine owes is `owed` (it replaced `act`): the due expiry first.
-    expect(describePending(d, (await store.get(runId)).record, undefined, LATER()).owed).toEqual([
-      { expiry: { gate_id: gateId, step: 'q', on_expiry: 'settle_default' } },
-    ]);
-    expect(describePending(d, (await store.get(runId)).record, undefined, new Date()).owed).toEqual(
-      [],
-    );
+    expect(
+      describePending(d, writtenSnapshot((await store.get(runId)).record, LATER()), undefined).owed,
+    ).toEqual([{ expiry: { gate_id: gateId, step: 'q', on_expiry: 'settle_default' } }]);
+    expect(
+      describePending(d, writtenSnapshot((await store.get(runId)).record, new Date()), undefined)
+        .owed,
+    ).toEqual([]);
     await submitHumanResponse(store, d, { runId, gateId, choice: 'approve' });
-    const owed = describePending(d, (await store.get(runId)).record, undefined, new Date());
+    const owed = describePending(
+      d,
+      writtenSnapshot((await store.get(runId)).record, new Date()),
+      undefined,
+    );
     expect(owed.engine_runnable.map((e) => [e.step, typeof e.runnable_here])).toEqual([
       ['after', 'boolean'],
     ]);
@@ -1539,7 +1551,8 @@ describe('#760 — handlers.md: check_quotes and locateQuote', () => {
     await advanceRun(store, def, { runId: run.id, registry: createDefaultRegistry() });
     // Correction 2 (03, D4): the agent step's prompt carries the document, read from the record
     // after `advanceRun` ran `fetch_document` (the record as first created renders none).
-    const prompt = stepBrief(def, (await store.get(run.id)).record, 'extract_fields').prompt;
+    // #715 (b) (02 §D.4): the brief renders at the read's own reading.
+    const prompt = stepBrief(def, await store.get(run.id), 'extract_fields').prompt;
     const reply = await executeChain(store, def, {
       runId: run.id,
       command: 'extract_fields',

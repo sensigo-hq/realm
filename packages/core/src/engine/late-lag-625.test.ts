@@ -150,7 +150,6 @@ describe('#625 PR-2a, F1 — the late answer says how late it was', () => {
           line: reply.warnings[0],
           expired_at: reply.expiry?.expired_at,
           overdue: reply.expiry?.overdue,
-          by_this_call: reply.expiry?.by_this_call,
           details: [reply.error_details?.['expired_at'], reply.error_details?.['overdue_ms']],
         }).toEqual({
           legacy,
@@ -158,10 +157,92 @@ describe('#625 PR-2a, F1 — the late answer says how late it was', () => {
           line: `gate '${gateId}' on 'q' had expired 15s before this call — this submitHumanResponse call first carried out its declared ${did} (enacted_via: submitHumanResponse).`,
           expired_at: expiresAt,
           overdue: { ms: 15_000 },
-          by_this_call: true,
           details: [undefined, undefined],
         });
       }
+    },
+  );
+
+  // #715 (b), Q-1 (MA 3, 2026-10-30): the race the deleted cell named ("the race: a late answer
+  // whose own expiry write found the question already settled names the lag to THIS call, and
+  // another call") had a window between two writes; with the late answer in one write (01 A.8
+  // (iii)) the same situation is another process carrying the expiry out BEFORE this answer's one
+  // write, and the answer meets an already-settled question. Pinned as the build says it (verify-
+  // first); NAMED DIVERGENCE from the old line, which said `… had expired 42s before this call —
+  // another call had already carried out its declared settle_default: …`: no `warnings` line, no
+  // `expiry` receipt — the reply's `outcome` and hint carry it (MA 3 decides: report, divergence 10).
+  it.each([
+    [
+      'settle_default',
+      'approve',
+      'ok',
+      undefined,
+      false,
+      { kind: 'timeout' },
+      'the outcome matches your choice, but it was settled by timeout; your response was not recorded.',
+    ],
+    [
+      'settle_default',
+      'reject',
+      'error',
+      'STATE_BLOCKED',
+      false,
+      { kind: 'timeout' },
+      "Gate '<g>' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.",
+    ],
+    // Amendment 3: the abort row — the run the expiry ended answers as any ended run does.
+    [
+      'abort',
+      'approve',
+      'error',
+      'STATE_RUN_TERMINAL',
+      undefined,
+      undefined,
+      "Run '<r>' is terminal (aborted); cannot submit a gate response — an aborted run is never resumed; 'realm run purge <r>' previews what it would remove.",
+    ],
+  ] as const)(
+    "an answer that reaches a question another process already expired (%s gate, answered '%s'): %s, not recorded, no expiry receipt and no expiry line",
+    async (onExpiry, choice, status, code, recorded, by, hint) => {
+      const d = gated(onExpiry);
+      const { runId, gateId, at } = await atQuestion(d);
+      await setClockOf(store, at(42_000));
+      let fired = false;
+      const racing = new Proxy(store, {
+        get(target, prop) {
+          if (prop === 'settleStep') {
+            return async (...a: Parameters<JsonFileStore['settleStep']>) => {
+              if (!fired && a[1].kind === 'settle_gate') {
+                fired = true; // another process's expire_gate write lands first
+                await target.settleStep(a[0], { kind: 'expire_gate', gateId }, a[2]);
+              }
+              return target.settleStep(...a);
+            };
+          }
+          const v = Reflect.get(target, prop, target) as unknown;
+          return typeof v === 'function' ? (v as (...x: unknown[]) => unknown).bind(target) : v;
+        },
+      });
+      const reply = await submitHumanResponse(racing, d, { runId, gateId, choice });
+      // (a) red when the answer is recorded over the expired question, the settle is not said to be
+      //     the timeout's, the ended run is not refused as ended, or an expiry line/receipt appears;
+      //     (b) prints the reply's fields.
+      expect({
+        status: reply.status,
+        error_code: reply.error_code,
+        answer_recorded: reply.answer_recorded,
+        by: reply.outcome?.by,
+        warnings: reply.warnings,
+        expiry: reply.expiry,
+        hint: reply.context_hint?.replace(gateId, '<g>').replaceAll(runId, '<r>'),
+      }).toEqual({
+        status,
+        error_code: code,
+        answer_recorded: recorded,
+        by,
+        warnings: [],
+        expiry: undefined,
+        hint,
+      });
     },
   );
 

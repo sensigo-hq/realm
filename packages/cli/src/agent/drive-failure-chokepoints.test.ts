@@ -15,6 +15,7 @@ import { LlmProvider, ToolCapableLlmProvider } from './providers/llm-provider.js
 import type { AgentDeps } from './run-agent.js';
 import { driveCreate, type LlmClock, type WireCounters } from './providers/agent-utils.js';
 import { listing, snap } from '../test-support/snapshot-double.js';
+import { writtenSnapshot } from '@sensigo/realm';
 
 /**
  * Extends the real base class rather than shaping an object literal: the base supplies
@@ -1005,10 +1006,15 @@ describe('#401 PR-2 — a fired ceiling as the operator meets it', () => {
     // inside the same millisecond, and the finding's floor is the creation instant, so the real
     // failure does not sort after it (see the note at run-health.ts's floor comparison). The
     // entry under test is untouched.
-    const finding = classifyRunHealth({
-      ...run,
-      created_at: new Date(Date.parse(run.created_at) - 1000).toISOString(),
-    }).find((f) => f.kind === 'drive_failing');
+    const finding = classifyRunHealth(
+      writtenSnapshot(
+        {
+          ...run,
+          created_at: new Date(Date.parse(run.created_at) - 1000).toISOString(),
+        },
+        new Date(),
+      ),
+    ).find((f) => f.kind === 'drive_failing');
     expect(finding?.reason).toContain('aborted_by_budget');
     expect(finding?.reason).toContain('llm_timeout_seconds');
 

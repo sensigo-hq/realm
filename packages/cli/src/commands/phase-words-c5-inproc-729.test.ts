@@ -182,6 +182,7 @@ describe('#729 PR-3 correction 5 (J-2) — the race and prompt lines print the p
               opened_at: AT,
             },
           } as Partial<RunRecord>),
+          new Date(),
           'a',
           ways(),
         ).split('\n')[0]!,

@@ -25,7 +25,7 @@
 //      claim can still be `in_progress_steps` at the instant a guard aborts the run) — nothing
 //      further to report — **and the run did not complete while carrying `failed_steps` (item 6,
 //      below); that class is narrower still, checked in the same branch.**
-//   2. Claim findings: `classifyInProgressClaims(run, now)` entries with `state !== 'healthy' &&
+//   2. Claim findings: `classifyInProgressClaims(snapshot)` entries with `state !== 'healthy' &&
 //      step !== run.pending_gate?.step_name`. The open-gate claim is always `{deadline: null}` ⇒
 //      `claim_unknown_age` — excluding it is what keeps a healthy gate_waiting run at ZERO
 //      findings (the B1 negative pin); without the exclusion EVERY healthy gated run would flag.
@@ -126,6 +126,7 @@
 // execution-loop.ts's countRejection doc) still requires sidecar evidence this function
 // structurally cannot see (classification here is write-free by construction).
 import type { RunRecord } from '../types/run-record.js';
+import type { Snapshot } from './snapshot.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
 import { classifyInProgressClaims } from './claim-liveness.js';
@@ -133,7 +134,7 @@ import { findCapabilityBlockedSteps } from './capability.js';
 import { findEligibleSteps, findEligibleGuardSteps, deriveRunPhase } from './eligibility.js';
 import { classifyStepTrust, buildTrustRefusal } from '../types/workflow-definition.js';
 import { cannotGoOnUntilCorrected, composeWaysAt, type Unavailable } from './ways.js';
-import { parseStamp } from './instants.js';
+import { CLOCK_SKEW_EPSILON_MS, parseStamp, recordStampedAheadSentence } from './instants.js';
 
 /**
  * Default age threshold for the `never_claimed_idle` finding (issue #221) — 24 hours. Engine-
@@ -189,7 +190,11 @@ export interface RunHealthFinding {
     // denied, a directory, empty, corrupt JSON, a legacy record, or a registry directory that
     // itself cannot be read. Fires on ANY run, live or terminal: the class is about the COPY, not
     // the phase. Supplied by the caller (`definitionError`) — this function never touches a store.
-    | 'definition_unresolvable';
+    | 'definition_unresolvable'
+    // #715 (b) (02 §D.1, D6-3, D6-34, Amendment 7): this run's last write is stamped more than ε after
+    // this reader's RAW reading — one of the two clocks is off (it cannot tell which). Fires on any
+    // run, live or terminal. Not a `--stuck` member (RUN_HEALTH_STUCK_EXCLUDED); no act pointer.
+    | 'record_stamped_ahead';
   /** The affected step, when the finding is step-scoped. Absent for `never_claimed_idle` — a
    *  run-level observation (no step is claimed at all). */
   step?: string;
@@ -203,7 +208,7 @@ export interface RunHealthFinding {
    *  tracked anywhere in the run record — only a deadline, which is carried in `evidence`
    *  instead). REQUIRED for kind `never_claimed_idle`. */
   since?: string;
-  /** Milliseconds idle, computed from `opts.now`. REQUIRED (together with `since`) for kind
+  /** Milliseconds idle, computed at the snapshot's `at`. REQUIRED (together with `since`) for kind
    *  `never_claimed_idle`; absent otherwise. */
   idle_ms?: number;
   /** Kind-specific supporting data — label-sufficient for every surface to render without
@@ -346,13 +351,23 @@ function findStructuredOutputDowngrades(run: RunRecord): RunHealthFinding | unde
  * Record-only by construction — no definition, no I/O — so `list --stuck`, which passes neither,
  * gets this finding for free.
  */
-function findDriveFailing(run: RunRecord, now: Date): RunHealthFinding | undefined {
+function findDriveFailing(snapshot: Snapshot): RunHealthFinding | undefined {
+  const { record: run, at: now } = snapshot;
   const field = run.drive_failures;
   const lastEntry = field?.entries[field.entries.length - 1];
   if (field === undefined || lastEntry === undefined) return undefined;
   if (run.terminal_state) return undefined;
 
-  const lastAt = new Date(lastEntry.at).getTime();
+  const lastAt = parseStamp(lastEntry.at) ?? NaN;
+  // #715 (b) (02 §D.2, D6-15, D6-47): an entry that recorded what the run held when it was appended
+  // fires while the run still holds exactly that — nothing recorded since, the same question open —
+  // never by comparing stamps, so a frozen or stepped clock judges it right. An entry written before
+  // #715 (b) carries neither: it is judged by the stamp order, and says so (`legacy_stamp_order`).
+  const legacy = lastEntry.evidence_count === undefined;
+  if (!legacy) {
+    if (run.evidence.length !== lastEntry.evidence_count) return undefined;
+    if (run.pending_gate?.gate_id !== lastEntry.gate_id) return undefined;
+  }
   const floor = parseStamp(run.created_at) ?? NaN;
   const gateOpened =
     run.pending_gate !== undefined ? (parseStamp(run.pending_gate.opened_at) ?? NaN) : -Infinity;
@@ -365,7 +380,7 @@ function findDriveFailing(run: RunRecord, now: Date): RunHealthFinding | undefin
   // spend far longer than a millisecond reaching a provider, so this is invisible in practice —
   // but an in-memory test that creates and fails in one tick will see no finding and should
   // separate the two rather than conclude the predicate is broken.
-  if (lastAt <= Math.max(gateOpened, lastEvidence, floor)) return undefined;
+  if (legacy && lastAt <= Math.max(gateOpened, lastEvidence, floor)) return undefined;
 
   const settled = new Set([...run.completed_steps, ...run.failed_steps, ...run.skipped_steps]);
   if (settled.has(lastEntry.step)) return undefined;
@@ -399,6 +414,8 @@ function findDriveFailing(run: RunRecord, now: Date): RunHealthFinding | undefin
       ...(lastEntry.derived_ceiling_ms !== undefined
         ? { derived_ceiling_ms: lastEntry.derived_ceiling_ms }
         : {}),
+      // #715 (b) (02 §D.2, FW-4): an entry from before #715 (b) was judged by the stamp order.
+      ...(legacy ? { basis: 'legacy_stamp_order' } : {}),
     },
   };
 }
@@ -416,13 +433,92 @@ function formatAgo(ms: number): string {
 
 /**
  * Classifies a run's health into zero or more typed findings. Pure, read-only, definition-
- * optional, `now`-injectable. See the module doc above for the full branch-conditioning table
+ * optional, judged at the snapshot's `at` (#715 (b)). See the module doc above for the full branch-conditioning table
  * (design record §1, fold B1) and the honest-admission rule.
  */
 export function classifyRunHealth(
-  run: RunRecord,
+  // #715 (b) (D6-17): one snapshot — the record and the reading it is judged at; no default clock.
+  snapshot: Snapshot,
+  opts?: Parameters<typeof classifyRecordHealth>[1],
+): RunHealthFinding[] {
+  // #715 (b) (02 §D.1): the stamped-ahead finding is about the record and the reader's clock, on
+  // any run — after every other finding.
+  const ahead = recordStampedAheadOf(snapshot);
+  const findings = classifyRecordHealth(snapshot, opts);
+  return ahead === undefined ? findings : [...findings, ahead];
+}
+
+/**
+ * #715 (b) (02 §D.1, D6-3, D6-34, Amendment 7): `record_stamped_ahead` — the record's `updated_at`
+ * lies more than ε after the reader's RAW reading `r`. Read off the snapshot alone: a store's read is
+ * judged at `max(r, min(updated_at, r + ε))` (the store contract's `READ_AT_CAPPED`), so
+ * `updated_at > at` ⇔ `updated_at − r > ε`, and then `r = at − ε`. A store whose reads do not cap
+ * is not supported by this finding. Evidence: `{ record_updated_at, reader_at, delta_ms }`, the RAW
+ * lead (never the capped one).
+ */
+export function recordStampedAheadOf(snapshot: Snapshot): RunHealthFinding | undefined {
+  const stamped = parseStamp(snapshot.record.updated_at);
+  if (stamped === undefined || stamped <= snapshot.at.getTime()) return undefined;
+  const readerMs = snapshot.at.getTime() - CLOCK_SKEW_EPSILON_MS;
+  const deltaMs = stamped - readerMs;
+  const seconds = Math.round(deltaMs / 1000);
+  return {
+    kind: 'record_stamped_ahead',
+    reason: `this run's last write is stamped ${seconds} s after this reader's clock; ${recordStampedAheadSentence(deltaMs)}`,
+    evidence: {
+      record_updated_at: snapshot.record.updated_at,
+      reader_at: new Date(readerMs).toISOString(),
+      delta_ms: deltaMs,
+    },
+  };
+}
+
+/**
+ * #715 (b) (02 §D.1, Amendment 7): the finding kinds that never select a run for
+ * `realm run list --stuck` — each co-rides a run some other finding selects (or none), and carries no
+ * `--stuck` label. Decided here, read by the CLI's selection.
+ */
+export const RUN_HEALTH_STUCK_EXCLUDED: ReadonlySet<RunHealthFinding['kind']> = new Set<
+  RunHealthFinding['kind']
+>([
+  'completed_with_failed_steps',
+  'structured_output_downgraded',
+  'guard_awaiting_settlement',
+  'trust_value_invalid',
+  'record_stamped_ahead',
+]);
+
+/**
+ * #715 (b) (02 §D.1, D6-26): every finding kind, as a list a program can walk (the `--stuck` law
+ * cell reads it). Compile-checked against {@link RunHealthFinding}'s `kind`: a kind added there and
+ * not here fails to build.
+ */
+export const RUN_HEALTH_KINDS = [
+  'never_claimed_idle',
+  'drive_failing',
+  'stale_claim',
+  'wedged_gate_sibling',
+  'capability_block',
+  'terminal_pending_finalizer',
+  'terminal_with_stale_gate',
+  'gate_corruption',
+  'guard_awaiting_settlement',
+  'completed_with_failed_steps',
+  'gate_expired_awaiting_drive',
+  'structured_output_downgraded',
+  'trust_value_invalid',
+  'cannot_go_on',
+  'definition_unresolvable',
+  'record_stamped_ahead',
+] as const satisfies readonly RunHealthFinding['kind'][];
+type MissingKind = Exclude<RunHealthFinding['kind'], (typeof RUN_HEALTH_KINDS)[number]>;
+const _everyKindListed: [MissingKind] extends [never] ? true : MissingKind = true;
+void _everyKindListed;
+
+/** The run's findings but `record_stamped_ahead` — see {@link classifyRunHealth}. */
+function classifyRecordHealth(
+  snapshot: Snapshot,
   opts?: {
-    now?: Date;
     idleThresholdMs?: number;
     definition?: WorkflowDefinition;
     /** issue #558 PR-T — the failure the CALLER got when it tried to resolve this run's
@@ -438,7 +534,7 @@ export function classifyRunHealth(
     registry?: ExtensionRegistry;
   },
 ): RunHealthFinding[] {
-  const now = opts?.now ?? new Date();
+  const { record: run, at: now } = snapshot;
   // issue #432: computed ONCE per classify call, ahead of every branch — the module's own D-3
   // disposal rule (module doc item 6, eligibility.ts:259-264) applies to every control-flow read
   // in this function, not just the completed_with_failed_steps check that already honored it. A
@@ -551,7 +647,7 @@ export function classifyRunHealth(
   const findings: RunHealthFinding[] = [];
 
   // Branch 2 — claim findings (subsumes list.ts's pre-#221 wedgedNonGatedClaims).
-  for (const c of classifyInProgressClaims(run, now)) {
+  for (const c of classifyInProgressClaims(snapshot)) {
     if (c.state === 'healthy') continue;
     if (c.step === run.pending_gate?.step_name) continue; // the open-gate claim is never a wedge
     // issue #432: `derivedPhase`, never `run.run_phase` — the D-3 disposal rule (module doc item
@@ -593,7 +689,7 @@ export function classifyRunHealth(
   // issue #401: drive_failing — the run's last drive attempt failed and nothing has happened
   // since. Deliberately NOT exclusive with `never_claimed_idle`: from 24h onward a
   // failed-then-silent run legitimately trips both, and suppressing either would hide a fact.
-  const driveFailing = findDriveFailing(run, now);
+  const driveFailing = findDriveFailing(snapshot);
   if (driveFailing !== undefined) findings.push(driveFailing);
 
   // issue #291: gate_expired_awaiting_drive — record-fields-only (never the definition), fires

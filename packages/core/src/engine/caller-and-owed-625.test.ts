@@ -30,6 +30,7 @@ import { JsonFileStore } from '../store/json-file-store.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import { agentActionFor, nextCalls, owedOf, proofOf } from '../test-support/ways-view.js';
 import { writeTestClockFile } from '../store/test-clock-file.js';
+import { writtenSnapshot } from './snapshot.js';
 
 /** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
  *  runs folder sits beside the location's clock file (first set to the host's reading), which
@@ -243,7 +244,7 @@ describe('#625 PR-2a, C133/C134/C135/C136 — the caller, the opener, what a ref
               verb: 'advance',
               conditions: [],
               run_id: runId,
-              owed: describePending(d, run, undefined, past).owed,
+              owed: describePending(d, writtenSnapshot(run, past), undefined).owed,
             },
           ],
         }),
@@ -300,7 +301,10 @@ describe('#625 PR-2a, C133/C134/C135/C136 — the caller, the opener, what a ref
       next: ['advance'],
       owed: ['after'],
     });
-    expect(describePending(d, (await store.get(runId)).record, undefined, now).owed.length).toBe(1);
+    expect(
+      describePending(d, writtenSnapshot((await store.get(runId)).record, now), undefined).owed
+        .length,
+    ).toBe(1);
   });
 
   it("C136, W5-Y3: execute_step on the question's own step after its expiry was carried out by that call — the suggestion says to call advance_run, as next_actions holds only that", async () => {

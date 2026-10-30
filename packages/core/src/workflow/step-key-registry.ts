@@ -1191,7 +1191,8 @@ export const STEP_KEY_REGISTRY = {
       where: [
         {
           file: EL,
-          pattern: 'stepDef!.instructions !== undefined ? renderTemplate(stepDef!.instructions, {',
+          // #715 (b) (02 §D.4): rendered at the opening write's reading (`{ time: { at } }`).
+          pattern: 'stepDef!.instructions !== undefined ? renderTemplate( stepDef!.instructions, {',
         },
       ],
       when: {

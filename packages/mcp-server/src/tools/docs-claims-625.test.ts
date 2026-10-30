@@ -2646,17 +2646,13 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
       //     what the run owes, or the expiry line or receipt is in the wrong reply; (b) prints the
       //     reply's fields.
       const outcome = r['outcome'] as { choice?: string; by?: unknown } | undefined;
-      const expiry = r['expiry'] as
-        { expired_at?: string; overdue?: { ms?: unknown }; by_this_call?: boolean } | undefined;
+      const expiry = r['expiry'] as { expired_at?: string; overdue?: { ms?: unknown } } | undefined;
       expect({
         status: r['status'],
         recorded: r['answer_recorded'],
         details: r['error_details'],
         outcome: { choice: outcome?.choice, by: outcome?.by },
-        expiry:
-          expiry === undefined
-            ? undefined
-            : [expiry.expired_at, typeof expiry.overdue?.ms, expiry.by_this_call],
+        expiry: expiry === undefined ? undefined : [expiry.expired_at, typeof expiry.overdue?.ms],
         hint: r['context_hint'],
         next: next(r),
         expiryLine: ((lagless(r['warnings']) as string[]) ?? []).includes(expiryLine),
@@ -2669,7 +2665,7 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
         // expiry out finds no such question and carries none.
         details: undefined,
         outcome: { choice: 'approve', by: { kind: 'timeout' } },
-        expiry: earlier ? undefined : [expiresAt, 'number', true],
+        expiry: earlier ? undefined : [expiresAt, 'number'],
         hint: "the outcome matches your choice, but it was settled by timeout; your response was not recorded. Ready for the agent: 'write'.",
         next: ['execute_step:write'],
         expiryLine: !earlier,

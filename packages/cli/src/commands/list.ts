@@ -4,10 +4,14 @@ import { Command } from 'commander';
 import {
   parseStamp,
   classifyRunHealth,
+  RUN_HEALTH_STUCK_EXCLUDED,
   deriveRunPhase,
   DEFAULT_IDLE_THRESHOLD_MS,
   FailedAttemptStore,
   computeGateDueState,
+  reminderScheduleOf,
+  reminderScheduleWords,
+  writtenSnapshot,
   probeClassOf,
   shellWord,
 } from '@sensigo/realm';
@@ -23,6 +27,7 @@ import type {
 import { dirname } from 'node:path';
 import { parseDuration } from '../lib/parse-duration.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
+import { openRunStore } from '../lib/run-store.js';
 
 /**
  * issue #719 (B3): a run store as Realm's commands list it — the JSON store's
@@ -126,7 +131,7 @@ function formatThreshold(ms: number): string {
  * has no step-scoped label of its own (its presence is already implied by the run showing up in
  * the list at all, with `idle:` shown) — returns `undefined`, filtered out by the caller.
  */
-function renderFindingLabel(f: RunHealthFinding): string | undefined {
+export function renderFindingLabel(f: RunHealthFinding): string | undefined {
   switch (f.kind) {
     case 'stale_claim':
     case 'wedged_gate_sibling':
@@ -199,6 +204,7 @@ function renderFindingLabel(f: RunHealthFinding): string | undefined {
     case 'completed_with_failed_steps':
     case 'structured_output_downgraded':
     case 'trust_value_invalid':
+    case 'record_stamped_ahead': // #715 (b) (02 §D.1, Amendment 7): a clock skew does not stop a run.
       return undefined;
     // issue #279 (increment 1, PR-B): a terminal run with an undrained finalizer — points at the
     // recovery verb directly in the label (appended-segment style; see the dedicated kind-filter
@@ -320,7 +326,10 @@ export async function listRuns(
   workflowProbe?: (workflowId: string) => StuckDefinitionProbe | undefined,
   listing?: RunListing,
 ): Promise<string> {
-  const runs = (listing ?? (await store.list(workflowId))).snapshots.map((s) => s.record);
+  const snapshots = (listing ?? (await store.list(workflowId))).snapshots;
+  const runs = snapshots.map((s) => s.record);
+  // #715 (b) (D6-17, D-26): each row is judged at its own snapshot's `at`.
+  const atOf = new Map(snapshots.map((s) => [s.record.id, s.at]));
   // issue #719 (C2): with damaged run files in the store, an empty result says "readable" — stdout
   // alone (piped, or with stderr gone) must not say no run matched when a damaged file may be one.
   const damaged = listing !== undefined && listing.unreadable.length > 0;
@@ -351,7 +360,7 @@ export async function listRuns(
       const definitionError = probed !== undefined && 'code' in probed ? probed : undefined;
       const definition =
         probed !== undefined && 'definition' in probed ? probed.definition : undefined;
-      const findings = classifyRunHealth(r, {
+      const findings = classifyRunHealth(writtenSnapshot(r, atOf.get(r.id)!), {
         idleThresholdMs: effectiveIdleThresholdMs,
         ...(definitionError !== undefined ? { definitionError } : {}),
         ...(definition !== undefined ? { definition } : {}),
@@ -375,13 +384,10 @@ export async function listRuns(
       // that the definition is passed — neither has a label, and a guard awaiting settlement has
       // `advance` offered (selected alone, it would print a silent line at age 0). A refused trust
       // value selects the run through `cannot_go_on`, which co-fires and is labelled.
-      return findings.some(
-        (f) =>
-          f.kind !== 'completed_with_failed_steps' &&
-          f.kind !== 'structured_output_downgraded' &&
-          f.kind !== 'guard_awaiting_settlement' &&
-          f.kind !== 'trust_value_invalid',
-      );
+      //
+      // #715 (b) (02 §D.1, Amendment 7): the excluded kinds are core's one set, `record_stamped_ahead`
+      // among them (a clock skew does not stop a run).
+      return findings.some((f) => !RUN_HEALTH_STUCK_EXCLUDED.has(f.kind));
     });
   } else if (statusFilter !== undefined) {
     // issue #279 (increment 2, PR-C — D-3 leg vi): filter on the DERIVED phase, never the
@@ -571,17 +577,14 @@ export async function listRuns(
       // issue #291 (Deliverable 7): the EXPIRED marker + next-reminder-due annotation — the SAME
       // shared computeGateDueState derivation get_run_state/inspect also read from, off the
       // frozen record fields only (never the definition — definition-free by construction here).
-      const due = computeGateDueState(run.pending_gate, new Date());
+      const due = computeGateDueState(run.pending_gate, atOf.get(run.id)!);
       if (due.expired) {
         line += `  EXPIRED ${formatGateAge(run.pending_gate.expires_at!)} ago`;
       }
-      if (due.next_reminder_due_at !== undefined) {
-        const dueMs = parseStamp(due.next_reminder_due_at) ?? NaN;
-        const overdueReminder = dueMs <= Date.now();
-        line += overdueReminder
-          ? `  reminder overdue (was due ${formatGateAge(due.next_reminder_due_at)} ago)`
-          : `  reminder due in ${formatGateAge(new Date().toISOString(), new Date(due.next_reminder_due_at))}`;
-      }
+      // #715 (b) (02 §D.3, Amendment 9): the authored reminder SCHEDULE, from the one core function,
+      // at this row's reading — never "due" or "overdue": no send is recorded on the run.
+      const reminders = reminderScheduleOf(writtenSnapshot(run, atOf.get(run.id)!));
+      if (reminders !== undefined) line += `  ${reminderScheduleWords(reminders)}`;
     }
     lines.push(line);
   }
@@ -606,8 +609,7 @@ export const listCommand = new Command('list')
   )
   .action(
     async (opts: { workflow?: string; status?: string; stuck?: boolean; olderThan?: string }) => {
-      const { JsonFileStore } = await import('@sensigo/realm');
-      const store = new JsonFileStore();
+      const store = openRunStore();
       // issue #219: explicit injection — `JsonFileStore.runsDirPath` is a real, nominal public
       // getter (not duck-typed off `RunStore`, which stays plain). Constructed ONLY for --stuck,
       // at the SAME runsDir the run store persists to.

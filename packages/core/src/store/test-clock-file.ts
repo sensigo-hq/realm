@@ -9,7 +9,7 @@
 import { accessSync, constants, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { WorkflowError } from '../types/workflow-error.js';
-import { systemClock, type Clock } from '../utils/clock.js';
+import { markTestClock, systemClock, type Clock } from '../utils/clock.js';
 import { atomicWriteFile } from './atomic-write.js';
 
 /**
@@ -99,6 +99,23 @@ export function readTestClockFile(path: string): TestClockFile | undefined {
 }
 
 /**
+ * #715 (b) (02 §C.1, D6-53): the clocks of test LOCATIONS alone (a file clock) — private to core, a
+ * `WeakSet` beside the set of all test clocks (`markTestClock`). A process opening a store whose clock
+ * is in it says so once on stderr (the hosts' notice).
+ */
+const FILE_CLOCKS = new WeakSet<Clock>();
+
+function markFileClock(clock: Clock): Clock {
+  FILE_CLOCKS.add(clock);
+  return markTestClock(clock);
+}
+
+/** #715 (b) (02 §C.1): whether `clock` is a test location's file clock. */
+export function isTestLocationClock(clock: Clock): boolean {
+  return FILE_CLOCKS.has(clock);
+}
+
+/**
  * The clock of a test location (D6-54): `now()` re-reads the file at `path` on EVERY call, so a store
  * in another process sees the current instant, and returns a fresh `Date`. A file that can no longer
  * be read (or is gone) makes `now()` throw, so a write fails loud. `at()` throws: no code registers a
@@ -106,7 +123,7 @@ export function readTestClockFile(path: string): TestClockFile | undefined {
  * (the gate timer). For `@sensigo/realm-testing`, not for hosts.
  */
 export function fileClock(path: string): Clock {
-  return {
+  return markFileClock({
     now(): Date {
       const file = readTestClockFile(path);
       if (file === undefined) throw new Error(`the test clock file ${path} is gone`);
@@ -117,7 +134,7 @@ export function fileClock(path: string): Clock {
         "a test location's clock cannot run waiters until the unit that registers them (#715 (b)) is built",
       );
     },
-  };
+  });
 }
 
 /**

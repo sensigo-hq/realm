@@ -25,6 +25,7 @@ import { JsonFileStore } from '../store/json-file-store.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { RunStore } from '../store/store-interface.js';
 import { writeTestClockFile } from '../store/test-clock-file.js';
+import { writtenSnapshot } from './snapshot.js';
 
 /** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
  *  runs folder sits beside the location's clock file (first set to the host's reading), which
@@ -210,14 +211,14 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
     expect(JSON.stringify((await store.get(runId)).record)).toBe(before);
   });
 
-  it('line 103, the describePending row: describePending(definition, run, registry, now) returns an object with every field the row names', async () => {
+  it('line 103, the describePending row: describePending(definition, snapshot, registry) returns an object with every field the row names', async () => {
     claim(
       PAGE,
-      "| `describePending(definition, run, registry, now)` | Says what a run is waiting for, as an object with: `agent_steps` (the agent steps ready for an answer), `agent_refused` (the ready agent steps the run refuses before their claim, and why), `pending_guards` (the guard steps ready to be decided), `engine_runnable` (the `auto` steps it owes, each with `runnable_here`), `cannot_run` (every step that cannot run, and why), `expiry_due` (the open question whose time is up at `now` and whose `on_expiry` the engine carries out — it can no longer be answered), `open_question` (whenever the run waits on a question: its `step`, `gate_id` and `choices`) and `owed` (what the engine owes that can run with the given registry — with no registry, any owed step counts — each `{ step }`, an expired question's `on_expiry` first as `{ expiry }`; added after version 0.47.0, in place of `agent_actions` and `act`).",
+      "| `describePending(definition, snapshot, registry)` | Says what a run is waiting for, as an object with: `agent_steps` (the agent steps ready for an answer), `agent_refused` (the ready agent steps the run refuses before their claim, and why), `pending_guards` (the guard steps ready to be decided), `engine_runnable` (the `auto` steps it owes, each with `runnable_here`), `cannot_run` (every step that cannot run, and why), `expiry_due` (the open question whose time is up at the snapshot's `at` and whose `on_expiry` the engine carries out — it can no longer be answered), `open_question` (whenever the run waits on a question: its `step`, `gate_id` and `choices`) and `owed` (what the engine owes that can run with the given registry — with no registry, any owed step counts — each `{ step }`, an expired question's `on_expiry` first as `{ expiry }`; added after version 0.47.0, in place of `agent_actions` and `act`).",
     );
     const { runId, gateId } = await atQuestion();
     const { record: run } = await store.get(runId);
-    const due = describePending(GATED, run, undefined, LATER());
+    const due = describePending(GATED, writtenSnapshot(run, LATER()), undefined);
     // (a) red when a field the row names is dropped, or the expired question is not named as due
     //     and as owed; (b) prints the object.
     expect(Object.keys(due).sort()).toEqual(
@@ -237,7 +238,7 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
       ['expiry'],
     ]);
     // Not yet due at the current time: nothing owed, no expiry_due.
-    const open = describePending(GATED, run, undefined, new Date());
+    const open = describePending(GATED, writtenSnapshot(run, new Date()), undefined);
     expect([open.expiry_due, open.owed]).toEqual([undefined, []]);
     // An agent step ready, and an auto step owed beside it.
     const both: WorkflowDefinition = {
@@ -254,7 +255,7 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
       workflowVersion: 1,
       params: {},
     });
-    const p = describePending(both, fresh, undefined, new Date());
+    const p = describePending(both, writtenSnapshot(fresh, new Date()), undefined);
     // (a) red when the agent step or the owed auto step is not named; (b) prints them.
     expect([
       p.agent_steps,
@@ -541,7 +542,11 @@ describe('#872 (a) — core-library.md: describePending names the handler or ada
       workflowVersion: 1,
       params: {},
     });
-    const byRegistry = describePending(d, run, new ExtensionRegistry(), new Date());
+    const byRegistry = describePending(
+      d,
+      writtenSnapshot(run, new Date()),
+      new ExtensionRegistry(),
+    );
     const marked = {
       ...run,
       capability_blocks: {
@@ -552,7 +557,7 @@ describe('#872 (a) — core-library.md: describePending names the handler or ada
         },
       },
     };
-    const byMarker = describePending(d, marked, undefined, new Date());
+    const byMarker = describePending(d, writtenSnapshot(marked, new Date()), undefined);
     // (a) red when the field is missing (on `engine_runnable` or `cannot_run`), or is not the
     //     marker's on a marker-judged refusal; (b) prints the entries' basis and requirement.
     expect([

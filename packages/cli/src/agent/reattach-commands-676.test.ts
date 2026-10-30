@@ -121,13 +121,13 @@ describe('the dev-run detach map prints the model flags to fill in (issue #676)'
       // #729 PR-0: the map composes the run's ways from the whole definition.
       workflow: { id: 'wf', name: 'wf', version: 1, steps: {} } as unknown as WorkflowDefinition,
     };
-    const line = renderDetachMap(record, 'summarise', agentReady)
+    const line = renderDetachMap(record, new Date(), 'summarise', agentReady)
       .split('\n')
       .find((l) => l.startsWith('  Drive it:'));
     expect(line).toBe(`  Drive it:  realm agent --run-id run_abc ${PLACEHOLDER}`);
     // The flags the dev run was given that `realm agent` takes too ride on the same line.
     // (a) red when `driveFlags` is not appended; (b) prints the line.
-    const withFlags = renderDetachMap(record, 'summarise', agentReady, {
+    const withFlags = renderDetachMap(record, new Date(), 'summarise', agentReady, {
       driveFlags: buildReattachFlags({ extensionsModule: './ext.mjs', mintWriterNonce: true }),
     })
       .split('\n')

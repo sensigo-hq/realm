@@ -44,7 +44,10 @@ import {
  * declared with what showed the question, the program that recorded it, whether the door asked the
  * user's app to ask the person, and the transport's principal, each read back exactly, typed
  * absences included) and `EVIDENCE_WRITE_ORDER` (#872 (b1) — a run's evidence reads back in the
- * order it was written: `get_run_state` pages a run's steps in that order, by a step's place in it).
+ * order it was written: `get_run_state` pages a run's steps in that order, by a step's place in it)
+ * and `DRIVE_FAILURE_KEEPS_ITS_FENCE` (#715 (b), 02 §D.2 — a failed drive's entry reads back with the
+ * evidence count and the open question's id it was appended at, and one written without them reads
+ * back without them: the `drive_failing` finding tells a legacy entry by their absence).
  */
 export const RUN_STORE_FIDELITY_LAWS = [
   'FIDELITY_HONESTY',
@@ -57,6 +60,7 @@ export const RUN_STORE_FIDELITY_LAWS = [
   'SUPPLIER_ROUND_TRIPS',
   'EVIDENCE_KEEPS_ANSWER_FACTS',
   'EVIDENCE_WRITE_ORDER',
+  'DRIVE_FAILURE_KEEPS_ITS_FENCE',
 ] as const;
 
 export type RunStoreFidelityLaw = (typeof RUN_STORE_FIDELITY_LAWS)[number];
@@ -763,6 +767,55 @@ export function runStoreFidelityContract(
             );
           }
         }
+      }
+    },
+  });
+
+  // #715 (b) (02 §D.2) — DRIVE_FAILURE_KEEPS_ITS_FENCE. Always active: every store round-trips
+  // drive failures.
+  cases.push({
+    law: 'DRIVE_FAILURE_KEEPS_ITS_FENCE',
+    name: "a failed drive's entry reads back with the evidence count and question id it was appended at; one written without them reads back without them",
+    run: async () => {
+      const { record: run } = await adapter.store.create({
+        workflowId: `tck-fence-${Math.random().toString(36).slice(2)}`,
+        workflowVersion: 1,
+        params: {},
+      });
+      const base = {
+        at: '2026-01-01T00:00:02.000Z',
+        step: adapter.stepName,
+        provider: 'tck-provider',
+        error_class: 'other' as const,
+        message: 'tck',
+        elapsed_ms: 1,
+      };
+      await adapter.store.update({
+        ...run,
+        drive_failures: {
+          first_failed_at: base.at,
+          total: 2,
+          entries: [base, { ...base, evidence_count: 3, gate_id: 'tck-fence-gate' }],
+        },
+      });
+      const { record: reread } = await adapter.store.get(run.id);
+      const [legacy, fenced] = reread.drive_failures?.entries ?? [];
+      const got = {
+        legacy: [
+          legacy !== undefined && 'evidence_count' in legacy,
+          legacy !== undefined && 'gate_id' in legacy,
+        ],
+        fenced: [fenced?.evidence_count, fenced?.gate_id],
+      };
+      if (
+        got.legacy[0] !== false ||
+        got.legacy[1] !== false ||
+        got.fenced[0] !== 3 ||
+        got.fenced[1] !== 'tck-fence-gate'
+      ) {
+        throw new Error(
+          `a store must round-trip a failed drive's fence (#715 (b)): read back ${JSON.stringify(got)} — want the legacy entry without evidence_count and gate_id, the other with 3 and 'tck-fence-gate'`,
+        );
       }
     },
   });

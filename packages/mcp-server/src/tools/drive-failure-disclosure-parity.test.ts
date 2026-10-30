@@ -37,6 +37,9 @@ const ENTRY: DriveFailureRecord = {
   derived_ceiling_ms: 1860000,
   last_observed_status: 429,
   retry_after_observed_ms: 30000,
+  // #715 (b) (02 §D.2): the finding's fence, passed verbatim like every other field.
+  evidence_count: 2,
+  gate_id: 'gate-parity',
   usage: USAGE,
 };
 
@@ -68,6 +71,8 @@ const DRIVE_FAILURE_DISCLOSURE = {
   // `DriveFailureRecord.usage` says so), so `usage` needs no new plumbing here — only the row
   // that proves it, same as every field above.
   usage: { surface: 'rendered', probe: (e) => expect(e.usage).toEqual(USAGE) },
+  evidence_count: { surface: 'rendered', probe: (e) => expect(e.evidence_count).toBe(2) },
+  gate_id: { surface: 'rendered', probe: (e) => expect(e.gate_id).toBe('gate-parity') },
 } satisfies Record<keyof DriveFailureRecord, DisclosureRoute>;
 
 function makeStore(run: RunRecord): RunStore {
@@ -127,7 +132,8 @@ describe('#401 — every DriveFailureRecord field reaches a get_run_state consum
   });
 
   it('the registry covers every field, and v1 waives none', () => {
-    expect(Object.keys(DRIVE_FAILURE_DISCLOSURE)).toHaveLength(12);
+    // #715 (b) (02 §D.2): + evidence_count and gate_id, passed verbatim like the rest.
+    expect(Object.keys(DRIVE_FAILURE_DISCLOSURE)).toHaveLength(14);
     expect(
       Object.values(DRIVE_FAILURE_DISCLOSURE as Record<string, DisclosureRoute>).filter(
         (r) => r.surface === 'waived',

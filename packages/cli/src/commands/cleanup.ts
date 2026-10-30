@@ -1,9 +1,10 @@
 // cleanup command — marks idle non-terminal runs as abandoned.
 import { Command } from 'commander';
 import type { RunStore, RunRecord, UnreadableRunFileEntry } from '@sensigo/realm';
-import { WAITING_PHASES, deriveRunPhase, readInstant } from '@sensigo/realm';
+import { isIdleForCleanup } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
 import { listRunsDiagnosed, unreadableRunLines } from './list.js';
+import { openRunStore } from '../lib/run-store.js';
 
 /**
  * List all non-terminal runs idle for longer than `olderThan` and mark them abandoned.
@@ -27,30 +28,11 @@ export async function cleanupRuns(
   if (unreadable.length > 0) options.onUnreadable?.(unreadable);
 
   const affected: RunRecord[] = [];
-  for (const { record: run, at } of all) {
-    if (run.terminal_state) {
-      continue;
-    }
-    // issue #367: DERIVE the phase, and check the gate directly. Keying the waiting-skip on the
-    // PERSISTED `run_phase` is the disposal-rule violation #282 exists to close — and it is not
-    // theoretical here: a record whose persisted phase is stale while a human is genuinely waiting
-    // on a live gate was being sealed `cleanup_sweep` with `pending_gate` still on the record, i.e.
-    // this command was freshly minting the very zombie shape #282 closed, and killing a run
-    // somebody was answering. The stale-phase population is exactly what `gc --heal` exists for,
-    // so cleanup-before-heal is an ordinary ordering. `abandonRun` already checks the gate; this
-    // brings its sweeping sibling in line.
-    if (run.pending_gate !== undefined || WAITING_PHASES.has(deriveRunPhase(run))) {
-      continue;
-    }
-    // #715 (b) (D-25, D6-29(k)): the idle age through the one stamp reader, at the snapshot's own
-    // reading — an unparseable stamp has no age (as its NaN never reached the threshold before), and a
-    // record stamped ahead of the reading is not idle until the clock passes its stamp.
-    const stamp = readInstant(run.updated_at, 'past_event', at);
-    if ('absent' in stamp) continue;
-    const idleMs = at.getTime() - stamp.ms;
-    if (idleMs >= threshold) {
-      affected.push(run);
-    }
+  for (const snapshot of all) {
+    // #715 (b) (02 §B.3, D6-9, Amendment 11): selected by core's one cleanup judge, at this row's own
+    // reading — not ended, no question open (issue #367: a gate is never swept, whatever the persisted
+    // phase says), idle for the threshold, and no step held by a live claim.
+    if (isIdleForCleanup(snapshot, threshold)) affected.push(snapshot.record);
   }
 
   if (!(options.dryRun ?? false)) {
@@ -84,8 +66,8 @@ export const cleanupCommand = new Command('cleanup')
   )
   .option('--dry-run', 'Preview which runs would be abandoned without modifying them')
   .action(async (opts: { olderThan: string; dryRun?: boolean }) => {
-    const { ABANDON_KILL_ADVISORY, JsonFileStore } = await import('@sensigo/realm');
-    const runStore = new JsonFileStore();
+    const { ABANDON_KILL_ADVISORY } = await import('@sensigo/realm');
+    const runStore = openRunStore();
     try {
       const { affected } = await cleanupRuns(
         {

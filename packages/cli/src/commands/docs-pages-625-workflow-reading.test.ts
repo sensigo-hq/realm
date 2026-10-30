@@ -978,7 +978,7 @@ describe(
         },
         workflow: { id: 'wf', name: 'wf', version: 1, steps: {} } as unknown as WorkflowDefinition,
       });
-      const stalled = renderDetachMap(record, 'x', view(['x']), {
+      const stalled = renderDetachMap(record, new Date(), 'x', view(['x']), {
         headline: 'Workflow stalled',
       }).split('\n');
       const gate = renderDetachMap(
@@ -986,6 +986,7 @@ describe(
           ...(record as object),
           pending_gate: { gate_id: 'g', step_name: 'x', choices: ['a', 'b'] },
         } as never,
+        new Date(),
         'x',
         view([]),
       );
@@ -996,6 +997,7 @@ describe(
           sealed_by: { arm: 'complete' },
           run_phase: 'completed',
         } as never,
+        new Date(),
         'x',
         view([]),
       );

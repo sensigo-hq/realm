@@ -1096,6 +1096,15 @@ export interface DriveFailureRecord {
     | 'other';
   /** Sanitized (secrets redacted) and capped at 500 characters. */
   message: string;
+  /**
+   * #715 (b) (02 §D.2, D6-15, D6-47): the run's evidence count when this entry was appended — read in
+   * the write that appends it. `drive_failing` fires while it still equals the run's count (nothing
+   * was recorded since), never by comparing stamps. Absent on an entry written before #715 (b): that
+   * entry is judged by the stamp order, its basis `legacy_stamp_order`.
+   */
+  evidence_count?: number;
+  /** #715 (b) (02 §D.2): the open question's `gate_id` when this entry was appended (absent: none). */
+  gate_id?: string;
   /** Populated when the throwing error carries a driveCall payload. */
   attempts_sdk?: number;
   /**

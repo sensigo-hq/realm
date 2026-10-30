@@ -1,7 +1,8 @@
 // expiry-receipt-729.test.ts — issue #729 PR-0 (D4 T-2; DESIGN-PLAN A.3 #5, do-not-regress): every
 // engine entry that can carry out an expired question's declared `on_expiry` names itself and the lag
-// on the reply's `expiry` receipt. The [F1] NOOP — a call whose own expiry write finds the question
-// already settled says `by_this_call: false` — is `late-lag-625.test.ts`'s race cell.
+// on the reply's `expiry` receipt. #715 (b) (Amendment 3): no `by_this_call` — the receipt is always
+// the returning call's own; an answer that finds the expiry already carried out carries none
+// (`late-lag-625.test.ts`).
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: the
 // entry's word, the receipt's fields — gate ids and instants are the fixture's own.
@@ -88,7 +89,6 @@ const receipt = (reply: EngineReply) =>
         on_expiry: reply.expiry.on_expiry,
         choice: reply.expiry.choice,
         enacted_via: reply.expiry.enacted_via,
-        by_this_call: reply.expiry.by_this_call,
         overdue: reply.expiry.overdue,
       };
 
@@ -96,7 +96,6 @@ const CARRIED = (via: string) => ({
   on_expiry: 'settle_default',
   choice: 'approve',
   enacted_via: via,
-  by_this_call: true,
   overdue: { ms: LAG_MS },
 });
 

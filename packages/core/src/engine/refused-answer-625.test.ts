@@ -49,6 +49,7 @@ function refusalOf(reply: EngineReply, openGateId?: string) {
 import { JsonFileStore } from '../store/json-file-store.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import { writeTestClockFile } from '../store/test-clock-file.js';
+import { writtenSnapshot } from './snapshot.js';
 
 /** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
  *  runs folder sits beside the location's clock file (first set to the host's reading), which
@@ -159,9 +160,10 @@ describe('#625 PR-2a, C117/C118/C122/C124/C125 — the clock required, the refus
         refusal: { code: 'gate_not_open', open_gate: [true, 'q'], remedy: ['advance'] },
         remedy: ['advance'],
       });
-      expect(describePending(d, (await store.get(runId)).record, undefined, past).owed.length).toBe(
-        1,
-      );
+      expect(
+        describePending(d, writtenSnapshot((await store.get(runId)).record, past), undefined).owed
+          .length,
+      ).toBe(1);
       // (a) red when the refusal carried the expiry out itself; (b) prints the gate.
       expect((await store.get(runId)).record.pending_gate?.gate_id).toBe(gateId);
     }
@@ -341,19 +343,8 @@ describe('#625 PR-2a, C117/C118/C122/C124/C125 — the clock required, the refus
         `gate 'g1' on 's' had expired 15s before this call — this ${call} call first carried out its declared abort: the run ended (enacted_via: ${via}).`,
       );
     }
-    // (a) red when the race form claims the call or names a via; (b) prints it.
-    expect(
-      expiryCarriedOutLine(
-        'g1',
-        's',
-        { on_expiry: 'settle_default', choice: 'c' },
-        'submitHumanResponse',
-        { ms: 15_000 },
-        false,
-      ),
-    ).toBe(
-      "gate 'g1' on 's' had expired 15s before this call — another call had already carried out its declared settle_default: the default choice 'c' was recorded.",
-    );
+    // #715 (b) (Amendment 3): the race form ("another call had already carried out …") is deleted
+    // with `byThisCall` — no call reports another call's expiry any more.
   });
 
   it("C125: the record keeps the question's text where the answer's words point; the answer outside the opening reply is presented alone (the MCP words: render-reply.test.ts)", async () => {

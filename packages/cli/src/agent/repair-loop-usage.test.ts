@@ -212,14 +212,15 @@ describe('issue #600 — a repaired step records every call it paid for', () => 
 
   it('cell 5 — exit 4 before anything was saved: the last-resort entry carries both calls', async () => {
     quiet();
-    // Throws once, from the SECOND `get` whose immediate caller is the public `executeChain`
-    // wrapper — the first such call belongs to the rejected attempt. That wrapper re-throws any
-    // read failure other than STATE_RUN_NOT_FOUND, so `executeChain` throws before claiming.
+    // Throws once, from the SECOND `get` whose immediate caller is `executeChain`'s own body — the
+    // first such call belongs to the rejected attempt. It re-throws any read failure other than
+    // STATE_RUN_NOT_FOUND, so `executeChain` throws before claiming. #715 (b) (Amendment 4): the
+    // body is `executeChainBody`, behind the public wrapper that attaches the judged snapshot.
     class FaultStore extends InMemoryStore {
       private wrapperReads = 0;
       override async get(runId: string): Promise<Snapshot> {
         const caller = (new Error().stack ?? '').split('\n')[2] ?? '';
-        if (/\bat executeChain \(/.test(caller)) {
+        if (/\bat executeChainBody \(/.test(caller)) {
           this.wrapperReads += 1;
           if (this.wrapperReads === 2) throw new Error('read failed');
         }

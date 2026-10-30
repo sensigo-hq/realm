@@ -8,7 +8,10 @@ import {
   advanceRun,
   propagateSkips,
   describePending,
+  writtenSnapshot,
+  judgedSnapshotOf,
   withFullStop,
+  type EngineReply,
   type WorkflowDefinition,
   type ExtensionManifest,
   type StepHandler,
@@ -208,7 +211,7 @@ async function runSingleFixture(
       fixture.agent_errors,
     );
 
-    const { record: run } = await store.create({
+    const { record: run, at: runAt } = await store.create({
       workflowId: definition.id,
       workflowVersion: definition.version,
       params: fixture.params,
@@ -224,8 +227,21 @@ async function runSingleFixture(
     const maxIterations = Object.keys(definition.steps).length * 2 + 10;
     let iterations = 0;
     let currentRun = run;
+    // #715 (b) (D6-17): the reading `currentRun` was read or written at — its view is judged there.
+    let currentAt = runAt;
     // Tracks how many times each step has been resumed after a mock error.
     const stepResumeCount: Record<string, number> = {};
+    // #715 (b) (D6-17, Amendment 4): after an engine call, the snapshot the engine judged its reply
+    // on becomes the held one — the run is never read again for it. A reply that carries none
+    // loaded no run (an error reply): the fixture fails with the engine's own words.
+    const holdJudged = (reply: EngineReply): string | undefined => {
+      const judged = judgedSnapshotOf(reply);
+      if (judged === undefined) {
+        return reply.errors[0] ?? reply.context_hint;
+      }
+      ({ record: currentRun, at: currentAt } = judged);
+      return undefined;
+    };
 
     while (!currentRun.terminal_state) {
       if (iterations++ >= maxIterations) {
@@ -260,7 +276,8 @@ async function runSingleFixture(
             error: gateResult.errors[0] ?? 'Unknown gate response error',
           };
         }
-        currentRun = (await store.get(runId)).record;
+        const gateHeld = holdJudged(gateResult);
+        if (gateHeld !== undefined) return { name: fixture.name, passed: false, error: gateHeld };
         continue;
       }
 
@@ -274,8 +291,12 @@ async function runSingleFixture(
       // does not stop the fixture here on its own: the engine's call below (`advanceRun`) attempts
       // it, and the fixture fails with the engine's own message, as a chained step that needs it does. Beside a step
       // refused before its claim, it is named here too, with the other steps that cannot run.
-      const viewAt = new Date();
-      const pending = describePending(definition, currentRun, fixtureRegistry, viewAt);
+      const viewAt = currentAt;
+      const pending = describePending(
+        definition,
+        writtenSnapshot(currentRun, viewAt),
+        fixtureRegistry,
+      );
       // #729 PR-0 (Part C, F10): the runner is a library door — it reads the run's ways, composed by
       // core, and words them with the library's words (`libraryCannotRunWords`).
       const ways = composeWaysAt(currentRun, viewAt, {
@@ -315,7 +336,10 @@ async function runSingleFixture(
             error: advanced.errors[0] ?? 'Unknown error from step execution',
           };
         }
-        currentRun = (await store.get(runId)).record;
+        const advanceHeld = holdJudged(advanced);
+        if (advanceHeld !== undefined) {
+          return { name: fixture.name, passed: false, error: advanceHeld };
+        }
         continue;
       }
 
@@ -366,13 +390,13 @@ async function runSingleFixture(
           // handling added here, since nothing in packages/testing reads that field. Flagged in
           // the implementation report as a discovered anchor discrepancy.
           const { skipped: newSkippedSteps } = propagateSkips(tempRun, definition);
-          await store.update({
+          // #715 (b): the held snapshot is the write's own — never a read after it.
+          ({ record: currentRun, at: currentAt } = await store.update({
             ...rest,
             failed_steps: newFailedSteps,
             skipped_steps: newSkippedSteps,
             terminal_state: false,
-          });
-          currentRun = (await store.get(runId)).record;
+          }));
           continue;
         }
         return {
@@ -382,7 +406,8 @@ async function runSingleFixture(
         };
       }
 
-      currentRun = (await store.get(runId)).record;
+      const chainHeld = holdJudged(envelope);
+      if (chainHeld !== undefined) return { name: fixture.name, passed: false, error: chainHeld };
     }
 
     // Assert final phase.

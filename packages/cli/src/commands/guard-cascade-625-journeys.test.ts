@@ -28,6 +28,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { resolveMcpServerEntry } from '../agent/test-support/mcp-server-entry.js';
 import { makeJourneyHome } from '../agent/test-support/composed-journey.js';
+import { writtenSnapshot } from '@sensigo/realm';
 
 /** The built CLI. THREE `..`: commands → src → cli. */
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
@@ -330,8 +331,7 @@ describe('issue #625 kill — no surviving record is "gate answered ∧ a guard 
             } else {
               unanswered += 1;
             }
-            const awaiting = classifyRunHealth(run, {
-              now: new Date(),
+            const awaiting = classifyRunHealth(writtenSnapshot(run, new Date()), {
               definition: def,
             }).some((f) => f.kind === 'guard_awaiting_settlement');
             if ((gateAnswered && !guardSettled(run)) || awaiting) {

@@ -6,6 +6,7 @@ import {
   JsonWorkflowStore,
   JsonFileStore,
   submitHumanResponse,
+  judgedSnapshotOf,
   endedRunWaysSentence,
   pendingCleanupSentence,
   pendingCleanupWay,
@@ -213,7 +214,9 @@ export async function handleSubmitHumanResponse(
   if (reply.run_phase === undefined || !TERMINAL_PHASES.has(reply.run_phase)) {
     return mcpReplyOf(renderReply(reply, host));
   }
-  const endedSnap = await runStore.get(args.run_id).catch(() => undefined);
+  // #715 (b) (D6-17, Amendment 4): the snapshot the engine judged its reply on — never a second load;
+  // a reply that carries none gets no sentence about the ended run.
+  const endedSnap = judgedSnapshotOf(reply);
   if (endedSnap === undefined) return mcpReplyOf(renderReply(reply, host));
   const ended = endedSnap.record;
   // #729 PR-0: the ended run's ways back in follow the door's own sentence of what comes next, as

@@ -22,6 +22,7 @@ import {
 } from '@sensigo/realm';
 import { listRunsDiagnosed, unreadableRunLines } from './list.js';
 import { RUN_PHASE_WORDS, escapePassCut, writerCtx } from '../output/writer.js';
+import { openRunStore } from '../lib/run-store.js';
 
 /** One record's disposition. Every reachable state has exactly one home here. */
 export interface MigrateBuckets {
@@ -409,8 +410,7 @@ export const runMigrateCommand = new Command('migrate')
       'pipeline never inherits a chronic alarm from records that can never be classified.',
   )
   .action(async (opts: { force?: boolean; detailedExitcode?: boolean }) => {
-    const { JsonFileStore } = await import('@sensigo/realm');
-    const runStore = new JsonFileStore();
+    const runStore = openRunStore();
     try {
       const buckets = await migrateStampSeals(runStore, {
         force: opts.force ?? false,

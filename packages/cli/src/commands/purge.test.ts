@@ -24,6 +24,7 @@ import {
 import type { RunRecord, RunStore, PerRunArtifactStore } from '@sensigo/realm';
 import { JsonTraceBufferStore } from '@sensigo/realm-mcp';
 import { snap } from '../test-support/snapshot-double.js';
+import { writtenSnapshot } from '@sensigo/realm';
 
 /** Recompute the pointer-file path the store uses (sha256 of workflowId\0key) — test-side only,
  *  mirroring json-file-store.test.ts's own helper; NOT a production code path. */
@@ -109,7 +110,7 @@ describe('isPurgeEligible (the purge selection predicate — mode-aware, issue #
     'rejects a non-terminal (running) run regardless of explicit mode (explicit=%s)',
     (explicit) => {
       const run = makeRun({ run_phase: 'running', terminal_state: false });
-      const v = isPurgeEligible(run, { explicit });
+      const v = isPurgeEligible(writtenSnapshot(run, new Date()), { explicit });
       expect(v.eligible).toBe(false);
       if (!v.eligible) expect(v.reason).toMatch(/not terminal/);
     },
@@ -119,7 +120,7 @@ describe('isPurgeEligible (the purge selection predicate — mode-aware, issue #
     'rejects a gate_waiting run regardless of explicit mode (explicit=%s)',
     (explicit) => {
       const run = makeRun({ run_phase: 'gate_waiting', terminal_state: false });
-      const v = isPurgeEligible(run, { explicit });
+      const v = isPurgeEligible(writtenSnapshot(run, new Date()), { explicit });
       expect(v.eligible).toBe(false);
       if (!v.eligible) expect(v.reason).toMatch(/not terminal/);
     },
@@ -129,8 +130,12 @@ describe('isPurgeEligible (the purge selection predicate — mode-aware, issue #
     'accepts a plain terminal run (phase: %s) with no in-progress claims, in BOTH modes',
     (phase) => {
       const run = makeRun({ run_phase: phase, terminal_state: true });
-      expect(isPurgeEligible(run, { explicit: true })).toEqual({ eligible: true });
-      expect(isPurgeEligible(run, { explicit: false })).toEqual({ eligible: true });
+      expect(isPurgeEligible(writtenSnapshot(run, new Date()), { explicit: true })).toEqual({
+        eligible: true,
+      });
+      expect(isPurgeEligible(writtenSnapshot(run, new Date()), { explicit: false })).toEqual({
+        eligible: true,
+      });
     },
   );
 
@@ -151,7 +156,7 @@ describe('isPurgeEligible (the purge selection predicate — mode-aware, issue #
     it.each([true, false])(
       'refuses when explicit=%s — a runner died mid-claim, and there is no override for a provably-live claim',
       (explicit) => {
-        const v = isPurgeEligible(run, { explicit });
+        const v = isPurgeEligible(writtenSnapshot(run, new Date()), { explicit });
         expect(v.eligible).toBe(false);
         if (!v.eligible) {
           expect(v.reason).toMatch(/future-deadline/);
@@ -172,7 +177,7 @@ describe('isPurgeEligible (the purge selection predicate — mode-aware, issue #
     });
 
     it('refuses in BATCH mode (explicit: false) — with an actionable reason: names the step, states the indeterminacy, and points at the override verbatim', () => {
-      const v = isPurgeEligible(run, { explicit: false });
+      const v = isPurgeEligible(writtenSnapshot(run, new Date()), { explicit: false });
       expect(v.eligible).toBe(false);
       if (!v.eligible) {
         expect(v.reason).toMatch(/indeterminate-age claim/);
@@ -184,7 +189,7 @@ describe('isPurgeEligible (the purge selection predicate — mode-aware, issue #
     });
 
     it('is ELIGIBLE in single-id mode (explicit: true) — the explicit override — and reports which step was overridden', () => {
-      const v = isPurgeEligible(run, { explicit: true });
+      const v = isPurgeEligible(writtenSnapshot(run, new Date()), { explicit: true });
       expect(v).toEqual({ eligible: true, overriddenClaimStep: 'charge' });
     });
   });
@@ -199,7 +204,9 @@ describe('isPurgeEligible (the purge selection predicate — mode-aware, issue #
         in_progress_steps: ['charge'],
         claims: { charge: { deadline: PAST } },
       });
-      expect(isPurgeEligible(run, { explicit })).toEqual({ eligible: true });
+      expect(isPurgeEligible(writtenSnapshot(run, new Date()), { explicit })).toEqual({
+        eligible: true,
+      });
     },
   );
 });
@@ -1383,11 +1390,11 @@ describe('purge — disposal coherence (issue #558 PR-C)', () => {
     // decision at `isPurgeEligible` already derived; only the rendered reason did not.
     const run = makeRun({ id: 'r-divergent', run_phase: 'completed', terminal_state: false });
 
-    expect(isPurgeEligible(run, { explicit: true })).toEqual({
+    expect(isPurgeEligible(writtenSnapshot(run, new Date()), { explicit: true })).toEqual({
       eligible: false,
       reason: "not terminal (phase: 'running')",
     });
-    expect(isPurgeEligible(run, { explicit: false })).toEqual({
+    expect(isPurgeEligible(writtenSnapshot(run, new Date()), { explicit: false })).toEqual({
       eligible: false,
       reason: "not terminal (phase: 'running')",
     });

@@ -22,6 +22,8 @@ import {
   deriveRunPhase,
   describePending,
   composeWaysAt,
+  writtenSnapshot,
+  judgedSnapshotOf,
   deriveRunPhase as derivePhase,
   sentenceEnd,
   pendingCleanupLine,
@@ -45,6 +47,7 @@ import {
   type ProjectLoad,
 } from './run-advance.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
+import { openRunStore } from '../lib/run-store.js';
 
 /**
  * issue #625: the last line for an answer the gate's expiry beat — never `Responded:`. The choice
@@ -66,11 +69,12 @@ function nextLines(
   runId: string,
   workflow: WorkflowDefinition,
   run: RunRecord,
+  // #715 (b) (D6-17): the reading `run` was read at — every line judges it there.
+  now: Date,
   registry: ExtensionRegistry,
   hasCode: boolean,
 ): string[] {
-  const now = new Date();
-  const pending = describePending(workflow, run, registry, now);
+  const pending = describePending(workflow, writtenSnapshot(run, now), registry);
   // #729 PR-0 (A-10): the run's ways, composed by core and rendered by the CLI's one renderer.
   const ways = composeWaysAt(run, now, { definition: workflow, registry });
   // decisions C62, C64: when the answer leaves nothing that can run from here, each engine step
@@ -118,8 +122,7 @@ function nextLines(
  * cleanup steps the ending left pending — once: after a guard's ending the composer's lines carry
  * it already (after each cleanup step's outcome); an answer that ended the run otherwise gets it here.
  */
-function withCleanupLine(lines: string[], run: RunRecord): string[] {
-  const now = new Date();
+function withCleanupLine(lines: string[], run: RunRecord, now: Date): string[] {
   const cleanup = pendingCleanupLine(run, now);
   // F11: said once — a line that already names the command that runs them (the refusal of a late
   // answer whose run completed with a cleanup step pending says it) gets no second line.
@@ -287,8 +290,11 @@ export async function respondToGate(
     // and an answer naming a gate that is not the open one its way on (#729 PR-0 correction, C5).
     const refusal = result.errors[0] ?? 'Gate response failed';
     let lines = [refusal, ...gateMismatchLines(result), ...describeEndedBy(result)];
-    if (result.answer_recorded === false) {
-      const { record: lateRun } = await runStore.get(runId);
+    // #715 (b) (D6-17, Amendment 4): the lines about the record after the answer are judged on the
+    // snapshot the engine judged its reply on — never a second load; a reply with none gets none.
+    const judged = judgedSnapshotOf(result);
+    if (result.answer_recorded === false && judged !== undefined) {
+      const { record: lateRun, at: lateAt } = judged;
       const late = lateAnswerOutcome(result, lateRun);
       // decision C146: the composer starts with which call carried out the question's expiry
       // (this one, or another), then the refusal and what the expiry's guards did.
@@ -300,15 +306,16 @@ export async function respondToGate(
             workflow,
             // F9: the record this command read before its answer.
             before: run,
-            now: new Date(),
+            now: lateAt,
           }),
           lateRun,
+          lateAt,
         ),
         ...(late !== undefined
           ? [
               notRecordedLine(runId, late),
               // decision C135: after `Not recorded:`, what the run owes — the on-time answer's lines.
-              ...nextLines(runId, workflow, lateRun, effectiveRegistry, hasCode),
+              ...nextLines(runId, workflow, lateRun, lateAt, effectiveRegistry, hasCode),
             ]
           : []),
       ];
@@ -321,7 +328,20 @@ export async function respondToGate(
     });
   }
 
-  const { record: updatedRun } = await runStore.get(runId);
+  // #715 (b) (D6-17, Amendment 4): judged on the snapshot the engine judged its reply on — never a
+  // second load. An `ok` reply always carries one (it loaded the run); were it ever absent, nothing
+  // is said about the record after the answer: the `Responded:` line without its record clauses.
+  const judged = judgedSnapshotOf(result);
+  if (judged === undefined) {
+    return {
+      choice: options.choice,
+      newState: result.run_phase ?? '',
+      recorded: result.answer_recorded !== false,
+      lines: [],
+      lastLine: `Responded: ${runId} | choice '${options.choice}'`,
+    };
+  }
+  const { record: updatedRun, at: updatedAt } = judged;
   const lines = withCleanupLine(
     describeAnswerEnding(result, updatedRun, {
       gateId: options.gate,
@@ -329,9 +349,10 @@ export async function respondToGate(
       workflow,
       // F9: the record this command read before its answer.
       before: run,
-      now: new Date(),
+      now: updatedAt,
     }),
     updatedRun,
+    updatedAt,
   );
   // issue #625: an `ok` reply is not always a recorded answer — when the gate's expiry had
   // already settled it with the same choice, the call succeeds and the answer was NOT recorded.
@@ -347,7 +368,7 @@ export async function respondToGate(
       // decision C135: after `Not recorded:`, what the run owes — the on-time answer's lines.
       lastLine: [
         notRecordedLine(runId, late),
-        ...nextLines(runId, workflow, updatedRun, effectiveRegistry, hasCode),
+        ...nextLines(runId, workflow, updatedRun, updatedAt, effectiveRegistry, hasCode),
       ].join('\n'),
     };
   }
@@ -369,7 +390,7 @@ export async function respondToGate(
     lines,
     lastLine: [
       `Responded: ${runId} | choice '${options.choice}'${answeredBy} | new state '${writerCtx().word(phase, RUN_PHASE_WORDS)}'`,
-      ...nextLines(runId, workflow, updatedRun, effectiveRegistry, hasCode),
+      ...nextLines(runId, workflow, updatedRun, updatedAt, effectiveRegistry, hasCode),
     ].join('\n'),
   };
 }
@@ -421,8 +442,8 @@ export const respondCommand = new Command('respond')
         'respond',
         "it is written as the program's name on any cleanup steps the answer lets run, and respond checks it before reading the run, so nothing was recorded",
       );
-      const { JsonFileStore, JsonWorkflowStore } = await import('@sensigo/realm');
-      const runStore = new JsonFileStore();
+      const { JsonWorkflowStore } = await import('@sensigo/realm');
+      const runStore = openRunStore();
       const workflowStore = new JsonWorkflowStore();
       try {
         // issue #466 — the run/workflow fetches stay OUTSIDE the sentence-try: a bad run-id is

@@ -17,7 +17,8 @@ import { respondWayOfGate } from './ways.js';
 import { admitEntry } from '../admission.js';
 import { captureEvidence } from '../evidence/snapshot.js';
 import { classifyClaim, omitClaim, type ClaimState } from './claim-liveness.js';
-import { parseStamp } from './instants.js';
+import { isPastDeadline } from './instants.js';
+import { writtenSnapshot, type Snapshot } from './snapshot.js';
 
 export type ReclaimOutcome =
   /** The claim was moved out of `in_progress_steps` this call → the step is eligible again. */
@@ -67,13 +68,16 @@ export interface ReclaimResult {
  * or no gate at all, produces no advisory). Pure, read-only; never used to decide reclaim's OWN
  * outcome — purely informational.
  */
-function buildGateExpiryAdvisory(record: RunRecord, now: Date): string | undefined {
+function buildGateExpiryAdvisory(snapshot: Snapshot): string | undefined {
+  // #715 (b) (D6-17, D-25): judged at the snapshot's `at`, through the one due test — an unparseable
+  // deadline is never past (Q10), so it draws no advisory (its NaN compare used to draw one).
+  const { record, at } = snapshot;
   const gate = record.pending_gate;
   if (
     gate === undefined ||
     gate.expires_at === undefined ||
     gate.on_expiry === undefined ||
-    now.getTime() < (parseStamp(gate.expires_at) ?? NaN)
+    !isPastDeadline(gate.expires_at, at)
   ) {
     return undefined;
   }
@@ -432,7 +436,7 @@ export async function reclaimStep(
   // Guard — membership: not in_progress → discriminate settled vs no-active-claim (issue #221, B2).
   if (!run.in_progress_steps.includes(stepName)) {
     const { outcome, detail } = classifyNoActiveClaim(run, stepName);
-    const gateAdvisory = buildGateExpiryAdvisory(run, now);
+    const gateAdvisory = buildGateExpiryAdvisory(writtenSnapshot(run, now));
     return {
       run,
       step: stepName,
@@ -476,7 +480,7 @@ export async function reclaimStep(
     if (!fenced) {
       await clearStaleWal(traceBufferStore, runId, stepName);
     }
-    const gateAdvisory = buildGateExpiryAdvisory(updated, updatedAt);
+    const gateAdvisory = buildGateExpiryAdvisory(writtenSnapshot(updated, updatedAt));
     return {
       run: updated,
       step: stepName,
@@ -501,7 +505,7 @@ export async function reclaimStep(
       // NOW, after the concurrent write that caused this CAS mismatch, not at the stale decision
       // read).
       const { outcome, detail } = classifyNoActiveClaim(reloaded, stepName);
-      const gateAdvisory = buildGateExpiryAdvisory(reloaded, reloadedAt);
+      const gateAdvisory = buildGateExpiryAdvisory(writtenSnapshot(reloaded, reloadedAt));
       return {
         run: reloaded,
         step: stepName,
@@ -514,7 +518,7 @@ export async function reclaimStep(
     }
     if (classifyClaim(reloaded.claims?.[stepName], reloadedAt) === 'healthy') {
       // Re-claimed FRESH (a future deadline) → a live driver took over. Never stomp live work.
-      const gateAdvisory = buildGateExpiryAdvisory(reloaded, reloadedAt);
+      const gateAdvisory = buildGateExpiryAdvisory(writtenSnapshot(reloaded, reloadedAt));
       return {
         run: reloaded,
         step: stepName,
@@ -552,7 +556,7 @@ export async function reclaimStep(
     if (!fenced) {
       await clearStaleWal(traceBufferStore, runId, stepName);
     }
-    const gateAdvisory = buildGateExpiryAdvisory(updated, updatedAt);
+    const gateAdvisory = buildGateExpiryAdvisory(writtenSnapshot(updated, updatedAt));
     return {
       run: updated,
       step: stepName,

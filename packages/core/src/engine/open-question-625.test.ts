@@ -184,17 +184,20 @@ describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named ever
     const { record: run } = await store.get(runId);
     const question = { step: 'q', gate_id: gateId, choices: ['approve', 'reject'] };
     // (a) red when the view does not name the open question; (b) prints the view.
-    expect(describePending(d, run, undefined, new Date()).open_question).toEqual(question);
+    expect(describePending(d, writtenSnapshot(run, new Date()), undefined).open_question).toEqual(
+      question,
+    );
     // (a) red when a due question loses the field (it is still the open question); (b) prints it.
     const past = new Date(new Date(run.pending_gate!.expires_at!).getTime() + 5_000);
-    expect(describePending(d, run, undefined, past).open_question).toEqual(question);
+    expect(describePending(d, writtenSnapshot(run, past), undefined).open_question).toEqual(
+      question,
+    );
     // (a) red when a run with no question gets one; (b) prints it.
     expect(
       describePending(
         d,
-        { ...run, pending_gate: undefined } as unknown as RunRecord,
+        writtenSnapshot({ ...run, pending_gate: undefined } as unknown as RunRecord, new Date()),
         undefined,
-        new Date(),
       ).open_question,
     ).toBe(undefined);
     expect(openQuestionOf({ ...run, terminal_state: true } as RunRecord)).toBe(undefined);

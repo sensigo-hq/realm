@@ -8,7 +8,6 @@ import chalk from 'chalk';
 import { Command } from 'commander';
 import { isAbsolute, join } from 'node:path';
 import {
-  parseStamp,
   describePending,
   lastExecutionIdentity,
   pendingCleanupLine,
@@ -19,6 +18,7 @@ import {
   resumeWay,
   dueExpiry,
   composeWaysAt,
+  writtenSnapshot,
   narrowForDoor,
   DOOR_SERVES,
   CACHE_BASES,
@@ -29,6 +29,8 @@ import {
   deriveDefaultedSteps,
   deriveRunPhase,
   computeGateDueState,
+  reminderScheduleOf,
+  reminderScheduleWords,
   getWorkflowForRun,
   composeStepViews,
   composeDriveFailureCosts,
@@ -118,6 +120,7 @@ import {
   writerTally,
 } from '../output/writer.js';
 import { readRunManifest, type RunManifest } from '../lib/read-run-manifest.js';
+import { openRunStore } from '../lib/run-store.js';
 
 /**
  * Renders one skipped step's reason inline (issue #111) — kind plus the salient detail.
@@ -136,6 +139,8 @@ function openQuestionLine(
   run: RunRecord,
   gate: NonNullable<RunRecord['pending_gate']>,
   definition: WorkflowDefinition | undefined,
+  // #715 (b) (02 §D.4): the reading this read is judged at — the fallback's prompt renders there.
+  at: Date,
 ): string {
   // #729 PR-3 correction 2 (C2): a question is shown at the declared tier, as every surface shows it
   // (P-9), and the receipt line says so.
@@ -160,7 +165,10 @@ function openQuestionLine(
   if (step.prompt !== undefined) {
     let question: string | undefined;
     try {
-      question = pendingGateQuestion(definition, { ...run, pending_gate: gate });
+      question = pendingGateQuestion(
+        definition,
+        writtenSnapshot({ ...run, pending_gate: gate }, at),
+      );
     } catch {
       return "  Question: not shown — the step's prompt could not be rendered";
     }
@@ -177,10 +185,12 @@ function openQuestionLine(
  */
 function cliRespondWay(
   run: RunRecord,
+  // #715 (b) (D6-17): the reading `run` was read at — the ways are judged at it.
+  at: Date,
   definition: WorkflowDefinition | undefined,
 ): Extract<WayOn, { verb: 'respond' }> | undefined {
   if (definition === undefined || run.terminal_state) return undefined;
-  const composed = composeWaysAt(run, new Date(), { definition });
+  const composed = composeWaysAt(run, at, { definition });
   const narrowed = narrowForDoor(composed, {
     door: 'cli',
     serves: DOOR_SERVES.cli,
@@ -1107,7 +1117,8 @@ export async function inspectRun(
     priceSourceFor?: (definition: WorkflowDefinition | undefined) => Promise<PriceSource>;
   },
 ): Promise<string> {
-  const { record: run } = await store.get(runId);
+  // #715 (b) (D6-17): the one read; every statement below judges `run` at its reading.
+  const { record: run, at: runAt } = await store.get(runId);
 
   // Try to load workflow definition; gracefully handle missing definition. `definition` is
   // hoisted (issue #221) so classifyRunHealth below can reuse it when resolved — the try/catch
@@ -1281,7 +1292,7 @@ export async function inspectRun(
   }
   // decision C211 (walk c14 W3-4's class): cleanup steps the ending left pending — the command that
   // runs them.
-  const cleanup = pendingCleanupLine(run, new Date());
+  const cleanup = pendingCleanupLine(run, runAt);
   if (cleanup !== undefined) lines.push(cleanup);
   // issue #625 PR-2a (D7.3): what the engine owes on a live run with no open question, and each
   // step this record shows cannot run — an engine step, or an agent step refused before its claim
@@ -1289,13 +1300,13 @@ export async function inspectRun(
   // runner that last attempted the step lacked), else is unknown (decision C33).
   // decision C95: an open question whose time is up and that declares `on_expiry` is owed engine
   // work too — named here with the command that carries it out.
-  const inspectNow = new Date();
+  const inspectNow = runAt;
   if (
     definition !== undefined &&
     !run.terminal_state &&
     (run.pending_gate === undefined || dueExpiry(run.pending_gate, inspectNow) !== undefined)
   ) {
-    const pending = describePending(definition, run, undefined, inspectNow);
+    const pending = describePending(definition, writtenSnapshot(run, inspectNow), undefined);
     // #729 PR-0 (A-10): the run's ways, composed by core with no registry (an observer, C33), and
     // rendered by the CLI's one renderer.
     const ways = composeWaysAt(run, inspectNow, { definition });
@@ -1458,7 +1469,7 @@ export async function inspectRun(
   // the reminder due/overdue annotation, which [B1] deliberately keeps OUT of run-health.
   if (derivedPhase === 'gate_waiting' && run.pending_gate !== undefined) {
     const gate = run.pending_gate;
-    const due = computeGateDueState(gate, new Date());
+    const due = computeGateDueState(gate, runAt);
     // issue #406: the gate id is on the line because `realm run respond --gate <gate-id>` needs
     // it, and the --stuck label now points an operator here to get it. The drive-time surfaces
     // that already print it are the ones a stuck run no longer has.
@@ -1466,12 +1477,10 @@ export async function inspectRun(
     if (due.expired) {
       gateLine += ` — EXPIRED ${formatGateAge(gate.expires_at!)} ago`;
     }
-    if (due.next_reminder_due_at !== undefined) {
-      const overdueReminder = (parseStamp(due.next_reminder_due_at) ?? NaN) <= Date.now();
-      gateLine += overdueReminder
-        ? `, reminder overdue (was due ${formatGateAge(due.next_reminder_due_at)} ago)`
-        : `, reminder due in ${formatGateAge(new Date().toISOString(), new Date(due.next_reminder_due_at))}`;
-    }
+    // #715 (b) (02 §D.3, Amendment 9): the authored reminder SCHEDULE, from the one core function, at
+    // this read's reading — never "due" or "overdue": no send is recorded on the run.
+    const reminders = reminderScheduleOf(writtenSnapshot(run, runAt));
+    if (reminders !== undefined) gateLine += `, ${reminderScheduleWords(reminders)}`;
     lines.push(gateLine);
     // issue #406: the OTHER argument `realm run respond` requires. Rendered from
     // `run.pending_gate.choices`, which is the same source BOTH validation sites read
@@ -1488,13 +1497,13 @@ export async function inspectRun(
     // #627 W (§5.4b): the question as it was frozen when the gate opened — never the live
     // definition's message, which may have been edited since. A gate with no message, and one an
     // earlier version opened without keeping it, each say so.
-    lines.push(openQuestionLine(run, gate, definition));
+    lines.push(openQuestionLine(run, gate, definition, runAt));
     if (gate.choices.length > 0) {
       lines.push(`  Choices: ${gate.choices.join(', ')}`);
     }
     // #627 W (§5.4b): the person's route — whenever the CLI door's narrowed list holds a callable
     // `respond` (W-s1 says `realm run inspect` shows the question, its gate id and its choices).
-    const respond = cliRespondWay(run, definition);
+    const respond = cliRespondWay(run, runAt, definition);
     if (respond !== undefined) {
       lines.push(`  To answer: ${CLI_COMMANDS.respond(respond, undefined, { driveFlags: '' })}`);
     }
@@ -1508,7 +1517,7 @@ export async function inspectRun(
   // Note: `realm run reclaim` is a separate, independent consumer of the underlying record facts
   // (settle sets, capability_blocks, reclaim-audit evidence) — it does NOT call this function; see
   // its own classifyNoActiveClaim discriminator in reclaim-step.ts.
-  const runHealth = classifyRunHealth(run, {
+  const runHealth = classifyRunHealth(writtenSnapshot(run, runAt), {
     ...(definition !== undefined ? { definition } : {}),
     ...(definitionError !== undefined ? { definitionError } : {}),
   });
@@ -1966,8 +1975,8 @@ export const inspectCommand = new Command('inspect')
       runId: string,
       cmdOpts: { verbose?: boolean; checkDrift?: boolean; acceptPartialDisclosure?: boolean },
     ) => {
-      const { JsonFileStore, JsonWorkflowStore } = await import('@sensigo/realm');
-      const store = new JsonFileStore();
+      const { JsonWorkflowStore } = await import('@sensigo/realm');
+      const store = openRunStore();
       const workflowStore = new JsonWorkflowStore();
       try {
         // #729 PR-3 (L-4): the run's declared values join the writer's set before anything prints,

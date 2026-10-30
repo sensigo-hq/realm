@@ -1076,6 +1076,7 @@ describe('applyFilter — date', () => {
   });
 });
 
+// #715 (b) (02 §D.4): `from_now` reads no clock — each cell hands the filter its instant.
 describe('applyFilter — from_now', () => {
   beforeEach(() => {
     vi.useFakeTimers({ now: new Date('2026-01-28T10:00:00Z') });
@@ -1086,27 +1087,35 @@ describe('applyFilter — from_now', () => {
   });
 
   it('returns "3 minutes ago" for input 3 minutes in the past', () => {
-    expect(applyFilter('2026-01-28T09:57:00Z', 'from_now', [])).toEqual({
+    expect(
+      applyFilter('2026-01-28T09:57:00Z', 'from_now', [], { at: new Date('2026-01-28T10:00:00Z') }),
+    ).toEqual({
       ok: true,
       value: '3 minutes ago',
     });
   });
 
   it('returns "2 hours ago" for input 2 hours in the past', () => {
-    expect(applyFilter('2026-01-28T08:00:00Z', 'from_now', [])).toEqual({
+    expect(
+      applyFilter('2026-01-28T08:00:00Z', 'from_now', [], { at: new Date('2026-01-28T10:00:00Z') }),
+    ).toEqual({
       ok: true,
       value: '2 hours ago',
     });
   });
 
   it('returns relative day for input 1 day in the past', () => {
-    const result = applyFilter('2026-01-27T10:00:00Z', 'from_now', []);
+    const result = applyFilter('2026-01-27T10:00:00Z', 'from_now', [], {
+      at: new Date('2026-01-28T10:00:00Z'),
+    });
     expect(result.ok).toBe(true);
     if (result.ok) expect(String(result.value)).toMatch(/ago|yesterday/);
   });
 
   it('returns future relative time for input 5 minutes ahead', () => {
-    expect(applyFilter('2026-01-28T10:05:00Z', 'from_now', [])).toEqual({
+    expect(
+      applyFilter('2026-01-28T10:05:00Z', 'from_now', [], { at: new Date('2026-01-28T10:00:00Z') }),
+    ).toEqual({
       ok: true,
       value: 'in 5 minutes',
     });

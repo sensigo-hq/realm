@@ -12,9 +12,11 @@
 // nothing, and says how the form ended (1.4).
 import {
   composeWaysOn,
+  waysStoreOf,
   deriveRunPhase,
   dueExpiry,
   loadSnapshot,
+  judgedSnapshotOf,
   outcomeOf,
   readInstant,
   shownViewEvidence,
@@ -478,7 +480,12 @@ export async function replyAfterForm(
   if (result.kind === 'answered' && formAnswerRecorded(result.reply)) {
     return { ...result.reply, command: before.command, warnings };
   }
-  const snap = await loadSnapshot(deps.runStore, before.run_id);
+  // #715 (b) (D6-17, Amendment 4): an answer the engine refused carries the snapshot it judged the
+  // refusal on — this reply is composed on it, never on a second load; a form that came back with no
+  // answer (or an answer whose reply loaded no run) ended a WAIT, and the run is read for this reply.
+  const snap =
+    (result.kind === 'answered' ? judgedSnapshotOf(result.reply) : undefined) ??
+    (await loadSnapshot(deps.runStore, before.run_id));
   const record = snap.record;
   const ways = composeWaysOn(snap, {
     definition: { ok: deps.definition },
@@ -486,7 +493,8 @@ export async function replyAfterForm(
       deps.registry !== undefined
         ? { kind: 'this_program', registry: deps.registry }
         : { kind: 'observer' },
-    store: { persistsClaims: deps.runStore.persistsClaims === true },
+    // #715 (b) (02 §C.1): with what the reply's instant stands on (`as_of_basis`).
+    store: waysStoreOf(deps.runStore),
   });
   const base: EngineReply = {
     command: before.command,

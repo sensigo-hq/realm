@@ -106,7 +106,6 @@ export function scheduleGateExpiryTimer(
           carried,
           TIMER_VIA,
           outcome.at,
-          true,
         );
         console.log(
           `⏰ ${receipt !== undefined ? expiryReceiptLine(receipt) : expiryCarriedOutLine(gate.gate_id, gate.step_name, carried, TIMER_VIA, undefined)}` +

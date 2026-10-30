@@ -12,6 +12,7 @@ import { advanceRun, executeStep } from './execution-loop.js';
 import { checkPreClaim, describePending } from './pending.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
+import { writtenSnapshot } from './snapshot.js';
 
 const INJECT: WorkflowDefinition = {
   id: 'inject',
@@ -44,7 +45,7 @@ describe('#625 PR-2a, F5 — the precondition refusal renders the value escaped;
     await advanceRun(store, INJECT, { runId: run.id });
     const { record: record } = await store.get(run.id);
     const refused = checkPreClaim({ definition: INJECT, run: record, step: 'check', input: {} });
-    const view = describePending(INJECT, record, undefined, new Date());
+    const view = describePending(INJECT, writtenSnapshot(record, new Date()), undefined);
     const blocked = await executeStep(store, INJECT, {
       runId: run.id,
       command: 'check',

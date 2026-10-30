@@ -26,6 +26,7 @@ import {
   respondWayOfGate,
   classifyStop,
   composeWaysOn,
+  waysStoreOf,
   isRaceStop,
   type NotRecordedKind,
   type Party,
@@ -35,7 +36,14 @@ import {
   type WayOn,
   type WaysContext,
 } from './ways.js';
-import { loadSnapshot, writtenSnapshot, type Snapshot } from './snapshot.js';
+import {
+  attachJudged,
+  loadSnapshot,
+  noteErrorSnapshot,
+  snapshotOfBasis,
+  writtenSnapshot,
+  type Snapshot,
+} from './snapshot.js';
 import type { ToolCallRecord } from '../types/mcp-types.js';
 import { extensionIdentityDiffers, lastExecutionIdentity } from '../types/extension-identity.js';
 import type {
@@ -745,7 +753,7 @@ async function callHandler(
  * ⇒ false, fail closed). `opening_token` only on the reply whose own call opened the question (A-17).
  */
 function waysContext(
-  store: Pick<RunStore, 'persistsClaims'>,
+  store: Pick<RunStore, 'persistsClaims'> & Partial<Pick<RunStore, 'clock'>>,
   definition: WorkflowDefinition,
   registry: ExtensionRegistry | undefined,
   // issue #729 (the Q3 unit): `party` only at the admission (Step 2, `byNameRefusal`) — never on a
@@ -755,7 +763,8 @@ function waysContext(
   return {
     definition: { ok: definition },
     enactor: registry !== undefined ? { kind: 'this_program', registry } : { kind: 'observer' },
-    store: { persistsClaims: store.persistsClaims === true },
+    // #715 (b) (02 §C.1): with what the reply's instant stands on.
+    store: waysStoreOf(store),
     ...extra,
   };
 }
@@ -785,6 +794,17 @@ function hasProgressWay(composed: Pick<EngineReply, 'ways'>): boolean {
       w.verb === 'advance' ||
       (w.verb === 'run_step' && w.brief.execution === 'agent'),
   );
+}
+
+/**
+ * #715 (b) (Amendment 4, D6-17): an error reply about a record this call holds, composed with no ways
+ * (so no `basis`), is handed the snapshot of that record — what a host that composes after the call
+ * judges. A reply with a `basis` keeps the basis's. Returns the reply.
+ */
+function judgedOn<T extends EngineReply>(reply: T, snapshot: Snapshot): T {
+  if (reply.basis === undefined && reply.error !== undefined)
+    noteErrorSnapshot(reply.error, snapshot);
+  return reply;
 }
 
 /** issue #729 PR-0: the ways of a reply that judges none (no run was read, or the run has stopped the call). */
@@ -1184,7 +1204,7 @@ function makeErrorEnvelope(
       ...waysOf(store, definition, snapshot.record, options.registry, snapshot.at),
     };
   }
-  return baseWithWarnings;
+  return snapshot !== null ? judgedOn(baseWithWarnings, snapshot) : baseWithWarnings;
 }
 
 /**
@@ -1236,25 +1256,31 @@ export function runReadError(err: unknown): WorkflowError {
  */
 export function pendingGateQuestion(
   definition: WorkflowDefinition,
-  run: RunRecord,
+  // #715 (b) (02 §D.4): the record and the reading the fallback is rendered at (a read, now).
+  snapshot: Snapshot,
 ): string | undefined {
+  const run = snapshot.record;
   const gate = run.pending_gate;
   if (gate === undefined) return undefined;
   if (gate.resolved_message !== undefined) return gate.resolved_message;
   const prompt = definition.steps[gate.step_name]?.prompt;
   if (prompt === undefined) return undefined;
-  return renderTemplate(prompt, {
-    evidenceByStep: buildEvidenceByStep(run),
-    runParams: run.params,
-    ...(run.workflow_context_snapshots !== undefined
-      ? {
-          workflowContext: {
-            snapshots: run.workflow_context_snapshots,
-            wrapper: (definition.context_wrapper ?? 'xml') as ContextWrapperFormat,
-          },
-        }
-      : {}),
-  });
+  return renderTemplate(
+    prompt,
+    {
+      evidenceByStep: buildEvidenceByStep(run),
+      runParams: run.params,
+      ...(run.workflow_context_snapshots !== undefined
+        ? {
+            workflowContext: {
+              snapshots: run.workflow_context_snapshots,
+              wrapper: (definition.context_wrapper ?? 'xml') as ContextWrapperFormat,
+            },
+          }
+        : {}),
+    },
+    { time: { at: snapshot.at } },
+  );
 }
 
 /**
@@ -1695,7 +1721,7 @@ export type EnactedVia =
 
 /**
  * issue #729 PR-0 (T-2; A.3 #5): the receipt of an expired question's declared `on_expiry`, carried
- * out — by this call (`by_this_call`) or by another before it — naming the call that did it and how
+ * out by the call that returns it — naming the call that did it and how
  * long the question's time had been up: `overdue`, read through the one parser at the call's reading
  * (`overdueOf`), or `{ absent: 'unparseable_stamp' }`. `undefined` when the question's time is not
  * known (no stamp) or not yet up at the reading — a question not yet due never reaches a receipt.
@@ -1705,7 +1731,6 @@ export function expiryReceiptOf(
   outcome: { on_expiry: 'settle_default'; choice: string } | { on_expiry: 'abort' },
   via: EnactedVia,
   at: Date,
-  byThisCall: boolean,
 ): ExpiryReceipt | undefined {
   if (gate.expires_at === undefined) return undefined;
   const overdue = overdueOf(gate.expires_at, at);
@@ -1716,7 +1741,6 @@ export function expiryReceiptOf(
     on_expiry: outcome.on_expiry,
     ...(outcome.on_expiry === 'settle_default' ? { choice: outcome.choice } : {}),
     enacted_via: via,
-    by_this_call: byThisCall,
     expired_at: gate.expires_at,
     overdue,
   };
@@ -1728,9 +1752,10 @@ export function expiryReceiptOf(
  * question's time was up (F1: `had expired 15s before this call`, from {@link formatDuration} — the
  * lag, A.3 #5), then by whom — this call: `this <call> call first carried out its declared
  * settle_default: the default choice '<c>' was recorded (enacted_via: <via>).` or `… abort: the run
- * ended …` — or, when another call had already done it (`byThisCall: false`, a late answer that lost
- * the race), that another call had. Every caller that carries an expiry out says it through this
- * function. `overdue` is the receipt's; `undefined` when the question's time is not known, and the
+ * ended …`. Every caller that carries an expiry out says it through this function. #715 (b)
+ * (Amendment 3): the "another call had already carried out" form is gone — with the late answer in
+ * one write no call reports another call's expiry; such an answer is answered as any answer to an
+ * expired question is. `overdue` is the receipt's; `undefined` when the question's time is not known, and the
  * line then says `had expired before this call`; an unreadable stored deadline says so.
  */
 export function expiryCarriedOutLine(
@@ -1739,7 +1764,6 @@ export function expiryCarriedOutLine(
   outcome: { on_expiry: 'settle_default'; choice: string } | { on_expiry: 'abort' },
   via: EnactedVia,
   overdue: ExpiryReceipt['overdue'] | undefined,
-  byThisCall = true,
 ): string {
   const did =
     outcome.on_expiry === 'settle_default'
@@ -1749,9 +1773,7 @@ export function expiryCarriedOutLine(
   const unreadable =
     overdue !== undefined && 'absent' in overdue ? ' (its stored deadline cannot be read)' : '';
   const when = `had expired ${lag}before this call${unreadable}`;
-  return byThisCall
-    ? `gate '${gateId}' on '${step}' ${when} — this ${via} call first carried out its declared ${did} (enacted_via: ${via}).`
-    : `gate '${gateId}' on '${step}' ${when} — another call had already carried out its declared ${did}.`;
+  return `gate '${gateId}' on '${step}' ${when} — this ${via} call first carried out its declared ${did} (enacted_via: ${via}).`;
 }
 
 /** issue #729 PR-0 (T-2): {@link expiryCarriedOutLine} of a receipt. */
@@ -1764,7 +1786,6 @@ export function expiryReceiptLine(receipt: ExpiryReceipt): string {
       : { on_expiry: 'abort' },
     receipt.enacted_via,
     receipt.overdue,
-    receipt.by_this_call,
   );
 }
 
@@ -1918,7 +1939,6 @@ async function enactExpiredGateIfDue(
     carriedOut,
     via,
     expireOutcome.at,
-    true,
   );
   disclosureParts.push(
     receipt !== undefined
@@ -2141,7 +2161,10 @@ export async function executeStep(
     caller: options?.caller,
     parts: { definition, options },
   });
-  return executeStepAs(store, definition, options, options.caller ?? 'executeStep');
+  // #715 (b) (Amendment 4): the reply carries, privately, the snapshot it was judged on.
+  return attachJudged(
+    await executeStepAs(store, definition, options, options.caller ?? 'executeStep'),
+  );
 }
 
 /**
@@ -2249,7 +2272,11 @@ async function executeStepBody(
           ? []
           : callableSteps(
               definition,
-              describePending(definition, run, options.registry, gateExpiryCheckNow),
+              describePending(
+                definition,
+                writtenSnapshot(run, gateExpiryCheckNow),
+                options.registry,
+              ),
             ),
       },
     };
@@ -2328,7 +2355,7 @@ async function executeStepBody(
       ...(refusal !== undefined ? { refusal } : {}),
       eligible_steps: callableSteps(
         definition,
-        describePending(definition, run, options.registry, gateExpiryCheckNow),
+        describePending(definition, writtenSnapshot(run, gateExpiryCheckNow), options.registry),
       ),
     };
   };
@@ -2813,7 +2840,7 @@ async function executeStepBody(
             // decision C94: the steps that can be called, as the ways name them.
             eligible_steps: callableSteps(
               definition,
-              describePending(definition, freshRun, options.registry, fresh.at),
+              describePending(definition, writtenSnapshot(freshRun, fresh.at), options.registry),
             ),
           },
         };
@@ -3414,6 +3441,8 @@ async function executeStepBody(
           // applied: true — abort is UNCONDITIONALLY terminal (transitioned is always true here;
           // isTerminal(fresh) was already refused above inside applySettlement).
           let finalRun = result.run;
+          // #715 (b) (D6-17): the reading of the write `finalRun` comes from — its own, or the drain's.
+          let finalAt = result.at;
           let drainWarnings: string[] = [];
           const reArmWarnings = computeReArmWarnings(
             pendingRun.finalizer_ledger,
@@ -3428,6 +3457,7 @@ async function executeStepBody(
               options.driver,
             );
             finalRun = drainOutcome.run;
+            finalAt = drainOutcome.at;
             drainWarnings = drainOutcome.warnings;
           } catch (err) {
             // A drain failure is NEVER the step's own failure — the abort already committed.
@@ -3447,7 +3477,7 @@ async function executeStepBody(
             context_hint: `Handler step '${options.command}' aborted the run: ${abortMessage}`,
             run_phase: finalRun.run_phase,
             reply_kind: 'ok',
-            ...waysOf(store, definition, finalRun, options.registry, gateExpiryCheckNow),
+            ...waysOf(store, definition, finalRun, options.registry, finalAt),
           };
         }
 
@@ -3831,6 +3861,8 @@ async function executeStepBody(
       // ALWAYS this SAME capability-block report — only whether the internal capability_blocks
       // marker got durably persisted varies, disclosed via blockStoreWarning. #715 (b): the one path.
       let persistedBlockedRun: RunRecord | undefined;
+      // #715 (b) (D6-17): the reading of the release write `persistedBlockedRun` comes from.
+      let persistedBlockedAt: Date | undefined;
       let blockStoreWarning: string | undefined;
       const releaseClaimToken = pendingRun.claims?.[options.command]?.token;
       const delta: ReleaseStepDelta = {
@@ -3854,6 +3886,7 @@ async function executeStepBody(
       try {
         const releaseResult = await store.settleStep(options.runId, delta, definition);
         persistedBlockedRun = releaseResult.run;
+        persistedBlockedAt = releaseResult.at;
         // applied / NOOP already_released ⇒ the block envelope exactly as today (NOOP merges
         // silently — no extra warning). ANY OTHER refusal ⇒ the same block envelope + a typed
         // warning (never STATE_CLAIM_LOST framing) — the claim survives for reclaim either way.
@@ -3884,7 +3917,8 @@ async function executeStepBody(
             definition,
             persistedBlockedRun ?? blockedRun,
             options.registry,
-            gateExpiryCheckNow,
+            // the release write's reading; the unwritten draft's is the one it was built at.
+            persistedBlockedAt ?? gateExpiryCheckNow,
           );
         } catch {
           // a step's prompt can throw for an unresolvable template reference; fall back to none.
@@ -3896,23 +3930,29 @@ async function executeStepBody(
           : recoverableCode === 'ENGINE_HANDLER_NOT_REGISTERED'
             ? 'handler'
             : 'adapter';
-      return {
-        command: options.command,
-        run_id: options.runId,
-        run_version: (persistedBlockedRun ?? blockedRun).version,
-        status: 'error',
-        data: {},
-        evidence: allEvidence,
-        warnings: mergeWarnings(traceWarnings, blockStoreWarning),
-        errors: [dispatchError.message],
-        error: replyErrorOf(dispatchError),
-        intrinsic_action: blockedAction,
-        reply_kind: 'error',
-        error_code: recoverableCode,
-        context_hint: `Step '${options.command}' is blocked: its ${reqLabel} is not registered in this runner. The run is NOT terminated — the step remains eligible, so a runner that provides this ${requirement?.kind ?? 'capability'} can execute it.`,
-        run_phase: (persistedBlockedRun ?? blockedRun).run_phase,
-        ...blockedWays,
-      };
+      return judgedOn(
+        {
+          command: options.command,
+          run_id: options.runId,
+          run_version: (persistedBlockedRun ?? blockedRun).version,
+          status: 'error',
+          data: {},
+          evidence: allEvidence,
+          warnings: mergeWarnings(traceWarnings, blockStoreWarning),
+          errors: [dispatchError.message],
+          error: replyErrorOf(dispatchError),
+          intrinsic_action: blockedAction,
+          reply_kind: 'error',
+          error_code: recoverableCode,
+          context_hint: `Step '${options.command}' is blocked: its ${reqLabel} is not registered in this runner. The run is NOT terminated — the step remains eligible, so a runner that provides this ${requirement?.kind ?? 'capability'} can execute it.`,
+          run_phase: (persistedBlockedRun ?? blockedRun).run_phase,
+          ...blockedWays,
+        },
+        // the release write's record; its write failed ⇒ the record this call read.
+        persistedBlockedRun !== undefined
+          ? writtenSnapshot(persistedBlockedRun, persistedBlockedAt!)
+          : writtenSnapshot(pendingRun, pendingAt),
+      );
     }
 
     // issue #279 (increment 1, PR-B): settles this failure atomically against FRESH state via the
@@ -3979,6 +4019,8 @@ async function executeStepBody(
     }
 
     let finalRun = result.run;
+    // #715 (b) (D6-17): the reading of the write `finalRun` comes from — its own, or the drain's.
+    let finalAt = result.at;
     let drainWarnings: string[] = [];
     const reArmWarnings = result.transitioned
       ? computeReArmWarnings(pendingRun.finalizer_ledger, result.run.finalizer_ledger)
@@ -3993,6 +4035,7 @@ async function executeStepBody(
           options.driver,
         );
         finalRun = drainOutcome.run;
+        finalAt = drainOutcome.at;
         drainWarnings = drainOutcome.warnings;
       } catch (err) {
         drainWarnings = [
@@ -4051,7 +4094,7 @@ async function executeStepBody(
     let migratedWays: Pick<EngineReply, 'ways' | 'unavailable' | 'basis'> = noWays();
     if (migratedEffectiveAction !== 'stop') {
       try {
-        migratedWays = waysOf(store, definition, finalRun, options.registry, gateExpiryCheckNow);
+        migratedWays = waysOf(store, definition, finalRun, options.registry, finalAt);
       } catch {
         // a step's prompt can throw for an unresolvable template reference; fall back to none.
       }
@@ -4068,7 +4111,7 @@ async function executeStepBody(
     // issue #625: a failed step's own write settles the guards it leaves eligible. This reply is
     // not `ok`, so the rule adds `guards` / `ended_by` only — the step's failure stays the
     // reply's own status, errors, evidence and sentence.
-    return withCascadedGuards(
+    const failedReply = withCascadedGuards(
       {
         command: options.command,
         run_id: options.runId,
@@ -4099,6 +4142,8 @@ async function executeStepBody(
       },
       result,
     );
+    judgedOn(failedReply, writtenSnapshot(finalRun, finalAt));
+    return failedReply;
   }
 
   // Step 5b: Gate check — if trust requires human confirmation, open a gate and halt.
@@ -4140,6 +4185,8 @@ async function executeStepBody(
           },
           {
             strict: true,
+            // #715 (b) (02 §D.4): the message is stored on the record — time in it is absolute.
+            time: 'stored',
             ...(messageSubstitutions?.onSubstitution !== undefined
               ? { onSubstitution: messageSubstitutions.onSubstitution }
               : {}),
@@ -4204,7 +4251,7 @@ async function executeStepBody(
                   runParams: run.params,
                   ...wfCtxSpreadEarly,
                 },
-                { strict: true, onSubstitution },
+                { strict: true, onSubstitution, time: 'stored' },
               ),
           }
         : {}),
@@ -4253,13 +4300,19 @@ async function executeStepBody(
         : {}),
     };
 
-    const resolvedGateInstructions =
+    // #715 (b) (02 §D.4, D6-22): the instructions ride the opening reply (never stored) — rendered at
+    // that reply's reading, the opening write's `at`.
+    const gateInstructionsAt = (at: Date): string | undefined =>
       stepDef!.instructions !== undefined
-        ? renderTemplate(stepDef!.instructions, {
-            evidenceByStep: gateEvidenceCtxEarly,
-            runParams: run.params,
-            ...wfCtxSpreadEarly,
-          })
+        ? renderTemplate(
+            stepDef!.instructions,
+            {
+              evidenceByStep: gateEvidenceCtxEarly,
+              runParams: run.params,
+              ...wfCtxSpreadEarly,
+            },
+            { time: { at } },
+          )
         : undefined;
 
     // issue #625 (the holder slice): the claim's own token, handed out on the two FRESH gate-opening
@@ -4422,7 +4475,9 @@ async function executeStepBody(
         preview: output,
         choices,
         ...(gateDisplay !== undefined ? { display: gateDisplay } : {}),
-        ...(resolvedGateInstructions !== undefined ? { agent_hint: resolvedGateInstructions } : {}),
+        ...((hint) => (hint !== undefined ? { agent_hint: hint } : {}))(
+          gateInstructionsAt(result.at),
+        ),
         response_spec: { choices },
         ...(writtenGate.expires_at !== undefined ? { expires_at: writtenGate.expires_at } : {}),
         ...(gateOpenDueState.next_reminder_due_at !== undefined
@@ -4495,6 +4550,8 @@ async function executeStepBody(
   }
 
   let finalRun = result.run;
+  // #715 (b) (D6-17): the reading of the write `finalRun` comes from — its own, or the drain's.
+  let finalAt = result.at;
   let drainWarnings: string[] = [];
   const reArmWarnings = result.transitioned
     ? computeReArmWarnings(pendingRun.finalizer_ledger, result.run.finalizer_ledger)
@@ -4509,6 +4566,7 @@ async function executeStepBody(
         options.driver,
       );
       finalRun = drainOutcome.run;
+      finalAt = drainOutcome.at;
       drainWarnings = drainOutcome.warnings;
     } catch (err) {
       drainWarnings = [
@@ -4568,12 +4626,11 @@ async function executeStepBody(
   // issue #625 PR-2a (decisions C33, C34): the reply's view is judged with the CALL's registry —
   // the same fact `get_run_state` reads on this server — and a step that cannot run is named, never
   // passed over as "waiting for other steps".
-  const migratedWays = waysOf(store, definition, finalRun, options.registry, gateExpiryCheckNow);
+  const migratedWays = waysOf(store, definition, finalRun, options.registry, finalAt);
   const migratedPending = describePending(
     definition,
-    finalRun,
+    writtenSnapshot(finalRun, finalAt),
     options.registry,
-    gateExpiryCheckNow,
   );
   // #729 PR-0 (Table rows 20–26, 32): the hint says what happened; the way on — the `inspect` way
   // on an ended run, the run's next ways otherwise — is the door's sentence after it.
@@ -5146,9 +5203,10 @@ async function composeExpiredGateEnvelope(
   // decision C211 (the architect's addendum, round 28 note 7): a late answer whose expiry ended the
   // run with a failed step `realm run resume` takes says the way back in, as an on-time answer's
   // reply does — read off the record the expiry's write and its drain left.
+  // #715 (b) (D6-17, B.1): that record is the one the expiry reply was judged on (the write's, or
+  // its drain's) — never a second load.
   const ended = expireResult.run.terminal_state
-    ? (await store.get(expireResult.run.id).catch(() => writtenSnapshot(expireResult.run, now)))
-        .record
+    ? (snapshotOfBasis(expiryReply)?.record ?? expireResult.run)
     : expireResult.run;
   // #729 PR-0 (Amendment 13 Q6): the answer's own verdict — the question was past its deadline when
   // the answer reached it (`question_past_deadline`, write-tagged: found by the settle — #715 (b):
@@ -5193,11 +5251,14 @@ async function composeExpiryReply(
   expiresAt: string | undefined,
 ): Promise<EngineReply> {
   let finalRun = expireResult.run;
+  // #715 (b) (D6-17): the reading of the write `finalRun` comes from — its own, or the drain's.
+  let finalAt = expireResult.at;
   let drainWarnings: string[] = [];
   if (expireResult.transitioned) {
     try {
       const drainOutcome = await drainFinalizers(store, definition, registry, finalRun.id, driver);
       finalRun = drainOutcome.run;
+      finalAt = drainOutcome.at;
       drainWarnings = drainOutcome.warnings;
     } catch (err) {
       drainWarnings = [
@@ -5231,7 +5292,6 @@ async function composeExpiryReply(
       carried,
       via,
       now,
-      true,
     );
     return receipt !== undefined
       ? { line: expiryReceiptLine(receipt), receipt }
@@ -5261,7 +5321,7 @@ async function composeExpiryReply(
           errors: [],
           context_hint: LATE_SAME_CHOICE_SENTENCE,
           run_phase: finalRun.run_phase,
-          ...waysOf(store, definition, finalRun, registry, now),
+          ...waysOf(store, definition, finalRun, registry, finalAt),
           ...(finalRun.terminal_state ? {} : { names_next: true as const }),
         },
         stepName,
@@ -5294,7 +5354,7 @@ async function composeExpiryReply(
       {
         ...envelope,
         warnings: mergeWarnings([], enacted.line, ...drainWarnings),
-        ...waysOf(store, definition, finalRun, registry, now),
+        ...waysOf(store, definition, finalRun, registry, finalAt),
         ...(finalRun.terminal_state ? {} : { names_next: true as const }),
       },
       stepName,
@@ -5329,7 +5389,10 @@ async function composeExpiryReply(
       finalRun.run_phase,
     );
     return lateReply(
-      { ...envelope, warnings: mergeWarnings([], enacted.line, ...drainWarnings) },
+      judgedOn(
+        { ...envelope, warnings: mergeWarnings([], enacted.line, ...drainWarnings) },
+        writtenSnapshot(finalRun, finalAt),
+      ),
       stepName,
       enacted.receipt,
     );
@@ -5343,6 +5406,10 @@ async function composeExpiryReply(
   );
 }
 
+/**
+ * #715 (b) (Amendment 4): `submitHumanResponseBody`, with the reply carrying, privately, the snapshot it was
+ * judged on (`judgedSnapshotOf`). Its contract is the body's, documented below.
+ */
 export async function submitHumanResponse(
   store: RunStore,
   definition: WorkflowDefinition,
@@ -5356,6 +5423,14 @@ export async function submitHumanResponse(
     caller: options?.caller,
     parts: { definition, options },
   });
+  return attachJudged(await submitHumanResponseBody(store, definition, options));
+}
+
+async function submitHumanResponseBody(
+  store: RunStore,
+  definition: WorkflowDefinition,
+  options: SubmitGateOptions,
+): Promise<EngineReply> {
   // decision C151: the call a late answer that carries out the question's expiry is named by.
   const via: AnswerCaller = options.caller ?? 'submitHumanResponse';
 
@@ -5375,11 +5450,12 @@ export async function submitHumanResponse(
   // `expiry` a not-recorded answer's outcome names.
   const readExpiresAt =
     run.pending_gate?.gate_id === options.gateId ? run.pending_gate.expires_at : undefined;
-  // #729 PR-0 (D3 A-6): an answer's refusal, judged on the record a settle returned.
-  const answerRefusal = (onRun: RunRecord): Unavailable | undefined => {
+  // #729 PR-0 (D3 A-6): an answer's refusal, judged on the record a settle returned — #715 (b)
+  // (D6-17): at that settle's own reading.
+  const answerRefusal = (onRun: RunRecord, onAt: Date): Unavailable | undefined => {
     const admission = admitWay(
       'respond',
-      writtenSnapshot(onRun, now),
+      writtenSnapshot(onRun, onAt),
       waysContext(store, definition, options.registry),
       { run_id: options.runId, gate_id: options.gateId, choice: options.choice },
     );
@@ -5432,13 +5508,16 @@ export async function submitHumanResponse(
               agentAction: 'stop',
               retryable: false,
             });
-      return errorEnvelope(
-        run.pending_gate?.step_name ?? 'submit_gate',
-        options.runId,
-        run.version,
-        e,
-        `Failed to persist gate response.`,
-        run.run_phase,
+      return judgedOn(
+        errorEnvelope(
+          run.pending_gate?.step_name ?? 'submit_gate',
+          options.runId,
+          run.version,
+          e,
+          `Failed to persist gate response.`,
+          run.run_phase,
+        ),
+        writtenSnapshot(run, now),
       );
     }
 
@@ -5452,6 +5531,8 @@ export async function submitHumanResponse(
           // §6 row 2, the buildAlreadySettledEnvelope drain-on-NOOP pattern reused verbatim).
           const stepName = findGateStepName(result.run, options.gateId) ?? 'submit_gate';
           let noopRun = result.run;
+          // #715 (b) (D6-17): the reading of the write `noopRun` comes from — the settle's, or the drain's.
+          let noopAt = result.at;
           let noopDrainWarnings: string[] = [];
           const hasPending = Object.values(noopRun.finalizer_ledger ?? {}).some(
             (e) => e.status === 'pending',
@@ -5466,6 +5547,7 @@ export async function submitHumanResponse(
                 options.driver,
               );
               noopRun = drainOutcome.run;
+              noopAt = drainOutcome.at;
               noopDrainWarnings = drainOutcome.warnings;
             } catch (err) {
               noopDrainWarnings = [
@@ -5505,7 +5587,7 @@ export async function submitHumanResponse(
                 : `Gate '${options.gateId}' was already resolved with choice '${options.choice}' — no action was taken.`,
               run_phase: noopRun.run_phase,
               reply_kind: 'ok',
-              ...waysOf(store, definition, noopRun, options.registry, now),
+              ...waysOf(store, definition, noopRun, options.registry, noopAt),
               ...(gateSettledByTimeout(noopRun, stepName) && !noopRun.terminal_state
                 ? { names_next: true as const }
                 : {}),
@@ -5554,7 +5636,7 @@ export async function submitHumanResponse(
               : undefined;
           const conflictWithNext: EngineReply = {
             ...conflictReply,
-            ...waysOf(store, definition, result.run, options.registry, now),
+            ...waysOf(store, definition, result.run, options.registry, result.at),
             ...(result.run.terminal_state ? {} : { names_next: true as const }),
             ...(conflictOutcome !== undefined ? { outcome: conflictOutcome } : {}),
           };
@@ -5575,13 +5657,16 @@ export async function submitHumanResponse(
               retryable: false,
             },
           );
-          return errorEnvelope(
-            stepName,
-            options.runId,
-            result.run.version,
-            err,
-            `Invalid choice '${options.choice}' for gate '${stepName}'.`,
-            result.run.run_phase,
+          return judgedOn(
+            errorEnvelope(
+              stepName,
+              options.runId,
+              result.run.version,
+              err,
+              `Invalid choice '${options.choice}' for gate '${stepName}'.`,
+              result.run.run_phase,
+            ),
+            writtenSnapshot(result.run, result.at),
           );
         }
         case 'gate_mismatch': {
@@ -5611,8 +5696,8 @@ export async function submitHumanResponse(
               err.message,
               result.run.run_phase,
             ),
-            waysOf(store, definition, result.run, options.registry, now),
-            answerRefusal(result.run),
+            waysOf(store, definition, result.run, options.registry, result.at),
+            answerRefusal(result.run, result.at),
           );
         }
         case 'run_terminal': {
@@ -5651,36 +5736,45 @@ export async function submitHumanResponse(
             );
             // #729 PR-0 (Amendment 6): the gate cancelled by the abort is the answer's outcome.
             const cancelOutcome = outcomeOf(result.run, cancelledStep, readExpiresAt, true);
-            return {
-              ...errorEnvelope(
-                cancelledStep,
-                options.runId,
-                result.run.version,
-                err,
-                err.message,
-                result.run.run_phase,
-              ),
-              ...(cancelOutcome !== undefined ? { outcome: cancelOutcome } : {}),
-            };
+            return judgedOn(
+              {
+                ...errorEnvelope(
+                  cancelledStep,
+                  options.runId,
+                  result.run.version,
+                  err,
+                  err.message,
+                  result.run.run_phase,
+                ),
+                ...(cancelOutcome !== undefined ? { outcome: cancelOutcome } : {}),
+              },
+              writtenSnapshot(result.run, result.at),
+            );
           }
           // Zombie/grandfathered variant — the #282 class: a terminal record may still carry a
           // stale pending_gate (never cleared), which is the best-effort step label here.
           const zombieStep = result.run.pending_gate?.step_name ?? 'submit_gate';
           // decision C170: the way out the refusal names is true for the run's kind of ending.
-          const err = new WorkflowError(terminalAnswerRefusalMessage(result.run, definition, now), {
-            code: 'STATE_RUN_TERMINAL',
-            category: 'STATE',
-            agentAction: 'report_to_user',
-            retryable: false,
-            details: { runId: options.runId, run_phase: result.run.run_phase },
-          });
-          return errorEnvelope(
-            zombieStep,
-            options.runId,
-            result.run.version,
-            err,
-            err.message,
-            result.run.run_phase,
+          const err = new WorkflowError(
+            terminalAnswerRefusalMessage(result.run, definition, result.at),
+            {
+              code: 'STATE_RUN_TERMINAL',
+              category: 'STATE',
+              agentAction: 'report_to_user',
+              retryable: false,
+              details: { runId: options.runId, run_phase: result.run.run_phase },
+            },
+          );
+          return judgedOn(
+            errorEnvelope(
+              zombieStep,
+              options.runId,
+              result.run.version,
+              err,
+              err.message,
+              result.run.run_phase,
+            ),
+            writtenSnapshot(result.run, result.at),
           );
         }
         default:
@@ -5725,6 +5819,8 @@ export async function submitHumanResponse(
     // true` never reaches the already_settled leg, so only the `transitioned` disjunct applies at
     // THIS call site (design record §6 row 2).
     let finalRun = result.run;
+    // #715 (b) (D6-17): the reading of the write `finalRun` comes from — its own, or the drain's.
+    let finalAt = result.at;
     let drainWarnings: string[] = [];
     if (result.transitioned) {
       try {
@@ -5736,6 +5832,7 @@ export async function submitHumanResponse(
           options.driver,
         );
         finalRun = drainOutcome.run;
+        finalAt = drainOutcome.at;
         drainWarnings = drainOutcome.warnings;
       } catch (err) {
         drainWarnings = [
@@ -5778,7 +5875,7 @@ export async function submitHumanResponse(
             context_hint: migratedOrientation,
             run_phase: finalRun.run_phase,
             reply_kind: 'ok',
-            ...waysOf(store, definition, finalRun, options.registry, now),
+            ...waysOf(store, definition, finalRun, options.registry, finalAt),
             names_next: true,
             ...(finalRun.defaulted_steps?.length
               ? { defaulted_steps: finalRun.defaulted_steps }
@@ -6283,7 +6380,10 @@ export async function executeEngineStep(
     caller: options?.caller,
     parts: { definition, options },
   });
-  return engineStepAs(store, definition, options, options.caller ?? 'executeEngineStep');
+  // #715 (b) (Amendment 4): the reply carries, privately, the snapshot it was judged on.
+  return attachJudged(
+    await engineStepAs(store, definition, options, options.caller ?? 'executeEngineStep'),
+  );
 }
 
 /**
@@ -6362,7 +6462,7 @@ function withOwnInputRefusal(reply: EngineReply, step: string): EngineReply {
 
 /**
  * The ONE pick of the next step the engine runs (issue #625 PR-2a, law L8; decision C13): the first
- * entry of the run's view (`describePending(definition, run, registry).engine_runnable`, definition
+ * entry of the run's view (`describePending(definition, snapshot, registry).engine_runnable`, definition
  * order) that the view does not refuse — so the act and the pick agree by construction and a refused
  * step is never re-attempted in a loop. One exception: a step refused for `capability` that carries
  * no `capability_blocks` marker yet is picked ONCE, so its post-claim dispatch failure writes the
@@ -6371,11 +6471,11 @@ function withOwnInputRefusal(reply: EngineReply, step: string): EngineReply {
  */
 function pickNextEngineStep(
   definition: WorkflowDefinition,
-  run: RunRecord,
+  snapshot: Snapshot,
   registry: ExtensionRegistry | undefined,
-  now: Date,
 ): string | undefined {
-  const pending = describePending(definition, run, registry, now);
+  const run = snapshot.record;
+  const pending = describePending(definition, snapshot, registry);
   // Every step the view lets run comes first, so a call that names the owed steps runs all of them
   // before it makes the one capability attempt that stops it (decision C23: a capability block is a
   // step that cannot run here, like a refusal — it must not leave the act's own steps unrun).
@@ -6460,9 +6560,10 @@ async function advanceLoop(
 ): Promise<EngineReply> {
   const { chainedSteps, depth0Warnings, races } = state;
   let { run, result } = state;
-  // #729 PR-0: the reading the loop's own replies judge their ways at (each step it runs reads its own).
-  // #715 (b): the store's — the reading of the record the loop was handed, never a fresh one.
-  const loopAt = state.at;
+  // #715 (b) (02 §A.2, D6-17): the reading `run` was read or written at — the loop holds the record
+  // and its reading as ONE snapshot, and replaces both together whenever it reads or writes the run,
+  // so a record is never judged at another load's reading.
+  let runAt = state.at;
   // F7: the step whose own `ok` reply `result` is — the named step for `executeChain`, none for
   // `advanceRun` until a step runs.
   let lastRan = options.namedStep;
@@ -6470,7 +6571,7 @@ async function advanceLoop(
   const afterRaces = (reply: EngineReply): EngineReply =>
     races.length === 0
       ? reply
-      : composeAfterRaces(store, definition, run, options.registry, loopAt, reply, {
+      : composeAfterRaces(store, definition, run, options.registry, runAt, reply, {
           lastRan,
           races,
         });
@@ -6576,22 +6677,26 @@ async function advanceLoop(
         // Thrown infra errors — the persist-failure envelope (the shape the deleted legacy path's
         // store.update catch returned).
         const msg = storeErr instanceof Error ? storeErr.message : String(storeErr);
-        return {
-          command: options.command,
-          run_id: options.runId,
-          run_version: run.version,
-          status: 'error',
-          data: {},
-          evidence: [],
-          warnings: [],
-          errors: [`Failed to persist guard step '${guardName}': ${msg}`],
-          error: { remedy: [] },
-          intrinsic_action: 'stop' as const,
-          reply_kind: 'error',
-          context_hint: `Guard step '${guardName}' could not be persisted. Run state may be inconsistent.`,
-          run_phase: run.run_phase,
-          ...noWays(),
-        };
+        // #715 (b) (D6-17): the record this loop holds, at its reading — the write did not land.
+        return judgedOn(
+          {
+            command: options.command,
+            run_id: options.runId,
+            run_version: run.version,
+            status: 'error',
+            data: {},
+            evidence: [],
+            warnings: [],
+            errors: [`Failed to persist guard step '${guardName}': ${msg}`],
+            error: { remedy: [] },
+            intrinsic_action: 'stop' as const,
+            reply_kind: 'error',
+            context_hint: `Guard step '${guardName}' could not be persisted. Run state may be inconsistent.`,
+            run_phase: run.run_phase,
+            ...noWays(),
+          },
+          writtenSnapshot(run, runAt),
+        );
       }
 
       if (!guardSettleResult.applied) {
@@ -6620,6 +6725,7 @@ async function advanceLoop(
             pushGuard({ step: guardName, run_phase: guardSettleResult.run.run_phase });
           }
           run = guardSettleResult.run;
+          runAt = guardSettleResult.at;
           // Drain: on already_settled ∧ pending ledger entries non-empty (design record §6, "same
           // clause" as the transitioned leg below) — recovers a crashed-drain RESOLVE that a
           // sibling's own settle committed but never drained.
@@ -6637,6 +6743,7 @@ async function advanceLoop(
                   options.driver,
                 );
                 run = drainOutcome.run;
+                runAt = drainOutcome.at;
                 if (drainOutcome.warnings.length > 0) guardWarnings.push(...drainOutcome.warnings);
               } catch (err) {
                 guardWarnings.push(
@@ -6674,24 +6781,27 @@ async function advanceLoop(
               },
             },
           );
-          return {
-            command: options.command,
-            run_id: options.runId,
-            run_version: guardSettleResult.run.version,
-            status: 'error',
-            data: {},
-            evidence: [],
-            warnings: [],
-            errors: [err.message],
-            error_code: err.code,
-            ...(Object.keys(err.details).length > 0 ? { error_details: err.details } : {}),
-            error: replyErrorOf(err),
-            intrinsic_action: err.agentAction,
-            reply_kind: 'error',
-            context_hint: err.message,
-            run_phase: guardSettleResult.run.run_phase,
-            ...noWays(),
-          };
+          return judgedOn(
+            {
+              command: options.command,
+              run_id: options.runId,
+              run_version: guardSettleResult.run.version,
+              status: 'error',
+              data: {},
+              evidence: [],
+              warnings: [],
+              errors: [err.message],
+              error_code: err.code,
+              ...(Object.keys(err.details).length > 0 ? { error_details: err.details } : {}),
+              error: replyErrorOf(err),
+              intrinsic_action: err.agentAction,
+              reply_kind: 'error',
+              context_hint: err.message,
+              run_phase: guardSettleResult.run.run_phase,
+              ...noWays(),
+            },
+            writtenSnapshot(guardSettleResult.run, guardSettleResult.at),
+          );
         }
         if (guardSettleResult.reason === 'run_terminal') {
           // Terminal by OTHER (a sibling settle raced this guard's own evaluation) — INLINE
@@ -6711,7 +6821,13 @@ async function advanceLoop(
             reply_kind: 'ok',
             context_hint: `Run '${options.runId}' is already terminal (${guardSettleResult.run.run_phase}); guard '${guardName}' was not evaluated.`,
             run_phase: guardSettleResult.run.run_phase,
-            ...waysOf(store, definition, guardSettleResult.run, options.registry, loopAt),
+            ...waysOf(
+              store,
+              definition,
+              guardSettleResult.run,
+              options.registry,
+              guardSettleResult.at,
+            ),
           };
         }
         // gate_mismatch/choice_not_eligible/already_open/already_released and every other kind's
@@ -6729,6 +6845,7 @@ async function advanceLoop(
         // terminal envelope (design record §6/R5 — a post-loop drain would be dead code on this
         // leg: this function RETURNS before ever reaching a post-loop point).
         let finalGuardRun = guardSettleResult.run;
+        let finalGuardAt = guardSettleResult.at;
         let guardDrainWarnings: string[];
         try {
           const drainOutcome = await drainFinalizers(
@@ -6739,6 +6856,7 @@ async function advanceLoop(
             options.driver,
           );
           finalGuardRun = drainOutcome.run;
+          finalGuardAt = drainOutcome.at;
           guardDrainWarnings = drainOutcome.warnings;
         } catch (err) {
           guardDrainWarnings = [
@@ -6767,7 +6885,7 @@ async function advanceLoop(
           context_hint: migratedContextHint,
           run_phase: finalGuardRun.run_phase,
           reply_kind: 'ok',
-          ...waysOf(store, definition, finalGuardRun, options.registry, loopAt),
+          ...waysOf(store, definition, finalGuardRun, options.registry, finalGuardAt),
           guards: [{ step: guardName, outcome: guardSettleOutcome }],
           ...(loopEnding !== undefined
             ? {
@@ -6786,6 +6904,7 @@ async function advanceLoop(
 
       // Non-terminal pass — continue the chain.
       run = guardSettleResult.run;
+      runAt = guardSettleResult.at;
       guardEligible = findEligibleGuardSteps(definition, run);
       continue;
     }
@@ -6797,7 +6916,7 @@ async function advanceLoop(
       result = {
         ...result,
         run_version: run.version,
-        ...waysOf(store, definition, run, options.registry, loopAt),
+        ...waysOf(store, definition, run, options.registry, runAt),
         // issue #279 (increment 2, PR-D): non-abort settled_outcome_divergence warnings accumulated
         // during the guard loop above (the ADVANCE leg) must reach whichever envelope returns —
         // this rebuild is the first point after the loop `result` is touched again.
@@ -6811,14 +6930,18 @@ async function advanceLoop(
       return afterRaces(result);
     }
 
-    const nextAutoStep = pickNextEngineStep(definition, run, options.registry, loopAt);
+    const nextAutoStep = pickNextEngineStep(
+      definition,
+      writtenSnapshot(run, runAt),
+      options.registry,
+    );
     if (nextAutoStep === undefined || executions >= budget) {
       // Only agent steps, a refused step, or nothing — the reply is composed from this record.
       return afterRaces({
         ...result,
         run_version: run.version,
         run_phase: deriveRunPhase(run),
-        ...waysOf(store, definition, run, options.registry, loopAt),
+        ...waysOf(store, definition, run, options.registry, runAt),
       });
     }
 
@@ -6864,8 +6987,9 @@ async function advanceLoop(
       // F7: every reply that is not `ok` is read against the record as it is now — core's one rule
       // for "another program got there first" ({@link classifyStop}), which the hosts read too.
       let after: RunRecord;
+      let afterAt: Date;
       try {
-        after = (await store.get(options.runId)).record;
+        ({ record: after, at: afterAt } = await store.get(options.runId));
       } catch {
         return stepResult;
       }
@@ -6879,6 +7003,7 @@ async function advanceLoop(
         // its own — the reply says what the record shows. A refused settle's own warnings are said
         // with the reply the call ends on.
         run = after;
+        runAt = afterAt;
         races.push({ step: nextAutoStep, stop });
         if (stepResult.status === 'error') depth0Warnings.push(...stepResult.warnings);
         if (stop.kind === 'held_elsewhere' && !stop.ran_here) {
@@ -6899,10 +7024,10 @@ async function advanceLoop(
       // decision C24: the step's own reply judged its ways with no registry (the capability check
       // reports 'unknown', so the act stayed offered for the step that just failed to dispatch).
       // Judge them again on the record as it is now, with this call's registry.
-      return { ...stepResult, ...waysOf(store, definition, after, options.registry, loopAt) };
+      return { ...stepResult, ...waysOf(store, definition, after, options.registry, afterAt) };
     }
     try {
-      run = (await store.get(options.runId)).record;
+      ({ record: run, at: runAt } = await store.get(options.runId));
     } catch {
       return stepResult;
     }
@@ -7033,13 +7158,15 @@ function hasCannotRun(pending: PendingView): boolean {
  * The reply text of an `advanceRun` call that ran no step, from the record it ends on (M10). When
  * the call carried out an expired question's declared `on_expiry` (decision C95), it says so — the
  * run did not end, or stop, by itself — and the disclosure line in `warnings` gives the details.
+ * #715 (b) (02 §A.1, D6-17): judges ONE snapshot — the one the reply's ways were judged on.
  */
 function nothingRanHint(
-  run: RunRecord,
+  snapshot: Snapshot,
   expiryCarriedOut: boolean,
   // decision C186: the guards the expiry's write decided — they ran.
   expiryGuards: readonly string[] = [],
 ): Pick<EngineReply, 'context_hint' | 'names_next'> {
+  const { record: run } = snapshot;
   // #729 PR-0 (Table rows 20–26): what happened; on an open run the door's sentence of what comes
   // next follows (decisions C51, C57: with the way out when the run cannot go on until its workflow
   // is corrected — the same condition `realm run advance` prints its own form under).
@@ -7120,10 +7247,8 @@ export interface AdvanceRunOptions {
 }
 
 /**
- * issue #625 PR-2a: run what the engine owes on a run — its eligible guards, then its eligible
- * `auto` steps — from the stored record. The same loop `executeChain` runs after its named step;
- * `start_run`, the `realm agent` loop, MCP `advance_run` and `realm run advance` call it. A repeat
- * with nothing owed runs nothing and returns the run's view.
+ * #715 (b) (Amendment 4): `advanceRunBody`, with the reply carrying, privately, the snapshot it was
+ * judged on (`judgedSnapshotOf`). Its contract is the body's, documented below.
  */
 export async function advanceRun(
   store: RunStore,
@@ -7138,7 +7263,20 @@ export async function advanceRun(
     caller: options?.caller,
     parts: { definition, options },
   });
+  return attachJudged(await advanceRunBody(store, definition, options));
+}
 
+/**
+ * issue #625 PR-2a: run what the engine owes on a run — its eligible guards, then its eligible
+ * `auto` steps — from the stored record. The same loop `executeChain` runs after its named step;
+ * `start_run`, the `realm agent` loop, MCP `advance_run` and `realm run advance` call it. A repeat
+ * with nothing owed runs nothing and returns the run's view.
+ */
+async function advanceRunBody(
+  store: RunStore,
+  definition: WorkflowDefinition,
+  options: AdvanceRunOptions,
+): Promise<EngineReply> {
   const caller: AdvanceCaller = options.caller ?? 'advanceRun';
   const command = options.command ?? caller;
   const registry = options.registry ?? createDefaultRegistry();
@@ -7215,7 +7353,7 @@ export async function advanceRun(
         evidence: [],
         warnings: [],
         errors: [],
-        ...nothingRanHint(stored, expiryCarriedOut, expiryGuards),
+        ...nothingRanHint(writtenSnapshot(stored, now), expiryCarriedOut, expiryGuards),
         run_phase: deriveRunPhase(stored),
         reply_kind: 'ok',
         ...waysOf(store, definition, stored, registry, now),
@@ -7228,12 +7366,12 @@ export async function advanceRun(
   // When nothing ran (no step, no guard), the hint is composed from the record the loop ends on:
   // a step another process took in the meantime (D3.2) is no longer owed here, and the reply's
   // `next_actions` already say so — the hint must not still name it. F7: never when a step's work
-  // ran here and its outcome was not recorded — the loop's own words say that.
+  // ran here and its outcome was not recorded — the loop's own words say that. #715 (b) (D6-17):
+  // the record the loop ends on is the snapshot its reply's ways were judged on (the loop re-reads
+  // the run after every race) — never a second load, so the hint and the reply's `as_of` agree.
   let endHint: Pick<EngineReply, 'context_hint' | 'names_next'> | undefined;
   if (chained.length === 0 && advanced.status === 'ok' && !races.some((r) => r.stop.ran_here)) {
-    const { record: end } = await store
-      .get(options.runId)
-      .catch(() => writtenSnapshot(stored, now));
+    const end = snapshotOfBasis(advanced) ?? writtenSnapshot(stored, now);
     endHint = nothingRanHint(end, expiryCarriedOut, expiryGuards);
   }
   // decision C110: each line once — a chained step's warnings are not listed again when the final
@@ -7265,10 +7403,8 @@ export async function advanceRun(
 }
 
 /**
- * Executes a step and automatically chains into subsequent `execution: auto` steps.
- * Stops at agent steps, gate steps (returning confirm_required), errors, or terminal state.
- * Returns next_actions containing the agent steps the run's view offers when the auto chain
- * exhausts (an agent step refused before its claim is not offered, decision C82).
+ * #715 (b) (Amendment 4): `executeChainBody`, with the reply carrying, privately, the snapshot it was
+ * judged on (`judgedSnapshotOf`). Its contract is the body's, documented below.
  */
 export async function executeChain(
   store: RunStore,
@@ -7283,6 +7419,20 @@ export async function executeChain(
     caller: options?.caller,
     parts: { definition, options },
   });
+  return attachJudged(await executeChainBody(store, definition, options));
+}
+
+/**
+ * Executes a step and automatically chains into subsequent `execution: auto` steps.
+ * Stops at agent steps, gate steps (returning confirm_required), errors, or terminal state.
+ * Returns next_actions containing the agent steps the run's view offers when the auto chain
+ * exhausts (an agent step refused before its claim is not offered, decision C82).
+ */
+async function executeChainBody(
+  store: RunStore,
+  definition: WorkflowDefinition,
+  options: ExecuteChainOptions,
+): Promise<EngineReply> {
   // decision C151: the call an expiry this call carries out is named by — before its named step or
   // a step it chains into.
   const via: ChainCaller = options.caller ?? 'executeChain';

@@ -225,6 +225,10 @@ async function drive(member: Member, otherBranch: boolean): Promise<Drive> {
   };
 }
 
+/** #715 (b) (02 §D.2): the entry's fence — the run's evidence count when it was appended (no question open). */
+const fenced = (entries: unknown[], evidenceCount: number) =>
+  entries.map((e) => ({ ...(e as Record<string, unknown>), evidence_count: evidenceCount }));
+
 const withoutTimes = (entries: Array<Record<string, unknown>> | undefined) =>
   (entries ?? []).map(({ at: _at, elapsed_ms: _ms, ...rest }) => rest);
 
@@ -254,8 +258,9 @@ describe('#625 PR-2a, decision C23 — an engine step that cannot run here', () 
         }
         // #401's chokepoint-4 record and the drive_failing finding: as before, for the input-schema
         // member only.
+        // #715 (b): the agent step beside it ran first — one evidence entry when the wedge was written.
         expect(withoutTimes(run.drive_failures?.entries as never)).toEqual(
-          BASE_DRIVE_FAILURES[member],
+          fenced(BASE_DRIVE_FAILURES[member], 1),
         );
         // A held capability reply is the exit — the drive attempts the step once, never twice.
         if (member === 'capability_first') {
@@ -285,8 +290,9 @@ describe('#625 PR-2a, decision C23 — an engine step that cannot run here', () 
           expect(rest).toEqual(BASE_CAPABILITY_LINES[member as 'capability_first']);
         }
         const { record: run } = await d.store.get(d.runId);
+        // #715 (b): nothing had run when the wedge was written — no evidence.
         expect(withoutTimes(run.drive_failures?.entries as never)).toEqual(
-          BASE_DRIVE_FAILURES[member],
+          fenced(BASE_DRIVE_FAILURES[member], 0),
         );
       });
     }

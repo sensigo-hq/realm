@@ -139,7 +139,10 @@ describe('inspectRun — Gate: line (issue #291)', () => {
     expect(result).toContain('[approve]');
   });
 
-  it('a gate with a frozen reminder shows "reminder due in"', async () => {
+  // #715 (b) (02 §D.3, Amendment 9): what is SCHEDULED, with its basis — never "due" or "overdue".
+  it('a gate with an authored reminder still to come: the Gate line names the next one and how many are scheduled, with the basis clause', async () => {
+    // (a) red when the line says a reminder is due or overdue, or drops the basis clause; (b) prints
+    //     the inspect output.
     const run = makeRun({
       pending_gate: makeGate({
         opened_at: new Date(Date.now() - 10_000).toISOString(),
@@ -147,7 +150,26 @@ describe('inspectRun — Gate: line (issue #291)', () => {
       }),
     });
     const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore());
-    expect(result).toContain('reminder due in');
+    expect(result).toContain(
+      ', next reminder: 1 of 3 scheduled (no send is recorded; reminders are sent only while a process attends this question)',
+    );
+    expect(result).not.toMatch(/reminder (due|overdue)/);
+  });
+
+  it('a gate whose authored reminders are all behind the reading: no further reminder is scheduled, with the basis clause', async () => {
+    // (a) red when a schedule with none left still names one, or reads as overdue; (b) prints it.
+    const run = makeRun({
+      pending_gate: makeGate({
+        opened_at: new Date(Date.now() - 200_000).toISOString(),
+        reminder_seconds: 60,
+        reminder_max: 3,
+      }),
+    });
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore());
+    expect(result).toContain(
+      ', no further reminder is scheduled (no send is recorded; reminders are sent only while a process attends this question)',
+    );
+    expect(result).not.toContain('overdue');
   });
 
   it('no Gate: line at all for a non-gated run', async () => {

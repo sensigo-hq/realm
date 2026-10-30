@@ -8,7 +8,9 @@ import {
   advanceRun,
   classifyStop,
   endedRunWaysSentence,
+  judgedSnapshotOf,
   composeWaysOn,
+  waysStoreOf,
   writtenSnapshot,
   hashParams,
   WorkflowError,
@@ -25,6 +27,7 @@ import {
   type Attributed,
   type Principal,
   type RunRecord,
+  type Snapshot,
   type WorkflowDefinition,
   type DisclosureClass,
   persistsField,
@@ -70,7 +73,8 @@ export function composeToolWays(
   return composeWaysOn(writtenSnapshot(run, at), {
     definition: { ok: definition },
     enactor: registry !== undefined ? { kind: 'this_program', registry } : { kind: 'observer' },
-    store: { persistsClaims: runStore.persistsClaims === true },
+    // #715 (b) (02 §C.1): with what the reply's instant stands on (`as_of_basis`).
+    store: waysStoreOf(runStore),
   });
 }
 
@@ -155,19 +159,20 @@ import { boundedLines, boundedRefusal, moreUnmetSteps } from './refusal-format.j
  * and every `started` entry of `start_run_batch` carry it; neither composes its own.
  *
  * @param run      The record the store returned: the run created, or the one the key matched.
- * @param current  The record the reply describes — `run`, or the one a capability block's attempt
- *                 left (decision C52).
+ * @param current  The snapshot of the record the reply describes — `run`, or the one a capability
+ *                 block's attempt left (decision C52) — and the reading it is judged at.
  */
 export function handBackHint(args: {
   run: RunRecord;
-  current: RunRecord;
+  current: Snapshot;
   definition: WorkflowDefinition;
   deduped: boolean;
 }): string {
   const { run, current, definition, deduped } = args;
   if (deduped) {
-    // decisions C205, C211: a matched run that has ended says the ways back in.
-    return `Matched existing run '${run.id}' (idempotent) in phase '${deriveRunPhase(run)}'; no new run created.${endedRunWaysSentence(current, definition, new Date())}`;
+    // decisions C205, C211: a matched run that has ended says the ways back in — #715 (b) (02 §A.1,
+    // D6-17): judged at the snapshot's own reading.
+    return `Matched existing run '${run.id}' (idempotent) in phase '${deriveRunPhase(run)}'; no new run created.${endedRunWaysSentence(current.record, definition, current.at)}`;
   }
   return run.rerun_of !== undefined
     ? `Run '${run.id}' created for workflow '${definition.id}'; it supersedes run '${run.rerun_of}' under the same idempotency key (on_terminal_match).`
@@ -367,6 +372,9 @@ export async function handleStartRun(
   // decision C52: the record the creation reply is composed from — the created record, or the one a
   // capability block left (its attempt wrote the marker and an entry).
   let createdRun = run;
+  // #715 (b) (02 §B.2): the reading `createdRun` was written or judged at — the create's, or the
+  // snapshot the block's reply was judged on.
+  let createdRunAt = createdAt;
   let capabilityBlock: EngineReply | undefined;
   if (!deduped) {
     const result = await advanceRun(runStore, definition, {
@@ -389,20 +397,21 @@ export async function handleStartRun(
     // `context_hint`: "Step '<s>' is blocked: …") rides in `warnings`, in place of that step's
     // pre-flight warning (decision C58). A failed step is returned as is.
     // F7: the reply read by core's classifier (one rule for every host — no code list here).
-    const afterAdvance =
-      result.status === 'error'
-        ? (await runStore.get(run.id).catch(() => writtenSnapshot(run, createdAt))).record
-        : undefined;
+    // #715 (b) (D6-17, Amendment 4): the snapshot advanceRun judged its reply on — no second load.
+    // A reply that loaded no run carries none: then nothing is said about the record after the call
+    // (no phase, no supersede line, no ways back in) — the engine's reply stands as it is.
+    const judged = judgedSnapshotOf(result);
+    const afterAdvance = result.status === 'error' ? judged?.record : undefined;
     if (
       afterAdvance !== undefined &&
       classifyStop(result, undefined, afterAdvance)?.kind === 'capability_missing'
     ) {
       capabilityBlock = result;
       createdRun = afterAdvance;
+      createdRunAt = judged!.at;
     } else if (ranSomething) {
       // decision C10: the phase is derived from the record advanceRun leaves.
-      const finalSnap = await runStore.get(run.id).catch(() => writtenSnapshot(run, createdAt));
-      const finalRun = finalSnap.record;
+      const finalRun = judged?.record;
       // decisions C205, C211 (the architect's addendum): a run this call ended — its own step
       // failed, or cleanup steps were left pending — says the ways back in.
       const ranReply: EngineReply = {
@@ -410,12 +419,12 @@ export async function handleStartRun(
         run_id: run.id,
         data: {},
         evidence: [],
-        run_phase: deriveRunPhase(finalRun),
+        ...(finalRun !== undefined ? { run_phase: deriveRunPhase(finalRun) } : {}),
         warnings: [...result.warnings, ...warnings],
         // issue #558 PR-C (walk): a superseding run says so in the response that created it — the
         // agent should not need a second call to learn that `on_terminal_match: 'rerun'` replaced
         // a run.
-        ...(finalRun.rerun_of !== undefined ? { rerun_of: finalRun.rerun_of } : {}),
+        ...(finalRun?.rerun_of !== undefined ? { rerun_of: finalRun.rerun_of } : {}),
       };
       // walk 2: the hint is what an agent reads first; a supersede must be said there, not only
       // carried as a key below the next_actions block. It, or the ended run's ways back in, follow
@@ -427,14 +436,16 @@ export async function handleStartRun(
         call,
       );
       // Correction 1 (B7): the ended run's ways back in are read from the record as it stands after
-      // the form's wait — a run that ended during the form gets them.
+      // the form's wait — a run that ended during the form gets them (a deliberate wait: its own
+      // read, judged at its own reading — #715 (b), B.1).
       const afterSnap =
-        after === ranReply ? finalSnap : await runStore.get(run.id).catch(() => finalSnap);
+        after === ranReply ? judged : await runStore.get(run.id).catch(() => judged);
       const tail =
-        finalRun.rerun_of !== undefined
+        finalRun?.rerun_of !== undefined
           ? ` This run supersedes run '${finalRun.rerun_of}' under the same idempotency key (on_terminal_match).`
-          : // #715 (b): judged at the snapshot's own reading.
-            endedRunWaysSentence(afterSnap.record, definition, afterSnap.at);
+          : afterSnap !== undefined
+            ? endedRunWaysSentence(afterSnap.record, definition, afterSnap.at)
+            : '';
       return {
         ...mcpReplyOf(withHintTail(renderReply(after, mcpHostOf(stores)), tail)),
         deduped,
@@ -443,8 +454,9 @@ export async function handleStartRun(
   }
 
   // decision C95: with the clock, a run the key matched whose open question is due (its time is up,
-  // `on_expiry` declared) is handed back with the `advance_run` act that carries it out.
-  const now = new Date();
+  // `on_expiry` declared) is handed back with the `advance_run` act that carries it out. #715 (b)
+  // (02 §B.2): judged at the reading of the record the hand-back describes — never a fresh clock.
+  const handedBack = writtenSnapshot(createdRun, createdRunAt);
   // decision C58: the block happened, so the pre-flight warning for the same step ("If reached it
   // will block") is dropped beside it. The blocked steps are the ones whose `capability_blocks`
   // marker this call's attempt wrote — a created run carries none before it.
@@ -479,10 +491,10 @@ export async function handleStartRun(
     // issue #625 PR-2a (decisions C45, C57, C64): a run this call ran nothing on — created, or
     // matched by its key — says what comes next in its own hint, so a step that cannot run, and the
     // way out when the run cannot go on, are named on the reply that hands the run back.
-    context_hint: handBackHint({ run, current: createdRun, definition, deduped }),
+    context_hint: handBackHint({ run, current: handedBack, definition, deduped }),
     run_phase: deriveRunPhase(createdRun),
     ...(run.rerun_of !== undefined ? { rerun_of: run.rerun_of } : {}),
-    ...composeToolWays(runStore, definition, createdRun, registry, now),
+    ...composeToolWays(runStore, definition, createdRun, registry, handedBack.at),
     // decisions C45, C57, C64: the hand-back says what comes next on a live run (the renderer's).
     ...(createdRun.terminal_state ? {} : { names_next: true as const }),
   };

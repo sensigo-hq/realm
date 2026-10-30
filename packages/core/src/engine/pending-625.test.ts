@@ -47,6 +47,7 @@ import type { RunRecord, EvidenceSnapshot } from '../types/run-record.js';
 import type { WorkflowDefinition, StepDefinition } from '../types/workflow-definition.js';
 import type { ExtensionIdentityEntry } from '../types/extension-identity.js';
 import type { RunStore } from '../store/store-interface.js';
+import { writtenSnapshot } from './snapshot.js';
 
 const echo: StepDispatcher = async (_name, input) => ({ ...input });
 
@@ -138,9 +139,8 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
       expect(owedOf(answered)).toEqual(['after']);
       const pending = describePending(
         gateThenAuto,
-        (await store.get(run.id)).record,
+        writtenSnapshot((await store.get(run.id)).record, new Date()),
         undefined,
-        new Date(),
       );
       expect(composeNextActionsStatusWord(pending)).toBe(ADVANCE_OWED);
       expect(ADVANCE_OWED).toBe('advance_owed');
@@ -261,7 +261,7 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
       evidence: [],
       terminal_state: false,
     } as unknown as RunRecord;
-    const two = describePending(d, fresh, undefined, new Date());
+    const two = describePending(d, writtenSnapshot(fresh, new Date()), undefined);
     // decision C207: with several owed, where one advance call stops — never a promise that all run.
     expect(owedWords(two)).toEqual({
       steps: 'the steps',
@@ -271,9 +271,8 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
     expect(two.owed).toEqual([{ step: 'a' }, { step: 'b' }]);
     const one = describePending(
       def({ a: { description: 'A', execution: 'auto', depends_on: [] } }),
-      fresh,
+      writtenSnapshot(fresh, new Date()),
       undefined,
-      new Date(),
     );
     expect(owedWords(one)).toEqual({ steps: 'the step', them: 'it', until: '' });
     expect(one.owed).toEqual([{ step: 'a' }]);
@@ -298,7 +297,9 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
           .map((w) => (w.verb === 'run_step' ? `run_step:${w.step}` : w.verb)),
       ).toEqual(['run_step:a', 'advance']);
       expect(
-        composeNextActionsStatusWord(describePending(d, run, undefined, new Date())),
+        composeNextActionsStatusWord(
+          describePending(d, writtenSnapshot(run, new Date()), undefined),
+        ),
       ).toBeUndefined();
     });
   });
@@ -324,7 +325,7 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
       evidence: [{ step_id: 'w', status: 'success', output_summary: { ok: true } }],
       terminal_state: false,
     } as unknown as RunRecord;
-    const pending = describePending(d, run, undefined, new Date());
+    const pending = describePending(d, writtenSnapshot(run, new Date()), undefined);
     expect(pending.pending_guards).toEqual(['g']);
     expect(pending.owed).toEqual([{ step: 'g' }, { step: 'x' }]);
   });
@@ -341,25 +342,28 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
       evidence: [],
       terminal_state: false,
     } as unknown as RunRecord;
-    expect(describePending(d, live, undefined, new Date()).owed).not.toEqual([]);
+    expect(describePending(d, writtenSnapshot(live, new Date()), undefined).owed).not.toEqual([]);
     expect(
-      describePending(d, { ...live, terminal_state: true }, undefined, new Date()).owed,
+      describePending(d, writtenSnapshot({ ...live, terminal_state: true }, new Date()), undefined)
+        .owed,
     ).toEqual([]);
     expect(
       describePending(
         d,
-        {
-          ...live,
-          pending_gate: {
-            gate_id: 'g',
-            step_name: 'y',
-            choices: ['a'],
-            opened_at: '',
-            preview: {},
-          },
-        } as RunRecord,
+        writtenSnapshot(
+          {
+            ...live,
+            pending_gate: {
+              gate_id: 'g',
+              step_name: 'y',
+              choices: ['a'],
+              opened_at: '',
+              preview: {},
+            },
+          } as RunRecord,
+          new Date(),
+        ),
         undefined,
-        new Date(),
       ).owed,
     ).toEqual([]);
   });
@@ -390,9 +394,9 @@ describe('#625 PR-2a — checkPreClaim, one cell per member of PRE_CLAIM_REFUSAL
     });
     const v = checkPreClaim({ definition: d, run: live(), step: 'x', input: {} });
     expect(v && 'refused_by' in v ? v.refused_by : undefined).toBe('trust');
-    expect(describePending(d, live(), undefined, new Date()).engine_runnable).toEqual([
-      expect.objectContaining({ step: 'x', runnable_here: false, refused_by: 'trust' }),
-    ]);
+    expect(
+      describePending(d, writtenSnapshot(live(), new Date()), undefined).engine_runnable,
+    ).toEqual([expect.objectContaining({ step: 'x', runnable_here: false, refused_by: 'trust' })]);
   });
 
   it('precondition: the hint and the suggestion executeStep returns', () => {
@@ -432,7 +436,9 @@ describe('#625 PR-2a — checkPreClaim, one cell per member of PRE_CLAIM_REFUSAL
       },
     });
     expect(engineStepInput(d, live([], { alpha: 'a' }), 'x')).toEqual({ alpha: 'a' });
-    expect(describePending(d, live([], {}), undefined, new Date()).engine_runnable[0]).toEqual({
+    expect(
+      describePending(d, writtenSnapshot(live([], {}), new Date()), undefined).engine_runnable[0],
+    ).toEqual({
       step: 'x',
       runnable_here: false,
       refused_by: 'input_schema',
@@ -457,22 +463,24 @@ describe('#625 PR-2a — checkPreClaim, one cell per member of PRE_CLAIM_REFUSAL
       },
     });
     expect(
-      describePending(nested, live([], { n: { m: 'one' } }), undefined, new Date())
+      describePending(nested, writtenSnapshot(live([], { n: { m: 'one' } }), new Date()), undefined)
         .engine_runnable[0]?.refusal,
     ).toBe("Invalid input for step 'x': 'n.m' must be number");
     expect(
-      describePending(d, live([], { alpha: 'a' }), undefined, new Date()).engine_runnable[0]
-        ?.runnable_here,
+      describePending(d, writtenSnapshot(live([], { alpha: 'a' }), new Date()), undefined)
+        .engine_runnable[0]?.runnable_here,
     ).toBe(true);
   });
 
   it('capability: unknown with no registry; refused with one that lacks it; runnable with one that has it', () => {
     const d = def({ x: { description: 'X', execution: 'auto', depends_on: [], handler: 'h' } });
     expect(
-      describePending(d, live(), undefined, new Date()).engine_runnable[0]?.runnable_here,
+      describePending(d, writtenSnapshot(live(), new Date()), undefined).engine_runnable[0]
+        ?.runnable_here,
     ).toBe('unknown');
     expect(
-      describePending(d, live(), new ExtensionRegistry(), new Date()).engine_runnable[0],
+      describePending(d, writtenSnapshot(live(), new Date()), new ExtensionRegistry())
+        .engine_runnable[0],
     ).toEqual({
       step: 'x',
       runnable_here: false,
@@ -484,11 +492,14 @@ describe('#625 PR-2a — checkPreClaim, one cell per member of PRE_CLAIM_REFUSAL
     });
     const reg = new ExtensionRegistry();
     reg.register('handler', 'h', { id: 'h', execute: async () => ({ data: {} }) });
-    expect(describePending(d, live(), reg, new Date()).engine_runnable[0]?.runnable_here).toBe(
-      true,
-    );
+    expect(
+      describePending(d, writtenSnapshot(live(), new Date()), reg).engine_runnable[0]
+        ?.runnable_here,
+    ).toBe(true);
     // A refused step is never named, so with nothing else owed the act is withdrawn.
-    expect(describePending(d, live(), new ExtensionRegistry(), new Date()).owed).toEqual([]);
+    expect(
+      describePending(d, writtenSnapshot(live(), new Date()), new ExtensionRegistry()).owed,
+    ).toEqual([]);
   });
 });
 
@@ -526,7 +537,8 @@ describe('#625 PR-2a — L9 agreement: executeStep refuses exactly when the view
           workflowVersion: 1,
           params: c.params ?? {},
         });
-        const view = describePending(d, run, undefined, new Date()).engine_runnable[0]!;
+        const view = describePending(d, writtenSnapshot(run, new Date()), undefined)
+          .engine_runnable[0]!;
         expect(view.runnable_here).toBe(false);
         expect(view.refused_by).toBe(c.member);
         const reply = await executeStep(store, d, {
@@ -550,7 +562,8 @@ describe('#625 PR-2a — L9 agreement: executeStep refuses exactly when the view
           params: {},
         });
         expect(
-          describePending(d, run, undefined, new Date()).engine_runnable[0]!.runnable_here,
+          describePending(d, writtenSnapshot(run, new Date()), undefined).engine_runnable[0]!
+            .runnable_here,
         ).toBe(true);
         const reply = await executeStep(store, d, {
           runId: run.id,
@@ -571,9 +584,9 @@ describe('#625 PR-2a — L9 agreement: executeStep refuses exactly when the view
         params: {},
       });
       const empty = new ExtensionRegistry();
-      expect(describePending(d, run, empty, new Date()).engine_runnable[0]!.refused_by).toBe(
-        'capability',
-      );
+      expect(
+        describePending(d, writtenSnapshot(run, new Date()), empty).engine_runnable[0]!.refused_by,
+      ).toBe('capability');
       const reply = await executeStep(store, d, {
         runId: run.id,
         command: 'x',
@@ -631,8 +644,10 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
       const { record: after } = await store.get(run.id);
       expect(after.completed_steps).toEqual(['b']);
       // L5: the act is withdrawn — only the refused step is left, and it is never named.
-      expect(describePending(d, after, undefined, new Date()).owed).toEqual([]);
-      expect(describePending(d, after, undefined, new Date()).engine_runnable).toEqual([
+      expect(describePending(d, writtenSnapshot(after, new Date()), undefined).owed).toEqual([]);
+      expect(
+        describePending(d, writtenSnapshot(after, new Date()), undefined).engine_runnable,
+      ).toEqual([
         expect.objectContaining({ step: 'a', runnable_here: false, refused_by: 'precondition' }),
       ]);
     });
@@ -651,7 +666,9 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
       });
       const reg = new ExtensionRegistry();
       // The act names only `b` (the view refuses `a` for capability)…
-      expect(describePending(d, run, reg, new Date()).owed).toEqual([{ step: 'b' }]);
+      expect(describePending(d, writtenSnapshot(run, new Date()), reg).owed).toEqual([
+        { step: 'b' },
+      ]);
       const steps: string[] = [];
       const first = await advanceRun(store, d, {
         runId: run.id,
@@ -672,9 +689,9 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
       });
       expect(again).toEqual([]);
       expect(second.status).toBe('ok');
-      expect(describePending(d, (await store.get(run.id)).record, reg, new Date()).owed).toEqual(
-        [],
-      );
+      expect(
+        describePending(d, writtenSnapshot((await store.get(run.id)).record, new Date()), reg).owed,
+      ).toEqual([]);
     });
   });
 
@@ -702,7 +719,11 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
           workflowVersion: 1,
           params: {},
         });
-        const before = describePending(d, (await store.get(run.id)).record, undefined, new Date());
+        const before = describePending(
+          d,
+          writtenSnapshot((await store.get(run.id)).record, new Date()),
+          undefined,
+        );
         expect(before.owed).toEqual([]);
         expect(before.engine_runnable).toEqual([
           expect.objectContaining({ step: 'x', runnable_here: false, refused_by: member }),
@@ -722,7 +743,11 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
         ).toMatchObject({ code: 'refused_before_claim', facts: { check: member } });
         expect(agentActionFor(reply)).toBe('report_to_user');
         expect(
-          describePending(d, (await store.get(run.id)).record, undefined, new Date()).owed,
+          describePending(
+            d,
+            writtenSnapshot((await store.get(run.id)).record, new Date()),
+            undefined,
+          ).owed,
         ).toEqual([]);
       });
     });
@@ -1104,7 +1129,8 @@ describe('#625 PR-2a — L8 witnesses (source text)', () => {
     const ra = code('cli/src/agent/run-agent.ts');
     // decision C82: the pick is the view's offered agent steps — a refused one is never picked.
     expect(ra).toContain(
-      'describePending(definition, currentRun, deps.registry, new Date()).agent_steps',
+      // #715 (b) (02 §A.1): the view judges the held snapshot — the record and its own reading.
+      'describePending(definition, writtenSnapshot(currentRun, currentAt!), deps.registry) .agent_steps',
     );
     expect(ra).not.toContain("execution === 'auto'");
     expect(ra).not.toContain('executeStep(');
@@ -1253,8 +1279,11 @@ describe('#625 PR-2a — round 5: one cell per reply site (C39), the C24 rebuild
         },
       },
     } as unknown as RunRecord;
-    const byRegistry = describePending(d, live, new ExtensionRegistry(), new Date())
-      .engine_runnable[0]!;
+    const byRegistry = describePending(
+      d,
+      writtenSnapshot(live, new Date()),
+      new ExtensionRegistry(),
+    ).engine_runnable[0]!;
     expect(byRegistry).toEqual({
       step: 'x',
       runnable_here: false,
@@ -1264,7 +1293,8 @@ describe('#625 PR-2a — round 5: one cell per reply site (C39), the C24 rebuild
       // #872 (a) (add-only): the handler or adapter refused, as data.
       requirement: { kind: 'handler', name: 'h' },
     });
-    const byMarker = describePending(d, marked, undefined, new Date()).engine_runnable[0]!;
+    const byMarker = describePending(d, writtenSnapshot(marked, new Date()), undefined)
+      .engine_runnable[0]!;
     expect(byMarker).toEqual({
       step: 'x',
       runnable_here: false,
@@ -1297,9 +1327,11 @@ describe('#625 PR-2a — round 5: one cell per reply site (C39), the C24 rebuild
       x: { description: 'X', execution: 'auto', depends_on: [], trust: 'nope' as never },
     });
     expect(
-      describePending(trust, live, undefined, new Date()).engine_runnable[0],
+      describePending(trust, writtenSnapshot(live, new Date()), undefined).engine_runnable[0],
     ).not.toHaveProperty('basis');
-    expect(describePending(d, live, hasNote2(), new Date()).engine_runnable[0]).toEqual({
+    expect(
+      describePending(d, writtenSnapshot(live, new Date()), hasNote2()).engine_runnable[0],
+    ).toEqual({
       step: 'x',
       runnable_here: true,
     });
@@ -1330,8 +1362,8 @@ describe('#625 PR-2a — round 5: one cell per reply site (C39), the C24 rebuild
       },
     });
     expect(
-      describePending(top, live({ n: 1, extra: true }), undefined, new Date()).engine_runnable[0]
-        ?.refusal,
+      describePending(top, writtenSnapshot(live({ n: 1, extra: true }), new Date()), undefined)
+        .engine_runnable[0]?.refusal,
     ).toBe("Invalid input for step 'x': 'extra' is not allowed");
     const nested = def({
       x: {
@@ -1351,8 +1383,11 @@ describe('#625 PR-2a — round 5: one cell per reply site (C39), the C24 rebuild
       },
     });
     expect(
-      describePending(nested, live({ n: { m: 1, stray: 2 } }), undefined, new Date())
-        .engine_runnable[0]?.refusal,
+      describePending(
+        nested,
+        writtenSnapshot(live({ n: { m: 1, stray: 2 } }), new Date()),
+        undefined,
+      ).engine_runnable[0]?.refusal,
     ).toBe("Invalid input for step 'x': 'n.stray' is not allowed");
     // executeStep's own reply for the same refusal: the engine's message, byte-identical.
     await withStore(async (store) => {
@@ -1397,7 +1432,8 @@ describe("#625 PR-2a — round 6: the view's trust voice (C49), the tools' way o
         params: {},
       });
       // The view: the read-time voice — nothing was dispatched, and the agent step beside it runs.
-      const entry = describePending(d, run, undefined, new Date()).engine_runnable[0]!;
+      const entry = describePending(d, writtenSnapshot(run, new Date()), undefined)
+        .engine_runnable[0]!;
       expect(entry).toEqual({
         step: 'work',
         runnable_here: false,
@@ -1738,7 +1774,7 @@ describe('#625 PR-2a, round 29 — C206, C207, C208: the one choice form, where 
           workflowVersion: 1,
           params: {},
         });
-        const view = describePending(d, run, registry, new Date());
+        const view = describePending(d, writtenSnapshot(run, new Date()), registry);
         const steps: string[] = [];
         const reply = await advanceRun(store, d, {
           runId: run.id,
@@ -1866,7 +1902,7 @@ describe('#625 PR-2a, round 30 — C211, C212: the composers', () => {
       in_progress_steps: ['q'],
       pending_gate: gate,
     } as never);
-    const view = describePending(def, open, undefined, new Date());
+    const view = describePending(def, writtenSnapshot(open, new Date()), undefined);
     // (a) red when a held step is left out, the question's own step or a step after it is named, or
     //     a run with no question names any; (b) prints them.
     expect({
@@ -2016,8 +2052,8 @@ describe('issue #759 — the pending refusal names every problem', () => {
       },
     });
     expect(
-      describePending(d, run({ n: 'one', extra: true }), undefined, new Date()).engine_runnable[0]
-        ?.refusal,
+      describePending(d, writtenSnapshot(run({ n: 'one', extra: true }), new Date()), undefined)
+        .engine_runnable[0]?.refusal,
     ).toBe(
       "Invalid input for step 'x': the input must have required property 'alpha'; 'extra' is not allowed; 'n' must be number",
     );
@@ -2036,7 +2072,8 @@ describe('issue #759 — the pending refusal names every problem', () => {
       },
     });
     const refusal =
-      describePending(d, run({}), undefined, new Date()).engine_runnable[0]?.refusal ?? '';
+      describePending(d, writtenSnapshot(run({}), new Date()), undefined).engine_runnable[0]
+        ?.refusal ?? '';
     const verdict = checkPreClaim({ definition: d, run: run({}), step: 'x', input: {} });
     expect({
       clauses: refusal.split('; ').length,

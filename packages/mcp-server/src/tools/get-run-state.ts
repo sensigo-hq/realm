@@ -24,6 +24,7 @@ import {
   describePending,
   composeNextActionsStatusWord,
   composeWaysOn,
+  waysStoreOf,
   definitionAbsenceOf,
   dueExpiry,
   loadSnapshot,
@@ -990,7 +991,8 @@ export async function handleGetRunState(
             : registry !== undefined
               ? { kind: 'this_program', registry }
               : { kind: 'observer' },
-        store: { persistsClaims: runStore.persistsClaims === true },
+        // #715 (b) (02 §C.1): with what the reply's instant stands on (`as_of_basis`).
+        store: waysStoreOf(runStore),
       }),
       mcpHostOf(stores),
     );
@@ -1089,7 +1091,7 @@ export async function handleGetRunState(
           warnings.push(loadFailureWarning(run.workflow_id, loadFailed, err));
         }
       }
-      pending = describePending(definition, run, registry, now);
+      pending = describePending(definition, snap, registry);
       nextActionsStatus = composeNextActionsStatusWord(pending) ?? 'ok';
     }
 
@@ -1103,7 +1105,7 @@ export async function handleGetRunState(
       // The open question's own step holds a claim while it waits (decision C95 reaches this block
       // with a question open, when its time is up): it is not work in flight, as `stuck_claims`
       // below says too.
-      const claimStates = classifyInProgressClaims(run)
+      const claimStates = classifyInProgressClaims(snap)
         .filter((c) => c.step !== run.pending_gate?.step_name)
         .map((c) => c.state);
       if (claimStates.includes('claim_stale')) {
@@ -1144,7 +1146,7 @@ export async function handleGetRunState(
   // sibling claim on another fan-out branch is still surfaced here. The open-gate step is excluded.
   const stuckClaims = run.terminal_state
     ? []
-    : classifyInProgressClaims(run)
+    : classifyInProgressClaims(snap)
         .filter((c) => c.state !== 'healthy' && c.step !== run.pending_gate?.step_name)
         .map((c) => ({ step: c.step, state: c.state }));
 
@@ -1202,7 +1204,7 @@ export async function handleGetRunState(
   // finalized BEFORE this line runs — nothing below this point may write back to it.
   const runHealth: RunHealthFinding[] = run.terminal_state
     ? []
-    : classifyRunHealth(run, {
+    : classifyRunHealth(snap, {
         ...(definition !== undefined ? { definition } : {}),
         ...(definitionError !== undefined ? { definitionError } : {}),
         // issue #625 PR-2a (decision C46): a server that can run a step is not told the step is

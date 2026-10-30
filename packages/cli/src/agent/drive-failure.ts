@@ -299,11 +299,18 @@ export async function recordDriveFailure(
       if (run.terminal_state) return;
 
       const prev: DriveFailuresField | undefined = run.drive_failures;
+      // #715 (b) (02 §D.2): what the run held when this entry is appended, read in this write — the
+      // `drive_failing` finding fires while nothing was recorded since (counts, never stamps).
+      const fenced: DriveFailureRecord = {
+        ...stored,
+        evidence_count: run.evidence.length,
+        ...(run.pending_gate !== undefined ? { gate_id: run.pending_gate.gate_id } : {}),
+      };
       const field: DriveFailuresField = {
         first_failed_at: prev?.first_failed_at ?? entry.at,
         // Monotonic and OUTSIDE the ring: a run that failed forty times must not read as five.
         total: (prev?.total ?? 0) + 1,
-        entries: [...(prev?.entries ?? []), stored].slice(-RING_CAP),
+        entries: [...(prev?.entries ?? []), fenced].slice(-RING_CAP),
       };
 
       try {

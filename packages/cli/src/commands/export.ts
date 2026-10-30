@@ -47,6 +47,7 @@ import {
   withoutMarks,
   writerCtx,
 } from '../output/writer.js';
+import { openRunStore } from '../lib/run-store.js';
 
 /** Fixed redaction marker (issue #197 PR-2, design §6) — replaces every `nonce` value belonging
  *  to a step currently in `in_progress_steps` on a NON-terminal export (the claimant-nonce
@@ -494,9 +495,9 @@ export const exportCommand = new Command('export')
     "Write the bundle even when the run's declared secrets are not all known (its manifest changed, could not be read, or the run has no project): it is masked with what is known, and its header says so",
   )
   .action(async (runId: string, opts: { out?: string; acceptPartialDisclosure?: boolean }) => {
-    const { JsonFileStore, FailedAttemptStore } = await import('@sensigo/realm');
+    const { FailedAttemptStore } = await import('@sensigo/realm');
     const { JsonTraceBufferStore } = await import('@sensigo/realm-mcp');
-    const runStore = new JsonFileStore();
+    const runStore = openRunStore();
     const runsDir = runStore.runsDirPath;
     const failedAttemptStore = new FailedAttemptStore(runsDir);
     const traceBufferStore = new JsonTraceBufferStore(runsDir, runStore);

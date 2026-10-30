@@ -379,7 +379,6 @@ describe('#625 PR-2a, C144/C149/C151 — each call names itself; the suggestion 
           step: 'q',
           on_expiry: onExpiry,
           enacted_via: via,
-          by_this_call: true,
           overdue: { ms: 5_000 },
         });
         // (a) red when enacted_via is written to the run's record; (b) prints the record's text.

@@ -36,6 +36,7 @@ import { renderDetachMap } from './run.js';
 import { CLI_COMMANDS, NO_DRIVE_FLAGS } from './ways-renderer.js';
 import { buildReattachFlags } from './agent.js';
 import { inFlightLine } from '../lib/holder-render.js';
+import { writtenSnapshot } from '@sensigo/realm';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLI = join(HERE, '../../dist/index.js');
@@ -167,8 +168,8 @@ describe('#625 PR-2a, F6 — a printed command is safe to paste', { timeout: 60_
       const h = await atQuestion([choice], `paste-map-${CHOICES.findIndex(([l]) => l === label)}`);
       const { record: record } = await runStore.get(h.runId);
       lines['hand-back'] = commandOf(
-        renderDetachMap(record, 'ask', {
-          pending: describePending(h.def, record, undefined, new Date()),
+        renderDetachMap(record, new Date(), 'ask', {
+          pending: describePending(h.def, writtenSnapshot(record, new Date()), undefined),
           workflow: h.def,
         })
           .split('\n')

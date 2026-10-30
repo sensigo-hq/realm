@@ -52,6 +52,7 @@ const refused = (step: string, check: 'trust' | 'precondition', refusal: string)
 import { inspectRun } from './inspect.js';
 import { resumeRun } from './resume.js';
 import { sweepExpiredGates } from './listen.js';
+import { writtenSnapshot } from '@sensigo/realm';
 
 const wf = (id: string, steps: WorkflowDefinition['steps']): WorkflowDefinition => ({
   id,
@@ -511,7 +512,8 @@ describe("#625 PR-2a — listen's sweeper names the owed steps an expiry leaves"
       const line = logged.find(([m]) => m === 'listen: sweeper enacted an expired gate');
       expect((line?.[1] as Record<string, unknown>)['owed']).toEqual(['after']);
       expect(
-        describePending(d, (await runs.get(run.id)).record, undefined, new Date()).owed,
+        describePending(d, writtenSnapshot((await runs.get(run.id)).record, new Date()), undefined)
+          .owed,
       ).toEqual([{ step: 'after' }]);
     } finally {
       rmSync(home, { recursive: true, force: true });
@@ -1888,11 +1890,9 @@ describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says
     [
       "the advance call's first read (the reply names no step)",
       2,
-      [
-        'Stopped: Failed to load run from store: disk gone',
-        "Stopped: the engine still owes 's' — to run it: realm run advance <run>",
-        "Run <run>: phase 'running'",
-      ],
+      // #715 (b) (Amendment 4 (4)): the reply loaded no run, so it hands back no snapshot — the
+      // command says the engine's words and reads the run no more (no stop reasons, no phase line).
+      ['Stopped: Failed to load run from store: disk gone'],
     ],
   ] as const)(
     'the run cannot be read at %s: the engine\'s words, never "failed"; exit 1',

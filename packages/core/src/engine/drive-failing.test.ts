@@ -6,6 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import { classifyRunHealth, DEFAULT_IDLE_THRESHOLD_MS } from './run-health.js';
 import type { RunRecord, DriveFailureRecord, EvidenceSnapshot } from '../types/run-record.js';
+import { writtenSnapshot } from './snapshot.js';
 
 const T0 = '2026-01-01T00:00:00.000Z';
 const NOW = new Date('2026-01-01T00:05:00.000Z');
@@ -44,7 +45,7 @@ function makeRun(over: Partial<RunRecord> = {}): RunRecord {
 }
 
 const kinds = (run: RunRecord, now = NOW): string[] =>
-  classifyRunHealth(run, { now }).map((f) => f.kind);
+  classifyRunHealth(writtenSnapshot(run, now)).map((f) => f.kind);
 
 function snapshot(step: string, completedAt: string): EvidenceSnapshot {
   return {
@@ -63,7 +64,7 @@ describe('drive_failing — the base case', () => {
   });
 
   it('carries the step, the class and the counters as evidence', () => {
-    const [finding] = classifyRunHealth(makeRun(), { now: NOW }).filter(
+    const [finding] = classifyRunHealth(writtenSnapshot(makeRun(), NOW)).filter(
       (f) => f.kind === 'drive_failing',
     );
     expect(finding?.step).toBe('classify');
@@ -150,7 +151,7 @@ describe('drive_failing — conjunct (iv): the failing step must not have settle
 
 describe('drive_failing — the reason string', () => {
   it('names when, what class, and what the provider said', () => {
-    const [finding] = classifyRunHealth(makeRun(), { now: NOW }).filter(
+    const [finding] = classifyRunHealth(writtenSnapshot(makeRun(), NOW)).filter(
       (f) => f.kind === 'drive_failing',
     );
     expect(finding?.reason).toBe(
@@ -166,12 +167,14 @@ describe('drive_failing — the reason string', () => {
         entries: [failure()],
       },
     });
-    const [f1] = classifyRunHealth(rolled, { now: NOW }).filter((f) => f.kind === 'drive_failing');
+    const [f1] = classifyRunHealth(writtenSnapshot(rolled, NOW)).filter(
+      (f) => f.kind === 'drive_failing',
+    );
     expect(f1?.reason).toContain('; 9 failures since 2026-01-01T00:00:30.000Z');
 
     // Polarity: total === entries.length ⇒ no suffix, because it would restate what the entries
     // already show.
-    const [f2] = classifyRunHealth(makeRun(), { now: NOW }).filter(
+    const [f2] = classifyRunHealth(writtenSnapshot(makeRun(), NOW)).filter(
       (f) => f.kind === 'drive_failing',
     );
     expect(f2?.reason).not.toContain('failures since');
@@ -190,7 +193,7 @@ describe('drive_failing — the discriminators reach the operator', () => {
     const run = makeRun({
       drive_failures: { first_failed_at: rich.at, total: 1, entries: [rich] },
     });
-    const [finding] = classifyRunHealth(run, { now: NOW }).filter(
+    const [finding] = classifyRunHealth(writtenSnapshot(run, NOW)).filter(
       (f) => f.kind === 'drive_failing',
     );
     expect(finding?.evidence).toMatchObject({
@@ -202,7 +205,7 @@ describe('drive_failing — the discriminators reach the operator', () => {
   });
 
   it('and are ABSENT, not null, when the entry does not carry them', () => {
-    const [finding] = classifyRunHealth(makeRun(), { now: NOW }).filter(
+    const [finding] = classifyRunHealth(writtenSnapshot(makeRun(), NOW)).filter(
       (f) => f.kind === 'drive_failing',
     );
     expect(finding?.evidence).not.toHaveProperty('last_observed_status');
@@ -278,7 +281,8 @@ describe('drive_failing — the "ago" phrasing, per branch', () => {
   // Only the minutes branch was pinned; the other three could each drift silently.
   const at = (offsetMs: number): Date => new Date(new Date(failure().at).getTime() + offsetMs);
   const reasonAt = (now: Date): string | undefined =>
-    classifyRunHealth(makeRun(), { now }).find((f) => f.kind === 'drive_failing')?.reason;
+    classifyRunHealth(writtenSnapshot(makeRun(), now)).find((f) => f.kind === 'drive_failing')
+      ?.reason;
 
   it('seconds', () => {
     expect(reasonAt(at(45_000))).toContain('failed 45s ago');

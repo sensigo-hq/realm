@@ -9,14 +9,17 @@
 // `computeClaimDeadline`); detection classifies each in-progress claim into one of three states
 // WITHOUT needing the workflow definition (it reads the stored deadline). Recovery is a
 // deliberate per-step act (`reclaimStep` / `realm run reclaim`), never a background sweep.
-import type { RunRecord, ClaimRecord } from '../types/run-record.js';
+import type { ClaimRecord } from '../types/run-record.js';
+import type { Snapshot } from './snapshot.js';
 import type {
   WorkflowDefinition,
   StepDefinition,
   RetryConfig,
 } from '../types/workflow-definition.js';
 import { computeBackoff } from './backoff.js';
-import { parseStamp } from './instants.js';
+import { isPastDeadline, readInstant } from './instants.js';
+import { WAITING_PHASES } from './lifecycle.js';
+import { deriveRunPhase } from './eligibility.js';
 
 /**
  * Default execution timeout (issue A3) enforced on every `execution: 'auto'` step that declares no
@@ -197,7 +200,9 @@ export type ClaimState = 'healthy' | 'claim_stale' | 'claim_unknown_age';
 /** Classifies a single claim record against `now`. Definition-free (reads only the stored deadline). */
 export function classifyClaim(claim: ClaimRecord | undefined, now: Date): ClaimState {
   if (claim === undefined || claim.deadline === null) return 'claim_unknown_age';
-  return now.getTime() > (parseStamp(claim.deadline) ?? NaN) ? 'claim_stale' : 'healthy';
+  // #715 (b) (Amendment 11): the engine's one due test (`at ≥ deadline`) — a claim is stale AT its
+  // deadline, as every other reader of a deadline says; an unparseable one is never past (healthy).
+  return isPastDeadline(claim.deadline, now) ? 'claim_stale' : 'healthy';
 }
 
 /** A classified in-progress claim: the step, its liveness state, and its stored deadline. */
@@ -210,13 +215,29 @@ export interface InProgressClaimInfo {
 /**
  * Classifies every in-progress claim on a run. Definition-free — works even when the workflow
  * definition is unresolved (detection reads the stored per-claim deadline, not the definition).
+ * #715 (b) (D6-17): judged at the snapshot's `at` — no default clock (its `now = new Date()` died).
  */
-export function classifyInProgressClaims(
-  run: RunRecord,
-  now: Date = new Date(),
-): InProgressClaimInfo[] {
+export function classifyInProgressClaims(snapshot: Snapshot): InProgressClaimInfo[] {
+  const { record: run, at: now } = snapshot;
   return run.in_progress_steps.map((step) => {
     const claim = run.claims?.[step];
     return { step, state: classifyClaim(claim, now), deadline: claim?.deadline ?? null };
   });
+}
+
+/**
+ * #715 (b) (02 §B.3, D6-9, D6-41, MA 3 Amendment 11): whether `realm run cleanup` abandons a run —
+ * the ONE judge its selection uses, of one snapshot: not ended, no open question and not in a
+ * waiting phase, idle for at least `thresholdMs` at the snapshot's `at` (through `readInstant`: a
+ * record stamped ahead of the reading has no age yet and is not idle), and no step held by a LIVE
+ * claim (`classifyInProgressClaims` says `healthy`: a deadline not yet passed). A stale claim, a claim
+ * of unknown age (`deadline: null`, what a crashed `realm agent` leaves) and no claim are swept.
+ */
+export function isIdleForCleanup(snapshot: Snapshot, thresholdMs: number): boolean {
+  const { record: run, at } = snapshot;
+  if (run.terminal_state) return false;
+  if (run.pending_gate !== undefined || WAITING_PHASES.has(deriveRunPhase(run))) return false;
+  const stamp = readInstant(run.updated_at, 'past_event', at);
+  if ('absent' in stamp || at.getTime() - stamp.ms < thresholdMs) return false;
+  return !classifyInProgressClaims(snapshot).some((c) => c.state === 'healthy');
 }

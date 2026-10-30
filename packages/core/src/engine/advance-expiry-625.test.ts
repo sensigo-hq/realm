@@ -17,6 +17,7 @@ import { nextCalls, owedOf } from '../test-support/ways-view.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import { writeTestClockFile } from '../store/test-clock-file.js';
+import { writtenSnapshot } from './snapshot.js';
 
 /** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
  *  runs folder sits beside the location's clock file (first set to the host's reading), which
@@ -184,7 +185,7 @@ describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view nam
       warnings: [],
     });
     // (a) red when the view owes engine work for it; (b) prints the view's owed list.
-    expect(describePending(d, after, undefined, past).owed).toEqual([]);
+    expect(describePending(d, writtenSnapshot(after, past), undefined).owed).toEqual([]);
     expect(nextCalls(composeWaysAt(after, past, { definition: d }))).toEqual(['respond']);
   });
 
@@ -192,7 +193,7 @@ describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view nam
     const d = def('settle_default');
     const { runId, gateId, past, before } = await atGate(d);
     const { record: run } = await store.get(runId);
-    const view = describePending(d, run, undefined, past);
+    const view = describePending(d, writtenSnapshot(run, past), undefined);
     // (a) red when the view no longer reports a due expiry; (b) prints it.
     expect(view.expiry_due).toEqual({
       gate_id: gateId,
@@ -208,7 +209,7 @@ describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view nam
     const composed = composeWaysAt(run, past, { definition: d });
     expect([nextCalls(composed), owedOf(composed)]).toEqual([['advance'], [`expiry:${gateId}`]]);
     // (a) red when a view before the expiry reads one; (b) prints the acts.
-    expect(describePending(d, run, undefined, before).owed).toEqual([]);
+    expect(describePending(d, writtenSnapshot(run, before), undefined).owed).toEqual([]);
     expect(nextCalls(composeWaysAt(run, before, { definition: d }))).toEqual(['respond']);
     expect(dueExpiry(run.pending_gate, before)).toBeUndefined();
   });

@@ -7,8 +7,14 @@
 // `applyResume` computed (its own version-CAS is the whole atomicity story — see that module's
 // doc). issue #281 rides here too: applyResume strips `abandoned_at` alongside `terminal_reason`.
 import { Command } from 'commander';
-import type { RunStore, WorkflowRegistrar, ApplyResumeVoidedFinalizer } from '@sensigo/realm';
+import type {
+  RunStore,
+  WorkflowRegistrar,
+  ApplyResumeVoidedFinalizer,
+  Snapshot,
+} from '@sensigo/realm';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
+import { openRunStore } from '../lib/run-store.js';
 
 // issue #279 (increment 1, PR-B): NO top-level VALUE import from `@sensigo/realm` — JsonFileStore's
 // default runsDir is computed at module-load time (`homedir()`), so a top-level value import here
@@ -46,7 +52,13 @@ export async function resumeRun(
   runStore: RunStore,
   workflowStore: WorkflowRegistrar,
   opts: ResumeOptions = {},
-): Promise<{ voided: ApplyResumeVoidedFinalizer[]; disclosures: string[] }> {
+): Promise<{
+  voided: ApplyResumeVoidedFinalizer[];
+  disclosures: string[];
+  /** #715 (b) (02 §B.1, D6-17): the resumed record and its write's reading — what the lines after
+   *  the resume are judged on; the run is never read again for them. */
+  resumed: Snapshot;
+}> {
   const {
     WorkflowError,
     applyResume,
@@ -59,7 +71,8 @@ export async function resumeRun(
     quotedCommand,
     parseStamp,
   } = await import('@sensigo/realm');
-  const { record: run } = await runStore.get(runId);
+  // #715 (b) (D6-17): the one read; its reading is the instant every check below is made at.
+  const { record: run, at: runAt } = await runStore.get(runId);
 
   // §5.1 — structural, phase-independent (RESUME_REFUSES_ABORTED pin): an aborted run is never
   // resumable, checked directly against aborted_at rather than relying on RESUMABLE_PHASES
@@ -141,7 +154,7 @@ export async function resumeRun(
     });
   }
 
-  const now = new Date();
+  const now = runAt;
 
   // §5.3 — any pending finalizer ledger entry with an UNEXPIRED lease refuses: a drainer is
   // executing RIGHT NOW. Bounded by the §3 clamp (DRAIN_LEASE_MAX) — the wait is short by
@@ -201,8 +214,8 @@ export async function resumeRun(
   }
 
   const { run: resumedRun, voided, disclosures } = applyResume(run, stepName, workflow);
-  await runStore.update(resumedRun);
-  return { voided, disclosures };
+  const resumed = await runStore.update(resumedRun);
+  return { voided, disclosures, resumed };
 }
 
 export const resumeCommand = new Command('resume')
@@ -214,11 +227,15 @@ export const resumeCommand = new Command('resume')
     'Override the claim_unknown_age refusal ONLY (never a healthy claim or an unexpired drain lease)',
   )
   .action(async (runId: string, opts: { from: string; force?: boolean }) => {
-    const { JsonFileStore, JsonWorkflowStore } = await import('@sensigo/realm');
-    const runStore = new JsonFileStore();
+    const { JsonWorkflowStore } = await import('@sensigo/realm');
+    const runStore = openRunStore();
     const workflowStore = new JsonWorkflowStore();
     try {
-      const { voided, disclosures } = await resumeRun(runId, opts.from, runStore, workflowStore, {
+      const {
+        voided,
+        disclosures,
+        resumed: written,
+      } = await resumeRun(runId, opts.from, runStore, workflowStore, {
         ...(opts.force !== undefined ? { force: opts.force } : {}),
       });
       // issue #625 PR-2a (D7.5): the resumed run's engine work, and the call that runs it without a
@@ -240,15 +257,16 @@ export const resumeCommand = new Command('resume')
           cannotGoOnHere,
           composeWaysAt,
           deriveRunPhase,
+          writtenSnapshot,
         } = await import('@sensigo/realm');
         const { cannotGoOnLines } = await import('./ways-renderer.js');
-        const { record: resumed } = await runStore.get(runId);
+        // #715 (b) (02 §B.1, D6-17): the resume's own write — never a second load.
+        const { record: resumed, at: resumedAt } = written;
         const wf = await getWorkflowForRun(workflowStore, resumed, {
           retryVerb: 'resume again',
           verb: 'resume',
         });
-        const resumedAt = new Date();
-        const pending = describePending(wf, resumed, undefined, resumedAt);
+        const pending = describePending(wf, writtenSnapshot(resumed, resumedAt), undefined);
         // decision C207: with several owed, where the call stops — never a promise that all run.
         const { steps, until } = owedWords(pending);
         view = {

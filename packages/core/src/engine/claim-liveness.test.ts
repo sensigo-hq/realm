@@ -18,6 +18,7 @@ import {
 } from './claim-liveness.js';
 import type { WorkflowDefinition, RetryConfig } from '../types/workflow-definition.js';
 import type { RunRecord } from '../types/run-record.js';
+import { writtenSnapshot } from './snapshot.js';
 
 const NOW = new Date('2026-07-07T12:00:00.000Z');
 
@@ -216,7 +217,7 @@ describe('classifyInProgressClaims', () => {
         // c has no claim entry
       },
     } as unknown as RunRecord;
-    const infos = classifyInProgressClaims(run, NOW);
+    const infos = classifyInProgressClaims(writtenSnapshot(run, NOW));
     expect(infos).toEqual([
       { step: 'a', state: 'healthy', deadline: expect.any(String) },
       { step: 'b', state: 'claim_stale', deadline: expect.any(String) },

@@ -42,12 +42,12 @@ import {
   CACHE_GAP_MAX_S,
   type PromptCacheSetting,
   loadWorkflowFromFile,
-  JsonFileStore,
   JsonWorkflowStore,
   validateRunParams,
   WorkflowError,
   renderLoaderWarning,
   describePending,
+  writtenSnapshot,
   owedNames,
   composeWaysAt,
   deriveRunPhase,
@@ -84,6 +84,7 @@ import {
 } from '../extensions/load-project-extensions.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
 import { addDeclaredValues } from '../output/writer.js';
+import { openRunStore } from '../lib/run-store.js';
 
 const DEFAULT_TTL_MINUTES = 60;
 // Fixed signature-header names for the body-signature presets.
@@ -1073,7 +1074,7 @@ export async function sweepExpiredGates(
         // it — nothing else is attending a run the sweeper just moved on.
         const owedView = outcome.run.terminal_state
           ? undefined
-          : describePending(definition, outcome.run, undefined, outcome.at);
+          : describePending(definition, writtenSnapshot(outcome.run, outcome.at), undefined);
         // decision C64: an expiry that leaves nothing able to run from here names the steps and the
         // way out — the CLI renderer's lines over the ways core composes (#729 PR-0, A-10).
         const cannotGoOn =
@@ -1761,7 +1762,7 @@ export const listenCommand = new Command('listen')
       const memoryStores = new Map<string, DedupStore>();
       const deps: ListenDeps = {
         workflowStore: new JsonWorkflowStore(),
-        runStore: new JsonFileStore(),
+        runStore: openRunStore(),
         dedupStoreFor: (workflowId: string): DedupStore => {
           if (dedupKind === 'memory') {
             let s = memoryStores.get(workflowId);
