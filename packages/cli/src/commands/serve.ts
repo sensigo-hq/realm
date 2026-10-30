@@ -16,6 +16,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { makeProjectProviders } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
 import { hostRefusalLine } from '../lib/host-refusal-line.js';
+import { parseHost, parseWholeNumber } from '../lib/option-parsers.js';
 import { cliDisclosureProvider, writerCtx, writerInstalled } from '../output/writer.js';
 import {
   checkValueLine,
@@ -221,8 +222,15 @@ export const serveCommand = new Command('serve')
   .description(
     'Start the Realm MCP server over HTTP (for hosted agent platforms that cannot use stdio)',
   )
-  .option('--port <number>', 'Port to listen on', '3001')
-  .option('--host <address>', 'Bind address', '127.0.0.1')
+  // issues #944, #949: `--port` and `--host` are checked when the command line is read
+  // (`option-parsers.ts`), so a mistyped value is refused before anything is built or bound.
+  .option(
+    '--port <number>',
+    'Port to listen on: a whole number from 0 to 65535; 0 lets the system pick',
+    parseWholeNumber('--port', 0, 65535),
+    3001,
+  )
+  .option('--host <address>', 'Bind address', parseHost('--host'), '127.0.0.1')
   .option('--dev', 'Disable authentication (for local development only)')
   .option(
     '--extensions-module <path>',
@@ -278,7 +286,7 @@ export const serveCommand = new Command('serve')
     // issue #625 (holder slice): this program's name, made once outside the per-request handler,
     // before anything is bound. A name that cannot be used prints one line and exits 1.
     const driver = resolveProgramIdentity('mcp-http');
-    const port = parseInt(options.port, 10);
+    const port = options.port as number;
     const host = options.host as string;
     const devMode = options.dev === true || process.env.REALM_DEV === '1';
     const token = process.env.REALM_SERVE_TOKEN;
