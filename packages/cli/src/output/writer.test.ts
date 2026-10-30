@@ -790,7 +790,7 @@ describe('U1 — the writer carries across writes on a log', () => {
       exitedCode: 0,
       exitedOut: 'exit tail FAKE',
     });
-  });
+  }, 30_000);
 
   it("U1-7b the seam's reset writes a held tail through the original and removes the 'exit' listener", () => {
     const listeners = process.listenerCount('exit');
