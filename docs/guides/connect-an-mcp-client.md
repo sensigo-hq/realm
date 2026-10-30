@@ -153,6 +153,10 @@ Three things to know:
 - **It listens on this machine only**, unless you set `--host`.
 - **`--dev` turns the token check off.** It prints `Warning: Running in dev mode — authentication is disabled. Do not expose this to a network.` Use it only on your own machine.
 
+## Other clients
+
+Codex keeps only the first and the last part of a long tool reply unless that tool's limit is raised: set `mcp_servers.<id>.tools.<tool>.output_token_limit` in its config (checked against Codex's source at 73bdd06f, 2026-10-27). The limit is set per tool as `output_token_limit`, in tokens; without it, Codex applies its own default, as little as 10,000 bytes. Realm keeps a reply at or under 40,000 characters when shortening its lists can make it fit (three tools shorten nothing yet — see [The reply](../reference/mcp/tools.md#the-reply)).
+
 ## Workflows that use your own code or secrets
 
 A workflow registered from a project folder remembers that folder. When an assistant runs it, Realm loads the project's `realm.yaml` and its code from there, with nothing more to set up.

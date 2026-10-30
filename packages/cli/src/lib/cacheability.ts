@@ -507,7 +507,7 @@ function stepLine(report: CacheabilityReport, result: StepResult): string {
 }
 
 const ANTHROPIC_ONCE =
-  "anthropic: on steps without tools, realm marks the fixed part for caching unless the drive's --prompt-cache turns it off; a fixed part below the model's minimum is sent uncached, silently";
+  "anthropic: when realm agent or realm listen drives a step, realm marks its fixed part for caching, and on steps with tools the conversation at each turn, unless --prompt-cache turns it off; below the model's minimum nothing is cached, silently";
 const OPENAI_ONCE =
   "openai: realm sends no cache marker; the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)";
 const SCOPE_ONCE =
@@ -515,8 +515,8 @@ const SCOPE_ONCE =
 
 /**
  * The block's lines: one per agent step, in definition order, then the once-lines that are true for
- * it — each per-layout line only when some step line shows a size for that layout (Δ15). A
- * definition with no agent step has none.
+ * it — each per-layout line only when some step line shows a size, or calls tools, for that layout
+ * (Δ15). A definition with no agent step has none.
  */
 export function renderCacheabilityLines(report: CacheabilityReport): {
   steps: string[];
@@ -524,7 +524,9 @@ export function renderCacheabilityLines(report: CacheabilityReport): {
 } {
   const steps = report.steps.map((s) => stepLine(report, s));
   const shown = (pred: (a: RequestAdapter) => boolean): boolean =>
-    report.steps.some((s) => s.layouts.some((l) => l.sized !== undefined && pred(l.adapter)));
+    report.steps.some((s) =>
+      s.layouts.some((l) => (l.sized !== undefined || l.cause === 'tools_step') && pred(l.adapter)),
+    );
   const anthropic = shown((a) => a === 'anthropic');
   const openai = shown(isOpenAi);
   return {

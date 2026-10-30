@@ -155,7 +155,10 @@ describe('#610 — AnthropicProvider.callStepWithTools records each answered req
     }).toEqual({ hasClass: true, indexes: [0] });
   });
 
-  describe('P5, a tools record’s facts, per conjunct (the settings where `requestFacts` would write an ask)', () => {
+  // Issue #899: a main turn of the tool loop records what `requestFacts` writes, so each ask key is
+  // compared with the single-shot record's value for the same setting. This drive is one text
+  // answer — one main turn; the final extraction's record is pinned in the #899 file (M7).
+  describe('P5, a main turn’s record of the tool loop, per conjunct: the ask `requestFacts` writes, under each setting that writes one', () => {
     const recordFor = async (
       promptCache: ConstructorParameters<typeof AnthropicProvider>[1],
       url?: string,
@@ -170,8 +173,22 @@ describe('#610 — AnthropicProvider.callStepWithTools records each answered req
       );
       return (result.usage ?? [])[0] as unknown as Record<string, unknown>;
     };
+    /** The single-shot request's record for the same setting: what `requestFacts` writes. */
+    const singleShotFor = async (
+      promptCache: ConstructorParameters<typeof AnthropicProvider>[1],
+    ): Promise<Record<string, unknown>> => {
+      baseURL = undefined;
+      mockCreate.mockResolvedValueOnce(text('{"answer":"x"}', 1));
+      const result = await new AnthropicProvider('claude-x', promptCache).callStepWithMeta(
+        'prompt',
+      );
+      return (result.usage ?? [])[0] as unknown as Record<string, unknown>;
+    };
+    type Setting = ConstructorParameters<typeof AnthropicProvider>[1];
+    /** `[present, value]` of one key, to compare with the single-shot record's `[true, value]`. */
+    const ask = (r: Record<string, unknown>, key: string): [boolean, unknown] => [key in r, r[key]];
 
-    it('(a) `long`: the model, the endpoint, the split offered — and no ask', async () => {
+    it('(a) `long`: the model, the endpoint, the split offered — and the ask, as `requestFacts` writes it', async () => {
       const custom = await recordFor({ promptCache: { value: 'long' } }, 'http://127.0.0.1:9');
       const viaDefault = await recordFor(
         { promptCache: { value: 'long' } },
@@ -186,28 +203,41 @@ describe('#610 — AnthropicProvider.callStepWithTools records each answered req
       expect(viaDefault['endpoint'], JSON.stringify(Object.keys(viaDefault))).toBe('default');
       // (a) red: `cache_split_offered` dropped; (b) prints the record's keys.
       expect(custom['cache_split_offered'], keys).toBe(true);
-      // (a) red when `requestFacts` is used (each ask key appears); (b) prints the record's keys.
-      expect('cache_requested' in custom, keys).toBe(false);
-      expect('cache_lifetime_s' in custom, keys).toBe(false);
-      expect('cache_ttl_sent' in custom, keys).toBe(false);
+      const single = await singleShotFor({ promptCache: { value: 'long' } });
+      // (a) red when a main turn records `toolsRequestFacts` (each ask key is missing); (b) prints
+      // the record's keys.
+      expect(ask(custom, 'cache_requested'), keys).toEqual([true, single['cache_requested']]);
+      expect(ask(custom, 'cache_lifetime_s'), keys).toEqual([true, single['cache_lifetime_s']]);
+      expect(ask(custom, 'cache_ttl_sent'), keys).toEqual([true, single['cache_ttl_sent']]);
     });
 
-    it('(b) `long` stated by a runner: no source and no runner on the record', async () => {
-      const r = await recordFor({
+    it('(b) `long` stated by a runner: its source and its runner on the record', async () => {
+      const setting: Setting = {
         promptCache: { value: 'long', source: 'stated', by: 'realm agent' },
-      });
+      };
+      const r = await recordFor(setting);
+      const single = await singleShotFor(setting);
       const keys = JSON.stringify(Object.keys(r));
-      // (a) red when `requestFacts` is used (each key appears); (b) prints the record's keys.
-      expect('cache_requested_source' in r, keys).toBe(false);
-      expect('cache_requested_by' in r, keys).toBe(false);
+      // (a) red when a main turn records `toolsRequestFacts` (each key is missing); (b) prints the
+      // record's keys.
+      expect(ask(r, 'cache_requested_source'), keys).toEqual([
+        true,
+        single['cache_requested_source'],
+      ]);
+      expect(ask(r, 'cache_requested_by'), keys).toEqual([true, single['cache_requested_by']]);
     });
 
-    it('(c) `auto` with gaps given: no `cache_auto` on the record', async () => {
-      const r = await recordFor({
+    it('(c) `auto` with gaps given: `cache_auto` on the record', async () => {
+      const setting: Setting = {
         promptCache: { value: 'auto', auto: { basis: 'listen_trigger_gaps', gaps_s: [420] } },
-      });
-      // (a) red when `requestFacts` is used; (b) prints the record's keys.
-      expect('cache_auto' in r, JSON.stringify(Object.keys(r))).toBe(false);
+      };
+      const r = await recordFor(setting);
+      const single = await singleShotFor(setting);
+      // (a) red when a main turn records `toolsRequestFacts`; (b) prints the record's keys.
+      expect(ask(r, 'cache_auto'), JSON.stringify(Object.keys(r))).toEqual([
+        true,
+        single['cache_auto'],
+      ]);
     });
   });
 });

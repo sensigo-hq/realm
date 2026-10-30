@@ -514,7 +514,7 @@ describe('#872 (a) — tools.md: two or more steps that cannot run here, said on
   it("start_run: the page's sentence and its example — the real hint of a new run with three steps this server cannot run", async () => {
     claim(
       TOOLS,
-      "Two or more `auto` steps that cannot run here for a handler or adapter this server lacks are said in one sentence, in the place of the first of them (added after version 0.48.0): their count, then each missing handler or adapter with at most three of the steps that need it and how many more, at most ten of them and then how many more, the way out once, and where the full list is — for example `3 steps cannot run here (capability): handler 'enrich' ('fetch', 'tag'); handler 'publish' ('post') — load the missing extensions, or run these steps on a runner that has them. get_run_state lists each one in engine_runnable.`",
+      "Two or more `auto` steps that cannot run here for a handler or adapter this server lacks are said in one sentence, in the place of the first of them (added after version 0.48.0): their count, then each missing handler or adapter with at most three of the steps that need it and how many more, at most ten of them and then how many more, the way out once, and where to read them — for example `3 steps cannot run here (capability): handler 'enrich' ('fetch', 'tag'); handler 'publish' ('post') — load the missing extensions, or run these steps on a runner that has them. See engine_runnable in get_run_state.`",
     );
     const { call, workflowStore } = await connect();
     await workflowStore.register(
@@ -541,7 +541,7 @@ describe('#872 (a) — tools.md: two or more steps that cannot run here, said on
     // (a) red when the hint or the page's example changes alone (the count, a group, the way out,
     //     the pointer); (b) prints the real hint.
     expect(r['context_hint']).toBe(
-      `Run '${String(r['run_id'])}' created for workflow 'example-872'. 3 steps cannot run here (capability): handler 'enrich' ('fetch', 'tag'); handler 'publish' ('post') — load the missing extensions, or run these steps on a runner that has them. get_run_state lists each one in engine_runnable.`,
+      `Run '${String(r['run_id'])}' created for workflow 'example-872'. 3 steps cannot run here (capability): handler 'enrich' ('fetch', 'tag'); handler 'publish' ('post') — load the missing extensions, or run these steps on a runner that has them. See engine_runnable in get_run_state.`,
     );
   });
 });
@@ -567,7 +567,7 @@ describe('CHANGELOG.md — #872 (a)’s entry (#871’s form: the section that h
   it('AC8 (correction 1): the entry’s changed and new sentences, and the behaviour each states', async () => {
     for (const sentence of [
       '**Two or more steps that cannot run here for a missing handler or adapter are said in one sentence (issue #872).**',
-      'the way out once — `load the missing extension` when one handler or adapter is missing, `load the missing extensions` when several are — and `get_run_state lists each one in engine_runnable.`',
+      'the way out once — `load the missing extension` when one handler or adapter is missing, `load the missing extensions` when several are — and `See engine_runnable in get_run_state.`',
       'The error reply of the call that attempts one such step counts them too.',
       "A step or handler name over 500 characters is named by its length in these sentences and in the CLI's lines for a step that cannot run.",
     ]) {
@@ -616,5 +616,66 @@ describe('CHANGELOG.md — #872 (a)’s entry (#871’s form: the section that h
       attempt: ['error', true],
       cliLines: '‹600 characters, not kept›',
     });
+  });
+});
+
+describe('#872 (b1) B11 — tools.md and the CHANGELOG: the reply ceiling', () => {
+  it('"## The reply": the ceiling paragraph, sentence by sentence (correction 1, C6 — each guarantee names its mode and its conditions)', () => {
+    for (const sentence of [
+      // The guarantee and its exceptions: reply-ceiling-correction-872.test.ts AC3 (the guard arm on
+      // the three tools; the field arm on an authored prompt and schema). A gate's question cut once
+      // at open, to the view budget, with every declared value known: docs-729-pr4.test.ts :436 and
+      // core question-view.test.ts :226 (correction 2, B).
+      'A reply is kept at or under 40,000 characters when shortening its lists can make it fit.',
+      "`get_workflow_protocol`, `list_workflows` and `start_run_batch` shorten nothing yet, and a part written in the workflow itself — a step's prompt or schema — is never shortened (a gate's question is cut once, to the view budget, when it opens with every declared value known — see [Gates](../workflow/gates.md)).",
+      // The measure: reply-ceiling.test.ts B1 (ix) (the person block outside it).
+      'The size is counted as a JavaScript string\'s length (UTF-16 code units; Codex counts bytes or tokens), the block addressed to the person (`audience: ["user"]`) not counted (added after version 0.48.0).',
+      // What is cut and what is kept: reply-ceiling.test.ts B2 (nothing but the cut list), B5 (params).
+      'When a reply would pass it, its longer lists are shortened — and on `get_run_state` a long `params` is replaced by its size — and nothing else is: the head an agent acts on — `status`, `run_id`, `run_version`, `error_code`, the first of `errors`, `agent_action`, `context_hint`, `blocked_reason`, `basis`, `disclosure`, `gate`, the first `next_actions` entry whole (its `prompt` and `input_schema` included), `awaiting` and `also` — and every other field stay as they are.',
+      // The counts: reply-ceiling-correction-872.test.ts HC4 (the run's lists), HC6 (the envelope's).
+      'A shortened list keeps its first items and says how many it left out in a field of its own: `next_actions_more` on every reply that has `next_actions`; `defaulted_steps_more`, `guards_more` and `chained_auto_steps_more` on a reply that carries `defaulted_steps`, `guards` or `chained_auto_steps`; and on `get_run_state` also `defaulted_steps_more`, `skipped_steps_more`, `completed_steps_more`, `skip_details_more`, `waiting_on_answer_more`, `pending_guards_more`, `step_claims_more`, `stuck_claims_more`, `in_progress_steps_more`, `failed_steps_more`, `engine_runnable_more`, `agent_refused_more`, `capability_blocks_more` and `steps_more` (with `next_cursor`, the cursor to the next page) ([Run state and health findings](run-state-and-health.md)).',
+      // C1: reply-ceiling.test.ts B5; crown-872.test.ts AC1; correction 2 A1–A3
+      // (reply-ceiling-correction-2-872.test.ts).
+      "On `get_run_state` the steps' detail is cut last.",
+      // C3, the four arms in order: reply-ceiling-correction-872.test.ts AC3; the floor-cut reply
+      // on the field and floor arms: reply-ceiling-correction-2-872.test.ts C1, C2 (correction 2, C).
+      'When nothing can make the reply fit, everything Realm can shorten in it is cut to its least, and a line says why.',
+      'A plain-text reply gets it as its first line: `This reply was <M> characters, past the 40,000-character ceiling; it is sent whole.`',
+      'Any other reply gets it as the first item of `warnings`, its first key: on a reply that shortens nothing, `This reply was <M> characters before this line, past the 40,000-character ceiling; nothing in this reply is shortened.` (`start_run_batch` adds ` Send fewer items per call.`); when a part no list holds is at or over the ceiling by itself, `This reply was <M> characters, past the 40,000-character ceiling: <path> alone is <P>. Everything Realm can shorten in it is cut to its least (each list to one item, with the count of the rest); without this line it is now <N>.` (the largest such part, such as `next_actions[0].prompt` or `gate`); when every list is down to one item and the reply is still over, `This reply was <M> characters, past the 40,000-character ceiling. Everything Realm can shorten in it is cut to its least (each list to one item, with the count of the rest); without this line it is now <N>. Tell the user.`',
+      // H2: bounded-sentences-872.test.ts HC2.
+      "Names in a reply's sentences stop at ten, then say how many more.",
+    ]) {
+      claim(TOOLS, sentence);
+    }
+  });
+  it('"## get_run_state": the step_names and cursor rows', () => {
+    // Pinned by execution in get-run-state-cursor-872.test.ts (B4, B6).
+    claim(
+      TOOLS,
+      "Adds the named steps' attempts and costs, as `include_steps` does for every step; a name the run has not attempted is named in `warnings`. Added after version 0.48.0.",
+    );
+    claim(
+      TOOLS,
+      'Reads the next page of `steps`: the `next_cursor` a reply gave. Needs `include_steps: true` or `step_names`; refused with `VALIDATION_CURSOR` without them, or when it names no step the run has attempted. Added after version 0.48.0.',
+    );
+  });
+  it('"## abandon_run": a reason over 500 characters is shown by its length', () => {
+    // Pinned by execution in bounded-echoes-872.test.ts (B8).
+    claim(
+      TOOLS,
+      'A `reason` over 500 characters is recorded whole, and this reply shows it as `‹<N> characters, not kept›` (added after version 0.48.0).',
+    );
+  });
+  it('CHANGELOG.md: the #872 (b1) entry, as written', () => {
+    const text = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
+    const section = text.slice(text.indexOf('## [Unreleased]'), text.indexOf('\n## [0.48.0]'));
+    // (a) red when the entry is changed or moved out of the unreleased section; (b) prints it. Each
+    //     sentence is pinned by the cells named above, B7 and AC4 (create_workflow), B9 (the store
+    //     law), HC2–HC7 (the bounds by construction).
+    expect(flat(section)).toContain(
+      flat(
+        "**An MCP reply is kept at or under 40,000 characters when shortening its lists can make it fit (issue #872).** `get_workflow_protocol`, `list_workflows` and `start_run_batch` shorten nothing yet, and a step's prompt or schema is never shortened. When a reply would pass the ceiling, its longer lists are shortened — `next_actions` beyond the first, and on `get_run_state` the run's own lists and its other lists, then `params`, replaced by its size, then the steps' detail it was asked for — and each says how many it left out (`next_actions_more`, `steps_more`, …); the head an agent acts on and every other field stay as they are. When nothing can make it fit, everything Realm can shorten in it is cut to its least, and the reply says so: a text reply in its first line, any other in the first item of `warnings` — which part is too long, that nothing in it is shortened, or how long it still is. Names in a reply's sentences stop at ten, then say how many more; steps refused the same way share one clause (at most ten clauses, then a count); `run_health` keeps ten findings of a kind and counts the rest; a failed drive's request list keeps three. `get_run_state` takes `step_names` (only the named steps' detail) and `cursor` (the next page of steps, from `next_cursor`); a refused cursor is `VALIDATION_CURSOR`. `create_workflow`'s refusal says each fault once: steps with the same fault share one line, and each other fault has its own line until the lines reach 8,000 characters; one last line then counts the rest and names three of their steps. A terminal reason or an unknown key over 500 characters is named by its length. The store contract gains `EVIDENCE_WRITE_ORDER`.",
+      ),
+    );
   });
 });

@@ -167,34 +167,54 @@ describe('provider conformance — toolArgsStrict is a promise about the wire (i
 
 // =========================================================================
 // issue #600 PR 2 — `ProviderCapabilities.promptCache` is a promise about the wire too: a provider
-// declaring a lifetime places `cache_control` on its single-shot request, and one declaring `off`
-// or nothing places none. On a failing CI host each cell prints the setting and whether the
+// declaring a lifetime places `cache_control` on each request it marks: a single-shot request, and
+// every main turn of a tool step; one declaring `off` or nothing places none. On a failing CI host each cell prints the setting and whether the
 // request carried the marker: no environment, header or key.
 // =========================================================================
 describe('provider conformance — promptCache is a promise about the wire (issue #600 PR 2)', () => {
   const SCHEMA = { type: 'object', properties: { ok: { type: 'boolean' } } };
   const settings = ['off', 'short', 'long'] as const;
 
-  // G5. (a) red when the tools path builds its system through the cache helper; (b) prints the
-  // setting and the requests' bodies that carried the marker.
-  it('guard: G5 — the tools path carries no cache_control under short and long', async () => {
+  // G5′ (issue #899, in place of G5). Three main turns, then the final extraction (the tool budget
+  // of 3 is used up). (a) red when the main turns are not marked (the short and long half) or when
+  // the `off` guard is dropped (the off half); (b) prints the setting, the request count, each
+  // request's kind and the indexes of the requests that carried the marker. Each body is read the
+  // moment it is sent, so a later write cannot hide or fake a marker.
+  it("G5′ — the tool loop's main turns carry cache_control under short and long, its final extraction none; under off no request does", async () => {
     const { AnthropicProvider } = await import('./anthropic-provider.js');
-    for (const value of ['short', 'long'] as const) {
+    const cases = [
+      { value: 'short', marked: [0, 1, 2] },
+      { value: 'long', marked: [0, 1, 2] },
+      { value: 'off', marked: [] },
+    ] as const;
+    for (const c of cases) {
+      const sent: string[] = [];
       anthropicCreate.mockReset();
-      anthropicCreate.mockResolvedValue({ content: [{ type: 'text', text: '{"ok":true}' }] });
+      anthropicCreate.mockImplementation(async (body: unknown) => {
+        sent.push(JSON.stringify(body));
+        return sent.length <= 3
+          ? { content: [{ type: 'tool_use', id: `toolu_${sent.length}`, name: 'a', input: {} }] }
+          : { content: [{ type: 'text', text: '{"ok":true}' }] };
+      });
       const p = new AnthropicProvider('claude-sonnet-4-5', {
-        promptCache: { value, source: 'stated', by: 'realm agent' },
+        promptCache: { value: c.value, source: 'stated', by: 'realm agent' },
       });
-      await p.callStepWithTools('prompt', [tool('a')], async () => ({}), { inputSchema: SCHEMA });
-      const marked = anthropicCreate.mock.calls
-        .map((c) => JSON.stringify(c[0]))
-        .filter((body) => body.includes('cache_control'));
-      expect({ value, calls: anthropicCreate.mock.calls.length, marked }).toEqual({
-        value,
-        calls: anthropicCreate.mock.calls.length,
-        marked: [],
+      await p.callStepWithTools('prompt', [tool('a')], async () => ({}), {
+        inputSchema: SCHEMA,
+        maxToolCalls: 3,
       });
-      expect(anthropicCreate.mock.calls.length).toBeGreaterThan(0);
+      const kinds = sent.map((body) =>
+        (JSON.parse(body) as { tool_choice?: unknown }).tool_choice !== undefined
+          ? 'final'
+          : 'main',
+      );
+      const marked = sent.flatMap((body, i) => (body.includes('cache_control') ? [i] : []));
+      expect({ value: c.value, requests: sent.length, kinds, marked }).toEqual({
+        value: c.value,
+        requests: 4,
+        kinds: ['main', 'main', 'main', 'final'],
+        marked: [...c.marked],
+      });
     }
   });
 

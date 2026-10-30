@@ -12,6 +12,7 @@
  * (`Invalid:` + exit 1) at the CLI layer; it is a hard error, never a warning.
  */
 import type { SourcePosition } from './source-positions.js';
+import { capText } from '../utils/redaction.js';
 
 export type WarningCode =
   | 'UNKNOWN_WORKFLOW_KEY'
@@ -215,13 +216,15 @@ function renderUnknownKeyMessage(
   line: number | undefined,
 ): string {
   const at = line === undefined ? '' : ` (line ${line})`;
+  // #872 (b1): a key over 500 characters is named by its length (I4), never quoted whole.
+  const quoted = capText(key);
   // Punctuation deliberately differs by form, matching the design's own literal examples exactly:
   // the no-suggestion form ends with a period (byte-identical to the pre-#169 text); the
   // did_you_mean form's trailing '?)' is the sentence's natural end — no additional period.
   if (didYouMean !== undefined) {
-    return `${target}: unknown key '${key}'${at} — ignored (did you mean '${didYouMean}'?)`;
+    return `${target}: unknown key '${quoted}'${at} — ignored (did you mean '${didYouMean}'?)`;
   }
-  return `${target}: unknown key '${key}'${at} — ignored (not a recognized ${noun} field).`;
+  return `${target}: unknown key '${quoted}'${at} — ignored (not a recognized ${noun} field).`;
 }
 
 /**
@@ -311,7 +314,8 @@ export function findUnknownKeys(
       severity: resolveSeverity(ctx.code),
       message: renderUnknownKeyMessage(target, key, did_you_mean, noun, pos?.line),
       scope: ctx.scope,
-      key,
+      // #872 (b1): the structured channel bounds the key as the message does.
+      key: capText(key),
     };
     if (ctx.id !== undefined) warning.id = ctx.id;
     if (ctx.step !== undefined) warning.step = ctx.step;

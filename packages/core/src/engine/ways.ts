@@ -38,6 +38,7 @@ import {
 } from './pending.js';
 import { capabilityRefusalWords, requirementForStep } from './capability.js';
 import { capText } from '../utils/redaction.js';
+import { quotedNames } from '../utils/list-words.js';
 import { consumesInputMap, newRunCanChangeInput, refusedInputField } from './input-map.js';
 
 // ─── Parties and slots ──────────────────────────────────────────────────────────────────────────
@@ -2463,22 +2464,21 @@ export function cannotRunSummary(entries: readonly Unavailable[]): string {
   );
   if (capability.length === 0) return '';
   if (capability.length === 1) return libraryCannotRunWords(capability[0]!) ?? '';
-  const groups = new Map<string, { requirement: string; steps: string[]; count: number }>();
+  const groups = new Map<string, { requirement: string; steps: string[] }>();
   for (const entry of capability) {
     const { kind, name } = entry.facts.requirement;
     const key = JSON.stringify([kind, name, entry.facts.basis]);
     let group = groups.get(key);
     if (group === undefined) {
-      group = { requirement: `${kind} '${capText(name)}'`, steps: [], count: 0 };
+      group = { requirement: `${kind} '${capText(name)}'`, steps: [] };
       groups.set(key, group);
     }
-    group.count += 1;
-    if (group.steps.length < SUMMARY_STEPS) group.steps.push(`'${capText(entry.facts.step)}'`);
+    group.steps.push(entry.facts.step);
   }
-  const named = [...groups.values()].slice(0, SUMMARY_REQUIREMENTS).map((group) => {
-    const more = group.count - group.steps.length;
-    return `${group.requirement} (${group.steps.join(', ')}${more > 0 ? ` and ${more} more` : ''})`;
-  });
+  // correction 1 (H1): each group's steps in the one producer of a bounded list in words.
+  const named = [...groups.values()]
+    .slice(0, SUMMARY_REQUIREMENTS)
+    .map((group) => `${group.requirement} (${quotedNames(group.steps, SUMMARY_STEPS)})`);
   const rest = groups.size - SUMMARY_REQUIREMENTS;
   if (rest > 0) {
     // correction 1 (C4): plain words for what is counted, never the field's name.

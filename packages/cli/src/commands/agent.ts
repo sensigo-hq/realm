@@ -385,9 +385,10 @@ export const agentCommand = new Command('agent')
       // workflow, so its child discloses instead).
       const refuseInertPromptCache = (definition: WorkflowDefinition): void => {
         if (opts.promptCache === undefined || opts.spawnedByListen === true) return;
-        if (cacheableStepCounts(definition).singleShot > 0) return;
+        const counts = cacheableStepCounts(definition);
+        if (counts.singleShot + counts.withTools > 0) return;
         console.error(
-          `Error: --prompt-cache has nothing to apply to: workflow '${definition.id}' has no agent step that sends its instructions in one request (steps that call tools are not cached yet), so the flag would change nothing. Remove --prompt-cache; it applies once the workflow has an agent step without tools. ${tail}`,
+          `Error: --prompt-cache has nothing to apply to: workflow '${definition.id}' has no agent step, so the flag would change nothing. Remove --prompt-cache. ${tail}`,
         );
         process.exit(1);
       };

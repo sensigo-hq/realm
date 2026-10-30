@@ -62,7 +62,7 @@ describe('realm workflow validate — golden (extension-free byte-identical)', (
         // its correction 1 (C-1): no sharing clause — the two steps share only Realm's own text.
         "cache: identify_ticket — anthropic 1,150 chars ≈ 450–990 tokens, with Anthropic's tool text · openai 585 chars ≈ 117–234 tokens (estimates: 2.5–5 chars/token, with margin)\n" +
         "cache: classify_ticket — anthropic 1,020 chars ≈ 424–938 tokens, with Anthropic's tool text · openai 520 chars ≈ 104–208 tokens (estimates: 2.5–5 chars/token, with margin)\n" +
-        "anthropic: on steps without tools, realm marks the fixed part for caching unless the drive's --prompt-cache turns it off; a fixed part below the model's minimum is sent uncached, silently\n" +
+        "anthropic: when realm agent or realm listen drives a step, realm marks its fixed part for caching, and on steps with tools the conversation at each turn, unless --prompt-cache turns it off; below the model's minimum nothing is cached, silently\n" +
         "openai: realm sends no cache marker; the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)\n" +
         "anthropic: the cache is kept per workspace (per organization on Bedrock and Google Cloud), as Anthropic's page said on 2026-10-09: drives from different workspaces each pay the write\n",
     );

@@ -89,10 +89,18 @@ export interface StartRunBatchResult {
     error: string;
     error_code?: string;
   }>;
+  /**
+   * #872 (b1): absent unless the reply passes the 40,000-character ceiling — then its first line
+   * says so (the items are paged in a later unit; nothing is cut here).
+   */
+  warnings?: string[];
 }
 
 type Started = StartRunBatchResult['started'][number];
 type Failed = StartRunBatchResult['failed'][number];
+
+/** #872 (b1) correction 1 (C3): the batch's way out, appended to its overflow line. */
+export const BATCH_WAY_OUT = ' Send fewer items per call.';
 
 /**
  * #729 PR-3 (M-1): the batch's class table. Each run's params are values; a matched run's stored
@@ -122,6 +130,8 @@ export const START_RUN_BATCH_TABLE = {
       error_code: 'fact',
     } satisfies Record<keyof Failed, DisclosureClass>,
   },
+  // #872 (b1): the overflow line's carrier — guard-only here until (c) pages the items.
+  warnings: 'bounded',
 } as const satisfies Record<keyof StartRunBatchResult, DisclosureClass>;
 
 export async function handleStartRunBatch(
@@ -367,6 +377,10 @@ export function registerStartRunBatch(
             audience: 'agent',
             table: START_RUN_BATCH_TABLE,
           },
+          undefined,
+          // #872 (b1) correction 1 (C3): the batch has no plan yet ((c)'s); its own way out — an item
+          // is about 936 characters, so fewer items per call make the reply fit.
+          BATCH_WAY_OUT,
         );
       },
       async (err, args) => {

@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
+  capText,
   JsonWorkflowStore,
   JsonFileStore,
   submitHumanResponse,
@@ -84,8 +85,8 @@ export function unknownKeyWarnings(args: Record<string, unknown>): string[] {
     (key) => {
       const near = NEAR_MISSES[key];
       return near !== undefined
-        ? `submit_human_response: unknown argument '${key}' was ignored — did you mean '${near}'?`
-        : `submit_human_response: unknown argument '${key}' was ignored.`;
+        ? `submit_human_response: unknown argument '${capText(key)}' was ignored — did you mean '${near}'?`
+        : `submit_human_response: unknown argument '${capText(key)}' was ignored.`;
     },
     moreUnknownKeys,
   );

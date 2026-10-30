@@ -41,8 +41,9 @@ export type ListWorkflowsResult =
       status: 'ok';
       workflows: Array<{ id: string; name: string; version: number }>;
       unreadable: UnreadableWorkflowEntry[];
-      /** Non-empty exactly when `unreadable` is — the envelope grammar's channel a client reads
-       *  before `hint` (walk 2: a `status: ok` guard skipped the hint entirely). */
+      /** Non-empty when `unreadable` is, or when the reply passes the ceiling (#872 (b1): the
+       *  overflow line) — the envelope grammar's channel a client reads before `hint` (walk 2: a
+       *  `status: ok` guard skipped the hint entirely). */
       warnings: string[];
       hint: string;
     }

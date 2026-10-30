@@ -31,7 +31,7 @@ const padded = (head: string, length: number, pad: string): string => head.padEn
 // or adapter takes the singular way out (B7's `many` is two steps on one handler).
 const TAIL = ' — load the missing extension, or run these steps on a runner that has it';
 /** What the MCP door adds to a summary (C1): the full stop and its pointer — 50 characters. */
-const DOOR = '. get_run_state lists each one in engine_runnable.'.length;
+const DOOR = '. See engine_runnable in get_run_state.'.length;
 
 describe('#872 (a) — cannotRunSummary, the grouped hand-back hint', () => {
   it("B6 (a): every step judged from the run's marker — the past tense, no way out, no pointer (the MCP door adds it)", () => {

@@ -61,6 +61,8 @@ const line = (
 const FIX = "Caching: Anthropic is asked to cache each step's fixed instructions for";
 const LISTEN_DEFAULT = "realm listen's default; change it with realm listen --prompt-cache";
 const AGENT_DEFAULT = "realm agent's default; turn it off with --prompt-cache off";
+const TOOLS_TAIL =
+  ' On a step that calls tools, it is also asked to cache the conversation so far, at each turn.';
 
 describe('the drive start line (issue #600, D1; the lifetime unit — B8)', () => {
   // One cell per producing branch of B8, the at-stake branch first: `auto` choosing the long
@@ -200,8 +202,9 @@ describe('the drive start line (issue #600, D1; the lifetime unit — B8)', () =
     ).toBe('Caching: Realm asks OpenAI for no caching; any caching it does is its own.');
   });
 
-  // F4a and F4b. (a) red when the two are swapped; (b) prints the lines.
-  it('F4a — on, every agent step calls tools; F4b — on, no agent step', () => {
+  // F5 for a tools-only workflow (issue #899: F4a is gone) and F4b. (a) red when a tools-only
+  // workflow is said to have no step cached; (b) prints the lines.
+  it('F5 with the tools tail — on, every agent step calls tools (was F4a); F4b — on, no agent step', () => {
     expect([
       line(
         ANTHROPIC(SHORT),
@@ -210,16 +213,34 @@ describe('the drive start line (issue #600, D1; the lifetime unit — B8)', () =
       ),
       line(ANTHROPIC(LONG), pc('long', 'stated', 'realm listen'), NO_AGENT),
     ]).toEqual([
-      'Caching: no step is cached; every agent step in this workflow calls tools, and steps that call tools are not cached yet.',
+      `${FIX} 5 minutes (auto: a drive realm agent starts on its own has no trigger history; ${AGENT_DEFAULT}).${TOOLS_TAIL}`,
       'Caching: no step is cached; this workflow has no agent step.',
     ]);
   });
 
   // The tools clause. (a) red when it is never printed; (b) prints the line.
-  it('F5 — a workflow that also has tool-calling agent steps says they are not cached yet', () => {
+  it('F5 — a workflow that also has tool-calling agent steps says they are asked to cache the conversation at each turn', () => {
     expect(line(ANTHROPIC(SHORT), pc('short', 'stated', 'realm agent'), MIXED)).toBe(
-      `${FIX} 5 minutes (set by --prompt-cache short). Steps that call tools are not cached yet.`,
+      `${FIX} 5 minutes (set by --prompt-cache short).${TOOLS_TAIL}`,
     );
+  });
+
+  // M10 (issue #899): one line per producing branch, the at-stake branch first. (a) red when the
+  // condition goes back to `singleShot === 0` (the tools-only line becomes F4b), or when the tail
+  // prints without a step that calls tools; (b) prints the four lines.
+  it('M10 — tools only → F5 with the tail; mixed → F5 with the tail; single-shot only → F5 without it; no agent step → F4b', () => {
+    const stated = pc('short', 'stated', 'realm agent');
+    expect([
+      line(ANTHROPIC(SHORT), stated, ALL_TOOLS),
+      line(ANTHROPIC(SHORT), stated, MIXED),
+      line(ANTHROPIC(SHORT), stated, SINGLE),
+      line(ANTHROPIC(SHORT), stated, NO_AGENT),
+    ]).toEqual([
+      `${FIX} 5 minutes (set by --prompt-cache short).${TOOLS_TAIL}`,
+      `${FIX} 5 minutes (set by --prompt-cache short).${TOOLS_TAIL}`,
+      `${FIX} 5 minutes (set by --prompt-cache short).`,
+      'Caching: no step is cached; this workflow has no agent step.',
+    ]);
   });
 
   // Absent `deps.promptCache` (a host calling runAgent itself). (a) red when F3 or F5 print a

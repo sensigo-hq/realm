@@ -157,7 +157,7 @@ describe('#625 PR-2a, F2 — over MCP, a run an operator ended is never offered 
     );
     claim(
       'mcp/run-state-and-health.md',
-      "| `resumable` | An engine failure ended the run (`failed`) with a failed step `realm run resume` takes | `steps`, those steps (never a cleanup step), and `command`, `realm run resume <id> --from <step>`. Never for a run an operator ended (`abandoned`): resuming it would erase the operator's ending and its reason, which `terminal_reason` and `sealed_by_arm` give.",
+      "| `resumable` | An engine failure ended the run (`failed`) with a failed step `realm run resume` takes | `steps`, those steps (never a cleanup step) — at most ten, then `steps_more`, how many more — and `command`, `realm run resume <id> --from <step>`, its `<one of: …>` naming at most ten, then how many more (both added after version 0.48.0). Never for a run an operator ended (`abandoned`): resuming it would erase the operator's ending and its reason, which `terminal_reason` and `sealed_by_arm` give.",
     );
     const { call, runId } = await ended('abandoned', 'op-625-state');
     const s = await call('get_run_state', { run_id: runId });

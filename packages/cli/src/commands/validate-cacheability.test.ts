@@ -125,7 +125,7 @@ const shareWorkflow = (id: string, steps: string[]): string =>
   `id: ${id}\nname: ${id}\nversion: 1\nsteps:\n${steps.join('')}`;
 
 const ONCE_ANTHROPIC =
-  "anthropic: on steps without tools, realm marks the fixed part for caching unless the drive's --prompt-cache turns it off; a fixed part below the model's minimum is sent uncached, silently";
+  "anthropic: when realm agent or realm listen drives a step, realm marks its fixed part for caching, and on steps with tools the conversation at each turn, unless --prompt-cache turns it off; below the model's minimum nothing is cached, silently";
 const ONCE_OPENAI =
   "openai: realm sends no cache marker; the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)";
 const ONCE_SCOPE =
@@ -864,8 +864,43 @@ describe('the once-lines (C5; Δ15)', { timeout: 60_000 }, () => {
       [ONCE_ANTHROPIC, ONCE_OPENAI, ONCE_SCOPE],
       [ONCE_OPENAI],
       [ONCE_ANTHROPIC, ONCE_SCOPE],
-      [],
+      [ONCE_ANTHROPIC, ONCE_OPENAI, ONCE_SCOPE],
     ]);
+  });
+
+  // M12 (issue #899): a step that calls tools now prints the once-lines of each provider in scope,
+  // one cell per producing branch of `shown`, the at-stake branch first. Every list is compared
+  // whole. (b) Each prints the once-lines of its run.
+  const TOOLS = '09-webhook-pr-review';
+  // (a) red under `shown`'s old test (`l.sized !== undefined && …`), which prints no once-line.
+  it('M12 a workflow whose agent steps all call tools, --provider anthropic → the anthropic lines', () => {
+    const r = realm(['workflow', 'validate', ex(TOOLS), '--provider', 'anthropic']);
+    expect(onceLines(r.stdout)).toEqual([ONCE_ANTHROPIC, ONCE_SCOPE]);
+  });
+  // (a) red under `shown`'s old test (no once-line at all).
+  it('M12 the same, --provider openai → the openai line only', () => {
+    const r = realm(['workflow', 'validate', ex(TOOLS), '--provider', 'openai']);
+    expect(onceLines(r.stdout)).toEqual([ONCE_OPENAI]);
+  });
+  // (a) red under `shown`'s old test (no once-line at all).
+  it('M12 the same, no --provider → the three, in the order the block gives them', () => {
+    const r = realm(['workflow', 'validate', ex(TOOLS)]);
+    expect(onceLines(r.stdout)).toEqual([ONCE_ANTHROPIC, ONCE_OPENAI, ONCE_SCOPE]);
+  });
+  // (a) red under the old once-line text.
+  it('M12 a sized single-shot step, --provider anthropic → the new anthropic line', () => {
+    const dir = project({ workflow: oneStep('sized') });
+    const r = realm(['workflow', 'validate', dir, '--provider', 'anthropic']);
+    expect(onceLines(r.stdout)).toEqual([ONCE_ANTHROPIC, ONCE_SCOPE]);
+  });
+  // (a) red when a once-line prints with no step that shows a size or calls tools.
+  it('M12 a workflow with no agent step → no once-line', () => {
+    const dir = project({
+      workflow:
+        'id: w\nname: w\nversion: 1\nsteps:\n  plain:\n    description: a step\n    execution: auto\n    depends_on: []\n    input_schema: { type: object, additionalProperties: true }\n',
+    });
+    const r = realm(['workflow', 'validate', dir]);
+    expect({ code: r.code, once: onceLines(r.stdout) }).toEqual({ code: 0, once: [] });
   });
 });
 
@@ -975,6 +1010,35 @@ describe('where the block prints (C5; Δ10)', { timeout: 60_000 }, () => {
           ],
         ],
       ]);
+    } finally {
+      child.kill();
+    }
+  });
+
+  // M12 watch (issue #899): on a workflow whose agent steps all call tools, the first block carries
+  // the once-lines of both providers. (a) red under `shown`'s old test (the block has the step lines
+  // only); (b) prints the once-lines seen after the first save, times cut.
+  it('M12 watch: a workflow whose agent steps all call tools prints the once-lines in its first block', async () => {
+    const dir = project({ example: '09-webhook-pr-review' });
+    const child = spawn(process.execPath, [DIST_CLI, 'workflow', 'watch', dir], {
+      cwd: base,
+      env: { PATH: process.env['PATH'] ?? '', HOME: home, REALM_NO_NUDGE: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = '';
+    child.stdout.on('data', (c: Buffer) => (out += c.toString()));
+    child.stderr.on('data', (c: Buffer) => (out += c.toString()));
+    try {
+      const end = Date.now() + 20_000;
+      while (!out.includes('Registered:') && Date.now() < end) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      await new Promise((r) => setTimeout(r, 300));
+      const once = hide(out)
+        .split('\n')
+        .filter((l) => / anthropic: | openai: /.test(l))
+        .map((l) => l.replace(/^\[[^\]]+\] /, ''));
+      expect(once).toEqual([ONCE_ANTHROPIC, ONCE_OPENAI, ONCE_SCOPE]);
     } finally {
       child.kill();
     }

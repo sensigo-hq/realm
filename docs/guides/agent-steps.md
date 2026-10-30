@@ -119,7 +119,7 @@ It prints:
 ```text
 Registered: triage v1 (1 step)
 cache: classify — anthropic 1,047 chars ≈ 430–949 tokens, with Anthropic's tool text · openai 637 chars ≈ 128–255 tokens (estimates: 2.5–5 chars/token, with margin)
-anthropic: on steps without tools, realm marks the fixed part for caching unless the drive's --prompt-cache turns it off; a fixed part below the model's minimum is sent uncached, silently
+anthropic: when realm agent or realm listen drives a step, realm marks its fixed part for caching, and on steps with tools the conversation at each turn, unless --prompt-cache turns it off; below the model's minimum nothing is cached, silently
 openai: realm sends no cache marker; the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)
 anthropic: the cache is kept per workspace (per organization on Bedrock and Google Cloud), as Anthropic's page said on 2026-10-09: drives from different workspaces each pay the write
 ```
