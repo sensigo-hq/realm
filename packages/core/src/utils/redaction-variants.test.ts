@@ -144,6 +144,7 @@ function setOf(value: string, omit?: string): DisclosureSet {
     declared: 'resolved',
     environment: 'not_swept',
     forms,
+    maxFormLength: forms[0]?.form.length ?? 0,
     sources: ['declared:ROW'],
     unmaskable: 0,
   };
