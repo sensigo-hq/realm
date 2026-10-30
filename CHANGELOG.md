@@ -158,6 +158,16 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
 - Hardening: a declared secret or an environment value that a step prints in pieces, or relays
   from a child program chunk by chunk, is hidden in a log as one value — when the pieces arrive
   within 200 ms, and unless another hidden value inside it ends before the pieces split.
+- **A word that starts with `-` is refused as the value of `--model` (issue #920).** `realm agent`,
+  `realm listen`, `realm workflow validate`, `register` and `watch` now refuse a value that starts
+  with `-` (a lone `-` is accepted) as the value of `--model`; `--model --strict` used to take
+  `--strict` as the model id and drop the flag, so a CI gate passed. Write `--model=<id>` for a
+  value that starts with `-`. The same now holds for 26 other options that took any word:
+  `--project` (on `workflow run`, `agent`, `run drain`, `run respond`, `run advance`, `mcp` and
+  `serve`), `--extensions-module` (`run drain`, `mcp`, `serve`), `--workflow` (`run list`,
+  `reclaim`, `purge`, `reconcile`), `run export --out`, `run abandon --reason`, `run respond --by`,
+  `run reclaim --step`, `agent --params` and `--base-url`, `serve --port`, and `listen --port`,
+  `--host`, `--dedup-store`, `--log-level` and `--sweep-expired-gates`.
 
 ## [0.48.0] — 2026-10-26
 

@@ -34,8 +34,12 @@ import { agentCommand } from './commands/agent.js';
 import { webhookCommand } from './commands/webhook.js';
 import { listenCommand } from './commands/listen.js';
 import { attachWriterHook } from './output/writer.js';
+import { attachOptionValueGuard } from './lib/option-value-guard.js';
 
 export { attachWriterHook, writerHook } from './output/writer.js';
+// issue #920: the guard that refuses a flag-like word as the value of an option that would swallow it;
+// exported beside the writer's hook so a program that reuses realm's commands attaches it the same way.
+export { attachOptionValueGuard, optionValueGuard } from './lib/option-value-guard.js';
 
 /** Commands that operate on workflow definitions (realm workflow <cmd>). */
 export const workflowCommands = [
@@ -79,6 +83,10 @@ export const topLevelCommands = [
   listenCommand,
 ];
 
+// issue #920: the option-value guard, on every command object in the three lists. Attached BEFORE the
+// writer's hook (a command's hooks run in the order they were added): a refusal is printed before the
+// writer is installed.
+attachOptionValueGuard([workflowCommands, runCommands, topLevelCommands]);
 // #729 PR-3 (L-1): every command object in the three lists — nested ones included — carries the
 // writer's `preAction` hook, so the one writer is installed in any program that reuses realm's
 // commands (cli-cloud attaches the exported hook to its own commands too).

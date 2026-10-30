@@ -41,6 +41,8 @@ Give `--model` too, unless you give `--provider-module`: Realm has no default mo
 | `--prompt-cache <setting>` | `auto`                                                | What Anthropic is asked to cache of each agent step's request: `auto`, `short` (5 minutes), `long` (1 hour) or `off`. See [What a run costs](../../guides/realm-agent.md#what-a-run-costs). Refused for a provider Realm asks for no caching, and for a workflow with no agent step. Added after version 0.47.0.                     |
 | `--provider-module <path>` | None                                                  | Uses your own provider, loaded from this code file. Cannot be combined with the five flags above.                                                                                                                                                                                                                                    |
 
+`--model`, `--project`, `--params` and `--base-url` refuse a value that starts with `-`, except a lone `-`; write `--option=value` for one.
+
 ### How steps are run
 
 | Flag                         | Default            | What it does                                                                                                                                                                                                                             |
