@@ -142,17 +142,25 @@ cache: review_changes — 1,010 chars ≈ 220–297 tokens (estimate: 4 chars/to
 
 **No verdict.** When no minimum is known, the line says why:
 
-| The line ends                                                                             | When                                                                                                              |
-| ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `the floor was not judged: no --model named`                                              | `--provider` is given, with no `--model` and no `--floor`.                                                        |
-| `no economics file named in realm.yaml (runner.cache.economics); --floor tests a minimum` | `--model` is given and `realm.yaml` names no economics file.                                                      |
-| `economics unreachable: <reason>`, `your economics file: <reason>`                        | The economics file cannot be read, or does not parse.                                                             |
-| `no entry for <model> in your economics file`                                             | The economics file has no entry for the model.                                                                    |
-| `no minimum stated for <model> in your economics file`                                    | The model's entry has no `min_cacheable_tokens`.                                                                  |
-| `economics not checked (<reason>)`                                                        | `--registered`, and the copy records no project folder, or the one it records is gone.                            |
-| `profile file not read (<reason>): sizes not computed`                                    | `--registered`, the step names a profile, and the copy records no workflow folder, or the one it records is gone. |
+| The line ends                                                                                                  | When                                                                                                                                                                                                         |
+| -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `the floor was not judged: no --model named`                                                                   | `--provider` is given, with no `--model` and no `--floor`.                                                                                                                                                   |
+| `no economics file named in realm.yaml (runner.cache.economics); --floor tests a minimum`                      | `--model` is given and `realm.yaml` names no economics file.                                                                                                                                                 |
+| `economics unreachable: <reason>`, `your economics file: <reason>`                                             | The economics file cannot be read, or does not parse.                                                                                                                                                        |
+| `no entry for <model> in your economics file`                                                                  | The economics file has no entry for the model.                                                                                                                                                               |
+| `no minimum stated for <model> in your economics file`                                                         | The model's entry has no `min_cacheable_tokens`.                                                                                                                                                             |
+| `economics not checked (no project folder to read it from)`                                                    | `--registered` with `--model`, and the copy records no project folder, or the one it records is gone. The reason is on the line above the cache lines that starts `1 check not run:` or `N checks not run:`. |
+| `profile text not stored in the registered copy: sizes not computed — register the workflow again to store it` | `--registered`, the step names a profile, and the registered copy holds no text for it.                                                                                                                      |
 
-`profile file not read` means the command could not read the step's profile file, because the registered copy records no workflow folder, or the one it records is gone. The copy still holds the profile's text, and runs use it. What to do: register again from the workflow's folder, with `realm workflow register <path>`. The line above the cache lines that starts `1 check not run:` or `N checks not run:` names the same reason. With `--registered`, the sizes come from the profile files now in the workflow's folder, which is what registering again would store, not from the text the copy holds.
+`profile text not stored in the registered copy` means the registered copy holds no text for the step's profile, so the step is not sized. What to do: register again from the workflow's folder, with `realm workflow register <path>`.
+
+With `--registered`, the sizes come from the profile text stored in the copy, not from the profile files now in the workflow's folder. After you edit a profile, register again to update the copy. When a profile file in the folder differs from the copy's text, `validate --registered` prints one line after the cache lines, naming each such profile once:
+
+```text
+ℹ profile text differs from the registered copy for: p — this check used the copy's text; register again to update it
+```
+
+A difference in line endings counts. The line is not in `--json`, `REALM_NO_NUDGE=1` leaves it out, and it changes neither the exit code nor `--strict`. The command reads the workflow's folder for the loader's checks, and the project's folder for the project-extension check and, when `--model` is given, for the economics file.
 
 A step that calls tools is not judged: each tool's definition comes from its MCP server when the step runs, so its request cannot be measured before a run:
 
