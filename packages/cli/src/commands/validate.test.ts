@@ -1,4 +1,9 @@
 import { describe, it, expect } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { renderLoadFailure, renderEscalationLine } from '../lib/loader-warnings.js';
 import type { LoaderWarning } from '@sensigo/realm';
 import { loadWorkflowFromString, WorkflowError } from '@sensigo/realm';
@@ -144,4 +149,60 @@ describe('validate — the escalation line (issue #425)', () => {
       "Invalid: 2 warnings, 2 escalated to an error by policy: UNKNOWN_STEP_KEY 'a', UNKNOWN_STEP_KEY 'b'",
     );
   });
+});
+
+// =================================================================================================
+// issue #933 — T10: `realm workflow register` and `realm workflow validate` refuse a precondition on
+// the run's input, on the built `realm` (the door every author meets). Both print arm A's text with
+// the step's line and exit non-zero; register stores nothing. On a failing host the cell prints each
+// command's exit and its first stderr line (a step name and the refusal's clauses).
+// =================================================================================================
+describe("register and validate refuse a precondition on the run's input (issue #933, T10)", () => {
+  const DIST_CLI = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist', 'index.js');
+
+  it("both print arm A's text, with the step's line, and exit 1", () => {
+    const home = mkdtempSync(join(tmpdir(), 'realm-933-t10-home-'));
+    const dir = mkdtempSync(join(tmpdir(), 'realm-933-t10-wf-'));
+    try {
+      mkdirSync(join(dir, 'wf'));
+      writeFileSync(
+        join(dir, 'wf', 'workflow.yaml'),
+        [
+          'id: t10',
+          'name: t10',
+          'version: 1',
+          'steps:',
+          '  s:',
+          '    description: S.',
+          '    execution: auto',
+          `    preconditions: ["run.params.mode == 'go'"]`,
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+      const cli = (args: string[]): { code: number | null; first: string } => {
+        const r = spawnSync(process.execPath, [DIST_CLI, ...args], {
+          cwd: dir,
+          env: { ...process.env, HOME: home, REALM_NO_NUDGE: '1' },
+          encoding: 'utf8',
+          timeout: 20_000,
+        });
+        return { code: r.status, first: (r.stderr ?? '').split('\n')[0] ?? '' };
+      };
+      const text =
+        "Invalid workflow: Step 's': precondition 'run.params.mode == 'go'' reads 'run.params.mode', " +
+        "the run's input. A precondition reads only what the workflow's steps recorded, never the " +
+        "run's input, so it could never be true and the step could never run. To refuse a run whose " +
+        'input does not fit, declare it in params_schema. Then register the workflow again. (step at ' +
+        'line 5)';
+      // (a) red when either command accepts the file or prints other words; (b) prints both.
+      expect({
+        validate: cli(['workflow', 'validate', join(dir, 'wf')]),
+        register: cli(['workflow', 'register', join(dir, 'wf')]),
+      }).toEqual({ validate: { code: 1, first: text }, register: { code: 1, first: text } });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 45_000);
 });
