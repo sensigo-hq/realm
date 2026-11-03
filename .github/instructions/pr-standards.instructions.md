@@ -40,19 +40,19 @@ type(scope): short imperative description
 
 ## PR Body
 
-Always write the body to a temp file and pass it with `--body-file`:
+Pass the body to `gh` on standard input, with `--body-file -` and a quoted heredoc:
 
 ```bash
-cat > /tmp/pr-body.md << 'BODY'
-<content>
-BODY
-
 gh pr create \
   --title "type(scope): description" \
-  --body-file /tmp/pr-body.md \
   --base main \
-  --head branch-name
+  --head branch-name \
+  --body-file - <<'BODY'
+<content>
+BODY
 ```
+
+The same goes for `gh pr edit` and for `gh api … -F body=@-`. **Never** pass the body through a shared fixed file such as `/tmp/pr-body.md`: many sessions share one machine, and another session can overwrite that file between your write and your `gh` call, so the PR gets someone else's text (this happened on 2026-10-30). If a file is truly needed, put it in your own session's scratch folder.
 
 **Never** use `--body "..."` inline — multiline content becomes unreadable and escaping errors are common.
 

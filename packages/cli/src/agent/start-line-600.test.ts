@@ -326,6 +326,36 @@ describe('the start line and the record agree when auto chooses against its prio
         'id: cross-600\nname: Cross 600\nversion: 1\nsteps:\n  ask:\n    description: Answer.\n    execution: agent\n',
         'utf8',
       );
+      // #898: `auto` with gaps is priced from the runner's price file. A full file at today's
+      // Anthropic ratios keeps this cell's choice where the shipped multiples put it: 5 minutes.
+      writeFileSync(
+        join(root, 'realm.yaml'),
+        'version: 1\nrunner:\n  cache:\n    economics: prices.json\n',
+        'utf8',
+      );
+      writeFileSync(
+        join(root, 'prices.json'),
+        JSON.stringify({
+          version: 1,
+          currency: 'USD',
+          models: {
+            'claude-x': {
+              prices: [
+                {
+                  per_million_tokens: {
+                    input: 3,
+                    output: 15,
+                    cache_read: 0.3,
+                    cache_write_5m: 3.75,
+                    cache_write_1h: 6,
+                  },
+                },
+              ],
+            },
+          },
+        }),
+        'utf8',
+      );
       const cli = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
       const stdout = await new Promise<string>((resolve) => {
         const child = spawn(
@@ -371,11 +401,18 @@ describe('the start line and the record agree when auto chooses against its prio
         auto: request.cache_auto,
         words,
         wordsOfRecord: lifetimeText(request.cache_lifetime_s ?? 0),
+        // #898: the start line says where the choice took its prices.
+        priced: startLine.includes('; priced from your price file; '),
       }).toEqual({
         recorded: 300,
-        auto: { basis: 'listen_trigger_gaps', gaps_s: [10, 10, 10, 7200, 7200] },
+        auto: {
+          basis: 'listen_trigger_gaps',
+          gaps_s: [10, 10, 10, 7200, 7200],
+          prices: { from: 'economics' },
+        },
         words: '5 minutes',
         wordsOfRecord: '5 minutes',
+        priced: true,
       });
     } finally {
       await stub.close();

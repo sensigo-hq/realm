@@ -1,11 +1,13 @@
 // spawn-budget-guard.test.ts — a test that starts a child process must carry a time budget of its own.
 //
-// vitest gives every test 5 seconds (`vitest.config.mts`, `testTimeout`). A cell that starts the built
-// CLI or server needs more than that on a loaded machine, so the repository's rule (#371) is that such
-// a cell carries its own budget when it is written. 31 of 478 had not, and under load they ran out of
-// the 5 seconds before the child's own limit, which voided counted runs (#938 gave them budgets). This
-// file is the guard the owner asked for: "add the narrow time-limit check" (session aaefd3da, uuid
-// 37bb7e82-5e97-43a6-9603-74d1182addf2, 2026-10-29T19:57:47Z). It is narrow on purpose: it looks only
+// vitest gives every test 30 seconds (`vitest.config.mts`, `testTimeout`; it was 5 seconds until the
+// owner's yes of 2026-10-30, uuid 359abf57-54f1-4af3-b7e5-2df4b96e18d0). A cell that starts the built
+// CLI or server can need all of that and more on a loaded machine, so the repository's rule (#371)
+// stays that such a cell carries its own budget when it is written. 31 of 478 had not, and under load
+// they ran out of the then default of 5 seconds before the child's own limit, which voided counted
+// runs (#938 gave them budgets). This file is the guard the owner asked for: "add the narrow
+// time-limit check" (session aaefd3da, uuid 37bb7e82-5e97-43a6-9603-74d1182addf2,
+// 2026-10-29T19:57:47Z); it stays after the default was raised. It is narrow on purpose: it looks only
 // at cells that start a child process, not at every test.
 //
 // WHAT COUNTS AS A CELL THAT STARTS A CHILD PROCESS. A cell (`it`, `test`, `it.each(...)`, `it.skip`,

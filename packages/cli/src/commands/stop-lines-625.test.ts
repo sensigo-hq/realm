@@ -111,7 +111,7 @@ describe('#625 PR-2a, F16 — realm workflow run: engine work owed is not a stal
       '  g:',
       '    description: Decide first.',
       '    execution: guard',
-      '    abort_unless: ["run.params.ok == true"]',
+      '    abort_unless: ["g.ok == true"]',
       '  s:',
       '    description: After the guard.',
       '    execution: agent',

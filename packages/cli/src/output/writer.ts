@@ -343,6 +343,8 @@ interface WriterState {
   standings: Map<string, DeclaredStanding>;
   /** H-7'': set by a read command that prints a run's stored values. */
   readRule?: { accepted: boolean };
+  /** U1: each stream's held tail on a log (`log`, `broadcast`), and the idle timer that flushes it. */
+  carry: Record<'stdout' | 'stderr', { chunk: ChunkCarry; idle?: NodeJS.Timeout }>;
 }
 
 /** What this process's output hid and shaped, its sources on a private terminal, and whether it
@@ -411,6 +413,53 @@ function audienceOf(stream: 'stdout' | 'stderr'): StreamAudience {
 /** The constant written when a line cannot be checked: never the line. */
 export const PASS_FAILED_LINE =
   'realm: a line could not be checked for secrets, so it was not written.\n';
+
+/** U1: how long a log keeps a held tail when nothing follows it. A log read live (`tee`, a tail)
+ *  must show a line's unfinished end although nothing follows it; pipe chunks of a live child arrive
+ *  within microseconds; 200 ms is below what a person notices and above any back-to-back producer's
+ *  gap. */
+export const CARRY_IDLE_MS = 200;
+
+/** A span mark in raw text (`span`'s three marks). */
+const SPAN_MARK = /[\uE000-\uE002]/;
+
+/**
+ * U1: one stream's state across writes on a log — the masked tail of its trailing partial line,
+ * held back so a value cut by a write boundary is masked with its rest (Buildkite's held-back
+ * buffer; aho-corasick's `max_pattern_len`). Pure: no I/O, no timer.
+ */
+class ChunkCarry {
+  private held = '';
+
+  /** Splits masked text into what is written now and what is held: at most `k` units of its
+   *  trailing partial line (none when the raw text's trailing partial line holds a span mark),
+   *  never parting a surrogate pair; a line ends at `\n` or `\r` — a carriage-return redraw ends
+   *  its frame. */
+  push(shown: string, k: number, rawTail: string): { emit: string; held: string } {
+    const tail = shown.slice(Math.max(shown.lastIndexOf('\n'), shown.lastIndexOf('\r')) + 1);
+    let keep = Math.min(k, tail.length);
+    // A span's verified body is shown as built; a re-pass would mask it.
+    if (SPAN_MARK.test(rawTail)) keep = 0;
+    if (keep > 0) {
+      const before = shown.charCodeAt(shown.length - keep - 1);
+      if (before >= 0xd800 && before <= 0xdbff) keep += 1;
+    }
+    this.held = shown.slice(shown.length - keep);
+    return { emit: shown.slice(0, shown.length - keep), held: this.held };
+  }
+
+  /** Returns the held text and clears it. */
+  take(): string {
+    const held = this.held;
+    this.held = '';
+    return held;
+  }
+
+  /** Returns the held text, leaving it held. */
+  peek(): string {
+    return this.held;
+  }
+}
 
 /** A verified span of a line: its kind and body, and (the echo's correction 1) the count of line
  *  breaks (`\n`, `\r`) at the body's start (`lead`) and at its end (`trail`); a body that is empty or
@@ -696,14 +745,77 @@ function patch(stream: 'stdout' | 'stderr'): void {
       // goes to the masked stderr.
       return process.stderr.write(text, cb);
     }
+    if (audience === 'private') {
+      // A terminal never carries: a held echo would lag each character the person types.
+      let shown: string;
+      try {
+        shown = pass(text, audience);
+      } catch {
+        shown = PASS_FAILED_LINE;
+      }
+      return original.call(target, shown, cb as never);
+    }
+    const carry = state!.carry[stream];
+    text = carry.chunk.take() + text;
+    clearIdle(carry);
     let shown: string;
+    let k = 0;
     try {
       shown = pass(text, audience);
+      k = Math.max(setFor(audience).maxFormLength - 1, 0);
     } catch {
       shown = PASS_FAILED_LINE;
     }
-    return original.call(target, shown, cb as never);
+    // U1: a member form with no line break running into the next write has at most `k` units here,
+    // all in the trailing partial line's last `k`, so none is emitted; one complete in `text` was
+    // masked above. The held tail is masked text, re-passed with the next piece: idempotent for
+    // members (`disclose` skips its markers); a pattern hide carries what its marker leaves; a
+    // multi-line form hides per line; a member holding another, cut after the inner one ends, only
+    // up to the inner one (already a marker on the re-pass; as before U1).
+    const { emit, held } = carry.chunk.push(
+      shown,
+      k,
+      text.slice(Math.max(text.lastIndexOf('\n'), text.lastIndexOf('\r')) + 1),
+    );
+    if (held !== '') carry.idle = setTimeout(() => flush(stream, 'idle'), CARRY_IDLE_MS).unref();
+    if (emit !== '') return original.call(target, emit, cb as never);
+    if (cb !== undefined) queueMicrotask(() => cb(null));
+    return true;
   } as typeof target.write;
+}
+
+function clearIdle(carry: { idle?: NodeJS.Timeout }): void {
+  if (carry.idle === undefined) return;
+  clearTimeout(carry.idle);
+  delete carry.idle;
+}
+
+/**
+ * U1: writes a stream's held tail (already masked) and clears its idle timer: through the original
+ * write for the idle timer and the test seam's reset; by `writeSync` for a fatal error and the
+ * process's exit, which end the process before a pending pipe write completes on POSIX.
+ */
+function flush(stream: 'stdout' | 'stderr', how: 'idle' | 'reset' | 'fatal' | 'exit'): void {
+  if (state === undefined) return;
+  const carry = state.carry[stream];
+  clearIdle(carry);
+  const held = carry.chunk.take();
+  if (held === '') return;
+  if (how === 'idle' || how === 'reset') {
+    state.original[stream].call(process[stream], held, undefined as never);
+    return;
+  }
+  try {
+    writeSync(stream === 'stdout' ? 1 : 2, held);
+  } catch {
+    // Nothing more can be written.
+  }
+}
+
+function onExit(): void {
+  if (state === undefined) return;
+  flush('stdout', 'exit');
+  flush('stderr', 'exit');
 }
 
 function errorText(err: unknown): string {
@@ -716,6 +828,9 @@ export const FATAL_CONSTANT =
   'realm: a fatal error occurred; its text could not be checked for secrets.\n';
 
 function fatal(err: unknown): void {
+  // U1: the held tails precede the error's text.
+  flush('stdout', 'fatal');
+  flush('stderr', 'fatal');
   let text: string;
   try {
     text = passForStderr(errorText(err));
@@ -755,6 +870,7 @@ export function installWriter(mode: WriterMode = 'default'): void {
       stdout: process.stdout.write.bind(process.stdout) as Writable['write'],
       stderr: process.stderr.write.bind(process.stderr) as Writable['write'],
     },
+    carry: { stdout: { chunk: new ChunkCarry() }, stderr: { chunk: new ChunkCarry() } },
   };
   // A value printed through `util.inspect` (console.log of an object) is never cut (I4).
   util.inspect.defaultOptions.maxStringLength = Infinity;
@@ -762,6 +878,7 @@ export function installWriter(mode: WriterMode = 'default'): void {
   patch('stderr');
   process.on('uncaughtException', fatal);
   process.on('unhandledRejection', fatal);
+  process.once('exit', onExit);
   // F32: a name REALM_NOT_SECRET lists that is not set has no effect — said once per process.
   const unset = notSecretNames(process.env).filter((name) => process.env[name] === undefined);
   if (unset.length > 0) process.stderr.write(`${notSecretUnsetWarning(unset)}\n`);
@@ -990,12 +1107,19 @@ export const writerTestSeams = {
   visible(text: string): string {
     return passForStdout(text);
   },
+  /** U1: the text a stream holds back (masked), left held. */
+  carry(stream: 'stdout' | 'stderr'): string {
+    return state === undefined ? '' : state.carry[stream].chunk.peek();
+  },
   reset(): void {
     if (state === undefined) return;
+    flush('stdout', 'reset');
+    flush('stderr', 'reset');
     process.stdout.write = state.original.stdout as typeof process.stdout.write;
     process.stderr.write = state.original.stderr as typeof process.stderr.write;
     process.off('uncaughtException', fatal);
     process.off('unhandledRejection', fatal);
+    process.off('exit', onExit);
     state = undefined;
   },
 };

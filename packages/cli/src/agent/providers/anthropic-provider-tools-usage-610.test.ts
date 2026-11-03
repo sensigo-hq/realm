@@ -159,18 +159,25 @@ describe('#610 — AnthropicProvider.callStepWithTools records each answered req
   // compared with the single-shot record's value for the same setting. This drive is one text
   // answer — one main turn; the final extraction's record is pinned in the #899 file (M7).
   describe('P5, a main turn’s record of the tool loop, per conjunct: the ask `requestFacts` writes, under each setting that writes one', () => {
+    /** #898: a provider whose `auto` choice is pending (gaps given) is settled at today's Anthropic
+     *  ratios, which choose as the shipped multiples did; its records gain `prices`. */
+    const built = (
+      promptCache: ConstructorParameters<typeof AnthropicProvider>[1],
+    ): AnthropicProvider => {
+      const provider = new AnthropicProvider('claude-x', promptCache);
+      if (provider.isAutoChoicePending())
+        provider.settleAutoChoice({
+          rates: { input: 3, output: 15, cache_read: 0.3, cache_write_5m: 3.75, cache_write_1h: 6 },
+        });
+      return provider;
+    };
     const recordFor = async (
       promptCache: ConstructorParameters<typeof AnthropicProvider>[1],
       url?: string,
     ): Promise<Record<string, unknown>> => {
       baseURL = url;
       mockCreate.mockResolvedValueOnce(text('{"answer":"x"}', 1));
-      const result = await new AnthropicProvider('claude-x', promptCache).callStepWithTools(
-        'prompt',
-        [tool()],
-        EXECUTOR,
-        {},
-      );
+      const result = await built(promptCache).callStepWithTools('prompt', [tool()], EXECUTOR, {});
       return (result.usage ?? [])[0] as unknown as Record<string, unknown>;
     };
     /** The single-shot request's record for the same setting: what `requestFacts` writes. */
@@ -179,9 +186,7 @@ describe('#610 — AnthropicProvider.callStepWithTools records each answered req
     ): Promise<Record<string, unknown>> => {
       baseURL = undefined;
       mockCreate.mockResolvedValueOnce(text('{"answer":"x"}', 1));
-      const result = await new AnthropicProvider('claude-x', promptCache).callStepWithMeta(
-        'prompt',
-      );
+      const result = await built(promptCache).callStepWithMeta('prompt');
       return (result.usage ?? [])[0] as unknown as Record<string, unknown>;
     };
     type Setting = ConstructorParameters<typeof AnthropicProvider>[1];

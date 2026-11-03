@@ -2068,7 +2068,7 @@ describe(
             '    description: Check.',
             '    execution: guard',
             '    depends_on: [confirm]',
-            '    abort_unless: ["nope.x == 1"]',
+            '    abort_unless: ["confirm.x == 1"]',
           ].join('\n'),
           false,
         );
@@ -2411,7 +2411,7 @@ describe(
             '    description: Check.',
             '    execution: guard',
             '    depends_on: [confirm]',
-            '    abort_unless: ["nope.field == true"]',
+            '    abort_unless: ["confirm.field == true"]',
           ].join('\n'),
         );
         const q = await atQuestion(def);

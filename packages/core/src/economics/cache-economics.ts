@@ -266,7 +266,50 @@ export function minCacheableTokensFor(
 }
 
 /**
- * Prices one request from the runner's economics file. Pure.
+ * Issue #898 — the ONE row selection, for billing ({@link priceFromEconomics}) and for `--prompt-cache
+ * auto`'s choice alike, so the two read the same row for the same model id and UTC day. Pure.
+ * - The model: through {@link matchModel} — an exact entry wins; else the id with its date suffix
+ *   removed; else `model_unknown`.
+ * - The price: the last whose `start_date` is on or before the UTC date of `at`; the undated first
+ *   one applies before every dated one. An `at` that does not parse is `date_unreadable`.
+ * - The tier: the highest whose `above_prompt_tokens` `promptTokens` exceeds (strictly); with
+ *   `promptTokens` undefined, the price's own (base) rates.
+ * `date_basis` is `current` when the model has one price, `dated` when it has dated ones.
+ */
+export function selectEconomicsRates(
+  economics: CacheEconomics,
+  model: string,
+  at: string,
+  promptTokens?: number,
+):
+  | { rates: CacheEconomicsRates; matched_model: string; date_basis: 'dated' | 'current' }
+  | { not_priced: 'model_unknown' | 'date_unreadable' } {
+  const matched = matchModel(economics, model);
+  if (matched === undefined) return { not_priced: 'model_unknown' };
+  const entry = economics.models[matched]!;
+  const time = Date.parse(at);
+  if (Number.isNaN(time)) return { not_priced: 'date_unreadable' };
+  const day = new Date(time).toISOString().slice(0, 10);
+  let price = entry.prices[0]!;
+  for (const candidate of entry.prices) {
+    if (candidate.start_date === undefined || candidate.start_date <= day) price = candidate;
+  }
+  let rates = price.per_million_tokens;
+  if (promptTokens !== undefined) {
+    for (const tier of price.tiers ?? []) {
+      if (promptTokens > tier.above_prompt_tokens) rates = tier.per_million_tokens;
+    }
+  }
+  return {
+    rates,
+    matched_model: matched,
+    date_basis: entry.prices.length > 1 ? 'dated' : 'current',
+  };
+}
+
+/**
+ * Prices one request from the runner's economics file. Pure. The row — the model, the price and the
+ * tier — comes from {@link selectEconomicsRates} (#898):
  * - The model: an exact entry wins; else the recorded id with its date suffix removed; else
  *   `model_unknown`.
  * - The price: the last whose `start_date` is on or before the UTC date of `at`; the undated first
@@ -285,23 +328,12 @@ export function priceFromEconomics(
   at: string,
   usage: PriceUsage,
 ): PriceResult {
-  const matched = matchModel(economics, model);
-  if (matched === undefined) return { not_priced: 'model_unknown' };
-  const entry = economics.models[matched]!;
-  const time = Date.parse(at);
-  if (Number.isNaN(time)) return { not_priced: 'date_unreadable' };
-  const day = new Date(time).toISOString().slice(0, 10);
-  let price = entry.prices[0]!;
-  for (const candidate of entry.prices) {
-    if (candidate.start_date === undefined || candidate.start_date <= day) price = candidate;
-  }
-  const dateBasis = entry.prices.length > 1 ? 'dated' : 'current';
+  // #898: the row — model, day and tier — comes from the one selector.
+  const selected = selectEconomicsRates(economics, model, at, usage.prompt_tokens);
+  if ('not_priced' in selected) return { not_priced: selected.not_priced };
+  const { rates, matched_model: matched, date_basis: dateBasis } = selected;
 
   const prompt = usage.prompt_tokens;
-  let rates = price.per_million_tokens;
-  for (const tier of price.tiers ?? []) {
-    if (prompt > tier.above_prompt_tokens) rates = tier.per_million_tokens;
-  }
 
   const read = usage.cache_read_tokens;
   const write = usage.cache_write_tokens;

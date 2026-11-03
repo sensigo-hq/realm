@@ -422,7 +422,7 @@ describe(
           '  p:',
           '    description: P.',
           '    execution: auto',
-          "    preconditions: ['run.params.ok == true']",
+          "    preconditions: ['ready.ok == true']",
           '',
         ]),
       );
