@@ -4,8 +4,10 @@
 // `runs/` folder, and every process that opens that location reads its time from the file. A store
 // on an ordinary directory has no such file and uses the host's system clock. Nothing in production
 // writes this file, and a lint rule (static imports) and a source scan (the names as text, in any
-// import form; `lint-test-location-715.test.ts`) keep the helpers that create or read it out of
-// production code (D6-52).
+// import form; `lint-test-location-715.test.ts`) keep the helpers that create a test location, or read
+// its clock file outside the store, out of production code (D6-52): `resolveStoreClock` below is the
+// one reader, the file store's. The scan reads the `.ts` and `.mjs` files of the four packages' `src`
+// folders (no `.sh` or `.json`) and skips `*.test.ts`, whose tests create test locations.
 import { accessSync, constants, readFileSync, realpathSync, watch } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { WorkflowError } from '../types/workflow-error.js';

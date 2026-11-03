@@ -199,10 +199,13 @@ describe('#715 (a) — the docs sentences', () => {
       TESTING,
       '`createTestLocation` refuses an empty root, and a root that is the working directory or a folder above it, judged by the path as written: a symlink or junction to one is not followed, and the parent of a working directory whose own name starts with `..` is not recognised as a folder above it. It also refuses a root that already holds a clock file; to use that folder as an ordinary store again, delete its `.realm-test-clock` file.',
     );
-    // Correction 1 (C-9): B2 (create, update, claimStep stamp the location) and the C-9 cell.
+    // Correction 1 (C-9), REVERSED by #715 (b) commit 1 (the page caught up in commit 5): B2 (create,
+    // update, claimStep stamp the location) and json-file-store-clock-715's "(C-9 reversed) — on a test
+    // location, claimStep and settleStep both stamp the location"; the store clock contract's
+    // SETTLE_ONE_READING on the location route.
     claim(
       TESTING,
-      "The location's time stamps a run's `created_at`, a claim's `since` and deadline, and the `updated_at` that `create`, `update` and `claimStep` write; `settleStep` still stamps `updated_at` with this computer's clock, so a run whose step settled can read updated before it was created.",
+      "The location's time stamps everything a store opened there records: a run's `created_at` and `updated_at`, a claim's `since` and deadline, and every time `settleStep` records.",
     );
     // C9; C7, C7b; C8.
     claim(
@@ -210,11 +213,12 @@ describe('#715 (a) — the docs sentences', () => {
       '`set` to an earlier time runs nothing and moves the clock back. A function given to `at` sees the clock at its own time, never earlier. An `advance` runs every due function even when some throw, then rejects with their errors.',
     );
     // Correction 1 (C-2) and 2 (R-3c): the source scan (lint-test-location-715.test.ts: its
-    // PACKAGES, NEEDLES and ALLOWED are the sentence's four packages, names and exceptions); C1, C2
-    // (the store reads the file beside runs/, and none elsewhere).
+    // PACKAGES, NEEDLES and ALLOWED are the sentence's four packages, names and exceptions; its file
+    // set cell: `.ts` and `.mjs`, no test file — #715 (b), #913's R2-4); C1, C2 (the store reads the
+    // file beside runs/, and none elsewhere).
     claim(
       TESTING,
-      "A test of Realm's own source keeps `createTestLocation`, and the clock file's helpers `@sensigo/realm` exports for this package, out of the `src` folders of Realm's four packages, except the files that define or re-export them, the file store's own file (it reads the clock file, and a comment there names it) and this package: no command, server or library there creates a test location or writes a clock file.",
+      "A test of Realm's own source keeps `createTestLocation`, and the clock file's helpers `@sensigo/realm` exports for this package, out of the `.ts` and `.mjs` files in the `src` folders of Realm's four packages, except test files (`*.test.ts`, which create test locations), the files that define or re-export them, the file store's own file (it reads the clock file, and a comment there names it) and this package: no command, server or library there creates a test location or writes a clock file.",
     );
     claim(TESTING, 'The file store reads a clock file, only when it sits beside `runs/`.');
     // The type count cell below.

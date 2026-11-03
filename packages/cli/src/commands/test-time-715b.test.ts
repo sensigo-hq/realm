@@ -59,6 +59,33 @@ const ALLOWED: Record<string, string> = {
     "U1-6 fakes timers for the writer's idle flush (a duration) in a cell that starts nothing; the cells that start the CLI run on the real clock",
 };
 
+/**
+ * #715 (b) 04 §D (B4), MA 3's Amendment 13 (1): no test waits on the real clock for a question to
+ * expire, a claim to lapse or a lease to end — except the cells named here, each with its reason (a
+ * named exemption, never a silent skip). The waits are SYNCHRONOUS holds (`while (Date.now() <= …)`):
+ * the cell below fails when such a hold appears in any other test file, or a named cell is gone.
+ */
+const REAL_CLOCK_EXPIRY_WAITS: Record<string, { cells: string[]; reason: string }> = {
+  'packages/cli/src/commands/run-prompt-625.test.ts': {
+    cells: [
+      'DIFFERENT choice: `⚠ … this run call first carried out …` once, then the refusal and `✗ not recorded`, on stderr',
+      'SAME choice: the line once, then the same-choice sentence and `✗ not recorded`, on stdout',
+      'abort: the line once, then the refusal and `✗ not recorded → aborted`, on stderr',
+    ],
+    reason:
+      "C146's race: the answer must be handled past the deadline BEFORE this process's own expiry timer runs. Only a synchronous hold past a real deadline orders the two; a test location's clock moves by an asynchronous file write, during which the timer's watch can fire first",
+  },
+  'packages/cli/src/commands/phase-words-c5-inproc-729.test.ts': {
+    cells: [
+      'run.ts — a late answer, the same choice: `✗ not recorded — … → …` on stdout',
+      'run.ts — a late answer, another choice: `✗ not recorded — … → …` on stderr',
+      'run.ts — a late answer the expiry aborted: `✗ not recorded → …` (the declared route: `aborted`)',
+    ],
+    reason:
+      "the same race as C146's (the late answer read before this process's own timer fires), held the same way",
+  },
+};
+
 function testFiles(): string[] {
   const out: string[] = [];
   const walk = (dir: string): void => {
@@ -148,5 +175,24 @@ describe('#715 (b) 04 §B.3 — a test that takes real locks never fakes the glo
       return !(TAKES_REAL_LOCKS.test(text) && fakesDate(text));
     });
     expect(stale).toEqual([]);
+  });
+});
+
+describe('#715 (b) 04 §D (B4) — the real-clock expiry waits are exactly the named ones', () => {
+  it('a synchronous hold past a deadline appears only in the named files, and every named cell is still there', () => {
+    // (a) red when a test file adds a `while (Date.now() <= …)` hold and is not named here, or a named
+    //     cell is renamed or removed (a stale exemption); (b) prints the files and the cells.
+    const holding = testFiles().filter(
+      (path) =>
+        path !== SELF && /while \(Date\.now\(\) <= /.test(readFileSync(join(ROOT, path), 'utf8')),
+    );
+    const missing = Object.entries(REAL_CLOCK_EXPIRY_WAITS).flatMap(([path, { cells }]) => {
+      const text = readFileSync(join(ROOT, path), 'utf8');
+      return cells.filter((c) => !text.includes(`it('${c}'`)).map((c) => `${path}: ${c}`);
+    });
+    expect({ holding, missing }).toEqual({
+      holding: Object.keys(REAL_CLOCK_EXPIRY_WAITS).sort(),
+      missing: [],
+    });
   });
 });

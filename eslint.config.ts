@@ -165,7 +165,8 @@ const ZOD_V3_RESTRICTIONS = {
  * (for `realm workflow test`), and core exports the clock file's helpers for that package, so both
  * are named here; tests and the testing package are allowed by the override block below. The rule
  * catches static import and export-from declarations; the source scan in
- * `lint-test-location-715.test.ts` finds the names as text in any other form.
+ * `lint-test-location-715.test.ts` finds the names as text in any other form (it reads the `.ts` and
+ * `.mjs` files of the four packages' `src` folders, no `.sh` or `.json`, and skips `*.test.ts`).
  */
 const TEST_CLOCK_RESTRICTIONS = [
   {
