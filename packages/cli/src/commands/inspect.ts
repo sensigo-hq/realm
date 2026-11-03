@@ -53,6 +53,7 @@ import {
   operatorInputLine,
   owedCallWords,
   owedItems,
+  advanceNeedsWords,
   heldByAnswerWords,
   writerHost,
 } from './ways-renderer.js';
@@ -85,7 +86,7 @@ import type {
   RunCost,
 } from '@sensigo/realm';
 import { recomputeIdentity } from '../extensions/extension-identity.js';
-import { autoEvidence, lifetimeText } from '../agent/prompt-cache.js';
+import { autoEvidence, autoPricesText, lifetimeText } from '../agent/prompt-cache.js';
 import {
   ABSENCE_WORDS,
   UNSHOWABLE_NAME,
@@ -575,11 +576,17 @@ function askSourceText(entry: CacheRequestedEntry): string {
 
 /**
  * Issue #600 PR 2 (D3) — one distinct ask, in words; the lifetime unit: when `auto` chose it, what it
- * read (`; auto: <evidence>`, the start line's words).
+ * read (`; auto: <evidence>`, the start line's words); issue #898: then where its prices came from
+ * (`; <prices text>`, from core's view — `not_recorded` included), by the lifetime asked.
  */
 function askEntryText(entry: CacheRequestedEntry): string {
-  const auto = entry.auto !== undefined ? `; auto: ${autoEvidence(entry.auto)}` : '';
-  if (entry.value === 'off') return `asked for no caching (${askSourceText(entry)}${auto})`;
+  const autoFor = (asked: number | 'off'): string =>
+    entry.auto === undefined
+      ? ''
+      : `; auto: ${autoEvidence(entry.auto)}` +
+        (entry.auto.prices !== undefined ? `; ${autoPricesText(entry.auto.prices, asked)}` : '');
+  if (entry.value === 'off')
+    return `asked for no caching (${askSourceText(entry)}${autoFor('off')})`;
   if (entry.value === 'provider_rules') {
     return "asked for nothing (the provider's own caching, if any, applies)";
   }
@@ -593,7 +600,7 @@ function askEntryText(entry: CacheRequestedEntry): string {
       : entry.ttl_sent
         ? `sent as ${lifetime}`
         : "the provider's default lifetime";
-  return `asked for ${lifetime} (${sent}; ${askSourceText(entry)}${auto})`;
+  return `asked for ${lifetime} (${sent}; ${askSourceText(entry)}${autoFor(entry.lifetime_s)})`;
 }
 
 /**
@@ -1303,8 +1310,11 @@ export async function inspectRun(
       // decision C207: with several owed, where the call stops — the clause the preview ends with.
       // decision C212: the words after the command are set off by a space — no punctuation follows
       // it (`owedCallWords`).
+      // issue #923 (C33): inspect loads no project code, so the code an owed step needs is a
+      // condition said before the command (`advanceNeedsWords`), never judged here.
+      const needs = advanceNeedsWords(advance);
       lines.push(
-        `Owed to the engine: ${owedItems(advance).join(', ')} — ${CLI_COMMANDS.advance(advance, undefined, writerHost())}${owedCallWords(advance)}`,
+        `Owed to the engine: ${owedItems(advance).join(', ')} — ${needs === '' ? '' : `${needs}: `}${CLI_COMMANDS.advance(advance, undefined, writerHost())}${owedCallWords(advance)}`,
       );
     }
     // decision C205: an agent step ready — the drive, in the words `realm run advance` and `realm

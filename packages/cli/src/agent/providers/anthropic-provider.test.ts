@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Anthropic from '@anthropic-ai/sdk';
 import { AnthropicProvider, ANTHROPIC_DEFAULT_BASE_URL } from './anthropic-provider.js';
-import { WorkflowError, type CacheAutoBasis } from '@sensigo/realm';
+import { WorkflowError, type AutoPriceInput, type CacheAuto } from '@sensigo/realm';
 import {
   CLASS_B_NO_TEXT_MARKER,
   buildSystemPrompt,
@@ -1670,10 +1670,7 @@ describe('cut after hiding (GHSA-gxfq cell 17)', () => {
 // =========================================================================
 describe('AnthropicProvider — the cache request and the request facts (issue #600 PR 2)', () => {
   const SCHEMA = { type: 'object', properties: { x: { type: 'string' } } };
-  const at = (
-    value: 'auto' | 'short' | 'long' | 'off',
-    auto?: { basis: CacheAutoBasis; gaps_s?: number[] },
-  ) =>
+  const at = (value: 'auto' | 'short' | 'long' | 'off', auto?: CacheAuto) =>
     new AnthropicProvider('claude-sonnet-4-5', {
       promptCache: {
         value,
@@ -1682,6 +1679,16 @@ describe('AnthropicProvider — the cache request and the request facts (issue #
         ...(auto !== undefined ? { auto } : {}),
       },
     });
+  // #898: an `auto` with kept gaps is pending until settled from the runner's price file. These cells
+  // settle it at today's Anthropic ratios (read 0.1×, writes 1.25× and 2×), which choose as the
+  // shipped multiples did, so each choice is unchanged and its record gains `prices`.
+  const FULL_PRICES: AutoPriceInput = {
+    rates: { input: 3, output: 15, cache_read: 0.3, cache_write_5m: 3.75, cache_write_1h: 6 },
+  };
+  const settled = (provider: AnthropicProvider): AnthropicProvider => {
+    if (provider.isAutoChoicePending()) provider.settleAutoChoice(FULL_PRICES);
+    return provider;
+  };
   // The three single-shot requests `buildOpts` builds: the first, the strict ladder's retry after
   // a 400, and the non-JSON retry. Returns every request body the SDK was handed, in order.
   const threeRequests = async (
@@ -1811,8 +1818,8 @@ describe('AnthropicProvider — the cache request and the request facts (issue #
     expect([
       await row(at('auto', { basis: 'no_measurement' })),
       await row(at('auto', { basis: 'listen_trigger_gaps', gaps_s: [] })),
-      await row(at('auto', { basis: 'listen_trigger_gaps', gaps_s: [420, 720] })),
-      await row(at('auto', { basis: 'listen_trigger_gaps', gaps_s: [7200, 7200, 7200] })),
+      await row(settled(at('auto', { basis: 'listen_trigger_gaps', gaps_s: [420, 720] }))),
+      await row(settled(at('auto', { basis: 'listen_trigger_gaps', gaps_s: [7200, 7200, 7200] }))),
       await row(at('auto', { basis: 'listen_gaps_unreadable' })),
       await row(at('auto')),
     ]).toEqual([
@@ -1832,7 +1839,11 @@ describe('AnthropicProvider — the cache request and the request facts (issue #
         facts: {
           ...asked(3600),
           ...common,
-          cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [420, 720] },
+          cache_auto: {
+            basis: 'listen_trigger_gaps',
+            gaps_s: [420, 720],
+            prices: { from: 'economics' },
+          },
         },
         promptCache: { lifetime_s: 3600 },
       },
@@ -1840,7 +1851,11 @@ describe('AnthropicProvider — the cache request and the request facts (issue #
         facts: {
           cache_requested: 'off',
           ...common,
-          cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [7200, 7200, 7200] },
+          cache_auto: {
+            basis: 'listen_trigger_gaps',
+            gaps_s: [7200, 7200, 7200],
+            prices: { from: 'economics' },
+          },
         },
         promptCache: 'off',
       },
@@ -1867,9 +1882,9 @@ describe('AnthropicProvider — the cache request and the request facts (issue #
     };
     const system = buildSystemPrompt(SCHEMA, undefined, true);
     expect([
-      await sent(at('auto', { basis: 'listen_trigger_gaps', gaps_s: [7200, 7200, 7200] })),
+      await sent(settled(at('auto', { basis: 'listen_trigger_gaps', gaps_s: [7200, 7200, 7200] }))),
       await sent(at('auto', { basis: 'no_measurement' })),
-      await sent(at('auto', { basis: 'listen_trigger_gaps', gaps_s: [420, 720] })),
+      await sent(settled(at('auto', { basis: 'listen_trigger_gaps', gaps_s: [420, 720] }))),
     ]).toEqual([
       system,
       [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],

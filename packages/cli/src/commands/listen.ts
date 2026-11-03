@@ -36,7 +36,7 @@ import { Command, InvalidArgumentError } from 'commander';
 import { parseLlmTimeout, parseProvider } from './agent.js';
 import { hasText, listenModelRefusal, type ProviderName } from '../agent/providers/llm-provider.js';
 // issue #600 PR 2: the SAME parser `realm agent --prompt-cache` uses.
-import { parsePromptCache } from '../agent/prompt-cache.js';
+import { autoFallbackWindowText, autoLongText, parsePromptCache } from '../agent/prompt-cache.js';
 import {
   AUTO_GAPS_KEPT,
   CACHE_GAP_MAX_S,
@@ -1534,7 +1534,8 @@ export function makeAgentSpawner(
 /**
  * Issue #600 (D2; the lifetime unit) — what listen's startup line says each provider is asked to
  * cache. A child that uses Anthropic asks for the stated setting, or listen's default, `auto` (off,
- * 5 minutes or 1 hour per workflow, by the gaps between its recent triggers); Realm asks OpenAI for
+ * 5 minutes or 1 hour per workflow, by the gaps between its recent triggers and the prices in the
+ * runner's price file — #898); Realm asks OpenAI for
  * no caching. With `--provider`, only that provider's agents are started, so the other is named
  * only as `not used` (OpenAI) or not at all (Anthropic).
  */
@@ -1544,7 +1545,7 @@ export function listenCachingFacts(
 ): Record<string, string> {
   if (provider === 'openai') return { openai: 'asked for no caching', anthropic: 'not used' };
   const words: Record<PromptCacheSetting, string> = {
-    auto: 'auto: off, 5 minutes or 1 hour for each workflow, by the gaps between its recent triggers',
+    auto: 'auto: off, 5 minutes or 1 hour for each workflow, by the gaps between its recent triggers and the prices in runner.cache.economics',
     short: '5 minutes',
     long: '1 hour',
     off: 'off',
@@ -1638,7 +1639,8 @@ export const listenCommand = new Command('listen')
   // listen's default (`auto`), recorded as `runner_default`.
   .option(
     '--prompt-cache <setting>',
-    'Passed to each realm agent it starts: auto, short, long or off. auto (the default): each agent asks Anthropic for off, 5 minutes or 1 hour, by the gaps between the recent triggers of its workflow. short: 5 minutes. long: 1 hour. off: nothing. Other providers are asked for no caching.',
+    // eslint-disable-next-line no-restricted-syntax -- help prose naming the setting, not a command to copy (#729 PR-3, L-2); #898: its numbers come from the provider's constants.
+    `Passed to each realm agent it starts: auto, short, long or off. auto (the default): each agent asks Anthropic for off, 5 minutes or 1 hour, by the gaps between the recent triggers of its workflow, priced from runner.cache.economics (with no usable prices: ${autoLongText()} when a recent gap is under ${autoFallbackWindowText()}, else off). short: 5 minutes. long: 1 hour. off: nothing. Other providers are asked for no caching.`,
     parsePromptCache,
   )
   .option(

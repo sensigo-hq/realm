@@ -534,7 +534,8 @@ const STEP_LINE_CACHE_REQUESTED_ENTRY = {
     surface: 'rendered',
     probe: (out) =>
       expect(out).toContain(
-        "; auto: the last 5 gaps between this workflow's triggers were about 10 seconds, 10 seconds, 10 seconds, 2 hours and 2 hours)",
+        // #898: the fixture predates priced auto (gaps, no prices).
+        "; auto: the last 5 gaps between this workflow's triggers were about 10 seconds, 10 seconds, 10 seconds, 2 hours and 2 hours; price source not recorded (this request was recorded before Realm priced auto from the price file))",
       ),
   },
 } satisfies Record<keyof CacheRequestedEntry, DisclosureRoute>;
@@ -1225,7 +1226,8 @@ const FAILURE_CACHE_REQUESTED_ENTRY = {
     surface: 'rendered',
     probe: (out) =>
       expect(out).toContain(
-        "; auto: the last 5 gaps between this workflow's triggers were about 10 seconds, 10 seconds, 10 seconds, 2 hours and 2 hours)",
+        // #898: the fixture predates priced auto (gaps, no prices).
+        "; auto: the last 5 gaps between this workflow's triggers were about 10 seconds, 10 seconds, 10 seconds, 2 hours and 2 hours; price source not recorded (this request was recorded before Realm priced auto from the price file))",
       ),
   },
 } satisfies Record<keyof CacheRequestedEntry, DisclosureRoute>;

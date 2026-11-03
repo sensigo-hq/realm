@@ -29,6 +29,9 @@ import type {
   ExtensionRegistry,
   Attributed,
   PromptCacheSetting,
+  AutoPriceInput,
+  CacheAutoPrices,
+  CacheChoice,
 } from '@sensigo/realm';
 import {
   LlmProvider,
@@ -38,7 +41,9 @@ import {
 } from '../agent/providers/llm-provider.js';
 import type { ProviderName } from '../agent/providers/llm-provider.js';
 import { runAgent } from '../agent/run-agent.js';
+import { settleAutoFromPriceFile } from '../agent/auto-prices.js';
 import {
+  autoFallbackWindowText,
   cacheableStepCounts,
   parsePromptCache,
   providerName,
@@ -295,7 +300,8 @@ export const agentCommand = new Command('agent')
   // record `runner_default` and the re-attach command never repeats a value nobody typed.
   .option(
     '--prompt-cache <setting>',
-    "What Anthropic is asked to cache: auto, short, long or off. auto (the default) chooses per drive — the short lifetime for a drive realm agent starts on its own; for a drive realm listen starts, off, short or long by the gaps between that workflow's recent triggers. short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: Anthropic is asked to cache nothing. Other providers are asked for no caching.",
+    // eslint-disable-next-line no-restricted-syntax -- help prose naming the setting, not a command to copy (#729 PR-3, L-2); #898: its numbers come from the provider's constants.
+    `What Anthropic is asked to cache: auto, short, long or off. auto (the default) chooses per drive — the short lifetime for a drive realm agent starts on its own; for a drive realm listen starts, off, short or long by the gaps between that workflow's recent triggers, priced from the runner's price file (runner.cache.economics); with no usable prices, long when a recent gap is under ${autoFallbackWindowText()}, else off. short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: Anthropic is asked to cache nothing. Other providers are asked for no caching.`,
     parsePromptCache,
   )
   // issue #620 PR-C: the repo's first hidden option. `realm listen` appends it to every child it
@@ -404,6 +410,17 @@ export const agentCommand = new Command('agent')
         // predicate is evaluated against it inside the trace buffer's own critical section.
         const traceBufferStore = new JsonTraceBufferStore(store.runsDirPath, store);
         let provider: LlmProvider;
+        // issue #898: an Anthropic provider whose `auto` choice is pending (a drive `realm listen`
+        // started, with measured gaps) — settled from the runner's price file after the load — and
+        // the requested `--model` the file is read by.
+        let settleAuto:
+          | ((prices: AutoPriceInput) => { choice: CacheChoice; prices?: CacheAutoPrices })
+          | undefined;
+        let requestedModel: string | undefined;
+        // issue #898 (C.1): whether the provider applies --prompt-cache, never by reading a pending
+        // choice: a provider with one pending is Anthropic, which applies the setting.
+        const appliesPromptCache = (): boolean =>
+          settleAuto !== undefined || provider.capabilities().promptCache !== undefined;
         // issue #313: a third-party provider cannot declare a `providerId` capability (realm
         // does not know its dialect), so its identity travels separately and evidence can still
         // name it. In-repo providers declare their own and this stays undefined.
@@ -476,22 +493,24 @@ export const agentCommand = new Command('agent')
                 'COMPAT endpoint enforces strict, and native OpenAI endpoints already do.',
             );
           }
-          provider = await resolveProvider({
+          ({ provider, settleAuto } = await resolveProvider({
             provider: opts.provider,
             model: opts.model,
             baseUrl: opts.baseUrl,
             strictBaseUrl: opts.strictBaseUrl === true,
             promptCache,
-          });
+          }));
+          requestedModel = flags.model;
           // issue #600 PR 2 (C3b): a stated setting for a provider that cannot apply it is refused,
           // keyed on the capability, never on a provider's name. A child `realm listen` started is
           // never refused: listen's flag is fleet-wide, so the child's start line discloses it.
-          const caps = provider.capabilities();
           if (
             opts.promptCache !== undefined &&
             opts.spawnedByListen !== true &&
-            caps.promptCache === undefined
+            !appliesPromptCache()
           ) {
+            // #898: reached only when no choice is pending, so `capabilities()` can be read here.
+            const caps = provider.capabilities();
             console.error(
               `Error: --prompt-cache sets caching only for Anthropic; Realm asks ${providerName(caps, 'this provider')} for no caching, so the flag would change nothing. Remove --prompt-cache, or use --provider anthropic with an Anthropic model. ${tail}`,
             );
@@ -505,11 +524,33 @@ export const agentCommand = new Command('agent')
         const reattachFlags = buildReattachFlags({
           ...opts,
           promptCacheSource: 'stated',
-          providerAppliesPromptCache: provider.capabilities().promptCache !== undefined,
+          providerAppliesPromptCache: appliesPromptCache(),
         });
         // issue #600 PR 2: the setting the provider was built with, for the start line. A
-        // `--provider-module` run has none: the module asks for what it asks.
-        const promptCacheForDrive = moduleProviderId === undefined ? { promptCache } : {};
+        // `--provider-module` run has none: the module asks for what it asks. Issue #898 (C.4): when
+        // a settle ran, its `prices` join the setting's `auto` — the start line's only source for it.
+        const promptCacheFor = (
+          prices: CacheAutoPrices | undefined,
+        ): { promptCache?: typeof promptCache } =>
+          moduleProviderId !== undefined
+            ? {}
+            : {
+                promptCache:
+                  prices !== undefined && promptCache.auto !== undefined
+                    ? { ...promptCache, auto: { ...promptCache.auto, prices } }
+                    : promptCache,
+              };
+        // issue #898 (C.2): a pending `auto` choice is settled from the runner's price file, read once
+        // after the definition and `realm.yaml` load and before the drive. Without a pending choice no
+        // file is opened.
+        const settleFromPriceFile = async (
+          economicsPath: string | undefined,
+        ): Promise<CacheAutoPrices | undefined> => {
+          if (settleAuto === undefined || requestedModel === undefined) return undefined;
+          const outcome = await settleAutoFromPriceFile(settleAuto, economicsPath, requestedModel);
+          if (outcome.warning !== undefined) console.error(outcome.warning);
+          return outcome.prices;
+        };
         // `realm agent` is operator-launched: cwd is a legitimate deployment-root default.
         const projectDir = resolve(opts.project ?? process.cwd());
         const extensionOpts = {
@@ -575,6 +616,7 @@ export const agentCommand = new Command('agent')
             { store, workflowStore, ctx: writerCtx() },
             extensionOpts,
           );
+          const autoPrices = await settleFromPriceFile(loaded.cacheEconomicsPath);
 
           const gateHandler = buildManifestGateHandler(loaded.notifiers, {
             store,
@@ -601,7 +643,7 @@ export const agentCommand = new Command('agent')
               schemaRetries: opts.schemaRetries,
               llmTimeoutSeconds: opts.llmTimeout,
               reattachFlags,
-              ...promptCacheForDrive,
+              ...promptCacheFor(autoPrices),
               ...(gateHandler ? { gateHandler } : {}),
               ...(loaded.secretValues !== undefined
                 ? { redactionValues: loaded.secretValues }
@@ -652,6 +694,7 @@ export const agentCommand = new Command('agent')
             printDriveReceipt();
             process.exit(1);
           }
+          const autoPrices = await settleFromPriceFile(loaded.cacheEconomicsPath);
 
           const gateHandler = buildManifestGateHandler(loaded.notifiers, {
             store,
@@ -678,7 +721,7 @@ export const agentCommand = new Command('agent')
               schemaRetries: opts.schemaRetries,
               llmTimeoutSeconds: opts.llmTimeout,
               reattachFlags,
-              ...promptCacheForDrive,
+              ...promptCacheFor(autoPrices),
               ...(gateHandler ? { gateHandler } : {}),
               ...(loaded.secretValues !== undefined
                 ? { redactionValues: loaded.secretValues }

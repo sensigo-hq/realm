@@ -113,8 +113,13 @@ const TCK_REQUEST_FACTS: Required<
   cache_ttl_sent: true,
   cache_requested_source: 'stated',
   cache_requested_by: 'tck-runner',
-  // issue #600 (the lifetime unit): an object no store default produces
-  cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [61, 3599] },
+  // issue #600 (the lifetime unit): an object no store default produces; issue #898: its `prices`
+  // in the shape with the most keys, so a store that drops or reorders a nested key fails
+  cache_auto: {
+    basis: 'listen_trigger_gaps',
+    gaps_s: [61, 3599],
+    prices: { from: 'economics', excluded: ['long'], missing: ['cache_write_1h'] },
+  },
   provider: 'tck-provider',
   endpoint: 'custom',
   cache_split_offered: true,

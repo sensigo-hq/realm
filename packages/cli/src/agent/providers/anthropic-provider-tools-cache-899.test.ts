@@ -155,18 +155,27 @@ async function sixMainTurns(setting: Setting): Promise<void> {
 }
 
 /** Two tool calls use up the budget of 2, then the final extraction answers with the submit tool. */
+/** #898: a provider whose `auto` choice is pending (gaps given) is settled at today's Anthropic
+ *  ratios, which choose as the shipped multiples did; its records gain `prices`. */
+function built(setting: Setting): AnthropicProvider {
+  const provider = new AnthropicProvider('claude-x', setting);
+  if (provider.isAutoChoicePending())
+    provider.settleAutoChoice({
+      rates: { input: 3, output: 15, cache_read: 0.3, cache_write_5m: 3.75, cache_write_1h: 6 },
+    });
+  return provider;
+}
+
 async function budgetUsedUp(setting: Setting) {
   script = [
     reply([toolUse('toolu_1')]),
     reply([toolUse('toolu_2')]),
     reply([submit({ answer: 'x' })]),
   ];
-  return new AnthropicProvider('claude-x', setting).callStepWithTools(
-    'prompt',
-    [lookupTool()],
-    EXECUTOR,
-    { inputSchema: SCHEMA, maxToolCalls: 2 },
-  );
+  return built(setting).callStepWithTools('prompt', [lookupTool()], EXECUTOR, {
+    inputSchema: SCHEMA,
+    maxToolCalls: 2,
+  });
 }
 
 const kindOf = (body: Body): 'main' | 'final' =>
@@ -344,7 +353,7 @@ describe('#899 — what each request of the tool loop records', () => {
   /** The single-shot request's record for the same setting and endpoint: what `requestFacts` writes. */
   async function singleShotFor(setting: Setting): Promise<Record<string, unknown>> {
     script = [reply([VALID])];
-    const r = await new AnthropicProvider('claude-x', setting).callStepWithMeta('prompt');
+    const r = await built(setting).callStepWithMeta('prompt');
     sent = [];
     return records(r)[0]!;
   }

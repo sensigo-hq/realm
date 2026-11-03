@@ -59,6 +59,19 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- **`--prompt-cache auto` now chooses from the prices in the runner's price file
+  (`runner.cache.economics`); Realm uses no price of its own for the choice.** On a drive `realm
+listen` starts, with measured gaps, each cached lifetime is costed only when the file states its
+  rates, and an option the file cannot cost is never chosen. When the file cannot price the choice —
+  no file, a file that cannot be read or is not valid, no entry for the model, an input price of 0,
+  or no read rate or no write rate for either lifetime — `auto` asks for 1 hour when any of the last
+  five gaps is under 54 minutes, and for no caching otherwise. Each request's record
+  (`cache_auto.prices`), the start line, `realm run inspect` and `get_run_state` say which happened
+  and why. **Upgrading:** with no usable price file, such a drive no longer asks for 5 minutes, and
+  it asks for 1 hour on some gap patterns where it asked for no caching before. A file without a
+  1-hour write rate never asks for 1 hour, and one without a 5-minute write rate never asks for 5
+  minutes. A file that gives only a single `cache_write` rate, or prices input at 0, is treated as
+  not able to price the choice. Key the file by the id you pass to `--model`. (#898)
 - **Two or more steps that cannot run here for a missing handler or adapter are said in one sentence
   (issue #872).** The MCP replies' `context_hint` gives their count first, then each missing handler
   or adapter with at most three of the steps that need it and how many more (at most ten, then how
@@ -109,6 +122,7 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
   run's line then leaves out "refusing to purge its trace buffer". As in 0.48.0, a run that owes a
   cleanup step is blocked as `drain_pending` after its trace files and refused answers were deleted,
   and a dry run lists it among the runs that would be purged.
+- **BREAKING — a precondition or a guard (`abort_unless`) whose path starts outside the workflow's steps is refused when the workflow file is loaded (issue #933).** That covers a path on the run (`run`, `run.params.…`, `run.id`), the `input_map` form `context.resources.…`, and a name that is no step of the workflow. Such a check could never be read: the step stayed blocked, or the guard failed the run. Each refusal says what to write instead. For the run's input, declare it in `params_schema` to refuse a run that does not fit, or, on a step that depends on another, put the condition under `when` to skip it. A `when` that uses the `context.resources.…` form now says how to write the path, in place of telling you to add `context` to `depends_on`. A copy registered before this version keeps running as registered; `realm workflow validate --registered <id>` shows whether it would now be refused.
 
 ### Fixed
 
@@ -141,6 +155,23 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
 - **A run started again under an idempotency key is stamped after the run it replaces when the
   clock stepped back by less than 5 seconds, and each `create`, `update` and `claimStep` of a store
   stamps from one reading of the clock (issue #715).**
+- Hardening: a declared secret or an environment value that a step prints in pieces, or relays
+  from a child program chunk by chunk, is hidden in a log as one value — when the pieces arrive
+  within 200 ms, and unless another hidden value inside it ends before the pieces split.
+- **A word that starts with `-` is refused as the value of `--model` (issue #920).** `realm agent`,
+  `realm listen`, `realm workflow validate`, `register` and `watch` now refuse a value that starts
+  with `-` (a lone `-` is accepted) as the value of `--model`; `--model --strict` used to take
+  `--strict` as the model id and drop the flag, so a CI gate passed. Write `--model=<id>` for a
+  value that starts with `-`. The same now holds for 26 other options that took any word:
+  `--project` (on `workflow run`, `agent`, `run drain`, `run respond`, `run advance`, `mcp` and
+  `serve`), `--extensions-module` (`run drain`, `mcp`, `serve`), `--workflow` (`run list`,
+  `reclaim`, `purge`, `reconcile`), `run export --out`, `run abandon --reason`, `run respond --by`,
+  `run reclaim --step`, `agent --params` and `--base-url`, `serve --port`, and `listen --port`,
+  `--host`, `--dedup-store`, `--log-level` and `--sweep-expired-gates`.
+- `realm run inspect`, `realm run drain` and `realm run resume` no longer list a step as something
+  `realm run advance` runs without saying what it needs: when an owed step needs a handler or
+  adapter other than the `filesystem` adapter and the `check_quotes` handler, which every Realm
+  program has, the line names it before the command (issue #923).
 
 ## [0.48.0] — 2026-10-26
 

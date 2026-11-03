@@ -15,8 +15,9 @@ import type {
   CaptureEvidenceParams,
   SettlementResult,
   Attributed,
+  ComposedWays,
 } from '@sensigo/realm';
-import { CLI_COMMANDS, cannotGoOnLines, writerHost } from './ways-renderer.js';
+import { CLI_COMMANDS, advanceNeedsWords, cannotGoOnLines, writerHost } from './ways-renderer.js';
 import {
   describePending,
   owedList,
@@ -91,29 +92,41 @@ const waysOnWithoutEngineWork = (runId: string, run: RunRecord, pending: Pending
 /** The run's view with the workflow it was read from (F15: each refused step's way out reads it). */
 type OwedView = PendingView & { workflow: WorkflowDefinition };
 
+/**
+ * Issue #923 (decision C33): drain loads no project code, so it cannot know whether the program that
+ * runs `realm run advance` has the code an owed step needs. The words of the composed `advance`
+ * way's condition (`advanceNeedsWords`, the one producer), as `, <words>` before the owed line's
+ * `:`; `''` when it has none.
+ */
+const needsClause = (composed: ComposedWays | undefined): string => {
+  const advance = composed?.ways.find((w) => w.verb === 'advance');
+  const words =
+    advance !== undefined && advance.verb === 'advance' ? advanceNeedsWords(advance) : '';
+  return words === '' ? '' : `, ${words}`;
+};
+
 const wayOutOf = (runId: string, run: RunRecord, now: Date, pending?: OwedView): string[] => {
   const gate = run.pending_gate;
   if (gate === undefined) {
     // decision C64: when nothing can run from here, each engine step that cannot run and the way
     // out — core's lines (`correct the workflow …` for a refusal before the claim).
-    // #729 PR-0 (A-10): the CLI renderer's lines over the ways core composes.
+    // #729 PR-0 (A-10): the CLI renderer's lines over the ways core composes — composed once, with
+    // no registry (an observer, C33), for this reply's lines.
+    const composed =
+      pending === undefined ? undefined : composeWaysAt(run, now, { definition: pending.workflow });
     const cannotGoOn =
-      pending === undefined
+      composed === undefined
         ? []
-        : cannotGoOnLines(
-            composeWaysAt(run, now, { definition: pending.workflow }),
-            runId,
-            deriveRunPhase(run),
-            writerCtx(),
-          );
+        : cannotGoOnLines(composed, runId, deriveRunPhase(run), writerCtx());
     if (cannotGoOn.length > 0) return [cannotGoOn.join(' ')];
     // issue #625 PR-2a (decision C7): with engine work owed, the way on is `advance` — `abandon`
     // stays the alternative, never the only way out named.
     if (pending !== undefined && pending.owed.length > 0) {
       // decision C207: with several owed, where the call stops — never a promise that all run.
       const { steps, until } = owedWords(pending);
+      // issue #923: the code an owed step needs, before the `:` (`needsClause`).
       return [
-        `To run ${steps} the engine owes (${owedList(pending)})${until}: realm run advance ${runId}`,
+        `To run ${steps} the engine owes (${owedList(pending)})${until}${needsClause(composed)}: realm run advance ${runId}`,
         `To end the run instead: realm run abandon ${runId}`,
       ];
     }
@@ -869,24 +882,26 @@ export async function runDrainAction(
       );
       // issue #625 PR-2a (decision C7): the expiry left steps owed to the engine — name the call.
       const owed = await ownedWork(workingRun);
+      // #729 PR-0 (A-10): the run's ways, composed once by core with no registry (an observer,
+      // C33), for both lines below.
+      const composed =
+        owed === undefined
+          ? undefined
+          : composeWaysAt(workingRun, now, { definition: owed.workflow });
       if (owed !== undefined && owed.owed.length > 0) {
         // decision C207: with several owed, where the call stops.
         const { steps, until } = owedWords(owed);
         // decision C212: the line ends with its command — no full stop.
+        // issue #923: the code an owed step needs, before the `:` (`needsClause`).
         console.log(
-          `To run ${steps} the engine owes (${owedList(owed)})${until}: realm run advance ${runId}`,
+          `To run ${steps} the engine owes (${owedList(owed)})${until}${needsClause(composed)}: realm run advance ${runId}`,
         );
       }
       // decision C64: the expiry left nothing that can run from here — the steps and the way out.
       const cannotGoOn =
-        owed === undefined
+        composed === undefined
           ? []
-          : cannotGoOnLines(
-              composeWaysAt(workingRun, now, { definition: owed.workflow }),
-              runId,
-              deriveRunPhase(workingRun),
-              writerCtx(),
-            );
+          : cannotGoOnLines(composed, runId, deriveRunPhase(workingRun), writerCtx());
       for (const line of cannotGoOn) console.log(line);
       // decision C205: with no engine work and nothing that cannot run, an agent step ready (the
       // drive) or a step in flight in another program (wait for it).

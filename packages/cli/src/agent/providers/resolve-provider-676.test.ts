@@ -232,7 +232,7 @@ describe('resolveProvider — no default model (issue #676)', () => {
   // ---- a given model builds the provider with that model -------------------------------------
   it('with --model given, the Anthropic provider is built with that model', async () => {
     setKeys({ ANTHROPIC_API_KEY: 'k' });
-    const p = await resolveProvider({
+    const { provider: p } = await resolveProvider({
       provider: undefined,
       model: 'claude-given-676',
       promptCache: TEST_PROMPT_CACHE,
@@ -243,7 +243,7 @@ describe('resolveProvider — no default model (issue #676)', () => {
 
   it('with --model given, the OpenAI provider is built with that model', async () => {
     setKeys({ OPENAI_API_KEY: 'k' });
-    const p = await resolveProvider({
+    const { provider: p } = await resolveProvider({
       provider: 'openai',
       model: 'gpt-given-676',
       promptCache: TEST_PROMPT_CACHE,
@@ -254,7 +254,7 @@ describe('resolveProvider — no default model (issue #676)', () => {
 
   it('the o1 route is still taken for o1-mini', async () => {
     setKeys({ OPENAI_API_KEY: 'k' });
-    const p = await resolveProvider({
+    const { provider: p } = await resolveProvider({
       provider: 'openai',
       model: 'o1-mini',
       promptCache: TEST_PROMPT_CACHE,

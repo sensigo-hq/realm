@@ -48,7 +48,10 @@ describe('#899 — the docs sentences', () => {
     );
     claim(
       REF,
-      'With Anthropic and a setting other than off: when the workflow has no agent step, it says `Caching: no step is cached; this workflow has no agent step.`, and when an agent step calls tools, the line ends `On a step that calls tools, it is also asked to cache the conversation so far, at each turn.`',
+      // #898 D.6 (REVIEW-939 finding 1): the no-agent-step words hold under the default setting or
+      // on a drive `realm listen` started; a stated setting on such a workflow is refused first
+      // (the refusal row below; W939).
+      'With Anthropic and a setting other than off: when the workflow has no agent step, it says `Caching: no step is cached; this workflow has no agent step.` under the default setting, or on a drive `realm listen` started (a stated setting on such a workflow is refused first), and when an agent step calls tools, the line ends `On a step that calls tools, it is also asked to cache the conversation so far, at each turn.`',
     );
     claim(
       REF,

@@ -38,6 +38,8 @@ Answers the gate a run is waiting at. `realm run inspect <run-id>` prints the ga
 | `--project <dir>`            | No       | Used only for a workflow registered without a project folder (made by an agent or from a string): the folder whose `realm.yaml` and code it loads. Default: the current folder. A workflow registered from a folder loads its code from there, and `--project` is not used (the command says so). |
 | `--extensions-module <path>` | No       | Loads this code file in place of the files named by the workflow's `extensions`.                                                                                                                                                                                                                  |
 
+`--by` and `--project` refuse a value that starts with `-`, except a lone `-`; write `--option=value` for one.
+
 ```bash
 realm run respond 3ebc1158-1d29-41b5-9ca5-df054a681b58 --gate 0d499c26-a6b4-406f-ae29-6d6ef5c75fcb --choice approve
 ```
@@ -145,6 +147,8 @@ The refusals:
 realm run advance <run-id> [--project <dir>] [--extensions-module <path>]
 ```
 
+`--project` refuses a value that starts with `-`, except a lone `-`; write `--option=value` for one.
+
 Added after version 0.46.0. Runs what a run owes the engine, from this shell — no model provider, no key: first, when the open question's time is up and it declares `on_expiry`, that default or abort (the preview names it as `the expired question on '<step>' (its declared <on_expiry>)`, and for a declared default goes on `; then it runs what that leaves owed until a step opens a question, fails or ends the run.`, and the command prints the line from its reply before the steps it runs: `⚠ gate '<gate>' on '<step>' had expired <how long> before this call — this advance call first carried out its declared settle_default: the default choice '<choice>' was recorded (enacted_via: advance).`, or `… its declared abort: the run ended …`; when the default's choice made a guard ready, the guard's sentence follows on the same line: `… (enacted_via: advance). Guard step '<guard>' passed.`); then the guards and `auto` steps that are ready. It runs them one at a time, and the steps the run owes after them, and stops at the first step that opens a question, fails or ends the run: a step named after that one does not run in that call. When the preview names more than one, its line says so: `Owed to the engine: 'approve', 'fetch'; it runs them until a step opens a question, fails or ends the run.` It loads the project's extensions exactly as `respond` does (`--project`, `--extensions-module`) — from the workflow's own project folder, whatever folder the shell is in, or, for a workflow made without one, from `--project` or the folder it runs in — names this program with `REALM_OPERATOR` or the OS user (a `REALM_OPERATOR` that cannot be used prints one line and exits 1 before any work), and prints what it is about to do before it runs anything:
 
 ```text
@@ -239,8 +243,10 @@ When the step that is ready again is one only the engine runs, one line names it
 
 ```text
 Resumed run '8bc06d55-77fb-43f4-937f-8d166fad20cf': step 'a' re-enabled and run reset to 'running'.
-To run the step the engine owes ('a') without a model: realm run advance 8bc06d55-77fb-43f4-937f-8d166fad20cf
+To run the step the engine owes ('a') without a model, from a program that has handler 'boom': realm run advance 8bc06d55-77fb-43f4-937f-8d166fad20cf
 ```
+
+When a step it names needs a handler or adapter other than the `filesystem` adapter and the `check_quotes` handler, which every Realm program has, `, from a program that has handler '<name>'` (or `adapter '<name>'`) comes before the `:` (resume loads no project code, so it cannot check). Added after version 0.48.0.
 
 When the step that is ready again cannot run — the workflow was registered again with a check the step fails — and nothing else can run, driving the run would only stop on that step: the step and the way out take the place of the `Drive it with:` lines. Added after version 0.46.0, which prints the `Drive it with:` lines in this case too:
 
@@ -276,6 +282,8 @@ Ends an open run. Its phase becomes `abandoned`. The workflow's cleanup steps do
 | Flag              | What it does                                                             |
 | ----------------- | ------------------------------------------------------------------------ |
 | `--reason <text>` | Recorded as the run's cause. Default: `Abandoned via realm run abandon`. |
+
+`--reason` refuses a value that starts with `-`, except a lone `-`; write `--option=value` for one.
 
 ```bash
 realm run abandon 00b33778-f504-4d65-93ca-6300441f41e7 --reason "upstream still down"
@@ -355,6 +363,8 @@ When a step starts, Realm marks it in progress and, where it can, records a time
 | `--all`                   | Selects, across all runs, every step that is past its time, is declared `idempotent: true`, and is not waiting at a gate. |
 | `--workflow <id>`         | With `--all`: only runs of this workflow.                                                                                 |
 | `--older-than <duration>` | With `--all`: only steps that are past their time by at least this long.                                                  |
+
+`--step` and `--workflow` refuse a value that starts with `-`, except a lone `-`; write `--option=value` for one.
 
 With a run ID alone, it lists the steps in progress and the state of each:
 
@@ -441,6 +451,8 @@ A workflow's cleanup steps, the steps with `execution: finalizer`, run after the
 | `--project <dir>`            | The project whose `realm.yaml` applies if the workflow has no project of its own. Default: the current folder. |
 | `--extensions-module <path>` | Loads this code file in place of the files named by the workflow's `extensions`.                               |
 
+`--project` and `--extensions-module` refuse a value that starts with `-`, except a lone `-`; write `--option=value` for one.
+
 Without `--force`, it reports:
 
 ```text
@@ -519,6 +531,8 @@ Run 'daeede5e-c0dd-4b88-9caf-6efa089902dd' is not terminal (phase: 'running') �
 To run the step the engine owes ('after'): realm run advance daeede5e-c0dd-4b88-9caf-6efa089902dd
 ```
 
+When a step it names needs a handler or adapter other than the `filesystem` adapter and the `check_quotes` handler, which every Realm program has, `, from a program that has handler '<name>'` (or `adapter '<name>'`) comes before the `:`. drain loads a project's code only with `--force` on a run that has ended, so for a run still going it cannot check. Added after version 0.48.0.
+
 When it leaves nothing that can run from here, the steps that cannot run and the way out follow instead. Added after version 0.46.0:
 
 ```text
@@ -577,6 +591,8 @@ No runs with an actionable pending finalizer.
 
 The runs after the second — the work the engine owes, a step that cannot run and the way out, an agent step that is ready, a step in flight in another program, each with the way out after it — were added after version 0.46.0, which prints the second line's `To end the run: realm run abandon <id>` for every run in `running`. The second line is now for a run with none of these. A command ends its line: where the way out follows it, it is the next line (added after version 0.46.0, which printed them on one line, the command followed by a full stop). At a question, the second line says that after the answer `realm run respond` names what the run owes next (added after version 0.46.0, which named only `realm run abandon` for a run still open after the answer).
 
+In the `To run … the engine owes` line of a run still going, `, from a program that has handler '<name>'` (or `adapter '<name>'`) comes before the `:` when a step it names needs a handler or adapter other than the `filesystem` adapter and the `check_quotes` handler, which every Realm program has. Added after version 0.48.0.
+
 **Exit code:** 0 if every cleanup step it tried ran, and when there is nothing to do. With `--all`, a run file that cannot be read as a run, except a copy of a run whose own file reads, is not acted on: it is named on standard error with what is wrong with it and the way out, then `⚠ <n> run file(s) in '<runs folder>' could not be read; realm run drain --all did not act on them.`, and the exit code is that of the runs acted on (added after version 0.47.0, which crashed). 1 if a cleanup step is left owed after `--force`, if `--force` prints one of the seven `is not terminal … nothing to drain` lines above, or for one of:
 
 ```text
@@ -600,6 +616,8 @@ Deletes finished runs, with their refused answers and trace entries. A deleted r
 | `--force`                 | Deletes. Without it, `purge` lists what it would delete.       |
 | `--older-than <duration>` | Selects every finished run that has not changed for this long. |
 | `--workflow <id>`         | With `--older-than`: only runs of this workflow.               |
+
+`--workflow` refuses a value that starts with `-`, except a lone `-`; write `--option=value` for one.
 
 ```bash
 realm run purge --older-than 30d
@@ -733,6 +751,8 @@ Realm keeps one small file for each idempotency key, in `~/.realm/runs/keys/`, t
 | ----------------- | ------------------------------------------------- |
 | `--workflow <id>` | Only runs of this workflow.                       |
 | `--dry-run`       | Reports what would be written and writes nothing. |
+
+`--workflow` refuses a value that starts with `-`, except a lone `-`; write `--option=value` for one.
 
 ```bash
 realm run reconcile --dry-run

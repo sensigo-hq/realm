@@ -207,6 +207,10 @@ export interface DisclosureSet {
     readonly kind: MemberKind;
     readonly member: number;
   }[];
+  /** The longest form's length: a stream that masks chunk by chunk keeps back at most this many
+   *  units less one between writes, so no form can straddle two of its emissions (aho-corasick's
+   *  `max_pattern_len`). */
+  readonly maxFormLength: number;
   /** Each member's source, by member index (named only on a private surface). */
   readonly sources: readonly string[];
   /** How many declared values are under the declared floor (I8). */
@@ -271,6 +275,7 @@ export function compileDisclosure(
       ? { environmentCause: options.environmentCause }
       : {}),
     forms,
+    maxFormLength: forms[0]?.form.length ?? 0,
     sources,
     unmaskable: unmaskable.length,
   };

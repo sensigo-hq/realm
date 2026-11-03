@@ -203,9 +203,9 @@ function cli(args: string[], env: Record<string, string> = childEnv, cwd = proje
 }
 
 /** A CLI run that does not block this process (the stub provider answers from it). */
-function cliAsync(args: string[], env: Record<string, string>): Promise<string> {
+function cliAsync(args: string[], env: Record<string, string>, cwd = project): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [CLI_ENTRY, ...args], { cwd: project, env });
+    const child = spawn(process.execPath, [CLI_ENTRY, ...args], { cwd, env });
     let out = '';
     child.stdout.on('data', (d: Buffer) => (out += d.toString()));
     child.stderr.on('data', (d: Buffer) => (out += d.toString()));
@@ -1316,3 +1316,118 @@ describe(
     });
   },
 );
+
+// U1: a value a handler prints in pieces, or relays from a child chunk by chunk, is hidden as one
+// in a piped `realm agent` log. The handlers are the reproduction's own (fakes only).
+describe('U1 — a value printed in pieces is hidden as one in a piped log (the spawned drive)', () => {
+  /** 29 characters, declared by the project's `.env`. */
+  const U1_FAKE = 'CANARY-declared-4f2a-xxxxxxxx';
+  const HANDLERS = `import { spawn } from 'node:child_process';
+export function makeSplit({ id, config }) {
+  return { id, async execute() {
+    const v = config.token;                      // 29 chars
+    process.stdout.write('split: ' + v.slice(0, 10));   // first piece, no newline
+    process.stdout.write(v.slice(10) + ' end\\n');       // second piece completes the value
+    return { data: { ok: true } };
+  } };
+}
+export function makeWhole({ id, config }) {
+  return { id, async execute() {
+    process.stdout.write('whole: ' + config.token + ' end\\n');
+    return { data: { ok: true } };
+  } };
+}
+export function makeChild({ id, config }) {
+  return { id, execute() {
+    return new Promise((resolve) => {
+      const v = config.token;
+      const child = spawn(process.execPath, ['-e', \`process.stdout.write('x'.repeat(65530) + \${JSON.stringify(v)} + ' end\\\\n')\`], { stdio: ['ignore', 'pipe', 'inherit'] });
+      let chunks = 0;
+      child.stdout.on('data', (d) => { chunks += 1; process.stdout.write(d); });
+      child.on('close', () => { process.stdout.write(\`child chunks: \${chunks}\\n\`); resolve({ data: { chunks } }); });
+    });
+  } };
+}
+`;
+
+  it('U1-11 two writes and a child relayed per chunk: both lines read [REDACTED]', async () => {
+    const dir = join(root, 'u1-project');
+    mkdirSync(join(dir, 'wf'), { recursive: true });
+    writeFileSync(
+      join(dir, 'realm.yaml'),
+      [
+        'version: 1',
+        'secrets:',
+        '  sources: [dotenv]',
+        '  dotenv: .env',
+        'handlers:',
+        '  split_writes:',
+        '    use: ./handlers.mjs#makeSplit',
+        '    config:',
+        "      token: '${secret:U1_TOKEN}'",
+        '  child_chunks:',
+        '    use: ./handlers.mjs#makeChild',
+        '    config:',
+        "      token: '${secret:U1_TOKEN}'",
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    writeFileSync(join(dir, '.env'), `U1_TOKEN=${U1_FAKE}\n`, 'utf8');
+    writeFileSync(join(dir, 'handlers.mjs'), HANDLERS, 'utf8');
+    // The project's top folder (the reproduction's `package.json`): its handlers load from it.
+    writeFileSync(join(dir, 'package.json'), '{ "type": "module" }\n', 'utf8');
+    writeFileSync(
+      join(dir, 'wf', 'workflow.yaml'),
+      [
+        'id: u1-carry',
+        'name: U1 carry',
+        'version: 1',
+        'steps:',
+        '  split:',
+        '    description: Two writes.',
+        '    execution: auto',
+        '    handler: split_writes',
+        '  child:',
+        "    description: A child's chunks.",
+        '    execution: auto',
+        '    depends_on: [split]',
+        '    handler: child_chunks',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    const stub = await startAnthropicStub({ finalContent: { summary: 'done' } });
+    try {
+      const out = await cliAsync(
+        ['agent', '--workflow', './wf', '--provider', 'anthropic', '--model', 'fake-model'],
+        { ...childEnv, ANTHROPIC_API_KEY: 'fake-u1-key-0000', ANTHROPIC_BASE_URL: stub.baseUrl },
+        dir,
+      );
+      const lines = out.split('\n');
+      const chunks = Number(/child chunks: (\d+)/.exec(out)?.[1] ?? 0);
+      // (a) red when the writer masks each write alone (main 772c0904: the fake whole on both
+      //     lines); (b) prints the two lines (the child's x run cut off), the counts and booleans.
+      expect(
+        {
+          split: lines.filter((l) => l.startsWith('split: ')),
+          child: lines.filter((l) => l.startsWith('x'.repeat(65530))).map((l) => l.slice(65530)),
+          chunkedInside: chunks >= 2,
+          fake: out.split(U1_FAKE).length - 1,
+          redacted: out.split('[REDACTED]').length - 1,
+          complete: out.includes('Run complete'),
+        },
+        `chunks: ${chunks}`,
+      ).toEqual({
+        split: ['split: [REDACTED] end'],
+        child: ['[REDACTED] end'],
+        chunkedInside: true,
+        fake: 0,
+        redacted: 2,
+        complete: true,
+      });
+    } finally {
+      await stub.close();
+    }
+  }, 60_000);
+});

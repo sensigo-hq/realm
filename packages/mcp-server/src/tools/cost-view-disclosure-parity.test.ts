@@ -516,7 +516,13 @@ describe('#600 PR 1b (D4) — context 3, get_run_state.steps', () => {
                 ttl_sent: true,
                 source: 'stated',
                 by: 'realm listen',
-                auto: { basis: 'listen_trigger_gaps', gaps_s: [420, 720] },
+                // #898: the fixture's record predates priced auto (gaps, no prices): the view
+                // says so.
+                auto: {
+                  basis: 'listen_trigger_gaps',
+                  gaps_s: [420, 720],
+                  prices: { from: 'not_recorded' },
+                },
               },
             ],
             reported: 1,
@@ -663,11 +669,16 @@ describe('#600 PR 1b (D4) — context 3, get_run_state.steps', () => {
       ttl_sent: { surface: 'rendered', probe: () => expect(entry.ttl_sent).toBe(true) },
       source: { surface: 'rendered', probe: () => expect(entry.source).toBe('stated') },
       by: { surface: 'rendered', probe: () => expect(entry.by).toBe('realm listen') },
-      // issue #600 (the lifetime unit): the evidence `auto` chose by, as data.
+      // issue #600 (the lifetime unit): the evidence `auto` chose by, as data; #898: and where its
+      // prices came from — this fixture predates priced auto, so the view says not_recorded.
       auto: {
         surface: 'rendered',
         probe: () =>
-          expect(entry.auto).toEqual({ basis: 'listen_trigger_gaps', gaps_s: [420, 720] }),
+          expect(entry.auto).toEqual({
+            basis: 'listen_trigger_gaps',
+            gaps_s: [420, 720],
+            prices: { from: 'not_recorded' },
+          }),
       },
     } satisfies Record<keyof CacheRequestedEntry, DisclosureRoute>;
 
@@ -1094,7 +1105,13 @@ describe('#600 PR 1b (D4) — context 4, get_run_state.drive_failure_costs', () 
                 ttl_sent: true,
                 source: 'stated',
                 by: 'realm listen',
-                auto: { basis: 'listen_trigger_gaps', gaps_s: [420, 720] },
+                // #898: the fixture's record predates priced auto (gaps, no prices): the view
+                // says so.
+                auto: {
+                  basis: 'listen_trigger_gaps',
+                  gaps_s: [420, 720],
+                  prices: { from: 'not_recorded' },
+                },
               },
             ],
             reported: 1,
@@ -1188,11 +1205,16 @@ describe('#600 PR 1b (D4) — context 4, get_run_state.drive_failure_costs', () 
       ttl_sent: { surface: 'rendered', probe: () => expect(entry.ttl_sent).toBe(true) },
       source: { surface: 'rendered', probe: () => expect(entry.source).toBe('stated') },
       by: { surface: 'rendered', probe: () => expect(entry.by).toBe('realm listen') },
-      // issue #600 (the lifetime unit): the evidence `auto` chose by, as data.
+      // issue #600 (the lifetime unit): the evidence `auto` chose by, as data; #898: and where its
+      // prices came from — this fixture predates priced auto, so the view says not_recorded.
       auto: {
         surface: 'rendered',
         probe: () =>
-          expect(entry.auto).toEqual({ basis: 'listen_trigger_gaps', gaps_s: [420, 720] }),
+          expect(entry.auto).toEqual({
+            basis: 'listen_trigger_gaps',
+            gaps_s: [420, 720],
+            prices: { from: 'not_recorded' },
+          }),
       },
     } satisfies Record<keyof CacheRequestedEntry, DisclosureRoute>;
 

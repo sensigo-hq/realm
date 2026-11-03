@@ -25,6 +25,8 @@ realm mcp [--project <dir>] [--extensions-module <path>] [--gate-answers <value>
 | `--form-wait-seconds <seconds>` | `240`   | The longest a form waits for the person, from 30 to 3600. With `REALM_MCP_FORM_WAIT_SECONDS` also set, the smaller wins. Refused at start under `withheld` or `offered`, which send no form. Added after version 0.47.0. |
 | `--check`                       | Off     | Prints the gate-answers value the server would start with and the separation check, then exits without starting. Added after version 0.47.0.                                                                             |
 
+`--project` and `--extensions-module` refuse a value that starts with `-`, except a lone `-`; write `--option=value` for one.
+
 When it starts, `realm mcp` prints one line to standard error: the gate-answers value it runs with, where it came from, and what that means (added after version 0.47.0, which printed nothing). Its standard output carries the MCP messages, so nothing else may be written there. It runs until its input is closed, then exits with code 0. A gate-answers or form-wait value that is not valid stops it before it starts, with one line on standard error and exit code 1.
 
 A client that connects is told the server's name and version:
@@ -64,6 +66,8 @@ realm serve [--port <number>] [--host <address>] [--dev] [--project <dir>] [--ex
 | `--extensions-module <path>` | None               | Loads this code file in place of the files named by every workflow's `extensions`.     |
 | `--gate-answers <value>`     | `asked`            | As for `realm mcp`. Added after version 0.47.0.                                        |
 | `--check`                    | Off                | As for `realm mcp`. Added after version 0.47.0.                                        |
+
+`--port`, `--project` and `--extensions-module` refuse a value that starts with `-`, except a lone `-`; write `--option=value` for one.
 
 `realm serve` sends no forms, so `--form-wait-seconds`, or `REALM_MCP_FORM_WAIT_SECONDS`, stops it from starting, as it stops `realm mcp` under `withheld` or `offered`: the setting is refused at start wherever no form is sent. Added after version 0.47.0.
 

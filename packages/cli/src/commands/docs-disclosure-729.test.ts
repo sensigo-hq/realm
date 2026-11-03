@@ -1019,6 +1019,18 @@ describe(`${OPERATE_PAGE} — what the output hides`, () => {
       OPERATE_PAGE,
       "The program label `user@host` that names who took a step is attribution, shown whole everywhere, as are a run's phase and the commands Realm prints; a secret whose value is your user name shows inside the label.",
     );
+    // U1: the sentence and the CHANGELOG line, executed by `writer.test.ts` "U1 — the writer
+    // carries across writes on a log" (U1-1, U1-2, U1-6; the parenthesis by U1-10b) and
+    // `source-canary-729.test.ts` "U1 — a value printed in pieces is hidden as one in a piped log"
+    // (U1-11); the cross-stream order by U1-5b.
+    claim(
+      OPERATE_PAGE,
+      'A declared secret or an environment value printed in pieces, or relayed from a child program chunk by chunk, is hidden as one (unless another hidden value inside it ends before the pieces split): a log keeps back the unfinished end of a line for up to 200 ms, or until the next piece arrives; a line written to the other stream in the meantime comes first in a combined log.',
+    );
+    claim(
+      'CHANGELOG.md',
+      'Hardening: a declared secret or an environment value that a step prints in pieces, or relays from a child program chunk by chunk, is hidden in a log as one value — when the pieces arrive within 200 ms, and unless another hidden value inside it ends before the pieces split.',
+    );
     const home = mkdtempSync(join(tmpdir(), 'realm-docs-729-or-'));
     try {
       // What `realm agent` stores of a tool's error or a drive failure is `sanitizeError`'s text.

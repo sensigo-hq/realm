@@ -1,7 +1,10 @@
 // llm-provider.ts — LLM provider interface and factory function for realm agent.
 import { brandClass } from '@sensigo/realm';
 import type {
-  CacheAutoBasis,
+  AutoPriceInput,
+  CacheAuto,
+  CacheAutoPrices,
+  CacheChoice,
   CacheRequestSource,
   PromptCacheSetting,
   RequestEndpoint,
@@ -82,7 +85,7 @@ export interface PromptCacheRequest {
   value: PromptCacheSetting;
   source: CacheRequestSource;
   by: string;
-  auto?: { basis: CacheAutoBasis; gaps_s?: number[] };
+  auto?: CacheAuto;
 }
 
 /**
@@ -462,6 +465,10 @@ export function listenModelRefusal(provider: ProviderName | undefined): string {
  * owner's reason: "we should not have a default model in realm because models change
  * frequently"). The checks and their messages are `checkProviderFlags`'; this throws its message.
  * Also throws when the provider's SDK package is not installed.
+ *
+ * Issue #898: returns the provider and, exactly when it built an Anthropic provider whose `auto`
+ * choice is pending (measured gaps), `settleAuto` — that provider's `settleAutoChoice`, bound. The
+ * caller settles it from the runner's price file before the provider serves a request.
  */
 export async function resolveProvider(options: {
   provider: ProviderName | undefined;
@@ -472,7 +479,10 @@ export async function resolveProvider(options: {
   strictBaseUrl?: boolean | undefined;
   /** Issue #600 PR 2: the cache setting and its origin. Only the Anthropic provider takes it. */
   promptCache: PromptCacheRequest;
-}): Promise<LlmProvider> {
+}): Promise<{
+  provider: LlmProvider;
+  settleAuto?: (prices: AutoPriceInput) => { choice: CacheChoice; prices?: CacheAutoPrices };
+}> {
   const providerFlag = options.provider;
   const modelFlag = options.model;
   const baseUrlFlag = options.baseUrl;
@@ -502,12 +512,15 @@ export async function resolveProvider(options: {
         );
       }
       const { OpenAIReasoningProvider } = await import('./openai-reasoning-provider.js');
-      return new OpenAIReasoningProvider(model);
+      return { provider: new OpenAIReasoningProvider(model) };
     }
     const { OpenAIProvider } = await import('./openai-provider.js');
-    return new OpenAIProvider(model, baseUrlFlag, strictBaseUrlFlag === true);
+    return { provider: new OpenAIProvider(model, baseUrlFlag, strictBaseUrlFlag === true) };
   } else {
     const { AnthropicProvider } = await import('./anthropic-provider.js');
-    return new AnthropicProvider(model, { promptCache: options.promptCache });
+    const anthropic = new AnthropicProvider(model, { promptCache: options.promptCache });
+    return anthropic.isAutoChoicePending()
+      ? { provider: anthropic, settleAuto: anthropic.settleAutoChoice.bind(anthropic) }
+      : { provider: anthropic };
   }
 }

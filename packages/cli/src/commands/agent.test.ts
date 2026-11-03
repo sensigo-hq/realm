@@ -320,13 +320,15 @@ describe('resolveProvider', () => {
     delete process.env['ANTHROPIC_API_KEY'];
 
     // The guard must not fire — resolveProvider returns successfully for openai + base-url.
-    const provider = await resolveProvider({
+    // #898: it returns `{ provider }`; the provider itself is asserted, not merely defined.
+    const { OpenAIProvider } = await import('../agent/providers/openai-provider.js');
+    const { provider } = await resolveProvider({
       provider: 'openai',
       model: 'test-model',
       baseUrl: 'https://api.deepseek.com',
       promptCache: TEST_PROMPT_CACHE,
     });
-    expect(provider).toBeDefined();
+    expect(provider).toBeInstanceOf(OpenAIProvider);
   });
 });
 
@@ -355,7 +357,7 @@ describe('resolveProvider — issue #313 dead-config cells 3 and 4', () => {
   // A direct-ctor cell cannot substitute: it bypasses the seam under test.
   // -------------------------------------------------------------------------------------------
   it('flag-travel (i): --strict-base-url ARRIVES at the provider — an attested compat endpoint carries NO strictGate', async () => {
-    const p = await resolveProvider({
+    const { provider: p } = await resolveProvider({
       provider: 'openai',
       model: 'gpt-4o',
       baseUrl: 'https://compat.example.com',
@@ -371,7 +373,7 @@ describe('resolveProvider — issue #313 dead-config cells 3 and 4', () => {
   });
 
   it('flag-travel (ii): the discriminating counterpart — the SAME call without the attestation IS gated', async () => {
-    const explicitFalse = await resolveProvider({
+    const { provider: explicitFalse } = await resolveProvider({
       provider: 'openai',
       model: 'gpt-4o',
       baseUrl: 'https://compat.example.com',
@@ -385,7 +387,7 @@ describe('resolveProvider — issue #313 dead-config cells 3 and 4', () => {
       strictGate: 'compat_endpoint',
     });
     // …and omitted entirely (the CLI passes nothing when the flag is absent).
-    const omitted = await resolveProvider({
+    const { provider: omitted } = await resolveProvider({
       provider: 'openai',
       model: 'gpt-4o',
       baseUrl: 'https://compat.example.com',
@@ -414,7 +416,7 @@ describe('resolveProvider — issue #313 dead-config cells 3 and 4', () => {
       ).rejects.toThrow('--base-url is only supported with --provider openai');
       // Flag alone: no --base-url to attest about, so the Anthropic provider is built normally
       // and the attestation is inert (the CLI layer is what warns — cell 1).
-      const p = await resolveProvider({
+      const { provider: p } = await resolveProvider({
         provider: 'anthropic',
         model: 'claude-sonnet-4-5',
         baseUrl: undefined,
@@ -429,7 +431,7 @@ describe('resolveProvider — issue #313 dead-config cells 3 and 4', () => {
   });
 
   it('dead-config 4: the o1 branch DROPS --base-url/--strict-base-url and now says so (it silently ignored them before)', async () => {
-    const p = await resolveProvider({
+    const { provider: p } = await resolveProvider({
       provider: 'openai',
       model: 'o1-mini',
       baseUrl: 'https://compat.example.com',
@@ -897,10 +899,11 @@ describe('realm agent --cache-gaps and --prompt-cache auto (issue #600, the life
     });
   }, 30_000);
 
-  // Cell 12. (a) red when the option's description differs from B4's words; (b) prints it.
+  // Cell 12; #898 S11. (a) red when the option's description differs from B4's words, or (#898) it
+  // keeps the old words, with no price file and no fallback; (b) prints it.
   it("the help: realm agent's --prompt-cache description", () => {
     expect(agentCommand.options.find((o) => o.long === '--prompt-cache')?.description).toBe(
-      "What Anthropic is asked to cache: auto, short, long or off. auto (the default) chooses per drive — the short lifetime for a drive realm agent starts on its own; for a drive realm listen starts, off, short or long by the gaps between that workflow's recent triggers. short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: Anthropic is asked to cache nothing. Other providers are asked for no caching.",
+      "What Anthropic is asked to cache: auto, short, long or off. auto (the default) chooses per drive — the short lifetime for a drive realm agent starts on its own; for a drive realm listen starts, off, short or long by the gaps between that workflow's recent triggers, priced from the runner's price file (runner.cache.economics); with no usable prices, long when a recent gap is under 54 minutes, else off. short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: Anthropic is asked to cache nothing. Other providers are asked for no caching.",
     );
   });
 });

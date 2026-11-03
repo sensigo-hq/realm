@@ -95,6 +95,7 @@ export const USAGE_RECORD_TABLE = {
   cache_ttl_sent: 'fact',
   cache_requested_source: 'fact',
   cache_requested_by: 'fact',
+  // closed at the write by `normalizeCacheAuto` (basis ∈ CACHE_AUTO_BASES; prices ∈ its five shapes); any other value drops the field
   cache_auto: 'fact',
   provider: 'fact',
   endpoint: 'fact',
@@ -431,6 +432,7 @@ export const USAGE_RECORD_FACTS = {
   cache_requested: 'enum',
   cache_requested_source: 'enum',
   cache_requested_by: 'enum',
+  // closed at the write by `normalizeCacheAuto` (basis ∈ CACHE_AUTO_BASES; prices ∈ its five shapes); any other value drops the field
   cache_auto: 'enum',
   provider: 'enum',
   endpoint: 'enum',

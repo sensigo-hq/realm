@@ -41,7 +41,7 @@ describe('yaml-loader — issue #524, the gate-remedy silence (DEAD_GATE_CONFIG 
       const { warnings } = loadWorkflowFromStringWithDiagnostics(
         gateWorkflow(
           'guard',
-          "    description: check\n    abort_unless: ['true == true']",
+          "    description: check\n    abort_unless: ['work.ok == true']",
           ON_EXPIRY_BLOCK,
         ),
       );
