@@ -1297,8 +1297,11 @@ describe(
       // the row in "no verdict: each reason in the table" (a copy with no text for the profile); the
       // sizes from the stored text in validate-cacheability "G-1 (1)", "G-1 (2)"; the note, its line
       // endings, --json, REALM_NO_NUDGE, the exit code and --strict in "G-5 (1)", (7), (8), (9), (11);
-      // the folders read: the workflow's for the loader's checks in "G-1 (3)", the project's for the
-      // economics file only with --model in "G-3 (1)", "G-3 (3)". The note's line is run below.
+      // what the command reads: the folder's workflow.yaml not at all in validate-cacheability "G-1 (6)"
+      // (a refusable edit there still audits Valid); the profile files from the folder in "G-1 (3)" (a
+      // deleted one fails the audit); the project's realm.yaml in validate-registered.test.ts "7e" (an
+      // invalid one → `Error loading extensions:` on the stored copy); the economics file only with
+      // --model in "G-3 (1)", "G-3 (3)". The note's line is run below.
       for (const sentence of [
         "`profile text not stored in the registered copy` means the registered copy holds no text for the step's profile, so the step is not sized.",
         "What to do: register again from the workflow's folder, with `realm workflow register <path>`.",
@@ -1307,7 +1310,7 @@ describe(
         "When a profile file in the folder differs from the copy's text, `validate --registered` prints one line after the cache lines, naming each such profile once:",
         'A difference in line endings counts.',
         'The line is not in `--json`, `REALM_NO_NUDGE=1` leaves it out, and it changes neither the exit code nor `--strict`.',
-        "The command reads the workflow's folder for the loader's checks, and the project's folder for the project-extension check and, when `--model` is given, for the economics file.",
+        "The loader's checks run on the registered copy's workflow, not on the `workflow.yaml` now in the folder; the profile files are read from the workflow's folder. The project's folder is read for `realm.yaml` (the project-extension check) and, when `--model` is given, for the economics file it names.",
         // The line's start, worded as correction 3 (I-4) made the page word it; the runs below print
         // both forms.
         '| `economics not checked (no project folder to read it from)` | `--registered` with `--model`, and the copy records no project folder, or the one it records is gone. The reason is on the line above the cache lines that starts `1 check not run:` or `N checks not run:`. |',

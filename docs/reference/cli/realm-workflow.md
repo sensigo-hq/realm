@@ -160,7 +160,7 @@ With `--registered`, the sizes come from the profile text stored in the copy, no
 ℹ profile text in the folder differs from the registered copy for: p — register again to update the copy
 ```
 
-A difference in line endings counts. The line is not in `--json`, `REALM_NO_NUDGE=1` leaves it out, and it changes neither the exit code nor `--strict`. The command reads the workflow's folder for the loader's checks, and the project's folder for the project-extension check and, when `--model` is given, for the economics file.
+A difference in line endings counts. The line is not in `--json`, `REALM_NO_NUDGE=1` leaves it out, and it changes neither the exit code nor `--strict`. The loader's checks run on the registered copy's workflow, not on the `workflow.yaml` now in the folder; the profile files are read from the workflow's folder. The project's folder is read for `realm.yaml` (the project-extension check) and, when `--model` is given, for the economics file it names.
 
 A step that calls tools is not judged: each tool's definition comes from its MCP server when the step runs, so its request cannot be measured before a run:
 
