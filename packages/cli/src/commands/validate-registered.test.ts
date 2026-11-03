@@ -91,9 +91,15 @@ describe('validate --registered (issue #427)', () => {
     // through a future edit that quietly widened the claim back to something false.
     // issue #508 correction (item 6): "this release's" was version-relative with no anchor on a
     // permanent, unconditional string — replaced with a hard anchor (issue #508, realm 0.42.0).
+    // #600 D1 correction (C-1): the first sentence said "this reports what re-registration today
+    // would say", false once the folder's files differ from the copy; it now says what the checks read
+    // and what the cache lines size (executed in validate-cacheability.test.ts, "G-1 (2)" and
+    // "G-1 (6)"). The #508 sentence is unchanged. (a) red when the old words return; (b) prints the
+    // output, header line included.
     expect(text).toContain(
-      'Registered copies stay grandfathered at runtime against LOADER changes — this reports ' +
-        'what re-registration today would say. A NEW engine-side dispatch check (issue #508, ' +
+      'Registered copies stay grandfathered at runtime against LOADER changes — the checks run ' +
+        "today's loader on the copy, as registering the unchanged workflow again would; the " +
+        'cache lines size the copy as stored. A NEW engine-side dispatch check (issue #508, ' +
         'realm 0.42.0) is NOT grandfathered: it applies immediately, whatever schema_version ' +
         'is on file.',
     );

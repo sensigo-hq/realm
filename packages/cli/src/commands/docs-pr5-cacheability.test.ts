@@ -1313,6 +1313,15 @@ describe(
         '| `economics not checked (no project folder to read it from)` | `--registered` with `--model`, and the copy records no project folder, or the one it records is gone. The reason is on the line above the cache lines that starts `1 check not run:` or `N checks not run:`. |',
       ])
         claim(WORKFLOW_PAGE, sentence.replace(/ +\|/g, ' |'));
+      // D1 correction (C-1): the upgrade guide says what the audit's checks read and what its cache
+      // lines size. Executed in validate-cacheability.test.ts: "G-1 (6)" (the checks read the copy, as
+      // registering the unchanged workflow again would; an edited workflow.yaml still audits Valid)
+      // and "G-1 (2)" (the lines size the copy as stored, profile text included). Its link is checked
+      // in F-8's link list. (a) red when the old sentence returns; (b) prints the sentence.
+      claim(
+        'docs/guides/upgrade.md',
+        "The command changes nothing. Its checks run the new version's loader on the registered copy, as registering the unchanged workflow again would. From the version after 0.48.0 it also prints a cache line for each agent step, sized from the copy as stored, profile text included, not from the files now in the folder (see [the cache lines](../reference/cli/realm-workflow.md#the-cache-lines)).",
+      );
       const dir = project({
         workflow:
           'id: moved\nname: moved\nversion: 1\nsteps:\n' +
@@ -1453,6 +1462,8 @@ describe('correction 2, F-8: the pages that print the cache lines say what they 
       [WORKFLOW_PAGE, 'realm-agent.md'],
       [WORKFLOW_PAGE, '../cache-economics.md#how-a-request-is-priced'],
       [WORKFLOW_PAGE, '../../guides/realm-agent.md#what-a-run-costs'],
+      // D1 correction (C-1): the upgrade guide's sentence about the audit links to the cache lines.
+      ['docs/guides/upgrade.md', '../reference/cli/realm-workflow.md#the-cache-lines'],
     ];
     expect(links.map(([page, href]) => `${page} → ${href}: ${linkLands(page, href)}`)).toEqual(
       links.map(([page, href]) => `${page} → ${href}: ok`),

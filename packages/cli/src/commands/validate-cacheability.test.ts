@@ -1362,18 +1362,27 @@ describe(
     // grows by 326 characters and the workflow is not registered again. Break: the registered lines
     // follow the file (the swap removed). (a) red when the registered lines follow the file, or file mode
     // stops following it; (b) prints both blocks.
+    // D1 correction (C-1): the run has REALM_NO_NUDGE=1, so no note helps; the header must say on its
+    // own which text the lines size. (a) also red when the header loses `the cache lines size the copy
+    // as stored`; (b) prints the header line.
     it('G-1 (2): a profile file edited, not registered again: --registered keeps the stored sizes, file mode the new ones', () => {
       const dir = twoProfiles();
       const registered = registerLines(dir);
       writeFileSync(join(dir, 'profiles', 'a.md'), 'You are careful.' + 'x'.repeat(326));
       const chars = (line: string): number =>
         Number(/ — anthropic ([\d,]+) chars/.exec(line)?.[1]?.replace(/,/g, '') ?? -1);
-      const copy = cacheLines(realm(['workflow', 'validate', '--registered', 'twoprof']).stdout);
+      const audit = realm(['workflow', 'validate', '--registered', 'twoprof']).stdout;
+      const copy = cacheLines(audit);
       const file = cacheLines(realm(['workflow', 'validate', dir]).stdout);
-      expect({ copy, grew: chars(file[0]!) - chars(registered[0]!) }).toEqual({
-        copy: registered,
-        grew: 326,
-      });
+      const header = audit.split('\n').find((l) => l.startsWith('Registered copies stay')) ?? '';
+      expect(
+        {
+          copy,
+          grew: chars(file[0]!) - chars(registered[0]!),
+          headerSizesTheCopy: header.includes('the cache lines size the copy as stored'),
+        },
+        `the header line: ${header}`,
+      ).toEqual({ copy: registered, grew: 326, headerSizesTheCopy: true });
     });
 
     // (3) The loader audit is untouched: a profile file deleted from a present folder still fails the
@@ -1494,6 +1503,49 @@ describe(
           o.split('\n').filter((l) => l.startsWith('ℹ')),
         ),
       }).toEqual({ lines: registered, model: [true, true, true], notes: [] });
+    });
+
+    // (6) D1 correction (C-1): the checks read the STORED copy, not the folder's `workflow.yaml`. The
+    // folder's workflow gains a refusal (`minlength` in an output_schema, as AUDC-06) and is not
+    // registered again: the audit still says Valid, because its checks are what registering the
+    // UNCHANGED workflow again would say, while `register` of the folder refuses. Breaks: the header's
+    // checks clause loses "unchanged" (or says "this reports what re-registration today would say"
+    // again); the registered audit reads the folder's workflow.yaml (it then exits 1). (a) red on
+    // either; (b) prints the header, the verdict lines and both exit codes, the scratch folder `<dir>`.
+    it("G-1 (6): the folder's workflow.yaml gains a refusal, not registered again: --registered says Valid with the header's checks clause; register refuses", () => {
+      const dir = twoProfiles();
+      registerLines(dir);
+      writeFileSync(
+        join(dir, 'workflow.yaml'),
+        readFileSync(join(dir, 'workflow.yaml'), 'utf8') +
+          '    output_schema:\n      type: object\n      properties:\n        a: { type: string, minlength: 3 }\n',
+      );
+      const audit = realm(['workflow', 'validate', '--registered', 'twoprof']);
+      const again = realm(['workflow', 'register', dir]);
+      const verdicts = (r: { stdout: string; stderr: string }): string[] =>
+        hide(`${r.stdout}${r.stderr}`)
+          .split('\n')
+          .filter((l) => /^(Valid|Invalid workflow)/.test(l));
+      const header = audit.stdout.split('\n').find((l) => l.startsWith('Registered copies stay'));
+      expect(
+        {
+          audit: [audit.code, verdicts(audit)],
+          register: [
+            again.code,
+            verdicts(again).map((l) =>
+              l.startsWith("Invalid workflow: Step 'plain': 'output_schema' is refused")
+                ? 'refused'
+                : l,
+            ),
+          ],
+          checksClause: header?.includes('as registering the unchanged workflow again would'),
+        },
+        `the header line: ${String(header)}`,
+      ).toEqual({
+        audit: [0, ['Valid: twoprof v1 (3 steps)']],
+        register: [1, ['refused']],
+        checksClause: true,
+      });
     });
   },
 );

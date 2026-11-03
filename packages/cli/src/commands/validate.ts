@@ -709,8 +709,9 @@ async function validateRegistered(
         `with realm ${VERSION}'s loader.`,
     );
     console.log(
-      'Registered copies stay grandfathered at runtime against LOADER changes — this reports ' +
-        'what re-registration today would say. A NEW engine-side dispatch check (issue #508, ' +
+      'Registered copies stay grandfathered at runtime against LOADER changes — the checks run ' +
+        "today's loader on the copy, as registering the unchanged workflow again would; the " +
+        'cache lines size the copy as stored. A NEW engine-side dispatch check (issue #508, ' +
         'realm 0.42.0) is NOT grandfathered: it applies immediately, whatever schema_version ' +
         'is on file.',
     );
