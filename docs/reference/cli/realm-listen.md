@@ -35,7 +35,7 @@ The commands on this page use Anthropic and the model `claude-sonnet-5-5`; any m
 | `--prompt-cache <setting>`        | `auto`                                                                                   | Passed to each `realm agent` it starts as that command's `--prompt-cache`: `auto`, `short`, `long` or `off`. Refused with `--provider openai`. Added after version 0.47.0.                    |
 | `--sweep-expired-gates <seconds>` | Off                                                                                      | Every this many seconds, carries out the gates in the store whose time has passed: a whole number of seconds from 1 to 2147483.                                                               |
 
-`--model`, `--port`, `--host`, `--dedup-store`, `--log-level` and `--sweep-expired-gates` refuse a value that starts with `-`, except a lone `-`; write `--option=value` for one.
+`--model` refuses a value that starts with `-`, except a lone `-`; write `--option=value` for one.
 
 ### `--host`
 

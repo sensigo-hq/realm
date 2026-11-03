@@ -67,7 +67,7 @@ realm serve [--port <number>] [--host <address>] [--dev] [--project <dir>] [--ex
 | `--gate-answers <value>`     | `asked`            | As for `realm mcp`. Added after version 0.47.0.                                                                                                          |
 | `--check`                    | Off                | As for `realm mcp`. Added after version 0.47.0.                                                                                                          |
 
-`--port`, `--project` and `--extensions-module` refuse a value that starts with `-`, except a lone `-`; write `--option=value` for one.
+`--project` and `--extensions-module` refuse a value that starts with `-`, except a lone `-`; write `--option=value` for one.
 
 `realm serve` sends no forms, so `--form-wait-seconds`, or `REALM_MCP_FORM_WAIT_SECONDS`, stops it from starting, as it stops `realm mcp` under `withheld` or `offered`: the setting is refused at start wherever no form is sent. Added after version 0.47.0.
 
