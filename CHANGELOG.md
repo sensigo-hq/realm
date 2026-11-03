@@ -126,6 +126,16 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
 
 ### Fixed
 
+- **`realm listen` and `realm serve` refuse a bad option value when the command line is read,
+  and say a failure to listen in one line (issues #944 and #949).** They refuse a bad `--port`,
+  `--host`, `--dedup-store`, `--log-level` or `--sweep-expired-gates`. Before, a mistyped log level
+  turned debug logging on, a mistyped dedup store selected the file store, a sweep interval of 0 or a
+  word made the gate sweeper run about every millisecond, and a bad port or host ended in a stack
+  trace. A failure to listen is one line naming the host and the port: a port in use, permission
+  denied, an address that is not the machine's, a name that cannot be resolved.
+  `realm serve --port 0` now prints the port the system picked in its start line (it printed `:0`),
+  and the start line writes an IPv6 host in brackets (`http://[::1]:3001/`; it was
+  `http://::1:3001/`, which is not a URL).
 - **A Slack post that is refused or does not answer within 30 s is reported, and the person's
   terminal way is printed (issue #729 PR-4).** `realm agent` names the cause
   (`Slack did not answer within 30 s`, `Slack refused the post: …`) and prints one
