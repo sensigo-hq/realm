@@ -177,6 +177,10 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
   `serve`), `--extensions-module` (`run drain`, `mcp`, `serve`), `--workflow` (`run list`,
   `reclaim`, `purge`, `reconcile`), `run export --out`, `run abandon --reason`, `run respond --by`,
   `run reclaim --step`, and `agent --params` and `--base-url`.
+- `realm run inspect`, `realm run drain` and `realm run resume` no longer list a step as something
+  `realm run advance` runs without saying what it needs: when an owed step needs a handler or
+  adapter other than the `filesystem` adapter and the `check_quotes` handler, which every Realm
+  program has, the line names it before the command (issue #923).
 
 ## [0.48.0] — 2026-10-26
 

@@ -24,6 +24,7 @@ import type {
 import type { AgentAction, ErrorCode } from '../types/workflow-error.js';
 import type { WorkflowDefinition, ContextWrapperFormat } from '../types/workflow-definition.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
+import { isBuiltInRequirement } from '../extensions/built-in-requirements.js';
 import { stampOf, writtenSnapshot, type Basis, type Snapshot } from './snapshot.js';
 import { renderTemplate } from './render-template.js';
 import { buildEvidenceByStep, deriveRunPhase, findEligibleSteps } from './eligibility.js';
@@ -1260,13 +1261,15 @@ function advanceWayOf(
   const owed = [...pending.owed];
   if (owed.length === 0) return undefined;
   // C33: a step judged with no registry is offered on the condition that the enactor has its code.
+  // Issue #923 (PR0-CONTRACT Amendment 26): never for one of Realm's built-ins, which every Realm
+  // program's registry starts with (`createDefaultRegistry()`), so no project must supply it.
   const conditions: Cond[] = pending.engine_runnable
     .filter((entry) => entry.runnable_here === 'unknown')
     .flatMap((entry) => {
       const def = definition.steps[entry.step];
       const requirement =
         def !== undefined ? requirementForStep(entry.step, def, definition) : undefined;
-      return requirement === undefined
+      return requirement === undefined || isBuiltInRequirement(requirement.kind, requirement.name)
         ? []
         : [
             {
