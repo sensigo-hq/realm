@@ -114,7 +114,7 @@ Registered copies stay grandfathered at runtime against LOADER changes — this 
 Valid: digest v1 (1 step)
 ```
 
-The command changes nothing. It reports what would happen if you registered the workflow again today.
+The command changes nothing. Its checks run the new version's loader on the registered copy, as registering the unchanged workflow again would. From the version after 0.48.0 it also prints a cache line for each agent step, sized from the copy as stored, profile text included, not from the files now in the folder (see [the cache lines](../reference/cli/realm-workflow.md#the-cache-lines)).
 
 ## 4. See the new version find a problem
 
