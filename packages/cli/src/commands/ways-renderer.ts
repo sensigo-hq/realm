@@ -9,10 +9,13 @@
 // `shellWord`; a `Slot` printed as its one value or `<one of: …>` with each member quoted (T-7); no
 // full stop after a printed command (C212).
 import {
+  NAMES_SHOWN,
   cannotGoOnFrom,
   cannotGoOnUntilCorrected,
   cannotRunParts,
+  capText,
   libraryCannotRunWords,
+  listWords,
   oneOf,
   preconditionHint,
   preconditionRefusal,
@@ -300,6 +303,29 @@ export function owedItems(way: WayOf<'advance'>): string[] {
       ? `the expired question on '${o.expiry.step}' (its declared ${o.expiry.on_expiry})`
       : `'${o.step}'`,
   );
+}
+
+/**
+ * Issue #923: the code the owed work needs, as the words an observer's owed line says before its
+ * command — `from a program that has handler 'stamp', adapter 'crm'` — or `''` when the way carries
+ * no `enactor_has` condition. Decision C33 (design D1 rule 7): an `advance` offered by a door that
+ * judged with no registry (`realm run inspect`, `realm run drain`, `realm run resume`) carries its
+ * capability basis, never a runnable claim; such a door loads no project code, so it cannot know
+ * whether the program that runs the command has that code, and says so as a condition. Core leaves
+ * Realm's own built-ins out of the condition (PR0-CONTRACT Amendment 26). Each requirement once, in
+ * the way's order, through core's one bounded list (`listWords`, ten shown) with each name through
+ * `capText`. From the way alone (the renderer law): every observer door calls this one producer, and
+ * joins it to its own frame (` — <words>: ` on inspect, `, <words>` before the `:` on drain and
+ * resume).
+ */
+export function advanceNeedsWords(way: WayOf<'advance'>): string {
+  const needs: string[] = [];
+  for (const c of way.conditions) {
+    if (c.code !== 'enactor_has') continue;
+    const words = `${c.kind} '${capText(c.name)}'`;
+    if (!needs.includes(words)) needs.push(words);
+  }
+  return needs.length === 0 ? '' : `from a program that has ${listWords(needs, NAMES_SHOWN)}`;
 }
 
 /**

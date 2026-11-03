@@ -55,8 +55,9 @@ describe('#625 PR-2a — resume names the owed call', () => {
       });
       children.record({ args: [CLI_ENTRY, 'run', 'resume', run.id, '--from', 'a'], ...r });
       expect(r.status).toBe(0);
+      // issue #923: resume loads no project code, so it names the handler `a` needs.
       expect(r.stdout).toContain(
-        `To run the step the engine owes ('a') without a model: realm run advance ${run.id}`,
+        `To run the step the engine owes ('a') without a model, from a program that has handler 'boom': realm run advance ${run.id}`,
       );
     } finally {
       rmSync(home, { recursive: true, force: true });

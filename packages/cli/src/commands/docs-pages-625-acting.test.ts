@@ -1727,7 +1727,9 @@ describe(
             `Run ${q.id}: phase 'gate_waiting'`,
           ],
           notifyRan: false,
-          resumed: `To run the steps the engine owes ('a', 'b') ${UNTIL}, without a model: realm run advance ${rid}`,
+          // issue #923: resume loads no project code, so it names the handlers `a` and `b` need
+          // (the project has them; resume cannot know).
+          resumed: `To run the steps the engine owes ('a', 'b') ${UNTIL}, without a model, from a program that has handler 'boom', handler 'mark': realm run advance ${rid}`,
           drained: [
             `Run '${did}' is not terminal (phase: 'running') — nothing to drain. To run the steps the engine owes ('approve', 'fetch') ${UNTIL}: realm run advance ${did}`,
             `To end the run instead: realm run abandon ${did}`,
