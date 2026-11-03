@@ -347,7 +347,7 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
           '  limit:',
           '    description: Limit.',
           '    execution: guard',
-          '    abort_unless: ["run.params.amount <= 1000"]',
+          '    abort_unless: ["limit.amount <= 1000"]',
           '  work:',
           '    description: Work.',
           '    execution: agent',

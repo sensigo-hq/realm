@@ -98,16 +98,200 @@ function renderRegistryProhibition(
   return `${front} — ${homeText(home.mechanism, kind)} ${homeText(home.remedy, kind)}`;
 }
 
+/** The run's input under a condition: `run.params` itself or a path below it. The one test for
+ *  it, shared by `when`'s reference check and the precondition/guard root check (issue #933). */
+function isRunParamsPath(path: string): boolean {
+  return path === 'run.params' || path.startsWith('run.params.');
+}
+
+/**
+ * Issue #933 — the surfaces that read ONLY the evidence the workflow's steps recorded: a
+ * precondition resolves its path against the steps' evidence (precondition.ts) and a guard's
+ * `abort_unless` against `buildEvidenceByStep(run)` alone (settlement.ts). A path whose first
+ * segment is no step of the workflow can never be found there.
+ */
+type StepsReadSurface = 'preconditions' | 'abort_unless';
+
+/** Issue #933 — the read set, one phrase for every refusal below (R3: one const per vocabulary). */
+const STEPS_READ_SET = "reads only what the workflow's steps recorded";
+
+/**
+ * Issue #933 — each surface's own words, passed into the one mint per text below. The
+ * consequences are each surface's runtime truth: a missing left side is false for every operator
+ * in a precondition (precondition.ts), an unresolvable path fails the run in a guard
+ * (settlement.ts), and under `when` a missing value `== null` is TRUE (eligibility.ts), so
+ * "never true" would be false there.
+ */
+const STEPS_READ_WORDS: {
+  readonly [S in StepsReadSurface]: {
+    readonly opening: (stepName: string, leaf: string, path: string) => string;
+    readonly reader: string;
+    readonly consequence: string;
+  };
+} & {
+  readonly when: {
+    readonly opening: (stepName: string, path: string) => string;
+    readonly consequence: string;
+  };
+} = {
+  preconditions: {
+    opening: (stepName, leaf, path) => `Step '${stepName}': precondition '${leaf}' reads '${path}'`,
+    reader: 'A precondition',
+    consequence: 'so it could never be true and the step could never run.',
+  },
+  abort_unless: {
+    opening: (stepName, leaf, path) => `Step '${stepName}': abort_unless '${leaf}' reads '${path}'`,
+    reader: 'A guard',
+    consequence: 'so whenever the guard runs, this check fails the run.',
+  },
+  when: {
+    opening: (stepName, path) => `Step '${stepName}': 'when' reads '${path}'`,
+    consequence: 'so the path always reads as missing, whatever that step outputs.',
+  },
+};
+
+/** Issue #933, the `params_schema` remedy: it refuses, at start, a run whose input does not fit. */
+const REFUSE_UNFIT_RUN = 'refuse a run whose input does not fit, declare it in params_schema';
+
+/**
+ * Issue #933, arm A's remedy per surface: the fields that do read the input. A precondition's
+ * names `when` only on a step that depends on another: the engine records a `when` skip once the
+ * step's dependencies have settled, so on a step with no `depends_on` a false `when` leaves the run
+ * with nothing ready, never skipped (the architect's ruling on #933, from the build's verify-first
+ * probe). A guard's names only `params_schema`, wherever the guard stands: a guard refuses an unfit
+ * run, which `params_schema` does at start; and a guard on the run's input is usually a workflow's
+ * first step, so once it is removed the steps after it have no `depends_on` left, and a false
+ * `when` there would leave the run with nothing ready (the review of PR #942, F1).
+ */
+function runInputRemedy(surface: StepsReadSurface, stepHasDependency: boolean): string {
+  return surface !== 'abort_unless' && stepHasDependency
+    ? `To skip the step when the input says so, put the condition under 'when'; to ${REFUSE_UNFIT_RUN}.`
+    : `To ${REFUSE_UNFIT_RUN}.`;
+}
+
+/** Issue #933, arm A: the path is the run's input (`run.params`, `run.params.…`). */
+function runInputRefusal(
+  surface: StepsReadSurface,
+  opening: string,
+  stepHasDependency: boolean,
+): string {
+  const words = STEPS_READ_WORDS[surface];
+  return (
+    `${opening}, the run's input. ${words.reader} ${STEPS_READ_SET}, never the run's input, ` +
+    `${words.consequence} ${runInputRemedy(surface, stepHasDependency)} Then register the ` +
+    `workflow again.`
+  );
+}
+
+/** Issue #933, arm B: any other path on the run (`run`, `run.id`, `run.paramsX.y`). */
+function otherRunRefusal(surface: StepsReadSurface, opening: string): string {
+  const words = STEPS_READ_WORDS[surface];
+  return (
+    `${opening}, which no condition can read: of the run, only 'run.params.*' is readable, and ` +
+    `only under 'when'. ${words.reader} ${STEPS_READ_SET}, ${words.consequence} Read a step's ` +
+    `output instead, then register the workflow again.`
+  );
+}
+
+/**
+ * Issue #933, arm C: the `input_map` and template form (`context.…`). A condition names a step's
+ * output as `<step>.<field>`. The fix drops the `context.resources.` prefix when at least one
+ * segment follows the step (`context.resources.fetch.ok` → `fetch.ok`); otherwise it is the
+ * literal `<step>.<field>`. An empty segment (two dots in a row, a trailing dot) is no segment.
+ */
+function contextFormRefusal(consequence: string, opening: string, path: string): string {
+  const parts = path.split('.');
+  const fix =
+    parts[0] === 'context' &&
+    parts[1] === 'resources' &&
+    parts.length >= 4 &&
+    parts.slice(2).every((part) => part !== '')
+      ? parts.slice(2).join('.')
+      : '<step>.<field>';
+  return (
+    `${opening}, the form input_map uses. A condition names a step's output as ` +
+    `'<step>.<field>', ${consequence} Write it as '${fix}', then register the workflow again.`
+  );
+}
+
+/** Issue #933, arm D: the first segment is no step of the workflow (a typo; a dotless `true`). */
+function notAStepRefusal(
+  surface: StepsReadSurface,
+  opening: string,
+  root: string,
+  closest: string | undefined,
+): string {
+  const words = STEPS_READ_WORDS[surface];
+  const guess = closest === undefined ? '' : ` Did you mean '${closest}'?`;
+  return (
+    `${opening}, but '${root}' is not a step of this workflow. ${words.reader} ` +
+    `${STEPS_READ_SET}, ${words.consequence}${guess} Name a step of this workflow, then ` +
+    `register the workflow again.`
+  );
+}
+
+/**
+ * Issue #933 — the root check for a precondition or a guard: the path's first segment must be a
+ * step of the workflow (any step: the step itself, one declared later, any other). Four arms,
+ * tried in order, each leaf reaching at most one: A `run.params…`; B any other `run` path; C a
+ * `context` root; D a root that is no step. The loader refuses `run`, `context` and `$settlement`
+ * as step names, so a root that is a step is never one of them. A `$settlement` leaf returns
+ * from its own branch before this is reached.
+ */
+function validateStepsReadRoot(
+  surface: StepsReadSurface,
+  path: string,
+  leaf: string,
+  stepName: string,
+  /** The step's own `depends_on`: arm A's precondition remedy forks on it being non-empty. */
+  dependsOn: readonly string[],
+  stepNames: readonly string[],
+  errors: string[],
+  withLine: (stepName: string, message: string) => string,
+): void {
+  const root = path.split('.')[0]!;
+  const opening = STEPS_READ_WORDS[surface].opening(stepName, leaf, path);
+  let message: string | undefined;
+  if (root === 'run') {
+    message = isRunParamsPath(path)
+      ? runInputRefusal(surface, opening, dependsOn.length > 0)
+      : otherRunRefusal(surface, opening);
+  } else if (root === 'context') {
+    message = contextFormRefusal(STEPS_READ_WORDS[surface].consequence, opening, path);
+  } else if (!stepNames.includes(root)) {
+    message = notAStepRefusal(surface, opening, root, closestKey(root, stepNames));
+  }
+  if (message !== undefined) errors.push(withLine(stepName, message));
+}
+
+/**
+ * Issue #933 — whether a precondition's or a guard's root is checked on this step. `preconditions`
+ * only where the registry's cell consumes it (today auto and agent), derived from the cell as
+ * `dependsOnLegal` is: on a guard it is prohibited, and its kind refusal stays the one message;
+ * on a finalizer it is inert, accepted and never evaluated (#509); a missing or malformed kind is
+ * already refused. `abort_unless` is validated on guards only, by its caller.
+ */
+function checksStepsReadRoot(surface: StepsReadSurface, kind: ExecutionMode | undefined): boolean {
+  if (surface === 'abort_unless') return true;
+  return kind !== undefined && STEP_KEY_REGISTRY.preconditions[kind].c === 'consumed';
+}
+
 /**
  * Validate one condition leaf at load time using the shared quote-aware splitter (the SAME split
  * used at runtime). Rejects compound `and`/`or`, multiple operators, and non-path LHS. For `when`,
- * also enforces the direct-`depends_on` reference check (Change 2). Pushes actionable errors.
+ * also enforces the direct-`depends_on` reference check (Change 2); for a precondition or a guard,
+ * the root check (issue #933). Pushes actionable errors.
  */
 function validateConditionLeaf(
   surface: ConditionSurface,
   leaf: string,
   stepName: string,
   dependsOn: string[],
+  /**
+   * The workflow's step names in declared order (issue #933): a precondition's or a guard's path
+   * must start with one of them. From the `steps` map every caller already holds.
+   */
+  stepNames: readonly string[],
   /**
    * The step's declared `execution` kind (undefined when missing/malformed — those steps are
    * already refused by the invalid-execution error, and the remedy below keeps its generic
@@ -187,6 +371,17 @@ function validateConditionLeaf(
     }
     if (surface === 'when')
       validateWhenReference(split.path, stepName, dependsOn, kind, errors, withLine);
+    else if (surface === 'abort_unless')
+      validateStepsReadRoot(
+        surface,
+        split.path,
+        leaf,
+        stepName,
+        dependsOn,
+        stepNames,
+        errors,
+        withLine,
+      );
     return;
   }
 
@@ -214,6 +409,17 @@ function validateConditionLeaf(
   }
   if (surface === 'when')
     validateWhenReference(split.lhsPath, stepName, dependsOn, kind, errors, withLine);
+  else if (checksStepsReadRoot(surface, kind))
+    validateStepsReadRoot(
+      surface,
+      split.lhsPath,
+      leaf,
+      stepName,
+      dependsOn,
+      stepNames,
+      errors,
+      withLine,
+    );
 }
 
 /**
@@ -306,7 +512,7 @@ function validateWhenReference(
 ): void {
   const first = path.split('.')[0]!;
   if (first === 'run') {
-    if (!(path === 'run.params' || path.startsWith('run.params.'))) {
+    if (!isRunParamsPath(path)) {
       errors.push(
         withLine(
           stepName,
@@ -314,6 +520,23 @@ function validateWhenReference(
         ),
       );
     }
+    return;
+  }
+  // Issue #933, arm C: the `input_map` form (`context.…`). `context` can never be a step (the
+  // loader refuses the name), so "add it to depends_on" below would be a dead end; say how to
+  // write the path instead. Only where `when` is consumed (auto, agent, guard): on a finalizer it
+  // is prohibited and never evaluated, so today's text stays there.
+  if (first === 'context' && kind !== undefined && STEP_KEY_REGISTRY.when[kind].c === 'consumed') {
+    errors.push(
+      withLine(
+        stepName,
+        contextFormRefusal(
+          STEPS_READ_WORDS.when.consequence,
+          STEPS_READ_WORDS.when.opening(stepName, path),
+          path,
+        ),
+      ),
+    );
     return;
   }
   if (!dependsOn.includes(first)) {
@@ -1541,6 +1764,9 @@ function parseWorkflowString(
     }
 
     // Step 3: Per-step validation
+    // The workflow's step names in declared order: a precondition's or a guard's path must start
+    // with one of them (issue #933).
+    const stepNames = Object.keys(stepsRaw);
     for (const [stepName, stepRaw] of Object.entries(stepsRaw)) {
       if (typeof stepRaw !== 'object' || stepRaw === null || Array.isArray(stepRaw)) {
         errors.push(withStepLine(stepName, `Step '${stepName}' must be an object`));
@@ -2832,6 +3058,7 @@ function parseWorkflowString(
               rawWhen,
               stepName,
               dependsOn,
+              stepNames,
               stepKind,
               errors,
               withStepLine,
@@ -2857,6 +3084,7 @@ function parseWorkflowString(
                   leaf,
                   stepName,
                   dependsOn,
+                  stepNames,
                   stepKind,
                   errors,
                   withStepLine,
@@ -2876,7 +3104,8 @@ function parseWorkflowString(
 
       // Validate abort_unless leaf shape (guard steps only; the LEGACY depends_on/run.params
       // reference check is when-only — but issue #220 §4c's `$settlement` one-hop check fires here
-      // too, via the hoisted `dependsOn`, SCOPED to `$settlement.`-prefixed paths only).
+      // too, via the hoisted `dependsOn`, SCOPED to `$settlement.`-prefixed paths only; and since
+      // issue #933 every other path must start with a step of the workflow).
       if (step['abort_unless'] !== undefined && step['execution'] === 'guard') {
         const rawAbort = step['abort_unless'];
         if (typeof rawAbort === 'string') {
@@ -2893,6 +3122,7 @@ function parseWorkflowString(
               rawAbort,
               stepName,
               dependsOn,
+              stepNames,
               stepKind,
               errors,
               withStepLine,
@@ -2918,6 +3148,7 @@ function parseWorkflowString(
                   leaf,
                   stepName,
                   dependsOn,
+                  stepNames,
                   stepKind,
                   errors,
                   withStepLine,
@@ -2935,9 +3166,9 @@ function parseWorkflowString(
         }
       }
 
-      // Validate preconditions leaf shape (each must be a single comparison). Reference check is
-      // `$settlement`-scoped only (issue #220 §4c) — a non-`$settlement` precondition has no
-      // depends_on/run.params check (unchanged from before this PR).
+      // Validate preconditions leaf shape (each must be a single comparison). A `$settlement` path
+      // gets the one-hop check (issue #220 §4c); any other path must start with a step of the
+      // workflow where the kind evaluates preconditions (issue #933) — no depends_on check.
       if (step['preconditions'] !== undefined) {
         const rawPre = step['preconditions'];
         if (!Array.isArray(rawPre)) {
@@ -2962,6 +3193,7 @@ function parseWorkflowString(
                 leaf,
                 stepName,
                 dependsOn,
+                stepNames,
                 stepKind,
                 errors,
                 withStepLine,
