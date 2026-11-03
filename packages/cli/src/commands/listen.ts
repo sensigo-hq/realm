@@ -78,6 +78,8 @@ import {
 } from '../lib/webhook-verifiers.js';
 import { extractParams, extractDedupId, resolveDotPath } from '../lib/webhook-params.js';
 import { FileDedupStore, InMemoryDedupStore, type DedupStore } from '../lib/dedup-store.js';
+import { parseHost, parseOneOf, parseWholeNumber } from '../lib/option-parsers.js';
+import { bindFailureLine } from '../lib/bind-failure.js';
 import { listRunsDiagnosed } from './list.js';
 import {
   loadProjectExtensions,
@@ -1578,6 +1580,15 @@ export function parseListenLimit(flag: string): (value: string) => number {
 }
 
 /**
+ * issue #944: the sweeper's timer delay for `--sweep-expired-gates <seconds>`. The option's parser
+ * accepts 1 to 2147483 seconds, so the delay is a whole number of milliseconds below 2^31 − 1, the
+ * largest a Node timer holds (above it, or at 0 or NaN, a timer fires about every millisecond).
+ */
+export function sweepIntervalMs(seconds: number): number {
+  return seconds * 1000;
+}
+
+/**
  * `realm listen` — start a webhook server that turns verified inbound webhooks into Realm runs.
  *
  * Serves plaintext HTTP. TLS termination, rate limiting, and autoscaling are reverse-proxy /
@@ -1590,8 +1601,20 @@ export const listenCommand = new Command('listen')
     'Start a webhook server that creates runs from inbound webhooks (per each workflow trigger: block)',
   )
   .argument('[workflows...]', 'Workflow files or directories to mount (default: ./workflow.yaml)')
-  .option('--port <n>', 'Port to listen on', '3000')
-  .option('--host <addr>', 'Host/interface to bind (default loopback)', '127.0.0.1')
+  // issues #944, #949: each of these five options' value is checked when the command line is read
+  // (`option-parsers.ts`), so a mistyped value is refused before anything loads or binds.
+  .option(
+    '--port <n>',
+    'Port to listen on: a whole number from 0 to 65535; 0 lets the system pick',
+    parseWholeNumber('--port', 0, 65535),
+    3000,
+  )
+  .option(
+    '--host <addr>',
+    'Host/interface to bind (default loopback)',
+    parseHost('--host'),
+    '127.0.0.1',
+  )
   .option(
     '--body-timeout-ms <n>',
     "Max time (ms) for a request's headers, then its body, to arrive",
@@ -1610,8 +1633,18 @@ export const listenCommand = new Command('listen')
     parseListenLimit('--max-concurrent'),
     20,
   )
-  .option('--dedup-store <kind>', 'Dedup store: file | memory', 'file')
-  .option('--log-level <level>', 'Log level: debug | info | warn | error', 'info')
+  .option(
+    '--dedup-store <kind>',
+    'Dedup store: file | memory',
+    parseOneOf('--dedup-store', ['file', 'memory']),
+    'file',
+  )
+  .option(
+    '--log-level <level>',
+    'Log level: debug | info | warn | error',
+    parseOneOf('--log-level', ['debug', 'info', 'warn', 'error']),
+    'info',
+  )
   // issue #676: no Commander default for either. Realm has no default model; `--provider` absent
   // means each child picks the provider from the API key it finds.
   .option(
@@ -1645,22 +1678,24 @@ export const listenCommand = new Command('listen')
   )
   .option(
     '--sweep-expired-gates <seconds>',
-    'OPT-IN (issue #291): store-wide sweep interval (seconds) that enacts expired, enactable ' +
-      'gates across every run this store holds. Default OFF — listen never touches gates ' +
-      'unless this is set. Never drains finalizers itself — see: realm run drain --expired.',
+    'OPT-IN (issue #291): store-wide sweep interval, a whole number of seconds from 1 to 2147483, ' +
+      'that enacts expired, enactable gates across every run this store holds. Default OFF — ' +
+      'listen never touches gates unless this is set. Never drains finalizers itself — see: ' +
+      'realm run drain --expired.',
+    parseWholeNumber('--sweep-expired-gates', 1, 2_147_483),
   )
   .action(
     async (
       workflows: string[],
       opts: {
-        port?: string;
+        port?: number;
         host?: string;
         bodyTimeoutMs?: number;
         maxBodyBytes?: number;
         maxConcurrent?: number;
-        dedupStore?: string;
+        dedupStore?: 'file' | 'memory';
         logLevel?: string;
-        sweepExpiredGates?: string;
+        sweepExpiredGates?: number;
         llmTimeout?: number;
         provider?: ProviderName;
         model?: string;
@@ -1754,7 +1789,7 @@ export const listenCommand = new Command('listen')
         );
       }
 
-      const dedupKind = opts['dedupStore'] === 'memory' ? 'memory' : 'file';
+      const dedupKind = opts['dedupStore'] ?? 'file';
       const dedupBase = defaultDedupBase();
       const memoryStores = new Map<string, DedupStore>();
       const deps: ListenDeps = {
@@ -1787,24 +1822,33 @@ export const listenCommand = new Command('listen')
         return;
       }
 
-      const sweepExpiredGatesSeconds =
-        opts['sweepExpiredGates'] !== undefined
-          ? parseInt(opts['sweepExpiredGates'], 10)
-          : undefined;
-      const handle = await startListen(
-        routes,
-        {
-          port: parseInt(opts['port'] ?? '3000', 10),
-          host,
-          bodyTimeoutMs: opts['bodyTimeoutMs'] ?? 5000,
-          maxBodyBytes: opts['maxBodyBytes'] ?? 1048576,
-          maxConcurrent: opts['maxConcurrent'] ?? 20,
-          ...(sweepExpiredGatesSeconds !== undefined
-            ? { sweepExpiredGatesIntervalMs: sweepExpiredGatesSeconds * 1000 }
-            : {}),
-        },
-        deps,
-      );
+      const sweepExpiredGatesSeconds = opts['sweepExpiredGates'];
+      // issue #949: a failure to listen (the port in use, permission denied, an address that is not
+      // this machine's, a name that does not resolve) is one line naming the host and the port, in
+      // place of a stack; any other error propagates as before.
+      let handle: ListenHandle;
+      try {
+        handle = await startListen(
+          routes,
+          {
+            port: opts.port ?? 3000,
+            host,
+            bodyTimeoutMs: opts['bodyTimeoutMs'] ?? 5000,
+            maxBodyBytes: opts['maxBodyBytes'] ?? 1048576,
+            maxConcurrent: opts['maxConcurrent'] ?? 20,
+            ...(sweepExpiredGatesSeconds !== undefined
+              ? { sweepExpiredGatesIntervalMs: sweepIntervalMs(sweepExpiredGatesSeconds) }
+              : {}),
+          },
+          deps,
+        );
+      } catch (err) {
+        const line = bindFailureLine(err, host, opts.port ?? 3000);
+        if (line === undefined) throw err;
+        console.error(line);
+        process.exit(1);
+        return;
+      }
 
       // issue #600 PR 2 (D2): what each provider's agents are asked to cache.
       logger.info('listen: caching', listenCachingFacts(opts.provider, opts.promptCache));
