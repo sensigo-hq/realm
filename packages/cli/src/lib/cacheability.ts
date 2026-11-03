@@ -100,9 +100,11 @@ export function checkCacheFlags(opts: {
 export interface CacheContext {
   /** The runner's economics file the admission load resolved (`runner.cache.economics`). */
   cacheEconomicsPath?: string;
-  /** `--registered`: why agent-profile resolution did not run (the existing not-run reason). */
-  profilesNotRun?: string;
-  /** `--registered`: why the project-extensions check did not run — no economics path is known. */
+  /**
+   * `--registered`: why the project-extensions check did not run — no economics path is known. It
+   * decides the economics clause only when `--model` asked for the economics (D1, G-3); its words
+   * are not printed on the cache lines: the line that lists the checks left out carries them.
+   */
   economicsNotRun?: string;
 }
 
@@ -157,8 +159,6 @@ export interface CacheabilityReport {
   adapters: RequestAdapter[];
   floor?: Floor;
   steps: StepResult[];
-  profilesNotRun?: string;
-  economicsNotRun?: string;
 }
 
 /** The layouts the flags name: both built-in ones with no provider; the provider's own with one. */
@@ -227,7 +227,11 @@ export async function buildCacheabilityReport(
   // Rows 5–12: the clause after the sizes when no floor applies.
   let cause: StepResult['cause'];
   if (floor === undefined) {
-    if (ctx.economicsNotRun !== undefined) cause = { cause: 'economics_not_checked' };
+    // D1 (G-3): the economics file is read only with --model, so only --model asks for the
+    // economics; without it a copy whose project folder is gone gets the no-model cause, as a
+    // healthy copy does.
+    if (ctx.economicsNotRun !== undefined && flags.model !== undefined)
+      cause = { cause: 'economics_not_checked' };
     else if (economics !== undefined && 'cause' in economics)
       cause = {
         cause: economics.cause,
@@ -249,7 +253,13 @@ export async function buildCacheabilityReport(
         })),
       };
     }
-    if (ctx.profilesNotRun !== undefined && step.agent_profile !== undefined) {
+    // D1 (G-2): decided per profile, from the text the definition carries (for --registered, the text
+    // the copy holds): a step whose profile has no text is not sized without it. File mode, register
+    // and watch always carry the text (the loader refuses a profile it cannot read).
+    if (
+      step.agent_profile !== undefined &&
+      definition.resolved_profiles?.[step.agent_profile]?.content === undefined
+    ) {
       return {
         step: name,
         kind: 'profile_unavailable',
@@ -334,8 +344,6 @@ export async function buildCacheabilityReport(
     adapters,
     ...(floor !== undefined ? { floor } : {}),
     steps: results,
-    ...(ctx.profilesNotRun !== undefined ? { profilesNotRun: ctx.profilesNotRun } : {}),
-    ...(ctx.economicsNotRun !== undefined ? { economicsNotRun: ctx.economicsNotRun } : {}),
   };
 }
 
@@ -425,7 +433,8 @@ function causeText(report: CacheabilityReport, cause: NonNullable<StepResult['ca
     case 'no_minimum_stated':
       return ` — no minimum stated for ${model} in your economics file`;
     case 'economics_not_checked':
-      return ` — economics not checked (${report.economicsNotRun ?? ''})`;
+      // D1 (G-3): true for every reason the registry can carry; no path, no record field name.
+      return ' — economics not checked (no project folder to read it from)';
     default:
       // no_model: printed when a provider is named; the default two-layout line has no clause.
       return report.flags.provider !== undefined
@@ -464,7 +473,7 @@ function stepLine(report: CacheabilityReport, result: StepResult): string {
     return `cache: ${result.step} — uses tools: each tool's definition comes from its MCP server at run time, so the request cannot be measured before a run: not judged`;
   }
   if (result.kind === 'profile_unavailable') {
-    return `cache: ${result.step} — profile file not read (${report.profilesNotRun ?? ''}): sizes not computed`;
+    return `cache: ${result.step} — profile text not stored in the registered copy: sizes not computed — register the workflow again to store it`;
   }
   const layouts = result.layouts;
   const ratio = report.flags.ratio;
