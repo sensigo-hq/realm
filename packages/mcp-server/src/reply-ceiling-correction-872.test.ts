@@ -499,6 +499,14 @@ describe('#872 (b1) correction 1 HC4 (H4) — get_run_state’s run lists are cu
 
 // ─── HC6: the envelope's lists, and eligible_steps ───────────────────────────────────────────────
 
+/**
+ * The MCP client's limit for one request through `door()`: the largest cell budget in this file
+ * (HC6's 240 s), so each cell's own budget is the limit that applies. The SDK's default is 60 s
+ * (`DEFAULT_REQUEST_TIMEOUT_MSEC`), which a healthy 450-step `start_run` (about 17 s alone) passed
+ * under suite load and failed with -32001 in a counted run (registry IA715B-23).
+ */
+const REQUEST_TIMEOUT_MS = 240_000;
+
 /** A JSON-file store pair and an MCP client on a server with `registry` (when given). */
 async function door(registry?: ExtensionRegistry) {
   const dir = await mkdtemp(join(tmpdir(), 'realm-hc6-872-'));
@@ -513,7 +521,9 @@ async function door(registry?: ExtensionRegistry) {
   const client = new Client({ name: 'hc6-872', version: '0' });
   await Promise.all([server.connect(st), client.connect(ct)]);
   const call = async (name: string, args: Reply): Promise<{ size: number; json: Reply }> => {
-    const raw = (await client.callTool({ name, arguments: args })) as {
+    const raw = (await client.callTool({ name, arguments: args }, undefined, {
+      timeout: REQUEST_TIMEOUT_MS,
+    })) as {
       content: Array<{ text: string }>;
     };
     return { size: raw.content[0]!.text.length, json: JSON.parse(raw.content[0]!.text) as Reply };
