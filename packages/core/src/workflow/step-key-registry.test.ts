@@ -66,7 +66,7 @@ const BASES: Record<ExecutionMode, { steps: Record<string, StepShape>; target: s
   auto: { steps: { s: { description: 'd', execution: 'auto' } }, target: 's' },
   agent: { steps: { s: { description: 'd', execution: 'agent' } }, target: 's' },
   guard: {
-    steps: { s: { description: 'd', execution: 'guard', abort_unless: 'run.params.ok == true' } },
+    steps: { s: { description: 'd', execution: 'guard', abort_unless: 's.ok == true' } },
     target: 's',
   },
   finalizer: {
