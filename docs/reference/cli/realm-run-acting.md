@@ -38,6 +38,8 @@ Answers the gate a run is waiting at. `realm run inspect <run-id>` prints the ga
 | `--project <dir>`            | No       | Used only for a workflow registered without a project folder (made by an agent or from a string): the folder whose `realm.yaml` and code it loads. Default: the current folder. A workflow registered from a folder loads its code from there, and `--project` is not used (the command says so). |
 | `--extensions-module <path>` | No       | Loads this code file in place of the files named by the workflow's `extensions`.                                                                                                                                                                                                                  |
 
+`--by` and `--project` refuse a value that starts with `-`, except a lone `-`; write `--option=value` for one.
+
 ```bash
 realm run respond 3ebc1158-1d29-41b5-9ca5-df054a681b58 --gate 0d499c26-a6b4-406f-ae29-6d6ef5c75fcb --choice approve
 ```
@@ -144,6 +146,8 @@ The refusals:
 ```text
 realm run advance <run-id> [--project <dir>] [--extensions-module <path>]
 ```
+
+`--project` refuses a value that starts with `-`, except a lone `-`; write `--option=value` for one.
 
 Added after version 0.46.0. Runs what a run owes the engine, from this shell — no model provider, no key: first, when the open question's time is up and it declares `on_expiry`, that default or abort (the preview names it as `the expired question on '<step>' (its declared <on_expiry>)`, and for a declared default goes on `; then it runs what that leaves owed until a step opens a question, fails or ends the run.`, and the command prints the line from its reply before the steps it runs: `⚠ gate '<gate>' on '<step>' had expired <how long> before this call — this advance call first carried out its declared settle_default: the default choice '<choice>' was recorded (enacted_via: advance).`, or `… its declared abort: the run ended …`; when the default's choice made a guard ready, the guard's sentence follows on the same line: `… (enacted_via: advance). Guard step '<guard>' passed.`); then the guards and `auto` steps that are ready. It runs them one at a time, and the steps the run owes after them, and stops at the first step that opens a question, fails or ends the run: a step named after that one does not run in that call. When the preview names more than one, its line says so: `Owed to the engine: 'approve', 'fetch'; it runs them until a step opens a question, fails or ends the run.` It loads the project's extensions exactly as `respond` does (`--project`, `--extensions-module`) — from the workflow's own project folder, whatever folder the shell is in, or, for a workflow made without one, from `--project` or the folder it runs in — names this program with `REALM_OPERATOR` or the OS user (a `REALM_OPERATOR` that cannot be used prints one line and exits 1 before any work), and prints what it is about to do before it runs anything:
 
@@ -277,6 +281,8 @@ Ends an open run. Its phase becomes `abandoned`. The workflow's cleanup steps do
 | ----------------- | ------------------------------------------------------------------------ |
 | `--reason <text>` | Recorded as the run's cause. Default: `Abandoned via realm run abandon`. |
 
+`--reason` refuses a value that starts with `-`, except a lone `-`; write `--option=value` for one.
+
 ```bash
 realm run abandon 00b33778-f504-4d65-93ca-6300441f41e7 --reason "upstream still down"
 ```
@@ -355,6 +361,8 @@ When a step starts, Realm marks it in progress and, where it can, records a time
 | `--all`                   | Selects, across all runs, every step that is past its time, is declared `idempotent: true`, and is not waiting at a gate. |
 | `--workflow <id>`         | With `--all`: only runs of this workflow.                                                                                 |
 | `--older-than <duration>` | With `--all`: only steps that are past their time by at least this long.                                                  |
+
+`--step` and `--workflow` refuse a value that starts with `-`, except a lone `-`; write `--option=value` for one.
 
 With a run ID alone, it lists the steps in progress and the state of each:
 
@@ -440,6 +448,8 @@ A workflow's cleanup steps, the steps with `execution: finalizer`, run after the
 | `--expired`                  | Also carries out gates whose time has passed. See [Gates](../workflow/gates.md#what-happens-at-expiry).        |
 | `--project <dir>`            | The project whose `realm.yaml` applies if the workflow has no project of its own. Default: the current folder. |
 | `--extensions-module <path>` | Loads this code file in place of the files named by the workflow's `extensions`.                               |
+
+`--project` and `--extensions-module` refuse a value that starts with `-`, except a lone `-`; write `--option=value` for one.
 
 Without `--force`, it reports:
 
@@ -601,6 +611,8 @@ Deletes finished runs, with their refused answers and trace entries. A deleted r
 | `--older-than <duration>` | Selects every finished run that has not changed for this long. |
 | `--workflow <id>`         | With `--older-than`: only runs of this workflow.               |
 
+`--workflow` refuses a value that starts with `-`, except a lone `-`; write `--option=value` for one.
+
 ```bash
 realm run purge --older-than 30d
 ```
@@ -733,6 +745,8 @@ Realm keeps one small file for each idempotency key, in `~/.realm/runs/keys/`, t
 | ----------------- | ------------------------------------------------- |
 | `--workflow <id>` | Only runs of this workflow.                       |
 | `--dry-run`       | Reports what would be written and writes nothing. |
+
+`--workflow` refuses a value that starts with `-`, except a lone `-`; write `--option=value` for one.
 
 ```bash
 realm run reconcile --dry-run

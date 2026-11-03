@@ -31,6 +31,8 @@ Prints one line for each run, newest change first.
 | `--stuck`                 | Lists only runs that have a health finding. Cannot be combined with `--status`.                                                                                                 |
 | `--older-than <duration>` | With `--stuck`: how long an open run must have been idle to be listed for the idle finding (`never_claimed_idle`); every other finding lists its run at any age. Default `24h`. |
 
+`--workflow` refuses a value that starts with `-`, except a lone `-`; write `--option=value` for one.
+
 A duration is a whole number followed by `d`, `h` or `m`: `7d`, `6h`, `30m`. Write zero as `0m`.
 
 ```bash
@@ -605,6 +607,8 @@ Writes one JSON file with the run's record, its refused answers and its trace en
 | ----------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--out <path>`                | `./<run-id>.realm.json` | The file to write. If `<path>` is an existing folder, the file is `<run-id>.realm.json` in it.                                                                                   |
 | `--accept-partial-disclosure` | Off                     | Writes the file even when Realm does not know all of the run's declared secrets. It is masked with what is known, and the last line names the state. Added after version 0.47.1. |
+
+`--out` refuses a value that starts with `-`, except a lone `-`; write `--option=value` for one.
 
 ```bash
 realm run export 419c3c51-c4e7-4066-970f-8f877844709a --out ./exports

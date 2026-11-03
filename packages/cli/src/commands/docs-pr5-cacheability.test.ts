@@ -210,7 +210,7 @@ describe(
     it("C-6.1 / F-1: the parser's own messages, and which option a flag takes as its value", () => {
       claim(
         WORKFLOW_PAGE,
-        "A flag given last, with nothing after it, and a `--provider` other than `anthropic` or `openai` (in lower case) get the command line parser's own message instead, also on standard error with exit 1 and nothing on standard output: `error: option '--floor <tokens>' argument missing`, or `error: option '--provider <name>' argument 'foo' is invalid. --provider must be openai or anthropic.` A flag followed by an option that takes no value takes that option as its value. For `--floor` and `--ratio` that gets the `Error:` line above: `--floor --json` prints `Error: --floor must be a whole number of tokens, 1 or more (got '--json').` For `--provider` it gets the parser's message: `--provider --json` prints `error: option '--provider <name>' argument '--json' is invalid. --provider must be openai or anthropic.` `--model` has no check on its value: `--provider anthropic --model --json` reads `--json` as the model id, prints no error and leaves `--json` unset, so the output is text, not JSON; `--model --strict` leaves `--strict` unset, so a warning no longer fails the run. With a path given, a flag followed by an option that takes a value is read by the command line parser instead: `--floor --ratio 4` and `--floor --provider anthropic` print `error: too many arguments for 'validate'. Expected 1 argument but got 2: …` (`register` and `watch` name themselves; the path and the value follow). `--provider --floor 5` prints `error: option '--provider <name>' argument '--floor' is invalid. --provider must be openai or anthropic.` Each goes to standard error with exit 1 and nothing on standard output.",
+        "A flag given last, with nothing after it, and a `--provider` other than `anthropic` or `openai` (in lower case) get the command line parser's own message instead, also on standard error with exit 1 and nothing on standard output: `error: option '--floor <tokens>' argument missing`, or `error: option '--provider <name>' argument 'foo' is invalid. --provider must be openai or anthropic.` A flag followed by an option that takes no value takes that option as its value. For `--floor` and `--ratio` that gets the `Error:` line above: `--floor --json` prints `Error: --floor must be a whole number of tokens, 1 or more (got '--json').` For `--provider` it gets the parser's message: `--provider --json` prints `error: option '--provider <name>' argument '--json' is invalid. --provider must be openai or anthropic.` `--model` refuses a value that starts with `-`, except a lone `-`: `--provider anthropic --model --json` and `--model --strict` print the message below on standard error, exit 1 and print nothing on standard output; write `--model=--json` to mean that model id. With a path given, a flag followed by an option that takes a value is read by the command line parser instead: `--floor --ratio 4` and `--floor --provider anthropic` print `error: too many arguments for 'validate'. Expected 1 argument but got 2: …` (`register` and `watch` name themselves; the path and the value follow). `--provider --floor 5` prints `error: option '--provider <name>' argument '--floor' is invalid. --provider must be openai or anthropic.` Each goes to standard error with exit 1 and nothing on standard output.",
       );
       expect(
         read(WORKFLOW_PAGE),
@@ -251,15 +251,14 @@ describe(
         expect([r.code, r.stdout], shown).toEqual([1, '']);
         expect(r.first.startsWith(prefixes[i] ?? '\0'), shown).toBe(true);
       });
-      // Correction 3 (I-1): which option a flag takes as its value, flag by flag. `--floor` and
-      // `--ratio` get realm's `Error:` line; `--provider` the parser's message, on all three commands;
-      // `--model` has no check on its value, so `--model --json` leaves `--json` unset (text, not
-      // JSON), and `--model --strict` leaves `--strict` unset, so a warning no longer fails the run:
-      // the contrast is `--strict` alone, exit 1 on the same fixture (its warning is on standard
-      // error). (a) red when the page keeps the old sentence, `--model` starts refusing a value that
-      // begins with `-`, `--json` or `--strict` is set by `--model <flag>`, the fixture stops warning,
-      // or a message changes; (b) prints each run's exit code and the first line of its standard
-      // output and standard error.
+      // Correction 3 (I-1), re-pinned by #920 C-1: which option a flag takes as its value, flag by
+      // flag. `--floor` and `--ratio` get realm's `Error:` line; `--provider` the parser's message, on
+      // all three commands; `--model` refuses a value that starts with `-` (the option-value guard):
+      // `--model --json` and `--model --strict` exit 1 with the guard's message and nothing on standard
+      // output; the contrast is `--strict` alone, exit 1 on the same fixture (its warning is on standard
+      // error). (a) red when the page keeps the old sentence, `--model` stops refusing a value that
+      // begins with `-`, the fixture stops warning, or a message changes; (b) prints each run's exit
+      // code and the first line of its standard output and standard error.
       const firstLine = (s: string): string => hide(s).trim().split('\n')[0] ?? '';
       const PROVIDER_JSON =
         "error: option '--provider <name>' argument '--json' is invalid. --provider must be openai or anthropic.";
@@ -288,14 +287,21 @@ describe(
         realm(['workflow', 'validate', retried, '--strict']),
         realm(['workflow', 'validate', retried, '--provider', 'anthropic', '--model', '--strict']),
       ].map((r) => [r.code, firstLine(r.stdout), firstLine(r.stderr).startsWith(INERT)]);
+      const GUARD_SECOND =
+        "Did you forget to specify the option argument for '--model'? To specify an option argument starting with a dash use '--model=-XYZ'.";
       expect({
         model: [asModel.code, firstLine(asModel.stdout), parses, asModel.stderr],
         gate,
       }).toEqual({
-        model: [0, 'Valid: code-reviewer v1 (3 steps)', false, ''],
+        model: [
+          1,
+          '',
+          false,
+          `error: option '--model <id>' argument is ambiguous: '--json' looks like a flag.\n${GUARD_SECOND}\n`,
+        ],
         gate: [
           [1, 'Valid: retried v1 (1 step) — 1 warning; failing due to --strict', true],
-          [0, 'Valid: retried v1 (1 step)', true],
+          [1, '', false],
         ],
       });
       // Correction 3 (I-6): `register` and `watch` name themselves in the parser's "too many
