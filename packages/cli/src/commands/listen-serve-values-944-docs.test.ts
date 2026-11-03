@@ -177,7 +177,7 @@ describe('issues #944, #949 — the CHANGELOG bullet', () => {
   it('the refusals, the one-line bind failures, and serve --port 0 with an IPv6 host in brackets', () => {
     // Executed by the built-CLI refusal cells and the sweeper timing cell.
     claimChangelog(
-      '**`realm listen` and `realm serve` refuse a bad option value when the command line is read, and say a failure to listen in one line (issues #944 and #949).** They refuse a bad `--port`, `--host`, `--dedup-store`, `--log-level` or `--sweep-expired-gates`. Before, a mistyped log level turned debug logging on, a mistyped dedup store selected the file store, a sweep interval of 0 or a word made the gate sweeper run about every millisecond, and a bad port or host ended in a stack trace.',
+      '**`realm listen` and `realm serve` refuse a bad option value when the command line is read, and say a failure to listen in one line (issues #944 and #949).** They refuse a bad `--port`, `--host`, `--dedup-store`, `--log-level` or `--sweep-expired-gates`. Before, a mistyped log level turned debug logging on, a mistyped dedup store selected the file store, a sweep interval of 0 or a word made the gate sweeper run about every millisecond, and on `realm listen` a bad port or host ended in a stack trace.',
     );
     // Executed by the bind-failure cells (port in use, permission denied, not this machine's
     // address, a name that cannot be resolved).

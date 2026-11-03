@@ -228,12 +228,14 @@ describe('issue #944 — the sweeper waits the seconds it is given', () => {
     }).toEqual({ one: 1000, largest: 2147483000, underTimerLimit: true });
   });
 
-  // The runaway of #944, through the built `realm listen --sweep-expired-gates 4` over a store
-  // holding one run at an expired gate: the sweeper's first pass comes about 4 s after the server
-  // starts, never in the first 3 s (a pass every 4 ms would come at once; a loaded machine can only
-  // make it later). (a) red when the interval is taken as milliseconds (the first line comes at
-  // once) or the sweeper never runs; (b) prints the delay and the run's lines.
-  it('realm listen --sweep-expired-gates 4: no sweep line in the first 3 s after the start line, one afterwards', async () => {
+  // The runaway of #944, through the built `realm listen --sweep-expired-gates 6` over a store
+  // holding one run at an expired gate: the sweeper's first pass comes about 6 s after the server
+  // starts. The cell requires at least 3 s between the two lines it reads (the start line, then
+  // the first sweep line), which leaves about 3 s for this test process to be late reading the
+  // start line; a pass every 6 ms (the interval taken as milliseconds) would come at once.
+  // (a) red when the interval is taken as milliseconds (the first line comes at once) or the
+  // sweeper never runs; (b) prints the delay and the run's lines.
+  it('realm listen --sweep-expired-gates 6: no sweep line in the first 3 s after the start line, one afterwards', async () => {
     mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
     mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
     const runStore = new JsonFileStore(join(home, '.realm', 'runs'));
@@ -282,7 +284,7 @@ describe('issue #944 — the sweeper waits the seconds it is given', () => {
     }>((resolve) => {
       const child = spawn(
         process.execPath,
-        [CLI, ...LISTEN, '--port', '0', '--sweep-expired-gates', '4'],
+        [CLI, ...LISTEN, '--port', '0', '--sweep-expired-gates', '6'],
         { cwd: root, env: env(), stdio: ['ignore', 'pipe', 'pipe'] },
       );
       const got: string[] = [];

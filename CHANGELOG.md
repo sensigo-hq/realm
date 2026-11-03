@@ -130,7 +130,7 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
   and say a failure to listen in one line (issues #944 and #949).** They refuse a bad `--port`,
   `--host`, `--dedup-store`, `--log-level` or `--sweep-expired-gates`. Before, a mistyped log level
   turned debug logging on, a mistyped dedup store selected the file store, a sweep interval of 0 or a
-  word made the gate sweeper run about every millisecond, and a bad port or host ended in a stack
+  word made the gate sweeper run about every millisecond, and on `realm listen` a bad port or host ended in a stack
   trace. A failure to listen is one line naming the host and the port: a port in use, permission
   denied, an address that is not the machine's, a name that cannot be resolved.
   `realm serve --port 0` now prints the port the system picked in its start line (it printed `:0`),
