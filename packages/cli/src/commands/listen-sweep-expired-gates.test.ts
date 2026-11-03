@@ -357,7 +357,6 @@ describe('issue #719 — the expiry sweeper on a store with a damaged run file (
         runStore: new JsonFileStore(runsDir),
         dedupStoreFor: () => ({ check: () => false, record: () => {}, cleanup: () => {} }),
         spawnAgent: async () => ({ pid: 1 }),
-        clock: () => Date.now(),
         logger,
       };
       handle = await startListen(
@@ -410,7 +409,6 @@ describe('issue #719 — the expiry sweeper on a store with a damaged run file (
           runStore: new JsonFileStore(runsDir),
           dedupStoreFor: () => ({ check: () => false, record: () => {}, cleanup: () => {} }),
           spawnAgent: async () => ({ pid: 1 }),
-          clock: () => Date.now(),
           logger,
         };
         handle = await startListen(
@@ -555,5 +553,60 @@ describe('issue #719 — the expiry sweeper on a store with a damaged run file (
     } finally {
       rmSync(runsDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('#715 (b) 03 §A.4 — the sweeper waits for a gate’s expiry on the store’s clock', () => {
+  it('a gate the pass finds not yet due is carried out when the store’s clock reaches its expires_at — without another pass', async () => {
+    // (a) red when the pass registers no waiter on the store's clock (the gate stays open until the
+    //     next real-time pass); (b) prints the run's gate and phase before and after the clock moves.
+    const clock = settableClock(new Date('2020-01-01T00:04:00.000Z'));
+    const store = new InMemoryStore({ clock });
+    const def = wf();
+    const run = await seedGatedRun(store, def, makeGate({ on_expiry: 'abort' }));
+    const waits = new Map<string, () => void>();
+    const pass = await sweepExpiredGates({
+      runStore: store,
+      workflowStore: makeWorkflowStore([def]),
+      logger: silentLogger,
+      waits,
+    });
+    const before = (await store.get(run.id)).record;
+    await clock.advance(60_000);
+    const after = (await store.get(run.id)).record;
+    expect({
+      pass: pass.enacted,
+      waiting: [...waits.keys()],
+      before: [before.pending_gate?.gate_id, before.run_phase],
+      after: [after.pending_gate?.gate_id, after.run_phase],
+    }).toEqual({
+      pass: 0,
+      waiting: [],
+      before: ['gate-1', before.run_phase],
+      after: [undefined, 'aborted'],
+    });
+  });
+
+  it('a waiter whose gate a later pass no longer finds open is cancelled', async () => {
+    // (a) red when an answered gate's waiter stays armed (it would write at the old deadline); (b)
+    //     prints the waiters after each pass.
+    const clock = settableClock(new Date('2020-01-01T00:04:00.000Z'));
+    const store = new InMemoryStore({ clock });
+    const def = wf();
+    const run = await seedGatedRun(store, def, makeGate({ on_expiry: 'abort' }));
+    const waits = new Map<string, () => void>();
+    const deps = {
+      runStore: store,
+      workflowStore: makeWorkflowStore([def]),
+      logger: silentLogger,
+      waits,
+    };
+    await sweepExpiredGates(deps);
+    const first = [...waits.keys()];
+    const { record } = await store.get(run.id);
+    const { pending_gate: _gate, ...rest } = record;
+    await store.update({ ...rest, in_progress_steps: [] });
+    await sweepExpiredGates(deps);
+    expect({ first, second: [...waits.keys()] }).toEqual({ first: ['gate-1'], second: [] });
   });
 });

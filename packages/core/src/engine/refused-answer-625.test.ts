@@ -50,6 +50,7 @@ import { JsonFileStore } from '../store/json-file-store.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import { writeTestClockFile } from '../store/test-clock-file.js';
 import { writtenSnapshot } from './snapshot.js';
+import { zOf } from '../test-support/instant.js';
 
 /** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
  *  runs folder sits beside the location's clock file (first set to the host's reading), which
@@ -256,8 +257,8 @@ describe('#625 PR-2a, C117/C118/C122/C124/C125 — the clock required, the refus
         });
         const line =
           onExpiry === 'settle_default'
-            ? `gate '${gateId}' on 'q' had expired 5s before this call — this submitHumanResponse call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: submitHumanResponse).`
-            : `gate '${gateId}' on 'q' had expired 5s before this call — this submitHumanResponse call first carried out its declared abort: the run ended (enacted_via: submitHumanResponse).`;
+            ? `gate '${gateId}' on 'q' had expired 5s before this call (deadline ${zOf(reply.expiry!.expired_at)}) — this submitHumanResponse call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: submitHumanResponse).`
+            : `gate '${gateId}' on 'q' had expired 5s before this call (deadline ${zOf(reply.expiry!.expired_at)}) — this submitHumanResponse call first carried out its declared abort: the run ended (enacted_via: submitHumanResponse).`;
         // (a) red when the line drops the lag (F1), says "expired 0m ago", or is not the composer's;
         // (b) prints the warnings.
         expect({ legacy, onExpiry, choice, warnings: reply.warnings.slice(0, 1) }).toEqual({
@@ -309,7 +310,7 @@ describe('#625 PR-2a, C117/C118/C122/C124/C125 — the clock required, the refus
       expect({ caller, command: reply.command, line: reply.warnings[0] }).toEqual({
         caller,
         command: named,
-        line: `gate '${gateId}' on 'q' had expired 5s before this call — this ${named} call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: ${named}).`,
+        line: `gate '${gateId}' on 'q' had expired 5s before this call (deadline ${zOf(reply.expiry!.expired_at)}) — this ${named} call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: ${named}).`,
       });
     }
   });

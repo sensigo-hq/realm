@@ -225,7 +225,7 @@ describe(
       // F1: the line says how long before the call the question's time was up — `<lag>` in its place.
       const out = lagless(r.out);
       const all = [...out, ...lagless(r.err)];
-      const line = `⚠ gate '${gateId}' on 'confirm' had expired <lag> before this call — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`;
+      const line = `⚠ gate '${gateId}' on 'confirm' had expired <lag> before this call (deadline <instant>) — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`;
       // (a) red when the line is not printed, or prints after a step; (b) prints the output.
       expect(all.filter((l) => l === line)).toHaveLength(1);
       expect(out.indexOf(line) === -1 || out.indexOf(line) < out.indexOf('→ after')).toBe(true);
@@ -253,9 +253,9 @@ describe(
       expect(r.code).toBe(1);
       // F1: the question's time ended in 2020 (the fixture), so the lag is days and hours.
       // (a) red when the line says no lag, or a lag not in days; (b) prints the line.
-      expect(err[0]).toMatch(/had expired \d+d \d+h before this call — /);
+      expect(err[0]).toMatch(/had expired \d+d \d+h before this call \(deadline \S+Z\) — /);
       expect(lagless(err[0] ?? '')).toBe(
-        `⚠ gate '${gateId}' on 'confirm' had expired <lag> before this call — this respond call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: respond).`,
+        `⚠ gate '${gateId}' on 'confirm' had expired <lag> before this call (deadline <instant>) — this respond call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: respond).`,
       );
       expect(err[1]).toBe(
         `Gate '${gateId}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.`,

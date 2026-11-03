@@ -66,7 +66,7 @@ export type { IdempotencyDecision } from './store/idempotency-policy.js';
 export { executeStep } from './engine/execution-loop.js';
 // Issue #625 PR-2a (F1): the one duration formatter — `<n>s` under a minute, then `<m>m`, `<h>h <m>m`,
 // `<d>d <h>h`.
-export { formatDuration } from './utils/duration.js';
+export { formatDuration, formatInstantWords } from './utils/duration.js';
 // Issue #625 PR-2a (F6): the one POSIX shell quoter for a value a printed command carries.
 export { shellWord, quotedCommand } from './utils/shell-word.js';
 /**
@@ -496,7 +496,14 @@ export {
 export type { InstantClass, InstantReading } from './engine/instants.js';
 // issue #715 (a) (D5 §1.1, §2.1; D6-3, D6-4, D6-6, D6-7, D6-14, D6-35): the clock a run store holds,
 // the one place a store takes its reading for a write, and the per-key floor on that reading.
-export { createSystemClock, systemClock, markTestClock, clockBasis } from './utils/clock.js';
+export {
+  createSystemClock,
+  systemClock,
+  markTestClock,
+  clockBasis,
+  setClockErrorSink,
+  clockErrorSink,
+} from './utils/clock.js';
 export type { Clock } from './utils/clock.js';
 // #715 (b) (D-17): a read's raw reading (taken BEFORE the load) and the floor by a record's own stamp.
 export { takeReading, takeRawReading, floorAtRecord, floorAtHolder } from './store/take-reading.js';

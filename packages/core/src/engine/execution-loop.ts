@@ -122,7 +122,7 @@ import {
 import { discloseGate } from '../utils/disclosure-tables.js';
 import type { DisclosureSet } from '../utils/redaction.js';
 import { consumesInputMap, resolveInputMap } from './input-map.js';
-import { formatDuration } from '../utils/duration.js';
+import { formatDuration, formatLagWords } from '../utils/duration.js';
 import { loadWorkflowContext } from './workflow-context-loader.js';
 import { gateChoicesOf } from '../workflow/yaml-loader.js';
 import {
@@ -1749,8 +1749,8 @@ export function expiryReceiptOf(
 /**
  * The ONE line that says an expired question's declared `on_expiry` was carried out (decisions
  * C105, C122; #729 PR-0 T-2: rendered from the receipt's facts): how long before this call the
- * question's time was up (F1: `had expired 15s before this call`, from {@link formatDuration} — the
- * lag, A.3 #5), then by whom — this call: `this <call> call first carried out its declared
+ * question's time was up (F1: `had expired 15s before this call (deadline 2026-10-27T14:03:07Z)`, from
+ * {@link formatLagWords} — the lag, A.3 #5, with its deadline, #715 (b) D6-72 (c)), then by whom — this call: `this <call> call first carried out its declared
  * settle_default: the default choice '<c>' was recorded (enacted_via: <via>).` or `… abort: the run
  * ended …`. Every caller that carries an expiry out says it through this function. #715 (b)
  * (Amendment 3): the "another call had already carried out" form is gone — with the late answer in
@@ -1764,15 +1764,21 @@ export function expiryCarriedOutLine(
   outcome: { on_expiry: 'settle_default'; choice: string } | { on_expiry: 'abort' },
   via: EnactedVia,
   overdue: ExpiryReceipt['overdue'] | undefined,
+  deadline?: string,
 ): string {
   const did =
     outcome.on_expiry === 'settle_default'
       ? `settle_default: the default choice '${outcome.choice}' was recorded`
       : 'abort: the run ended';
+  // #715 (b) (03 §B.2 B1, D6-72 (c)): the lag through the one formatter, with its deadline beside it.
+  const lagWords =
+    overdue !== undefined && 'ms' in overdue && deadline !== undefined
+      ? formatLagWords(deadline, overdue.ms)
+      : undefined;
   const lag = overdue !== undefined && 'ms' in overdue ? `${formatDuration(overdue.ms)} ` : '';
   const unreadable =
     overdue !== undefined && 'absent' in overdue ? ' (its stored deadline cannot be read)' : '';
-  const when = `had expired ${lag}before this call${unreadable}`;
+  const when = lagWords ?? `had expired ${lag}before this call${unreadable}`;
   return `gate '${gateId}' on '${step}' ${when} — this ${via} call first carried out its declared ${did} (enacted_via: ${via}).`;
 }
 
@@ -1786,6 +1792,7 @@ export function expiryReceiptLine(receipt: ExpiryReceipt): string {
       : { on_expiry: 'abort' },
     receipt.enacted_via,
     receipt.overdue,
+    receipt.expired_at,
   );
 }
 

@@ -463,7 +463,6 @@ describe('#729 PR-3 correction 5 (J-5) — the in-process creators', () => {
       runStore,
       dedupStoreFor: () => ({ check: () => false, record: () => {}, cleanup: () => {} }),
       spawnAgent: async () => ({ pid: 4242 }),
-      clock: () => 1_700_000_000_000,
       logger,
     } as never);
     const req = new EventEmitter() as unknown as IncomingMessage;

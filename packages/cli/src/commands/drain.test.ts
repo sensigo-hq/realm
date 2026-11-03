@@ -43,6 +43,7 @@ import {
   runDrainAction,
   type DrainRuntimeDeps,
 } from './drain.js';
+import { zOf } from '../test-support/instant.js';
 
 const NOW = new Date('2026-07-08T12:00:00.000Z');
 const past = new Date(NOW.getTime() - 60_000).toISOString();
@@ -1166,15 +1167,17 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
   it('a gate whose time limit has passed, drained without --expired: the way out names drain --expired, never the answer command — on the dry run and on --force', async () => {
     // Issue #625 (review walk J4): the answer sentence was printed for an expired gate too, and
     // never named `--expired`, the flag that acts on it.
+    const expiresAt = expiredNinetyMinutesAgo();
     const run = await seedGateWaiting({
-      expires_at: expiredNinetyMinutesAgo(),
+      expires_at: expiresAt,
       on_expiry: 'settle_default',
       default_choice: 'reject',
     });
     // decision C212: each command ends its line — the dry run, then the command that carries it out.
+    // #715 (b) (03 §B.2 B2): the expiry through the one formatter, its deadline beside it.
     const expected = [
       `Run '${run.id}' is not terminal (phase: 'gate_waiting') — nothing to drain. ` +
-        `Its gate expired 1h 30m ago. To see what the expiry will do: realm run drain ${run.id} --expired`,
+        `Its gate EXPIRED 1h 30m ago (${zOf(expiresAt)}). To see what the expiry will do: realm run drain ${run.id} --expired`,
       `To carry it out: realm run drain ${run.id} --expired --force`,
     ];
     await runDrainAction(run.id, {}, store, workflowStore, DEPS);

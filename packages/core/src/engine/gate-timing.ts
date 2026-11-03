@@ -7,6 +7,7 @@
 import type { PendingGate } from '../types/run-record.js';
 import type { Snapshot } from './snapshot.js';
 import { isPastDeadline, overdueOf, parseStamp } from './instants.js';
+import { formatInstantWords } from '../utils/duration.js';
 
 /**
  * Read-time due/overdue state for a live gate. `overdue_ms` is present iff `expired`.
@@ -104,8 +105,11 @@ export const REMINDER_BASIS_CLAUSE =
  * next scheduled occurrence and how many are scheduled (each before the question's deadline), or
  * that none is left; always with the basis clause. "Scheduled", never "due", "overdue" or "sent".
  */
-export function reminderScheduleWords(schedule: ReminderSchedule): string {
-  return schedule.next !== undefined
-    ? `next reminder: ${schedule.next.k} of ${schedule.occurrences.length} scheduled (${REMINDER_BASIS_CLAUSE})`
-    : `no further reminder is scheduled (${REMINDER_BASIS_CLAUSE})`;
+export function reminderScheduleWords(schedule: ReminderSchedule, at: Date): string {
+  if (schedule.next === undefined)
+    return `no further reminder is scheduled (${REMINDER_BASIS_CLAUSE})`;
+  // #715 (b) (03 §B.2, Amendment 9): the next occurrence's instant through the one formatter, at the
+  // reading the schedule was taken at (`in 3m (…Z)`; it has not passed there, by `next`'s rule).
+  const when = formatInstantWords(schedule.next.at, 'deadline', at);
+  return `next reminder: ${schedule.next.k} of ${schedule.occurrences.length} scheduled${when !== undefined ? ` ${when}` : ''} (${REMINDER_BASIS_CLAUSE})`;
 }

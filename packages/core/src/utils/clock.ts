@@ -34,20 +34,54 @@ export interface Clock {
 export const MAX_HOP_MS = 60_000;
 
 /**
- * Builds a system clock (D6-6, D6-7): `now()` is `new Date()`; `at()` arms an `unref`'d timer of at
- * most {@link MAX_HOP_MS} and re-checks `now()` each time it fires. A waiter's synchronous throw or
- * rejection is caught and passed to `options.onWaiterError` — never an unhandled rejection. The sink
- * must not throw; if it does, that throw is swallowed. Core never writes to `console` here: the sink
- * is the only channel.
+ * #715 (b) (03 §A.1, D-22): the process's waiter-error sink — set ONCE by a host at its start
+ * (`setClockErrorSink`), read when a waiter FAILS, never when it is registered. The CLI sets it before
+ * it parses its arguments (`installClockErrorSink`), the `realm-mcp` bin in its run-directly block; a
+ * library embedding core sets none.
  */
-export function createSystemClock(options: { onWaiterError: (err: unknown) => void }): Clock {
-  const report = (err: unknown): void => {
-    try {
-      options.onWaiterError(err);
-    } catch {
-      // A sink must not throw (its doc says so); a throw from it is swallowed here.
-    }
-  };
+let processSink: ((err: unknown) => void) | undefined;
+
+/**
+ * #715 (b) (03 §A.1, D-22): sets the process's waiter-error sink — the channel the shared
+ * {@link systemClock} (and a test location's clock) passes a failing waiter's error to. A host calls
+ * it once, at its start. The sink must not throw; a throw from it is swallowed.
+ */
+export function setClockErrorSink(sink: (err: unknown) => void): void {
+  processSink = sink;
+}
+
+/** #715 (b) (03 §A.1): the process's waiter-error sink, or `undefined` when no host set one. For tests. */
+export function clockErrorSink(): ((err: unknown) => void) | undefined {
+  return processSink;
+}
+
+/** #715 (b) (03 §A.1): un-sets the process's sink — for core's own tests (not exported from core). */
+export function resetClockErrorSinkForTest(): void {
+  processSink = undefined;
+}
+
+/**
+ * #715 (b) (03 §A.1, D-22): passes a failing waiter's error to the process's sink, read NOW (at the
+ * failure). No sink set ⇒ the error is re-thrown from a microtask: loud (an uncaught exception), never
+ * swallowed, never written to `console` by core. A sink that throws is swallowed. Private to core.
+ */
+export function reportWaiterError(err: unknown): void {
+  const sink = processSink;
+  if (sink === undefined) {
+    queueMicrotask(() => {
+      throw err;
+    });
+    return;
+  }
+  try {
+    sink(err);
+  } catch {
+    // A sink must not throw (its doc says so); a throw from it is swallowed here.
+  }
+}
+
+/** A system clock whose waiters' failures go to `report` (which must not throw). */
+function systemClockReportingTo(report: (err: unknown) => void): Clock {
   return {
     now: (): Date => new Date(),
     at(when: Date, fn: () => void | Promise<void>): () => void {
@@ -92,19 +126,31 @@ export function createSystemClock(options: { onWaiterError: (err: unknown) => vo
 }
 
 /**
- * The shared system clock a store uses when nothing else is said (a `JsonFileStore` on an ordinary
- * directory, an `InMemoryStore` built without a clock). `now()` is `new Date()`. `at()` THROWS: this
- * clock has no error sink, and a waiter whose failure is silently swallowed is what D6-6 exists to
- * prevent — a waiter needs a clock built with `createSystemClock({ onWaiterError })`.
+ * Builds a system clock (D6-6, D6-7) with its OWN waiter-error sink: `now()` is `new Date()`; `at()`
+ * arms an `unref`'d timer of at most {@link MAX_HOP_MS} and re-checks `now()` each time it fires. A
+ * waiter's synchronous throw or rejection is caught and passed to `options.onWaiterError` — never an
+ * unhandled rejection. The sink must not throw; if it does, that throw is swallowed. Core never
+ * writes to `console` here: the sink is the only channel. For a host or a test that wants its own
+ * sink; the shared {@link systemClock} uses the process's ({@link setClockErrorSink}).
  */
-export const systemClock: Clock = {
-  now: (): Date => new Date(),
-  at(): () => void {
-    throw new Error(
-      'systemClock.at cannot run a waiter: a waiter needs a clock built with createSystemClock({ onWaiterError }), so its failures reach a host channel',
-    );
-  },
-};
+export function createSystemClock(options: { onWaiterError: (err: unknown) => void }): Clock {
+  return systemClockReportingTo((err: unknown): void => {
+    try {
+      options.onWaiterError(err);
+    } catch {
+      // A sink must not throw (its doc says so); a throw from it is swallowed here.
+    }
+  });
+}
+
+/**
+ * The shared system clock a store uses when nothing else is said (a `JsonFileStore` on an ordinary
+ * directory, an `InMemoryStore` built without a clock). `now()` is `new Date()`; `at()` works as
+ * {@link createSystemClock}'s does (D6-7), and a waiter's failure goes to the process's sink, read
+ * when the waiter fails ({@link setClockErrorSink}); with no sink set it is re-thrown from a
+ * microtask — loud, never swallowed (03 §A.1, D-22).
+ */
+export const systemClock: Clock = systemClockReportingTo(reportWaiterError);
 
 /**
  * #715 (b) (02 §C.1, D-24, D6-53): every TEST clock, private to core — a `WeakSet`, so a clock is

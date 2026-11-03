@@ -296,7 +296,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       //     sentence is missing; (b) prints what the prompt printed after the gate.
       // #729 PR-0 (T-2; Table rows 35, 50): the timer's line is the receipt's.
       expect(lagless(afterTheGate().slice(0, 4))).toEqual([
-        `⏰ gate '${gateId()}' on 'confirm' had expired <lag> before this call — this timer call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: timer). Guard step 'check' passed.`,
+        `⏰ gate '${gateId()}' on 'confirm' had expired <lag> before this call (deadline <instant>) — this timer call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: timer). Guard step 'check' passed.`,
         `  ${LATE_SAME_CHOICE}`,
         "  ✗ not recorded — gate settled by timeout with choice 'approve' → running\n",
         '→ [agent] finish: Finish',
@@ -324,7 +324,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       // (a) red when a state line claiming success is printed for the refused answer;
       //     (b) prints what the prompt printed after the gate.
       expect(lagless(afterTheGate().slice(0, 2))).toEqual([
-        `⏰ gate '${gateId()}' on 'confirm' had expired <lag> before this call — this timer call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: timer). Guard step 'check' passed.`,
+        `⏰ gate '${gateId()}' on 'confirm' had expired <lag> before this call (deadline <instant>) — this timer call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: timer). Guard step 'check' passed.`,
         '→ [agent] finish: Finish',
       ]);
       expect(code).toBe(0);
@@ -334,7 +334,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
     /** The line this prompt's answer prints first: `run` names `realm workflow run`. F1: its lag
      *  follows the clock — `<lag>` in its place, here and in what was printed. */
     const runCarriedOut = (did: string): string =>
-      `  ⚠ gate '${gateId()}' on 'confirm' had expired <lag> before this call — this run call first carried out its declared ${did} (enacted_via: run).`;
+      `  ⚠ gate '${gateId()}' on 'confirm' had expired <lag> before this call (deadline <instant>) — this run call first carried out its declared ${did} (enacted_via: run).`;
 
     it('DIFFERENT choice: `⚠ … this run call first carried out …` once, then the refusal and `✗ not recorded`, on stderr', async () => {
       claimGates215();
@@ -1026,9 +1026,11 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
           const show = (args: string[]) =>
             spawnSync(process.execPath, [cli, ...args], { env, encoding: 'utf8' }).stdout;
           views = {
-            inspect: /^\s*finish: taken by .+, via run\), \d+m ago$/m.test(
-              show(['run', 'inspect', runId()]),
-            ),
+            // #715 (b) (03 §B.2 A1): the claim's age through the one formatter, its instant beside it.
+            inspect:
+              /^\s*finish: taken by .+, via run\), \d+s ago \(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\)$/m.test(
+                show(['run', 'inspect', runId()]),
+              ),
             stuck: show(['run', 'list', '--stuck']).includes('finish=claim_unknown_age'),
           };
           return '{"by": "person"}';

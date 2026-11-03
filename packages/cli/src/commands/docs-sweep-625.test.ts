@@ -816,7 +816,7 @@ describe(
       const r = realm(['run', 'advance', id]);
       // F1: the expiry line's lag follows the clock — `<lag>` in its place.
       const lines = lagless([...r.out, ...r.err]);
-      const expiry = `⚠ gate '${gateId}' on 'confirm' had expired <lag> before this call — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`;
+      const expiry = `⚠ gate '${gateId}' on 'confirm' had expired <lag> before this call (deadline <instant>) — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`;
       // (a) red when the guard's line is lost, printed twice, replaced by the reply's MCP words, or
       //     the run does not complete; (b) prints the output and the exit.
       expect({
@@ -920,11 +920,15 @@ describe('issue #729 — operate-runs.md: `--stuck` lists the runs that need som
       //     `idle:` on each run's line.
       expect({
         code: r.status,
-        stuck: lines.find((l) => l.startsWith(stuck))?.replace(/^.* idle: /, ''),
+        // #715 (b) (03 §B.2 A7): the idle age carries its instant; under a minute, in seconds.
+        stuck: lines
+          .find((l) => l.startsWith(stuck))
+          ?.replace(/^.* idle: /, '')
+          .replace(/^\d+s ago \(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\)/, '<age>'),
         healthyListed: lines.some((l) => l.startsWith(healthy)),
       }).toEqual({
         code: 0,
-        stuck: `0m  publish=cannot_go_on(input_schema) (realm run inspect ${stuck})`,
+        stuck: `<age>  publish=cannot_go_on(input_schema) (realm run inspect ${stuck})`,
         healthyListed: false,
       });
     },

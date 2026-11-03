@@ -24,7 +24,13 @@ import {
   type StepDispatcher,
   type WorkflowDefinition,
 } from '@sensigo/realm';
-import { environmentSet, logMasked, renderReply, renderWaysOf } from './render-reply.js';
+import {
+  environmentSet,
+  logMasked,
+  POLL_CAP_MS,
+  renderReply,
+  renderWaysOf,
+} from './render-reply.js';
 
 const echo: StepDispatcher = async (_name, input) => ({ ...input });
 
@@ -438,9 +444,10 @@ describe('#729 PR-0 — the MCP door words what comes next (formerly core descri
         `Run '${run.id}': nothing ran. No step is ready: 'x' is in flight elsewhere — wait for it, then call get_run_state. 'x' was claimed by another process, so it did not run here.`,
       );
       expect(reply.races).toEqual([{ step: 'x', kind: 'held_elsewhere', ran_here: false }]);
-      // T-22: a step in flight elsewhere is a wait — `await`, with the pace (P-2).
+      // T-22: a step in flight elsewhere is a wait — `await`, with the pace (P-2). #715 (b) (03 §C,
+      // D6-71): the pace is the claim's deadline's — further away than the cap, so the cap.
       expect(reply.agent_action).toBe('await');
-      expect(reply.poll_after_ms).toBe(30_000);
+      expect([reply.poll_after_ms, reply.poll_reason]).toEqual([POLL_CAP_MS, 'claim_deadline']);
     });
   });
 });

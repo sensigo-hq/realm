@@ -26,6 +26,7 @@ import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { RunStore } from '../store/store-interface.js';
 import { writeTestClockFile } from '../store/test-clock-file.js';
 import { writtenSnapshot } from './snapshot.js';
+import { zOf } from '../test-support/instant.js';
 
 /** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
  *  runs folder sits beside the location's clock file (first set to the host's reading), which
@@ -107,8 +108,9 @@ const PLAIN: WorkflowDefinition = {
 const dispatcher = async () => ({});
 const LATER = () => new Date(Date.now() + 120_000);
 const EARLIER = () => new Date(Date.now() - 120_000);
-const line = (gateId: string, fn: string) =>
-  `gate '${gateId}' on 'q' had expired 1m before this call — this ${fn} call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: ${fn}).`;
+// #715 (b) (D6-72 (c)): the lag carries its deadline — the reply's receipt names it (`expired_at`).
+const line = (gateId: string, fn: string, expiredAt: string) =>
+  `gate '${gateId}' on 'q' had expired 1m before this call (deadline ${zOf(expiredAt)}) — this ${fn} call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: ${fn}).`;
 
 /** The store, with a count of every method called on it (reads and writes alike). */
 function counted(store: RunStore): { store: RunStore; calls: string[] } {
@@ -174,7 +176,7 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
       r.run_phase,
     ]).toEqual([
       'ok',
-      line(gateId, 'advanceRun'),
+      line(gateId, 'advanceRun', r.expiry!.expired_at),
       ['expiry', 'a', 'b'],
       ['a', 'check', 'b'],
       'completed',
@@ -199,7 +201,10 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
       });
       const named = caller ?? 'advanceRun';
       // (a) red when a word is refused, or the line or the reply names another call; (b) prints them.
-      expect([r.command, r.warnings[0]], named).toEqual([named, line(gateId, named)]);
+      expect([r.command, r.warnings[0]], named).toEqual([
+        named,
+        line(gateId, named, r.expiry!.expired_at),
+      ]);
     }
     const { runId } = await atQuestion();
     const before = JSON.stringify((await store.get(runId)).record);
@@ -299,7 +304,9 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
         ...(caller !== undefined ? { caller } : {}),
       });
       // (a) red when the default is not executeEngineStep, or agent is refused; (b) prints the line.
-      expect(r.warnings).toContain(line(gateId, caller ?? 'executeEngineStep'));
+      expect(r.warnings).toContain(
+        line(gateId, caller ?? 'executeEngineStep', r.expiry!.expired_at),
+      );
     }
     const { runId } = await atQuestion();
     const { record: record } = await store.get(runId);
@@ -390,7 +397,9 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
         const { runId, gateId } = await atQuestion();
         const r = await call(store, runId, w);
         // (a) red when a listed word is refused, or the line names another call; (b) prints it.
-        expect(r.warnings, `${fn} ${w ?? '(default)'}`).toContain(line(gateId, w ?? fn));
+        expect(r.warnings, `${fn} ${w ?? '(default)'}`).toContain(
+          line(gateId, w ?? fn, r.expiry!.expired_at),
+        );
       }
       const { runId } = await atQuestion();
       const before = JSON.stringify((await store.get(runId)).record);
@@ -421,7 +430,9 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
         ...(w !== undefined ? { caller: w } : {}),
       });
       // (a) red when a listed word is refused, or the line names another call; (b) prints it.
-      expect(r.warnings, w ?? '(default)').toContain(line(gateId, w ?? 'submitHumanResponse'));
+      expect(r.warnings, w ?? '(default)').toContain(
+        line(gateId, w ?? 'submitHumanResponse', r.expiry!.expired_at),
+      );
     }
     const { runId, gateId } = await atQuestion();
     const before = JSON.stringify((await store.get(runId)).record);

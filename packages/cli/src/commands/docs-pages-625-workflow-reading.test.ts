@@ -1582,7 +1582,15 @@ describe('issue #729 — realm-run-reading.md, `--stuck` names a run that cannot
         l.includes('cannot_go_on'),
       );
       const pageId = pageLine?.split(' ')[0] ?? '';
-      const time = (l: string) => l.replace(/\d+\/\d+\/\d+, \d+:\d+:\d+ [AP]M/, '<time>');
+      // #715 (b) (03 §B.2 A7): the stored instant (the 4th column) and the idle age's instant are
+      // this run's; under a minute the age is in seconds.
+      const time = (l: string) =>
+        l
+          .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/, '<time>')
+          .replace(
+            /idle: \d+s ago \(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\)/,
+            'idle: <seconds> ago (<instant>)',
+          );
       const built = realm(home, ['run', 'list', '--stuck']).out.find((l) => l.startsWith(run.id));
       // (a) red when the built line differs from the page's (the label, the pointer, the parse
       //     shape — `idle:` and the counts), or the run is not listed at age 0; (b) prints both.

@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { classifyRunHealth, DEFAULT_IDLE_THRESHOLD_MS } from './run-health.js';
 import type { RunRecord, DriveFailureRecord, EvidenceSnapshot } from '../types/run-record.js';
 import { writtenSnapshot } from './snapshot.js';
+import { zOf } from '../test-support/instant.js';
 
 const T0 = '2026-01-01T00:00:00.000Z';
 const NOW = new Date('2026-01-01T00:05:00.000Z');
@@ -154,8 +155,9 @@ describe('drive_failing — the reason string', () => {
     const [finding] = classifyRunHealth(writtenSnapshot(makeRun(), NOW)).filter(
       (f) => f.kind === 'drive_failing',
     );
+    // #715 (b) (03 §B.2 A12, D6-70/72): the age through the one formatter, its instant beside it.
     expect(finding?.reason).toBe(
-      'the last drive attempt failed 1m ago (connection_error): socket hang up',
+      `the last drive attempt failed 1m ago (${zOf(failure().at)}) (connection_error): socket hang up`,
     );
   });
 
@@ -289,11 +291,13 @@ describe('drive_failing — the "ago" phrasing, per branch', () => {
   });
 
   it('hours', () => {
-    expect(reasonAt(at(3 * 60 * 60 * 1000))).toContain('failed 3h ago');
+    // #715 (b) (D6-70): formatDuration's form — hours keep their minutes.
+    expect(reasonAt(at(3 * 60 * 60 * 1000))).toContain('failed 3h 0m ago');
   });
 
   it('days', () => {
-    expect(reasonAt(at(2 * 24 * 60 * 60 * 1000))).toContain('failed 2d ago');
+    // #715 (b) (D6-70): formatDuration's form — days keep their hours.
+    expect(reasonAt(at(2 * 24 * 60 * 60 * 1000))).toContain('failed 2d 0h ago');
   });
 });
 

@@ -35,7 +35,7 @@ import {
   guardEndingOf,
   // issue #625 PR-2a (F1): how long ago a gate expired — core's one duration formatter (seconds
   // under a minute, never `0m`).
-  formatDuration,
+  formatInstantWords,
   shellWord,
   pendingCleanupLine,
   pendingCleanupWay,
@@ -131,7 +131,7 @@ const wayOutOf = (runId: string, run: RunRecord, now: Date, pending?: OwedView):
   const expiry = classifyGateExpiry(run, now);
   if (expiry.kind === 'enactable') {
     return [
-      `Its gate expired ${formatDuration(expiry.overdueMs)} ago. To see what the expiry ` +
+      `Its gate ${expiry.words}. To see what the expiry ` +
         `will do: realm run drain ${runId} --expired`,
       `To carry it out: realm run drain ${runId} --expired --force`,
     ];
@@ -156,8 +156,13 @@ const wayOutOf = (runId: string, run: RunRecord, now: Date, pending?: OwedView):
 export type GateExpiryClass =
   | { kind: 'none' }
   | { kind: 'not_expired' }
-  | { kind: 'finding_only'; overdueMs: number }
-  | { kind: 'enactable'; disposition: 'settle_default' | 'abort'; overdueMs: number };
+  | { kind: 'finding_only'; overdueMs: number; words: string }
+  | {
+      kind: 'enactable';
+      disposition: 'settle_default' | 'abort';
+      overdueMs: number;
+      words: string;
+    };
 
 export function classifyGateExpiry(run: RunRecord, now: Date): GateExpiryClass {
   const gate = run.pending_gate;
@@ -168,8 +173,11 @@ export function classifyGateExpiry(run: RunRecord, now: Date): GateExpiryClass {
   const overdue = overdueOf(gate.expires_at, now);
   if (overdue === undefined || 'absent' in overdue) return { kind: 'not_expired' };
   const overdueMs = overdue.ms;
-  if (gate.on_expiry === undefined) return { kind: 'finding_only', overdueMs };
-  return { kind: 'enactable', disposition: gate.on_expiry, overdueMs };
+  // #715 (b) (03 §B.2 B2-B5): the expiry in words through the one formatter, at the same reading —
+  // `EXPIRED 2m ago (2026-10-27T13:58:07Z)`; the deadline parsed above, so the words are there.
+  const words = formatInstantWords(gate.expires_at, 'deadline', now)!;
+  if (gate.on_expiry === undefined) return { kind: 'finding_only', overdueMs, words };
+  return { kind: 'enactable', disposition: gate.on_expiry, overdueMs, words };
 }
 
 /**
@@ -355,11 +363,10 @@ function renderGateExpiryDryRun(
   if (!expiredFlag) return false;
   const cls = classifyGateExpiry(run, now);
   if (cls.kind === 'enactable') {
-    const overdue = formatDuration(cls.overdueMs);
     // issue #625: the line names the choice a `settle_default` would settle, then what the
     // guards that choice unlocks would do — one clause per guard.
     console.log(
-      `Run '${runId}': gate expired ${overdue} ago — would enact ` +
+      `Run '${runId}': gate ${cls.words} — would enact ` +
         describeEnactment(run, cls.disposition) +
         predictedGuards.map((clause) => `; ${clause}`).join('') +
         ' on --force.',
@@ -367,9 +374,8 @@ function renderGateExpiryDryRun(
     return true;
   }
   if (cls.kind === 'finding_only') {
-    const overdue = formatDuration(cls.overdueMs);
     console.log(
-      `Run '${runId}': gate expired ${overdue} ago — finding-only (no on_expiry declared, nothing to enact).`,
+      `Run '${runId}': gate ${cls.words} — finding-only (no on_expiry declared, nothing to enact).`,
     );
     return false;
   }
@@ -652,9 +658,7 @@ export async function runDrainAction(
         for (const r of gateActionable) {
           const cls = classifyGateExpiry(r, atOf.get(r.id)!);
           if (cls.kind === 'enactable') {
-            console.log(
-              `  • ${r.id}: gate expired ${formatDuration(cls.overdueMs)} ago — would enact ${cls.disposition}`,
-            );
+            console.log(`  • ${r.id}: gate ${cls.words} — would enact ${cls.disposition}`);
           }
         }
       }

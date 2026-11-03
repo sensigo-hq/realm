@@ -16,6 +16,7 @@ import { advanceRun, executeStep, submitHumanResponse } from './execution-loop.j
 import { JsonFileStore } from '../store/json-file-store.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import { writeTestClockFile } from '../store/test-clock-file.js';
+import { zOf } from '../test-support/instant.js';
 
 /** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
  *  runs folder sits beside the location's clock file (first set to the host's reading), which
@@ -154,7 +155,7 @@ describe('#625 PR-2a, F1 — the late answer says how late it was', () => {
         }).toEqual({
           legacy,
           status,
-          line: `gate '${gateId}' on 'q' had expired 15s before this call — this submitHumanResponse call first carried out its declared ${did} (enacted_via: submitHumanResponse).`,
+          line: `gate '${gateId}' on 'q' had expired 15s before this call (deadline ${zOf(expiresAt)}) — this submitHumanResponse call first carried out its declared ${did} (enacted_via: submitHumanResponse).`,
           expired_at: expiresAt,
           overdue: { ms: 15_000 },
           details: [undefined, undefined],
@@ -271,7 +272,7 @@ describe('#625 PR-2a, F1 — the late answer says how late it was', () => {
       // (a) red when the call's line drops the lag or writes it in another form; (b) prints the
       //     reply's expiry lines.
       expect(reply.warnings.filter((w) => w.includes('had expired'))).toEqual([
-        `gate '${gateId}' on 'q' had expired ${words} before this call — this ${entry} call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: ${entry}).`,
+        `gate '${gateId}' on 'q' had expired ${words} before this call (deadline ${zOf(at(0))}) — this ${entry} call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: ${entry}).`,
       ]);
     },
   );

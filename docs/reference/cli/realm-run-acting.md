@@ -403,8 +403,8 @@ With `--all`:
 
 ```text
 2 claim(s) WOULD be auto-reclaimed (idempotent ∧ past-deadline ∧ non-gated):
-  • 70f9528e-4f45-4806-8690-c4e92a31760d / fetch  (deadline 2026-10-01T23:15:36.957Z, 0m past)
-  • 7252133d-1033-4300-8ddb-ff949f646a79 / fetch  (deadline 2026-10-01T23:15:34.551Z, 0m past)
+  • 70f9528e-4f45-4806-8690-c4e92a31760d / fetch  (deadline 2026-10-01T23:15:36.957Z, EXPIRED 4s ago (2026-10-01T23:15:36Z))
+  • 7252133d-1033-4300-8ddb-ff949f646a79 / fetch  (deadline 2026-10-01T23:15:34.551Z, EXPIRED 6s ago (2026-10-01T23:15:34Z))
 
 Re-run with --force to reclaim them. WARNING: each re-executes its handler at-least-once with NO per-step human judgment — enable only for genuinely idempotent handlers.
 ```
@@ -499,8 +499,8 @@ Drained 1/1 run(s).
 With `--expired`, a gate whose time has passed is reported first, with the choice it would be settled with. If the settled choice would make a guard step ready, the report says what the guard would then do: `would pass`, `would pass and complete the run`, `would then abort the run (<reason>)` or `would then fail the run (<reason>)`. Nothing is written:
 
 ```text
-Run '0e0ace7e-e57c-400c-a63a-eaf685688d19': gate expired 18s ago — would enact settle_default 'hold'; guard 'only_if_shipping' would then abort the run (The order was held.) on --force.
-Run '230b0939-9c61-40e4-8b6f-910594a81e92': gate expired 17s ago — would enact settle_default 'ship'; guard 'only_if_shipping' would pass on --force.
+Run '0e0ace7e-e57c-400c-a63a-eaf685688d19': gate EXPIRED 18s ago (2026-10-09T09:14:00Z) — would enact settle_default 'hold'; guard 'only_if_shipping' would then abort the run (The order was held.) on --force.
+Run '230b0939-9c61-40e4-8b6f-910594a81e92': gate EXPIRED 17s ago (2026-10-09T09:14:01Z) — would enact settle_default 'ship'; guard 'only_if_shipping' would pass on --force.
 ```
 
 The report leaves the guard out when the run's registered workflow cannot be read.
@@ -551,8 +551,8 @@ With `--all --expired`, the list names what each gate declared, without the choi
 
 ```text
 2 run(s) WOULD be drained:
-  • 962cb7f0-a894-4592-aadc-a4907ef14c9c: gate expired 41s ago — would enact settle_default
-  • ce8296d1-c5d3-4ea6-b62c-7dc0f795fb09: gate expired 40s ago — would enact settle_default
+  • 962cb7f0-a894-4592-aadc-a4907ef14c9c: gate EXPIRED 41s ago (2026-10-09T09:13:37Z) — would enact settle_default
+  • ce8296d1-c5d3-4ea6-b62c-7dc0f795fb09: gate EXPIRED 40s ago (2026-10-09T09:13:38Z) — would enact settle_default
 
 Re-run with --force to actually drain them.
 ```
@@ -580,7 +580,7 @@ Run '5b3f90de-2c47-4a18-9e6d-f81a0b7c3d25' is not terminal (phase: 'running') �
 To end the run instead: realm run abandon 5b3f90de-2c47-4a18-9e6d-f81a0b7c3d25
 Run '22efc6a7-01f8-4256-9d2f-74621b621d28' is not terminal (phase: 'gate_waiting') — nothing to drain. To go on, answer its question first: realm run respond 22efc6a7-01f8-4256-9d2f-74621b621d28 --gate 817f3921-6ddd-4bda-9506-762892ae37e7 --choice <one of: approve, reject>
 The answer can end the run by itself; if it does not, realm run respond names what the run owes next, and realm run abandon 22efc6a7-01f8-4256-9d2f-74621b621d28 ends it.
-Run '94bf33c8-3933-47c4-ad50-556d0b298e6c' is not terminal (phase: 'gate_waiting') — nothing to drain. Its gate expired 25s ago. To see what the expiry will do: realm run drain 94bf33c8-3933-47c4-ad50-556d0b298e6c --expired
+Run '94bf33c8-3933-47c4-ad50-556d0b298e6c' is not terminal (phase: 'gate_waiting') — nothing to drain. Its gate EXPIRED 25s ago (2026-10-09T09:13:53Z). To see what the expiry will do: realm run drain 94bf33c8-3933-47c4-ad50-556d0b298e6c --expired
 To carry it out: realm run drain 94bf33c8-3933-47c4-ad50-556d0b298e6c --expired --force
 No runs with an actionable pending finalizer.
 ```

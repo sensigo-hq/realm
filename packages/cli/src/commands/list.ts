@@ -11,6 +11,7 @@ import {
   computeGateDueState,
   reminderScheduleOf,
   reminderScheduleWords,
+  formatInstantWords,
   writtenSnapshot,
   probeClassOf,
   shellWord,
@@ -78,26 +79,6 @@ function colorState(phase: RunPhase): string {
   if (phase === 'failed' || phase === 'abandoned') return chalk.red(word);
   if (phase === 'gate_waiting') return chalk.cyan(word);
   return chalk.yellow(word);
-}
-
-/**
- * Formats elapsed time since a gate was opened as a compact human-readable duration.
- * @param openedAt  ISO 8601 timestamp of when the gate was opened.
- * @param now       Current time — injectable for testing. Defaults to `new Date()`.
- */
-export function formatGateAge(openedAt: string, now: Date = new Date()): string {
-  const elapsedMs = now.getTime() - new Date(openedAt).getTime();
-  const totalMinutes = Math.floor(elapsedMs / 60_000);
-  const totalHours = Math.floor(totalMinutes / 60);
-  const totalDays = Math.floor(totalHours / 24);
-
-  if (totalMinutes < 60) return `${totalMinutes}m`;
-  if (totalHours < 24) {
-    const remainingMinutes = totalMinutes % 60;
-    return `${totalHours}h ${remainingMinutes}m`;
-  }
-  const remainingHours = totalHours % 24;
-  return `${totalDays}d ${remainingHours}h`;
 }
 
 // issue #289: 'aborted' was missing — RunPhase has carried it since #279 increment 2 (PR-C), but
@@ -456,14 +437,17 @@ export async function listRuns(
     // colored state label and the gate-line suppression below.
     const derivedPhase = deriveRunPhase(run);
     const state = colorState(derivedPhase);
-    const updated = new Date(run.updated_at).toLocaleString();
+    // #715 (b) (03 §B.2 A7): the stored UTC instant, as stored — never the host's local zone.
+    const updated = run.updated_at;
     const steps = new Set(
       run.evidence.filter((e) => e.kind !== 'gate_response').map((e) => e.step_id),
     ).size;
     let line = `${chalk.dim(run.id)}  ${chalk.bold(run.workflow_id)} v${run.workflow_version}  ${state}  ${updated}  ${steps} step(s)`;
     if (stuck === true) {
-      // Show how long the run has been parked (idle age since last update).
-      line += `  idle: ${formatGateAge(run.updated_at)}`;
+      // Show how long the run has been parked (idle age since last update) — #715 (b) (03 §B.2 A7):
+      // through the one formatter, at this row's reading, with the instant beside it.
+      const idleWords = formatInstantWords(run.updated_at, 'past_event', atOf.get(run.id)!);
+      if (idleWords !== undefined) line += `  idle: ${idleWords}`;
       // issue #221 correction: restore main's TWO-GROUP join (an undisclosed deviation in the
       // original round) — claim-based labels first, capability labels second (classifyRunHealth
       // already emits findings in that order), each group internally ', '-joined, each appended
@@ -572,19 +556,23 @@ export async function listRuns(
     } else if (derivedPhase === 'gate_waiting' && run.pending_gate !== undefined) {
       // issue #279 (increment 2, PR-C — D-3 leg vi): keyed on the DERIVED phase — no live-looking
       // gate line on a terminal run carrying a stale/leftover pending_gate (the #282 class).
-      const age = formatGateAge(run.pending_gate.opened_at);
-      line += `  gate: ${run.pending_gate.step_name} (${age})`;
+      // #715 (b) (03 §B.2 A8, A9): the opening's age and the expiry through the one formatter, at this
+      // row's reading, each with its instant beside it.
+      const rowAt = atOf.get(run.id)!;
+      const openedWords = formatInstantWords(run.pending_gate.opened_at, 'past_event', rowAt);
+      line += `  gate: ${run.pending_gate.step_name}${openedWords !== undefined ? ` opened ${openedWords}` : ''}`;
       // issue #291 (Deliverable 7): the EXPIRED marker + next-reminder-due annotation — the SAME
       // shared computeGateDueState derivation get_run_state/inspect also read from, off the
       // frozen record fields only (never the definition — definition-free by construction here).
-      const due = computeGateDueState(run.pending_gate, atOf.get(run.id)!);
+      const due = computeGateDueState(run.pending_gate, rowAt);
       if (due.expired) {
-        line += `  EXPIRED ${formatGateAge(run.pending_gate.expires_at!)} ago`;
+        const expiredWords = formatInstantWords(run.pending_gate.expires_at!, 'deadline', rowAt);
+        if (expiredWords !== undefined) line += `  ${expiredWords}`;
       }
       // #715 (b) (02 §D.3, Amendment 9): the authored reminder SCHEDULE, from the one core function,
       // at this row's reading — never "due" or "overdue": no send is recorded on the run.
-      const reminders = reminderScheduleOf(writtenSnapshot(run, atOf.get(run.id)!));
-      if (reminders !== undefined) line += `  ${reminderScheduleWords(reminders)}`;
+      const reminders = reminderScheduleOf(writtenSnapshot(run, rowAt));
+      if (reminders !== undefined) line += `  ${reminderScheduleWords(reminders, rowAt)}`;
     }
     lines.push(line);
   }

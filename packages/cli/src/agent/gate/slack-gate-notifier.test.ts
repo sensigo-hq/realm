@@ -40,7 +40,14 @@ import {
   VIEW_BUDGET,
   type PersonNotice,
   type RunRecord,
+  type Snapshot,
+  writtenSnapshot,
 } from '@sensigo/realm';
+
+/** #715 (b) (D-29): the run as the notifier reads it when it starts — its gate, at this instant. */
+function heldAt(gate: PendingGate): Snapshot {
+  return writtenSnapshot({ pending_gate: gate } as unknown as RunRecord, new Date());
+}
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
@@ -55,6 +62,7 @@ import type { SlackGateEvent } from './slack-gate-server.js';
 import { connectSocketMode } from './slack-socket-client.js';
 import { slackResponse } from '../test-support/slack-response.js';
 import { snap, doubleClock, noSettle } from '../../test-support/snapshot-double.js';
+import { zOf } from '../../test-support/instant.js';
 
 // Module-level mocks are hoisted by vitest — slack-gate-notifier.ts will receive these stubs for
 // its internal imports of slack-gate-server and slack-socket-client.
@@ -348,7 +356,7 @@ describe('startGateReminderTimers', () => {
       'xoxb-test',
       'C123',
       '1234567890.000',
-      gate,
+      heldAt(gate),
       500, // reminderIntervalMs
       5000, // escalationThresholdMs
     );
@@ -357,8 +365,11 @@ describe('startGateReminderTimers', () => {
     clearTimers();
 
     // #729 PR-4 (re-pinned: the `reminder` notice's words). (a) red when the plain firing loses its
-    // words; (b) prints the posted texts.
-    expect(calls).toEqual(['⏰ gate `review_step` has been open for 0s. Please respond.']);
+    // words; (b) prints the posted texts. #715 (b) (D-29, D6-72): composed at its scheduled instant,
+    // with the opening's instant beside the words.
+    expect(calls).toEqual([
+      `⏰ gate \`review_step\` has been open for 0s (since ${zOf(gate.opened_at)}). Please respond.`,
+    ]);
   });
 
   it('includes owner mention in escalation message when gate.owner is set', async () => {
@@ -378,7 +389,7 @@ describe('startGateReminderTimers', () => {
       'xoxb-test',
       'C123',
       '1234567890.000',
-      gate,
+      heldAt(gate),
       10, // reminderIntervalMs — fires fast
       20, // escalationThresholdMs — fires even faster for escalation
     );
@@ -410,7 +421,7 @@ describe('startGateReminderTimers', () => {
       'xoxb-test',
       'C123',
       '1234567890.000',
-      gate,
+      heldAt(gate),
       10,
       20,
     );
@@ -436,7 +447,7 @@ describe('startGateReminderTimers', () => {
       'xoxb-test',
       'C123',
       '1234567890.000',
-      gate,
+      heldAt(gate),
       200,
       400,
     );

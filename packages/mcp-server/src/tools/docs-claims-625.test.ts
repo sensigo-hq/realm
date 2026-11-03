@@ -28,16 +28,20 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
 import { renderReply } from '../render-reply.js';
+import { zOf } from '../test-support/instant.js';
 
 const DOCS = join(dirname(fileURLToPath(import.meta.url)), '../../../../docs/reference');
 const flat = (t: string) => t.replace(/\s+/g, ' ');
 
 /** F1: the expiry line's lag follows the clock (these cells wait a real second), so `<lag>` stands in
- *  for it — a line with no lag (`had expired —`, as before F1) keeps its words and still differs. */
-const LAG = /had expired (?:\d+s|\d+m|\d+h \d+m|\d+d \d+h) before this call/g;
+ *  for it — a line with no lag (`had expired —`, as before F1) keeps its words and still differs.
+ *  #715 (b) (D6-72 (c)): the lag carries its deadline, written `<instant>`; a line without it is not
+ *  normalised. */
+const LAG =
+  /had expired (?:\d+s|\d+m|\d+h \d+m|\d+d \d+h) before this call \(deadline \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\)/g;
 const lagless = (v: unknown): unknown =>
   typeof v === 'string'
-    ? v.replace(LAG, 'had expired <lag> before this call')
+    ? v.replace(LAG, 'had expired <lag> before this call (deadline <instant>)')
     : Array.isArray(v)
       ? v.map(lagless)
       : v;
@@ -1617,7 +1621,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
       `Gate '${gateId}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded. Owed to the engine: 'after' — call advance_run.`,
     ]);
     expect(lagless(r['warnings'])).toContain(
-      `gate '${gateId}' on 'confirm' had expired <lag> before this call — this submit_human_response call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: submit_human_response).`,
+      `gate '${gateId}' on 'confirm' had expired <lag> before this call (deadline <instant>) — this submit_human_response call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: submit_human_response).`,
     );
   });
 
@@ -1682,7 +1686,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     await new Promise((resolve) => setTimeout(resolve, 1_100));
     const r = await call('advance_run', { run_id: runId });
     expect(lagless(r['warnings'])).toContain(
-      `gate '${gateId}' on 'confirm' had expired <lag> before this call — this advance_run call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance_run).`,
+      `gate '${gateId}' on 'confirm' had expired <lag> before this call (deadline <instant>) — this advance_run call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance_run).`,
     );
     expect([
       (r['chained_auto_steps'] as Array<{ step: string }>).map((e) => e.step),
@@ -2037,7 +2041,7 @@ describe('#625 PR-2a, C163 — gates.md: what happens at expiry over MCP, senten
   it('C163 gates.md: the call that carries out an expiry says so in its warnings, naming itself — over MCP the tool (a late answer, a step of the run, advance_run)', async () => {
     claim(
       'workflow/gates.md',
-      "The call that carries out an expiry says so in its `warnings`, naming itself and how long before it the question's time was up (`had expired 15s before this call`; seconds under a minute, then minutes, hours and days): over MCP the tool — for a late answer, `this submit_human_response call first carried out its declared …` (`enacted_via: submit_human_response`)",
+      "The call that carries out an expiry says so in its `warnings`, naming itself and how long before it the question's time was up, with the deadline beside it (`had expired 15s before this call (deadline 2026-10-09T09:14:00Z)`; seconds under a minute, then minutes, hours and days): over MCP the tool — for a late answer, `this submit_human_response call first carried out its declared …` (`enacted_via: submit_human_response`)",
     );
     claim(
       'workflow/gates.md',
@@ -2065,7 +2069,7 @@ describe('#625 PR-2a, C163 — gates.md: what happens at expiry over MCP, senten
             : await call(tool, { run_id: runId });
       // (a) red when a tool's line names another call; (b) prints its warnings.
       expect(lagless(r['warnings']), tool).toContain(
-        `gate '${gateId}' on 'confirm' had expired <lag> before this call — this ${tool} call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: ${tool}).`,
+        `gate '${gateId}' on 'confirm' had expired <lag> before this call (deadline <instant>) — this ${tool} call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: ${tool}).`,
       );
     }
   });
@@ -2641,7 +2645,7 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
         gate_id: gateId,
         choice: 'approve',
       });
-      const expiryLine = `gate '${gateId}' on 'confirm' had expired <lag> before this call — this submit_human_response call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: submit_human_response).`;
+      const expiryLine = `gate '${gateId}' on 'confirm' had expired <lag> before this call (deadline <instant>) — this submit_human_response call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: submit_human_response).`;
       // (a) red when the same-choice reply does not say the timeout decided it, its hint stops before
       //     what the run owes, or the expiry line or receipt is in the wrong reply; (b) prints the
       //     reply's fields.
@@ -2750,6 +2754,9 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
           .join(shown.gate_id)
           .split(got.expired_at)
           .join(shown.expired_at)
+          // #715 (b) (D6-72 (c)): the warning's deadline, to the second.
+          .split(zOf(got.expired_at))
+          .join(zOf(shown.expired_at))
           .split(gotAt)
           .join(shownAt)
           .replace(`"overdue":{"ms":${got.overdue.ms}}`, `"overdue":{"ms":${shown.overdue.ms}}`)

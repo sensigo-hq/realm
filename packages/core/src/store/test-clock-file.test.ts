@@ -11,7 +11,6 @@ import { join } from 'node:path';
 import { JsonFileStore } from './json-file-store.js';
 import {
   TEST_CLOCK_FILE_NAME,
-  fileClock,
   resolveStoreClock,
   testClockFilePath,
   writeTestClockFile,
@@ -113,15 +112,8 @@ describe('#715 (a) C.1 — the clock file', () => {
     expect(listed, `listing: ${listed.join(', ')}`).toEqual([a.id, b.id].sort());
   });
 
-  it('C5 a file clock’s at() throws the stated sentence', async () => {
-    // (a) red when at() silently registers; (b) prints the message.
-    const { root, runsDir } = await freshRoot();
-    await writeTestClockFile(root, new Date(T));
-    const clock = fileClock(testClockFilePath(runsDir));
-    expect(() => clock.at(new Date(T + 1_000), () => {})).toThrow(
-      "a test location's clock cannot run waiters until the unit that registers them (#715 (b)) is built",
-    );
-  });
+  // C5 (a file clock's at() threw until #715 (b)) is gone: a test location's clock runs waiters now
+  // (03 §A.2); its cells are test-clock-file-watch-715b.test.ts.
 
   it('C6 a clock file that cannot be read after construction makes create fail loud and write nothing', async () => {
     // (a) red when the write falls back to the wall clock; (b) prints the thrown message.

@@ -366,7 +366,7 @@ This was added in 0.46.0; version 0.45.0 prints `✗ error: …` without naming 
 A gate's prompt closes when its question is settled while it waits: by its time running out, when the gate declares an `on_expiry` (this process carries the expiry out and prints its own `⏰` line), or by another process — `realm run respond` from another terminal, `realm run advance`, `realm run drain --expired` or `realm listen`. Those read the workflow from the registry, so they act on the run only once it is registered (`realm workflow register <file>`): for a workflow never registered, `realm run respond`, `realm run advance` and `realm run drain` are refused with `Workflow '<id>' is not registered in this workflow store, …`, and `realm listen` skips the run. It then prints what the run's record holds, in the words of `realm run inspect`, and the run goes on:
 
 ```text
-  Choice [ship/hold]: ⏰ gate '02ebe774-…' on 'review' had expired 0s before this call — this timer call first carried out its declared settle_default: the default choice 'hold' was recorded (enacted_via: timer).
+  Choice [ship/hold]: ⏰ gate '02ebe774-…' on 'review' had expired 0s before this call (deadline 2026-10-09T09:20:00Z) — this timer call first carried out its declared settle_default: the default choice 'hold' was recorded (enacted_via: timer).
 
   This prompt is closed: the question on 'review' is no longer open — Answer: hold · settled by the gate's expiry (no answer in time).
 ```

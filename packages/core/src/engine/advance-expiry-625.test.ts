@@ -18,6 +18,7 @@ import { JsonFileStore } from '../store/json-file-store.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import { writeTestClockFile } from '../store/test-clock-file.js';
 import { writtenSnapshot } from './snapshot.js';
+import { zOf } from '../test-support/instant.js';
 
 /** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
  *  runs folder sits beside the location's clock file (first set to the host's reading), which
@@ -114,7 +115,7 @@ describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view nam
     });
     // (a) red when the disclosure is dropped or names the wrong call; (b) prints the warnings.
     expect(reply.warnings).toContain(
-      `gate '${gateId}' on 'confirm' had expired 5s before this call — this advanceRun call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advanceRun).`,
+      `gate '${gateId}' on 'confirm' had expired 5s before this call (deadline ${zOf(reply.expiry!.expired_at)}) — this advanceRun call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advanceRun).`,
     );
     // (a) red when the owed step the expiry made is not run in the same call; (b) prints the steps.
     expect(reply.chained_auto_steps?.map((c) => c.step)).toEqual(['after']);
@@ -141,7 +142,7 @@ describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view nam
       `Run '${runId}': its expired question was carried out as declared (see warnings); no step ran. The run ended (aborted).`,
     );
     expect(reply.warnings).toContain(
-      `gate '${gateId}' on 'confirm' had expired 5s before this call — this advanceRun call first carried out its declared abort: the run ended (enacted_via: advanceRun).`,
+      `gate '${gateId}' on 'confirm' had expired 5s before this call (deadline ${zOf(reply.expiry!.expired_at)}) — this advanceRun call first carried out its declared abort: the run ended (enacted_via: advanceRun).`,
     );
   });
 

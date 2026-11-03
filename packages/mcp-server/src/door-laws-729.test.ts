@@ -224,12 +224,15 @@ describe('#729 PR-0 — the MCP door’s laws', () => {
     const a = render(stated);
     const b = render(unknown);
     // (a) red when the pace is dropped, or until is invented for an unknown age; (b) prints them.
+    // #715 (b) (03 §C, D6-71): a claim's stated deadline paces the wait — `until − as_of`, five
+    // minutes here, unclamped (the cap is five minutes) — and says so; an unknown age keeps the
+    // fixed 30 s with no until.
     expect([
-      [a.agent_action, a.poll_after_ms, a.until],
-      [b.agent_action, b.poll_after_ms, 'until' in b],
+      [a.agent_action, a.poll_after_ms, a.until, a.poll_reason],
+      [b.agent_action, b.poll_after_ms, 'until' in b, b.poll_reason],
     ]).toEqual([
-      ['await', 30_000, deadline],
-      ['await', 30_000, false],
+      ['await', Date.parse(deadline) - AT.getTime(), deadline, 'claim_deadline'],
+      ['await', 30_000, false, 'fixed'],
     ]);
   });
 

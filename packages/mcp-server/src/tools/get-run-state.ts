@@ -66,7 +66,6 @@ import { toolMeta } from '../tool-annotations.js';
 import {
   ALSO_TABLE,
   MCP_ENVELOPE_TABLE,
-  MCP_POLL_AFTER_MS,
   NEXT_ACTION_TABLE,
   PERSON_BLOCK,
   disclosureOfTool,
@@ -80,6 +79,7 @@ import {
   type McpElsewhereEntry,
   type McpNextAction,
   type OperatorRoute,
+  type PollReason,
   type WithPersonBlock,
   replySubject,
   setForSubject,
@@ -457,6 +457,7 @@ export const RUN_STATE_SUMMARY_TABLE = {
   next_actions_status: 'fact',
   agent_action: 'fact',
   poll_after_ms: 'fact',
+  poll_reason: 'fact',
   until: 'fact',
   also: { nested: ALSO_TABLE },
   elsewhere: 'fact',
@@ -615,6 +616,8 @@ export interface RunStateSummary {
   agent_action?: AgentAction;
   /** issue #729 PR-0 (P-2): on an `await` read — read the run again no sooner than this. */
   poll_after_ms?: number;
+  /** #715 (b) (03 §C): which deadline set `poll_after_ms`. */
+  poll_reason?: PollReason;
   /** issue #729 PR-0 (P-2): on an `await` read, the deadline the record states for the blocker. */
   until?: string;
   /** issue #729 PR-0 (A-1): reading and ending the run — never counted as a next step. */
@@ -1304,8 +1307,14 @@ export async function handleGetRunState(
     next_actions: ways.next_actions,
     next_actions_status: nextActionsStatus,
     ...(agentAction !== undefined ? { agent_action: agentAction } : {}),
-    ...(agentAction === 'await' ? { poll_after_ms: MCP_POLL_AFTER_MS } : {}),
-    ...(agentAction === 'await' && ways.until !== undefined ? { until: ways.until } : {}),
+    // #715 (b) (03 §C, D6-71): the pace from the record's deadlines, at this read's reading.
+    ...(agentAction === 'await'
+      ? {
+          poll_after_ms: ways.pace.poll_after_ms,
+          poll_reason: ways.pace.poll_reason,
+          ...(ways.pace.until !== undefined ? { until: ways.pace.until } : {}),
+        }
+      : {}),
     ...(ways.also.length > 0 ? { also: ways.also } : {}),
     ...(ways.elsewhere.length > 0 ? { elsewhere: ways.elsewhere } : {}),
     ...(ways.narrowed !== undefined ? { basis: ways.narrowed.basis } : {}),

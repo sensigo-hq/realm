@@ -138,7 +138,7 @@ describe('#625 PR-2a, C159 — realm agent carries out a question that is alread
       );
       // F1: the expiry line's lag follows the clock — `<lag>` in its place.
       const out = lagless([...logSpy.mock.calls, ...errSpy.mock.calls].map((c) => String(c[0])));
-      const line = `⚠ gate '${gateId}' on 'review' had expired <lag> before this call — ${tail}`;
+      const line = `⚠ gate '${gateId}' on 'review' had expired <lag> before this call (deadline <instant>) — ${tail}`;
       // (a) red when the question is announced before its expiry is carried out (the gate block,
       //     `Waiting for approval...`, a `realm run respond … --choice` command) or when the expiry
       //     line is not printed; (b) prints what the drive printed.

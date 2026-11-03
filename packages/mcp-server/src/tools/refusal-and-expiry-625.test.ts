@@ -44,6 +44,7 @@ import { handleAdvanceRun, registerAdvanceRun } from './advance-run.js';
 import { handleSubmitHumanResponse } from './submit-human-response.js';
 import { handleGetRunState } from './get-run-state.js';
 import { handleStartRun } from './start-run.js';
+import { zOf } from '../test-support/instant.js';
 
 /**
  * The answer as the MCP door renders it on a reply that did not open the question (#729 PR-0, Table
@@ -201,16 +202,16 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       dispatcher: async () => ({}),
     });
     const { record: r } = await runStore.get(run.id);
+    const expiresAt = expired
+      ? new Date(Date.now() - 60_000).toISOString()
+      : (r.pending_gate!.expires_at ?? '');
     if (expired) {
       await runStore.update({
         ...r,
-        pending_gate: {
-          ...r.pending_gate!,
-          expires_at: new Date(Date.now() - 60_000).toISOString(),
-        },
+        pending_gate: { ...r.pending_gate!, expires_at: expiresAt },
       });
     }
-    return { runId: run.id, gateId: r.pending_gate!.gate_id };
+    return { runId: run.id, gateId: r.pending_gate!.gate_id, expiresAt };
   }
 
   for (const [onExpiry, phase] of [
@@ -219,7 +220,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
   ] as const) {
     it(`C95, ${onExpiry}: get_run_state says advance_owed and offers advance_run; advance_run carries it out (${phase})`, async () => {
       const d = gated(`rae-${onExpiry}`, onExpiry);
-      const { runId, gateId } = await expiredGate(d, true);
+      const { runId, gateId, expiresAt } = await expiredGate(d, true);
       const state = await handleGetRunState({ run_id: runId }, { runStore, workflowStore });
       // (a) red when a due expiry reads `awaiting_human` with nothing to call; (b) prints status and act.
       expect({
@@ -235,7 +236,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       });
       // (a) red when the disclosure leaves the reply; (b) prints the warnings.
       expect(reply.warnings).toContain(
-        `gate '${gateId}' on 'confirm' had expired 1m before this call — this advance_run call first carried out its declared ${
+        `gate '${gateId}' on 'confirm' had expired 1m before this call (deadline ${zOf(expiresAt)}) — this advance_run call first carried out its declared ${
           onExpiry === 'settle_default'
             ? "settle_default: the default choice 'approve' was recorded"
             : 'abort: the run ended'
@@ -462,7 +463,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
 
   it('C120, W5-R1: execute_step on the step after an expired abort question — blocked and stop: this call ended the run', async () => {
     const d = gated('rae-w5r1', 'abort');
-    const { runId, gateId } = await expiredGate(d, true);
+    const { runId, gateId, expiresAt } = await expiredGate(d, true);
     const reply = await handleExecuteStep(
       { run_id: runId, command: 'after', params: {} },
       { runStore, workflowStore },
@@ -483,7 +484,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       hint: "Step 'after' cannot be called now: the run has ended (aborted).",
       phase: 'aborted',
       line: [
-        `gate '${gateId}' on 'confirm' had expired 1m before this call — this execute_step call first carried out its declared abort: the run ended (enacted_via: execute_step).`,
+        `gate '${gateId}' on 'confirm' had expired 1m before this call (deadline ${zOf(expiresAt)}) — this execute_step call first carried out its declared abort: the run ended (enacted_via: execute_step).`,
       ],
     });
   });
@@ -542,7 +543,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
 
   it("C136, W5-Y3: execute_step on the question's own step after that call carried its expiry out — the suggestion says to call advance_run, the only call next_actions holds", async () => {
     const d = gated('rae-c136', 'settle_default');
-    const { runId, gateId } = await expiredGate(d, true);
+    const { runId, gateId, expiresAt } = await expiredGate(d, true);
     const reply = await handleExecuteStep(
       { run_id: runId, command: 'confirm', params: {} },
       { runStore, workflowStore },
@@ -562,7 +563,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       suggestion: 'Call advance_run, as next_actions says.',
       hint: "Step 'confirm' cannot be called now: it has already completed. Owed to the engine: 'after' — call advance_run.",
       line: [
-        `gate '${gateId}' on 'confirm' had expired 1m before this call — this execute_step call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: execute_step).`,
+        `gate '${gateId}' on 'confirm' had expired 1m before this call (deadline ${zOf(expiresAt)}) — this execute_step call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: execute_step).`,
       ],
     });
   });
@@ -572,7 +573,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       const lines: Record<string, string[]> = {};
       for (const tool of ['execute_step', 'submit_human_response'] as const) {
         const d = gated(`rae-c151-${tool}-${onExpiry}`, onExpiry);
-        const { runId, gateId } = await expiredGate(d, true);
+        const { runId, gateId, expiresAt } = await expiredGate(d, true);
         const reply =
           tool === 'execute_step'
             ? await handleExecuteStep(
@@ -591,7 +592,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
         // (a) red when the tool stops passing its own name (the library default, executeChain or
         // submitHumanResponse, shows instead); (b) prints the lines.
         expect(lines[tool]).toEqual([
-          `gate '${gateId}' on 'confirm' had expired 1m before this call — this ${tool} call first carried out its declared ${did} (enacted_via: ${tool}).`,
+          `gate '${gateId}' on 'confirm' had expired 1m before this call (deadline ${zOf(expiresAt)}) — this ${tool} call first carried out its declared ${did} (enacted_via: ${tool}).`,
         ]);
       }
     },

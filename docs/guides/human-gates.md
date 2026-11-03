@@ -121,13 +121,13 @@ realm run list --status gate_waiting
 It prints:
 
 ```text
-64993bb2-6f65-47d9-801c-d008e9291a00  announce v1  gate_waiting  10/1/2026, 11:13:36 PM  2 step(s)  gate: review (0m)
+64993bb2-6f65-47d9-801c-d008e9291a00  announce v1  gate_waiting  2026-10-01T20:13:36.512Z  2 step(s)  gate: review opened 0s ago (2026-10-01T20:13:36Z)
 ```
 
 `realm run inspect <run-id>` shows the gate's ID, its question as the person reads it, its choices and the command that answers it (the question and the command were added after version 0.47.0):
 
 ```text
-Gate: review (gate 39792a3a-f9c3-470a-b94c-c314fb254234, opened 0m ago)
+Gate: review (gate 39792a3a-f9c3-470a-b94c-c314fb254234, opened 0s ago (2026-10-01T20:13:36Z))
   Question: "Subject: OFFICE CLOSED FRIDAY\n\nThe office is closed this Friday.\n"
   Choices: send, discard
   To answer: realm run respond 64993bb2-6f65-47d9-801c-d008e9291a00 --gate 39792a3a-f9c3-470a-b94c-c314fb254234 --choice <one of: send, discard>

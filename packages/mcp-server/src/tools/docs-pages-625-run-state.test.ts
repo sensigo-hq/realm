@@ -29,6 +29,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
 import { handleGetRunState } from './get-run-state.js';
+import { POLL_CAP_MS } from '../render-reply.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../../../..');
@@ -653,14 +654,16 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
       await runStore.claimStep(fRun, 'x', flight);
       const inFlight = await call('get_run_state', { run_id: fRun });
       // (a) red when a healthy claim elsewhere is not ok with empty next_actions; (b) prints them.
-      // #729 PR-0 (T-22, P-2): the read names the wait — `await`, with its pace.
+      // #729 PR-0 (T-22, P-2): the read names the wait — `await`, with its pace. #715 (b) (03 §C,
+      // D6-71): the claim's deadline sets the pace — further away than the cap, so the cap.
       expect([
         inFlight['next_actions_status'],
         inFlight['next_actions'],
         inFlight['in_progress_steps'],
         inFlight['agent_action'],
         inFlight['poll_after_ms'],
-      ]).toEqual(['ok', [], ['x'], 'await', 30_000]);
+        inFlight['poll_reason'],
+      ]).toEqual(['ok', [], ['x'], 'await', POLL_CAP_MS, 'claim_deadline']);
       const cases: Array<
         [string, Partial<StepDefinition>, 'engine_runnable' | 'agent_refused', string]
       > = [
@@ -1226,11 +1229,15 @@ describe('issue #729 — cannot_go_on on run-state-and-health.md', () => {
         findingLines: inspected.filter((l) => l.includes('cannot_go_on [publish]: input_schema'))
           .length,
         wayOutLines: inspected.filter((l) => l.includes(`Run ${runId} stays open`)).length,
-        listed: listed.find((l) => l.startsWith(runId))?.replace(/^.* idle: /, ''),
+        // #715 (b) (03 §B.2 A7): the idle age through the one formatter, its instant beside it.
+        listed: listed
+          .find((l) => l.startsWith(runId))
+          ?.replace(/^.* idle: /, '')
+          .replace(/^\d+s ago \(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\)/, '<age>'),
       }).toEqual({
         findingLines: 1,
         wayOutLines: 1,
-        listed: `0m  publish=cannot_go_on(input_schema) (realm run inspect ${runId})`,
+        listed: `<age>  publish=cannot_go_on(input_schema) (realm run inspect ${runId})`,
       });
     },
   );

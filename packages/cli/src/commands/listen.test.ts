@@ -217,7 +217,6 @@ function makeDeps(overrides: Partial<ListenDeps> = {}): ListenDeps & {
     runStore,
     dedupStoreFor: () => dedup,
     spawnAgent,
-    clock: () => 1_700_000_000_000,
     logger: silentLogger,
     ...overrides,
   } as ListenDeps & { runStore: InMemoryStore; spawnAgent: ReturnType<typeof vi.fn> };
@@ -700,7 +699,7 @@ describe('makeListenHandler — request pipeline', () => {
   // ── issue #735: a delivery the run store matches starts nothing and writes nothing ──────────
   // The window expires by the clock the dedup stores read (`Date.now()`), so only Date is faked:
   // a bare vi.useFakeTimers() also fakes setImmediate, which makeReq uses, and hangs the handler.
-  // `deps.clock` stamps only `agent_started_at`; it does not expire the window.
+  // The run store's clock stamps only `agent_started_at` (#715 (b)); it does not expire the window.
   // Beside each cell: (a) the change that turns it red; (b) what it prints when it fails.
   const DEDUP_1M: WebhookTrigger = {
     ...SHARED_SECRET_TRIGGER,

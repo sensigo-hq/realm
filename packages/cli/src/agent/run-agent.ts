@@ -97,7 +97,12 @@ import {
   writerMode,
   writerSetFor,
 } from '../output/writer.js';
-import { cutWayLine, terminalRespondLines, viewSetFor } from '../lib/holder-render.js';
+import {
+  cutWayLine,
+  questionDeadlineLine,
+  terminalRespondLines,
+  viewSetFor,
+} from '../lib/holder-render.js';
 import {
   recordDriveFailure,
   buildEntry,
@@ -726,6 +731,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           const gate = currentRun.pending_gate;
 
           console.log(`\n⏸  Gate: ${gate.step_name} | ID: ${gate.gate_id}`);
+          // #715 (b) (03 §B.2 E, D6-72 (b)): the question's deadline, at the held snapshot's reading.
+          const deadlineLine = questionDeadlineLine(gate, currentAt!);
+          if (deadlineLine !== undefined) console.log(deadlineLine);
           const gateStepDef = definition.steps[gate.step_name];
           // #729 PR-4 (03 #6): the view core's composer returns — the question at the declared tier
           // in a question span, a blank line, the preview (`display` honoured); with no message the

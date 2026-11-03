@@ -191,7 +191,9 @@ describe('#625 PR-2a, C146 — a late Slack answer that carried out the expiry s
   const line = (
     gateId: string,
     did: { on_expiry: 'settle_default'; choice: string } | { on_expiry: 'abort' },
-  ): string => `⚠ ${lagless(expiryCarriedOutLine(gateId, 'confirm', did, 'agent', { ms: 0 }))}`;
+  ): string =>
+    // #715 (b) (D6-72 (c)): the line names the fixture question's deadline beside the lag.
+    `⚠ ${lagless(expiryCarriedOutLine(gateId, 'confirm', did, 'agent', { ms: 0 }, '2020-01-01T01:00:00.000Z'))}`;
 
   it('C146: another choice — `⚠ … this agent call first carried out …`, the refusal, the guard; posted once and printed once, no "try again"', async () => {
     claimGates215();

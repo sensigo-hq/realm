@@ -47,6 +47,7 @@ import { composeWaysAt, stepBrief } from './ways.js';
 import { compareStrings } from '../handlers/primitives/compare-strings.js';
 import { writeTestClockFile } from '../store/test-clock-file.js';
 import { writtenSnapshot } from './snapshot.js';
+import { zOf } from '../test-support/instant.js';
 
 /** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
  *  runs folder sits beside the location's clock file (first set to the host's reading), which
@@ -200,7 +201,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       }
       // (a) red when the line names another call, is missing, or is printed; (b) prints the reply.
       expect(reply.warnings).toContain(
-        `gate '${gateId}' on 'q' had expired 1m before this call — this ${fn} call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: ${fn}).`,
+        `gate '${gateId}' on 'q' had expired 1m before this call (deadline ${zOf(reply.expiry!.expired_at)}) — this ${fn} call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: ${fn}).`,
       );
       expect(printed).toEqual([]);
     },
@@ -220,7 +221,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       choice: 'reject',
     });
     expect(reply.warnings).toContain(
-      `gate '${gateId}' on 'q' had expired 1m before this call — this submitHumanResponse call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: submitHumanResponse).`,
+      `gate '${gateId}' on 'q' had expired 1m before this call (deadline ${zOf(reply.expiry!.expired_at)}) — this submitHumanResponse call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: submitHumanResponse).`,
     );
   });
 

@@ -9,6 +9,7 @@ import {
   JsonWorkflowStore,
   JsonFileStore,
   withTestClockNotice,
+  setClockErrorSink,
   FailedAttemptStore,
   WorkflowError,
   createDefaultRegistry,
@@ -573,6 +574,12 @@ if (isRunDirectly()) {
   // This program's name, which may itself refuse with one line — then no start line is printed.
   const driver = composeBinIdentity();
   console.error(gateAnswersStartLine(settings.answers, false, 'realm-mcp'));
+  // #715 (b) (03 §A.1, D-22): the bin's waiter-error sink — a waiter on the store's clock that fails is
+  // one masked line on stderr (stdout carries the protocol). An embedded server sets none: it is a
+  // library, and core's loud default applies.
+  setClockErrorSink((err: unknown): void => {
+    logMasked(`realm-mcp: ${err instanceof Error ? err.message : String(err)}`);
+  });
   // #627 W (§5.8): the stdio transport authenticates no one, so this bin's answers name no principal.
   // #715 (a) correction 1 (C-6): a run store opened on a copy of a test location refuses with one line
   // on stderr, masked for a log as `realm mcp`'s line is, and exit 1 — never Node's crash dump, and

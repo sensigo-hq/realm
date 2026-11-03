@@ -20,6 +20,7 @@ import {
   JsonFileStore,
   JsonWorkflowStore,
   advanceRun,
+  formatInstantWords,
   loadWorkflowFromString,
   type EngineReply,
   type RunStore,
@@ -37,7 +38,7 @@ import {
   type RealmMcpServerOptions,
 } from './server.js';
 import { effectiveGateAnswers } from './door.js';
-import { renderReply, tokenStrayed, type McpEnvelope } from './render-reply.js';
+import { POLL_CAP_MS, renderReply, tokenStrayed, type McpEnvelope } from './render-reply.js';
 
 type Reply = Record<string, unknown>;
 
@@ -658,6 +659,12 @@ describe('#627 W — the await entry: a question answered outside this conversat
     const later = awaitOf(read)!;
     const noMessage = awaitOf(bareRead)!;
     const gate = (await s.runStore.get(runId)).record.pending_gate!;
+    const bareGate = (await bare.runStore.get(bareRun)).record.pending_gate!;
+    // #715 (b) (03 §C, D6-71 (d)): the question declares on_expiry and its deadline is further away
+    // than the cap, so the pace is the cap and the entry hands over the instant — named through the
+    // one formatter at each reply's own reading (`basis.as_of`).
+    const handsOver = (r: Reply, expiresAt: string) =>
+      `Check again no sooner than poll_after_ms; the run waits until until (${formatInstantWords(expiresAt, 'deadline', new Date((r['basis'] as { as_of: string }).as_of))}): tell the user to come back then.`;
     // (a) red when an answer call or a token reaches the reply, the gate's reply reads W-a2, the
     //     pace is missing on the reply that opened the question, or `until` is not the deadline;
     //     (b) prints the entries' texts and the pace.
@@ -678,7 +685,7 @@ describe('#627 W — the await entry: a question answered outside this conversat
         null,
         // #819 (T2): red when the run-id instruction is missing; correction 1 (02 W3): "from a
         // terminal" — a Slack thread's answer needs no run id.
-        `The question on step 'q' of run ${runId} is answered outside this conversation. Show the user gate.display and tell them it is waiting for their answer; an answer they give here is not recorded. Give the user this run id (${runId}); they may need it to answer. Check again no sooner than poll_after_ms; when until passes, tell the user.`,
+        `The question on step 'q' of run ${runId} is answered outside this conversation. Show the user gate.display and tell them it is waiting for their answer; an answer they give here is not recorded. Give the user this run id (${runId}); they may need it to answer. ${handsOver(started, gate.expires_at!)}`,
         `Run is paused at gate '${gate.gate_id}' on step 'q', waiting for an answer outside this conversation.`,
       ],
       awaiting: {
@@ -692,11 +699,11 @@ describe('#627 W — the await entry: a question answered outside this conversat
       // them where they answer it" — false in Slack and in `realm agent`) or the row's text is
       // another's; correction 1 (02 W2): `noMessage` says what the record holds ("carries no
       // question text for this gate"), never what the definition declares.
-      later: `The question on step 'q' of run ${runId} is answered outside this conversation. Show the user the question: get_run_state's pending_gate.resolved_message, and tell them it is waiting for their answer outside this conversation; an answer they give here is not recorded. Give the user this run id (${runId}); they may need it to answer. Check again no sooner than poll_after_ms; when until passes, tell the user.`,
-      noMessage: `The question on step 'q' of run ${bareRun} is answered outside this conversation. get_run_state carries no question text for this gate: tell the user the run is waiting at step 'q' for their answer, outside this conversation; an answer they give here is not recorded. Give the user this run id (${bareRun}); they may need it to answer. Check again no sooner than poll_after_ms; when until passes, tell the user.`,
+      later: `The question on step 'q' of run ${runId} is answered outside this conversation. Show the user the question: get_run_state's pending_gate.resolved_message, and tell them it is waiting for their answer outside this conversation; an answer they give here is not recorded. Give the user this run id (${runId}); they may need it to answer. ${handsOver(read, gate.expires_at!)}`,
+      noMessage: `The question on step 'q' of run ${bareRun} is answered outside this conversation. get_run_state carries no question text for this gate: tell the user the run is waiting at step 'q' for their answer, outside this conversation; an answer they give here is not recorded. Give the user this run id (${bareRun}); they may need it to answer. ${handsOver(bareRead, bareGate.expires_at!)}`,
       noAnswerCall: false,
       noToken: false,
-      pace: [30_000, gate.expires_at, gate.expires_at],
+      pace: [POLL_CAP_MS, gate.expires_at, gate.expires_at],
       noWays: [],
     });
   });
@@ -842,6 +849,63 @@ describe('#627 W — the await entry: a question answered outside this conversat
       action: rendered.agent_action,
       paced: rendered.poll_after_ms,
     }).toEqual({ kinds: ['execute_step', 'await'], action: undefined, paced: 30_000 });
+  });
+
+  it('#715 (b) (MA 3, on Q-7): a report-only question whose deadline is EARLIER than a held claim’s — the pace and until are the claim’s; the question’s own deadline is still on its entry', async () => {
+    // A constructed reply (the engine opens no question beside a held claim in one call): the opening
+    // reply's ways, its question made report-only with a deadline 5 s after the reply's reading, and
+    // a step another program holds until 90 s after it.
+    const s = await session({ gateAnswers: 'withheld' });
+    const def = await registered(s, { side: true });
+    const { record: run } = await s.runStore.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const opening = await advanceRun(s.runStore, def, { runId: run.id });
+    const asOf = Date.parse(opening.basis!.as_of);
+    const questionDeadline = new Date(asOf + 5_000).toISOString();
+    const claimDeadline = new Date(asOf + 90_000).toISOString();
+    const mixed = {
+      ...opening,
+      ways: opening.ways.map((w) =>
+        w.verb === 'respond' ? { ...w, expires_at: questionDeadline, on_expiry: undefined } : w,
+      ),
+      unavailable: [
+        ...opening.unavailable,
+        {
+          verb: 'run_step',
+          code: 'held_elsewhere',
+          step: 'side',
+          clears_at: claimDeadline,
+          remedy: [],
+        },
+      ],
+    } as unknown as EngineReply;
+    const rendered = renderReply(mixed, {
+      answers: {
+        value: 'withheld',
+        source: { kind: 'default', ref: 'test' },
+        forms: { shown: false, source: { kind: 'negotiated', ref: 'test' } },
+      },
+    }).envelope;
+    const entry = rendered.next_actions.find((e) => e.awaiting !== undefined);
+    // Run first (MA 3's hypothesis, confirmed): the question's own deadline stays on its entry —
+    // `awaiting.expires_at` and the entry's words, at the reply's reading — while `until` and the
+    // pace are the claim's. (Reported: the entry's clause says "when until passes" beside the
+    // question's instant, and the reply's `until` is the claim's later one.)
+    // (a) red when the report-only deadline pulls the pace in, or the question's own deadline is
+    //     no longer on its entry (neither in `awaiting.expires_at` nor in its words); (b) prints the
+    //     pace, until, the entry's deadline and the tail of its words.
+    expect({
+      pace: [rendered.poll_after_ms, rendered.poll_reason, rendered.until],
+      entryDeadline: entry?.awaiting?.expires_at,
+      tail: entry?.human_readable.slice(entry.human_readable.indexOf('Check again')),
+    }).toEqual({
+      pace: [90_000, 'claim_deadline', claimDeadline],
+      entryDeadline: questionDeadline,
+      tail: `Check again no sooner than poll_after_ms; when until passes (${formatInstantWords(questionDeadline, 'deadline', new Date(asOf))}), tell the user.`,
+    });
   });
 
   it('an abandon refused at an open question names no answer tool under withheld (the remedy, narrowed: W-a3)', async () => {

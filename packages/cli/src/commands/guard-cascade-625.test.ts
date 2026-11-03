@@ -52,8 +52,12 @@ const respondCarriedOut = (gateId: string, choice?: string): string =>
       choice !== undefined ? { on_expiry: 'settle_default', choice } : { on_expiry: 'abort' },
       'respond',
       { ms: 0 },
+      EXPIRES_AT,
     )}`,
   );
+
+/** #715 (b) (D6-72 (c)): the fixture question's deadline (`expireGate`), named beside the lag. */
+const EXPIRES_AT = '2020-01-01T01:00:00.000Z';
 
 const LATE_SAME_CHOICE =
   'the outcome matches your choice, but it was settled by timeout; your response was not recorded.';
@@ -181,7 +185,7 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
         pending_gate: {
           ...run.pending_gate!,
           opened_at: '2020-01-01T00:00:00.000Z',
-          expires_at: '2020-01-01T01:00:00.000Z',
+          expires_at: EXPIRES_AT,
         },
       })
     ).record;
@@ -598,7 +602,7 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
       expect(stdout()).toHaveLength(1);
       expect(stdout()[0]).toMatch(
         new RegExp(
-          `^Run '${runId}': gate expired \\d+d \\d+h ago — would enact settle_default 'reject'; ` +
+          `^Run '${runId}': gate EXPIRED \\d+d \\d+h ago \\(2020-01-01T01:00:00Z\\) — would enact settle_default 'reject'; ` +
             `guard 'check' would then abort the run \\(${NOT_APPROVED}\\) on --force\\.$`,
         ),
       );
@@ -689,7 +693,9 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
       );
       // (a) red when the batch listing changes shape; (b) prints the listing line.
       expect(stdout()[1]).toMatch(
-        new RegExp(`^  • ${runId}: gate expired \\d+d \\d+h ago — would enact settle_default$`),
+        new RegExp(
+          `^  • ${runId}: gate EXPIRED \\d+d \\d+h ago \\(2020-01-01T01:00:00Z\\) — would enact settle_default$`,
+        ),
       );
 
       logSpy.mockClear();

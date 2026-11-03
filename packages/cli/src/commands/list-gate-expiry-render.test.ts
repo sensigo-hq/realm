@@ -6,6 +6,7 @@ import { describe, it, expect } from 'vitest';
 import { listRuns } from './list.js';
 import type { RunStore, RunRecord, PendingGate } from '@sensigo/realm';
 import { snap, listing, doubleClock, noSettle } from '../test-support/snapshot-double.js';
+import { zOf } from '../test-support/instant.js';
 
 function makeRun(overrides: Partial<RunRecord> = {}): RunRecord {
   return {
@@ -87,8 +88,11 @@ describe('listRuns — gate expiry rendering (issue #291)', () => {
       }),
     });
     const result = await listRuns(undefined, makeStore([run]));
+    // #715 (b) (Amendment 9, commit 3): the next occurrence's instant through the one formatter —
+    // an hour after the opening, at the reading "in 59m" — beside the words.
+    const next = Date.parse(run.pending_gate!.opened_at) + 3_600_000;
     expect(result).toContain(
-      '  next reminder: 1 of 3 scheduled (no send is recorded; reminders are sent only while a process attends this question)',
+      `  next reminder: 1 of 3 scheduled in 59m (${zOf(next)}) (no send is recorded; reminders are sent only while a process attends this question)`,
     );
     expect(result).not.toMatch(/reminder (due|overdue)/);
   });

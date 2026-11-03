@@ -135,6 +135,7 @@ import { findEligibleSteps, findEligibleGuardSteps, deriveRunPhase } from './eli
 import { classifyStepTrust, buildTrustRefusal } from '../types/workflow-definition.js';
 import { cannotGoOnUntilCorrected, composeWaysAt, type Unavailable } from './ways.js';
 import { CLOCK_SKEW_EPSILON_MS, parseStamp, recordStampedAheadSentence } from './instants.js';
+import { formatInstantWords } from '../utils/duration.js';
 
 /**
  * Default age threshold for the `never_claimed_idle` finding (issue #221) — 24 hours. Engine-
@@ -385,7 +386,10 @@ function findDriveFailing(snapshot: Snapshot): RunHealthFinding | undefined {
   const settled = new Set([...run.completed_steps, ...run.failed_steps, ...run.skipped_steps]);
   if (settled.has(lastEntry.step)) return undefined;
 
-  const ago = formatAgo(now.getTime() - lastAt);
+  // #715 (b) (03 §B.2 A12, D6-70): the failure's age through the one formatter, at the snapshot's
+  // reading, with its instant beside it; a stamp that does not parse prints no age.
+  const agoWords = formatInstantWords(lastEntry.at, 'past_event', now);
+  const ago = agoWords !== undefined ? ` ${agoWords}` : '';
   // The total suffix appears ONLY when the ring has rolled — otherwise it would repeat a number
   // the entries themselves already carry.
   const rolled = field.total > field.entries.length;
@@ -393,7 +397,7 @@ function findDriveFailing(snapshot: Snapshot): RunHealthFinding | undefined {
   return {
     kind: 'drive_failing',
     step: lastEntry.step,
-    reason: `the last drive attempt failed ${ago} (${lastEntry.error_class}): ${lastEntry.message}${suffix}`,
+    reason: `the last drive attempt failed${ago} (${lastEntry.error_class}): ${lastEntry.message}${suffix}`,
     evidence: {
       step: lastEntry.step,
       error_class: lastEntry.error_class,
@@ -418,17 +422,6 @@ function findDriveFailing(snapshot: Snapshot): RunHealthFinding | undefined {
       ...(legacy ? { basis: 'legacy_stamp_order' } : {}),
     },
   };
-}
-
-/** Renders an elapsed span the way an operator reads it: "12s ago", "4m ago", "3h ago". */
-function formatAgo(ms: number): string {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  if (s < 60) return `${String(s)}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${String(m)}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${String(h)}h ago`;
-  return `${String(Math.floor(h / 24))}d ago`;
 }
 
 /**

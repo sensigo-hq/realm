@@ -29,6 +29,7 @@ import type { RunRecord } from '../types/run-record.js';
 import type { EngineReply } from '../types/response-envelope.js';
 import { agentActionFor, nextCalls, proofOf } from '../test-support/ways-view.js';
 import { writeTestClockFile } from '../store/test-clock-file.js';
+import { zOf } from '../test-support/instant.js';
 
 /** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
  *  runs folder sits beside the location's clock file (first set to the host's reading), which
@@ -475,7 +476,7 @@ describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named ever
     // (a) red when the line says "before this call", drops the default choice, or is missing; (b)
     // prints the warnings.
     expect(reply.warnings).toEqual([
-      `gate '${gateId}' on 'q' had expired 5s before this call — this advanceRun call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advanceRun).`,
+      `gate '${gateId}' on 'q' had expired 5s before this call (deadline ${zOf(reply.expiry!.expired_at)}) — this advanceRun call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advanceRun).`,
     ]);
   });
 
@@ -489,7 +490,7 @@ describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named ever
     const reply = await advanceRun(store, d, { runId });
     // (a) red when the abort's line does not say the run ended; (b) prints the warnings.
     expect(reply.warnings).toEqual([
-      `gate '${gateId}' on 'q' had expired 5s before this call — this advanceRun call first carried out its declared abort: the run ended (enacted_via: advanceRun).`,
+      `gate '${gateId}' on 'q' had expired 5s before this call (deadline ${zOf(reply.expiry!.expired_at)}) — this advanceRun call first carried out its declared abort: the run ended (enacted_via: advanceRun).`,
     ]);
   });
 

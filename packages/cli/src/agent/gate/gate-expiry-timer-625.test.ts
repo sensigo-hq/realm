@@ -8,7 +8,7 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { lagless } from '../../test-support/lag.js';
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, settableClock } from '@sensigo/realm-testing';
 import { deriveRunPhase } from '@sensigo/realm';
 import type { WorkflowDefinition, PendingGate, StepDefinition } from '@sensigo/realm';
 import { scheduleGateExpiryTimer } from './gate-expiry-timer.js';
@@ -57,33 +57,39 @@ async function seedGatedRun(store: InMemoryStore, def: WorkflowDefinition, gate:
   ).record;
 }
 
+// #715 (b) (03 §A.3, D6-24): the timer waits on the store's clock — a settable one at T here, moved
+// past the deadline by `advance` (which awaits the enactment); no fake timers in a file with a store.
+const T = Date.parse('2030-01-01T00:00:00.000Z');
+const onClock = () => {
+  const clock = settableClock(new Date(T));
+  return { clock, store: new InMemoryStore({ clock }) };
+};
+
 const expiringGate = (defaultChoice: string): PendingGate => ({
   gate_id: 'gate-1',
   step_name: 'approve',
   preview: {},
   choices: ['approve', 'reject'],
-  opened_at: new Date().toISOString(),
-  expires_at: new Date(Date.now() + 1000).toISOString(),
+  opened_at: new Date(T).toISOString(),
+  expires_at: new Date(T + 1000).toISOString(),
   on_expiry: 'settle_default',
   default_choice: defaultChoice,
 });
 
 describe('issue #625 — the attending-process expiry timer reports the guards its write settled', () => {
   afterEach(() => {
-    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
   it("a default that makes the guard ABORT: the timer's one line carries the ending sentence and its Reason", async () => {
-    vi.useFakeTimers();
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const def = gateThenGuard({ abort_message: 'Not approved — stopping the run.' });
-    const store = new InMemoryStore();
+    const { clock, store } = onClock();
     const gate = expiringGate('reject');
     const run = await seedGatedRun(store, def, gate);
 
     const cancel = scheduleGateExpiryTimer(run.id, gate, { store, definition: def });
-    await vi.advanceTimersByTimeAsync(1500);
+    await clock.advance(1500);
     cancel();
 
     // (a) red when the timer logs only "expired — enacted" for an expiry whose guard ended the
@@ -91,7 +97,7 @@ describe('issue #625 — the attending-process expiry timer reports the guards i
     // #729 PR-0 (T-2; Table rows 35, 50): the timer's line is the receipt's — its second composer
     // died; the step and the lag on the fake clock are said, as on every door.
     expect(lagless(logSpy.mock.calls.map((c: unknown[]) => String(c[0])))).toEqual([
-      "⏰ gate 'gate-1' on 'approve' had expired <lag> before this call — this timer call first carried out its declared settle_default: the default choice 'reject' was recorded (enacted_via: timer). " +
+      "⏰ gate 'gate-1' on 'approve' had expired <lag> before this call (deadline <instant>) — this timer call first carried out its declared settle_default: the default choice 'reject' was recorded (enacted_via: timer). " +
         "Guard step 'check' aborted the run. Reason: Not approved — stopping the run.",
     ]);
     const { record: final } = await store.get(run.id);
@@ -104,21 +110,20 @@ describe('issue #625 — the attending-process expiry timer reports the guards i
   });
 
   it('a default that makes the guard PASS and the run go on: the line carries the passed line, no Reason', async () => {
-    vi.useFakeTimers();
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const def = gateThenGuard(undefined, true);
-    const store = new InMemoryStore();
+    const { clock, store } = onClock();
     const gate = expiringGate('approve');
     const run = await seedGatedRun(store, def, gate);
 
     const cancel = scheduleGateExpiryTimer(run.id, gate, { store, definition: def });
-    await vi.advanceTimersByTimeAsync(1500);
+    await clock.advance(1500);
     cancel();
 
     // (a) red when a guard that passed is not named on the timer's line (a later answer's screen
     //     has no guard lines — this write is the one that reports them); (b) prints the lines.
     expect(lagless(logSpy.mock.calls.map((c: unknown[]) => String(c[0])))).toEqual([
-      "⏰ gate 'gate-1' on 'approve' had expired <lag> before this call — this timer call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: timer). " +
+      "⏰ gate 'gate-1' on 'approve' had expired <lag> before this call (deadline <instant>) — this timer call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: timer). " +
         "Guard step 'check' passed.",
     ]);
     // (a) red when the guard is not on the record as passed; (b) prints the completed steps.
@@ -126,7 +131,6 @@ describe('issue #625 — the attending-process expiry timer reports the guards i
   });
 
   it('a gate with no guard behind it: the line is unchanged', async () => {
-    vi.useFakeTimers();
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const def: WorkflowDefinition = {
       id: 'timer-625-plain',
@@ -137,18 +141,18 @@ describe('issue #625 — the attending-process expiry timer reports the guards i
         finish: { description: 'f', execution: 'agent', depends_on: ['approve'] },
       },
     };
-    const store = new InMemoryStore();
+    const { clock, store } = onClock();
     const gate = expiringGate('approve');
     const run = await seedGatedRun(store, def, gate);
 
     const cancel = scheduleGateExpiryTimer(run.id, gate, { store, definition: def });
-    await vi.advanceTimersByTimeAsync(1500);
+    await clock.advance(1500);
     cancel();
 
     // The control. (a) red when the timer appends anything for a write that settled no guard;
     //     (b) prints the lines.
     expect(lagless(logSpy.mock.calls.map((c: unknown[]) => String(c[0])))).toEqual([
-      "⏰ gate 'gate-1' on 'approve' had expired <lag> before this call — this timer call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: timer).",
+      "⏰ gate 'gate-1' on 'approve' had expired <lag> before this call (deadline <instant>) — this timer call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: timer).",
     ]);
   });
 });

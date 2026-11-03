@@ -26,6 +26,7 @@ import type { EngineReply } from '../types/response-envelope.js';
 import type { StepDefinition, WorkflowDefinition } from '../types/workflow-definition.js';
 import type { Clock } from '../utils/clock.js';
 import { writeTestClockFile } from '../store/test-clock-file.js';
+import { zOf } from '../test-support/instant.js';
 
 /** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
  *  runs folder sits beside the location's clock file (first set to the host's reading), which
@@ -713,7 +714,7 @@ describe("a late answer — the verdict stands when the call's own expiry write 
     // (a) red when the gate-claim sentence repeats "not recorded" or keeps "Only the conversation
     //     that opened the question has one to pass."; (b) prints the warnings.
     expect(reply.warnings).toEqual([
-      `gate '${o.gateId}' on 'confirm' had expired 1m before this call — this submitHumanResponse call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: submitHumanResponse).`,
+      `gate '${o.gateId}' on 'confirm' had expired 1m before this call (deadline ${zOf(reply.expiry!.expired_at)}) — this submitHumanResponse call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: submitHumanResponse).`,
       'No claim_token was passed.',
     ]);
     expect(reply.warnings.some((w) => w.includes('Only the conversation'))).toBe(false);

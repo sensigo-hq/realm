@@ -661,7 +661,7 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
     );
     claim(
       AGENT_PAGE,
-      "| `⚠ gate '<gate>' on '<step>' had expired <how long> before this call — this agent call first carried out its declared …` | The run reaches a question whose time is already up and whose `on_expiry` the engine carries out | The expiry it carried out, in place of the gate's lines: such a question is not shown, since an answer could no longer be recorded. Added after version 0.46.0. |",
+      "| `⚠ gate '<gate>' on '<step>' had expired <how long> before this call (deadline <instant>) — this agent call first carried out its declared …` | The run reaches a question whose time is already up and whose `on_expiry` the engine carries out | The expiry it carried out, in place of the gate's lines: such a question is not shown, since an answer could no longer be recorded. Added after version 0.46.0. |",
     );
     const def = loadWorkflowFromString(
       [
@@ -717,11 +717,11 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
     expect(
       lagless(d.lines).filter((l) =>
         l.startsWith(
-          `log: ⚠ gate '${gate.gate_id}' on 'review' had expired <lag> before this call — this agent call first carried out its declared `,
+          `log: ⚠ gate '${gate.gate_id}' on 'review' had expired <lag> before this call (deadline <instant>) — this agent call first carried out its declared `,
         ),
       ),
     ).toEqual([
-      `log: ⚠ gate '${gate.gate_id}' on 'review' had expired <lag> before this call — this agent call first carried out its declared settle_default: the default choice 'hold' was recorded (enacted_via: agent).`,
+      `log: ⚠ gate '${gate.gate_id}' on 'review' had expired <lag> before this call (deadline <instant>) — this agent call first carried out its declared settle_default: the default choice 'hold' was recorded (enacted_via: agent).`,
     ]);
     expect(d.calls).toBe(0);
   });

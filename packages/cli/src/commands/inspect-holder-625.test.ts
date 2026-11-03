@@ -39,6 +39,9 @@ function makeStore(run: RunRecord, persistsClaims = true): RunStore {
 }
 
 const ago = (ms: number): string => new Date(Date.now() - ms).toISOString();
+/** #715 (b) (03 §B.2 A1): the claim's age carries its instant; a line with no instant is not changed. */
+const instantless = (line: string): string =>
+  line.replace(/ ago \(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\)$/, ' ago (<instant>)');
 
 function baseRun(over: Record<string, unknown>): RunRecord {
   return {
@@ -120,8 +123,8 @@ describe('the claim line of an in-progress step', () => {
       );
       // (a) red when the class token reaches the screen instead of words, or the door/age goes;
       //     (b) prints the line.
-      expect(claimLine(out, 'work')).toBe(
-        `  work: taken by prog@host (${words}, via agent), 5m ago`,
+      expect(instantless(claimLine(out, 'work'))).toBe(
+        `  work: taken by prog@host (${words}, via agent), 5m ago (<instant>)`,
       );
     }
   });
@@ -144,8 +147,8 @@ describe('the claim line of an in-progress step', () => {
         },
       }),
     );
-    expect(claimLine(out, 'confirm')).toBe(
-      '  confirm: question opened through prog@host (from the OS user, via mcp-stdio), 5m ago',
+    expect(instantless(claimLine(out, 'confirm'))).toBe(
+      '  confirm: question opened through prog@host (from the OS user, via mcp-stdio), 5m ago (<instant>)',
     );
   });
 
@@ -193,7 +196,9 @@ describe('the claim line of an in-progress step', () => {
     );
     // (a) red when the reader stops applying the writer's bound; (b) prints the line.
     // The verb stays: "work: a recorded name …" read as if the step were a name.
-    expect(claimLine(out, 'work')).toBe(`  work: taken by ${PHRASE_UNSHOWABLE}, 5m ago`);
+    expect(instantless(claimLine(out, 'work'))).toBe(
+      `  work: taken by ${PHRASE_UNSHOWABLE}, 5m ago (<instant>)`,
+    );
     expect(out).not.toContain(ESC);
     expect(out).not.toContain('evil');
   });

@@ -226,7 +226,7 @@ describe('#625 PR-2a, C98 and C95 — where the code comes from; advance carries
     // choice; (b) prints the lines.
     expect(lines.slice(3, 6)).toEqual([
       "Owed to the engine: the expired question on 'confirm' (its declared settle_default); then it runs what that leaves owed until a step opens a question, fails or ends the run.",
-      `⚠ gate '${gateId}' on 'confirm' had expired <lag> before this call — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`,
+      `⚠ gate '${gateId}' on 'confirm' had expired <lag> before this call (deadline <instant>) — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`,
       '→ after',
     ]);
     expect(lines.filter((l) => l.includes('had expired'))).toHaveLength(1);
@@ -249,7 +249,7 @@ describe('#625 PR-2a, C98 and C95 — where the code comes from; advance carries
     // (a) red when the abort is not carried out, or its line (C105) is not rendered; (b) prints the lines.
     expect(lines.slice(3)).toEqual([
       "Owed to the engine: the expired question on 'confirm' (its declared abort).",
-      `⚠ gate '${gateId}' on 'confirm' had expired <lag> before this call — this advance call first carried out its declared abort: the run ended (enacted_via: advance).`,
+      `⚠ gate '${gateId}' on 'confirm' had expired <lag> before this call (deadline <instant>) — this advance call first carried out its declared abort: the run ended (enacted_via: advance).`,
       'Stopped: the run has ended (aborted)',
       `Run ${runId}: phase 'aborted'`,
     ]);

@@ -4,7 +4,7 @@
 // through the real scheduling call).
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { startListen, type ListenDeps, type Logger, type WorkflowEntry } from './listen.js';
-import { listing, noSettle } from '../test-support/snapshot-double.js';
+import { doubleClock, listing, noSettle } from '../test-support/snapshot-double.js';
 
 const silentLogger: Logger = { debug() {}, info() {}, warn() {}, error() {} };
 
@@ -29,6 +29,8 @@ function makeDeps(): ListenDeps {
       list: async () => listing([]),
       // #715 (b): `settleStep` is required on the listen store — this double's never settles.
       settleStep: noSettle,
+      // #715 (b) (03 §A.4): and its `clock` — the sweeper's waits are the store's.
+      clock: doubleClock,
     },
     dedupStoreFor: () => ({
       // The real DedupStore contract is entirely SYNCHRONOUS (check/record/cleanup) and `check`
@@ -40,7 +42,6 @@ function makeDeps(): ListenDeps {
       cleanup: () => {},
     }),
     spawnAgent: async () => ({ pid: 1 }),
-    clock: () => Date.now(),
     logger: silentLogger,
   };
 }

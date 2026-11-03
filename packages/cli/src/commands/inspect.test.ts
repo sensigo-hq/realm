@@ -19,6 +19,7 @@ import type {
   ExtensionIdentityEntry,
 } from '@sensigo/realm';
 import { snap, listing, doubleClock, noSettle } from '../test-support/snapshot-double.js';
+import { zOf } from '../test-support/instant.js';
 
 function makeSnapshot(stepId: string, overrides: Partial<EvidenceSnapshot> = {}): EvidenceSnapshot {
   return {
@@ -1199,8 +1200,11 @@ describe('run_health rendering (issue #221)', () => {
       updated_at: new Date(Date.now() - (25 * 60 + 5) * 60_000).toISOString(), // 25h 5m ago
     });
     const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
-    // formatGateAge renders 25h5m-ago as "1d 1h" — the reason text must not just say "idle" bare.
-    expect(result).toContain('parked with no claimed step, idle 1d 1h');
+    // #715 (b) (03 §B.2 A6): the last write's age through the one formatter — 25h5m-ago is "1d 1h
+    // ago" — with its instant beside it; the reason text must not just say "idle" bare.
+    expect(result).toContain(
+      `parked with no claimed step, idle, last written 1d 1h ago (${zOf(run.updated_at)})`,
+    );
     expect(result).not.toContain('idle\n'); // never a bare dead-end
   });
 });

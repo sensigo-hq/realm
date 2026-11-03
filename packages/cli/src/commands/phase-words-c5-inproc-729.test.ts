@@ -738,7 +738,6 @@ describe("#729 PR-3 correction 5 (J-2) — `realm listen`'s log lines carry the 
       runStore,
       dedupStoreFor: () => ({ check: () => false, record: () => {}, cleanup: () => {} }),
       spawnAgent,
-      clock: () => 1_700_000_000_000,
       logger,
     } as never);
   }

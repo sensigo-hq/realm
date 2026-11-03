@@ -5,7 +5,7 @@ import { mkdtemp, rm, writeFile, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { listRuns, formatGateAge, renderCauseSegment, listCommand } from './list.js';
+import { listRuns, renderCauseSegment, listCommand } from './list.js';
 import {
   FailedAttemptStore,
   FAILED_ATTEMPT_SIDECAR_MAX_BYTES,
@@ -474,26 +474,6 @@ describe('listRuns statusFilter', () => {
     const result = await listRuns(undefined, makeStore([waiting]), 'gate_waiting');
     expect(result).toContain('human_review');
     expect(result).toContain('25m');
-  });
-});
-
-describe('formatGateAge', () => {
-  it('formats elapsed time under 60 minutes as Xm', () => {
-    const openedAt = new Date(0).toISOString();
-    const now = new Date(42 * 60 * 1000); // 42 minutes later
-    expect(formatGateAge(openedAt, now)).toBe('42m');
-  });
-
-  it('formats elapsed time under 24 hours as Xh Ym', () => {
-    const openedAt = new Date(0).toISOString();
-    const now = new Date((2 * 60 + 15) * 60 * 1000); // 2h 15m later
-    expect(formatGateAge(openedAt, now)).toBe('2h 15m');
-  });
-
-  it('formats elapsed time 24 hours or more as Xd Yh', () => {
-    const openedAt = new Date(0).toISOString();
-    const now = new Date((3 * 24 * 60 + 5 * 60) * 60 * 1000); // 3d 5h later
-    expect(formatGateAge(openedAt, now)).toBe('3d 5h');
   });
 });
 
@@ -1102,7 +1082,8 @@ describe('issue #729 — realm run list --stuck names a run that cannot go on, a
     //     the label or its pointer differ; (b) prints the lines.
     expect(out.split('\n').filter((l) => l.includes('run-'))).toEqual([
       expect.stringMatching(
-        /^run-stuck {2}w2 v1 {2}running {2}.+ {2}1 step\(s\) {2}idle: 0m {2}publish=cannot_go_on\(input_schema\) \(realm run inspect run-stuck\)$/,
+        // #715 (b) (03 §B.2 A7): the idle age through the one formatter, its instant beside it.
+        /^run-stuck {2}w2 v1 {2}running {2}.+ {2}1 step\(s\) {2}idle: \d+s ago \(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\) {2}publish=cannot_go_on\(input_schema\) \(realm run inspect run-stuck\)$/,
       ),
     ]);
   });
@@ -1170,9 +1151,9 @@ describe('issue #729 — realm run list --stuck names a run that cannot go on, a
       .find((l) => l.startsWith('run-trust'));
     // (a) red when the trust finding gets a label of its own beside cannot_go_on's, or the run is
     //     not listed; (b) prints what follows `idle:`.
-    expect(line?.replace(/^.* idle: 0m {2}/, '')).toBe(
-      'bad=cannot_go_on(trust) (realm run inspect run-trust)',
-    );
+    expect(
+      line?.replace(/^.* idle: \d+s ago \(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\) {2}/, ''),
+    ).toBe('bad=cannot_go_on(trust) (realm run inspect run-trust)');
   });
 });
 

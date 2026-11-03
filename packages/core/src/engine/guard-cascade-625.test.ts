@@ -158,6 +158,10 @@ async function withStore<T>(fn: (store: JsonFileStore) => Promise<T>): Promise<T
 
 /** Creates a run and opens the gate on `confirm`. Returns the run id, the gate id and an instant
  *  past the gate's expiry (meaningful only for an expiring gate). */
+/** #715 (b) (D6-72 (c)): the question's deadline, a minute before `afterExpiry` (`openGate`'s). */
+const deadlineOf = (afterExpiry: Date): string =>
+  new Date(afterExpiry.getTime() - 60_000).toISOString();
+
 async function openGate(
   store: RunStore,
   def: WorkflowDefinition,
@@ -873,7 +877,7 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
           now: new Date(),
         }),
       ).toEqual([
-        `⚠ ${expiryCarriedOutLine(gateId, 'confirm', { on_expiry: 'settle_default', choice: 'reject' }, 'submitHumanResponse', { ms: 60_000 })}`,
+        `⚠ ${expiryCarriedOutLine(gateId, 'confirm', { on_expiry: 'settle_default', choice: 'reject' }, 'submitHumanResponse', { ms: 60_000 }, deadlineOf(afterExpiry))}`,
         LATE_SAME_CHOICE,
         "Guard step 'check' aborted the run.",
         'Reason: Not approved (timed out to reject).',
@@ -919,7 +923,7 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
           now: new Date(),
         }),
       ).toEqual([
-        `⚠ ${expiryCarriedOutLine(gateId, 'confirm', { on_expiry: 'settle_default', choice: 'reject' }, 'submitHumanResponse', { ms: 60_000 })}`,
+        `⚠ ${expiryCarriedOutLine(gateId, 'confirm', { on_expiry: 'settle_default', choice: 'reject' }, 'submitHumanResponse', { ms: 60_000 }, deadlineOf(afterExpiry))}`,
         refusal,
         "Guard step 'check' aborted the run.",
         'Reason: Not approved (timed out to reject).',
@@ -963,7 +967,7 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
           now: new Date(),
         }),
       ).toEqual([
-        `⚠ ${expiryCarriedOutLine(same.gateId, 'confirm', { on_expiry: 'settle_default', choice: 'approve' }, 'submitHumanResponse', { ms: 60_000 })}`,
+        `⚠ ${expiryCarriedOutLine(same.gateId, 'confirm', { on_expiry: 'settle_default', choice: 'approve' }, 'submitHumanResponse', { ms: 60_000 }, deadlineOf(same.afterExpiry))}`,
         LATE_SAME_CHOICE,
         "Guard step 'check' passed.",
       ]);
@@ -994,7 +998,7 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
           now: new Date(),
         }),
       ).toEqual([
-        `⚠ ${expiryCarriedOutLine(other.gateId, 'confirm', { on_expiry: 'settle_default', choice: 'approve' }, 'submitHumanResponse', { ms: 60_000 })}`,
+        `⚠ ${expiryCarriedOutLine(other.gateId, 'confirm', { on_expiry: 'settle_default', choice: 'approve' }, 'submitHumanResponse', { ms: 60_000 }, deadlineOf(other.afterExpiry))}`,
         `Gate '${other.gateId}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.`,
         "Guard step 'check' passed.",
       ]);

@@ -158,6 +158,7 @@ describe('#625 PR-2a, C133/C134/C135/C136 — the caller, the opener, what a ref
           { on_expiry: 'settle_default', choice: 'approve' },
           caller,
           { ms: 5_000 },
+          new Date(past.getTime() - 5_000).toISOString(),
         ),
         phase: 'completed',
       });
@@ -343,6 +344,7 @@ describe('#625 PR-2a, C133/C134/C135/C136 — the caller, the opener, what a ref
           { on_expiry: 'settle_default', choice: 'approve' },
           'executeStep',
           { ms: 5_000 },
+          new Date(past.getTime() - 5_000).toISOString(),
         ),
       ],
     });

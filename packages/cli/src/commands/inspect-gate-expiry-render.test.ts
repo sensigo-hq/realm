@@ -12,6 +12,7 @@ import type {
   PendingGate,
 } from '@sensigo/realm';
 import { snap, listing, doubleClock, noSettle } from '../test-support/snapshot-double.js';
+import { zOf } from '../test-support/instant.js';
 
 function makeRun(overrides: Partial<RunRecord> = {}): RunRecord {
   return {
@@ -150,8 +151,11 @@ describe('inspectRun — Gate: line (issue #291)', () => {
       }),
     });
     const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore());
+    // #715 (b) (Amendment 9, commit 3): the next occurrence's instant through the one formatter —
+    // an hour after the opening, at the reading "in 59m" — beside the words.
+    const next = Date.parse(run.pending_gate!.opened_at) + 3_600_000;
     expect(result).toContain(
-      ', next reminder: 1 of 3 scheduled (no send is recorded; reminders are sent only while a process attends this question)',
+      `, next reminder: 1 of 3 scheduled in 59m (${zOf(next)}) (no send is recorded; reminders are sent only while a process attends this question)`,
     );
     expect(result).not.toMatch(/reminder (due|overdue)/);
   });

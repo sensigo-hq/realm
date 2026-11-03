@@ -109,7 +109,7 @@ describe('#625 PR-2a, C144/C149/C151 — each call names itself; the suggestion 
     if (opened.status !== 'confirm_required') throw new Error(`fixture: ${opened.status}`);
     const gate = (await store.get(run.id)).record.pending_gate!;
     const past = new Date(new Date(gate.expires_at!).getTime() + 5_000);
-    return { runId: run.id, gateId: gate.gate_id, past };
+    return { runId: run.id, gateId: gate.gate_id, past, expiresAt: gate.expires_at! };
   }
 
   // C144: each entry's refusal of a word outside its own list.
@@ -359,8 +359,9 @@ describe('#625 PR-2a, C144/C149/C151 — each call names itself; the suggestion 
       `C151, W5-Y2: %s carries out an expired ${onExpiry} — the line names %s, and the record holds no enacted_via`,
       async (_label, via, carry) => {
         const d = gated(onExpiry);
-        const { runId, gateId, past } = await atQuestion(d);
+        const { runId, gateId, past, expiresAt } = await atQuestion(d);
         const reply = await carry(store, d, runId, gateId, past);
+        // #715 (b) (D6-72 (c)): the lag carries its deadline.
         const line = expiryCarriedOutLine(
           gateId,
           'q',
@@ -369,6 +370,7 @@ describe('#625 PR-2a, C144/C149/C151 — each call names itself; the suggestion 
             : { on_expiry: 'abort' },
           via,
           { ms: 5_000 },
+          expiresAt,
         );
         // (a) red when the function names another call (the MCP tool's, as before C151) or its
         // default is lost; (b) prints the reply's warnings.

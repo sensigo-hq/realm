@@ -11,7 +11,7 @@ import type { RunRecord, StepDefinition, InProgressClaimInfo, ReclaimResult } fr
 import { parseDuration } from '../lib/parse-duration.js';
 import { listRunsDiagnosed, unreadableRunLines } from './list.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
-import { overdueOf, parseStamp } from '@sensigo/realm';
+import { formatInstantWords, overdueOf } from '@sensigo/realm';
 import { openRunStore } from '../lib/run-store.js';
 
 /**
@@ -204,11 +204,12 @@ export const reclaimCommand = new Command('reclaim')
             `${selected.length} claim(s) WOULD be auto-reclaimed (idempotent ∧ past-deadline ∧ non-gated):`,
           );
           for (const { runId: rid, claim, at } of selected) {
-            const ageMin = Math.round(
-              (at.getTime() - (parseStamp(claim.deadline!) ?? NaN)) / 60_000,
-            );
+            // #715 (b) (03 §B.2 A13): how far past its deadline, through the one formatter at this
+            // row's reading (a selected claim's deadline is concrete and past); the stored string
+            // stays beside the words.
+            const pastWords = formatInstantWords(claim.deadline!, 'deadline', at);
             console.log(
-              `  • ${rid} / ${claim.step}  (deadline ${claim.deadline}, ${ageMin}m past)`,
+              `  • ${rid} / ${claim.step}  (deadline ${claim.deadline}${pastWords !== undefined ? `, ${pastWords}` : ''})`,
             );
           }
           console.log(

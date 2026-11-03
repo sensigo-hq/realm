@@ -31,6 +31,7 @@ import {
   computeGateDueState,
   reminderScheduleOf,
   reminderScheduleWords,
+  formatInstantWords,
   getWorkflowForRun,
   composeStepViews,
   composeDriveFailureCosts,
@@ -64,7 +65,6 @@ import {
 // auto-registered anywhere by being imported). Reused so inspect's never_claimed_idle age
 // rendering matches `realm run list --stuck`'s own `idle: <age>` humanization exactly, rather
 // than re-implementing a second formatter.
-import { formatGateAge } from './list.js';
 import { agentReadyReason } from './run-advance.js';
 import type {
   RunStore,
@@ -1437,8 +1437,13 @@ export async function inspectRun(
   for (const step of run.in_progress_steps) {
     const described = describeClaimHolder(run.claims?.[step], store.persistsClaims === true);
     const verb = isQuestionStepId(step) ? 'question opened through' : 'taken by';
-    const sinceMs = described.since !== undefined ? Date.parse(described.since) : Number.NaN;
-    const age = Number.isFinite(sinceMs) ? `, ${formatGateAge(described.since!)} ago` : '';
+    // #715 (b) (03 §B.2 A1): the claim's age through the one formatter, at this read's reading, with
+    // its instant beside it; a stamp that does not parse prints no age.
+    const sinceWords =
+      described.since !== undefined
+        ? formatInstantWords(described.since, 'past_event', runAt)
+        : undefined;
+    const age = sinceWords !== undefined ? `, ${sinceWords}` : '';
     // An unreadable name keeps the verb ("taken by a recorded name that cannot be printed …"); the
     // other absences are whole sentences of their own.
     const body =
@@ -1479,14 +1484,18 @@ export async function inspectRun(
     // issue #406: the gate id is on the line because `realm run respond --gate <gate-id>` needs
     // it, and the --stuck label now points an operator here to get it. The drive-time surfaces
     // that already print it are the ones a stuck run no longer has.
-    let gateLine = `Gate: ${gate.step_name} (gate ${gate.gate_id}, opened ${formatGateAge(gate.opened_at)} ago)`;
+    // #715 (b) (03 §B.2 A2, A3): the opening's age and the expiry through the one formatter, at this
+    // read's reading, each with its instant beside it.
+    const openedWords = formatInstantWords(gate.opened_at, 'past_event', runAt);
+    let gateLine = `Gate: ${gate.step_name} (gate ${gate.gate_id}${openedWords !== undefined ? `, opened ${openedWords}` : ''})`;
     if (due.expired) {
-      gateLine += ` — EXPIRED ${formatGateAge(gate.expires_at!)} ago`;
+      const expiredWords = formatInstantWords(gate.expires_at!, 'deadline', runAt);
+      if (expiredWords !== undefined) gateLine += ` — ${expiredWords}`;
     }
     // #715 (b) (02 §D.3, Amendment 9): the authored reminder SCHEDULE, from the one core function, at
     // this read's reading — never "due" or "overdue": no send is recorded on the run.
     const reminders = reminderScheduleOf(writtenSnapshot(run, runAt));
-    if (reminders !== undefined) gateLine += `, ${reminderScheduleWords(reminders)}`;
+    if (reminders !== undefined) gateLine += `, ${reminderScheduleWords(reminders, runAt)}`;
     lines.push(gateLine);
     // issue #406: the OTHER argument `realm run respond` requires. Rendered from
     // `run.pending_gate.choices`, which is the same source BOTH validation sites read
@@ -1536,10 +1545,12 @@ export async function inspectRun(
       // append the humanized age (matches list --stuck's own `idle: <age>` rendering). Other kinds'
       // reason text is already complete on its own. `eligible_steps` evidence stays data-only (a
       // named residual in the record) — deliberately NOT rendered here.
-      const idleSuffix =
+      // #715 (b) (03 §B.2 A6): the last write's age through the one formatter, with its instant.
+      const idleWords =
         f.kind === 'never_claimed_idle' && f.since !== undefined
-          ? ` ${formatGateAge(f.since)}`
-          : '';
+          ? formatInstantWords(f.since, 'past_event', runAt)
+          : undefined;
+      const idleSuffix = idleWords !== undefined ? `, last written ${idleWords}` : '';
       // G7: a damaged copy's finding carries its repair command, printed whole.
       const reason =
         f.kind === 'definition_unresolvable'
