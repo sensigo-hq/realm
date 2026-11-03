@@ -157,7 +157,7 @@ cache: review_changes — 1,010 chars ≈ 220–297 tokens (estimate: 4 chars/to
 With `--registered`, the sizes come from the profile text stored in the copy, not from the profile files now in the workflow's folder. After you edit a profile, register again to update the copy. When a profile file in the folder differs from the copy's text, `validate --registered` prints one line after the cache lines, naming each such profile once:
 
 ```text
-ℹ profile text differs from the registered copy for: p — this check used the copy's text; register again to update it
+ℹ profile text in the folder differs from the registered copy for: p — register again to update the copy
 ```
 
 A difference in line endings counts. The line is not in `--json`, `REALM_NO_NUDGE=1` leaves it out, and it changes neither the exit code nor `--strict`. The command reads the workflow's folder for the loader's checks, and the project's folder for the project-extension check and, when `--model` is given, for the economics file.

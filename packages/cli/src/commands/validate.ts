@@ -994,7 +994,7 @@ function profileDriftNote(
     return fromFolder !== undefined && fromCopy !== undefined && fromFolder !== fromCopy;
   });
   return differing.length > 0
-    ? `ℹ profile text differs from the registered copy for: ${differing.join(', ')} — this check used the copy's text; register again to update it`
+    ? `ℹ profile text in the folder differs from the registered copy for: ${differing.join(', ')} — register again to update the copy`
     : undefined;
 }
 

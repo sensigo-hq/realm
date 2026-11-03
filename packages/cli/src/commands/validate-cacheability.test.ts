@@ -1609,8 +1609,11 @@ describe(
     // from the alphabetical one. Every call shows ℹ lines (REALM_NO_NUDGE 0) except cell 8's. Each cell
     // (a) names the change that turns it red, (b) prints the note lines and the exit, the scratch folder
     // written `<dir>`.
+    // D1 correction (C-2): the note claims only that the texts differ, and what to do; it no longer
+    // says "this check used the copy's text", which was false for a profile no sized step uses (cell 12).
+    // (a) red when the printed note differs from these words (cells 1, 9, 11 compare against them).
     const NOTE = (names: string): string =>
-      `ℹ profile text differs from the registered copy for: ${names} — this check used the copy's text; register again to update it`;
+      `ℹ profile text in the folder differs from the registered copy for: ${names} — register again to update the copy`;
     const SHOW = { REALM_NO_NUDGE: '0' };
     function drift(extra = ''): { dir: string; registered: string[] } {
       const dir = project({
@@ -1785,6 +1788,49 @@ describe(
       writeFileSync(file, readFileSync(file, 'utf8').replace(/\n/g, '\r\n'));
       const v = validate();
       expect({ notes: v.notes, lines: v.lines }).toEqual({ notes: [NOTE('a')], lines: registered });
+    });
+
+    // (12) D1 correction (C-2): profile `t` is named only by a step that calls tools, so no step is sized
+    // with it. `t.md` is edited, not registered again: the tools step is not judged, and the note still
+    // names `t` (its text in the folder differs from the copy's). Then the folder is registered again,
+    // and the audit prints no note and the lines `register` printed: what the note says to do works.
+    // Breaks: the names filtered to sized steps (first half: no note); the note always printed when both
+    // sides hold the name (second half: a note after registering again). (a) red on either; (b) prints
+    // the lines and the notes of both runs, the scratch folder written `<dir>`.
+    it("G-5 (12): a profile named only by a tools step, edited: the note names it; after registering again, no note and register's lines", () => {
+      const dir = project({
+        workflow:
+          'id: tooled\nname: tooled\nversion: 1\n' +
+          "mcp_servers:\n  - id: gh\n    transport: stdio\n    command: npx\n    args: ['-y', 'some-server']\n" +
+          'steps:\n' +
+          '  mid:\n    description: m\n    execution: agent\n    prompt: Do it.\n    agent_profile: t\n' +
+          "    tools:\n      - 'gh:get_thing'\n" +
+          '    input_schema:\n      type: object\n      properties:\n        answer: { type: string }\n',
+        profiles: { 't.md': 'You use tools with care.' },
+      });
+      expect(realm(['workflow', 'register', dir]).code).toBe(0);
+      append(dir, 't.md');
+      const audit = (): { notes: string[]; lines: string[] } => {
+        const r = realm(['workflow', 'validate', '--registered', 'tooled'], SHOW);
+        return {
+          notes: hide(r.stdout)
+            .split('\n')
+            .filter((l) => l.startsWith('ℹ')),
+          lines: cacheLines(r.stdout),
+        };
+      };
+      const edited = audit();
+      const again = realm(['workflow', 'register', dir]);
+      const after = audit();
+      expect({ edited, after }).toEqual({
+        edited: {
+          notes: [NOTE('t')],
+          lines: [
+            "cache: mid — uses tools: each tool's definition comes from its MCP server at run time, so the request cannot be measured before a run: not judged",
+          ],
+        },
+        after: { notes: [], lines: cacheLines(again.stdout) },
+      });
     });
   },
 );
