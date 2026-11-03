@@ -3,10 +3,17 @@
 // the `drive_failing` finding can tell whether anything was recorded since without comparing stamps.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { describe, expect, it } from 'vitest';
-import type { EvidenceSnapshot, RunRecord } from '@sensigo/realm';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  CURRENT_WORKFLOW_SCHEMA_VERSION,
+  createDefaultRegistry,
+  type EvidenceSnapshot,
+  type RunRecord,
+} from '@sensigo/realm';
+import { InMemoryStore, settableClock } from '@sensigo/realm-testing';
 import { recordDriveFailure } from './drive-failure.js';
+import { runAgent } from './run-agent.js';
+import { LlmProvider } from './providers/llm-provider.js';
 
 const T = '2026-10-30T10:00:00.000Z';
 
@@ -50,5 +57,55 @@ describe('#715 (b) §D.2 — a failed drive records its fence in the write that 
       { evidence_count: 0, gate_id: undefined },
       { evidence_count: 1, gate_id: 'g-fence' },
     ]);
+  });
+});
+
+describe('#715 (b) §D.2 — a drive failure’s instant is the store’s clock (census class `event`)', () => {
+  it('a provider that throws: the run’s drive_failures entry is stamped at the store’s reading (2030), not the host’s', async () => {
+    // (a) red when the drive stamps the entry with `new Date()` (today: the host's clock); (b) prints
+    //     the entry's `at` and the first failure's.
+    const def = {
+      id: 'drive-at-715b',
+      name: 'drive-at-715b',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: { draft: { description: 'Draft.', execution: 'agent' as const, depends_on: [] } },
+    };
+    const clock = settableClock(new Date('2030-01-01T00:00:00.000Z'));
+    const store = new InMemoryStore({ clock });
+    const provider = new (class extends LlmProvider {
+      callStep = vi
+        .fn()
+        .mockRejectedValue(Object.assign(new Error('rate limited'), { status: 429 }));
+    })();
+    for (const kind of ['log', 'error', 'warn'] as const)
+      vi.spyOn(console, kind).mockImplementation(() => {});
+    try {
+      await runAgent(
+        {
+          store,
+          workflowStore: {
+            async register() {},
+            async get() {
+              return def;
+            },
+            async list() {
+              return [def];
+            },
+          },
+          provider,
+          registry: createDefaultRegistry(),
+        },
+        { definition: def, params: {} },
+      );
+    } finally {
+      vi.restoreAllMocks();
+    }
+    const runs = (await store.list()).snapshots.map((s) => s.record as RunRecord);
+    const field = runs[0]?.drive_failures;
+    expect({ at: field?.entries[0]?.at, first: field?.first_failed_at }).toEqual({
+      at: '2030-01-01T00:00:00.000Z',
+      first: '2030-01-01T00:00:00.000Z',
+    });
   });
 });

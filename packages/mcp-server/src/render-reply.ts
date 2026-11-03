@@ -267,7 +267,8 @@ export const POLL_FLOOR_MS = 1_000;
 
 /**
  * #715 (b) (03 §C, D6-71 (d)): the longest `poll_after_ms`. A deadline further away hands the agent
- * the instant (`until`, and the await entry's "the run waits until …") — never a long interval.
+ * the instant (`until`, and the await entry's "this question expires …, too far to wait for here")
+ * — never a longer interval (Amendment 12b).
  */
 export const POLL_CAP_MS = 300_000;
 
@@ -514,28 +515,40 @@ function handedOffOrientation(way: Pick<RespondWay, 'gate_id' | 'step'>): string
 
 /**
  * #627 W: the await entry's pacing clause; its time clause iff the question has a deadline (cell 15).
- * #715 (b) (03 §C (d), D6-71): the deadline is named through the one formatter at the reply's reading,
- * and a question that changes the run further away than {@link POLL_CAP_MS} hands over the instant:
- * the run waits until then, and the user is told to come back then.
+ * #715 (b) (03 §C (d), D6-71; Amendment 12b): one instant per noun. The clause is keyed on whether the
+ * question's own stored stamp IS the reply's `until` (string equality: both are the stored stamp,
+ * never re-formatted) — `until` is the earliest deadline that paces the reply (`paceOf`), which a
+ * held step's or another question's deadline may set:
+ * 1. no deadline, or one that does not parse: the pace alone;
+ * 2. the question's stamp is `until`: (a) "when until passes (<words>)"; (b) the hand-over, when the
+ *    question declares `on_expiry` and expires further away than {@link POLL_CAP_MS} — "this question
+ *    expires <words>, too far to wait for here: tell the user to come back then";
+ * 3. it is not: "this question's own deadline is <words>, not the instant in until" — never the
+ *    hand-over (another deadline paces the poll; the hand-over appears when the question becomes the
+ *    pace).
+ * <words>: the one formatter at the reply's reading; with no reading, the stored stamp itself (2a keeps
+ * no parenthesis then, as before).
  */
 function pacingClause(
   way: Pick<RespondWay, 'expires_at' | 'on_expiry'>,
   basis: Basis | undefined,
+  until: string | undefined,
 ): string {
-  if (way.expires_at === undefined) return 'Check again no sooner than poll_after_ms.';
+  const deadlineMs = way.expires_at !== undefined ? parseStamp(way.expires_at) : undefined;
+  if (way.expires_at === undefined || deadlineMs === undefined) {
+    return 'Check again no sooner than poll_after_ms.';
+  }
   const asOf = basis !== undefined ? parseStamp(basis.as_of) : undefined;
   const at = asOf !== undefined ? new Date(asOf) : undefined;
   const words = at !== undefined ? formatInstantWords(way.expires_at, 'deadline', at) : undefined;
-  const named = words !== undefined ? ` (${words})` : '';
-  const deadlineMs = parseStamp(way.expires_at);
+  if (way.expires_at !== until) {
+    return `Check again no sooner than poll_after_ms; this question's own deadline is ${words ?? way.expires_at}, not the instant in until: when it passes, tell the user.`;
+  }
   const handsOver =
-    way.on_expiry !== undefined &&
-    at !== undefined &&
-    deadlineMs !== undefined &&
-    deadlineMs - at.getTime() > POLL_CAP_MS;
+    way.on_expiry !== undefined && at !== undefined && deadlineMs - at.getTime() > POLL_CAP_MS;
   return handsOver
-    ? `Check again no sooner than poll_after_ms; the run waits until until${named}: tell the user to come back then.`
-    : `Check again no sooner than poll_after_ms; when until passes${named}, tell the user.`;
+    ? `Check again no sooner than poll_after_ms; this question expires ${words ?? way.expires_at}, too far to wait for here: tell the user to come back then.`
+    : `Check again no sooner than poll_after_ms; when until passes${words !== undefined ? ` (${words})` : ''}, tell the user.`;
 }
 
 /** `1 time`, `2 times`. */
@@ -547,7 +560,12 @@ const times = (n: number): string => `${n} ${n === 1 ? 'time' : 'times'}`;
  * door's facts, never what the person saw); under `withheld`, W-a1 on a reply that carries the
  * question's `gate`, else W-a2. No text names a tool that answers, or a person; no claim token.
  */
-function awaitEntryOf(way: RespondWay, basis: Basis | undefined, host: McpHost): McpNextAction {
+function awaitEntryOf(
+  way: RespondWay,
+  basis: Basis | undefined,
+  host: McpHost,
+  until: string | undefined,
+): McpNextAction {
   const awaiting: McpAwaiting = {
     run_id: way.run_id,
     gate_id: way.gate_id,
@@ -555,7 +573,7 @@ function awaitEntryOf(way: RespondWay, basis: Basis | undefined, host: McpHost):
     choices: [...way.choice.one_of],
     ...(way.expires_at !== undefined ? { expires_at: way.expires_at } : {}),
   };
-  const pacing = pacingClause(way, basis);
+  const pacing = pacingClause(way, basis, until);
   let words: string;
   if (answersRowOf(host.answers) === 'asked_forms') {
     const facts = host.formFacts?.(way.gate_id);
@@ -672,6 +690,7 @@ function nextActionsOf(
   narrowed: Narrowed | undefined,
   basis: Basis | undefined,
   host: McpHost,
+  until: string | undefined,
 ): McpNextAction[] {
   const progress = agentProgressWays(narrowed);
   const entries: { rank: number; entry: McpNextAction | null }[] = [
@@ -679,7 +698,10 @@ function nextActionsOf(
       rank: w.verb === 'run_step' ? 0 : w.verb === 'respond' ? 1 : 3,
       entry: renderWay(w, basis, host),
     })),
-    ...handedOffWays(narrowed).map((w) => ({ rank: 1, entry: awaitEntryOf(w, basis, host) })),
+    ...handedOffWays(narrowed).map((w) => ({
+      rank: 1,
+      entry: awaitEntryOf(w, basis, host, until),
+    })),
     ...presentWays(narrowed).map((w) => ({ rank: 2, entry: renderWay(w, basis, host) })),
   ];
   return entries
@@ -1157,7 +1179,11 @@ export function renderReply(reply: EngineReply, hostIn: McpHost): RenderedReply 
       : hostIn;
   const narrowed = narrowReply(reply, host);
   const progress = agentProgressWays(narrowed);
-  const next_actions = nextActionsOf(narrowed, reply.basis, host);
+  // #715 (b) (03 §C, D6-71): the pace from the record's deadlines, at the reply's one reading — its
+  // `until` keys each await entry's clause (Amendment 12b), so it is the one the reply carries.
+  const asOf = narrowed !== undefined ? parseStamp(narrowed.basis.as_of) : undefined;
+  const paceAtReading = paceOf(narrowed, asOf !== undefined ? new Date(asOf) : undefined);
+  const next_actions = nextActionsOf(narrowed, reply.basis, host, paceAtReading.until);
   // #627 W: an await entry is paced wherever it renders — on a `confirm_required` reply too, whose
   // `agent_action` D-8 leaves unset (its text tells the agent to wait poll_after_ms).
   const awaits = handedOffWays(narrowed).length > 0;
@@ -1179,11 +1205,7 @@ export function renderReply(reply: EngineReply, hostIn: McpHost): RenderedReply 
   const rendered = renderedListOf(reply, narrowed, progress);
   const agentAction = agentActionOf(reply.intrinsic_action, reply.reply_kind, rendered);
   const paced = agentAction === 'await' || awaits;
-  // #715 (b) (03 §C, D6-71): the pace from the record's deadlines, at the reply's one reading.
-  const asOf = narrowed !== undefined ? parseStamp(narrowed.basis.as_of) : undefined;
-  const pace = paced
-    ? paceOf(narrowed, asOf !== undefined ? new Date(asOf) : undefined)
-    : undefined;
+  const pace = paced ? paceAtReading : undefined;
   const details = errorDetailsOf(reply);
   const {
     ways: _ways,
@@ -1389,7 +1411,11 @@ export function renderWaysOf(
   } as EngineReply;
   const narrowed = narrowReply(reply, host);
   const progress = agentProgressWays(narrowed);
-  const next_actions = nextActionsOf(narrowed, composed.basis, host);
+  // #715 (b) (03 §C; Amendment 12b): the pace at the composition's reading (`basis.as_of`); its
+  // `until` keys each await entry's clause.
+  const asOf = composed.basis !== undefined ? parseStamp(composed.basis.as_of) : undefined;
+  const pace = paceOf(narrowed, asOf !== undefined ? new Date(asOf) : undefined);
+  const next_actions = nextActionsOf(narrowed, composed.basis, host, pace.until);
   const also = (narrowed?.ways ?? [])
     .filter((w) => (w.verb === 'inspect' || w.verb === 'abandon') && forAgent(w))
     .map((w) => ({
@@ -1408,8 +1434,6 @@ export function renderWaysOf(
     human_readable: elsewhereWords(u, host),
   }));
   const rendered = renderedListOf(reply, narrowed, progress);
-  const asOf = composed.basis !== undefined ? parseStamp(composed.basis.as_of) : undefined;
-  const pace = paceOf(narrowed, asOf !== undefined ? new Date(asOf) : undefined);
   const person = personBlockOf(elsewhereEntries, composed.basis, host);
   return {
     narrowed,

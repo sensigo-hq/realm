@@ -662,9 +662,10 @@ describe('#627 W — the await entry: a question answered outside this conversat
     const bareGate = (await bare.runStore.get(bareRun)).record.pending_gate!;
     // #715 (b) (03 §C, D6-71 (d)): the question declares on_expiry and its deadline is further away
     // than the cap, so the pace is the cap and the entry hands over the instant — named through the
-    // one formatter at each reply's own reading (`basis.as_of`).
+    // one formatter at each reply's own reading (`basis.as_of`). #715 (b) Amendment 12b, branch 2b
+    // (re-pinned: was "the run waits until until (…)"): the question's stamp IS `until`.
     const handsOver = (r: Reply, expiresAt: string) =>
-      `Check again no sooner than poll_after_ms; the run waits until until (${formatInstantWords(expiresAt, 'deadline', new Date((r['basis'] as { as_of: string }).as_of))}): tell the user to come back then.`;
+      `Check again no sooner than poll_after_ms; this question expires ${formatInstantWords(expiresAt, 'deadline', new Date((r['basis'] as { as_of: string }).as_of))}, too far to wait for here: tell the user to come back then.`;
     // (a) red when an answer call or a token reaches the reply, the gate's reply reads W-a2, the
     //     pace is missing on the reply that opened the question, or `until` is not the deadline;
     //     (b) prints the entries' texts and the pace.
@@ -892,11 +893,12 @@ describe('#627 W — the await entry: a question answered outside this conversat
     const entry = rendered.next_actions.find((e) => e.awaiting !== undefined);
     // Run first (MA 3's hypothesis, confirmed): the question's own deadline stays on its entry —
     // `awaiting.expires_at` and the entry's words, at the reply's reading — while `until` and the
-    // pace are the claim's. (Reported: the entry's clause says "when until passes" beside the
-    // question's instant, and the reply's `until` is the claim's later one.)
-    // (a) red when the report-only deadline pulls the pace in, or the question's own deadline is
-    //     no longer on its entry (neither in `awaiting.expires_at` nor in its words); (b) prints the
-    //     pace, until, the entry's deadline and the tail of its words.
+    // pace are the claim's. #715 (b) Amendment 12b, branch 3 (re-pinned: was "when until passes
+    // (<the question's words>)", one word for two instants): the stamp is not `until`, so the
+    // question's deadline is named as its own, and the cell reads both to see they differ.
+    // (a) red when the report-only deadline pulls the pace in, the question's own deadline is no
+    //     longer on its entry (neither in `awaiting.expires_at` nor in its words), or the clause says
+    //     "when until passes" again; (b) prints the pace, until, the entry's deadline and the tail.
     expect({
       pace: [rendered.poll_after_ms, rendered.poll_reason, rendered.until],
       entryDeadline: entry?.awaiting?.expires_at,
@@ -904,7 +906,147 @@ describe('#627 W — the await entry: a question answered outside this conversat
     }).toEqual({
       pace: [90_000, 'claim_deadline', claimDeadline],
       entryDeadline: questionDeadline,
-      tail: `Check again no sooner than poll_after_ms; when until passes (${formatInstantWords(questionDeadline, 'deadline', new Date(asOf))}), tell the user.`,
+      tail: `Check again no sooner than poll_after_ms; this question's own deadline is ${formatInstantWords(questionDeadline, 'deadline', new Date(asOf))}, not the instant in until: when it passes, tell the user.`,
+    });
+    expect(rendered.until !== entry?.awaiting?.expires_at).toBe(true);
+  });
+
+  // #715 (b) Amendment 12b — the await entry's clause, one instant per noun, keyed on whether the
+  // question's own stored stamp IS the reply's `until` (string equality). Constructed replies (the
+  // engine opens no question beside a held claim in one call), as the Q-7 cell above: the opening
+  // reply's ways with the question's deadline and `on_expiry` set, and optionally a step another
+  // program holds. Each cell: (a) red when its branch's sentence changes (the three truths), the
+  // clause is keyed on the old rule ("when until passes" always), or the hand-over loses its `!==`
+  // test; (b) prints until, the question's stamp, and the tail of the entry's words.
+  async function clauseOf(question: { inMs: number; onExpiry: boolean }, claimInMs?: number) {
+    const s = await session({ gateAnswers: 'withheld' });
+    const def = await registered(s, { side: true });
+    const { record: run } = await s.runStore.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const opening = await advanceRun(s.runStore, def, { runId: run.id });
+    const asOf = Date.parse(opening.basis!.as_of);
+    const stamp = new Date(asOf + question.inMs).toISOString();
+    const mixed = {
+      ...opening,
+      ways: opening.ways.map((w) =>
+        w.verb === 'respond'
+          ? { ...w, expires_at: stamp, on_expiry: question.onExpiry ? 'abort' : undefined }
+          : w,
+      ),
+      unavailable: [
+        ...opening.unavailable,
+        ...(claimInMs !== undefined
+          ? [
+              {
+                verb: 'run_step',
+                code: 'held_elsewhere',
+                step: 'side',
+                facts: { holder: 'another program' },
+                clears_at: new Date(asOf + claimInMs).toISOString(),
+                remedy: [],
+              },
+            ]
+          : []),
+      ],
+    } as unknown as EngineReply;
+    const rendered = renderReply(mixed, {
+      answers: {
+        value: 'withheld',
+        source: { kind: 'default', ref: 'test' },
+        forms: { shown: false, source: { kind: 'negotiated', ref: 'test' } },
+      },
+    }).envelope;
+    const entry = rendered.next_actions.find((e) => e.awaiting !== undefined)!;
+    const words = formatInstantWords(stamp, 'deadline', new Date(asOf)) ?? stamp;
+    return {
+      until: rendered.until,
+      stamp: entry.awaiting?.expires_at,
+      tail: entry.human_readable.slice(entry.human_readable.indexOf('Check again')),
+      words,
+    };
+  }
+
+  it('#715 (b) Amendment 12b, branch 2a: an on_expiry question within the cap, and a report-only question with nothing pacing — until IS its stamp: "when until passes (<words>)"', async () => {
+    const onExpiry = await clauseOf({ inMs: 45_000, onExpiry: true });
+    const reportOnly = await clauseOf({ inMs: 45_000, onExpiry: false });
+    expect({
+      onExpiry: [onExpiry.until === onExpiry.stamp, onExpiry.tail],
+      reportOnly: [reportOnly.until === reportOnly.stamp, reportOnly.tail],
+    }).toEqual({
+      onExpiry: [
+        true,
+        `Check again no sooner than poll_after_ms; when until passes (${onExpiry.words}), tell the user.`,
+      ],
+      reportOnly: [
+        true,
+        `Check again no sooner than poll_after_ms; when until passes (${reportOnly.words}), tell the user.`,
+      ],
+    });
+  });
+
+  it('#715 (b) Amendment 12b, branch 2b: an on_expiry question beyond the cap, nothing earlier — until IS its stamp: the hand-over', async () => {
+    const far = await clauseOf({ inMs: 2 * 3_600_000, onExpiry: true });
+    expect([far.until === far.stamp, far.tail]).toEqual([
+      true,
+      `Check again no sooner than poll_after_ms; this question expires ${far.words}, too far to wait for here: tell the user to come back then.`,
+    ]);
+  });
+
+  it('#715 (b) Amendment 12b, branch 3: a claim earlier than an on_expiry question, and a claim earlier than a report-only question — until is the claim’s: the question’s own deadline, named as its own', async () => {
+    const onExpiry = await clauseOf({ inMs: 120_000, onExpiry: true }, 60_000);
+    const reportOnly = await clauseOf({ inMs: 120_000, onExpiry: false }, 60_000);
+    const own = (w: string) =>
+      `Check again no sooner than poll_after_ms; this question's own deadline is ${w}, not the instant in until: when it passes, tell the user.`;
+    expect({
+      onExpiry: [onExpiry.until !== onExpiry.stamp, onExpiry.tail],
+      reportOnly: [reportOnly.until !== reportOnly.stamp, reportOnly.tail],
+    }).toEqual({
+      onExpiry: [true, own(onExpiry.words)],
+      reportOnly: [true, own(reportOnly.words)],
+    });
+  });
+
+  it('#715 (b) Amendment 12b, branch 3, no hand-over: an on_expiry question beyond the cap beside an earlier claim — the claim paces, so the question is named as its own, never handed over', async () => {
+    const beside = await clauseOf({ inMs: 2 * 3_600_000, onExpiry: true }, 60_000);
+    expect([beside.until !== beside.stamp, beside.tail]).toEqual([
+      true,
+      `Check again no sooner than poll_after_ms; this question's own deadline is ${beside.words}, not the instant in until: when it passes, tell the user.`,
+    ]);
+  });
+
+  it('#715 (b) Amendment 12b, branch 3 on the get_run_state door: a question 10 min away (on_expiry) beside a step another program holds for 60 s — until is the claim’s, the entry names the question’s own deadline, no hand-over', async () => {
+    const s = await session({ gateAnswers: 'withheld' });
+    const def = await registered(s, { timed: true, side: true });
+    const { record: created } = await s.runStore.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    await advanceRun(s.runStore, def, { runId: created.id });
+    const { record: atGate, at } = await s.runStore.get(created.id);
+    const claimDeadline = new Date(at.getTime() + 60_000).toISOString();
+    await s.runStore.update({
+      ...atGate,
+      in_progress_steps: [...atGate.in_progress_steps, 'side'],
+      claims: { ...(atGate.claims ?? {}), side: { deadline: claimDeadline, token: 'another' } },
+    } as typeof atGate);
+    const read = await s.call('get_run_state', { run_id: created.id });
+    const entry = (read['next_actions'] as Entry[]).find((a) => a.awaiting !== undefined)!;
+    const stamp = entry.awaiting!.expires_at! as string;
+    const asOf = (read['basis'] as { as_of: string }).as_of;
+    expect({
+      until: read['until'],
+      reason: read['poll_reason'],
+      differ: read['until'] !== stamp,
+      tail: entry.human_readable.slice(entry.human_readable.indexOf('Check again')),
+    }).toEqual({
+      until: claimDeadline,
+      reason: 'claim_deadline',
+      differ: true,
+      tail: `Check again no sooner than poll_after_ms; this question's own deadline is ${formatInstantWords(stamp, 'deadline', new Date(asOf))}, not the instant in until: when it passes, tell the user.`,
     });
   });
 

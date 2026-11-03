@@ -18,6 +18,27 @@ import {
 } from '@sensigo/realm';
 import type { WorkflowDefinition, StepHandler, RunRecord } from '@sensigo/realm';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
+import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
+
+// #715 (b) 04 §D (B4): no cell here waits on the real clock for a question to expire. The run store a
+// cell opens sits at a TEST LOCATION (`located`), and `passes(ms)` moves the clock of every location
+// the cell opened, in place of a real sleep; the in-process server (or a spawned child) reads that
+// clock from the location's file.
+const OPENED: TestLocation[] = [];
+async function located(dir: string): Promise<string> {
+  // A second server on the same folder in one cell shares its location (and its clock).
+  const open = OPENED.find((l) => l.runsDir === join(dir, 'runs'));
+  if (open !== undefined) return open.runsDir;
+  const loc = await createTestLocation({ start: new Date(), root: dir });
+  OPENED.push(loc);
+  return loc.runsDir;
+}
+async function passes(ms: number): Promise<void> {
+  for (const loc of OPENED) await loc.clock.advance(ms);
+}
+afterEach(() => {
+  OPENED.length = 0;
+});
 
 const gateWorkflow: WorkflowDefinition = {
   id: 'respond-test-wf',
@@ -746,7 +767,10 @@ describe('#729 PR-0 correction (C5) — a wrong gate id: the refusal names its w
   } as WorkflowDefinition;
 
   async function stores() {
-    const runStore = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-respond-c5-run-')));
+    // #715 (b) B4: the run store at a test location — a question's time runs out by moving its clock.
+    const runStore = new JsonFileStore(
+      await located(await mkdtemp(join(tmpdir(), 'realm-respond-c5-run-'))),
+    );
     const workflowStore = new JsonWorkflowStore(
       await mkdtemp(join(tmpdir(), 'realm-respond-c5-wf-')),
     );
@@ -830,7 +854,7 @@ describe('#729 PR-0 correction (C5) — a wrong gate id: the refusal names its w
       (await runStore.get(run.id)).record.pending_gate,
       'fixture: the question is open',
     ).toBeDefined();
-    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    await passes(1_100);
     // (a) red when the refusal prints no way on, or offers the answer a question past its time can
     //     no longer take; (b) prints the lines.
     expect(await refusedLines(runStore, workflowStore, run.id)).toEqual([

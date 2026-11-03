@@ -149,6 +149,33 @@ describe('#715 (b) 03 §A.2 — a test location’s clock runs its waiters', () 
     expect({ ran: await within(2_000, () => ran > 0), sunk }).toEqual({ ran: true, sunk: [] });
   }, 15_000);
 
+  it('W7 a clock file unreadable for 50 polls in a row fails every waiter into the sink, once each; none runs', async () => {
+    // (a) red when the waiters wait forever on a file that is gone (the count never reached), or fail
+    //     before 50 polls (at 2 s, 20 polls, the sink must still be empty); (b) prints the runs, the
+    //     sink's message count at 2 s, and the messages with the folder replaced.
+    let ran = 0;
+    const clock = fileClock(path);
+    clock.at(new Date(T + 1_000), () => {
+      ran += 1;
+    });
+    clock.at(new Date(T + 2_000), () => {
+      ran += 1;
+    });
+    await rm(path);
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    const early = sunk.length;
+    await within(10_000, () => sunk.length >= 2);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect({ ran, early, sunk: sunk.map((m) => m.split(dir).join('<dir>')) }).toEqual({
+      ran: 0,
+      early: 0,
+      sunk: [
+        `the test clock file <dir>/${TEST_CLOCK_FILE_NAME} is gone`,
+        `the test clock file <dir>/${TEST_CLOCK_FILE_NAME} is gone`,
+      ],
+    });
+  }, 20_000);
+
   it('W6 a waiter whose `when` is not a valid Date is refused at registration', () => {
     // (a) red when an invalid `when` is accepted; (b) prints the message.
     expect(() => fileClock(path).at(new Date(Number.NaN), () => {})).toThrow(/valid Date/);

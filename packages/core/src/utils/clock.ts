@@ -26,6 +26,27 @@ export interface Clock {
 }
 
 /**
+ * #715 (b) (04 §A.4, B5′, D6-32): the five classes of a clock read — what a run store's clock governs
+ * (`write`, `read`, `event`) and what it does not (`outside`, `duration`). The clock census test
+ * classes every read in the source by them, and the docs table of what the clock governs is generated
+ * from them (`docs/reference/core-library.md`).
+ */
+export const CLOCK_READ_CLASSES = {
+  write:
+    "An instant a write records on the run (`updated_at`, a claim's deadline, an opened question's `opened_at`): the store's reading, taken once inside the write.",
+  read: "The instant every statement about a record a read returns is judged at (`as_of`): the store's reading, taken before the load.",
+  event:
+    "An instant the engine records with what happened (a step's start and end, a drive failure, a guard's evidence): the store's clock, read where it happens.",
+  outside:
+    "An instant compared with nothing on a run (a log line, a signature window, `Retry-After`, a price day): the host's clock, each read named in the census with its reason.",
+  duration:
+    'A duration (elapsed time, a budget, a timeout): the monotonic clock, never compared with an instant.',
+} as const;
+
+/** #715 (b): one of {@link CLOCK_READ_CLASSES}. */
+export type ClockReadClass = keyof typeof CLOCK_READ_CLASSES;
+
+/**
  * The longest single timer a system clock's waiter arms (D6-7). When the timer fires the clock
  * re-reads `now()` and re-arms if `when` is not reached yet, so a forward wall-clock step is noticed
  * within one hop: Node timers run on monotonic loop time, and this re-check is the only way a wall

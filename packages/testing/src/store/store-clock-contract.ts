@@ -31,8 +31,8 @@ import { createTestLocation, type TestLocation } from '../clock/test-location.js
  *   is stamped `min(updated_at, clock + ε)`; behind the clock, the clock.
  * - `READ_AT_CAPPED` (#715 (b), D6-34, Amendment 7) — a read judges its record at
  *   `max(r, min(updated_at, r + ε))`: a record stamped more than ε ahead of the clock is read at
- *   `clock + ε`, one up to ε ahead at its own stamp, one behind at the clock (`get` and `list`; clock
- *   route only). Core's `record_stamped_ahead` finding reads the raw reading back from that `at`: a
+ *   `clock + ε`, one up to ε ahead at its own stamp, one behind at the clock (`get` and `list`; both
+ *   routes: the reading is judged, never counted). Core's `record_stamped_ahead` finding reads the raw reading back from that `at`: a
  *   store whose reads do not cap is not supported by that finding.
  * - `KEYED_CREATE_ORDERS_AFTER_HOLDER` — a superseding keyed create after a backward step below ε, or
  *   at a frozen instant, is stamped at least 1 ms after the run it supersedes.

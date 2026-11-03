@@ -194,12 +194,15 @@ export function buildEntry(
   step: string,
   provider: string,
   attemptStartedAt: number,
+  // #715 (b) (02 §D.2; census class `event`): when the failure happened, on the run store's clock —
+  // the caller reads `store.clock.now()`; the entry is written with it.
+  at: Date,
 ): DriveFailureRecord {
   try {
-    return buildEntryUnsafe(err, step, provider, attemptStartedAt);
+    return buildEntryUnsafe(err, step, provider, attemptStartedAt, at);
   } catch {
     return {
-      at: new Date().toISOString(),
+      at: at.toISOString(),
       step,
       provider,
       error_class: 'other',
@@ -214,10 +217,11 @@ function buildEntryUnsafe(
   step: string,
   provider: string,
   attemptStartedAt: number,
+  at: Date,
 ): DriveFailureRecord {
   const classified = classifyDriveError(err);
   return {
-    at: new Date().toISOString(),
+    at: at.toISOString(),
     step,
     provider,
     message: sanitizeError(err).slice(0, MESSAGE_CAP),

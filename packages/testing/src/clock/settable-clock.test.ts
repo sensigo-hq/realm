@@ -143,6 +143,24 @@ describe('#715 (a) C.2 — settableClock', () => {
     }
   });
 
+  it('C11b #715 (b) 04 §C: the watchdog’s timers are Node’s own even when fake timers were installed before the module loaded (a setup file’s fake)', async () => {
+    // (a) red when the module captures `globalThis.setTimeout` (it would capture the fake); (b)
+    //     prints which of the three identities hold.
+    vi.useFakeTimers();
+    try {
+      vi.resetModules();
+      const mod = await import('./settable-clock.js');
+      const timers = await import('node:timers');
+      expect({
+        set: mod.WATCHDOG_TIMERS.setTimeout === timers.setTimeout,
+        clear: mod.WATCHDOG_TIMERS.clearTimeout === timers.clearTimeout,
+        theGlobalIsFaked: globalThis.setTimeout !== timers.setTimeout,
+      }).toEqual({ set: true, clear: true, theGlobalIsFaked: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('C12 maxFiresPerAdvance ends an advance whose waiter keeps re-registering', async () => {
     // (a) red when this is an infinite loop; (b) prints the message.
     const clock = settableClock(new Date(T), { maxFiresPerAdvance: 3 });

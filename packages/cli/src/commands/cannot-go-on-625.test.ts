@@ -26,6 +26,7 @@ import {
 import { inspectRun } from './inspect.js';
 import { sweepExpiredGates } from './listen.js';
 import { printChildrenWhenATestFails } from '../test-support/child-output.js';
+import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 if (!existsSync(CLI_ENTRY)) {
@@ -91,16 +92,24 @@ const inputWayOut = (id: string, deps: boolean): string =>
       : 'start a run with params that fit, or correct its input_schema and register the workflow again'
   }; then, after a fix, realm run advance ${id} — or end it: realm run abandon ${id}`;
 
-async function stores(): Promise<{
+async function stores(located = false): Promise<{
   home: string;
   runs: JsonFileStore;
   workflows: JsonWorkflowStore;
+  clock?: TestLocation['clock'];
 }> {
   const home = mkdtempSync(join(tmpdir(), 'realm-cannot-go-on-625-'));
+  // #715 (b) 04 §D (B4): `located` makes `~/.realm` a test location BEFORE the store opens (a store
+  // takes its clock when it is built), so a cell moves the clock the spawned `realm` reads instead of
+  // waiting on the real one.
+  const loc = located
+    ? await createTestLocation({ start: new Date(), root: join(home, '.realm') })
+    : undefined;
   return {
     home,
     runs: new JsonFileStore(join(home, '.realm', 'runs')),
     workflows: new JsonWorkflowStore(join(home, '.realm', 'workflows')),
+    ...(loc !== undefined ? { clock: loc.clock } : {}),
   };
 }
 
@@ -232,12 +241,12 @@ describe('#625 PR-2a, C64 — the census: drain, resume and the sweeper name the
   }, 60000);
 
   it('drain --expired --force whose expiry leaves the run unable to go on: the step and the way out after its line', async () => {
-    const { home, runs, workflows } = await stores();
+    const { home, runs, workflows, clock } = await stores(true);
     try {
       const d = wf('c64-expiry', { decide: gate(true), compute: needsN(['decide']) });
       await workflows.register(d);
       const [id] = await atGate(runs, d);
-      await new Promise((r) => setTimeout(r, 1300));
+      await clock!.advance(1300);
       const r = realm(home, ['run', 'drain', id, '--expired', '--force']);
       expect(r.status).toBe(0);
       expect(r.stdout).toContain(

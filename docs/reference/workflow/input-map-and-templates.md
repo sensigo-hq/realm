@@ -215,7 +215,7 @@ In the examples, `s.` stands for `context.resources.scan.`, and `⏎` marks a li
 | `time`     | `14:05`               |
 | `datetime` | `Jan 28, 2026, 14:05` |
 
-The result shown for `from_now` was produced on 1 October 2026.
+`from_now` says how long before or after the reply's time (its `basis.as_of`) the date is, in a step's `prompt` and `instructions`, which are rendered for each reply. In a gate's `message`, which Realm stores on the run and shows later, it writes the date itself, such as `2026-01-28T14:05:00.000Z` (added after version 0.48.0, which read this computer's clock for both). The result shown for `from_now` is for a reply on 1 October 2026.
 
 `bullets`, `first`, `last` and `and_join` on an empty list leave the expression as written.
 

@@ -20,6 +20,7 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { createTestLocation } from '@sensigo/realm-testing';
 import { spawn, spawnSync } from 'node:child_process';
 import {
   chmodSync,
@@ -794,8 +795,11 @@ describe(
       registered('announce', {
         'workflow.yaml': `${withLimit(limit.replace('timeout_seconds: 86400', 'timeout_seconds: 1'))}\n`,
       });
+      // #715 (b) 04 §D (B4): `~/.realm` is a test location before the `realm mcp` child opens the
+      // question, so the cell moves the clock the children read instead of waiting on the real one.
+      const loc = await createTestLocation({ start: new Date(), root: join(home, '.realm') });
       const at = await atGate('limited');
-      await new Promise((r) => setTimeout(r, 1_500));
+      await loc.clock.advance(1_500);
       const drain = sh(fence(page, 'realm run drain').trim());
       const { record: after } = await runStore.get(at.runId);
       // (a) red when the page's gate does not validate, or drain does not enact the expired gate with

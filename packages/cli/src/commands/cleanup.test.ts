@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { cleanupRuns, cleanupCommand } from './cleanup.js';
 import { JsonFileStore } from '@sensigo/realm';
+import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
 import type { RunRecord } from '@sensigo/realm';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -34,21 +35,25 @@ function makeRun(overrides: Partial<RunRecord> & { id?: string }): RunRecord {
   };
 }
 
+// #715 (b) (04 §D, D6-24): each cell's "now" is a TEST LOCATION's clock — the JSON store opened on
+// its `runs/` reads its time from the location's clock file — never a faked global `Date` (a faked
+// Date would also fake the lock library's staleness test; `test-time-715b.test.ts`).
 describe('cleanupRuns', () => {
   let dir: string;
+  let loc: TestLocation;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-cleanup-'));
-    vi.useFakeTimers();
+    loc = await createTestLocation({ start: '2024-06-01T12:00:00Z' });
+    dir = loc.runsDir;
   });
 
-  afterEach(() => {
-    vi.useRealTimers();
+  afterEach(async () => {
+    await loc.remove();
   });
 
   it('marks old non-terminal runs as abandoned', async () => {
     const now = new Date('2024-06-01T12:00:00Z');
-    vi.setSystemTime(now);
+    await loc.clock.set(now);
 
     const oldTime = new Date(now.getTime() - 2 * 86_400_000).toISOString(); // 2 days ago
     const run = makeRun({ updated_at: oldTime });
@@ -68,7 +73,7 @@ describe('cleanupRuns', () => {
 
   it('leaves runs updated within the threshold untouched', async () => {
     const now = new Date('2024-06-01T12:00:00Z');
-    vi.setSystemTime(now);
+    await loc.clock.set(now);
 
     const recentTime = new Date(now.getTime() - 30 * 60_000).toISOString(); // 30 minutes ago
     const run = makeRun({ updated_at: recentTime });
@@ -85,7 +90,7 @@ describe('cleanupRuns', () => {
 
   it('dry-run reports affected runs without writing changes', async () => {
     const now = new Date('2024-06-01T12:00:00Z');
-    vi.setSystemTime(now);
+    await loc.clock.set(now);
 
     const oldTime = new Date(now.getTime() - 2 * 86_400_000).toISOString();
     const run = makeRun({ updated_at: oldTime });
@@ -104,7 +109,7 @@ describe('cleanupRuns', () => {
 
   it('skips runs that are already terminal', async () => {
     const now = new Date('2024-06-01T12:00:00Z');
-    vi.setSystemTime(now);
+    await loc.clock.set(now);
 
     const oldTime = new Date(now.getTime() - 2 * 86_400_000).toISOString();
     const terminalRun = makeRun({
@@ -122,7 +127,7 @@ describe('cleanupRuns', () => {
 
   it('does not abandon gate-waiting runs', async () => {
     const now = new Date('2024-06-01T12:00:00Z');
-    vi.setSystemTime(now);
+    await loc.clock.set(now);
 
     const oldTime = new Date(now.getTime() - 2 * 86_400_000).toISOString();
     // issue #367: the fixture now carries the GATE, not just the label. It used to set
@@ -158,7 +163,7 @@ describe('cleanupRuns', () => {
     // zombie shape #282 closed. The stale-phase population is exactly what `gc --heal` exists for,
     // so cleanup-before-heal is an ordinary ordering, not an exotic one.
     const now = new Date('2024-06-01T12:00:00Z');
-    vi.setSystemTime(now);
+    await loc.clock.set(now);
     const oldTime = new Date(now.getTime() - 2 * 86_400_000).toISOString();
     const staleGated = makeRun({
       updated_at: oldTime,
@@ -186,7 +191,7 @@ describe('cleanupRuns', () => {
   it('a stale gate LABEL with no gate behind it is NOT protected — it is an idle run', async () => {
     // The other polarity, so "skip anything that mentions a gate" cannot pass the cell above.
     const now = new Date('2024-06-01T12:00:00Z');
-    vi.setSystemTime(now);
+    await loc.clock.set(now);
     const oldTime = new Date(now.getTime() - 2 * 86_400_000).toISOString();
     const labelOnly = makeRun({ updated_at: oldTime, run_phase: 'gate_waiting' });
     await injectRun(dir, labelOnly);
@@ -198,7 +203,7 @@ describe('cleanupRuns', () => {
 
   it('the sweep seals arm `cleanup_sweep`, and says what it killed', async () => {
     const now = new Date('2024-06-01T12:00:00Z');
-    vi.setSystemTime(now);
+    await loc.clock.set(now);
     const oldTime = new Date(now.getTime() - 2 * 86_400_000).toISOString();
     const idle = makeRun({ updated_at: oldTime, run_phase: 'running' });
     await injectRun(dir, idle);
@@ -213,7 +218,7 @@ describe('cleanupRuns', () => {
 
   it('sets abandoned_at and derives abandoned (not failed) for an idle running run carrying failed_steps', async () => {
     const now = new Date('2024-06-01T12:00:00Z');
-    vi.setSystemTime(now);
+    await loc.clock.set(now);
 
     const oldTime = new Date(now.getTime() - 2 * 86_400_000).toISOString();
     // A running run that already accumulated a failed step — without the authoritative marker this
@@ -233,7 +238,7 @@ describe('cleanupRuns', () => {
 
   it('issue #558 PR-C: the sweep releases every claim in the same write it seals with', async () => {
     const now = new Date('2024-06-01T12:00:00Z');
-    vi.setSystemTime(now);
+    await loc.clock.set(now);
     const oldTime = new Date(now.getTime() - 2 * 86_400_000).toISOString();
     // An idle run that died mid-claim: a claimed step with an open-ended claim. Before PR-C the
     // sweep sealed it and left the claim, so `purge` refused the dead run on a claim nobody held.
@@ -258,7 +263,7 @@ describe('cleanupRuns', () => {
     // (a) red when the seal ignores expected_version (the sweep seals over the other writer's write
     //     and resolves); (b) prints the code, the message and the run's state afterwards.
     const now = new Date('2024-06-01T12:00:00Z');
-    vi.setSystemTime(now);
+    await loc.clock.set(now);
     const run = makeRun({ updated_at: new Date(now.getTime() - 2 * 86_400_000).toISOString() });
     await injectRun(dir, run);
     const store = new JsonFileStore(dir);
@@ -297,8 +302,8 @@ describe('cleanupRuns', () => {
     // The per-member sweep found the mint pinned at two surfaces and this render pinned nowhere:
     // deleting the line left this file green. The command, not the function, prints it.
     const { ABANDON_KILL_ADVISORY } = await import('@sensigo/realm');
-    const now = new Date('2024-06-01T12:00:00Z');
-    vi.setSystemTime(now);
+    // The command opens its own store under HOME, on this computer's clock (no test location there).
+    const now = new Date();
     const oldTime = new Date(now.getTime() - 2 * 86_400_000).toISOString();
     const home = await mkdtemp(join(tmpdir(), 'realm-cleanup-home-'));
     const runsDir = join(home, '.realm', 'runs');

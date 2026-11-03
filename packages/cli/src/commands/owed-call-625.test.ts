@@ -17,6 +17,7 @@ import {
   type RunRecord,
 } from '@sensigo/realm';
 import { printChildrenWhenATestFails } from '../test-support/child-output.js';
+import { createTestLocation } from '@sensigo/realm-testing';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 if (!existsSync(CLI_ENTRY)) {
@@ -229,6 +230,10 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
         },
       };
       await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(d);
+      // #715 (b) 04 §D (B4): `~/.realm` is a test location, made BEFORE the store opens (a store takes
+      // its clock when it is built); the cell moves the clock the spawned `realm` reads instead of
+      // waiting on the real one.
+      const loc = await createTestLocation({ start: new Date(), root: join(home, '.realm') });
       const runs = new JsonFileStore(join(home, '.realm', 'runs'));
       const { record: run } = await runs.create({
         workflowId: d.id,
@@ -241,7 +246,7 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
         input: {},
         dispatcher: async () => ({}),
       });
-      await new Promise((r) => setTimeout(r, 1300));
+      await loc.clock.advance(1300);
       const drained = realm(home, ['run', 'drain', run.id, '--expired', '--force']);
       expect(drained.status).toBe(0);
       expect(drained.stdout).toContain(

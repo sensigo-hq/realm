@@ -142,7 +142,9 @@ describe('#715 (a) — the docs sentences', () => {
     // C1, B11, A6.
     claim(
       CORE,
-      '`systemClock` is the clock a store uses when it is given none; its `at` throws, because it has nowhere to report a failure.',
+      // #715 (b) commit 4: the rest of this paragraph (its `at` works since commit 3) is pinned in
+      // docs-715b.test.ts with its cells.
+      '`systemClock` is the clock a store uses when it is given none.',
     );
     // A8, A7.
     claim(
@@ -224,7 +226,7 @@ describe('#715 (a) — the docs sentences', () => {
     );
     claim(
       TESTING,
-      '| `storeClockContract` | `RunStore`, on a clock the test moves | 5 | 5, with `InMemoryStore` |',
+      '| `storeClockContract` | `RunStore`, on a clock the test moves | 12 | 12, with `InMemoryStore` |',
     );
     // STORE_CLOCK_LAWS has no STORE_RELEASE_LINE_TRUE (C16 runs its five laws).
     claim(TESTING, 'Each of the first four contracts has the law `STORE_RELEASE_LINE_TRUE`:');

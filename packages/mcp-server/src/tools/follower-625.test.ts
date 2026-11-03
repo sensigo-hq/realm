@@ -21,6 +21,7 @@ import {
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { printChildrenWhenATestFails } from '../test-support/child-output.js';
+import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
 
 const SERVER_ENTRY =
   process.env['FOLLOWER_SERVER_ENTRY'] ??
@@ -69,10 +70,16 @@ function handlerEntry(home: string): string {
 
 async function withServer<T>(
   defs: WorkflowDefinition[],
-  fn: (client: Client, home: string) => Promise<T>,
-  opts: { withHandler?: boolean } = {},
+  fn: (client: Client, home: string, clock?: TestLocation['clock']) => Promise<T>,
+  opts: { withHandler?: boolean; located?: true } = {},
 ): Promise<T> {
   const home = mkdtempSync(join(tmpdir(), 'realm-follower-625-'));
+  // #715 (b) 04 §D (B4): with `located`, `~/.realm` is a test location before the server starts, so a
+  // cell moves the clock the spawned server reads instead of waiting on the real one.
+  const loc =
+    opts.located === true
+      ? await createTestLocation({ start: new Date(), root: join(home, '.realm') })
+      : undefined;
   const workflows = new JsonWorkflowStore(join(home, '.realm', 'workflows'));
   for (const d of defs) await workflows.register(d);
   const client = new Client({ name: 'follower', version: '0' });
@@ -88,7 +95,7 @@ async function withServer<T>(
     ),
   );
   try {
-    return await fn(client, home);
+    return await fn(client, home, loc?.clock);
   } finally {
     await client.close();
     rmSync(home, { recursive: true, force: true });
@@ -331,20 +338,31 @@ describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
       },
       after: { description: 'After.', execution: 'auto', depends_on: ['confirm'] },
     });
-    await withServer([d], async (client, home) => {
-      const started = await call(client, 'start_run', { workflow_id: d.id, params: {} });
-      const opened = await call(client, 'execute_step', {
-        run_id: started.run_id!,
-        command: 'write',
-        params: {},
-      });
-      expect(opened.status).toBe('confirm_required');
-      // The person answers after the gate's time is up (a late human, not a poll).
-      await new Promise((resolve) => setTimeout(resolve, 1300));
-      const { calls } = await follow(client, opened);
-      expect(calls).toContain('advance_run');
-      expect(await phaseOf(home, started.run_id!)).toBe('completed');
-    });
+    await withServer(
+      [d],
+      async (client, home, clock) => {
+        const started = await call(client, 'start_run', { workflow_id: d.id, params: {} });
+        const opened = await call(client, 'execute_step', {
+          run_id: started.run_id!,
+          command: 'write',
+          params: {},
+        });
+        expect(opened.status).toBe('confirm_required');
+        // The person answers after the gate's time is up (a late human, not a poll): the location's
+        // clock moves past it.
+        await clock!.advance(1300);
+        const { calls } = await follow(client, opened);
+        expect(calls).toContain('advance_run');
+        expect(await phaseOf(home, started.run_id!)).toBe('completed');
+        // #715 (b) commit 4: the question was settled by its expiry (the default), not by the
+        // follower's answer — without this the cell passes whether or not the time ran out.
+        const { record } = await new JsonFileStore(join(home, '.realm', 'runs')).get(
+          started.run_id!,
+        );
+        expect(record.settled?.['confirm']?.resolved_by).toBe('timeout');
+      },
+      { located: true },
+    );
   }, 30000);
 
   it('a handler auto step after a gate: the act names it (never the handler as a tool), and the follower finishes', async () => {

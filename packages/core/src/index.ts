@@ -503,6 +503,8 @@ export {
   clockBasis,
   setClockErrorSink,
   clockErrorSink,
+  CLOCK_READ_CLASSES,
+  type ClockReadClass,
 } from './utils/clock.js';
 export type { Clock } from './utils/clock.js';
 // #715 (b) (D-17): a read's raw reading (taken BEFORE the load) and the floor by a record's own stamp.

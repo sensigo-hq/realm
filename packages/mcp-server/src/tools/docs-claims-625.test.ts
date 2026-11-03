@@ -6,7 +6,7 @@
 // asserts what the sentence states — so neither the page nor the behaviour can change alone.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -29,6 +29,27 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
 import { renderReply } from '../render-reply.js';
 import { zOf } from '../test-support/instant.js';
+import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
+
+// #715 (b) 04 §D (B4): no cell here waits on the real clock for a question to expire. The run store a
+// cell opens sits at a TEST LOCATION (`located`), and `passes(ms)` moves the clock of every location
+// the cell opened, in place of a real sleep; the in-process server (or a spawned child) reads that
+// clock from the location's file.
+const OPENED: TestLocation[] = [];
+async function located(dir: string): Promise<string> {
+  // A second server on the same folder in one cell shares its location (and its clock).
+  const open = OPENED.find((l) => l.runsDir === join(dir, 'runs'));
+  if (open !== undefined) return open.runsDir;
+  const loc = await createTestLocation({ start: new Date(), root: dir });
+  OPENED.push(loc);
+  return loc.runsDir;
+}
+async function passes(ms: number): Promise<void> {
+  for (const loc of OPENED) await loc.clock.advance(ms);
+}
+afterEach(() => {
+  OPENED.length = 0;
+});
 
 const DOCS = join(dirname(fileURLToPath(import.meta.url)), '../../../../docs/reference');
 const flat = (t: string) => t.replace(/\s+/g, ' ');
@@ -61,7 +82,7 @@ type Reply = Record<string, unknown> & { _isError?: boolean; _text?: string };
 
 async function connect(registry?: ExtensionRegistry) {
   const dir = await mkdtemp(join(tmpdir(), 'realm-docs-625-'));
-  const runStore = new JsonFileStore(join(dir, 'runs'));
+  const runStore = new JsonFileStore(await located(dir));
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
   const server = createRealmMcpServer({
     runStore,
@@ -540,7 +561,7 @@ describe('#625 PR-2a, C154 — tools.md and gates.md: every tool on a run that h
     await workflowStore.register(gated('docs-abort', 'abort'));
     const runId = (await call('start_run', { workflow_id: 'docs-abort' }))['run_id'] as string;
     const gateId = (await runStore.get(runId)).record.pending_gate!.gate_id;
-    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    await passes(1_100);
     const carried = await call('advance_run', { run_id: runId });
     expect(carried['run_phase'], 'fixture: the abort was not carried out').toBe('aborted');
     const r = await call('submit_human_response', {
@@ -1150,7 +1171,7 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
     const { call, workflowStore } = await connect();
     await workflowStore.register(gated('docs-stop', 'abort'));
     const runId = (await call('start_run', { workflow_id: 'docs-stop' }))['run_id'] as string;
-    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    await passes(1_100);
     const r = await call('execute_step', { run_id: runId, command: 'after', params: {} });
     expect([r['status'], r['agent_action'], r['run_phase']]).toEqual([
       'blocked',
@@ -1557,7 +1578,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     ]);
     const exp = (await call('start_run', { workflow_id: 'docs-wrong-exp' }))['run_id'] as string;
     const ge = (await runStore.get(exp)).record.pending_gate!.gate_id;
-    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    await passes(1_100);
     const late = await call('submit_human_response', {
       run_id: exp,
       gate_id: 'x',
@@ -1599,7 +1620,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     await workflowStore.register(gated('docs-late', 'settle_default'));
     const runId = (await call('start_run', { workflow_id: 'docs-late' }))['run_id'] as string;
     const gateId = (await runStore.get(runId)).record.pending_gate!.gate_id;
-    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    await passes(1_100);
     const r = await call('submit_human_response', {
       run_id: runId,
       gate_id: gateId,
@@ -1683,7 +1704,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     await workflowStore.register(gated('docs-adv', 'settle_default'));
     const runId = (await call('start_run', { workflow_id: 'docs-adv' }))['run_id'] as string;
     const gateId = (await runStore.get(runId)).record.pending_gate!.gate_id;
-    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    await passes(1_100);
     const r = await call('advance_run', { run_id: runId });
     expect(lagless(r['warnings'])).toContain(
       `gate '${gateId}' on 'confirm' had expired <lag> before this call (deadline <instant>) — this advance_run call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance_run).`,
@@ -1712,7 +1733,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
       'ok',
       true,
     ]);
-    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    await passes(1_100);
     const ended = await call('advance_run', { run_id: a });
     expect(
       (ended['warnings'] as string[]).some((w) =>
@@ -1907,7 +1928,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     expect(next(state)).toEqual(['execute_step:d', 'advance_run:']);
     await workflowStore.register(gated('docs-act-exp', 'settle_default'));
     const exp = (await call('start_run', { workflow_id: 'docs-act-exp' }))['run_id'] as string;
-    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    await passes(1_100);
     const expState = await call('get_run_state', { run_id: exp });
     const expAct = (expState['next_actions'] as Array<{ human_readable: string }>).at(-1)!;
     expect(expAct.human_readable).toBe(
@@ -1949,7 +1970,7 @@ describe('#625 PR-2a, C163 — gates.md: what happens at expiry over MCP, senten
     } as WorkflowDefinition);
     const exp = (await call('start_run', { workflow_id: 'docs-g-exp' }))['run_id'] as string;
     const none = (await call('start_run', { workflow_id: 'docs-g-none' }))['run_id'] as string;
-    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    await passes(1_100);
     const s = await call('get_run_state', { run_id: exp });
     // (a) red when an expired question is not offered to the engine, or one without on_expiry is; (b) prints them.
     expect([next(s).at(-1), s['next_actions_status']]).toEqual(['advance_run:', 'advance_owed']);
@@ -2029,7 +2050,7 @@ describe('#625 PR-2a, C163 — gates.md: what happens at expiry over MCP, senten
     const { call, workflowStore } = await connect();
     await workflowStore.register(gated('docs-g-ans', 'settle_default'));
     const runId = (await call('start_run', { workflow_id: 'docs-g-ans' }))['run_id'] as string;
-    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    await passes(1_100);
     await call('advance_run', { run_id: runId });
     const s = await call('get_run_state', { run_id: runId, include_steps: true });
     const answers = (s['steps'] as Record<string, { answers?: Array<{ answered_by: unknown }> }>)[
@@ -2053,7 +2074,7 @@ describe('#625 PR-2a, C163 — gates.md: what happens at expiry over MCP, senten
     for (const tool of ['submit_human_response', 'execute_step', 'advance_run']) {
       runs[tool] = (await call('start_run', { workflow_id: 'docs-g-name' }))['run_id'] as string;
     }
-    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    await passes(1_100);
     for (const tool of ['submit_human_response', 'execute_step', 'advance_run'] as const) {
       const runId = runs[tool]!;
       const gateId = (await runStore.get(runId)).record.pending_gate!.gate_id;
@@ -2261,7 +2282,7 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
       if (kind === 'aborted') {
         await workflowStore.register(gated('r21-abort', 'abort'));
         runId = (await call('start_run', { workflow_id: 'r21-abort' }))['run_id'] as string;
-        await new Promise((resolve) => setTimeout(resolve, 1_100));
+        await passes(1_100);
         await call('advance_run', { run_id: runId });
       } else if (kind === 'failed') {
         await workflowStore.register({
@@ -2446,7 +2467,7 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
     await workflowStore.register(gated('r21-exp', 'settle_default'));
     const runId = (await call('start_run', { workflow_id: 'r21-exp' }))['run_id'] as string;
     const gateId = (await runStore.get(runId)).record.pending_gate!.gate_id;
-    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    await passes(1_100);
     await call('advance_run', { run_id: runId });
     const r = await call('submit_human_response', {
       run_id: runId,
@@ -2638,7 +2659,7 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
       const runId = (await call('start_run', { workflow_id: id }))['run_id'] as string;
       const { gate_id: gateId, expires_at: expiresAt } = (await runStore.get(runId)).record
         .pending_gate!;
-      await new Promise((resolve) => setTimeout(resolve, 1_100));
+      await passes(1_100);
       if (earlier) await call('advance_run', { run_id: runId });
       const r = await call('submit_human_response', {
         run_id: runId,
@@ -2721,7 +2742,7 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
     const runId = (await call('start_run', { workflow_id: 'r23-example' }))['run_id'] as string;
     const { gate_id: gateId, expires_at: expiresAt } = (await runStore.get(runId)).record
       .pending_gate!;
-    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    await passes(1_100);
     const r = await call('submit_human_response', {
       run_id: runId,
       gate_id: gateId,
@@ -3004,7 +3025,7 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
     await workflowStore.register(gated('r22-exp', 'settle_default'));
     const runId = (await call('start_run', { workflow_id: 'r22-exp' }))['run_id'] as string;
     const gateId = (await runStore.get(runId)).record.pending_gate!.gate_id;
-    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    await passes(1_100);
     await call('advance_run', { run_id: runId });
     const late = await call('submit_human_response', {
       run_id: runId,

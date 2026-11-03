@@ -139,15 +139,26 @@ function validationWedgeEntry(
   provider: string,
   errors: readonly string[],
   attemptStartedAt: number,
+  // #715 (b) (02 §D.2; census class `event`): the run store's clock, read by the caller.
+  at: Date,
 ): DriveFailureRecord {
   return {
-    at: new Date().toISOString(),
+    at: at.toISOString(),
     step,
     provider,
     error_class: 'validation_rejected',
     message: sanitizeError(errors.join(', ')).slice(0, MESSAGE_CAP),
     elapsed_ms: Math.max(0, Math.round(performance.now() - attemptStartedAt)),
   };
+}
+
+/**
+ * #715 (b) (04 §A, census class `outside`): the failed-attempt sidecar's own stamp — a log line's
+ * time, read from the host's clock and compared with nothing on the run record. Its own function, so
+ * the class law (no `outside` read in a function that reads a run's instants) holds by construction.
+ */
+function sidecarStamp(): string {
+  return new Date().toISOString();
 }
 
 export interface AgentDeps {
@@ -1011,6 +1022,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                     providerForEvidence ?? 'unknown',
                     exitReply.errors,
                     attemptStartedAt,
+                    deps.store.clock.now(),
                   ),
                 );
               }
@@ -1616,6 +1628,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   stepName,
                   providerForEvidence ?? 'unknown',
                   attemptStartedAt,
+                  deps.store.clock.now(),
                 );
                 if (usageForStep !== undefined && usageForStep.length > 0) {
                   entry.usage = appendRequests(usageForStep, entry.usage);
@@ -1797,6 +1810,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   stepName,
                   providerForEvidence ?? 'unknown',
                   attemptStartedAt,
+                  deps.store.clock.now(),
                 );
                 if (usageForStep !== undefined && usageForStep.length > 0) {
                   entry.usage = appendRequests(usageForStep, entry.usage);
@@ -1946,7 +1960,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               run_id: runId,
               workflow_id: definition.id,
               step_id: stepName,
-              ts: new Date().toISOString(),
+              ts: sidecarStamp(),
               error_code: result.error_code,
               ajv_errors: list !== undefined ? [...list.errors] : [],
               ...(list?.error_count !== undefined ? { error_count: list.error_count } : {}),
@@ -2106,6 +2120,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   providerForEvidence ?? 'unknown',
                   result.errors,
                   attemptStartedAt,
+                  deps.store.clock.now(),
                 ),
                 // issue #600: a wedge carries every call of the exhausted repair budget. Nothing is
                 // attached when no call reported usage — the same rule as `attachBilledUsage`. Nor
@@ -2232,6 +2247,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
       currentStepName ?? '',
       providerForEvidence ?? 'unknown',
       attemptStartedAt,
+      deps.store.clock.now(),
     );
     // issue #600: a throw that escaped before the current step's evidence was saved takes the
     // step's billed calls with it. Once the repair loop has ended (`stepUsageSaved`), `executeChain`

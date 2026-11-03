@@ -97,6 +97,8 @@ The file store stamps the times it writes, such as a run's `created_at` and `upd
 
 A folder with a `.realm-test-clock` file beside its `runs/` folder is a test location. Only `@sensigo/realm-testing` creates one, for tests; the file store only reads the file. A store opened there takes the time from that file when it creates a run, starts a step, writes a run with `update`, records a step's result or reads a run, so every process that opens the folder reads the same time (added after version 0.48.0). The file names the folder it was made for: a store opened on a copy of it in another folder refuses with `STATE_TEST_CLOCK_FOREIGN`. To use the copy as an ordinary store, delete its `.realm-test-clock` file.
 
+The `realm` command and the `realm-mcp` server say once, on standard error, that they opened a store at a test location, on their first read of it: `this store runs on a test clock, now 2030-01-01T00:00:00.000Z`, with that read's time. An MCP reply judged on a test clock says so in its `basis`: `as_of_basis: "test_clock"` (added after version 0.48.0).
+
 ### Which commands remove files
 
 | Command           | Removes                                                                      |

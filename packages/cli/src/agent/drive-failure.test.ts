@@ -220,6 +220,7 @@ describe('classifyDriveError — precedence (issue #401)', () => {
       's',
       'openai',
       Date.now(),
+      new Date(),
     );
     expect(built.error_class).toBe('api_status');
     expect(built.last_observed_status).toBe(429);
@@ -241,7 +242,7 @@ describe('classifyDriveError — precedence (issue #401)', () => {
     const outer = new Error('step failed', { cause: middle });
 
     expect(findDriveCall(outer)).toBeDefined();
-    const built = buildEntry(outer, 's', 'openai', performance.now() - 5000);
+    const built = buildEntry(outer, 's', 'openai', performance.now() - 5000, new Date());
     expect(built.error_class).toBe('sdk_missing');
     // INVERTED by issue #401's reorder. The spread now sits ABOVE `elapsed_ms:`, so what
     // protects a payload's genuine 0ms span is the `??` on that line — and it is live, not dead:
@@ -266,7 +267,7 @@ describe('classifyDriveError — precedence (issue #401)', () => {
   });
 
   it('the message is CAPPED at 500 characters', () => {
-    const built = buildEntry(new Error('x'.repeat(2000)), 's', 'p', performance.now());
+    const built = buildEntry(new Error('x'.repeat(2000)), 's', 'p', performance.now(), new Date());
     expect(built.message).toHaveLength(500);
   });
 
@@ -279,6 +280,7 @@ describe('classifyDriveError — precedence (issue #401)', () => {
         's',
         'p',
         Date.now(),
+        new Date(),
       );
       expect(built.message).not.toContain('sk-super-secret-value');
       expect(built.message).toContain('[REDACTED]');
@@ -300,13 +302,15 @@ describe('classifyDriveError — precedence (issue #401)', () => {
       },
     };
 
-    const built = buildEntry(hostile, 'classify', 'anthropic', performance.now() - 10);
+    // #715 (b) commit 4: the degraded branch stamps the caller's `at` too (the store's reading).
+    const at = new Date('2030-01-02T03:04:05.000Z');
+    const built = buildEntry(hostile, 'classify', 'anthropic', performance.now() - 10, at);
     expect(built.error_class).toBe('other');
     expect(built.message).toBe('unrenderable thrown value');
     // All six required fields present — a degraded entry is still a complete entry.
     expect(built.step).toBe('classify');
     expect(built.provider).toBe('anthropic');
-    expect(built.at).toEqual(expect.any(String));
+    expect(built.at).toBe('2030-01-02T03:04:05.000Z');
     expect(built.elapsed_ms).toBeGreaterThanOrEqual(0);
   });
 
@@ -339,7 +343,7 @@ describe('the payload is a BOUNDARY, not a spread (issue #401)', () => {
         wire_secret: 'sk-should-never-be-stored',
       },
     });
-    const built = buildEntry(err, 's', 'anthropic', performance.now() - 1234);
+    const built = buildEntry(err, 's', 'anthropic', performance.now() - 1234, new Date());
 
     expect(built.error_class).toBe('api_status'); // shape decided, the claim did not
     expect(built.attempts_sdk).toBe(3); // a real number is kept
@@ -362,7 +366,7 @@ describe('the payload is a BOUNDARY, not a spread (issue #401)', () => {
     // #715 (R): the array survives with one addition, each request's identity, minted here where the
     // thrown usage enters realm's records. (a) red when `buildEntry` does not mint; (b) prints the
     // entry's usage.
-    expect(buildEntry(withArray, 's', 'anthropic', performance.now()).usage).toEqual(
+    expect(buildEntry(withArray, 's', 'anthropic', performance.now(), new Date()).usage).toEqual(
       withArray.driveCall.usage.map((r) => ({
         ...r,
         request_id: expect.stringMatching(
@@ -378,7 +382,9 @@ describe('the payload is a BOUNDARY, not a spread (issue #401)', () => {
       status: 429,
       driveCall: { usage: 'not-an-array' },
     });
-    expect(buildEntry(withGarbage, 's', 'anthropic', performance.now()).usage).toBeUndefined();
+    expect(
+      buildEntry(withGarbage, 's', 'anthropic', performance.now(), new Date()).usage,
+    ).toBeUndefined();
   });
 
   it('aborted_by_budget IS a recognized class and survives the pick', () => {
@@ -391,7 +397,7 @@ describe('the payload is a BOUNDARY, not a spread (issue #401)', () => {
         elapsed_ms: 151_502,
       },
     });
-    const built = buildEntry(err, 's', 'anthropic', performance.now());
+    const built = buildEntry(err, 's', 'anthropic', performance.now(), new Date());
     expect(built.error_class).toBe('aborted_by_budget');
     expect(built.declared_per_attempt_ms).toBe(30_000);
     expect(built.elapsed_ms).toBe(151_502);
@@ -428,13 +434,17 @@ describe('W1 — real SDK error objects classify by their CONSTRUCTOR', () => {
     it(`${pkg}: a real APIConnectionError classifies connection_error`, async () => {
       const err = await realError(pkg, 'APIConnectionError');
       expect(classifyDriveError(err).error_class).toBe('connection_error');
-      expect(buildEntry(err, 's', 'p', performance.now()).error_class).toBe('connection_error');
+      expect(buildEntry(err, 's', 'p', performance.now(), new Date()).error_class).toBe(
+        'connection_error',
+      );
     });
 
     it(`${pkg}: a real APIConnectionTimeoutError classifies connection_timeout`, async () => {
       const err = await realError(pkg, 'APIConnectionTimeoutError');
       expect(classifyDriveError(err).error_class).toBe('connection_timeout');
-      expect(buildEntry(err, 's', 'p', performance.now()).error_class).toBe('connection_timeout');
+      expect(buildEntry(err, 's', 'p', performance.now(), new Date()).error_class).toBe(
+        'connection_timeout',
+      );
     });
   }
 
@@ -444,7 +454,7 @@ describe('W1 — real SDK error objects classify by their CONSTRUCTOR', () => {
     const err = Object.assign(await realError('openai', 'APIConnectionTimeoutError'), {
       driveCall: { attempts_sdk: 2, elapsed_ms: 900 },
     });
-    const built = buildEntry(err, 's', 'openai', performance.now());
+    const built = buildEntry(err, 's', 'openai', performance.now(), new Date());
     expect(built.error_class).toBe('connection_timeout');
     expect(built.attempts_sdk).toBe(2); // the measurements it did carry are still kept
   });
@@ -479,7 +489,7 @@ describe('issue #719 — the fence names why, when the store refused with a Real
       await recordDriveFailure(
         store,
         'bad',
-        buildEntry(refusal, 's', 'anthropic', performance.now()),
+        buildEntry(refusal, 's', 'anthropic', performance.now(), new Date()),
       );
       const line = errors.join('\n');
       // (a) red when the store's message is appended to an entry that already carries it (the
@@ -515,7 +525,11 @@ describe('issue #719 — the fence names why, when the store refused with a Real
       const message = refusal instanceof Error ? refusal.message : '';
       // The precondition: the message crosses the cap, so the cell cannot pass on a short one.
       expect({ overCap: message.length > MESSAGE_CAP }).toEqual({ overCap: true });
-      await recordDriveFailure(store, id, buildEntry(refusal, 's', 'anthropic', performance.now()));
+      await recordDriveFailure(
+        store,
+        id,
+        buildEntry(refusal, 's', 'anthropic', performance.now(), new Date()),
+      );
       const line = errors.join('\n');
       // (a) red when the line prints the entry's capped, sanitised copy (the way out cut, the
       //     folder hidden) or the fault twice; (b) prints the line count and booleans only.
@@ -553,7 +567,7 @@ describe('#715 (a) — elapsed_ms is measured on the monotonic clock', () => {
           throw new Error('hostile getter');
         },
       };
-      const built = buildEntry(hostile, 's', 'p', 1_000);
+      const built = buildEntry(hostile, 's', 'p', 1_000, new Date());
       expect(built.message, 'the degraded branch').toBe('unrenderable thrown value');
       expect(built.elapsed_ms, 'elapsed_ms').toBe(750);
     } finally {
@@ -566,7 +580,7 @@ describe('#715 (a) — elapsed_ms is measured on the monotonic clock', () => {
     const wall = Date.now();
     vi.spyOn(Date, 'now').mockReturnValue(wall + HOUR);
     try {
-      const built = buildEntry(new Error('plain, no payload'), 's', 'p', 1_000);
+      const built = buildEntry(new Error('plain, no payload'), 's', 'p', 1_000, new Date());
       expect(built.elapsed_ms, 'elapsed_ms').toBe(750);
     } finally {
       vi.restoreAllMocks();

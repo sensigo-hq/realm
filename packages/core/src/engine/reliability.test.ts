@@ -6,6 +6,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { executeStep } from './execution-loop.js';
 import { JsonFileStore } from '../store/json-file-store.js';
+// #715 (b) (04 §D): C3/C4a/C4b keep their faked Date and timers (#573's pins MUST stay faked) on an
+// in-memory store — a store with no file lock, so a faked Date cannot make a lock look stale.
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepDispatcher } from './execution-loop.js';
@@ -1904,7 +1907,7 @@ steps:
         ],
       });
       try {
-        const store = new JsonFileStore(dir);
+        const store = new InMemoryStore();
 
         const { record: runA } = await store.create({
           workflowId: hangA573.id,
@@ -1998,7 +2001,7 @@ steps:
         ],
       });
       try {
-        const store = new JsonFileStore(dir);
+        const store = new InMemoryStore();
         const { record: run } = await store.create({
           workflowId: hangA573.id,
           workflowVersion: 1,

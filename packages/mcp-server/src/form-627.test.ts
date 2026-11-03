@@ -37,6 +37,27 @@ import {
   type FormDeps,
 } from './form-path.js';
 import { McpDoor } from './door.js';
+import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
+
+// #715 (b) 04 §D (B4): no cell here waits on the real clock for a question to expire. The run store a
+// cell opens sits at a TEST LOCATION (`located`), and `passes(ms)` moves the clock of every location
+// the cell opened, in place of a real sleep; the in-process server (or a spawned child) reads that
+// clock from the location's file.
+const OPENED: TestLocation[] = [];
+async function located(dir: string): Promise<string> {
+  // A second server on the same folder in one cell shares its location (and its clock).
+  const open = OPENED.find((l) => l.runsDir === join(dir, 'runs'));
+  if (open !== undefined) return open.runsDir;
+  const loc = await createTestLocation({ start: new Date(), root: dir });
+  OPENED.push(loc);
+  return loc.runsDir;
+}
+async function passes(ms: number): Promise<void> {
+  for (const loc of OPENED) await loc.clock.advance(ms);
+}
+afterEach(() => {
+  OPENED.length = 0;
+});
 
 type Reply = Record<string, unknown>;
 type ElicitReply = { action: 'accept' | 'decline' | 'cancel'; content?: Record<string, unknown> };
@@ -88,10 +109,12 @@ async function session(
   handler: Handler = async () => ({ action: 'decline' }),
   timeout?: number,
   // Correction 1: a workflow of the cell's own, and a store of its own (B5's failing settle).
-  own: { yaml?: string; runStore?: (dir: string) => RunStore } = {},
+  own: { yaml?: string; runStore?: (dir: string) => RunStore; located?: true } = {},
 ): Promise<Session> {
   const dir = await mkdtemp(join(tmpdir(), 'realm-form-627-'));
-  const runStore = own.runStore?.(dir) ?? new JsonFileStore(join(dir, 'runs'));
+  const runStore =
+    own.runStore?.(dir) ??
+    new JsonFileStore(own.located === true ? await located(dir) : join(dir, 'runs'));
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
   const def = loadWorkflowFromString(own.yaml ?? WORKFLOW(timeout));
   await workflowStore.register(def);
@@ -611,9 +634,9 @@ describe('#627 W — after the wait: a fresh read, four branches', () => {
     const waitedMs = realmTimerDelays(armed)[0];
     armed.mockRestore();
     err.mockRestore();
-    const due = await session();
+    const due = await session({}, undefined, undefined, { located: true });
     const d = await openedElsewhere(due, 1);
-    await new Promise((r) => setTimeout(r, 1_200));
+    await passes(1_200);
     await due.call('present_question', { run_id: d.runId, gate_id: d.gateId });
     // (a) red when the wait reads the stamp inline (NaN), says nothing, or a due question gets a
     //     form; (b) prints the wait, the stderr line and the forms sent.
@@ -637,7 +660,8 @@ describe('#627 W — after the wait: a fresh read, four branches', () => {
 /** A door on `asked` with forms, and a run opened at its question in a store of its own. */
 async function direct(timeout?: number) {
   const dir = await mkdtemp(join(tmpdir(), 'realm-form-627-direct-'));
-  const runStore = new JsonFileStore(join(dir, 'runs'));
+  // #715 (b) B4: at a test location, so a due question is reached by moving its clock.
+  const runStore = new JsonFileStore(await located(dir));
   const definition = loadWorkflowFromString(WORKFLOW(timeout));
   const { record: run } = await runStore.create({
     workflowId: definition.id,
@@ -668,7 +692,7 @@ async function direct(timeout?: number) {
 describe('#627 W — the form path’s own guards, on the function', () => {
   it('a due question sends no form (the due check at the fresh read)', async () => {
     const d = await direct(1);
-    await new Promise((r) => setTimeout(r, 1_200));
+    await passes(1_200);
     let sent = 0;
     const result = await sendQuestionForm(
       d.deps(async () => {

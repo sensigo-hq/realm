@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { renderTemplate, applyFilter, UnknownFilterError } from './render-template.js';
 
 const evidence = {
@@ -1076,16 +1076,9 @@ describe('applyFilter — date', () => {
   });
 });
 
-// #715 (b) (02 §D.4): `from_now` reads no clock — each cell hands the filter its instant.
+// #715 (b) (02 §D.4; 04 §D): `from_now` reads no clock — each cell hands the filter its instant, so
+// no cell fakes the global Date.
 describe('applyFilter — from_now', () => {
-  beforeEach(() => {
-    vi.useFakeTimers({ now: new Date('2026-01-28T10:00:00Z') });
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
   it('returns "3 minutes ago" for input 3 minutes in the past', () => {
     expect(
       applyFilter('2026-01-28T09:57:00Z', 'from_now', [], { at: new Date('2026-01-28T10:00:00Z') }),

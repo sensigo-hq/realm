@@ -320,7 +320,7 @@ Abandoning a run that is already abandoned changes nothing, and the first line s
 realm run cleanup --older-than <duration> [--dry-run]
 ```
 
-Abandons every open run that has not changed for `<duration>`. It leaves runs that are waiting at a gate.
+Abandons every open run that has not changed for `<duration>`. It leaves runs that are waiting at a gate, and a run whose step is held by a claim whose deadline has not passed; a claim past its deadline, or one with no recorded deadline, keeps nothing (added after version 0.48.0). Each run is judged at the time of the read that found it.
 
 | Flag                      | Required | What it does                                             |
 | ------------------------- | -------- | -------------------------------------------------------- |

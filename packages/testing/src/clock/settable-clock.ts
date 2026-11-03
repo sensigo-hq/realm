@@ -1,10 +1,16 @@
 // settable-clock.ts — issue #715 (a) (D5 §6, D6-20): a test clock that only moves when the test moves
 // it, and runs the waiters registered on it as it moves.
+import { clearTimeout as nodeClearTimeout, setTimeout as nodeSetTimeout } from 'node:timers';
 import { clockBasis, markTestClock, type Clock } from '@sensigo/realm';
 
-// Captured at MODULE LOAD, so a test's fake timers cannot freeze the watchdog (D6-20).
-const realSetTimeout = globalThis.setTimeout;
-const realClearTimeout = globalThis.clearTimeout;
+// The watchdog's timers are Node's own (`node:timers`), never the global ones: a test's fake timers
+// cannot freeze it (D6-20), even fake timers a setup file installs before this module loads
+// (#715 (b), 04 §C — a capture of `globalThis.setTimeout` at load would capture the fake).
+const realSetTimeout = nodeSetTimeout;
+const realClearTimeout = nodeClearTimeout;
+
+/** #715 (b) (04 §C): the watchdog's timer functions, for the cell that shows they are Node's own. */
+export const WATCHDOG_TIMERS = { setTimeout: realSetTimeout, clearTimeout: realClearTimeout };
 
 /** A test clock moved by `set` and `advance`, which run its due waiters (D5 §6, D6-20). */
 export interface SettableClock extends Clock {
