@@ -160,10 +160,13 @@ const FLOW = loadWorkflowFromString(
     '  classify:',
     '    description: Classify.',
     '    execution: agent',
-    '    prompt: "Classify the ticket below into one queue.\\nTicket: {{ run.params.ticket }}"',
+    '    prompt: "Classify the ticket below into one queue. Send it with Bearer FAKE.TOKEN-1A2B3C4D\\nTicket: {{ run.params.ticket }}"',
   ].join('\n') + '\n',
 );
-const HEAD = 'Classify the ticket below into one queue.\nTicket: ';
+// The fixed text holds a fake credential the law hides, so the head the agent receives is shorter
+// than the raw head: a field computed after the walk (the raw `chars` cut into the walked prompt)
+// would cut elsewhere, and (g) would see it.
+const HEAD = 'Classify the ticket below into one queue. Send it with Bearer [REDACTED]\nTicket: ';
 
 async function connect() {
   const dir = await mkdtemp(join(tmpdir(), 'realm-3b-door-'));
@@ -223,7 +226,8 @@ describe('caching 3-B B4 — every carrier, over a real reply', () => {
       get_run_state: [false, true],
       start_run_batch: [false, true],
     });
-    // (g) (a) red when the field is computed after the walk or from another text; (b) prints the
+    // (g) (a) red when the field is computed after the walk (the head holds a hidden value, so the
+    //     raw boundary lands elsewhere in the walked prompt) or from another text; (b) prints the
     //     field and each client's verdict.
     expect({
       stable: entries.envelope.stable_prefix,
