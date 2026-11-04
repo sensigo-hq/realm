@@ -1655,9 +1655,12 @@ describe('the --json row, the CHANGELOG, and review-note on its page', { timeout
   // alone — its workflow block, the profile line its sentence states, and a module with the handler
   // the workflow names — validate prints the page's cache lines. Break: one word of the profile
   // sentence changed. (a) red when the page's lines differ from the run's; (b) prints both.
-  it("top-level-fields: review-note's cache lines come from the profile its page states", () => {
+  it("top-level-fields: review-note's cache lines come from the profile and the glossary its page states", () => {
     const page = read(FIELDS_PAGE);
     const stated = /holds one line: `([^`]+)`/.exec(page)?.[1] ?? '';
+    // Caching 3-B (F2): the review step's prompt starts with the glossary, so validate counts it. The
+    // page shows the glossary as delivered (`context_wrapper: brackets`); the file is its inside.
+    const glossary = /\[glossary\]\n([\s\S]*?)\n\[\/glossary\]/.exec(page)?.[1] ?? '';
     const yaml = [...page.matchAll(/```yaml\n([\s\S]*?)```/g)]
       .map((m) => m[1]!)
       .find((b) => b.includes('id: review-note') && b.includes('steps:'))!;
@@ -1666,6 +1669,7 @@ describe('the --json row, the CHANGELOG, and review-note on its page', { timeout
       workflow: yaml,
       files: {
         'personas/reviewer.md': `${stated}\n`,
+        'glossary.md': glossary,
         'registry.mjs':
           "export default { handlers: { file_result: { id: 'file_result', execute: async () => ({ data: {} }) } } };\n",
       },
@@ -1676,8 +1680,11 @@ describe('the --json row, the CHANGELOG, and review-note on its page', { timeout
       encoding: 'utf8',
       timeout: 60_000,
     });
-    expect([stated, cacheLines(r.stdout)]).toEqual([
+    // (a) red when the page's cache lines are not what validate prints for the files it states (a
+    //     line left from before the glossary counted); (b) prints the two files' text and the lines.
+    expect([stated, glossary, cacheLines(r.stdout)]).toEqual([
       'You are a reviewer.',
+      'SKU: the code that identifies one product.\n',
       transcript.split('\n').filter((l) => l.startsWith('cache:')),
     ]);
   });
