@@ -138,7 +138,7 @@ describe('mcp tool handlers', () => {
     expect(result.context_hint).not.toBe('');
     expect(result.chained_auto_steps).toEqual([{ step: 'step-a', run_phase: 'completed' }]);
 
-    const run = await runStore.get(result.run_id);
+    const { record: run } = await runStore.get(result.run_id);
     expect(run.run_phase).toBe('completed');
   });
 
@@ -157,7 +157,7 @@ describe('mcp tool handlers', () => {
     expect(startResult.chained_auto_steps).toEqual([{ step: 'step-auto', run_phase: 'running' }]);
 
     // Run is now waiting for the agent step.
-    const midRun = await runStore.get(startResult.run_id);
+    const { record: midRun } = await runStore.get(startResult.run_id);
     expect(midRun.run_phase).toBe('running');
 
     // Agent executes the step.
@@ -167,7 +167,7 @@ describe('mcp tool handlers', () => {
     );
 
     expect(result.status).toBe('ok');
-    const finalRun = await runStore.get(startResult.run_id);
+    const { record: finalRun } = await runStore.get(startResult.run_id);
     expect(finalRun.run_phase).toBe('completed');
   });
 
@@ -274,7 +274,7 @@ describe('mcp tool handlers', () => {
     expect(startResult.gate).toBeDefined();
 
     const gateId = startResult.gate!.gate_id;
-    const gateRun = await runStore.get(startResult.run_id);
+    const { record: gateRun } = await runStore.get(startResult.run_id);
 
     const result = await handleSubmitHumanResponse(
       { run_id: startResult.run_id, gate_id: gateId, choice: 'approve' },
@@ -282,7 +282,7 @@ describe('mcp tool handlers', () => {
     );
 
     expect(result.status).toBe('ok');
-    const finalRun = await runStore.get(startResult.run_id);
+    const { record: finalRun } = await runStore.get(startResult.run_id);
     expect(finalRun.run_phase).toBe('completed');
     // Suppress unused-variable warning for gateRun
     void gateRun;
@@ -446,7 +446,7 @@ describe('mcp tool handlers', () => {
     );
     expect(reviseAction).toBeDefined();
 
-    const finalRun = await runStore.get(startResult.run_id);
+    const { record: finalRun } = await runStore.get(startResult.run_id);
     // Run is still in progress — revise step has not yet executed.
     expect(finalRun.run_phase).toBe('running');
     expect(finalRun.completed_steps).toContain('review');
@@ -492,7 +492,7 @@ describe('mcp tool handlers', () => {
     expect(result.chained_auto_steps![0]!.step).toBe('read_file');
     expect(result.chained_auto_steps![0]!.run_phase).toBe('completed');
 
-    const run = await runStore.get(result.run_id);
+    const { record: run } = await runStore.get(result.run_id);
     expect(run.run_phase).toBe('completed');
   });
 
@@ -578,7 +578,7 @@ describe('mcp tool handlers', () => {
     const workflowStore = new JsonWorkflowStore(workflowDir);
     await workflowStore.register(makeSingleServiceDef());
     const runStore = new JsonFileStore(runDir);
-    const { run: run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'single-service-wf',
       workflowVersion: 1,
       params: {},
@@ -610,7 +610,7 @@ describe('mcp tool handlers', () => {
     const workflowStore = new JsonWorkflowStore(workflowDir);
     await workflowStore.register(makeTwoStepServiceDef());
     const runStore = new JsonFileStore(runDir);
-    const { run: run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'two-step-service-wf',
       workflowVersion: 1,
       params: {},
@@ -643,7 +643,7 @@ describe('mcp tool handlers', () => {
     const workflowStore = new JsonWorkflowStore(workflowDir);
     await workflowStore.register(makeTwoStepServiceDef());
     const runStore = new JsonFileStore(runDir);
-    const { run: run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'two-step-service-wf',
       workflowVersion: 1,
       params: {},
@@ -674,7 +674,7 @@ describe('mcp tool handlers', () => {
     const workflowStore = new JsonWorkflowStore(workflowDir);
     await workflowStore.register(makeTwoStepServiceDef());
     const runStore = new JsonFileStore(runDir);
-    const { run: run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'two-step-service-wf',
       workflowVersion: 1,
       params: {},

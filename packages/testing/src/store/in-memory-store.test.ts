@@ -7,7 +7,14 @@ import {
   RUN_STORE_FIDELITY_LAWS,
   type RunStoreFidelityLaw,
 } from './run-store-fidelity-contract.js';
-import { WorkflowError } from '@sensigo/realm';
+import {
+  WorkflowError,
+  floorAtRecord,
+  systemClock,
+  takeRawReading,
+  takeReading,
+  writtenSnapshot,
+} from '@sensigo/realm';
 import type {
   WorkflowDefinition,
   RunStore,
@@ -15,6 +22,7 @@ import type {
   CreateRunOptions,
   LoadBearingRunRecordField,
 } from '@sensigo/realm';
+import type { Snapshot, Listing, CreateResult, StoreSettlement } from '@sensigo/realm';
 
 const autoFree: WorkflowDefinition = {
   id: 'p',
@@ -36,8 +44,8 @@ describe('InMemoryStore — claims parity (#101)', () => {
 
   it('claimStep writes a concrete deadline (auto step, finalizer-free) atomically with in_progress', async () => {
     const store = new InMemoryStore();
-    const { run } = await store.create({ workflowId: 'p', workflowVersion: 1, params: {} });
-    const claimed = await store.claimStep(run.id, 'work', autoFree);
+    const { record: run } = await store.create({ workflowId: 'p', workflowVersion: 1, params: {} });
+    const { record: claimed } = await store.claimStep(run.id, 'work', autoFree);
     expect(claimed.in_progress_steps).toContain('work');
     expect(claimed.claims?.['work']?.deadline).toEqual(expect.any(String));
     expect(new Date(claimed.claims!['work']!.deadline!).getTime()).toBeGreaterThan(Date.now());
@@ -45,8 +53,8 @@ describe('InMemoryStore — claims parity (#101)', () => {
 
   it('claimStep writes deadline: null for an agent step', async () => {
     const store = new InMemoryStore();
-    const { run } = await store.create({ workflowId: 'a', workflowVersion: 1, params: {} });
-    const claimed = await store.claimStep(run.id, 'work', agentWf);
+    const { record: run } = await store.create({ workflowId: 'a', workflowVersion: 1, params: {} });
+    const { record: claimed } = await store.claimStep(run.id, 'work', agentWf);
     expect(claimed.claims?.['work']?.deadline).toBeNull();
   });
 
@@ -54,8 +62,8 @@ describe('InMemoryStore — claims parity (#101)', () => {
   // dormant until PR-B, but real/present in every claim record starting with this PR.
   it('claimStep mints a token alongside the deadline (issue #279, dormant until PR-B)', async () => {
     const store = new InMemoryStore();
-    const { run } = await store.create({ workflowId: 'a', workflowVersion: 1, params: {} });
-    const claimed = await store.claimStep(run.id, 'work', agentWf);
+    const { record: run } = await store.create({ workflowId: 'a', workflowVersion: 1, params: {} });
+    const { record: claimed } = await store.claimStep(run.id, 'work', agentWf);
     expect(claimed.claims?.['work']?.token).toEqual(expect.any(String));
     expect(claimed.claims!['work']!.token!.length).toBeGreaterThan(0);
   });
@@ -133,9 +141,12 @@ class FieldDroppingFakeStore implements RunStore {
   readonly persistedRunRecordFields: ReadonlySet<LoadBearingRunRecordField> = new Set([
     'extension_identity',
   ]);
+  /** #715 (b): every store reads the time only through its clock. */
+  readonly clock = systemClock;
 
-  async create(options: CreateRunOptions): Promise<{ run: RunRecord; created: boolean }> {
-    const now = new Date().toISOString();
+  async create(options: CreateRunOptions): Promise<CreateResult> {
+    const at = takeReading(this.clock);
+    const now = at.toISOString();
     const record: RunRecord = {
       id: crypto.randomUUID(),
       workflow_id: options.workflowId,
@@ -153,10 +164,11 @@ class FieldDroppingFakeStore implements RunStore {
       terminal_state: false,
     };
     this.runs.set(record.id, record);
-    return { run: record, created: true };
+    return { ...writtenSnapshot(record, at), created: true };
   }
 
-  async get(runId: string): Promise<RunRecord> {
+  async get(runId: string): Promise<Snapshot> {
+    const r = takeRawReading(this.clock);
     const record = this.runs.get(runId);
     if (record === undefined) {
       throw new WorkflowError(`Run '${runId}' not found`, {
@@ -166,28 +178,40 @@ class FieldDroppingFakeStore implements RunStore {
         retryable: false,
       });
     }
-    return record;
+    return writtenSnapshot(record, floorAtRecord(r, record));
   }
 
-  async update(record: RunRecord): Promise<RunRecord> {
+  async update(record: RunRecord): Promise<Snapshot> {
+    const at = takeReading(this.clock, this.runs.get(record.id));
     // THE LIE: extension_identity is stripped here despite being declared persisted above.
     const { extension_identity: _dropped, ...rest } = record;
     const updated: RunRecord = {
       ...rest,
       version: record.version + 1,
-      updated_at: new Date().toISOString(),
+      updated_at: at.toISOString(),
     };
     this.runs.set(updated.id, updated);
-    return updated;
+    return writtenSnapshot(updated, at);
   }
 
-  async claimStep(): Promise<RunRecord> {
+  async claimStep(): Promise<Snapshot> {
     throw new Error('not exercised by the fidelity-honesty law');
   }
 
-  async list(workflowId?: string): Promise<RunRecord[]> {
+  async settleStep(): Promise<StoreSettlement> {
+    throw new Error('not exercised by the fidelity-honesty law');
+  }
+
+  async list(workflowId?: string): Promise<Listing> {
+    const r = takeRawReading(this.clock);
     const all = [...this.runs.values()];
-    return workflowId !== undefined ? all.filter((r) => r.workflow_id === workflowId) : all;
+    const kept =
+      workflowId !== undefined ? all.filter((rec) => rec.workflow_id === workflowId) : all;
+    return {
+      snapshots: kept.map((rec) => writtenSnapshot(rec, floorAtRecord(r, rec))),
+      read_at: r,
+      consistent_snapshot: true,
+    };
   }
 }
 
@@ -212,9 +236,9 @@ describe('InMemoryStore — rerun_of, the supersede link (issue #558 PR-C)', () 
     const store = new InMemoryStore();
     const first = await store.create({ ...opts });
     expect(first.created).toBe(true);
-    expect(first.run.rerun_of).toBeUndefined();
+    expect(first.record.rerun_of).toBeUndefined();
     await store.update({
-      ...first.run,
+      ...first.record,
       run_phase: 'abandoned',
       terminal_state: true,
       abandoned_at: new Date().toISOString(),
@@ -224,16 +248,16 @@ describe('InMemoryStore — rerun_of, the supersede link (issue #558 PR-C)', () 
 
     const reused = await store.create({ ...opts, onTerminalMatch: 'reuse' });
     expect(reused.created).toBe(false);
-    expect(reused.run.rerun_of).toBeUndefined();
+    expect(reused.record.rerun_of).toBeUndefined();
 
     const rerun = await store.create({ ...opts, onTerminalMatch: 'rerun' });
     expect(rerun.created).toBe(true);
-    expect(rerun.run.id).not.toBe(first.run.id);
-    expect(rerun.run.rerun_of).toBe(first.run.id);
+    expect(rerun.record.id).not.toBe(first.record.id);
+    expect(rerun.record.rerun_of).toBe(first.record.id);
 
     const fresh = await store.create({ ...opts, idempotencyKey: 'never-seen' });
-    expect(fresh.run.rerun_of).toBeUndefined();
-    expect(Object.prototype.hasOwnProperty.call(fresh.run, 'rerun_of')).toBe(false);
+    expect(fresh.record.rerun_of).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(fresh.record, 'rerun_of')).toBe(false);
   });
 
   it('a VANISHED mapped run supersedes nothing, so the fresh run carries no link', async () => {
@@ -243,11 +267,11 @@ describe('InMemoryStore — rerun_of, the supersede link (issue #558 PR-C)', () 
     const first = await store.create({ ...opts });
     // Element access is TypeScript's deliberate escape hatch for a private member — the ONLY way
     // to make a mapped run vanish underneath the key index (no public verb deletes a run here).
-    store['runs'].delete(first.run.id);
+    store['runs'].delete(first.record.id);
 
     const second = await store.create({ ...opts, onTerminalMatch: 'rerun' });
 
     expect(second.created).toBe(true);
-    expect(second.run.rerun_of).toBeUndefined();
+    expect(second.record.rerun_of).toBeUndefined();
   });
 });

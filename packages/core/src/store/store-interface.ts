@@ -1,9 +1,11 @@
 // Interface for run record persistence — implemented by JsonFileStore (local) and future Postgres store.
 import type { RunRecord, SealedBy } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
-import type { SettlementDelta, SettlementResult } from '../types/settlement.js';
+import type { SealRunDelta, SettlementDelta, SettlementResult } from '../types/settlement.js';
 import type { Attributed } from '../engine/holder.js';
 import type { ExtensionIdentityEntry } from '../types/extension-identity.js';
+import type { Snapshot } from '../engine/snapshot.js';
+import type { Clock } from '../utils/clock.js';
 
 /**
  * The load-bearing `RunRecord` fields the engine treats specially enough that a store must
@@ -92,7 +94,57 @@ export interface CreateRunOptions {
   extensionIdentity?: ExtensionIdentityEntry[];
 }
 
+/**
+ * What a run store's `list` returns (#715 (b), D-15): every record with the reading it is judged at,
+ * and the listing's own reading.
+ *
+ * - `read_at` is the RAW reading, taken ONCE before the first record was read (D6-16).
+ * - each snapshot's `at` is `read_at` floored by that record's own `updated_at` (`floorAtRecord`):
+ *   every statement about a record holds at its own `at`.
+ * - `consistent_snapshot` says whether the records were read as ONE cut: `true` for a store that reads
+ *   them in one synchronous pass (the in-memory store), `false` for one that reads them one by one
+ *   (the JSON-file store reads each file in turn, so two rows may come from different moments).
+ */
+export interface Listing {
+  snapshots: Snapshot[];
+  read_at: Date;
+  consistent_snapshot: boolean;
+}
+
+/**
+ * What a run store's `create` returns (#715 (b), D-15): the record with the reading the create
+ * used, and whether it was written. A keyed create that returns an existing run (`created: false`)
+ * has spent its reading too, and returns it.
+ */
+export type CreateResult = Snapshot & { created: boolean };
+
+/**
+ * What a run store's `settleStep` returns (#715 (b), D-19): the transform's result plus the write's
+ * one reading `at` — returned on an applied write AND on a predicate refusal (both took it, after the
+ * lock). A throw before the lock (a missing run) spends none.
+ */
+export type StoreSettlement = SettlementResult & { at: Date };
+
 export interface RunStore {
+  /**
+   * The clock this store reads the time from (#715, D5 §1.1, D6-1, D6-5; required from #715 (b)).
+   *
+   * What it governs (B5′, D6-32): every instant a store call reads or mints — the WRITE class (a
+   * write's `created_at`, `updated_at`, `opened_at`, `abandoned_at`, a claim's `since` and every
+   * deadline minted from a frozen duration), the READ class (the reading a `get` or `list` judges its
+   * records at, returned as `at` / `read_at`) and the EVENT class (a step's `completed_at`, folded
+   * into the settle that records it). What it does NOT govern: instants minted outside a store (the
+   * OUTSIDE class — a log line, a signature window, an export stamp) and durations (monotonic). Each
+   * call that returns spends exactly one reading: the four writes after their lock, the reads BEFORE
+   * they load; `stampSeal`, `save`, `reconcileKeys` and the store's own internal reads spend none.
+   *
+   * A JSON-file or SQLite store holds no clock of its own but the authority its LOCATION has: it
+   * takes no clock option and resolves its clock itself (the host's system clock, or a test
+   * location's clock file). An in-memory store may hold any clock. The engine's admission refuses a
+   * store without a callable `clock.now` and `clock.at` (`store_clock`).
+   */
+  readonly clock: Clock;
+
   /**
    * Whether this store round-trips the optional per-claim `claims` liveness clock (issue #101)
    * through `create`/`update`/`claimStep`. In-repo stores (`JsonFileStore`, `InMemoryStore`)
@@ -125,28 +177,39 @@ export interface RunStore {
    * Create a new run record, or — when an `idempotencyKey` is supplied and a run with the
    * same `(workflowId, idempotencyKey)` already exists — return that existing run instead.
    *
-   * Returns `{ run, created }`:
-   * - `created: true`  — a new run record was written.
+   * Returns a {@link CreateResult} `{ record, at, created }` — `at` is the create's one reading
+   * (taken after the key lock on a keyed create; floored by the run it supersedes):
+   * - `created: true`  — a new run record was written, stamped with `at`.
    * - `created: false` — an existing run matched the idempotency key and is returned unchanged
-   *   (nothing is re-driven; callers inspect `run.run_phase` to decide what to surface).
+   *   (nothing is re-driven); the reading it spent is still returned as `at`.
    *
-   * NOTE (breaking, 0.8.0): this previously returned `Promise<RunRecord>`. External store
-   * implementations (e.g. the cloud Postgres store) must update to the `{ run, created }` shape.
+   * NOTE (breaking, #715 (b)): this returned `{ run, created }`. External store implementations
+   * (e.g. the cloud Postgres store) must return `{ record, at, created }`.
    */
-  create(options: CreateRunOptions): Promise<{ run: RunRecord; created: boolean }>;
+  create(options: CreateRunOptions): Promise<CreateResult>;
 
-  /** Get a run record by ID. Throws WorkflowError(STATE_RUN_NOT_FOUND) if not found. */
-  get(runId: string): Promise<RunRecord>;
+  /**
+   * Get a run by ID, with the reading it is judged at (#715 (b), D-15, D-16): ONE raw reading taken
+   * BEFORE the record is loaded (D6-16), floored by the record's own `updated_at`, so every statement
+   * about the loaded copy holds at `at`. A run that does not exist has spent its reading and throws
+   * `WorkflowError(STATE_RUN_NOT_FOUND)`.
+   */
+  get(runId: string): Promise<Snapshot>;
 
   /**
    * Update a run record. Checks that record.version matches the stored version
    * before writing. Throws WorkflowError(STATE_SNAPSHOT_MISMATCH) on version conflict.
-   * Increments version on successful write.
+   * Increments version on successful write. Returns the written record with the write's one reading
+   * (taken with the lock held, before the version check; a refused update has spent it).
    */
-  update(record: RunRecord): Promise<RunRecord>;
+  update(record: RunRecord): Promise<Snapshot>;
 
-  /** List all run records, optionally filtered by workflowId. */
-  list(workflowId?: string): Promise<RunRecord[]>;
+  /**
+   * List every run, optionally of one workflow, as a {@link Listing}: ONE raw reading `read_at`
+   * taken before the first record is read; each snapshot's `at` is `read_at` floored by its own
+   * record; `consistent_snapshot` says whether the rows are one cut.
+   */
+  list(workflowId?: string): Promise<Listing>;
 
   /**
    * Atomically marks a step as in_progress. Under file lock:
@@ -172,18 +235,27 @@ export interface RunStore {
    * keeps claims writes it as `claims[stepName].holder` when it is passed, and stamps
    * `claims[stepName].since` (ISO) on EVERY claim, inside the one write that creates the claim.
    * `since` is the store's own act, so a claim read back says when it was taken whoever took it.
+   *
+   * Returns the claimed record with the claim's one reading (#715): the deadline, `since` and
+   * `updated_at` are all minted from it.
    */
   claimStep(
     runId: string,
     stepName: string,
     definition: WorkflowDefinition,
     claimant?: Attributed,
-  ): Promise<RunRecord>;
+  ): Promise<Snapshot>;
 
   /**
    * Atomically applies one {@link SettlementDelta} to this run's FRESH state, under the store's
-   * own serialization (issue #279). Optional (the `persistedRunRecordFields` precedent —
-   * additive-optional, never retroactively required of an external implementer).
+   * own serialization (issue #279). REQUIRED (#715 (b), D-19): the engine writes every settlement
+   * through it, and admission refuses a store without it (`store_settle_step`).
+   *
+   * **One reading (#715 (b), D-19).** After the lock, the store takes ONE reading
+   * `at = takeReading(clock, fresh, delta)` — floored by the fresh record, with the delta's event
+   * instants folded in — and hands it to `applySettlement`, which mints EVERY instant of its output
+   * from it (`updated_at` included). The result carries `at`, on an applied write and on a predicate
+   * refusal alike; a throw before the lock spends none.
    *
    * **LIVE for every kind.** The engine constructs and passes `settle_step`, `lease_finalizer` and
    * `mark_finalizer` since v0.32.0; `open_gate`, `settle_gate`, `settle_guard` and `release_step`
@@ -198,8 +270,19 @@ export interface RunStore {
    * that one makes eligible; the applied result lists them in `guards`. The engine reads `guards`
    * from what this method returns and does not settle those guards itself on the gate-answer and
    * gate-expiry paths, so a store that omits the option leaves a guard after a gate unsettled.
-   * The caller never passes the option: `options` here carries `now` only. The contract's laws
-   * `GUARD_CASCADE_ONE_WRITE` and `GUARD_CASCADE_TOTAL` check this.
+   * The caller never passes the option. The contract's laws `GUARD_CASCADE_ONE_WRITE` and
+   * `GUARD_CASCADE_TOTAL` check this.
+   *
+   * **`seal_run` moves THROW (#715 (b), D6-65).** The transform returns a `seal_run` whose
+   * `expected_version` no longer matches as the refusal `moved`; the store THROWS it as
+   * `STATE_SNAPSHOT_MISMATCH`, exactly as `update()` throws a version conflict. Every other refusal
+   * returns.
+   *
+   * **Two overloads (#715 (b), Amendment 1).** A `seal_run` delta takes NO definition — a seal must
+   * work when the workflow is gone, and its transform reads none; every other kind takes one. An
+   * implementer declares `settleStep(runId, delta, definition?)`; `applySettlement` takes the
+   * `seal_run` branch before it touches the definition, and throws a contract-violation `Error` for
+   * any other kind that arrives without one.
    *
    * **A WRITE surface, not a read-only helper** — it carries every obligation `update()` already
    * does for this store (e.g. a cloud store's own policy/authorization gate on the write; M1):
@@ -220,18 +303,18 @@ export interface RunStore {
    * (`{applied:false, reason, run}`) — never thrown as a `WorkflowError`. Implementations must not
    * invert this: a predicate refusal is not an exceptional condition.
    */
-  settleStep?(
+  settleStep(runId: string, delta: SealRunDelta): Promise<StoreSettlement>;
+  settleStep(
     runId: string,
-    delta: SettlementDelta,
+    delta: Exclude<SettlementDelta, SealRunDelta>,
     definition: WorkflowDefinition,
-    options?: { now?: Date },
-  ): Promise<SettlementResult>;
+  ): Promise<StoreSettlement>;
 
   /**
    * Issue #367 (part 3): write a `sealed_by` stamp onto an ALREADY-TERMINAL record — the migration
-   * vehicle's only write verb. Optional and dormant, exactly like {@link RunStore.settleStep}: a
-   * store that does not declare it is refused by `realm run migrate --stamp-seals`, with a pointer
-   * to its own tooling, rather than silently doing nothing.
+   * vehicle's only write verb. Optional: a store that does not declare it is refused by
+   * `realm run migrate --stamp-seals`, with a pointer to its own tooling, rather than silently doing
+   * nothing. It spends no reading (#715 (b), D-16): `updated_at` is carried through.
    *
    * Four checks, in this order:
    *

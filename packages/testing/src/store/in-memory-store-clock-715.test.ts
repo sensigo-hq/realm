@@ -45,15 +45,17 @@ afterEach(() => {
 });
 
 async function terminalize(store: InMemoryStore, run: RunRecord): Promise<RunRecord> {
-  const fresh = await store.get(run.id);
-  return store.update({
-    ...fresh,
-    run_phase: 'abandoned',
-    terminal_state: true,
-    abandoned_at: fresh.updated_at,
-    sealed_by: { arm: 'abandon_requested' },
-    terminal_reason: 'Abandoned via realm run abandon',
-  });
+  const { record: fresh } = await store.get(run.id);
+  return (
+    await store.update({
+      ...fresh,
+      run_phase: 'abandoned',
+      terminal_state: true,
+      abandoned_at: fresh.updated_at,
+      sealed_by: { arm: 'abandon_requested' },
+      terminal_reason: 'Abandoned via realm run abandon',
+    })
+  ).record;
 }
 
 async function code(p: Promise<unknown>): Promise<string> {
@@ -68,7 +70,7 @@ async function code(p: Promise<unknown>): Promise<string> {
 describe('#715 (a) B10 — readings per member (in-memory store)', () => {
   // (a) red when a member spends two readings, none where it must, or a read gains one;
   // (b) prints the member id and the count.
-  it('M1–M6 spend exactly one each (M2 reuse and the refused update and claim included); a missing run, settleStep, stampSeal and reads spend none', async () => {
+  it('M1–M6 spend exactly one each (M2 reuse and the refused update and claim included); a missing run and stampSeal spend none; #715 (b): get, list and settleStep spend one each', async () => {
     const clock = steppingClock(new Date(T), 1_000);
     const store = new InMemoryStore({ clock });
     const delta = (): (() => number) => {
@@ -76,17 +78,19 @@ describe('#715 (a) B10 — readings per member (in-memory store)', () => {
       return () => clock.reads - before;
     };
     let d = delta();
-    const { run } = await store.create(plain);
+    const { record: run } = await store.create(plain);
     expect(d(), 'M1').toBe(1);
     d = delta();
-    const { run: k } = await store.create(keyed());
+    const { record: k } = await store.create(keyed());
     expect(d(), 'M4 (unmapped key)').toBe(1);
     d = delta();
     expect((await store.create(keyed())).created, 'M2 reused').toBe(false);
     expect(d(), 'M2').toBe(1);
     await terminalize(store, k);
     d = delta();
-    expect((await store.create(keyed({ onTerminalMatch: 'rerun' }))).run.rerun_of, 'M3').toBe(k.id);
+    expect((await store.create(keyed({ onTerminalMatch: 'rerun' }))).record.rerun_of, 'M3').toBe(
+      k.id,
+    );
     expect(d(), 'M3').toBe(1);
     d = delta();
     await store.update(run);
@@ -112,15 +116,18 @@ describe('#715 (a) B10 — readings per member (in-memory store)', () => {
       'STATE_RUN_NOT_FOUND',
     );
     expect(d(), 'M6 missing run').toBe(0);
+    // #715 (b) (D-16, the reversal of (a)'s M7 read clause): a read spends ONE reading, taken
+    // before it loads.
     d = delta();
     await store.get(run.id);
+    expect(d(), 'M7 get').toBe(1);
+    d = delta();
     await store.list();
-    expect(d(), 'M7 get, list').toBe(0);
-    // M7: settleStep and stampSeal are unchanged in #715 (a) — #715 (b) moves settleStep onto the
-    // store's reading. Correction 1 (C-4): stampSeal stamps a terminal UNSEALED run at its real
-    // version, seeded by a direct map insert (the store refuses to write a terminal run without a
-    // seal); a stale version or a sealed run would be refused before any stamping code runs.
-    const { run: seed } = await store.create({ ...plain, workflowId: 'seed-m7' });
+    expect(d(), 'M7 list').toBe(1);
+    // Correction 1 (C-4): stampSeal stamps a terminal UNSEALED run at its real version, seeded by a
+    // direct map insert (the store refuses to write a terminal run without a seal); a stale version
+    // or a sealed run would be refused before any stamping code runs.
+    const { record: seed } = await store.create({ ...plain, workflowId: 'seed-m7' });
     const unsealed: RunRecord = {
       ...seed,
       completed_steps: ['a'],
@@ -129,15 +136,19 @@ describe('#715 (a) B10 — readings per member (in-memory store)', () => {
       run_phase: 'completed',
     };
     store['runs'].set(unsealed.id, unsealed);
+    // #715 (b) (D-19): a settle spends ONE reading, refused by its predicate too.
     d = delta();
-    await store.settleStep(run.id, { kind: 'expire_gate', gateId: 'none' }, AUTO);
+    const refused = await store.settleStep(run.id, { kind: 'expire_gate', gateId: 'none' }, AUTO);
+    expect(refused.applied, 'M8 refused').toBe(false);
+    expect(d(), 'M8 settleStep').toBe(1);
+    d = delta();
     const stamped = await store.stampSeal(
       unsealed.id,
       { arm: 'complete', classified: true },
       unsealed.version,
     );
     expect(stamped.stamped, 'M7 stampSeal stamped the seeded run').toBe(true);
-    expect(d(), 'M7 settleStep, stampSeal').toBe(0);
+    expect(d(), 'M7 stampSeal').toBe(0);
   });
 });
 
@@ -162,7 +173,7 @@ describe('#715 (a) correction 1 (C-7) — a refusal spends its one reading (in-m
   it('a keyed create refused by policy (`fail` on a live key, `reject` on an ended one) spends one', async () => {
     const clock = steppingClock(new Date(T), 1_000);
     const store = new InMemoryStore({ clock });
-    const { run } = await store.create(keyed());
+    const { record: run } = await store.create(keyed());
     let before = clock.reads;
     expect(await code(store.create(keyed({ onLiveMatch: 'fail' }))), 'fail').toBe(
       'STATE_RUN_ALREADY_ACTIVE',
@@ -179,7 +190,7 @@ describe('#715 (a) correction 1 (C-7) — a refusal spends its one reading (in-m
   it('a claim refused as not eligible spends one', async () => {
     const clock = steppingClock(new Date(T), 1_000);
     const store = new InMemoryStore({ clock });
-    const { run } = await store.create(plain);
+    const { record: run } = await store.create(plain);
     const before = clock.reads;
     expect(await code(store.claimStep(run.id, 'after', TWO)), 'not eligible').toBe(
       'STATE_STEP_NOT_ELIGIBLE',
@@ -193,19 +204,21 @@ describe('#715 (a) B10 — stamps equal the reading; MONOTONE capped; the floor'
     // (a) red when a stamp comes from a second `new Date()`; (b) prints field names and values.
     const clock = settableClock(new Date(T));
     const store = new InMemoryStore({ clock });
-    const { run } = await store.create(plain);
+    const { record: run } = await store.create(plain);
     expect([run.created_at, run.updated_at], 'M1').toEqual([iso(T), iso(T)]);
     await clock.set(new Date(T + 1_000));
-    const { run: k } = await store.create(keyed());
+    const { record: k } = await store.create(keyed());
     expect([k.created_at, k.updated_at], 'M4').toEqual([iso(T + 1_000), iso(T + 1_000)]);
     await terminalize(store, k);
     await clock.set(new Date(T + 2_000));
-    const { run: s } = await store.create(keyed({ onTerminalMatch: 'rerun' }));
+    const { record: s } = await store.create(keyed({ onTerminalMatch: 'rerun' }));
     expect([s.created_at, s.updated_at], 'M3').toEqual([iso(T + 2_000), iso(T + 2_000)]);
     await clock.set(new Date(T + 3_000));
-    expect((await store.update(await store.get(run.id))).updated_at, 'M5').toBe(iso(T + 3_000));
+    expect((await store.update((await store.get(run.id)).record)).record.updated_at, 'M5').toBe(
+      iso(T + 3_000),
+    );
     await clock.set(new Date(T + 4_000));
-    const c = await store.claimStep(run.id, 'work', AUTO);
+    const { record: c } = await store.claimStep(run.id, 'work', AUTO);
     const expected = computeClaimDeadline(AUTO, 'work', new Date(T + 4_000));
     expect(typeof expected, 'not vacuous').toBe('string');
     expect(
@@ -224,9 +237,9 @@ describe('#715 (a) B10 — stamps equal the reading; MONOTONE capped; the floor'
     for (const lead of [3_600_000, 3_000, -3_600_000]) {
       const clock = settableClock(new Date(T + Math.max(lead, 0)));
       const store = new InMemoryStore({ clock });
-      const { run } = await store.create(plain);
+      const { record: run } = await store.create(plain);
       await clock.set(new Date(T));
-      results.push((await store.update(run)).updated_at);
+      results.push((await store.update(run)).record.updated_at);
     }
     expect(results, 'after +1 h, +3 s, −1 h').toEqual([iso(T + EPS), iso(T + 3_000), iso(T)]);
   });
@@ -239,30 +252,30 @@ describe('#715 (a) B10 — stamps equal the reading; MONOTONE capped; the floor'
     ] as const) {
       const clock = settableClock(new Date(T));
       const store = new InMemoryStore({ clock });
-      const { run: holder } = await store.create(keyed());
+      const { record: holder } = await store.create(keyed());
       await terminalize(store, holder);
       await clock.set(new Date(T + step));
-      const { run: m3 } = await store.create(keyed({ onTerminalMatch: 'rerun' }));
+      const { record: m3 } = await store.create(keyed({ onTerminalMatch: 'rerun' }));
       expect(m3.created_at, `M3 ${label}: holder ${holder.created_at}`).toBe(iso(T + 1));
       // M4: the mapped run vanished; the key's newest remaining run floors the fresh create.
       store['runs'].delete(m3.id);
-      const { run: m4 } = await store.create(keyed({ onTerminalMatch: 'rerun' }));
+      const { record: m4 } = await store.create(keyed({ onTerminalMatch: 'rerun' }));
       expect(m4.created_at, `M4 ${label}: newest ${holder.created_at}`).toBe(iso(T + 1));
     }
     const clock = settableClock(new Date(T + 3_600_000));
     const store = new InMemoryStore({ clock });
-    const { run: ahead } = await store.create(keyed());
+    const { record: ahead } = await store.create(keyed());
     await terminalize(store, ahead);
     await clock.set(new Date(T));
-    const { run: capped } = await store.create(keyed({ onTerminalMatch: 'rerun' }));
+    const { record: capped } = await store.create(keyed({ onTerminalMatch: 'rerun' }));
     expect(capped.created_at, `capped: holder ${ahead.created_at}`).toBe(iso(T + EPS));
   });
 
   it('unkeyed creates at a frozen instant both carry it (never floored)', async () => {
     // (a) red when an unkeyed create is floored; (b) prints the stamps.
     const store = new InMemoryStore({ clock: settableClock(new Date(T)) });
-    const a = (await store.create(plain)).run;
-    const b = (await store.create(plain)).run;
+    const a = (await store.create(plain)).record;
+    const b = (await store.create(plain)).record;
     expect([a.created_at, b.created_at], 'both').toEqual([iso(T), iso(T)]);
   });
 });
@@ -275,9 +288,9 @@ describe('#715 (a) B11 — built without a clock, the in-memory store stamps wit
     try {
       vi.setSystemTime(X);
       const store = new InMemoryStore();
-      const { run } = await store.create(plain);
-      const updated = await store.update(run);
-      const claimed = await store.claimStep(run.id, 'work', AUTO);
+      const { record: run } = await store.create(plain);
+      const { record: updated } = await store.update(run);
+      const { record: claimed } = await store.claimStep(run.id, 'work', AUTO);
       expect(
         [run.created_at, updated.updated_at, claimed.claims?.['work']?.since, claimed.updated_at],
         `X = ${iso(X)}`,

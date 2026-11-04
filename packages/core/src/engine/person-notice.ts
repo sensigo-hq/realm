@@ -11,8 +11,8 @@ import type { Outcome } from '../types/response-envelope.js';
 import type { ErrorCode } from '../types/workflow-error.js';
 import type { RespondWay, UnavailableCode } from './ways.js';
 import type { QuestionView } from './question-view.js';
-import { overdueOf, readInstant } from './instants.js';
-import { formatDuration } from '../utils/duration.js';
+import { overdueOf, parseStamp, readInstant } from './instants.js';
+import { formatDuration, instantText } from '../utils/duration.js';
 
 /** The person's route: the respond way, without the claim proof only the opening call holds. */
 type Route = Omit<RespondWay, 'proof'>;
@@ -40,6 +40,11 @@ export type PersonNotice =
       count: number;
       /** How long the question has been open, in `formatDuration`'s form; absent when unknown. */
       elapsed?: string;
+      /**
+       * #715 (b) (D-29, D6-72): when the question opened, UTC to the second
+       * (`2026-10-27T14:03:07Z`) — present with `elapsed`, printed beside it.
+       */
+      since?: string;
       owner?: string;
       escalation: boolean;
     }
@@ -53,6 +58,11 @@ export type PersonNotice =
       on_expiry: 'settle_default' | 'abort' | 'none';
       /** How long past its deadline the question is, in `formatDuration`'s form; absent when unknown. */
       overdue?: string;
+      /**
+       * #715 (b) (D-29, D6-72): the question's deadline, UTC to the second (`2026-10-27T14:03:07Z`) —
+       * present with `overdue`, printed beside it.
+       */
+      deadline?: string;
     }
   | {
       kind: 'answer_recorded';
@@ -201,6 +211,7 @@ export function composePersonNotice(event: PersonNoticeEvent): PersonNotice {
       };
     case 'reminder': {
       const elapsed = durationWords(gate.opened_at, 'past_event', event.now);
+      const openedMs = elapsed !== undefined ? parseStamp(gate.opened_at) : undefined;
       return {
         kind: 'reminder',
         ...ids,
@@ -209,6 +220,7 @@ export function composePersonNotice(event: PersonNoticeEvent): PersonNotice {
         scheduled_at: event.scheduled_at,
         count: event.count,
         ...(elapsed !== undefined ? { elapsed } : {}),
+        ...(openedMs !== undefined ? { since: instantText(openedMs) } : {}),
         ...(gate.owner !== undefined ? { owner: gate.owner } : {}),
         escalation: event.escalation,
       };
@@ -218,6 +230,7 @@ export function composePersonNotice(event: PersonNoticeEvent): PersonNotice {
         gate.expires_at !== undefined
           ? durationWords(gate.expires_at, 'deadline', event.now)
           : undefined;
+      const deadlineMs = gate.expires_at !== undefined ? parseStamp(gate.expires_at) : undefined;
       return {
         kind: 'expiry_reminder',
         ...ids,
@@ -225,6 +238,9 @@ export function composePersonNotice(event: PersonNoticeEvent): PersonNotice {
         respond: routeOf(event.respond),
         on_expiry: gate.on_expiry ?? 'none',
         ...(overdue !== undefined ? { overdue } : {}),
+        ...(overdue !== undefined && deadlineMs !== undefined
+          ? { deadline: instantText(deadlineMs) }
+          : {}),
       };
     }
     case 'answer_recorded': {

@@ -241,7 +241,7 @@ export async function handleAppendTrace(
   const traceBufferStore = stores?.traceBufferStore;
 
   // 1. Load the run. Throws STATE_RUN_NOT_FOUND if missing.
-  const run = await runStore.get(args.run_id);
+  const { record: run } = await runStore.get(args.run_id);
 
   // 1b. issue #187: reject a terminal run BEFORE the fence or any WAL write. A WAL appended to
   // a completed/failed/abandoned/aborted run is always unreadable residue — the step it names

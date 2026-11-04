@@ -50,7 +50,7 @@ describe('purge ⟷ drain recovery closure (issue #279, increment 1, PR-B, verif
   it('purge refuses drain_pending (single-id --force included) → --void (via runDrainAction) → purge proceeds', async () => {
     const anchorStore = new JsonFileStore(runsDir);
     const workflowStore = new JsonWorkflowStore(join(dir, 'workflows'));
-    const { run } = await anchorStore.create({
+    const { record: run } = await anchorStore.create({
       workflowId: 'drain-purge-wf',
       workflowVersion: 1,
       params: {},
@@ -78,7 +78,7 @@ describe('purge ⟷ drain recovery closure (issue #279, increment 1, PR-B, verif
     // 3. Operator voids the finalizer via `runDrainAction` (the same logic `realm run drain
     // --void` wires, driven directly against the explicit anchorStore — no $HOME involved).
     await runDrainAction(run.id, { void: 'fin' }, anchorStore, workflowStore, DEPS);
-    const afterVoid = await anchorStore.get(run.id);
+    const { record: afterVoid } = await anchorStore.get(run.id);
     expect(afterVoid.finalizer_ledger?.['fin']?.status).toBe('voided');
 
     // 4. purge --force now proceeds — no pending entries left.

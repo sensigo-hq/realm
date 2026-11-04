@@ -12,6 +12,7 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type RunStore,
   type WorkflowDefinition,
+  writtenSnapshot,
 } from '@sensigo/realm';
 import { respondToGate } from './respond.js';
 
@@ -39,22 +40,28 @@ describe('#625 PR-2a — respond prints the derived phase', () => {
       const json = new JsonFileStore(join(home, 'runs'));
       const workflows = new JsonWorkflowStore(join(home, 'wf'));
       await workflows.register(def);
-      const { run } = await json.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await json.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await executeStep(json, def, {
         runId: run.id,
         command: 'confirm',
         input: {},
         dispatcher: async () => ({}),
       });
-      const gateId = (await json.get(run.id)).pending_gate!.gate_id;
+      const gateId = (await json.get(run.id)).record.pending_gate!.gate_id;
       let answered = false;
       // Reads after the answer return a stale stored label ('gate_waiting') on an open run.
       const store = new Proxy(json, {
         get(target, prop, receiver) {
           if (prop === 'get') {
             return async (id: string) => {
-              const r = await target.get(id);
-              return answered ? { ...r, run_phase: 'gate_waiting' } : r;
+              const snapshot = await target.get(id);
+              return answered
+                ? writtenSnapshot({ ...snapshot.record, run_phase: 'gate_waiting' }, snapshot.at)
+                : snapshot;
             };
           }
           if (prop === 'settleStep') {

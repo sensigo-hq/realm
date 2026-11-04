@@ -108,7 +108,7 @@ async function drive(
   } finally {
     vi.restoreAllMocks();
   }
-  const runId = (await store.list())[0]!.id;
+  const runId = (await store.list()).snapshots.map((s) => s.record)[0]!.id;
   return { result, lines: lines.map((l) => l.split(runId).join('<run>')), calls, runId, store };
 }
 
@@ -122,7 +122,7 @@ describe('#625 PR-2a, C82 — realm agent never picks an agent step refused befo
       calls: 0,
       lines: [...HEADER, PRE_LINE, stopLine('precondition')],
     });
-    expect((await d.store.get(d.runId)).evidence).toEqual([]);
+    expect((await d.store.get(d.runId)).record.evidence).toEqual([]);
   });
 
   it('head, trust: no model call; the step named once; the cannot-go-on exit (failed)', async () => {
@@ -152,7 +152,7 @@ describe('#625 PR-2a, C82 — realm agent never picks an agent step refused befo
         stopLine('precondition'),
       ],
     });
-    expect((await d.store.get(d.runId)).completed_steps).toEqual(['first']);
+    expect((await d.store.get(d.runId)).record.completed_steps).toEqual(['first']);
   });
 
   it('CONTROL — chained, the precondition passes: two calls, the run completes', async () => {
@@ -168,7 +168,7 @@ describe('#625 PR-2a, C82 — realm agent never picks an agent step refused befo
     expect({ result: d.result, calls: d.calls }).toEqual({ result: 'failed', calls: 1 });
     expect(d.lines.filter((l) => l === PRE_LINE)).toHaveLength(1);
     expect(d.lines.at(-1)).toBe(stopLine('precondition'));
-    expect((await d.store.get(d.runId)).completed_steps).toEqual(['ok']);
+    expect((await d.store.get(d.runId)).record.completed_steps).toEqual(['ok']);
   });
 });
 
@@ -178,7 +178,11 @@ describe('#625 PR-2a, C82 (4) — the cannot-go-on exit, never while a step is i
     // "nothing else can run … correct the workflow" would be false: `a` completes with `ok: true`.
     const def = wf({ a: agent(), ask: agent({ preconditions: ['a.ok == true'] }) });
     const store = new InMemoryStore();
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     let release!: () => void;
     const released = new Promise<void>((r) => (release = r));
     const other = executeStep(store, def, {
@@ -190,7 +194,7 @@ describe('#625 PR-2a, C82 (4) — the cannot-go-on exit, never while a step is i
         return { ok: true };
       },
     });
-    while (!(await store.get(run.id)).in_progress_steps.includes('a')) {
+    while (!(await store.get(run.id)).record.in_progress_steps.includes('a')) {
       await new Promise((r) => setTimeout(r, 2));
     }
     let calls = 0;
@@ -242,7 +246,7 @@ describe('#625 PR-2a, C82 (4) — the cannot-go-on exit, never while a step is i
       result,
       calls,
       stopped: lines.filter((l) => l.includes('The drive stops')),
-      completed: (await store.get(run.id)).completed_steps,
+      completed: (await store.get(run.id)).record.completed_steps,
     }).toEqual({ result: 'completed', calls: 1, stopped: [], completed: ['a', 'ask'] });
   });
 });
@@ -274,7 +278,7 @@ describe('#625 PR-2a, C82 (5) — the drive’s blocked arm never prints ✓', (
       // Another process completes `ask` while this drive's model answers (the first call only).
       if (once) return;
       once = true;
-      const runId = (await store.list())[0]!.id;
+      const runId = (await store.list()).snapshots.map((s) => s.record)[0]!.id;
       const r = await executeStep(store, def, {
         runId,
         command: 'ask',
@@ -302,7 +306,7 @@ describe('#625 PR-2a, C82 (5) — the drive’s blocked arm never prints ✓', (
     const d = await drive(def, {}, async (store) => {
       if (once) return;
       once = true;
-      const runId = (await store.list())[0]!.id;
+      const runId = (await store.list()).snapshots.map((s) => s.record)[0]!.id;
       await store.claimStep(runId, 'ask', def);
     });
     // (a) red when the in-flight member is dropped (the reply then prints its hint and stops);
@@ -327,7 +331,7 @@ describe('#625 PR-2a, C82 (5) — the drive’s blocked arm never prints ✓', (
     const d = await drive(def, {}, async (store) => {
       if (once) return;
       once = true;
-      const runId = (await store.list())[0]!.id;
+      const runId = (await store.list()).snapshots.map((s) => s.record)[0]!.id;
       const r = await executeStep(store, def, {
         runId,
         command: 'ask',
@@ -345,6 +349,6 @@ describe('#625 PR-2a, C82 (5) — the drive’s blocked arm never prints ✓', (
         "log: • Step 'ask' was taken by another process, whose claim is no longer on the record, and failed; this drive's answer was not recorded.",
       next: 'log: \n→ [agent] side',
     });
-    expect((await d.store.get(d.runId)).failed_steps).toEqual(['ask']);
+    expect((await d.store.get(d.runId)).record.failed_steps).toEqual(['ask']);
   });
 });

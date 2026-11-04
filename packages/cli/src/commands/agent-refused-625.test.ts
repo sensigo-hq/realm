@@ -86,7 +86,11 @@ describe('#625 PR-2a, C82 — realm run inspect and realm run advance name a ref
       const ready = wf('c82-inspect-ctl', { ask: agent(PRE), ok: agent() });
       await workflows.register(stuck);
       await workflows.register(ready);
-      const { run } = await runs.create({ workflowId: stuck.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: stuck.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const lines = (await inspectRun(run.id, runs, workflows)).split('\n');
       const at = lines.indexOf(`Cannot run 'ask' (precondition): ${PRE_REFUSAL}`);
       // (a) red when inspect reads the engine steps alone; (b) prints the index and the next line.
@@ -94,7 +98,7 @@ describe('#625 PR-2a, C82 — realm run inspect and realm run advance name a ref
         found: true,
         next: wayOut(run.id),
       });
-      const { run: c } = await runs.create({
+      const { record: c } = await runs.create({
         workflowId: ready.id,
         workflowVersion: 1,
         params: {},
@@ -136,7 +140,11 @@ describe('#625 PR-2a, C82 — realm run inspect and realm run advance name a ref
           }),
         ],
       ] as const) {
-        const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+        const { record: run } = await runs.create({
+          workflowId: d.id,
+          workflowVersion: 1,
+          params: {},
+        });
         const lines: string[] = [];
         const code = await advanceRunFromShell(
           run.id,
@@ -166,7 +174,11 @@ describe('#625 PR-2a, C82 — realm run advance after a call that ran a step', (
         ask: agent({ preconditions: ['prep.ok == true'] }, ['prep']),
       });
       await workflows.register(d);
-      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const lines: string[] = [];
       const code = await advanceRunFromShell(
         run.id,

@@ -92,7 +92,7 @@ describe('realm run gc --heal — flag composition (issue #293) — action-level
    *  inside `.action()`, not an explicit-dir store instance. */
   async function seedStalePhaseRecord(): Promise<string> {
     const store = new JsonFileStore(runsDir);
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'wf-293-cli',
       workflowVersion: 1,
       params: {},

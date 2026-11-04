@@ -194,12 +194,15 @@ export function buildEntry(
   step: string,
   provider: string,
   attemptStartedAt: number,
+  // #715 (b) (02 §D.2; census class `event`): when the failure happened, on the run store's clock —
+  // the caller reads `store.clock.now()`; the entry is written with it.
+  at: Date,
 ): DriveFailureRecord {
   try {
-    return buildEntryUnsafe(err, step, provider, attemptStartedAt);
+    return buildEntryUnsafe(err, step, provider, attemptStartedAt, at);
   } catch {
     return {
-      at: new Date().toISOString(),
+      at: at.toISOString(),
       step,
       provider,
       error_class: 'other',
@@ -214,10 +217,11 @@ function buildEntryUnsafe(
   step: string,
   provider: string,
   attemptStartedAt: number,
+  at: Date,
 ): DriveFailureRecord {
   const classified = classifyDriveError(err);
   return {
-    at: new Date().toISOString(),
+    at: at.toISOString(),
     step,
     provider,
     message: sanitizeError(err).slice(0, MESSAGE_CAP),
@@ -293,17 +297,24 @@ export async function recordDriveFailure(
             ) as UsageRecord[],
           };
     for (let i = 0; i < WRITE_ATTEMPTS; i++) {
-      const run = await store.get(runId);
+      const { record: run } = await store.get(runId);
       // A sealed run already tells its story; adding to it would be noise, and writing to it
       // would reopen a settled record.
       if (run.terminal_state) return;
 
       const prev: DriveFailuresField | undefined = run.drive_failures;
+      // #715 (b) (02 §D.2): what the run held when this entry is appended, read in this write — the
+      // `drive_failing` finding fires while nothing was recorded since (counts, never stamps).
+      const fenced: DriveFailureRecord = {
+        ...stored,
+        evidence_count: run.evidence.length,
+        ...(run.pending_gate !== undefined ? { gate_id: run.pending_gate.gate_id } : {}),
+      };
       const field: DriveFailuresField = {
         first_failed_at: prev?.first_failed_at ?? entry.at,
         // Monotonic and OUTSIDE the ring: a run that failed forty times must not read as five.
         total: (prev?.total ?? 0) + 1,
-        entries: [...(prev?.entries ?? []), stored].slice(-RING_CAP),
+        entries: [...(prev?.entries ?? []), fenced].slice(-RING_CAP),
       };
 
       try {

@@ -57,7 +57,7 @@ describe('resume wedge e2e (issue #279, increment 1, PR-B, verification item 4)'
     };
     await workflowStore.register(def);
 
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'resume-wedge-wf',
       workflowVersion: 1,
       params: {},
@@ -73,7 +73,7 @@ describe('resume wedge e2e (issue #279, increment 1, PR-B, verification item 4)'
       },
     });
     expect(failResult.status).toBe('error');
-    const afterFail = await runStore.get(run.id);
+    const { record: afterFail } = await runStore.get(run.id);
     expect(afterFail.failed_steps).toContain('work');
     expect(afterFail.terminal_state).toBe(true);
     expect(afterFail.run_phase).toBe('failed');
@@ -82,7 +82,7 @@ describe('resume wedge e2e (issue #279, increment 1, PR-B, verification item 4)'
     // object that `realm run resume` wires; the subcommand's own object is named `resume`).
     await resumeCommand.parseAsync([run.id, '--from', 'work'], { from: 'user' });
     expect(exitSpy).not.toHaveBeenCalled();
-    const afterResume = await runStore.get(run.id);
+    const { record: afterResume } = await runStore.get(run.id);
     expect(afterResume.terminal_state).toBe(false);
     expect(afterResume.failed_steps).not.toContain('work');
     expect(afterResume.claims?.['work']).toBeUndefined(); // claim released
@@ -99,7 +99,7 @@ describe('resume wedge e2e (issue #279, increment 1, PR-B, verification item 4)'
 
     expect(completeResult.status).toBe('ok');
     expect(completeResult.errors).toEqual([]);
-    const finalRun = await runStore.get(run.id);
+    const { record: finalRun } = await runStore.get(run.id);
     expect(finalRun.completed_steps).toContain('work');
     expect(finalRun.terminal_state).toBe(true);
     expect(finalRun.run_phase).toBe('completed');

@@ -39,10 +39,12 @@ describe('InMemoryStore — settlement TCK conformance (issue #279, increment 1 
         store,
         storeName: 'InMemoryStore',
         settlementFixture: defaultSettlementFixture,
+        // #715 (b): the time-moving families build a fresh store on a clock they set.
+        route: { kind: 'clock', makeStore: ({ clock }) => new InMemoryStore({ clock }) },
         // issue #367 (part 3): this store's own sanctioned channel — a direct map insert, which
         // is the in-memory equivalent of writing the file behind the boundary's back.
         seedLegacyTerminal: async (id) => {
-          const { run } = await store.create({
+          const { record: run } = await store.create({
             workflowId: `tck-seed-${id}`,
             workflowVersion: 1,
             params: {},
@@ -87,10 +89,14 @@ describe('InMemoryStore — no-await single-owner discipline for settleStep (iss
   it('two disjoint concurrent settleStep calls (same run, different steps) both land — no interleaving window', async () => {
     const store = new InMemoryStore();
     const def = defaultSettlementFixture.minimalDefinition(['a', 'b']);
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
-    const claimedA = await store.claimStep(run.id, 'a', def);
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const { record: claimedA } = await store.claimStep(run.id, 'a', def);
     const tokenA = claimedA.claims!['a']!.token!;
-    const claimedB = await store.claimStep(run.id, 'b', def);
+    const { record: claimedB } = await store.claimStep(run.id, 'b', def);
     const tokenB = claimedB.claims!['b']!.token!;
 
     const [resultA, resultB] = await Promise.all([
@@ -108,7 +114,7 @@ describe('InMemoryStore — no-await single-owner discipline for settleStep (iss
     expect(resultA.applied).toBe(true);
     expect(resultB.applied).toBe(true);
 
-    const final = await store.get(run.id);
+    const { record: final } = await store.get(run.id);
     expect(final.completed_steps).toContain('a');
     expect(final.completed_steps).toContain('b');
     expect(final.terminal_state).toBe(true);

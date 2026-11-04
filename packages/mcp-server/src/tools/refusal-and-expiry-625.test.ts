@@ -44,6 +44,7 @@ import { handleAdvanceRun, registerAdvanceRun } from './advance-run.js';
 import { handleSubmitHumanResponse } from './submit-human-response.js';
 import { handleGetRunState } from './get-run-state.js';
 import { handleStartRun } from './start-run.js';
+import { zOf } from '../test-support/instant.js';
 
 /**
  * The answer as the MCP door renders it on a reply that did not open the question (#729 PR-0, Table
@@ -135,7 +136,11 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
 
   it('C94, J9-R1: execute_step on `a` (agent, precondition) and on `blk` (auto, precondition) beside the ready `b`', async () => {
     await workflowStore.register(J9R1);
-    const { run } = await runStore.create({ workflowId: J9R1.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runStore.create({
+      workflowId: J9R1.id,
+      workflowVersion: 1,
+      params: {},
+    });
     for (const command of ['a', 'blk']) {
       const reply = await handleExecuteStep(
         { run_id: run.id, command, params: {} },
@@ -162,7 +167,11 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       steps: { a: J9R1.steps['a']! },
     };
     await workflowStore.register(d);
-    const { run } = await runStore.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runStore.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const reply = await handleExecuteStep(
       { run_id: run.id, command: 'a', params: {} },
       { runStore, workflowStore },
@@ -181,24 +190,28 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
   /** A registered run at its open question, the question's time already up (stored `expires_at` moved back). */
   async function expiredGate(d: WorkflowDefinition, expired: boolean) {
     await workflowStore.register(d);
-    const { run } = await runStore.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runStore.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await executeStep(runStore, d, {
       runId: run.id,
       command: 'confirm',
       input: {},
       dispatcher: async () => ({}),
     });
-    const r = await runStore.get(run.id);
+    const { record: r } = await runStore.get(run.id);
+    const expiresAt = expired
+      ? new Date(Date.now() - 60_000).toISOString()
+      : (r.pending_gate!.expires_at ?? '');
     if (expired) {
       await runStore.update({
         ...r,
-        pending_gate: {
-          ...r.pending_gate!,
-          expires_at: new Date(Date.now() - 60_000).toISOString(),
-        },
+        pending_gate: { ...r.pending_gate!, expires_at: expiresAt },
       });
     }
-    return { runId: run.id, gateId: r.pending_gate!.gate_id };
+    return { runId: run.id, gateId: r.pending_gate!.gate_id, expiresAt };
   }
 
   for (const [onExpiry, phase] of [
@@ -207,7 +220,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
   ] as const) {
     it(`C95, ${onExpiry}: get_run_state says advance_owed and offers advance_run; advance_run carries it out (${phase})`, async () => {
       const d = gated(`rae-${onExpiry}`, onExpiry);
-      const { runId, gateId } = await expiredGate(d, true);
+      const { runId, gateId, expiresAt } = await expiredGate(d, true);
       const state = await handleGetRunState({ run_id: runId }, { runStore, workflowStore });
       // (a) red when a due expiry reads `awaiting_human` with nothing to call; (b) prints status and act.
       expect({
@@ -215,7 +228,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
         next: state.next_actions.map((a) => a.instruction?.tool),
       }).toEqual({ status: 'advance_owed', next: ['advance_run'] });
       const reply = await handleAdvanceRun({ run_id: runId }, { runStore, workflowStore });
-      const after = await runStore.get(runId);
+      const { record: after } = await runStore.get(runId);
       // (a) red when advance_run leaves the question open; (b) prints the phase and the gate.
       expect({ phase: after.run_phase, gate: after.pending_gate }).toEqual({
         phase,
@@ -223,7 +236,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       });
       // (a) red when the disclosure leaves the reply; (b) prints the warnings.
       expect(reply.warnings).toContain(
-        `gate '${gateId}' on 'confirm' had expired 1m before this call — this advance_run call first carried out its declared ${
+        `gate '${gateId}' on 'confirm' had expired 1m before this call (deadline ${zOf(expiresAt)}) — this advance_run call first carried out its declared ${
           onExpiry === 'settle_default'
             ? "settle_default: the default choice 'approve' was recorded"
             : 'abort: the run ended'
@@ -250,7 +263,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       expect(JSON.stringify(state.next_actions)).not.toContain('"claim_token"');
       await handleAdvanceRun({ run_id: runId }, { runStore, workflowStore });
       // (a) red when advance_run settles or aborts this question; (b) prints the gate.
-      expect((await runStore.get(runId)).pending_gate?.gate_id).toBe(gateId);
+      expect((await runStore.get(runId)).record.pending_gate?.gate_id).toBe(gateId);
     });
   }
 
@@ -281,7 +294,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       { runStore, workflowStore },
     );
     expect(first.status).toBe('confirm_required');
-    const gateId = (await runStore.get(first.run_id)).pending_gate!.gate_id;
+    const gateId = (await runStore.get(first.run_id)).record.pending_gate!.gate_id;
     const again = await handleStartRun(
       { workflow_id: d.id, params: {}, idempotency_key: 'k1' },
       { runStore, workflowStore },
@@ -322,7 +335,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       },
     };
     await workflowStore.register(strand);
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: strand.id,
       workflowVersion: 1,
       params: {},
@@ -373,7 +386,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
     // (a) red when the refusal's act is not the view's (the one composition); (b) prints both.
     expect(reply.next_actions).toEqual(state.next_actions);
     // (a) red when the refusal carried the expiry out (it refuses; advance_run does that); (b) prints it.
-    expect((await runStore.get(runId)).pending_gate?.gate_id).toBe(gateId);
+    expect((await runStore.get(runId)).record.pending_gate?.gate_id).toBe(gateId);
   });
 
   it('C117 CONTROL: the same wrong gate id on an open question whose time is not up offers the answer — report_to_user (A-2 row 6), the question named', async () => {
@@ -429,7 +442,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
         phase: reply.run_phase,
       }).toEqual({ data: {}, evidence: [], ran: ['after'], phase: 'completed' });
       // (a) red when the run's own evidence is lost (the reply empties; the record keeps); (b) prints it.
-      expect((await runStore.get(runId)).evidence.map((e) => e.step_id)).toContain('after');
+      expect((await runStore.get(runId)).record.evidence.map((e) => e.step_id)).toContain('after');
       // (a) red when the core reply was empty anyway (the cell would prove nothing); (b) prints it.
       const core = await handleAdvanceRun(
         { run_id: (await expiredGate(d, true)).runId },
@@ -450,7 +463,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
 
   it('C120, W5-R1: execute_step on the step after an expired abort question — blocked and stop: this call ended the run', async () => {
     const d = gated('rae-w5r1', 'abort');
-    const { runId, gateId } = await expiredGate(d, true);
+    const { runId, gateId, expiresAt } = await expiredGate(d, true);
     const reply = await handleExecuteStep(
       { run_id: runId, command: 'after', params: {} },
       { runStore, workflowStore },
@@ -471,7 +484,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       hint: "Step 'after' cannot be called now: the run has ended (aborted).",
       phase: 'aborted',
       line: [
-        `gate '${gateId}' on 'confirm' had expired 1m before this call — this execute_step call first carried out its declared abort: the run ended (enacted_via: execute_step).`,
+        `gate '${gateId}' on 'confirm' had expired 1m before this call (deadline ${zOf(expiresAt)}) — this execute_step call first carried out its declared abort: the run ended (enacted_via: execute_step).`,
       ],
     });
   });
@@ -530,7 +543,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
 
   it("C136, W5-Y3: execute_step on the question's own step after that call carried its expiry out — the suggestion says to call advance_run, the only call next_actions holds", async () => {
     const d = gated('rae-c136', 'settle_default');
-    const { runId, gateId } = await expiredGate(d, true);
+    const { runId, gateId, expiresAt } = await expiredGate(d, true);
     const reply = await handleExecuteStep(
       { run_id: runId, command: 'confirm', params: {} },
       { runStore, workflowStore },
@@ -550,7 +563,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       suggestion: 'Call advance_run, as next_actions says.',
       hint: "Step 'confirm' cannot be called now: it has already completed. Owed to the engine: 'after' — call advance_run.",
       line: [
-        `gate '${gateId}' on 'confirm' had expired 1m before this call — this execute_step call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: execute_step).`,
+        `gate '${gateId}' on 'confirm' had expired 1m before this call (deadline ${zOf(expiresAt)}) — this execute_step call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: execute_step).`,
       ],
     });
   });
@@ -560,7 +573,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       const lines: Record<string, string[]> = {};
       for (const tool of ['execute_step', 'submit_human_response'] as const) {
         const d = gated(`rae-c151-${tool}-${onExpiry}`, onExpiry);
-        const { runId, gateId } = await expiredGate(d, true);
+        const { runId, gateId, expiresAt } = await expiredGate(d, true);
         const reply =
           tool === 'execute_step'
             ? await handleExecuteStep(
@@ -579,7 +592,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
         // (a) red when the tool stops passing its own name (the library default, executeChain or
         // submitHumanResponse, shows instead); (b) prints the lines.
         expect(lines[tool]).toEqual([
-          `gate '${gateId}' on 'confirm' had expired 1m before this call — this ${tool} call first carried out its declared ${did} (enacted_via: ${tool}).`,
+          `gate '${gateId}' on 'confirm' had expired 1m before this call (deadline ${zOf(expiresAt)}) — this ${tool} call first carried out its declared ${did} (enacted_via: ${tool}).`,
         ]);
       }
     },

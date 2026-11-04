@@ -9,6 +9,7 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: step,
 // handler and adapter names and the lines the command printed — never a value.
+import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
 import { describe, it, expect, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import {
@@ -78,6 +79,23 @@ function freshHome(): Home {
   };
 }
 
+/**
+ * #715 (b) 04 §D (B4), at the merge of main: a fresh HOME whose `~/.realm` is a test location, made
+ * BEFORE its stores open (a store takes its clock when it is built). A cell moves the clock the
+ * spawned `realm` reads instead of waiting on the real one for a question to expire.
+ */
+async function locatedHome(): Promise<Home & { clock: TestLocation['clock'] }> {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), 'realm-owed-923-')));
+  folders.push(home);
+  const loc = await createTestLocation({ start: new Date(), root: join(home, '.realm') });
+  return {
+    home,
+    runs: new JsonFileStore(join(home, '.realm', 'runs')),
+    workflows: new JsonWorkflowStore(join(home, '.realm', 'workflows')),
+    clock: loc.clock,
+  };
+}
+
 /** The built `realm`, in a fresh HOME, from `cwd` (the HOME when not given). */
 function realm(
   h: Home,
@@ -137,7 +155,7 @@ const expiringGate: StepDefinition = {
 
 async function started(h: Home, d: WorkflowDefinition, params = {}): Promise<string> {
   await h.workflows.register(d);
-  const { run } = await h.runs.create({ workflowId: d.id, workflowVersion: 1, params });
+  const { record: run } = await h.runs.create({ workflowId: d.id, workflowVersion: 1, params });
   return run.id;
 }
 
@@ -172,7 +190,7 @@ async function failed(
     ...(registry !== undefined ? { registry } : {}),
   });
   // (a) red when the step did not fail (fixture); (b) prints the failed steps.
-  expect((await h.runs.get(id)).failed_steps, 'fixture').toEqual([command]);
+  expect((await h.runs.get(id)).record.failed_steps, 'fixture').toEqual([command]);
 }
 
 /**
@@ -274,7 +292,7 @@ describe('#923 C1 — realm run inspect: the owed line names the code an owed st
   it(
     'C1 (c) a due question expiry owed (`on_expiry: settle_default`), the step after it needing a handler: today’s line',
     async () => {
-      const h = freshHome();
+      const h = await locatedHome();
       const d = wf('c1c', {
         decide: expiringGate,
         after: step({ handler: 'h_after' }, ['decide']),
@@ -286,7 +304,7 @@ describe('#923 C1 — realm run inspect: the owed line names the code an owed st
         input: {},
         dispatcher: async () => ({}),
       });
-      await new Promise((r) => setTimeout(r, 1300));
+      await h.clock.advance(1300);
       const r = realm(h, ['run', 'inspect', id]);
       // (a) red when a due expiry gains a condition (it is owed alone: the step after it is not owed
       //     yet); (b) prints the lines.
@@ -375,7 +393,7 @@ describe('#923 C1 — realm run inspect: the owed line names the code an owed st
       // Fixture: (a) red when the project does not have `mark` after all (advance refuses); (b)
       //     prints advance's exit code and the completed steps.
       expect(
-        { code: advanced.code, completed: (await h.runs.get(id)).completed_steps },
+        { code: advanced.code, completed: (await h.runs.get(id)).record.completed_steps },
         'fixture',
       ).toEqual({ code: 0, completed: ['s1'] });
     },
@@ -492,7 +510,7 @@ describe('#923 C2 — realm run drain on a live run: the way out names the code'
       expect(
         {
           code: advanced.code,
-          completed: (await h.runs.get(id)).completed_steps,
+          completed: (await h.runs.get(id)).record.completed_steps,
           marker: imported(p),
         },
         'fixture',
@@ -506,7 +524,7 @@ describe('#923 C3 — realm run drain after an expiry enactment', () => {
   it(
     'C3 `--expired --force` carries out a `settle_default` question; the step it leaves owed needs a handler: the condition',
     async () => {
-      const h = freshHome();
+      const h = await locatedHome();
       const d = wf('c3', {
         decide: expiringGate,
         after: step({ handler: 'h_after' }, ['decide']),
@@ -518,7 +536,7 @@ describe('#923 C3 — realm run drain after an expiry enactment', () => {
         input: {},
         dispatcher: async () => ({}),
       });
-      await new Promise((r) => setTimeout(r, 1300));
+      await h.clock.advance(1300);
       const r = realm(h, ['run', 'drain', id, '--expired', '--force']);
       // (a) red when the after-expiry owed line names no condition; (b) prints the exit code and the
       //     `To run` lines.
@@ -542,7 +560,7 @@ describe('#923 C3 — realm run drain after an expiry enactment', () => {
   it(
     'C3 (g) `--expired --force`, the step it leaves owed has its handler in the project: the condition shows, none of the project’s code is loaded, and advance runs the step',
     async () => {
-      const h = freshHome();
+      const h = await locatedHome();
       const p = await projectWithMark(h, 'c3g', [
         '  decide:',
         '    description: Decide.',
@@ -566,7 +584,7 @@ describe('#923 C3 — realm run drain after an expiry enactment', () => {
         input: {},
         dispatcher: async () => ({}),
       });
-      await new Promise((r) => setTimeout(r, 1300));
+      await h.clock.advance(1300);
       clearMarker(p);
       const r = realm(h, ['run', 'drain', id, '--expired', '--force']);
       // (a) red when the after-expiry owed line drops the condition; (b) prints the exit code and
@@ -590,7 +608,7 @@ describe('#923 C3 — realm run drain after an expiry enactment', () => {
       expect(
         {
           code: advanced.code,
-          completed: [...(await h.runs.get(id)).completed_steps].sort(),
+          completed: [...(await h.runs.get(id)).record.completed_steps].sort(),
           marker: imported(p),
         },
         'fixture',
@@ -659,7 +677,7 @@ describe('#923 C4 — realm run resume', () => {
       // Fixture: (a) red when the project does not have `mark` after all; (b) prints advance's exit
       //     code and the completed steps.
       expect(
-        { code: advanced.code, completed: (await h.runs.get(id)).completed_steps },
+        { code: advanced.code, completed: (await h.runs.get(id)).record.completed_steps },
         'fixture',
       ).toEqual({ code: 0, completed: ['a'] });
     },
@@ -704,9 +722,9 @@ describe('#923 C6 — a marked step stays out of the owed list', () => {
       });
       // Fixture: (a) red when the attempt left no marker on `s1`, or marked `s2` too; (b) prints the
       //     marked steps.
-      expect(Object.keys((await h.runs.get(id)).capability_blocks ?? {}), 'fixture').toEqual([
-        's1',
-      ]);
+      expect(Object.keys((await h.runs.get(id)).record.capability_blocks ?? {}), 'fixture').toEqual(
+        ['s1'],
+      );
       const r = realm(h, ['run', 'inspect', id]);
       // (a) red when the marked step is listed as owed (the marker branch gone) or loses its line;
       //     (b) prints the owed items (the words before ` — `; C1 pins the condition after them) and

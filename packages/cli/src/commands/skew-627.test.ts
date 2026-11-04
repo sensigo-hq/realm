@@ -56,9 +56,13 @@ async function opened() {
   const def = loadWorkflowFromString(YAML);
   await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(def);
   const store = new JsonFileStore(join(home, '.realm', 'runs'));
-  const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+  const { record: run } = await store.create({
+    workflowId: def.id,
+    workflowVersion: 1,
+    params: {},
+  });
   await advanceRun(store, def, { runId: run.id });
-  return { home, runId: run.id, gateId: (await store.get(run.id)).pending_gate!.gate_id };
+  return { home, runId: run.id, gateId: (await store.get(run.id)).record.pending_gate!.gate_id };
 }
 
 function run(command: string, args: string[], home: string) {

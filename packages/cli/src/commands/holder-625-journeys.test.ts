@@ -150,7 +150,7 @@ describe('HOST ROWS — each program that serves the MCP tools names itself on t
     const client = await stdioClient(resolveMcpServerEntry(), [], 'bin-row', 'row-bin');
     try {
       const { runId } = await startGate(client);
-      const claim = (await runs().get(runId)).claims!['confirm']!;
+      const claim = (await runs().get(runId)).record.claims!['confirm']!;
       // (a) red when the bin stops composing/passing its identity, or uses another channel; (b)
       //     prints the claim’s holder.
       expect(claim.holder).toEqual({ by: 'bin-row', by_source: 'ambient', channel: 'mcp-stdio' });
@@ -164,7 +164,7 @@ describe('HOST ROWS — each program that serves the MCP tools names itself on t
     const client = await stdioClient(CLI_ENTRY, ['mcp'], 'mcp-row', 'row-mcp');
     try {
       const { runId } = await startGate(client);
-      expect((await runs().get(runId)).claims!['confirm']!.holder).toEqual({
+      expect((await runs().get(runId)).record.claims!['confirm']!.holder).toEqual({
         by: 'mcp-row',
         by_source: 'ambient',
         channel: 'mcp-stdio',
@@ -227,7 +227,7 @@ describe('HOST ROWS — each program that serves the MCP tools names itself on t
       });
       const runId = /Run ID: (\S+)/.exec(out)?.[1];
       expect(runId).toBeDefined();
-      const run = await runs().get(runId!);
+      const { record: run } = await runs().get(runId!);
       // (a) red when `agent.ts` stops passing its identity down to the drive, or uses another
       //     channel; (b) prints the claim and the entry.
       const expected = { by: 'agent-row', by_source: 'ambient', channel: 'agent' };
@@ -277,7 +277,7 @@ describe('HOST ROWS — each program that serves the MCP tools names itself on t
       );
       try {
         const { runId } = await startGate(client);
-        expect((await runs().get(runId)).claims!['confirm']!.holder).toEqual({
+        expect((await runs().get(runId)).record.claims!['confirm']!.holder).toEqual({
           by: 'serve-row',
           by_source: 'ambient',
           channel: 'mcp-http',
@@ -340,7 +340,7 @@ describe('THE PROOF OVER REAL STDIO — the token is handed out once, passed bac
       // (a) red when the schema refuses an empty token; (b) prints the reply.
       expect(reply.status).toBe('ok');
       expect(reply.gate_claim?.proof).toBe('mismatch');
-      expect((await runs().get(runId)).pending_gate).toBeUndefined();
+      expect((await runs().get(runId)).record.pending_gate).toBeUndefined();
     } finally {
       await client.close();
     }
@@ -367,7 +367,7 @@ describe('THE PROOF OVER REAL STDIO — the token is handed out once, passed bac
         expect(reply.errors).toContain(
           `responded_by: ${reason}; nothing was recorded. Give a name of at most 200 characters with no control characters, or leave it out.`,
         );
-        const after = await runs().get(runId);
+        const { record: after } = await runs().get(runId);
         expect(after.pending_gate?.gate_id).toBe(gateId);
         expect(after.evidence.some((e) => e.kind === 'gate_response')).toBe(false);
       } finally {
@@ -475,7 +475,7 @@ describe('THE CLI AFTER — `realm run respond --by`, and `realm run inspect` re
       expect(refused.stderr.trim().split('\n')).toEqual([
         `--by: ${reason}; nothing was recorded. Give a name of at most 200 characters with no control characters, or leave it out.`,
       ]);
-      expect((await runs().get(ids.runId)).pending_gate?.gate_id).toBe(ids.gateId);
+      expect((await runs().get(ids.runId)).record.pending_gate?.gate_id).toBe(ids.gateId);
     },
     60_000,
   );

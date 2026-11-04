@@ -47,6 +47,7 @@ import type { RunRecord, EvidenceSnapshot } from '../types/run-record.js';
 import type { WorkflowDefinition, StepDefinition } from '../types/workflow-definition.js';
 import type { ExtensionIdentityEntry } from '../types/extension-identity.js';
 import type { RunStore } from '../store/store-interface.js';
+import { writtenSnapshot } from './snapshot.js';
 
 const echo: StepDispatcher = async (_name, input) => ({ ...input });
 
@@ -88,7 +89,7 @@ const gateThenAuto = def({
 });
 
 async function answeredGateThenAuto(store: RunStore): Promise<string> {
-  const { run } = await store.create({
+  const { record: run } = await store.create({
     workflowId: gateThenAuto.id,
     workflowVersion: 1,
     params: {},
@@ -100,7 +101,7 @@ async function answeredGateThenAuto(store: RunStore): Promise<string> {
     dispatcher: echo,
   });
   expect(opened.status).toBe('confirm_required');
-  const gate = (await store.get(run.id)).pending_gate!;
+  const gate = (await store.get(run.id)).record.pending_gate!;
   const answered = await submitHumanResponse(store, gateThenAuto, {
     runId: run.id,
     gateId: gate.gate_id,
@@ -113,7 +114,7 @@ async function answeredGateThenAuto(store: RunStore): Promise<string> {
 describe('#625 PR-2a — describePending, the act, the status word, the next sentence', () => {
   it('gate→auto after the answer: the act names the owed step, last; the answer reply says so', async () => {
     await withStore(async (store) => {
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: gateThenAuto.id,
         workflowVersion: 1,
         params: {},
@@ -124,7 +125,7 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
         input: {},
         dispatcher: echo,
       });
-      const gate = (await store.get(run.id)).pending_gate!;
+      const gate = (await store.get(run.id)).record.pending_gate!;
       const answered = await submitHumanResponse(store, gateThenAuto, {
         runId: run.id,
         gateId: gate.gate_id,
@@ -136,7 +137,11 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
       expect(answered.names_next).toBe(true);
       expect(nextCalls(answered)).toEqual(['advance']);
       expect(owedOf(answered)).toEqual(['after']);
-      const pending = describePending(gateThenAuto, await store.get(run.id), undefined, new Date());
+      const pending = describePending(
+        gateThenAuto,
+        writtenSnapshot((await store.get(run.id)).record, new Date()),
+        undefined,
+      );
       expect(composeNextActionsStatusWord(pending)).toBe(ADVANCE_OWED);
       expect(ADVANCE_OWED).toBe('advance_owed');
     });
@@ -157,10 +162,14 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
     has.register('handler', 'note', { id: 'note', execute: async () => ({ data: {} }) } as never);
     const answer = async (registry: ExtensionRegistry | undefined) =>
       withStore(async (store) => {
-        const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+        const { record: run } = await store.create({
+          workflowId: d.id,
+          workflowVersion: 1,
+          params: {},
+        });
         // A runner that lacked the handler attempted the step: the marker is on the record.
         await advanceRun(store, d, { runId: run.id, registry: new ExtensionRegistry() });
-        expect((await store.get(run.id)).capability_blocks?.['act']).toBeDefined();
+        expect((await store.get(run.id)).record.capability_blocks?.['act']).toBeDefined();
         await executeStep(store, d, {
           runId: run.id,
           command: 'b',
@@ -168,7 +177,7 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
           dispatcher: echo,
           registry: has,
         });
-        const gate = (await store.get(run.id)).pending_gate!;
+        const gate = (await store.get(run.id)).record.pending_gate!;
         return submitHumanResponse(store, d, {
           runId: run.id,
           gateId: gate.gate_id,
@@ -213,7 +222,11 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
       },
     });
     await withStore(async (store) => {
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const reply = await executeStep(store, d, {
         runId: run.id,
         command: 'w',
@@ -248,7 +261,7 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
       evidence: [],
       terminal_state: false,
     } as unknown as RunRecord;
-    const two = describePending(d, fresh, undefined, new Date());
+    const two = describePending(d, writtenSnapshot(fresh, new Date()), undefined);
     // decision C207: with several owed, where one advance call stops — never a promise that all run.
     expect(owedWords(two)).toEqual({
       steps: 'the steps',
@@ -258,9 +271,8 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
     expect(two.owed).toEqual([{ step: 'a' }, { step: 'b' }]);
     const one = describePending(
       def({ a: { description: 'A', execution: 'auto', depends_on: [] } }),
-      fresh,
+      writtenSnapshot(fresh, new Date()),
       undefined,
-      new Date(),
     );
     expect(owedWords(one)).toEqual({ steps: 'the step', them: 'it', until: '' });
     expect(one.owed).toEqual([{ step: 'a' }]);
@@ -272,7 +284,11 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
       b: { description: 'B', execution: 'auto', depends_on: [] },
     });
     await withStore(async (store) => {
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       // #729 PR-0: the run's ways, in the door's order — the agent's step first, the act last.
       const composed = composeWaysAt(run, new Date(), { definition: d });
       expect(
@@ -281,7 +297,9 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
           .map((w) => (w.verb === 'run_step' ? `run_step:${w.step}` : w.verb)),
       ).toEqual(['run_step:a', 'advance']);
       expect(
-        composeNextActionsStatusWord(describePending(d, run, undefined, new Date())),
+        composeNextActionsStatusWord(
+          describePending(d, writtenSnapshot(run, new Date()), undefined),
+        ),
       ).toBeUndefined();
     });
   });
@@ -307,7 +325,7 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
       evidence: [{ step_id: 'w', status: 'success', output_summary: { ok: true } }],
       terminal_state: false,
     } as unknown as RunRecord;
-    const pending = describePending(d, run, undefined, new Date());
+    const pending = describePending(d, writtenSnapshot(run, new Date()), undefined);
     expect(pending.pending_guards).toEqual(['g']);
     expect(pending.owed).toEqual([{ step: 'g' }, { step: 'x' }]);
   });
@@ -324,25 +342,28 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
       evidence: [],
       terminal_state: false,
     } as unknown as RunRecord;
-    expect(describePending(d, live, undefined, new Date()).owed).not.toEqual([]);
+    expect(describePending(d, writtenSnapshot(live, new Date()), undefined).owed).not.toEqual([]);
     expect(
-      describePending(d, { ...live, terminal_state: true }, undefined, new Date()).owed,
+      describePending(d, writtenSnapshot({ ...live, terminal_state: true }, new Date()), undefined)
+        .owed,
     ).toEqual([]);
     expect(
       describePending(
         d,
-        {
-          ...live,
-          pending_gate: {
-            gate_id: 'g',
-            step_name: 'y',
-            choices: ['a'],
-            opened_at: '',
-            preview: {},
-          },
-        } as RunRecord,
+        writtenSnapshot(
+          {
+            ...live,
+            pending_gate: {
+              gate_id: 'g',
+              step_name: 'y',
+              choices: ['a'],
+              opened_at: '',
+              preview: {},
+            },
+          } as RunRecord,
+          new Date(),
+        ),
         undefined,
-        new Date(),
       ).owed,
     ).toEqual([]);
   });
@@ -373,9 +394,9 @@ describe('#625 PR-2a — checkPreClaim, one cell per member of PRE_CLAIM_REFUSAL
     });
     const v = checkPreClaim({ definition: d, run: live(), step: 'x', input: {} });
     expect(v && 'refused_by' in v ? v.refused_by : undefined).toBe('trust');
-    expect(describePending(d, live(), undefined, new Date()).engine_runnable).toEqual([
-      expect.objectContaining({ step: 'x', runnable_here: false, refused_by: 'trust' }),
-    ]);
+    expect(
+      describePending(d, writtenSnapshot(live(), new Date()), undefined).engine_runnable,
+    ).toEqual([expect.objectContaining({ step: 'x', runnable_here: false, refused_by: 'trust' })]);
   });
 
   it('precondition: the hint and the suggestion executeStep returns', () => {
@@ -415,7 +436,9 @@ describe('#625 PR-2a — checkPreClaim, one cell per member of PRE_CLAIM_REFUSAL
       },
     });
     expect(engineStepInput(d, live([], { alpha: 'a' }), 'x')).toEqual({ alpha: 'a' });
-    expect(describePending(d, live([], {}), undefined, new Date()).engine_runnable[0]).toEqual({
+    expect(
+      describePending(d, writtenSnapshot(live([], {}), new Date()), undefined).engine_runnable[0],
+    ).toEqual({
       step: 'x',
       runnable_here: false,
       refused_by: 'input_schema',
@@ -440,22 +463,24 @@ describe('#625 PR-2a — checkPreClaim, one cell per member of PRE_CLAIM_REFUSAL
       },
     });
     expect(
-      describePending(nested, live([], { n: { m: 'one' } }), undefined, new Date())
+      describePending(nested, writtenSnapshot(live([], { n: { m: 'one' } }), new Date()), undefined)
         .engine_runnable[0]?.refusal,
     ).toBe("Invalid input for step 'x': 'n.m' must be number");
     expect(
-      describePending(d, live([], { alpha: 'a' }), undefined, new Date()).engine_runnable[0]
-        ?.runnable_here,
+      describePending(d, writtenSnapshot(live([], { alpha: 'a' }), new Date()), undefined)
+        .engine_runnable[0]?.runnable_here,
     ).toBe(true);
   });
 
   it('capability: unknown with no registry; refused with one that lacks it; runnable with one that has it', () => {
     const d = def({ x: { description: 'X', execution: 'auto', depends_on: [], handler: 'h' } });
     expect(
-      describePending(d, live(), undefined, new Date()).engine_runnable[0]?.runnable_here,
+      describePending(d, writtenSnapshot(live(), new Date()), undefined).engine_runnable[0]
+        ?.runnable_here,
     ).toBe('unknown');
     expect(
-      describePending(d, live(), new ExtensionRegistry(), new Date()).engine_runnable[0],
+      describePending(d, writtenSnapshot(live(), new Date()), new ExtensionRegistry())
+        .engine_runnable[0],
     ).toEqual({
       step: 'x',
       runnable_here: false,
@@ -467,11 +492,14 @@ describe('#625 PR-2a — checkPreClaim, one cell per member of PRE_CLAIM_REFUSAL
     });
     const reg = new ExtensionRegistry();
     reg.register('handler', 'h', { id: 'h', execute: async () => ({ data: {} }) });
-    expect(describePending(d, live(), reg, new Date()).engine_runnable[0]?.runnable_here).toBe(
-      true,
-    );
+    expect(
+      describePending(d, writtenSnapshot(live(), new Date()), reg).engine_runnable[0]
+        ?.runnable_here,
+    ).toBe(true);
     // A refused step is never named, so with nothing else owed the act is withdrawn.
-    expect(describePending(d, live(), new ExtensionRegistry(), new Date()).owed).toEqual([]);
+    expect(
+      describePending(d, writtenSnapshot(live(), new Date()), new ExtensionRegistry()).owed,
+    ).toEqual([]);
   });
 });
 
@@ -504,12 +532,13 @@ describe('#625 PR-2a — L9 agreement: executeStep refuses exactly when the view
     it(`${c.member}: refused by both, with the same check named`, async () => {
       const d = def({ x: c.step });
       await withStore(async (store) => {
-        const { run } = await store.create({
+        const { record: run } = await store.create({
           workflowId: d.id,
           workflowVersion: 1,
           params: c.params ?? {},
         });
-        const view = describePending(d, run, undefined, new Date()).engine_runnable[0]!;
+        const view = describePending(d, writtenSnapshot(run, new Date()), undefined)
+          .engine_runnable[0]!;
         expect(view.runnable_here).toBe(false);
         expect(view.refused_by).toBe(c.member);
         const reply = await executeStep(store, d, {
@@ -520,16 +549,21 @@ describe('#625 PR-2a — L9 agreement: executeStep refuses exactly when the view
         });
         expect(reply.status === 'ok' || reply.status === 'confirm_required').toBe(false);
         // write-free: the step was never claimed
-        expect((await store.get(run.id)).in_progress_steps).toEqual([]);
+        expect((await store.get(run.id)).record.in_progress_steps).toEqual([]);
       });
     });
     it(`${c.member}: CONTROL — fixed, both let it run`, async () => {
       const fixed: StepDefinition = { description: 'X', execution: 'auto', depends_on: [] };
       const d = def({ x: fixed });
       await withStore(async (store) => {
-        const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+        const { record: run } = await store.create({
+          workflowId: d.id,
+          workflowVersion: 1,
+          params: {},
+        });
         expect(
-          describePending(d, run, undefined, new Date()).engine_runnable[0]!.runnable_here,
+          describePending(d, writtenSnapshot(run, new Date()), undefined).engine_runnable[0]!
+            .runnable_here,
         ).toBe(true);
         const reply = await executeStep(store, d, {
           runId: run.id,
@@ -544,11 +578,15 @@ describe('#625 PR-2a — L9 agreement: executeStep refuses exactly when the view
   it('capability: the view with the registry says false exactly when the dispatch fails not-registered', async () => {
     const d = def({ x: { description: 'X', execution: 'auto', depends_on: [], handler: 'h' } });
     await withStore(async (store) => {
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const empty = new ExtensionRegistry();
-      expect(describePending(d, run, empty, new Date()).engine_runnable[0]!.refused_by).toBe(
-        'capability',
-      );
+      expect(
+        describePending(d, writtenSnapshot(run, new Date()), empty).engine_runnable[0]!.refused_by,
+      ).toBe('capability');
       const reply = await executeStep(store, d, {
         runId: run.id,
         command: 'x',
@@ -595,15 +633,21 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
       b: { description: 'B', execution: 'auto', depends_on: [] },
     });
     await withStore(async (store) => {
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const steps: string[] = [];
       await advanceRun(store, d, { runId: run.id, onStep: (s) => steps.push(s) });
       expect(steps).toEqual(['b']);
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       expect(after.completed_steps).toEqual(['b']);
       // L5: the act is withdrawn — only the refused step is left, and it is never named.
-      expect(describePending(d, after, undefined, new Date()).owed).toEqual([]);
-      expect(describePending(d, after, undefined, new Date()).engine_runnable).toEqual([
+      expect(describePending(d, writtenSnapshot(after, new Date()), undefined).owed).toEqual([]);
+      expect(
+        describePending(d, writtenSnapshot(after, new Date()), undefined).engine_runnable,
+      ).toEqual([
         expect.objectContaining({ step: 'a', runnable_here: false, refused_by: 'precondition' }),
       ]);
     });
@@ -615,10 +659,16 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
       b: { description: 'B', execution: 'auto', depends_on: [] },
     });
     await withStore(async (store) => {
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const reg = new ExtensionRegistry();
       // The act names only `b` (the view refuses `a` for capability)…
-      expect(describePending(d, run, reg, new Date()).owed).toEqual([{ step: 'b' }]);
+      expect(describePending(d, writtenSnapshot(run, new Date()), reg).owed).toEqual([
+        { step: 'b' },
+      ]);
       const steps: string[] = [];
       const first = await advanceRun(store, d, {
         runId: run.id,
@@ -628,7 +678,7 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
       // …so the call runs `b` first, then makes the one attempt that writes `a`'s marker (C4, C23).
       expect(steps).toEqual(['b', 'a']);
       expect(first.error_code).toBe('ENGINE_HANDLER_NOT_REGISTERED');
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       expect(after.completed_steps).toEqual(['b']);
       expect(after.capability_blocks?.['a']).toBeDefined();
       const again: string[] = [];
@@ -639,56 +689,9 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
       });
       expect(again).toEqual([]);
       expect(second.status).toBe('ok');
-      expect(describePending(d, await store.get(run.id), reg, new Date()).owed).toEqual([]);
-    });
-  });
-
-  it('a store without settleStep: gate→guard after the answer owes the act and advanceRun settles the guard (L6)', async () => {
-    const d = def({
-      confirm: {
-        description: 'Confirm',
-        execution: 'auto',
-        trust: 'human_confirmed',
-        depends_on: [],
-        gate: { choices: ['approve', 'reject'] },
-      },
-      check: {
-        description: 'Check',
-        execution: 'guard',
-        depends_on: ['confirm'],
-        abort_unless: ["confirm.choice == 'approve'"],
-      },
-      finish: { description: 'Finish', execution: 'agent', depends_on: ['check'] },
-    });
-    await withStore(async (json) => {
-      // The same store with `settleStep` hidden — the legacy two-write shape.
-      const store = new Proxy(json, {
-        get(target, prop, receiver) {
-          if (prop === 'settleStep') return undefined;
-          const v = Reflect.get(target, prop, receiver) as unknown;
-          return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
-        },
-      }) as unknown as RunStore;
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
-      await executeStep(store, d, {
-        runId: run.id,
-        command: 'confirm',
-        input: {},
-        dispatcher: echo,
-      });
-      const gate = (await store.get(run.id)).pending_gate!;
-      await submitHumanResponse(store, d, {
-        runId: run.id,
-        gateId: gate.gate_id,
-        choice: 'approve',
-      });
-      const afterAnswer = await store.get(run.id);
-      expect(describePending(d, afterAnswer, undefined, new Date()).pending_guards).toEqual([
-        'check',
-      ]);
-      expect(describePending(d, afterAnswer, undefined, new Date()).owed).not.toEqual([]);
-      await advanceRun(store, d, { runId: run.id });
-      expect((await store.get(run.id)).completed_steps).toContain('check');
+      expect(
+        describePending(d, writtenSnapshot((await store.get(run.id)).record, new Date()), reg).owed,
+      ).toEqual([]);
     });
   });
 
@@ -711,8 +714,16 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
     it(`L5 ${member}: after advance_run, nothing ran and the act is withdrawn for that caller`, async () => {
       const d = def({ x: refusedStep[member] });
       await withStore(async (store) => {
-        const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
-        const before = describePending(d, await store.get(run.id), undefined, new Date());
+        const { record: run } = await store.create({
+          workflowId: d.id,
+          workflowVersion: 1,
+          params: {},
+        });
+        const before = describePending(
+          d,
+          writtenSnapshot((await store.get(run.id)).record, new Date()),
+          undefined,
+        );
         expect(before.owed).toEqual([]);
         expect(before.engine_runnable).toEqual([
           expect.objectContaining({ step: 'x', runnable_here: false, refused_by: member }),
@@ -731,7 +742,13 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
           reply.unavailable.find((u) => u.verb === 'run_step' && u.step === 'x'),
         ).toMatchObject({ code: 'refused_before_claim', facts: { check: member } });
         expect(agentActionFor(reply)).toBe('report_to_user');
-        expect(describePending(d, await store.get(run.id), undefined, new Date()).owed).toEqual([]);
+        expect(
+          describePending(
+            d,
+            writtenSnapshot((await store.get(run.id)).record, new Date()),
+            undefined,
+          ).owed,
+        ).toEqual([]);
       });
     });
   }
@@ -742,7 +759,11 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
       y: { description: 'Y', execution: 'auto', depends_on: [] },
     });
     await withStore(async (store) => {
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const other = { by: 'other@host', by_source: 'derived', channel: 'agent' } as const;
       const realClaim = store.claimStep.bind(store);
       let first = true;
@@ -764,7 +785,7 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
       expect(taken).toEqual([{ step: 'x', holder: other }]);
       expect(reply.status).toBe('ok');
       expect(reply.chained_auto_steps?.map((c) => c.step)).toEqual(['y']);
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       expect(after.completed_steps).toEqual(['y']);
       expect(after.in_progress_steps).toEqual(['x']);
     });
@@ -773,7 +794,11 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
   it('D3.2: when the only owed step is taken, nothing ran — and the hint says what the record says now', async () => {
     const d = def({ x: { description: 'X', execution: 'auto', depends_on: [] } });
     await withStore(async (store) => {
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const realClaim = store.claimStep.bind(store);
       let first = true;
       store.claimStep = async (...args: Parameters<RunStore['claimStep']>) => {
@@ -809,7 +834,11 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
       z: { description: 'Z', execution: 'agent', depends_on: ['x', 'y'] },
     });
     await withStore(async (store) => {
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const realClaim = store.claimStep.bind(store);
       let first = true;
       store.claimStep = async (...args: Parameters<RunStore['claimStep']>) => {
@@ -838,7 +867,11 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
       y: { description: 'Y', execution: 'agent', depends_on: [] },
     });
     await withStore(async (store) => {
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const reply = await advanceRun(store, d, {
         runId: run.id,
         registry: new ExtensionRegistry(),
@@ -861,7 +894,7 @@ describe('#625 PR-2a — decision C3: the output of a bare step the engine runs'
 
   it('dependency (one and two hops), run_params (no depends_on), none (two dependencies), driven_step (the named step)', async () => {
     await withStore(async (store) => {
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: chainDef.id,
         workflowVersion: 1,
         params: { p: 1 },
@@ -873,7 +906,7 @@ describe('#625 PR-2a — decision C3: the output of a bare step the engine runs'
         dispatcher: async () => ({ answer: 42 }),
       });
       expect(reply.status).toBe('ok');
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       const entry = (s: string): EvidenceSnapshot => after.evidence.find((e) => e.step_id === s)!;
       expect(entry('draft').output_source).toBeUndefined(); // an agent step: never stamped
       expect([entry('middle').output_summary, entry('middle').output_source]).toEqual([
@@ -895,7 +928,7 @@ describe('#625 PR-2a — decision C3: the output of a bare step the engine runs'
   it("a bare step the CALLER names records driven_step and the dispatcher's output", async () => {
     const d = def({ only: { description: 'Only', execution: 'auto', depends_on: [] } });
     await withStore(async (store) => {
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: d.id,
         workflowVersion: 1,
         params: { p: 1 },
@@ -906,7 +939,7 @@ describe('#625 PR-2a — decision C3: the output of a bare step the engine runs'
         input: {},
         dispatcher: async () => ({ mine: true }),
       });
-      const e = (await store.get(run.id)).evidence.find((x) => x.step_id === 'only')!;
+      const e = (await store.get(run.id)).record.evidence.find((x) => x.step_id === 'only')!;
       expect([e.output_summary, e.output_source]).toEqual([{ mine: true }, 'driven_step']);
     });
   });
@@ -929,17 +962,25 @@ describe('#625 PR-2a — decision C3: the output of a bare step the engine runs'
     });
     const output = { review: 'looks good', score: 4 };
     const viaChain = await withStore(async (store) => {
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await executeChain(store, d, {
         runId: run.id,
         command: 'write_review',
         input: output,
         dispatcher: async () => output,
       });
-      return (await store.get(run.id)).pending_gate!.preview;
+      return (await store.get(run.id)).record.pending_gate!.preview;
     });
     const viaAdvance = await withStore(async (store) => {
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await executeStep(store, d, {
         runId: run.id,
         command: 'write_review',
@@ -947,7 +988,7 @@ describe('#625 PR-2a — decision C3: the output of a bare step the engine runs'
         dispatcher: async () => output,
       });
       await advanceRun(store, d, { runId: run.id });
-      return (await store.get(run.id)).pending_gate!.preview;
+      return (await store.get(run.id)).record.pending_gate!.preview;
     });
     expect(JSON.stringify(viaAdvance)).toBe(JSON.stringify(viaChain));
   });
@@ -1043,7 +1084,7 @@ describe('#625 PR-2a — describeRunDriver', () => {
   });
   it('C21, end to end: after an answered gate the count is 0', async () => {
     await withStore(async (store) => {
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: gateThenAuto.id,
         workflowVersion: 1,
         params: {},
@@ -1056,13 +1097,13 @@ describe('#625 PR-2a — describeRunDriver', () => {
         dispatcher: echo,
         driver,
       });
-      const gate = (await store.get(run.id)).pending_gate!;
+      const gate = (await store.get(run.id)).record.pending_gate!;
       await submitHumanResponse(store, gateThenAuto, {
         runId: run.id,
         gateId: gate.gate_id,
         choice: 'approve',
       });
-      const d = describeRunDriver(await store.get(run.id), gateThenAuto);
+      const d = describeRunDriver((await store.get(run.id)).record, gateThenAuto);
       expect(d.driver).toEqual(driver);
       expect(d.step).toBe('confirm');
       expect(d.newer_without_driver).toBe(0);
@@ -1088,7 +1129,8 @@ describe('#625 PR-2a — L8 witnesses (source text)', () => {
     const ra = code('cli/src/agent/run-agent.ts');
     // decision C82: the pick is the view's offered agent steps — a refused one is never picked.
     expect(ra).toContain(
-      'describePending(definition, currentRun, deps.registry, new Date()).agent_steps',
+      // #715 (b) (02 §A.1): the view judges the held snapshot — the record and its own reading.
+      'describePending(definition, writtenSnapshot(currentRun, currentAt!), deps.registry) .agent_steps',
     );
     expect(ra).not.toContain("execution === 'auto'");
     expect(ra).not.toContain('executeStep(');
@@ -1154,20 +1196,15 @@ describe('#625 PR-2a — round 5: one cell per reply site (C39), the C24 rebuild
     r.register('handler', 'note', { id: 'note', execute: async () => ({ data: {} }) } as never);
     return r;
   };
-  /** The same store with `settleStep` hidden — the legacy two-write shape. */
-  const withoutSettle = (json: JsonFileStore): RunStore =>
-    new Proxy(json, {
-      get(target, prop, receiver) {
-        if (prop === 'settleStep') return undefined;
-        const v = Reflect.get(target, prop, receiver) as unknown;
-        return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
-      },
-    }) as unknown as RunStore;
   /** A run whose `act` a runner that lacked `note` attempted: the marker is on the record. */
   async function markedRun(store: RunStore): Promise<string> {
-    const { run } = await store.create({ workflowId: capDef.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: capDef.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await advanceRun(store, capDef, { runId: run.id, registry: new ExtensionRegistry() });
-    expect((await store.get(run.id)).capability_blocks?.['act']).toBeDefined();
+    expect((await store.get(run.id)).record.capability_blocks?.['act']).toBeDefined();
     return run.id;
   }
   const stepReply = async (store: RunStore) => {
@@ -1180,23 +1217,6 @@ describe('#625 PR-2a — round 5: one cell per reply site (C39), the C24 rebuild
       registry: hasNote(),
     });
   };
-  const answerReply = async (store: RunStore) => {
-    const runId = await markedRun(store);
-    await executeStep(store, capDef, {
-      runId,
-      command: 'b',
-      input: {},
-      dispatcher: echo,
-      registry: hasNote(),
-    });
-    const gate = (await store.get(runId)).pending_gate!;
-    return submitHumanResponse(store, capDef, {
-      runId,
-      gateId: gate.gate_id,
-      choice: 'approve',
-      registry: hasNote(),
-    });
-  };
 
   it("C39 site S1: a step's reply on a store with settleStep judges with the CALL's registry (the old marker loses)", async () => {
     await withStore(async (store) => {
@@ -1205,27 +1225,6 @@ describe('#625 PR-2a — round 5: one cell per reply site (C39), the C24 rebuild
       // #729 PR-0: judged with the call's registry — the act offered, beside the agent's step.
       expect(reply.context_hint).toBe("Step 'w' completed.");
       expect(nextCalls(reply)).toEqual(['run_step:b', 'advance']);
-      expect(owedOf(reply)).toEqual(['act']);
-    });
-  });
-
-  it("C39 site S2: a step's reply on a store without settleStep judges with the CALL's registry", async () => {
-    await withStore(async (json) => {
-      const reply = await stepReply(withoutSettle(json));
-      expect(reply.status).toBe('ok');
-      // #729 PR-0: judged with the call's registry — the act offered, beside the agent's step.
-      expect(reply.context_hint).toBe("Step 'w' completed.");
-      expect(nextCalls(reply)).toEqual(['run_step:b', 'advance']);
-      expect(owedOf(reply)).toEqual(['act']);
-    });
-  });
-
-  it("C39 site S4: an answer's reply on a store without settleStep judges with the CALL's registry", async () => {
-    await withStore(async (json) => {
-      const reply = await answerReply(withoutSettle(json));
-      expect(reply.status).toBe('ok');
-      expect(reply.context_hint).toBe("Gate 'b' resolved with choice 'approve'.");
-      expect(nextCalls(reply)).toEqual(['run_step:w', 'advance']);
       expect(owedOf(reply)).toEqual(['act']);
     });
   });
@@ -1243,10 +1242,14 @@ describe('#625 PR-2a — round 5: one cell per reply site (C39), the C24 rebuild
       },
     } as never);
     await withStore(async (store) => {
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const reply = await advanceRun(store, d, { runId: run.id, registry });
       expect(reply.status).toBe('error');
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       // y is still eligible and unmarked: only the call's registry says it cannot run here.
       expect(after.terminal_state).toBe(false);
       expect(after.capability_blocks?.['y']).toBeUndefined();
@@ -1276,8 +1279,11 @@ describe('#625 PR-2a — round 5: one cell per reply site (C39), the C24 rebuild
         },
       },
     } as unknown as RunRecord;
-    const byRegistry = describePending(d, live, new ExtensionRegistry(), new Date())
-      .engine_runnable[0]!;
+    const byRegistry = describePending(
+      d,
+      writtenSnapshot(live, new Date()),
+      new ExtensionRegistry(),
+    ).engine_runnable[0]!;
     expect(byRegistry).toEqual({
       step: 'x',
       runnable_here: false,
@@ -1287,7 +1293,8 @@ describe('#625 PR-2a — round 5: one cell per reply site (C39), the C24 rebuild
       // #872 (a) (add-only): the handler or adapter refused, as data.
       requirement: { kind: 'handler', name: 'h' },
     });
-    const byMarker = describePending(d, marked, undefined, new Date()).engine_runnable[0]!;
+    const byMarker = describePending(d, writtenSnapshot(marked, new Date()), undefined)
+      .engine_runnable[0]!;
     expect(byMarker).toEqual({
       step: 'x',
       runnable_here: false,
@@ -1320,9 +1327,11 @@ describe('#625 PR-2a — round 5: one cell per reply site (C39), the C24 rebuild
       x: { description: 'X', execution: 'auto', depends_on: [], trust: 'nope' as never },
     });
     expect(
-      describePending(trust, live, undefined, new Date()).engine_runnable[0],
+      describePending(trust, writtenSnapshot(live, new Date()), undefined).engine_runnable[0],
     ).not.toHaveProperty('basis');
-    expect(describePending(d, live, hasNote2(), new Date()).engine_runnable[0]).toEqual({
+    expect(
+      describePending(d, writtenSnapshot(live, new Date()), hasNote2()).engine_runnable[0],
+    ).toEqual({
       step: 'x',
       runnable_here: true,
     });
@@ -1353,8 +1362,8 @@ describe('#625 PR-2a — round 5: one cell per reply site (C39), the C24 rebuild
       },
     });
     expect(
-      describePending(top, live({ n: 1, extra: true }), undefined, new Date()).engine_runnable[0]
-        ?.refusal,
+      describePending(top, writtenSnapshot(live({ n: 1, extra: true }), new Date()), undefined)
+        .engine_runnable[0]?.refusal,
     ).toBe("Invalid input for step 'x': 'extra' is not allowed");
     const nested = def({
       x: {
@@ -1374,12 +1383,15 @@ describe('#625 PR-2a — round 5: one cell per reply site (C39), the C24 rebuild
       },
     });
     expect(
-      describePending(nested, live({ n: { m: 1, stray: 2 } }), undefined, new Date())
-        .engine_runnable[0]?.refusal,
+      describePending(
+        nested,
+        writtenSnapshot(live({ n: { m: 1, stray: 2 } }), new Date()),
+        undefined,
+      ).engine_runnable[0]?.refusal,
     ).toBe("Invalid input for step 'x': 'n.stray' is not allowed");
     // executeStep's own reply for the same refusal: the engine's message, byte-identical.
     await withStore(async (store) => {
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: top.id,
         workflowVersion: 1,
         params: { n: 1, extra: true },
@@ -1414,9 +1426,14 @@ describe("#625 PR-2a — round 6: the view's trust voice (C49), the tools' way o
       ask: { description: 'Ask', execution: 'agent', depends_on: [] },
     });
     await withStore(async (store) => {
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       // The view: the read-time voice — nothing was dispatched, and the agent step beside it runs.
-      const entry = describePending(d, run, undefined, new Date()).engine_runnable[0]!;
+      const entry = describePending(d, writtenSnapshot(run, new Date()), undefined)
+        .engine_runnable[0]!;
       expect(entry).toEqual({
         step: 'work',
         runnable_here: false,
@@ -1472,7 +1489,7 @@ describe("#625 PR-2a — round 6: the view's trust voice (C49), the tools' way o
       ask: { description: 'Ask', execution: 'agent', depends_on: [] },
     });
     await withStore(async (store) => {
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: withAgent.id,
         workflowVersion: 1,
         params: {},
@@ -1487,7 +1504,11 @@ describe("#625 PR-2a — round 6: the view's trust voice (C49), the tools' way o
     // Absent for capability: another runner can run the step.
     const cap = def({ x: { description: 'X', execution: 'auto', depends_on: [], handler: 'h' } });
     await withStore(async (store) => {
-      const { run } = await store.create({ workflowId: cap.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: cap.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const lacking = new ExtensionRegistry();
       const first = await advanceRun(store, cap, { runId: run.id, registry: lacking });
       expect(first.error_code).toBe('ENGINE_HANDLER_NOT_REGISTERED');
@@ -1496,7 +1517,7 @@ describe("#625 PR-2a — round 6: the view's trust voice (C49), the tools' way o
       // A capability refusal is not one the workflow's correction fixes: no way out (C51).
       expect(
         cannotGoOnUntilCorrected(
-          composeWaysAt(await store.get(run.id), new Date(), {
+          composeWaysAt((await store.get(run.id)).record, new Date(), {
             definition: cap,
             registry: lacking,
           }),
@@ -1532,7 +1553,11 @@ describe("#625 PR-2a — round 6: the view's trust voice (C49), the tools' way o
       y: { description: 'Y', execution: 'auto', depends_on: [] },
     });
     await withStore(async (store) => {
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const realGet = store.get.bind(store);
       let armed = false;
       store.get = async (id: string) => {
@@ -1564,7 +1589,7 @@ describe("#625 PR-2a — round 6: the view's trust voice (C49), the tools' way o
       expect(
         reply.context_hint.endsWith(" 'x' was claimed by another process, so it did not run here."),
       ).toBe(true);
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       expect(after.in_progress_steps).toEqual(['x']);
       expect(after.completed_steps).toEqual(['y']);
     });
@@ -1572,15 +1597,6 @@ describe("#625 PR-2a — round 6: the view's trust voice (C49), the tools' way o
 });
 
 describe('#625 PR-2a — round 7: the way out at every site that says what comes next (C57), the two forms (C60)', () => {
-  /** The same store with `settleStep` hidden — the legacy two-write shape. */
-  const withoutSettle = (json: JsonFileStore): RunStore =>
-    new Proxy(json, {
-      get(target, prop, receiver) {
-        if (prop === 'settleStep') return undefined;
-        const v = Reflect.get(target, prop, receiver) as unknown;
-        return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
-      },
-    }) as unknown as RunStore;
   const needsN = { type: 'object', required: ['n'], properties: { n: { type: 'number' } } };
   /** After `ask`, only `compute` is owed, and it is refused before its claim. */
   const afterStep = def({
@@ -1616,13 +1632,21 @@ describe('#625 PR-2a — round 7: the way out at every site that says what comes
     compute: { description: 'C', execution: 'auto', depends_on: ['b'], input_schema: needsN },
   });
   const stepReply = async (store: RunStore, d: WorkflowDefinition) => {
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     return executeStep(store, d, { runId: run.id, command: 'ask', input: {}, dispatcher: echo });
   };
   const answerReply = async (store: RunStore, d: WorkflowDefinition) => {
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await executeStep(store, d, { runId: run.id, command: 'b', input: {}, dispatcher: echo });
-    const gate = (await store.get(run.id)).pending_gate!;
+    const gate = (await store.get(run.id)).record.pending_gate!;
     return submitHumanResponse(store, d, {
       runId: run.id,
       gateId: gate.gate_id,
@@ -1632,24 +1656,6 @@ describe('#625 PR-2a — round 7: the way out at every site that says what comes
 
   it("C57 site S1: a step's reply on a store with settleStep ends with the way out when only a refused engine step remains; not when an agent step is ready", async () => {
     await withStore(async (store) => {
-      const reply = await stepReply(store, afterStep);
-      expect(reply.status).toBe('ok');
-      expect(nextCalls(reply)).toEqual([]);
-      // #729 PR-0: what happened; the refusal is data the door words, with the way out (C57 — kept
-      // in render-reply.test.ts), since the run cannot go on until its workflow is corrected.
-      expect(reply.context_hint).toBe("Step 'ask' completed.");
-      expect(reply.names_next).toBe(true);
-      expect(cannotGoOnUntilCorrected(reply)).toBe(true);
-      const control = await stepReply(store, afterStepWithAgent);
-      expect(control.context_hint).toBe("Step 'ask' completed.");
-      expect(nextCalls(control)).toEqual(['run_step:ask2']);
-      expect(cannotGoOnUntilCorrected(control)).toBe(false);
-    });
-  });
-
-  it("C57 site S2: a step's reply on a store without settleStep ends with the way out; not when an agent step is ready", async () => {
-    await withStore(async (json) => {
-      const store = withoutSettle(json);
       const reply = await stepReply(store, afterStep);
       expect(reply.status).toBe('ok');
       expect(nextCalls(reply)).toEqual([]);
@@ -1682,24 +1688,6 @@ describe('#625 PR-2a — round 7: the way out at every site that says what comes
     });
   });
 
-  it("C57 site S4: an answer's reply on a store without settleStep ends with the way out; not when an agent step is ready", async () => {
-    await withStore(async (json) => {
-      const store = withoutSettle(json);
-      const reply = await answerReply(store, afterAnswer);
-      expect(reply.status).toBe('ok');
-      expect(nextCalls(reply)).toEqual([]);
-      // #729 PR-0: what happened; the refusal is data the door words, with the way out (C57 — kept
-      // in render-reply.test.ts), since the run cannot go on until its workflow is corrected.
-      expect(reply.context_hint).toBe("Gate 'b' resolved with choice 'approve'.");
-      expect(reply.names_next).toBe(true);
-      expect(cannotGoOnUntilCorrected(reply)).toBe(true);
-      const control = await answerReply(store, afterAnswerWithAgent);
-      expect(control.context_hint).toBe("Gate 'b' resolved with choice 'approve'.");
-      expect(nextCalls(control)).toEqual(['run_step:w']);
-      expect(cannotGoOnUntilCorrected(control)).toBe(false);
-    });
-  });
-
   it('C57 the nothing-ran reply: composed through describeNext, it ends with the way out once; not when an agent step is ready', async () => {
     const only = def({
       compute: { description: 'C', execution: 'auto', depends_on: [], input_schema: needsN },
@@ -1709,7 +1697,11 @@ describe('#625 PR-2a — round 7: the way out at every site that says what comes
       ask: { description: 'Ask', execution: 'agent', depends_on: [] },
     });
     await withStore(async (store) => {
-      const { run } = await store.create({ workflowId: only.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: only.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const reply = await advanceRun(store, only, { runId: run.id });
       // #729 PR-0: what happened; the way out is the door's (render-reply.test.ts, C51).
       expect(reply.context_hint).toBe(`Run '${run.id}': nothing ran.`);
@@ -1719,8 +1711,8 @@ describe('#625 PR-2a — round 7: the way out at every site that says what comes
         workflowVersion: 1,
         params: {},
       });
-      const controlReply = await advanceRun(store, withAgent, { runId: control.run.id });
-      expect(controlReply.context_hint).toBe(`Run '${control.run.id}': nothing ran.`);
+      const controlReply = await advanceRun(store, withAgent, { runId: control.record.id });
+      expect(controlReply.context_hint).toBe(`Run '${control.record.id}': nothing ran.`);
       expect(nextCalls(controlReply)).toEqual(['run_step:ask']);
       expect(cannotGoOnUntilCorrected(controlReply)).toBe(false);
     });
@@ -1777,15 +1769,19 @@ describe('#625 PR-2a, round 29 — C206, C207, C208: the one choice form, where 
     const seen: Record<string, unknown> = {};
     for (const [name, d] of Object.entries(cases)) {
       await withStore(async (store) => {
-        const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
-        const view = describePending(d, run, registry, new Date());
+        const { record: run } = await store.create({
+          workflowId: d.id,
+          workflowVersion: 1,
+          params: {},
+        });
+        const view = describePending(d, writtenSnapshot(run, new Date()), registry);
         const steps: string[] = [];
         const reply = await advanceRun(store, d, {
           runId: run.id,
           registry,
           onStep: (s) => steps.push(s),
         });
-        const after = await store.get(run.id);
+        const { record: after } = await store.get(run.id);
         seen[name] = {
           owed: view.owed.map((o) => ('step' in o ? o.step : `expiry:${o.expiry.gate_id}`)),
           ran: steps,
@@ -1906,7 +1902,7 @@ describe('#625 PR-2a, round 30 — C211, C212: the composers', () => {
       in_progress_steps: ['q'],
       pending_gate: gate,
     } as never);
-    const view = describePending(def, open, undefined, new Date());
+    const view = describePending(def, writtenSnapshot(open, new Date()), undefined);
     // (a) red when a held step is left out, the question's own step or a step after it is named, or
     //     a run with no question names any; (b) prints them.
     expect({
@@ -2056,8 +2052,8 @@ describe('issue #759 — the pending refusal names every problem', () => {
       },
     });
     expect(
-      describePending(d, run({ n: 'one', extra: true }), undefined, new Date()).engine_runnable[0]
-        ?.refusal,
+      describePending(d, writtenSnapshot(run({ n: 'one', extra: true }), new Date()), undefined)
+        .engine_runnable[0]?.refusal,
     ).toBe(
       "Invalid input for step 'x': the input must have required property 'alpha'; 'extra' is not allowed; 'n' must be number",
     );
@@ -2076,7 +2072,8 @@ describe('issue #759 — the pending refusal names every problem', () => {
       },
     });
     const refusal =
-      describePending(d, run({}), undefined, new Date()).engine_runnable[0]?.refusal ?? '';
+      describePending(d, writtenSnapshot(run({}), new Date()), undefined).engine_runnable[0]
+        ?.refusal ?? '';
     const verdict = checkPreClaim({ definition: d, run: run({}), step: 'x', input: {} });
     expect({
       clauses: refusal.split('; ').length,

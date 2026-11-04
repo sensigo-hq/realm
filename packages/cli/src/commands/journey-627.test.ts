@@ -265,7 +265,7 @@ describe('#627 W — cell 2: the journey scan over examples 03, 07, 08, 09 × th
               reply = await call(`drive:${tool}`, tool, args);
             }
             const store = new JsonFileStore(join(home, '.realm', 'runs'));
-            const atGate = await store.get(runId);
+            const { record: atGate } = await store.get(runId);
             expect(atGate.pending_gate, `${c.dir} reached its gate`).toBeDefined();
             const gate = atGate.pending_gate!;
             const downstream = Object.entries(def.steps).find(([, s]) =>
@@ -318,7 +318,7 @@ describe('#627 W — cell 2: the journey scan over examples 03, 07, 08, 09 × th
             });
             await call('get_workflow_protocol', 'get_workflow_protocol', { workflow_id: def.id });
             // The due-expiry variant: the question's time is up.
-            const due = await store.get(runId);
+            const { record: due } = await store.get(runId);
             await store.update({
               ...due,
               pending_gate: {
@@ -328,7 +328,7 @@ describe('#627 W — cell 2: the journey scan over examples 03, 07, 08, 09 × th
               },
             });
             await call('get_run_state:due', 'get_run_state', { run_id: runId });
-            await store.update({ ...(await store.get(runId)), pending_gate: gate });
+            await store.update({ ...(await store.get(runId)).record, pending_gate: gate });
             // The corrupt-definition variant, at each live registrar site this session serves.
             const copy = join(home, '.realm', 'workflows', `${def.id}.json`);
             const { readFileSync } = await import('node:fs');
@@ -413,7 +413,9 @@ describe('#627 W correction 1 (A3) — the replies after an accepted form and af
             const choice = schema.requestedSchema?.properties?.choice?.enum?.[0] ?? '';
             if (session === 'forms-settle') {
               // The person answers in the CLI while the form is open; the form then comes back.
-              const runs = await new JsonFileStore(join(home, '.realm', 'runs')).list();
+              const runs = (
+                await new JsonFileStore(join(home, '.realm', 'runs')).list()
+              ).snapshots.map((s) => s.record);
               const open = runs.find((r) => r.pending_gate !== undefined);
               if (open !== undefined) {
                 await realm(home, proj, [

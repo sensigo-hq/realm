@@ -53,7 +53,7 @@ describe('resumeRun', () => {
   });
 
   it('removes the step from failed_steps, re-enabling it for execution', async () => {
-    const { run: run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'resume-test-wf',
       workflowVersion: 1,
       params: {},
@@ -70,13 +70,13 @@ describe('resumeRun', () => {
 
     await resumeRun(run.id, 'step-one', runStore, workflowStore);
 
-    const updated = await runStore.get(run.id);
+    const { record: updated } = await runStore.get(run.id);
     expect(updated.failed_steps).not.toContain('step-one');
   });
 
   it('C4 (issue #456) a workflow-absent run carries the remedy — the T-21 words (#729 PR-0; was "most often") and "resume again"', async () => {
     // A plain failed/terminal record — the fixture reaches :95 past the aborted/phase checks.
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'resume-missing-wf',
       workflowVersion: 1,
       params: {},
@@ -99,7 +99,7 @@ describe('resumeRun', () => {
   });
 
   it('throws when the run is in a non-resumable state (completed)', async () => {
-    const { run: run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'resume-test-wf',
       workflowVersion: 1,
       params: {},
@@ -122,7 +122,7 @@ describe('resumeRun', () => {
   });
 
   it('throws when the step name does not exist in the workflow', async () => {
-    const { run: run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'resume-test-wf',
       workflowVersion: 1,
       params: {},
@@ -147,7 +147,7 @@ describe('resumeRun', () => {
 
   it('re-drives a failed run: resets to running, clears terminal_reason, re-derives skipped_steps, re-enables the step', async () => {
     await workflowStore.register(redriveWorkflow);
-    const { run: run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'resume-redrive-wf',
       workflowVersion: 1,
       params: {},
@@ -165,7 +165,7 @@ describe('resumeRun', () => {
 
     await resumeRun(run.id, 'step-a', runStore, workflowStore);
 
-    const resumed = await runStore.get(run.id);
+    const { record: resumed } = await runStore.get(run.id);
     expect(resumed.terminal_state).toBe(false);
     expect(resumed.run_phase).toBe('running');
     expect(resumed.failed_steps).not.toContain('step-a');
@@ -178,7 +178,7 @@ describe('resumeRun', () => {
 
   it('clean-slate recompute (issue #111): a stale skip_details entry does not survive resume for a step that is now re-eligible', async () => {
     await workflowStore.register(redriveWorkflow);
-    const { run: run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'resume-redrive-wf',
       workflowVersion: 1,
       params: {},
@@ -204,7 +204,7 @@ describe('resumeRun', () => {
 
     await resumeRun(run.id, 'step-a', runStore, workflowStore);
 
-    const resumed = await runStore.get(run.id);
+    const { record: resumed } = await runStore.get(run.id);
     // step-b is re-eligible again — its stale detail must not survive (would otherwise violate
     // Object.keys(skip_details) ⊆ skipped_steps AND show a misleading reason for a live step).
     expect(resumed.skip_details?.['step-b']).toBeUndefined();
@@ -217,7 +217,7 @@ describe('resumeRun', () => {
 
   describe('CLI refusals (issue #279, increment 1, PR-B)', () => {
     it('RESUME_REFUSES_ABORTED — a run with aborted_at set is never resumable, regardless of run_phase', async () => {
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'resume-test-wf',
         workflowVersion: 1,
         params: {},
@@ -255,7 +255,7 @@ describe('resumeRun', () => {
         },
       };
       await workflowStore.register(finalizerWorkflow);
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'resume-finalizer-wf',
         workflowVersion: 1,
         params: {},
@@ -274,7 +274,7 @@ describe('resumeRun', () => {
     });
 
     it('refuses on an unexpired drain lease — bounded wait, never force-bypassable', async () => {
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'resume-test-wf',
         workflowVersion: 1,
         params: {},
@@ -306,7 +306,7 @@ describe('resumeRun', () => {
     });
 
     it('an EXPIRED drain lease does NOT refuse — the finalizer is voided normally', async () => {
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'resume-test-wf',
         workflowVersion: 1,
         params: {},
@@ -325,12 +325,12 @@ describe('resumeRun', () => {
 
       const { voided } = await resumeRun(run.id, 'step-one', runStore, workflowStore);
       expect(voided).toHaveLength(1);
-      const resumed = await runStore.get(run.id);
+      const { record: resumed } = await runStore.get(run.id);
       expect(resumed.finalizer_ledger?.['fin']?.status).toBe('voided');
     });
 
     it('a HEALTHY claim on another in-progress step refuses resume — never force-bypassable', async () => {
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'resume-test-wf',
         workflowVersion: 1,
         params: {},
@@ -355,7 +355,7 @@ describe('resumeRun', () => {
     });
 
     it('a claim_unknown_age claim refuses WITHOUT --force, but --force overrides it', async () => {
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'resume-test-wf',
         workflowVersion: 1,
         params: {},
@@ -375,13 +375,13 @@ describe('resumeRun', () => {
       );
       // --force overrides — the claim is released inside applyResume.
       await resumeRun(run.id, 'step-one', runStore, workflowStore, { force: true });
-      const resumed = await runStore.get(run.id);
+      const { record: resumed } = await runStore.get(run.id);
       expect(resumed.in_progress_steps).toEqual([]);
       expect(resumed.claims).toEqual({});
     });
 
     it('a STALE (concrete, past-deadline) claim is released WITHOUT needing --force', async () => {
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'resume-test-wf',
         workflowVersion: 1,
         params: {},
@@ -398,7 +398,7 @@ describe('resumeRun', () => {
       });
 
       await resumeRun(run.id, 'step-one', runStore, workflowStore);
-      const resumed = await runStore.get(run.id);
+      const { record: resumed } = await runStore.get(run.id);
       expect(resumed.in_progress_steps).toEqual([]);
       expect(resumed.claims).toEqual({});
     });

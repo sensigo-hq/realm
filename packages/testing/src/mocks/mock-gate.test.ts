@@ -59,7 +59,7 @@ describe('createGateResponder — registry threading fires finalizers', () => {
   });
 
   async function openGate(def: WorkflowDefinition): Promise<string> {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
       params: {},
@@ -92,7 +92,7 @@ describe('createGateResponder — registry threading fires finalizers', () => {
 
     expect(result.status).toBe('ok');
     expect(ran).toHaveBeenCalledTimes(1);
-    const updated = await store.get(runId);
+    const { record: updated } = await store.get(runId);
     expect(updated.run_phase).toBe('completed');
     expect(updated.completed_steps).toContain('record_outcome');
     expect(updated.evidence.some((e) => e.step_id === 'record_outcome')).toBe(true);
@@ -110,7 +110,7 @@ describe('createGateResponder — registry threading fires finalizers', () => {
     const result = await createGateResponder(store, def, runId, {});
 
     expect(result.status).toBe('ok');
-    const updated = await store.get(runId);
+    const { record: updated } = await store.get(runId);
     expect(updated.run_phase).toBe('completed');
     expect(updated.failed_steps).not.toContain('record_outcome');
     expect(updated.completed_steps).not.toContain('record_outcome');
@@ -123,7 +123,7 @@ describe('createGateResponder — registry threading fires finalizers', () => {
     const result = await createGateResponder(store, def, runId, {});
 
     expect(result.status).toBe('ok');
-    const updated = await store.get(runId);
+    const { record: updated } = await store.get(runId);
     expect(updated.run_phase).toBe('completed');
   });
 
@@ -147,7 +147,7 @@ describe('createGateResponder — registry threading fires finalizers', () => {
     );
 
     expect(result.status).toBe('ok');
-    const updated = await store.get(runId);
+    const { record: updated } = await store.get(runId);
     expect(updated.run_phase).toBe('completed');
     expect(updated.completed_steps).toContain('record_outcome');
   });

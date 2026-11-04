@@ -8,7 +8,7 @@
 // alone. An example output block is compared line by line, its run and gate IDs put in place.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
@@ -22,8 +22,6 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   createDefaultRegistry,
   loadWorkflowFromString,
-  submitHumanResponse,
-  type RunStore,
   type StepDefinition,
   type WorkflowDefinition,
 } from '@sensigo/realm';
@@ -31,6 +29,28 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
 import { handleGetRunState } from './get-run-state.js';
+import { POLL_CAP_MS } from '../render-reply.js';
+import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
+
+// #715 (b) 04 §D (B4): no cell here waits on the real clock for a question to expire. The run store a
+// cell opens sits at a TEST LOCATION (`located`), and `passes(ms)` moves the clock of every location
+// the cell opened, in place of a real sleep; the in-process server (or a spawned child) reads that
+// clock from the location's file.
+const OPENED: TestLocation[] = [];
+async function located(dir: string): Promise<string> {
+  // A second server on the same folder in one cell shares its location (and its clock).
+  const open = OPENED.find((l) => l.runsDir === join(dir, 'runs'));
+  if (open !== undefined) return open.runsDir;
+  const loc = await createTestLocation({ start: new Date(), root: dir });
+  OPENED.push(loc);
+  return loc.runsDir;
+}
+async function passes(ms: number): Promise<void> {
+  for (const loc of OPENED) await loc.clock.advance(ms);
+}
+afterEach(() => {
+  OPENED.length = 0;
+});
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../../../..');
@@ -64,7 +84,7 @@ async function connect(opts: { registry?: ExtensionRegistry; home?: string } = {
   const wfDir = opts.home !== undefined ? join(base, '.realm', 'workflows') : join(base, 'wf');
   mkdirSync(runsDir, { recursive: true });
   mkdirSync(wfDir, { recursive: true });
-  const runStore = new JsonFileStore(runsDir);
+  const runStore = new JsonFileStore(await located(join(runsDir, '..')));
   const workflowStore = new JsonWorkflowStore(wfDir);
   const server = createRealmMcpServer({
     runStore,
@@ -121,8 +141,6 @@ function def(id: string, steps: Record<string, Partial<StepDefinition>>): Workfl
     steps: steps as Record<string, StepDefinition>,
   };
 }
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** A registry that has the handler `order_total`. */
 function withOrderTotal(): ExtensionRegistry {
@@ -396,7 +414,7 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
       const a = await call('get_run_state', { run_id: await first('autoonly') });
       const expRun = (await call('start_run', { workflow_id: 'expiring' }))['run_id'] as string;
       const before = await call('get_run_state', { run_id: expRun });
-      await sleep(1_100);
+      await passes(1_100);
       const e = await call('get_run_state', { run_id: expRun });
       // (a) red when a pending guard, a runnable auto step or a due expiry is not advance_owed with
       //     the one act advance_run, or pending_guards does not name the guard; (b) prints each.
@@ -429,7 +447,7 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
     async () => {
       claim(
         PAGE,
-        "| `capability_blocks` | The run is open and records that the program which last attempted a step lacked its code, and the step has not run since | Each such step, what it needs, and the error code: the record's marker, shown whenever the run carries one, whatever this server has. The `capability_block` finding is narrower: `get_run_state` reports it only when this server lacks the code too (see [The 15 findings](#the-15-findings)). Added after version 0.46.0. |",
+        "| `capability_blocks` | The run is open and records that the program which last attempted a step lacked its code, and the step has not run since | Each such step, what it needs, and the error code: the record's marker, shown whenever the run carries one, whatever this server has. The `capability_block` finding is narrower: `get_run_state` reports it only when this server lacks the code too (see [The 16 findings](#the-16-findings)). Added after version 0.46.0. |",
       );
       claim(
         PAGE,
@@ -558,7 +576,7 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
         run_id: (await call('start_run', { workflow_id: 'notup' }))['run_id'] as string,
       });
       const noExpiryId = (await call('start_run', { workflow_id: 'noexpiry' }))['run_id'] as string;
-      await sleep(1_100);
+      await passes(1_100);
       const past = await call('get_run_state', { run_id: noExpiryId });
       const answer = (r: Reply) => {
         const n = (
@@ -655,14 +673,16 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
       await runStore.claimStep(fRun, 'x', flight);
       const inFlight = await call('get_run_state', { run_id: fRun });
       // (a) red when a healthy claim elsewhere is not ok with empty next_actions; (b) prints them.
-      // #729 PR-0 (T-22, P-2): the read names the wait — `await`, with its pace.
+      // #729 PR-0 (T-22, P-2): the read names the wait — `await`, with its pace. #715 (b) (03 §C,
+      // D6-71): the claim's deadline sets the pace — further away than the cap, so the cap.
       expect([
         inFlight['next_actions_status'],
         inFlight['next_actions'],
         inFlight['in_progress_steps'],
         inFlight['agent_action'],
         inFlight['poll_after_ms'],
-      ]).toEqual(['ok', [], ['x'], 'await', 30_000]);
+        inFlight['poll_reason'],
+      ]).toEqual(['ok', [], ['x'], 'await', POLL_CAP_MS, 'claim_deadline']);
       const cases: Array<
         [string, Partial<StepDefinition>, 'engine_runnable' | 'agent_refused', string]
       > = [
@@ -958,7 +978,7 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
       const unnamed = await answersOf(await answerOne({}));
       // A stored name that cannot be shown: the record's answer entry carries a name that is not text.
       const unreadableRun = await answerOne({ responded_by: 'ana' });
-      const rec = await runStore.get(unreadableRun);
+      const { record: rec } = await runStore.get(unreadableRun);
       const entry = rec.evidence.find(
         (x) => (x as unknown as Reply)['kind'] === 'gate_response',
       ) as unknown as Reply;
@@ -966,7 +986,7 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
       await runStore.update(rec);
       const unreadable = await answersOf(unreadableRun);
       const expRun = (await call('start_run', { workflow_id: 'ansexp' }))['run_id'] as string;
-      await sleep(1_100);
+      await passes(1_100);
       await call('advance_run', { run_id: expRun });
       const expired = await answersOf(expRun);
       // (a) red when an answer's choice, answered_by or claim_proof is not as the page states for
@@ -1017,14 +1037,14 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
       // A program takes `fetch`, and its process dies: the claim is past its time.
       await runStore.claimStep(runId, 'fetch', fan);
       await call('execute_step', { run_id: runId, command: 'approve', params: {} });
-      const rec = await runStore.get(runId);
+      const { record: rec } = await runStore.get(runId);
       rec.claims = {
         ...rec.claims,
         fetch: { ...rec.claims!['fetch']!, deadline: new Date(Date.now() - 60_000).toISOString() },
       };
       await runStore.update(rec);
       const before = await call('get_run_state', { run_id: runId });
-      await sleep(2_100);
+      await passes(2_100);
       const after = await call('get_run_state', { run_id: runId });
       // (a) red when the status leaves awaiting_human before the time is up, or stays there after it
       //     with a step past its time; (b) prints both statuses and findings.
@@ -1043,12 +1063,12 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
   );
 
   it(
-    'guard_awaiting_settlement: ready when the run is created by start_run_batch or a program, when realm run resume opens it again at a failed guard, or in a store that does not settle in one write',
+    'guard_awaiting_settlement: ready when the run is created by start_run_batch or a program, or when realm run resume opens it again at a failed guard',
     { timeout: 60_000 },
     async () => {
       claim(
         PAGE,
-        'That is a guard that is ready when the run is created by `start_run_batch` or by a program, as here, or when `realm run resume` opens the run again at a failed guard, or a run kept in a store that does not settle in one write.',
+        'That is a guard that is ready when the run is created by `start_run_batch` or by a program, as here, or when `realm run resume` opens the run again at a failed guard.',
       );
       const home = await mkdtemp(join(tmpdir(), 'realm-pin-b-625-guard-'));
       const { call, workflowStore, runStore } = await connect({ home });
@@ -1073,7 +1093,7 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
         )['started'] as Array<{ run_id: string }>
       )[0]!.run_id;
       // A program.
-      const { run: made } = await runStore.create({
+      const { record: made } = await runStore.create({
         workflowId: 'limit',
         workflowVersion: 1,
         params: { amount: 5 },
@@ -1097,48 +1117,18 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
       await call('advance_run', { run_id: fRun });
       const failed = await call('get_run_state', { run_id: fRun });
       const resumed = realm(home, ['run', 'resume', fRun, '--from', 'check']);
-      // A store that does not settle in one write: the gate's answer and the guard after it.
-      const gateGuard = def('gg', {
-        confirm: {
-          description: 'Confirm.',
-          execution: 'agent',
-          trust: 'human_confirmed',
-          gate: { choices: ['approve', 'reject'] },
-        },
-        check: {
-          description: 'Check.',
-          execution: 'guard',
-          depends_on: ['confirm'],
-          abort_unless: ["confirm.choice == 'approve'"],
-        },
-        finish: { description: 'Finish.', execution: 'agent', depends_on: ['check'] },
-      });
-      await workflowStore.register(gateGuard);
-      const gRun = (await call('start_run', { workflow_id: 'gg' }))['run_id'] as string;
-      await call('execute_step', { run_id: gRun, command: 'confirm', params: {} });
-      const twoWrites = new Proxy(runStore, {
-        get(target, prop, receiver) {
-          if (prop === 'settleStep') return undefined;
-          const v = Reflect.get(target, prop, receiver) as unknown;
-          return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
-        },
-      }) as unknown as RunStore;
-      const gateId = (await runStore.get(gRun)).pending_gate!.gate_id;
-      await submitHumanResponse(twoWrites, gateGuard, { runId: gRun, gateId, choice: 'approve' });
-      // (a) red when any of the four ways leaves the guard ready without the finding, or the guard
+      // (a) red when any of the three ways leaves the guard ready without the finding, or the guard
       //     did not fail before the resume; (b) prints each run's findings and the resume's output.
       expect({
         batch: await finding(batched),
         program: await finding(made.id),
         failedBefore: [failed['run_phase'], failed['failed_steps']],
         resume: [resumed.code, await finding(fRun)],
-        twoWrites: await finding(gRun),
       }).toEqual({
         batch: ['guard_awaiting_settlement'],
         program: ['guard_awaiting_settlement'],
         failedBefore: ['failed', ['check']],
         resume: [0, ['guard_awaiting_settlement']],
-        twoWrites: ['guard_awaiting_settlement'],
       });
     },
   );
@@ -1150,15 +1140,15 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
 // `realm run inspect` and `realm run list --stuck` — driven on the crown's W2 over a real client
 // and the built CLI (fresh HOME). What a failing cell prints: kinds, steps, checks, line counts.
 describe('issue #729 — cannot_go_on on run-state-and-health.md', () => {
-  it('the page: 15 findings, the cannot_go_on row and example, the list --stuck surface row, the guard and trust rows', () => {
-    claim(PAGE, '### The 15 findings');
+  it('the page: 16 findings, the cannot_go_on row and example, the list --stuck surface row, the guard and trust rows', () => {
+    claim(PAGE, '### The 16 findings'); // #715 (b) commit 4: record_stamped_ahead
     claim(
       PAGE,
       "| `cannot_go_on` | The run is in `running`, no step is in progress, and a step it must run next is refused before its claim — its trust, a precondition, or an input its schema rejects — so nothing can run until the workflow is corrected. Found the moment it is so, at any age, wherever the definition can be read (`list --stuck`, `inspect`, `get_run_state`). `since` is the run's last change (the record's own instant): the finding keeps no clock, and a workflow corrected or registered again later is not a change of the run. (added after version 0.47.0) | `<step>=cannot_go_on(<check>) (realm run inspect <run-id>)` |",
     );
     claim(
       PAGE,
-      '| `realm run list --stuck` | The runs that have a finding, with a short label at the end of the line. It judges each run with its registered workflow when that copy can be read, and four findings do not select a run. (added after version 0.47.0) |',
+      '| `realm run list --stuck` | The runs that have a finding, with a short label at the end of the line. It judges each run with its registered workflow when that copy can be read, and five findings do not select a run. (added after version 0.47.0) |',
     );
     claim(
       PAGE,
@@ -1258,11 +1248,15 @@ describe('issue #729 — cannot_go_on on run-state-and-health.md', () => {
         findingLines: inspected.filter((l) => l.includes('cannot_go_on [publish]: input_schema'))
           .length,
         wayOutLines: inspected.filter((l) => l.includes(`Run ${runId} stays open`)).length,
-        listed: listed.find((l) => l.startsWith(runId))?.replace(/^.* idle: /, ''),
+        // #715 (b) (03 §B.2 A7): the idle age through the one formatter, its instant beside it.
+        listed: listed
+          .find((l) => l.startsWith(runId))
+          ?.replace(/^.* idle: /, '')
+          .replace(/^\d+s ago \(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\)/, '<age>'),
       }).toEqual({
         findingLines: 1,
         wayOutLines: 1,
-        listed: `0m  publish=cannot_go_on(input_schema) (realm run inspect ${runId})`,
+        listed: `<age>  publish=cannot_go_on(input_schema) (realm run inspect ${runId})`,
       });
     },
   );

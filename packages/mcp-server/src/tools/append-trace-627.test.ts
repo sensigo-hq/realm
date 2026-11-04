@@ -78,7 +78,7 @@ async function atGate(gateAnswers: Door, forms = false) {
   const started = JSON.parse(await text('start_run', { workflow_id: 'at627', params: {} })) as {
     run_id: string;
   };
-  const gateId = (await runStore.get(started.run_id)).pending_gate!.gate_id;
+  const gateId = (await runStore.get(started.run_id)).record.pending_gate!.gate_id;
   return { copy: join(dir, 'wf', 'at627.json'), runId: started.run_id, gateId, text };
 }
 
@@ -221,7 +221,7 @@ describe('#627 W correction 2 (8.1) — append_trace on a step waiting at its ow
     const started = await call('start_run', { workflow_id: 'at8', params: {} });
     const runId = String(started['run_id']);
     await call('execute_step', { run_id: runId, command: 'write', params: {} });
-    const record = await runStore.get(runId);
+    const { record: record } = await runStore.get(runId);
     const reply = await call('append_trace', {
       run_id: runId,
       step_id: 'write',

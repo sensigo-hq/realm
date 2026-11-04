@@ -3,7 +3,7 @@
 // every other terminal reason keeps today's refusal.
 import { declared } from '../test-support/declared.js';
 import { describe, it, expect, vi } from 'vitest';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryStore, settableClock } from '@sensigo/realm-testing';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   createDefaultRegistry,
@@ -40,7 +40,11 @@ function brokenLoader(): typeof loadProjectExtensions {
 }
 
 async function createRun(store: InMemoryStore): Promise<string> {
-  const { run } = await store.create({ workflowId: 'attach-wf', workflowVersion: 1, params: {} });
+  const { record: run } = await store.create({
+    workflowId: 'attach-wf',
+    workflowVersion: 1,
+    params: {},
+  });
   return run.id;
 }
 
@@ -64,7 +68,7 @@ describe('resolveRunAttach', () => {
     });
     expect(result.definition.id).toBe('attach-wf');
     expect(result.registry.getAdapter('filesystem')).toBeDefined();
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     expect(run.terminal_state).toBe(false);
   });
 
@@ -78,7 +82,7 @@ describe('resolveRunAttach', () => {
         loadExtensions: brokenLoader(),
       }),
     ).rejects.toThrow('broken extension module');
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     expect(run.terminal_state).toBe(true);
     expect(run.terminal_reason).toBe(EXTENSIONS_LOAD_FAILED);
     // issue #367 census path: an extensions-load death is a FAILURE and now records itself as one.
@@ -91,10 +95,10 @@ describe('resolveRunAttach', () => {
   it('load failure on a run WITH evidence entries rethrows with NO run mutation', async () => {
     const store = new InMemoryStore();
     const runId = await createRun(store);
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     run.evidence = [FAKE_EVIDENCE];
     await store.update(run);
-    const before = await store.get(runId);
+    const { record: before } = await store.get(runId);
 
     await expect(
       resolveRunAttach(runId, {
@@ -104,7 +108,7 @@ describe('resolveRunAttach', () => {
       }),
     ).rejects.toThrow('broken extension module');
 
-    const after = await store.get(runId);
+    const { record: after } = await store.get(runId);
     expect(after.terminal_state).toBe(false);
     expect(after.terminal_reason).toBeUndefined();
     expect(after.version).toBe(before.version); // no write happened
@@ -115,7 +119,7 @@ describe('resolveRunAttach', () => {
     // `terminal_reason` at all, which is exactly what proves the arm is doing the work.
     const store = new InMemoryStore();
     const runId = await createRun(store);
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     run.terminal_state = true;
     run.sealed_by = { arm: 'extensions_load_failure' };
     await store.update(run);
@@ -126,7 +130,7 @@ describe('resolveRunAttach', () => {
       loadExtensions: okLoader(),
     });
     expect(result.definition.id).toBe('attach-wf');
-    const cleared = await store.get(runId);
+    const { record: cleared } = await store.get(runId);
     expect(cleared.terminal_state).toBe(false);
     expect(cleared.sealed_by).toBeUndefined();
   });
@@ -134,7 +138,7 @@ describe('resolveRunAttach', () => {
   it("re-attach on terminal_reason 'extensions_load_failed' clears exactly that marker and proceeds", async () => {
     const store = new InMemoryStore();
     const runId = await createRun(store);
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     run.terminal_state = true;
     run.terminal_reason = EXTENSIONS_LOAD_FAILED;
     // issue #367 (part 3): NO arm here on purpose — this is the LEGACY polarity, a record written
@@ -147,7 +151,7 @@ describe('resolveRunAttach', () => {
       loadExtensions: okLoader(),
     });
     expect(result.definition.id).toBe('attach-wf');
-    const cleared = await store.get(runId);
+    const { record: cleared } = await store.get(runId);
     // issue #367 STRIP PIN: the retry path flips the run live again, so the seal fact must leave
     // in that same write. The store boundary would refuse the update otherwise — this asserts the
     // read-back carries no orphan.
@@ -161,7 +165,7 @@ describe('resolveRunAttach', () => {
   it('every other terminal reason keeps the refusal — thrown BEFORE the loader runs', async () => {
     const store = new InMemoryStore();
     const runId = await createRun(store);
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     run.terminal_state = true;
     run.terminal_reason = 'spawn_failed';
     await store.update(run);
@@ -175,7 +179,7 @@ describe('resolveRunAttach', () => {
       }),
     ).rejects.toThrow(`Run ${runId} has already ended (failed).\nReason: "spawn_failed"`);
     expect(loader).not.toHaveBeenCalled();
-    const untouched = await store.get(runId);
+    const { record: untouched } = await store.get(runId);
     expect(untouched.terminal_reason).toBe('spawn_failed');
   });
 
@@ -183,7 +187,7 @@ describe('resolveRunAttach', () => {
   it('a terminal run with a pending finalizer gets the drain-verb pointer appended to the refusal message', async () => {
     const store = new InMemoryStore();
     const runId = await createRun(store);
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     run.terminal_state = true;
     run.terminal_reason = 'Workflow completed.';
     run.finalizer_ledger = { fin: { status: 'pending', rank: 0 } };
@@ -203,7 +207,7 @@ describe('resolveRunAttach', () => {
   it('a completed run is refused, not re-attached', async () => {
     const store = new InMemoryStore();
     const runId = await createRun(store);
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     run.terminal_state = true;
     run.terminal_reason = 'Workflow completed.';
     await store.update(run);
@@ -254,7 +258,7 @@ describe('resolveRunAttach — drift evidence (issue #119)', () => {
   }
 
   async function seedIdentityHistory(store: InMemoryStore, runId: string, treeHash: string) {
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     run.extension_identity = [makeIdentity(treeHash)];
     await store.update(run);
   }
@@ -264,7 +268,7 @@ describe('resolveRunAttach — drift evidence (issue #119)', () => {
     const store = new InMemoryStore();
     const runId = await createRun(store);
     await seedIdentityHistory(store, runId, 'hash-old');
-    const before = await store.get(runId);
+    const { record: before } = await store.get(runId);
 
     await resolveRunAttach(runId, {
       store,
@@ -277,7 +281,7 @@ describe('resolveRunAttach — drift evidence (issue #119)', () => {
     expect(logged).toContain('hash-old');
     expect(logged).toContain('hash-new');
     // Success path writes NOTHING pre-claim (CAS bystander hazard): version unchanged.
-    const after = await store.get(runId);
+    const { record: after } = await store.get(runId);
     expect(after.version).toBe(before.version);
     expect(after.extension_identity).toHaveLength(1);
     errSpy.mockRestore();
@@ -313,7 +317,7 @@ describe('resolveRunAttach — drift evidence (issue #119)', () => {
         loadExtensions: brokenLoader(),
       }),
     ).rejects.toThrow('broken extension module');
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     expect(run.terminal_reason).toBe(EXTENSIONS_LOAD_FAILED);
     expect(run.extension_identity).toHaveLength(1);
     expect(run.extension_identity![0]!.error).toContain(
@@ -324,7 +328,7 @@ describe('resolveRunAttach — drift evidence (issue #119)', () => {
   it('in-flight load failure mutates nothing — no error identity entry either (deliberate asymmetry)', async () => {
     const store = new InMemoryStore();
     const runId = await createRun(store);
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     run.evidence = [FAKE_EVIDENCE];
     await store.update(run);
 
@@ -335,7 +339,7 @@ describe('resolveRunAttach — drift evidence (issue #119)', () => {
         loadExtensions: brokenLoader(),
       }),
     ).rejects.toThrow('broken extension module');
-    const after = await store.get(runId);
+    const { record: after } = await store.get(runId);
     expect(after.terminal_state).toBe(false);
     expect(after.extension_identity).toBeUndefined();
   });
@@ -464,5 +468,75 @@ describe('resolveRunAttach — a not-found workflow says what to do about it', (
         `realm run abandon ${runId}.`,
     );
     expect((err as Error).message).not.toContain('most often');
+  });
+});
+
+// #715 (b) A.8 (ii) (D-21): run-attach's load-failure seal is a `seal_run` settle. A run that moved
+// between run-attach's read and its seal is refused by the store exactly as update() refused it, and
+// reported on stderr; the seal's instant is the store's reading, the identity entry's `captured_at`
+// the host's (outside class, carried verbatim — D6-67).
+describe('#715 (b) D-21 — run-attach’s seal_run', () => {
+  it('a run that moves between the read and the seal: the seal is refused with the version conflict update() threw, reported, the load error rethrown, the run left live', async () => {
+    // (a) red when the seal ignores expected_version (the moved run is sealed and nothing is
+    //     reported); (b) prints the stderr line, the rethrown error and the run's state.
+    const store = new InMemoryStore();
+    const runId = await createRun(store);
+    const moving = new Proxy(store, {
+      get(target, prop) {
+        if (prop === 'settleStep') {
+          return async (...a: Parameters<InMemoryStore['settleStep']>) => {
+            const { record } = await target.get(runId);
+            await target.update(record); // another writer lands between the read and the seal
+            return target.settleStep(...a);
+          };
+        }
+        const v = Reflect.get(target, prop, target) as unknown;
+        return typeof v === 'function' ? (v as (...x: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let rethrown = '';
+    await resolveRunAttach(runId, {
+      store: moving,
+      workflowStore: makeWorkflowStore(),
+      loadExtensions: brokenLoader(),
+    }).catch((e: Error) => {
+      rethrown = e.message;
+    });
+    const lines = stderr.mock.calls.map((c) => String(c[0]));
+    stderr.mockRestore();
+    const { record: run } = await store.get(runId);
+    expect({ rethrown, lines, terminal: run.terminal_state }).toEqual({
+      rethrown: 'broken extension module',
+      lines: [
+        `Failed to mark run '${runId}' as ${EXTENSIONS_LOAD_FAILED}: Version conflict — run was modified by another process`,
+      ],
+      terminal: false,
+    });
+  });
+
+  it('on a store a year behind the wall: the seal’s updated_at is the store’s reading; the identity entry’s captured_at is the host’s', async () => {
+    // (a) red when the seal takes the host's instant (updated_at a year ahead of the store), or the
+    //     identity entry is re-stamped with the seal's reading; (b) prints both instants' years.
+    const wall = Date.now();
+    const T = new Date(Math.floor(wall / 1000) * 1000 - 365 * 86_400_000);
+    const store = new InMemoryStore({ clock: settableClock(T) });
+    const runId = await createRun(store);
+    await resolveRunAttach(runId, {
+      store,
+      workflowStore: makeWorkflowStore(),
+      loadExtensions: brokenLoader(),
+    }).catch(() => undefined);
+    const { record: run } = await store.get(runId);
+    const captured = Date.parse(run.extension_identity?.at(-1)?.captured_at ?? '');
+    expect({
+      sealed: run.sealed_by,
+      updated_at: run.updated_at,
+      capturedFromWall: Math.abs(captured - wall) < 60_000,
+    }).toEqual({
+      sealed: { arm: 'extensions_load_failure' },
+      updated_at: T.toISOString(),
+      capturedFromWall: true,
+    });
   });
 });

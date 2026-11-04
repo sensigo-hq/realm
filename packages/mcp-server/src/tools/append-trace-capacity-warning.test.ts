@@ -121,7 +121,7 @@ describe('append_trace capacity early-warning (issue #208)', () => {
     workflowStore = new JsonWorkflowStore(workflowDir);
     const def = makeWorkflowDef();
     await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'append-trace-capacity-wf',
       workflowVersion: 1,
       params: {},

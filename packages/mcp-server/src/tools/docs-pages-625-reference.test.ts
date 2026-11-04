@@ -176,7 +176,7 @@ describe('#625 PR-2a, C174 lane F — tools.md rows no cell quoted yet, over a r
     const runId = (await call('start_run', { workflow_id: 'owes' }))['run_id'] as string;
     const answered = await call('submit_human_response', {
       run_id: runId,
-      gate_id: (await runStore.get(runId)).pending_gate!.gate_id,
+      gate_id: (await runStore.get(runId)).record.pending_gate!.gate_id,
       choice: 'approve',
     });
     const r = await call('advance_run', { run_id: runId });
@@ -320,7 +320,7 @@ describe('#625 PR-2a, C174 lane F — tools.md rows no cell quoted yet, over a r
     const aborted = (await call('start_run', { workflow_id: 'ends' }))['run_id'] as string;
     await call('submit_human_response', {
       run_id: aborted,
-      gate_id: (await runStore.get(aborted)).pending_gate!.gate_id,
+      gate_id: (await runStore.get(aborted)).record.pending_gate!.gate_id,
       choice: 'reject',
     });
     // failed: its only step's handler throws
@@ -374,7 +374,7 @@ describe('#625 PR-2a, C174 lane F — tools.md rows no cell quoted yet, over a r
         `Gate '${gateId}' was already resolved with choice 'send' — your choice 'discard' was not recorded.`,
       ],
     ]);
-    expect((await runStore.get(runId)).settled?.['draft']?.choice).toBe('send');
+    expect((await runStore.get(runId)).record.settled?.['draft']?.choice).toBe('send');
   });
 
   it('line 215, start_run’s example reply: the real reply, its run ID put in place', async () => {
@@ -497,7 +497,7 @@ describe('#625 PR-2a, C174 lane F — tools.md rows no cell quoted yet, over a r
     const runId = (await call('start_run', { workflow_id: 'approval' }))['run_id'] as string;
     const r = await call('submit_human_response', {
       run_id: runId,
-      gate_id: (await runStore.get(runId)).pending_gate!.gate_id,
+      gate_id: (await runStore.get(runId)).record.pending_gate!.gate_id,
       choice: 'approve',
     });
     const page = shown('"tool": "advance_run"', { '<run>': runId });

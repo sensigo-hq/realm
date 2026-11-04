@@ -1,5 +1,6 @@
-// gate-expiry.test.ts — issue #291: applyExpireGate's arm matrix ([F1]) + applySettleGate's [F3]
-// write-free `gate_expired_pending` refusal. Pure `applySettlement` unit tests — no store needed
+// gate-expiry.test.ts — issue #291: applyExpireGate's arm matrix ([F1]) + applySettleGate's late
+// answer (#715 (b): the due gate's expiry enacted in the settle_gate write; until then the [F3]
+// write-free `gate_expired_pending` refusal). Pure `applySettlement` unit tests — no store needed
 // (the transform is pure/synchronous), mirroring how a store-level TCK case would exercise the
 // same deltas, but without the store round-trip (faster, and avoids the core→testing circular
 // package dependency: @sensigo/realm-testing already depends on @sensigo/realm).
@@ -64,7 +65,7 @@ describe('applyExpireGate — the [F1] arm matrix (issue #291)', () => {
       settled: { gated: { token: 'gate-1', outcome: 'gate', choice: 'approve' } },
     });
     const delta: SettlementDelta = { kind: 'expire_gate', gateId: 'gate-1' };
-    const result = applySettlement(run, delta, def, { now: NOW_PAST_EXPIRY });
+    const result = applySettlement(run, delta, def, { at: NOW_PAST_EXPIRY });
     expect(result.applied).toBe(false);
     if (!result.applied) expect(result.reason).toBe('already_settled');
   });
@@ -80,7 +81,7 @@ describe('applyExpireGate — the [F1] arm matrix (issue #291)', () => {
       aborted_at: { step_id: 'gated', abort_message: 'expired' },
     });
     const delta: SettlementDelta = { kind: 'expire_gate', gateId: 'gate-1' };
-    const result = applySettlement(run, delta, def, { now: NOW_PAST_EXPIRY });
+    const result = applySettlement(run, delta, def, { at: NOW_PAST_EXPIRY });
     expect(result.applied).toBe(false);
     if (!result.applied) expect(result.reason).toBe('already_settled');
   });
@@ -93,7 +94,7 @@ describe('applyExpireGate — the [F1] arm matrix (issue #291)', () => {
       terminal_reason: 'Workflow completed.',
     });
     const delta: SettlementDelta = { kind: 'expire_gate', gateId: 'gate-1' };
-    const result = applySettlement(run, delta, def, { now: NOW_PAST_EXPIRY });
+    const result = applySettlement(run, delta, def, { at: NOW_PAST_EXPIRY });
     expect(result.applied).toBe(false);
     if (!result.applied) expect(result.reason).toBe('run_terminal');
   });
@@ -103,7 +104,7 @@ describe('applyExpireGate — the [F1] arm matrix (issue #291)', () => {
       pending_gate: makeGate({ gate_id: 'gate-2', expires_at: EXPIRES_AT, on_expiry: 'abort' }),
     });
     const delta: SettlementDelta = { kind: 'expire_gate', gateId: 'gate-1' };
-    const result = applySettlement(run, delta, def, { now: NOW_PAST_EXPIRY });
+    const result = applySettlement(run, delta, def, { at: NOW_PAST_EXPIRY });
     expect(result.applied).toBe(false);
     if (!result.applied) expect(result.reason).toBe('gate_mismatch');
   });
@@ -113,7 +114,7 @@ describe('applyExpireGate — the [F1] arm matrix (issue #291)', () => {
       pending_gate: makeGate({ expires_at: EXPIRES_AT, on_expiry: 'abort' }),
     });
     const delta: SettlementDelta = { kind: 'expire_gate', gateId: 'gate-1' };
-    const result = applySettlement(run, delta, def, { now: NOW_BEFORE_EXPIRY });
+    const result = applySettlement(run, delta, def, { at: NOW_BEFORE_EXPIRY });
     expect(result.applied).toBe(false);
     if (!result.applied) expect(result.reason).toBe('not_expired');
     // No write on refusal — fresh state returned verbatim.
@@ -123,7 +124,7 @@ describe('applyExpireGate — the [F1] arm matrix (issue #291)', () => {
   it('not_expired: an absent expires_at (grandfathered/no-timeout gate) also REFUSES — defensive, never crashes', () => {
     const run = makeRun({ pending_gate: makeGate({ on_expiry: 'abort' }) });
     const delta: SettlementDelta = { kind: 'expire_gate', gateId: 'gate-1' };
-    const result = applySettlement(run, delta, def, { now: NOW_PAST_EXPIRY });
+    const result = applySettlement(run, delta, def, { at: NOW_PAST_EXPIRY });
     expect(result.applied).toBe(false);
     if (!result.applied) expect(result.reason).toBe('not_expired');
   });
@@ -131,7 +132,7 @@ describe('applyExpireGate — the [F1] arm matrix (issue #291)', () => {
   it('finding-only mode: expires_at present but on_expiry absent REFUSES no_disposition — never enacted', () => {
     const run = makeRun({ pending_gate: makeGate({ expires_at: EXPIRES_AT }) });
     const delta: SettlementDelta = { kind: 'expire_gate', gateId: 'gate-1' };
-    const result = applySettlement(run, delta, def, { now: NOW_PAST_EXPIRY });
+    const result = applySettlement(run, delta, def, { at: NOW_PAST_EXPIRY });
     expect(result.applied).toBe(false);
     if (!result.applied) expect(result.reason).toBe('no_disposition');
     expect(result.run.pending_gate).toBeDefined(); // never cleared
@@ -146,7 +147,7 @@ describe('applyExpireGate — the [F1] arm matrix (issue #291)', () => {
       }),
     });
     const delta: SettlementDelta = { kind: 'expire_gate', gateId: 'gate-1' };
-    const result = applySettlement(run, delta, def, { now: NOW_PAST_EXPIRY });
+    const result = applySettlement(run, delta, def, { at: NOW_PAST_EXPIRY });
     expect(result.applied).toBe(true);
     if (!result.applied) return;
     expect(result.run.pending_gate).toBeUndefined();
@@ -173,7 +174,7 @@ describe('applyExpireGate — the [F1] arm matrix (issue #291)', () => {
       pending_gate: makeGate({ expires_at: EXPIRES_AT, on_expiry: 'abort' }),
     });
     const delta: SettlementDelta = { kind: 'expire_gate', gateId: 'gate-1' };
-    const result = applySettlement(run, delta, def, { now: NOW_PAST_EXPIRY });
+    const result = applySettlement(run, delta, def, { at: NOW_PAST_EXPIRY });
     expect(result.applied).toBe(true);
     if (!result.applied) return;
     expect(result.run.pending_gate).toBeUndefined();
@@ -200,10 +201,10 @@ describe('applyExpireGate — the [F1] arm matrix (issue #291)', () => {
       }),
     });
     const delta: SettlementDelta = { kind: 'expire_gate', gateId: 'gate-1' };
-    const first = applySettlement(run, delta, def, { now: NOW_PAST_EXPIRY });
+    const first = applySettlement(run, delta, def, { at: NOW_PAST_EXPIRY });
     expect(first.applied).toBe(true);
     if (!first.applied) return;
-    const second = applySettlement(first.run, delta, def, { now: NOW_PAST_EXPIRY });
+    const second = applySettlement(first.run, delta, def, { at: NOW_PAST_EXPIRY });
     expect(second.applied).toBe(false);
     if (!second.applied) expect(second.reason).toBe('already_settled');
   });
@@ -213,19 +214,24 @@ describe('applyExpireGate — the [F1] arm matrix (issue #291)', () => {
       pending_gate: makeGate({ expires_at: EXPIRES_AT, on_expiry: 'abort' }),
     });
     const delta: SettlementDelta = { kind: 'expire_gate', gateId: 'gate-1' };
-    const first = applySettlement(run, delta, def, { now: NOW_PAST_EXPIRY });
+    const first = applySettlement(run, delta, def, { at: NOW_PAST_EXPIRY });
     expect(first.applied).toBe(true);
     if (!first.applied) return;
-    const second = applySettlement(first.run, delta, def, { now: NOW_PAST_EXPIRY });
+    const second = applySettlement(first.run, delta, def, { at: NOW_PAST_EXPIRY });
     expect(second.applied).toBe(false);
     if (!second.applied) expect(second.reason).toBe('already_settled');
   });
 });
 
-describe("applySettleGate's [F3] write-free gate_expired_pending refusal (issue #291)", () => {
+// #715 (b), A.8 (iii): the late answer in one write. Until #715 (b) a settle_gate on a DUE gate
+// returned a write-free `gate_expired_pending` refusal and the caller enacted the expiry in a second
+// write; the transform now enacts the gate's frozen expiry INSIDE the settle_gate write and says so
+// with `lateAnswer`. The cells that resolve normally assert `lateAnswer` is ABSENT — `applied: true`
+// alone no longer tells a normal answer from an enacted expiry.
+describe("applySettleGate's late answer — the due gate's expiry enacted in the same write (issue #291, #715 (b))", () => {
   const def = makeDefinition(['gated']);
 
-  it('a live gate past its frozen expires_at REFUSES gate_expired_pending BEFORE choice_not_eligible — write-free, version unchanged', () => {
+  it('a live gate past its frozen expires_at ENACTS its expiry in this write, BEFORE choice_not_eligible — applied, run aborted, lateAnswer names the gate, the choice and the pre-write expires_at', () => {
     const run = makeRun({
       pending_gate: makeGate({ expires_at: EXPIRES_AT, on_expiry: 'abort' }),
     });
@@ -235,13 +241,27 @@ describe("applySettleGate's [F3] write-free gate_expired_pending refusal (issue 
       choice: 'not-a-real-choice', // would ALSO be choice_not_eligible — expiry must win first
       evidence: [],
     };
-    const result = applySettlement(run, delta, def, { now: NOW_PAST_EXPIRY });
-    expect(result.applied).toBe(false);
-    if (!result.applied) expect(result.reason).toBe('gate_expired_pending');
-    expect(result.run).toBe(run); // no write
+    const result = applySettlement(run, delta, def, { at: NOW_PAST_EXPIRY });
+    // (a) red when the transform refuses again (the two-write shape) or drops `lateAnswer`;
+    // (b) prints the result's shape.
+    expect({
+      applied: result.applied,
+      lateAnswer: result.applied ? result.lateAnswer : undefined,
+      terminal: result.run.terminal_state,
+      gateLeft: result.run.pending_gate === undefined,
+    }).toEqual({
+      applied: true,
+      lateAnswer: expect.objectContaining({
+        gateId: 'gate-1',
+        choice: 'not-a-real-choice',
+        expiresAt: EXPIRES_AT,
+      }),
+      terminal: true,
+      gateLeft: true,
+    });
   });
 
-  it('a live gate BEFORE its frozen expires_at resolves normally — the refusal never fires early', () => {
+  it('a live gate BEFORE its frozen expires_at resolves normally — the expiry is never enacted early', () => {
     const run = makeRun({
       pending_gate: makeGate({ expires_at: EXPIRES_AT, on_expiry: 'abort' }),
     });
@@ -251,11 +271,12 @@ describe("applySettleGate's [F3] write-free gate_expired_pending refusal (issue 
       choice: 'approve',
       evidence: [],
     };
-    const result = applySettlement(run, delta, def, { now: NOW_BEFORE_EXPIRY });
+    const result = applySettlement(run, delta, def, { at: NOW_BEFORE_EXPIRY });
     expect(result.applied).toBe(true);
+    if (result.applied) expect(result.lateAnswer).toBeUndefined(); // the answer, not the expiry
   });
 
-  it('a FINDING-ONLY gate (expires_at present, on_expiry absent) NEVER trips the refusal — the human always resolves normally, however overdue', () => {
+  it('a FINDING-ONLY gate (expires_at present, on_expiry absent) NEVER enacts an expiry — the human always resolves normally, however overdue', () => {
     const run = makeRun({ pending_gate: makeGate({ expires_at: EXPIRES_AT }) });
     const delta: SettlementDelta = {
       kind: 'settle_gate',
@@ -263,11 +284,12 @@ describe("applySettleGate's [F3] write-free gate_expired_pending refusal (issue 
       choice: 'approve',
       evidence: [],
     };
-    const result = applySettlement(run, delta, def, { now: NOW_PAST_EXPIRY });
+    const result = applySettlement(run, delta, def, { at: NOW_PAST_EXPIRY });
     expect(result.applied).toBe(true);
+    if (result.applied) expect(result.lateAnswer).toBeUndefined(); // the answer, not the expiry
   });
 
-  it('a gate with NO frozen expires_at (grandfathered) never trips the refusal, however late', () => {
+  it('a gate with NO frozen expires_at (grandfathered) never enacts an expiry, however late', () => {
     const run = makeRun({ pending_gate: makeGate() });
     const delta: SettlementDelta = {
       kind: 'settle_gate',
@@ -275,7 +297,8 @@ describe("applySettleGate's [F3] write-free gate_expired_pending refusal (issue 
       choice: 'approve',
       evidence: [],
     };
-    const result = applySettlement(run, delta, def, { now: NOW_PAST_EXPIRY });
+    const result = applySettlement(run, delta, def, { at: NOW_PAST_EXPIRY });
     expect(result.applied).toBe(true);
+    if (result.applied) expect(result.lateAnswer).toBeUndefined(); // the answer, not the expiry
   });
 });

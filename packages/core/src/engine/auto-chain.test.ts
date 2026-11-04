@@ -103,7 +103,7 @@ describe('executeChain', () => {
 
   it('auto-chains 3 auto steps in one call — run ends at completed', async () => {
     const store = new JsonFileStore(dir);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'chain-wf',
       workflowVersion: 1,
       params: {},
@@ -118,7 +118,7 @@ describe('executeChain', () => {
 
     expect(envelope.status).toBe('ok');
 
-    const updated = await store.get(run.id);
+    const { record: updated } = await store.get(run.id);
     expect(updated.run_phase).toBe('completed');
     // Evidence for all 3 steps is persisted in the run.
     expect(updated.evidence).toHaveLength(3);
@@ -126,7 +126,7 @@ describe('executeChain', () => {
 
   it('stops at an agent step — step-b is NOT executed', async () => {
     const store = new JsonFileStore(dir);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'stop-agent-wf',
       workflowVersion: 1,
       params: {},
@@ -142,7 +142,7 @@ describe('executeChain', () => {
     // The returned envelope is from step-a (the last step executed).
     expect(envelope.status).toBe('ok');
 
-    const updated = await store.get(run.id);
+    const { record: updated } = await store.get(run.id);
     // step-a completed; step-b (agent) was NOT auto-executed — run is still running.
     expect(updated.run_phase).toBe('running');
     expect(updated.completed_steps).toContain('step-a');
@@ -151,7 +151,7 @@ describe('executeChain', () => {
 
   it('chains into trust: human_confirmed — step-b opens gate and returns confirm_required', async () => {
     const store = new JsonFileStore(dir);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'stop-gate-wf',
       workflowVersion: 1,
       params: {},
@@ -167,13 +167,13 @@ describe('executeChain', () => {
     // step-b opens a gate — chain returns confirm_required.
     expect(envelope.status).toBe('confirm_required');
 
-    const updated = await store.get(run.id);
+    const { record: updated } = await store.get(run.id);
     expect(updated.run_phase).toBe('gate_waiting');
   });
 
   it('stops and returns error when a step fails — run is marked failed', async () => {
     const store = new JsonFileStore(dir);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'fail-wf',
       workflowVersion: 1,
       params: {},
@@ -197,7 +197,7 @@ describe('executeChain', () => {
 
     expect(envelope.status).toBe('error');
 
-    const updated = await store.get(run.id);
+    const { record: updated } = await store.get(run.id);
     expect(updated.run_phase).toBe('failed');
   });
 });

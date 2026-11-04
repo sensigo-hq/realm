@@ -57,7 +57,7 @@ async function driveToExhaustion(
   runId: string,
   command = 'draft',
 ): Promise<Awaited<ReturnType<typeof executeStep>>> {
-  const run = await store.get(runId);
+  const { record: run } = await store.get(runId);
   await store.update({
     ...run,
     validation_rejections: { [command]: DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD - 1 },
@@ -94,7 +94,7 @@ describe('issue #220 PR-2 — declared fail-open (validation_exhaustion.mode: de
       }
       const undeclaredStore = new UndeclaredFieldStore(dir);
       const def = makeDefaultDef();
-      const { run } = await undeclaredStore.create({
+      const { record: run } = await undeclaredStore.create({
         workflowId: def.id,
         workflowVersion: 1,
         params: {},
@@ -113,7 +113,7 @@ describe('issue #220 PR-2 — declared fail-open (validation_exhaustion.mode: de
 
       // (i) the step lands in completed_steps with output === default_output.
       expect(envelope.status).toBe('ok');
-      const after = await undeclaredStore.get(run.id);
+      const { record: after } = await undeclaredStore.get(run.id);
       expect(after.completed_steps).toContain('draft');
       expect(envelope.data).toEqual(DEFAULT_OUTPUT);
 
@@ -150,7 +150,11 @@ describe('issue #220 PR-2 — declared fail-open (validation_exhaustion.mode: de
 
     it('never sets settled_by_default on a step that succeeds via its OWN valid submission (no exhaustion)', async () => {
       const def = makeDefaultDef();
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
 
       const envelope = await executeStep(store, def, {
         runId: run.id,
@@ -162,7 +166,7 @@ describe('issue #220 PR-2 — declared fail-open (validation_exhaustion.mode: de
       expect(envelope.status).toBe('ok');
       expect(envelope.data).toEqual(VALID_OUTPUT);
       expect(envelope.settled_by_default).toBeUndefined();
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       const settleEvidence = after.evidence.find(
         (e) => e.step_id === 'draft' && e.status === 'success',
       );
@@ -171,7 +175,11 @@ describe('issue #220 PR-2 — declared fail-open (validation_exhaustion.mode: de
 
     it('never sets settled_by_default even after PRIOR rejections, when the FINAL submission is the agent’s own valid output (not exhaustion-driven)', async () => {
       const def = makeDefaultDef();
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       // One rejection short of the threshold — not yet exhausted.
       await store.update({
         ...run,
@@ -220,7 +228,7 @@ describe('issue #220 PR-2 — declared fail-open (validation_exhaustion.mode: de
           },
         },
       };
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: plainDef.id,
         workflowVersion: 1,
         params: {},
@@ -234,7 +242,7 @@ describe('issue #220 PR-2 — declared fail-open (validation_exhaustion.mode: de
       });
 
       expect(envelope.status).toBe('ok');
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       expect(after.terminal_state).toBe(true); // single-step workflow ⇒ Step-6 DOES seal 'complete'
       expect(envelope.defaulted_steps).toBeUndefined();
       expect(after.defaulted_steps).toBeUndefined(); // NOT [] — stampDefaultedSteps' early-return
@@ -242,7 +250,11 @@ describe('issue #220 PR-2 — declared fail-open (validation_exhaustion.mode: de
 
     it('(a) a mid-workflow default-settled step with a LATER terminal step ⇒ the terminal ok envelope carries defaulted_steps containing that step', async () => {
       const def = makeDefaultDef({}, { finish: { description: 'Finish', execution: 'auto' } });
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
 
       const draftEnvelope = await driveToExhaustion(store, def, run.id);
       expect(draftEnvelope.status).toBe('ok');
@@ -258,7 +270,7 @@ describe('issue #220 PR-2 — declared fail-open (validation_exhaustion.mode: de
       });
 
       expect(finishEnvelope.status).toBe('ok');
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       expect(after.terminal_state).toBe(true);
       expect(finishEnvelope.defaulted_steps).toEqual(['draft']);
       expect(after.defaulted_steps).toEqual(['draft']); // JsonFileStore persists it too
@@ -266,7 +278,11 @@ describe('issue #220 PR-2 — declared fail-open (validation_exhaustion.mode: de
 
     it('(b) mode: default on a human_confirmed LAST step ⇒ approval via submitHumanResponse settles AND defaulted_steps is stamped', async () => {
       const def = makeDefaultDef({ trust: 'human_confirmed' });
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
 
       const gateEnvelope = await driveToExhaustion(store, def, run.id);
       expect(gateEnvelope.status).toBe('confirm_required');
@@ -278,7 +294,7 @@ describe('issue #220 PR-2 — declared fail-open (validation_exhaustion.mode: de
       });
 
       expect(result.status).toBe('ok');
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       expect(after.completed_steps).toContain('draft');
       expect(after.terminal_state).toBe(true);
       expect(result.defaulted_steps).toEqual(['draft']);
@@ -297,7 +313,7 @@ describe('issue #220 PR-2 — declared fail-open (validation_exhaustion.mode: de
           },
         },
       );
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: guardCompleteDef.id,
         workflowVersion: 1,
         params: {},
@@ -316,7 +332,7 @@ describe('issue #220 PR-2 — declared fail-open (validation_exhaustion.mode: de
 
       expect(envelope.status).toBe('ok');
       expect(envelope.chained_auto_steps?.some((s) => s.step === 'guard_done')).toBe(true);
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       expect(after.terminal_state).toBe(true);
       expect(after.run_phase).toBe('completed');
       expect(envelope.defaulted_steps).toEqual(['draft']);
@@ -335,7 +351,7 @@ describe('issue #220 PR-2 — declared fail-open (validation_exhaustion.mode: de
           },
         },
       );
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: guardAbortDef.id,
         workflowVersion: 1,
         params: {},
@@ -353,7 +369,7 @@ describe('issue #220 PR-2 — declared fail-open (validation_exhaustion.mode: de
       });
 
       expect(envelope.status).toBe('ok');
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       expect(after.run_phase).toBe('aborted');
       expect(after.terminal_state).toBe(true);
       // The FM-5 guard: an abort seal is never stamped, even though 'draft' genuinely
@@ -372,7 +388,11 @@ describe('issue #220 PR-2 — declared fail-open (validation_exhaustion.mode: de
         });
       };
       const def = makeDefaultDef({}, { finish: { description: 'Finish', execution: 'auto' } });
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
 
       const draftEnvelope = await driveToExhaustion(store, def, run.id);
       expect(draftEnvelope.status).toBe('ok');
@@ -388,7 +408,7 @@ describe('issue #220 PR-2 — declared fail-open (validation_exhaustion.mode: de
       });
 
       expect(finishEnvelope.status).toBe('error');
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       expect(after.terminal_state).toBe(true);
       expect(after.run_phase).toBe('failed');
       expect(after.failed_steps).toContain('finish');
@@ -406,7 +426,11 @@ describe('issue #220 PR-2 — declared fail-open (validation_exhaustion.mode: de
   describe('(z) V-D7 trust-gate × default', () => {
     it('human_confirmed + exhaustion + mode: default ⇒ the gate OPENS on the default_output preview with the disclosure in gate warnings; the step is NOT in completed_steps; settled_by_default is ABSENT', async () => {
       const def = makeDefaultDef({ trust: 'human_confirmed' });
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
 
       const gateEnvelope = await driveToExhaustion(store, def, run.id);
 
@@ -416,14 +440,18 @@ describe('issue #220 PR-2 — declared fail-open (validation_exhaustion.mode: de
       expect(gateEnvelope.settled_by_default).toBeUndefined();
       expect(gateEnvelope.warnings.join(' ')).toContain('settled with its declared default_output');
 
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       expect(after.completed_steps).not.toContain('draft');
       expect(after.pending_gate).toBeDefined();
     });
 
     it('a reject choice STILL settles the step with the default output (a rejecting human does not un-default)', async () => {
       const def = makeDefaultDef({ trust: 'human_confirmed' });
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
 
       const gateEnvelope = await driveToExhaustion(store, def, run.id);
       const result = await submitHumanResponse(store, def, {
@@ -435,7 +463,7 @@ describe('issue #220 PR-2 — declared fail-open (validation_exhaustion.mode: de
       expect(result.status).toBe('ok');
       expect(result.data['choice']).toBe('reject');
       expect(result.data['category']).toBe(DEFAULT_OUTPUT.category);
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       expect(after.completed_steps).toContain('draft');
       expect(after.terminal_state).toBe(true);
     });

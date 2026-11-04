@@ -31,6 +31,7 @@ import { startAnthropicStub } from './test-support/anthropic-stub.js';
 import { makeJourneyHome } from './test-support/composed-journey.js';
 import { runAgent } from './run-agent.js';
 import { inspectRun } from '../commands/inspect.js';
+import { writtenSnapshot } from '@sensigo/realm';
 
 // Distinctive for the redaction hazard the harness documents: `sanitizeError` masks every env
 // value over four characters as a substring, so a colliding key would rewrite the assertions.
@@ -99,8 +100,8 @@ describe('composed journey (budget) — a server-directed Retry-After is observe
       // still excluding the two-hour (7,200,000ms) Retry-After by a 480× margin.
       expect(elapsed).toBeLessThan(15_000);
 
-      const runId = (await store.list())[0]!.id;
-      const run = await store.get(runId);
+      const runId = (await store.list()).snapshots.map((s) => s.record)[0]!.id;
+      const { record: run } = await store.get(runId);
       const entry = run.drive_failures!.entries[0]!;
 
       // OBSERVED — all four discriminators, from real producers:
@@ -120,7 +121,7 @@ describe('composed journey (budget) — a server-directed Retry-After is observe
       expect(entry.derived_ceiling_ms).toBe(151_500); // 30s x 3 + 1.5s backoff + 60s download
 
       // The operator's two surfaces carry them too — a record nobody can read is not a record.
-      const findings = classifyRunHealth(run);
+      const findings = classifyRunHealth(writtenSnapshot(run, new Date()));
       const driveFinding = findings.find((f) => f.kind === 'drive_failing');
       expect(driveFinding?.reason).toContain('api_status');
       // The finding's EVIDENCE carries the discriminators too, not just its prose. An agent

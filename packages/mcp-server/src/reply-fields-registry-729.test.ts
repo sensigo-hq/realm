@@ -22,6 +22,7 @@ import {
   JsonFileStore,
   executeStep,
   submitHumanResponse,
+  writeTestClockFile,
   type EngineReply,
   type WorkflowDefinition,
 } from '@sensigo/realm';
@@ -121,8 +122,15 @@ const GATED: WorkflowDefinition = {
 
 /** Replies that carry every added field between them. */
 async function replies(): Promise<EngineReply[]> {
-  const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-registry-729-')));
-  const { run } = await store.create({ workflowId: AGENT.id, workflowVersion: 1, params: {} });
+  // #715 (b) (01 §C.4): a test location — the store's clock (its clock file) makes the answer late.
+  const root = await mkdtemp(join(tmpdir(), 'realm-registry-729-'));
+  await writeTestClockFile(root, new Date());
+  const store = new JsonFileStore(join(root, 'runs'));
+  const { record: run } = await store.create({
+    workflowId: AGENT.id,
+    workflowVersion: 1,
+    params: {},
+  });
   const ok = await executeStep(store, AGENT, {
     runId: run.id,
     command: 'a',
@@ -137,17 +145,20 @@ async function replies(): Promise<EngineReply[]> {
   });
   const gated = await store.create({ workflowId: GATED.id, workflowVersion: 1, params: {} });
   await executeStep(store, GATED, {
-    runId: gated.run.id,
+    runId: gated.record.id,
     command: 'q',
     input: {},
     dispatcher: async () => ({}),
   });
-  const open = await store.get(gated.run.id);
+  const { record: open } = await store.get(gated.record.id);
+  await writeTestClockFile(
+    root,
+    new Date(new Date(open.pending_gate!.expires_at!).getTime() + 5_000),
+  );
   const late = await submitHumanResponse(store, GATED, {
-    runId: gated.run.id,
+    runId: gated.record.id,
     gateId: open.pending_gate!.gate_id,
     choice: 'reject',
-    now: new Date(new Date(open.pending_gate!.expires_at!).getTime() + 5_000),
   });
   // A loop's race and a stop's `about` (their producers are pinned in core): carried by a reply.
   const raced = {

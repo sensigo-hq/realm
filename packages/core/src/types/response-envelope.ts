@@ -91,7 +91,8 @@ export interface RaceEntry {
 
 /**
  * issue #729 PR-0 (T-2; A.3 #5 "names the enactor and the lag"): an expired question's declared
- * `on_expiry`, carried out — by this call or by another. `overdue` is read through `readInstant`:
+ * `on_expiry`, carried out by the call whose reply carries it (#715 (b), Amendment 3: no
+ * `by_this_call` — it could no longer be false). `overdue` is read through `readInstant`:
  * the lag, or `{ absent: 'unparseable_stamp' }`; a question not yet due never reaches a receipt.
  */
 export interface ExpiryReceipt {
@@ -100,7 +101,6 @@ export interface ExpiryReceipt {
   on_expiry: 'settle_default' | 'abort';
   choice?: string;
   enacted_via: EnactedVia;
-  by_this_call: boolean;
   expired_at: string;
   overdue: { ms: number } | { absent: 'unparseable_stamp' };
 }

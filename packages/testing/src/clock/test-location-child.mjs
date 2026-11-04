@@ -5,5 +5,9 @@
 process.on('unhandledRejection', () => process.exit(3));
 const core = await import('@sensigo/realm');
 const store = new core.JsonFileStore(process.argv[2]);
-const { run } = await store.create({ workflowId: 'wf-715a-child', workflowVersion: 1, params: {} });
+const { record: run } = await store.create({
+  workflowId: 'wf-715a-child',
+  workflowVersion: 1,
+  params: {},
+});
 console.log(run.created_at);

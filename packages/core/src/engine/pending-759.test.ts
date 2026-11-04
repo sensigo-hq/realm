@@ -6,6 +6,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
+import { writtenSnapshot } from './snapshot.js';
 
 vi.mock('../validation/input-schema.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../validation/input-schema.js')>()),
@@ -49,7 +50,8 @@ describe('issue #759 — a refusal with no usable row', () => {
       terminal_state: false,
     } as unknown as RunRecord;
     expect(
-      describePending(definition, run, undefined, new Date()).engine_runnable[0]?.refusal,
+      describePending(definition, writtenSnapshot(run, new Date()), undefined).engine_runnable[0]
+        ?.refusal,
     ).toBe("Invalid input for step 'x'");
   });
 });

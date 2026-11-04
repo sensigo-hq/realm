@@ -32,7 +32,11 @@ describe('#625 PR-2a — resume names the owed call', () => {
       };
       await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(d);
       const runs = new JsonFileStore(join(home, '.realm', 'runs'));
-      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const registry = new ExtensionRegistry();
       registry.register('handler', 'boom', {
         id: 'boom',
@@ -47,7 +51,7 @@ describe('#625 PR-2a — resume names the owed call', () => {
         dispatcher: async () => ({}),
         registry,
       });
-      expect((await runs.get(run.id)).failed_steps).toEqual(['a']);
+      expect((await runs.get(run.id)).record.failed_steps).toEqual(['a']);
       const r = spawnSync(process.execPath, [CLI_ENTRY, 'run', 'resume', run.id, '--from', 'a'], {
         env: { ...process.env, HOME: home },
         cwd: home,

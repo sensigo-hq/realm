@@ -70,7 +70,7 @@ describe('handleSubmitHumanResponse — fires finalizers on gate completion', ()
     stores: Parameters<typeof handleStartRun>[1],
   ): Promise<{ runId: string; gateId: string }> {
     const started = await handleStartRun({ workflow_id: 'mcp-gate-fin-wf' }, stores);
-    const run = await runStore.get(started.run_id);
+    const { record: run } = await runStore.get(started.run_id);
     expect(run.pending_gate).toBeDefined();
     return { runId: started.run_id, gateId: run.pending_gate!.gate_id };
   }
@@ -88,7 +88,7 @@ describe('handleSubmitHumanResponse — fires finalizers on gate completion', ()
 
     expect(result.run_phase).toBe('completed');
     expect(ran()).toBe(1);
-    const updated = await runStore.get(runId);
+    const { record: updated } = await runStore.get(runId);
     expect(updated.completed_steps).toContain('record_outcome');
     expect(updated.evidence.some((e) => e.step_id === 'record_outcome')).toBe(true);
   });
@@ -118,7 +118,7 @@ describe('handleSubmitHumanResponse — fires finalizers on gate completion', ()
     expect(result.run_phase).toBe('completed');
     expect(registryProvider).toHaveBeenCalled();
     expect(ran()).toBe(1);
-    const updated = await runStore.get(runId);
+    const { record: updated } = await runStore.get(runId);
     expect(updated.completed_steps).toContain('record_outcome');
   });
 
@@ -142,7 +142,7 @@ describe('handleSubmitHumanResponse — fires finalizers on gate completion', ()
     );
 
     expect(result.run_phase).toBe('completed');
-    const updated = await runStore.get(runId);
+    const { record: updated } = await runStore.get(runId);
     expect(updated.failed_steps).not.toContain('record_outcome');
     expect(updated.completed_steps).not.toContain('record_outcome');
     expect(updated.finalizer_ledger?.['record_outcome']?.status).toBe('pending');
@@ -165,7 +165,7 @@ describe('handleSubmitHumanResponse — a workflow-absent run carries the remedy
     const runStore = new JsonFileStore(runDir);
     const workflowStore = new JsonWorkflowStore(workflowDir);
     // Nothing registered in workflowStore — a dev-run whose workflow was never persisted.
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'dev456',
       workflowVersion: 1,
       params: {},

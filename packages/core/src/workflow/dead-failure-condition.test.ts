@@ -407,7 +407,7 @@ describe('dead failure condition — the claimed consequences, executed (issue #
     definition: WorkflowDefinition,
     opts: { failWork: boolean },
   ): Promise<string> {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: 1,
       params: {},
@@ -430,14 +430,14 @@ describe('dead failure condition — the claimed consequences, executed (issue #
   // CLAIM: "if <dep> fails the step is skipped as trigger_rule_unsatisfiable before the condition
   // is evaluated; if <dep> succeeds the condition evaluates to false (when_false)". BOTH halves.
   it('`when`, non-guard: a FAILED dep skips the step as trigger_rule_unsatisfiable', async () => {
-    const after = await store.get(await drive(def('when'), { failWork: true }));
+    const { record: after } = await store.get(await drive(def('when'), { failWork: true }));
     expect(after.failed_steps).toContain('work');
     expect(after.skip_details?.['cleanup']?.kind).toBe('trigger_rule_unsatisfiable');
     expect(after.completed_steps).not.toContain('cleanup');
   });
 
   it('`when`, non-guard: a SUCCEEDED dep skips the step as when_false — the other half of the claim', async () => {
-    const after = await store.get(await drive(def('when'), { failWork: false }));
+    const { record: after } = await store.get(await drive(def('when'), { failWork: false }));
     expect(after.completed_steps).toContain('work');
     expect(after.skip_details?.['cleanup']?.kind).toBe('when_false');
     expect(after.completed_steps).not.toContain('cleanup');
@@ -446,7 +446,7 @@ describe('dead failure condition — the claimed consequences, executed (issue #
   // CLAIM: "the step never settles — the run WEDGES in a blocked envelope". Pin the OBSERVABLE,
   // not the adjective: blocked envelope + unsettled step + a run that is still going nowhere.
   it('`preconditions`, non-guard: the step never settles and the run wedges in a blocked envelope', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'dead-behaviour-wf',
       workflowVersion: 1,
       params: {},
@@ -465,7 +465,7 @@ describe('dead failure condition — the claimed consequences, executed (issue #
       dispatcher: echo,
     });
     expect(envelope.status).toBe('blocked');
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     // It is eligible on the record and refused on every attempt — that is the wedge, not a skip.
     // (#625 PR-2a, decision C94: the refusal never names the refused step as one that can be
     // called, and with nothing else to call it says to report to the user.)
@@ -496,7 +496,7 @@ describe('dead failure condition — the claimed consequences, executed (issue #
         tail: { description: 'Tail', execution: 'auto', depends_on: ['check'] },
       },
     };
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: 1,
       params: {},
@@ -507,7 +507,7 @@ describe('dead failure condition — the claimed consequences, executed (issue #
       input: {},
       dispatcher: echo,
     });
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.aborted_at).toBeDefined();
     expect(after.run_phase).toBe('aborted');
     expect(after.completed_steps).not.toContain('tail');
@@ -539,7 +539,7 @@ describe('dead failure condition — the claimed consequences, executed (issue #
     const outcomes: string[] = [];
     for (const withPreconditions of [true, false]) {
       const definition = guardDef(withPreconditions);
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: definition.id,
         workflowVersion: 1,
         params: {},
@@ -550,7 +550,7 @@ describe('dead failure condition — the claimed consequences, executed (issue #
         input: {},
         dispatcher: echo,
       });
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       outcomes.push(
         JSON.stringify({
           envelope: envelope.status,

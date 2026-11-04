@@ -20,6 +20,7 @@ import {
   JsonFileStore,
   JsonWorkflowStore,
   advanceRun,
+  formatInstantWords,
   loadWorkflowFromString,
   type EngineReply,
   type RunStore,
@@ -37,7 +38,7 @@ import {
   type RealmMcpServerOptions,
 } from './server.js';
 import { effectiveGateAnswers } from './door.js';
-import { renderReply, tokenStrayed, type McpEnvelope } from './render-reply.js';
+import { POLL_CAP_MS, renderReply, tokenStrayed, type McpEnvelope } from './render-reply.js';
 
 type Reply = Record<string, unknown>;
 
@@ -152,9 +153,13 @@ async function registered(s: Session, opts: Parameters<typeof WORKFLOW>[0] = {})
 /** A run opened at its question OUTSIDE the session (as the CLI or another process would). */
 async function openedElsewhere(s: Session, opts: Parameters<typeof WORKFLOW>[0] = {}) {
   const def = await registered(s, opts);
-  const { run } = await s.runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+  const { record: run } = await s.runStore.create({
+    workflowId: def.id,
+    workflowVersion: 1,
+    params: {},
+  });
   await advanceRun(s.runStore, def, { runId: run.id });
-  const record = await s.runStore.get(run.id);
+  const { record: record } = await s.runStore.get(run.id);
   return { runId: run.id, gateId: record.pending_gate!.gate_id };
 }
 
@@ -221,7 +226,7 @@ describe('#627 W — which answer tool a session lists', () => {
     const s = await session({ gateAnswers: 'withheld' });
     const { runId, gateId } = await openedElsewhere(s);
     const forced = await s.raw(ANSWER, { run_id: runId, gate_id: gateId, choice: 'approve' });
-    const after = await s.runStore.get(runId);
+    const { record: after } = await s.runStore.get(runId);
     // (a) red when the tool is registered regardless of the value; (b) prints the call's error flag
     //     and whether the question is still open.
     expect({
@@ -361,12 +366,12 @@ describe('#627 W — asked’s fallback: the answer tool asks the app to have th
       a.human_readable.startsWith('Human review required'),
     );
     await fallback.call(ANSWER, { run_id: runId, gate_id: gateId, choice: 'approve' });
-    const recorded = (await fallback.runStore.get(runId)).evidence.find(
+    const recorded = (await fallback.runStore.get(runId)).record.evidence.find(
       (e) => e.kind === 'gate_response',
     );
     const o = await openedElsewhere(offered);
     await offered.call(ANSWER, { run_id: o.runId, gate_id: o.gateId, choice: 'approve' });
-    const offeredEntry = (await offered.runStore.get(o.runId)).evidence.find(
+    const offeredEntry = (await offered.runStore.get(o.runId)).record.evidence.find(
       (e) => e.kind === 'gate_response',
     );
     // (a) red when _meta or the guidance reaches every session, or the fallback answer does not
@@ -404,7 +409,9 @@ describe('#627 W — asked’s fallback: the answer tool asks the app to have th
       route: 'mcp_form',
       principal: { kind: 'api_key', id: 'forged' },
     });
-    const entry = (await s.runStore.get(runId)).evidence.find((e) => e.kind === 'gate_response');
+    const entry = (await s.runStore.get(runId)).record.evidence.find(
+      (e) => e.kind === 'gate_response',
+    );
     // (a) red when the route or the principal is read from the arguments; (b) prints the record's
     //     facts and the reply's warnings.
     expect({
@@ -651,7 +658,14 @@ describe('#627 W — the await entry: a question answered outside this conversat
     const opened = awaitOf(started)!;
     const later = awaitOf(read)!;
     const noMessage = awaitOf(bareRead)!;
-    const gate = (await s.runStore.get(runId)).pending_gate!;
+    const gate = (await s.runStore.get(runId)).record.pending_gate!;
+    const bareGate = (await bare.runStore.get(bareRun)).record.pending_gate!;
+    // #715 (b) (03 §C, D6-71 (d)): the question declares on_expiry and its deadline is further away
+    // than the cap, so the pace is the cap and the entry hands over the instant — named through the
+    // one formatter at each reply's own reading (`basis.as_of`). #715 (b) Amendment 12b, branch 2b
+    // (re-pinned: was "the run waits until until (…)"): the question's stamp IS `until`.
+    const handsOver = (r: Reply, expiresAt: string) =>
+      `Check again no sooner than poll_after_ms; this question expires ${formatInstantWords(expiresAt, 'deadline', new Date((r['basis'] as { as_of: string }).as_of))}, too far to wait for here: tell the user to come back then.`;
     // (a) red when an answer call or a token reaches the reply, the gate's reply reads W-a2, the
     //     pace is missing on the reply that opened the question, or `until` is not the deadline;
     //     (b) prints the entries' texts and the pace.
@@ -672,7 +686,7 @@ describe('#627 W — the await entry: a question answered outside this conversat
         null,
         // #819 (T2): red when the run-id instruction is missing; correction 1 (02 W3): "from a
         // terminal" — a Slack thread's answer needs no run id.
-        `The question on step 'q' of run ${runId} is answered outside this conversation. Show the user gate.display and tell them it is waiting for their answer; an answer they give here is not recorded. Give the user this run id (${runId}); they may need it to answer. Check again no sooner than poll_after_ms; when until passes, tell the user.`,
+        `The question on step 'q' of run ${runId} is answered outside this conversation. Show the user gate.display and tell them it is waiting for their answer; an answer they give here is not recorded. Give the user this run id (${runId}); they may need it to answer. ${handsOver(started, gate.expires_at!)}`,
         `Run is paused at gate '${gate.gate_id}' on step 'q', waiting for an answer outside this conversation.`,
       ],
       awaiting: {
@@ -686,11 +700,11 @@ describe('#627 W — the await entry: a question answered outside this conversat
       // them where they answer it" — false in Slack and in `realm agent`) or the row's text is
       // another's; correction 1 (02 W2): `noMessage` says what the record holds ("carries no
       // question text for this gate"), never what the definition declares.
-      later: `The question on step 'q' of run ${runId} is answered outside this conversation. Show the user the question: get_run_state's pending_gate.resolved_message, and tell them it is waiting for their answer outside this conversation; an answer they give here is not recorded. Give the user this run id (${runId}); they may need it to answer. Check again no sooner than poll_after_ms; when until passes, tell the user.`,
-      noMessage: `The question on step 'q' of run ${bareRun} is answered outside this conversation. get_run_state carries no question text for this gate: tell the user the run is waiting at step 'q' for their answer, outside this conversation; an answer they give here is not recorded. Give the user this run id (${bareRun}); they may need it to answer. Check again no sooner than poll_after_ms; when until passes, tell the user.`,
+      later: `The question on step 'q' of run ${runId} is answered outside this conversation. Show the user the question: get_run_state's pending_gate.resolved_message, and tell them it is waiting for their answer outside this conversation; an answer they give here is not recorded. Give the user this run id (${runId}); they may need it to answer. ${handsOver(read, gate.expires_at!)}`,
+      noMessage: `The question on step 'q' of run ${bareRun} is answered outside this conversation. get_run_state carries no question text for this gate: tell the user the run is waiting at step 'q' for their answer, outside this conversation; an answer they give here is not recorded. Give the user this run id (${bareRun}); they may need it to answer. ${handsOver(bareRead, bareGate.expires_at!)}`,
       noAnswerCall: false,
       noToken: false,
-      pace: [30_000, gate.expires_at, gate.expires_at],
+      pace: [POLL_CAP_MS, gate.expires_at, gate.expires_at],
       noWays: [],
     });
   });
@@ -799,7 +813,11 @@ describe('#627 W — the await entry: a question answered outside this conversat
     // the opening reply's ways plus an agent step's run_step way.
     const s = await session({ gateAnswers: 'withheld' });
     const def = await registered(s);
-    const { run } = await s.runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await s.runStore.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const opening = await advanceRun(s.runStore, def, { runId: run.id });
     const mixed = {
       ...opening,
@@ -832,6 +850,204 @@ describe('#627 W — the await entry: a question answered outside this conversat
       action: rendered.agent_action,
       paced: rendered.poll_after_ms,
     }).toEqual({ kinds: ['execute_step', 'await'], action: undefined, paced: 30_000 });
+  });
+
+  it('#715 (b) (MA 3, on Q-7): a report-only question whose deadline is EARLIER than a held claim’s — the pace and until are the claim’s; the question’s own deadline is still on its entry', async () => {
+    // A constructed reply (the engine opens no question beside a held claim in one call): the opening
+    // reply's ways, its question made report-only with a deadline 5 s after the reply's reading, and
+    // a step another program holds until 90 s after it.
+    const s = await session({ gateAnswers: 'withheld' });
+    const def = await registered(s, { side: true });
+    const { record: run } = await s.runStore.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const opening = await advanceRun(s.runStore, def, { runId: run.id });
+    const asOf = Date.parse(opening.basis!.as_of);
+    const questionDeadline = new Date(asOf + 5_000).toISOString();
+    const claimDeadline = new Date(asOf + 90_000).toISOString();
+    const mixed = {
+      ...opening,
+      ways: opening.ways.map((w) =>
+        w.verb === 'respond' ? { ...w, expires_at: questionDeadline, on_expiry: undefined } : w,
+      ),
+      unavailable: [
+        ...opening.unavailable,
+        {
+          verb: 'run_step',
+          code: 'held_elsewhere',
+          step: 'side',
+          clears_at: claimDeadline,
+          remedy: [],
+        },
+      ],
+    } as unknown as EngineReply;
+    const rendered = renderReply(mixed, {
+      answers: {
+        value: 'withheld',
+        source: { kind: 'default', ref: 'test' },
+        forms: { shown: false, source: { kind: 'negotiated', ref: 'test' } },
+      },
+    }).envelope;
+    const entry = rendered.next_actions.find((e) => e.awaiting !== undefined);
+    // Run first (MA 3's hypothesis, confirmed): the question's own deadline stays on its entry —
+    // `awaiting.expires_at` and the entry's words, at the reply's reading — while `until` and the
+    // pace are the claim's. #715 (b) Amendment 12b, branch 3 (re-pinned: was "when until passes
+    // (<the question's words>)", one word for two instants): the stamp is not `until`, so the
+    // question's deadline is named as its own, and the cell reads both to see they differ.
+    // (a) red when the report-only deadline pulls the pace in, the question's own deadline is no
+    //     longer on its entry (neither in `awaiting.expires_at` nor in its words), or the clause says
+    //     "when until passes" again; (b) prints the pace, until, the entry's deadline and the tail.
+    expect({
+      pace: [rendered.poll_after_ms, rendered.poll_reason, rendered.until],
+      entryDeadline: entry?.awaiting?.expires_at,
+      tail: entry?.human_readable.slice(entry.human_readable.indexOf('Check again')),
+    }).toEqual({
+      pace: [90_000, 'claim_deadline', claimDeadline],
+      entryDeadline: questionDeadline,
+      tail: `Check again no sooner than poll_after_ms; this question's own deadline is ${formatInstantWords(questionDeadline, 'deadline', new Date(asOf))}, not the instant in until: when it passes, tell the user.`,
+    });
+    expect(rendered.until !== entry?.awaiting?.expires_at).toBe(true);
+  });
+
+  // #715 (b) Amendment 12b — the await entry's clause, one instant per noun, keyed on whether the
+  // question's own stored stamp IS the reply's `until` (string equality). Constructed replies (the
+  // engine opens no question beside a held claim in one call), as the Q-7 cell above: the opening
+  // reply's ways with the question's deadline and `on_expiry` set, and optionally a step another
+  // program holds. Each cell: (a) red when its branch's sentence changes (the three truths), the
+  // clause is keyed on the old rule ("when until passes" always), or the hand-over loses its `!==`
+  // test; (b) prints until, the question's stamp, and the tail of the entry's words.
+  async function clauseOf(question: { inMs: number; onExpiry: boolean }, claimInMs?: number) {
+    const s = await session({ gateAnswers: 'withheld' });
+    const def = await registered(s, { side: true });
+    const { record: run } = await s.runStore.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const opening = await advanceRun(s.runStore, def, { runId: run.id });
+    const asOf = Date.parse(opening.basis!.as_of);
+    const stamp = new Date(asOf + question.inMs).toISOString();
+    const mixed = {
+      ...opening,
+      ways: opening.ways.map((w) =>
+        w.verb === 'respond'
+          ? { ...w, expires_at: stamp, on_expiry: question.onExpiry ? 'abort' : undefined }
+          : w,
+      ),
+      unavailable: [
+        ...opening.unavailable,
+        ...(claimInMs !== undefined
+          ? [
+              {
+                verb: 'run_step',
+                code: 'held_elsewhere',
+                step: 'side',
+                facts: { holder: 'another program' },
+                clears_at: new Date(asOf + claimInMs).toISOString(),
+                remedy: [],
+              },
+            ]
+          : []),
+      ],
+    } as unknown as EngineReply;
+    const rendered = renderReply(mixed, {
+      answers: {
+        value: 'withheld',
+        source: { kind: 'default', ref: 'test' },
+        forms: { shown: false, source: { kind: 'negotiated', ref: 'test' } },
+      },
+    }).envelope;
+    const entry = rendered.next_actions.find((e) => e.awaiting !== undefined)!;
+    const words = formatInstantWords(stamp, 'deadline', new Date(asOf)) ?? stamp;
+    return {
+      until: rendered.until,
+      stamp: entry.awaiting?.expires_at,
+      tail: entry.human_readable.slice(entry.human_readable.indexOf('Check again')),
+      words,
+    };
+  }
+
+  it('#715 (b) Amendment 12b, branch 2a: an on_expiry question within the cap, and a report-only question with nothing pacing — until IS its stamp: "when until passes (<words>)"', async () => {
+    const onExpiry = await clauseOf({ inMs: 45_000, onExpiry: true });
+    const reportOnly = await clauseOf({ inMs: 45_000, onExpiry: false });
+    expect({
+      onExpiry: [onExpiry.until === onExpiry.stamp, onExpiry.tail],
+      reportOnly: [reportOnly.until === reportOnly.stamp, reportOnly.tail],
+    }).toEqual({
+      onExpiry: [
+        true,
+        `Check again no sooner than poll_after_ms; when until passes (${onExpiry.words}), tell the user.`,
+      ],
+      reportOnly: [
+        true,
+        `Check again no sooner than poll_after_ms; when until passes (${reportOnly.words}), tell the user.`,
+      ],
+    });
+  });
+
+  it('#715 (b) Amendment 12b, branch 2b: an on_expiry question beyond the cap, nothing earlier — until IS its stamp: the hand-over', async () => {
+    const far = await clauseOf({ inMs: 2 * 3_600_000, onExpiry: true });
+    expect([far.until === far.stamp, far.tail]).toEqual([
+      true,
+      `Check again no sooner than poll_after_ms; this question expires ${far.words}, too far to wait for here: tell the user to come back then.`,
+    ]);
+  });
+
+  it('#715 (b) Amendment 12b, branch 3: a claim earlier than an on_expiry question, and a claim earlier than a report-only question — until is the claim’s: the question’s own deadline, named as its own', async () => {
+    const onExpiry = await clauseOf({ inMs: 120_000, onExpiry: true }, 60_000);
+    const reportOnly = await clauseOf({ inMs: 120_000, onExpiry: false }, 60_000);
+    const own = (w: string) =>
+      `Check again no sooner than poll_after_ms; this question's own deadline is ${w}, not the instant in until: when it passes, tell the user.`;
+    expect({
+      onExpiry: [onExpiry.until !== onExpiry.stamp, onExpiry.tail],
+      reportOnly: [reportOnly.until !== reportOnly.stamp, reportOnly.tail],
+    }).toEqual({
+      onExpiry: [true, own(onExpiry.words)],
+      reportOnly: [true, own(reportOnly.words)],
+    });
+  });
+
+  it('#715 (b) Amendment 12b, branch 3, no hand-over: an on_expiry question beyond the cap beside an earlier claim — the claim paces, so the question is named as its own, never handed over', async () => {
+    const beside = await clauseOf({ inMs: 2 * 3_600_000, onExpiry: true }, 60_000);
+    expect([beside.until !== beside.stamp, beside.tail]).toEqual([
+      true,
+      `Check again no sooner than poll_after_ms; this question's own deadline is ${beside.words}, not the instant in until: when it passes, tell the user.`,
+    ]);
+  });
+
+  it('#715 (b) Amendment 12b, branch 3 on the get_run_state door: a question 10 min away (on_expiry) beside a step another program holds for 60 s — until is the claim’s, the entry names the question’s own deadline, no hand-over', async () => {
+    const s = await session({ gateAnswers: 'withheld' });
+    const def = await registered(s, { timed: true, side: true });
+    const { record: created } = await s.runStore.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    await advanceRun(s.runStore, def, { runId: created.id });
+    const { record: atGate, at } = await s.runStore.get(created.id);
+    const claimDeadline = new Date(at.getTime() + 60_000).toISOString();
+    await s.runStore.update({
+      ...atGate,
+      in_progress_steps: [...atGate.in_progress_steps, 'side'],
+      claims: { ...(atGate.claims ?? {}), side: { deadline: claimDeadline, token: 'another' } },
+    } as typeof atGate);
+    const read = await s.call('get_run_state', { run_id: created.id });
+    const entry = (read['next_actions'] as Entry[]).find((a) => a.awaiting !== undefined)!;
+    const stamp = entry.awaiting!.expires_at! as string;
+    const asOf = (read['basis'] as { as_of: string }).as_of;
+    expect({
+      until: read['until'],
+      reason: read['poll_reason'],
+      differ: read['until'] !== stamp,
+      tail: entry.human_readable.slice(entry.human_readable.indexOf('Check again')),
+    }).toEqual({
+      until: claimDeadline,
+      reason: 'claim_deadline',
+      differ: true,
+      tail: `Check again no sooner than poll_after_ms; this question's own deadline is ${formatInstantWords(stamp, 'deadline', new Date(asOf))}, not the instant in until: when it passes, tell the user.`,
+    });
   });
 
   it('an abandon refused at an open question names no answer tool under withheld (the remedy, narrowed: W-a3)', async () => {
@@ -899,7 +1115,11 @@ describe('#627 W — Part I: a token for a handed-off question is held back', ()
   it('a constructed reply under withheld whose answer instruction would carry a token is replaced by W-e1, and W-e2 is logged', async () => {
     const s = await session({ gateAnswers: 'withheld' });
     const def = await registered(s);
-    const { run } = await s.runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await s.runStore.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const opening = await advanceRun(s.runStore, def, { runId: run.id });
     const planted = {
       ...opening,
@@ -943,7 +1163,11 @@ describe('#627 W correction 1 (E4, E5) — the held-back reply by row, its arms,
   async function planted(gateAnswers: 'offered' | 'withheld') {
     const s = await session({ gateAnswers });
     const def = await registered(s);
-    const { run } = await s.runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await s.runStore.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const opening = await advanceRun(s.runStore, def, { runId: run.id });
     return {
       run,

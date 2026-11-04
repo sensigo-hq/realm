@@ -47,7 +47,7 @@ describe('realm run resume prints the model flags to fill in (issue #676)', () =
       // Built AFTER HOME is set: both stores resolve their folder at construction.
       const runStore = new JsonFileStore();
       await new JsonWorkflowStore().register(workflow);
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: workflow.id,
         workflowVersion: 1,
         params: {},
@@ -121,13 +121,13 @@ describe('the dev-run detach map prints the model flags to fill in (issue #676)'
       // #729 PR-0: the map composes the run's ways from the whole definition.
       workflow: { id: 'wf', name: 'wf', version: 1, steps: {} } as unknown as WorkflowDefinition,
     };
-    const line = renderDetachMap(record, 'summarise', agentReady)
+    const line = renderDetachMap(record, new Date(), 'summarise', agentReady)
       .split('\n')
       .find((l) => l.startsWith('  Drive it:'));
     expect(line).toBe(`  Drive it:  realm agent --run-id run_abc ${PLACEHOLDER}`);
     // The flags the dev run was given that `realm agent` takes too ride on the same line.
     // (a) red when `driveFlags` is not appended; (b) prints the line.
-    const withFlags = renderDetachMap(record, 'summarise', agentReady, {
+    const withFlags = renderDetachMap(record, new Date(), 'summarise', agentReady, {
       driveFlags: buildReattachFlags({ extensionsModule: './ext.mjs', mintWriterNonce: true }),
     })
       .split('\n')
@@ -177,7 +177,7 @@ describe('a drive blocked by a missing handler repeats its own model flags (issu
     } as unknown as AgentDeps;
     await runAgent(deps, { definition: BLOCKED_WF, params: {} });
     vi.restoreAllMocks();
-    const runs = await store.list();
+    const runs = (await store.list()).snapshots.map((s) => s.record);
     const line = errors
       .join('\n')
       .split('\n')
@@ -373,7 +373,11 @@ describe('the Go on: line repeats a stated --prompt-cache (issue #600 PR 2)', ()
       steps: { write: { description: 'Write', execution: 'agent' } },
     };
     const store = new InMemoryStore();
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await store.claimStep(run.id, 'write', def, {
       by: 'someone-else',
       by_source: 'stated',

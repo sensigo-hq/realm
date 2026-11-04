@@ -51,11 +51,15 @@ describe('realm run abandon (CLI command)', () => {
   it('success: abandons a running run and reports it', async () => {
     const { JsonFileStore } = await import('@sensigo/realm');
     const store = new JsonFileStore(); // default dir = $HOME/.realm/runs (temp)
-    const { run } = await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'wf',
+      workflowVersion: 1,
+      params: {},
+    });
 
     await abandonCommand.parseAsync([run.id, '--reason', 'stale'], { from: 'user' });
 
-    const reloaded = await store.get(run.id);
+    const { record: reloaded } = await store.get(run.id);
     expect(reloaded.run_phase).toBe('abandoned');
     expect(reloaded.abandoned_at).toBeDefined();
     expect(reloaded.terminal_reason).toBe('stale');
@@ -87,7 +91,7 @@ describe('realm run abandon (CLI command)', () => {
 
   it('E1 A1: a reason that ends with a full stop gets no second one', async () => {
     const { JsonFileStore } = await import('@sensigo/realm');
-    const { run } = await new JsonFileStore().create({
+    const { record: run } = await new JsonFileStore().create({
       workflowId: 'wf',
       workflowVersion: 1,
       params: {},
@@ -98,7 +102,7 @@ describe('realm run abandon (CLI command)', () => {
 
   it('E1 A2: a reason with no end mark gets one', async () => {
     const { JsonFileStore } = await import('@sensigo/realm');
-    const { run } = await new JsonFileStore().create({
+    const { record: run } = await new JsonFileStore().create({
       workflowId: 'wf',
       workflowVersion: 1,
       params: {},
@@ -110,8 +114,12 @@ describe('realm run abandon (CLI command)', () => {
   it('E1 A4: a record with no reason prints no Reason clause', async () => {
     const { JsonFileStore, sealRunLevel } = await import('@sensigo/realm');
     const store = new JsonFileStore();
-    const { run } = await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} });
-    const { terminal_reason: _, ...rec } = sealRunLevel(run, 'abandon_requested', 'x');
+    const { record: run } = await store.create({
+      workflowId: 'wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    const { terminal_reason: _, ...rec } = sealRunLevel(run, 'abandon_requested', 'x', new Date());
     await store.update(rec);
     await abandonCommand.parseAsync([run.id], { from: 'user' });
     const line = replyLine();
@@ -134,7 +142,7 @@ describe('realm run abandon (CLI command)', () => {
       source_dir: '/tmp/prc-src-dir',
     });
     const store = new JsonFileStore();
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'wf-src',
       workflowVersion: 1,
       params: { path: "/tmp/it's", n: 1 },
@@ -156,7 +164,11 @@ describe('realm run abandon (CLI command)', () => {
   it('issue #558 PR-C: the reason names THIS surface, and every claim is released', async () => {
     const { JsonFileStore } = await import('@sensigo/realm');
     const store = new JsonFileStore();
-    const { run } = await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'wf',
+      workflowVersion: 1,
+      params: {},
+    });
     await store.update({
       ...run,
       in_progress_steps: ['analyze'],
@@ -169,7 +181,7 @@ describe('realm run abandon (CLI command)', () => {
 
     await abandonCommand.parseAsync([run.id], { from: 'user' });
 
-    const reloaded = await store.get(run.id);
+    const { record: reloaded } = await store.get(run.id);
     expect(reloaded.terminal_reason).toBe('Abandoned via realm run abandon');
     expect(reloaded.in_progress_steps).toEqual([]);
     expect(reloaded.claims).toEqual({});
@@ -197,7 +209,11 @@ describe('realm run abandon (CLI command)', () => {
       ),
     );
     const store = new JsonFileStore();
-    const { run } = await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'wf',
+      workflowVersion: 1,
+      params: {},
+    });
     await store.update({
       ...run,
       pending_gate: {

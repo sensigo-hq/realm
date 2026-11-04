@@ -9,12 +9,15 @@ import { join } from 'node:path';
 import { executeStep, DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD } from './execution-loop.js';
 import type { StepDispatcher } from './execution-loop.js';
 import { JsonFileStore } from '../store/json-file-store.js';
+import { writtenSnapshot } from './snapshot.js';
 import { InMemoryTraceBufferStore } from '../store/trace-buffer-store.js';
 import { WorkflowError, type ValidationErrorFacts } from '../types/workflow-error.js';
 import type { WorkflowDefinition, StepDefinition } from '../types/workflow-definition.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { RunStore, LoadBearingRunRecordField } from '../store/store-interface.js';
 import { agentActionFor } from '../test-support/ways-view.js';
+import type { Snapshot } from './snapshot.js';
+import { snap, doubleClock, noSettle } from '../test-support/snapshot-double.js';
 
 const echoDispatcher: StepDispatcher = async (_step, input) => ({ ...input });
 
@@ -57,7 +60,11 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
 
   it('(a) bump-and-report: a counted, non-terminal rejection reports the PRE-write version, and the count IS persisted', async () => {
     const def = makeDef();
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const versionBefore = run.version;
 
     const envelope = await executeStep(store, def, {
@@ -71,7 +78,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
     expect(envelope.error_code).toBe('VALIDATION_OUTPUT_SCHEMA');
     expect(envelope.run_version).toBe(versionBefore); // bump-and-report
 
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.version).toBe(versionBefore + 1); // the CAS write DID actually happen
     expect(after.validation_rejections?.['draft']).toBe(1);
     expect(after.terminal_state).toBe(false);
@@ -79,7 +86,11 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
 
   it('(b) valid-always-wins: persisted count already AT threshold, then a VALID submission ⇒ success settle, never exhaustion', async () => {
     const def = makeDef();
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await store.update({
       ...run,
       validation_rejections: { draft: DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD },
@@ -93,7 +104,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
     });
 
     expect(envelope.status).toBe('ok');
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.completed_steps).toContain('draft');
     expect(after.terminal_state).toBe(true); // single-step workflow
     expect(after.failed_steps).not.toContain('draft');
@@ -102,7 +113,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
   it("(c) exactly-one-terminalizer: the winner terminalizes with VALIDATION_EXHAUSTED; a concurrent loser's retry lands after the winner's count-write and before its claim ⇒ the loser gets the ALREADY_CLAIMED-class blocked envelope, never a second terminal settle", async () => {
     // --- winner: a real, straightforward invocation reaching threshold ---
     const def = makeDef();
-    const { run: winnerRun } = await store.create({
+    const { record: winnerRun } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
       params: {},
@@ -119,7 +130,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
     });
     expect(winnerEnvelope.status).toBe('error');
     expect(winnerEnvelope.error_code).toBe('VALIDATION_EXHAUSTED');
-    const winnerAfter = await store.get(winnerRun.id);
+    const { record: winnerAfter } = await store.get(winnerRun.id);
     expect(winnerAfter.terminal_state).toBe(true);
     expect(winnerAfter.failed_steps).toContain('draft');
 
@@ -161,7 +172,9 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
     let updateIdx = 0;
     const records = [staleSnapshot, midSnapshot];
     const loserStore = declared({
-      get: async () => records[Math.min(getIdx++, records.length - 1)]!,
+      clock: doubleClock,
+      settleStep: noSettle,
+      get: async () => snap(records[Math.min(getIdx++, records.length - 1)]!),
       update: async (rec: RunRecord) => {
         const idx = updateIdx++;
         if (idx === 0) {
@@ -172,7 +185,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
             retryable: true,
           });
         }
-        return { ...rec, version: rec.version + 1 };
+        return snap({ ...rec, version: rec.version + 1 });
       },
       claimStep: async (runId: string, stepName: string) => {
         throw new WorkflowError(`Step '${stepName}' is already claimed`, {
@@ -208,7 +221,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
     const invalidTrace = [{ event: 'thinking' }]; // violates the `event` enum above
 
     // Non-exhausting: valid output, but the enforce-mode trace schema check fails.
-    const { run: freshRun } = await store.create({
+    const { record: freshRun } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
       params: {},
@@ -222,12 +235,12 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
     });
     expect(nonExhausting.status).toBe('error');
     expect(nonExhausting.error_code).toBe('VALIDATION_TRACE_SCHEMA');
-    const afterNonExhausting = await store.get(freshRun.id);
+    const { record: afterNonExhausting } = await store.get(freshRun.id);
     expect(afterNonExhausting.in_progress_steps).not.toContain('draft'); // never claimed
 
     // Exhausting: count at threshold-1, invalid OUTPUT (arms exhaustion via 2c) AND an invalid
     // trace (would fail the enforce gate on its own) — the enforce-gate must YIELD, not return.
-    const { run: hotRun } = await store.create({
+    const { record: hotRun } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
       params: {},
@@ -245,7 +258,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
     });
     expect(exhausting.status).toBe('error');
     expect(exhausting.error_code).toBe('VALIDATION_EXHAUSTED');
-    const afterExhausting = await store.get(hotRun.id);
+    const { record: afterExhausting } = await store.get(hotRun.id);
     expect(afterExhausting.terminal_state).toBe(true);
     expect(afterExhausting.failed_steps).toContain('draft');
   });
@@ -257,7 +270,11 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
         reviewer: { content: 'You are a reviewer.', content_hash: 'sha256:test-hash' },
       },
     };
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await store.update({
       ...run,
       validation_rejections: { draft: DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD - 1 },
@@ -283,7 +300,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
 
     expect(envelope.status).toBe('error');
     expect(envelope.error_code).toBe('VALIDATION_EXHAUSTED');
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     const exhaustedEvidence = after.evidence.find(
       (e) => e.step_id === 'draft' && e.status === 'error',
     );
@@ -306,7 +323,11 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
 
   it('(e) correction — WAL-variant: an exhausting call with a BARE WAL line (no options.trace at all) still carries the WAL-originated line on the failure evidence — the discriminating witness a submitted-trace-only fixture cannot provide', async () => {
     const def = makeDef();
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await store.update({
       ...run,
       validation_rejections: { draft: DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD - 1 },
@@ -329,7 +350,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
 
     expect(envelope.status).toBe('error');
     expect(envelope.error_code).toBe('VALIDATION_EXHAUSTED');
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     const exhaustedEvidence = after.evidence.find(
       (e) => e.step_id === 'draft' && e.status === 'error',
     );
@@ -346,7 +367,11 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
     const def = makeDef({
       retry: { max_attempts: 0, backoff: 'fixed', base_delay_ms: 0 },
     });
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await store.update({
       ...run,
       validation_rejections: { draft: DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD - 1 },
@@ -375,7 +400,11 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
 
   it('(j) success-settle stamp: reject twice then succeed ⇒ the settle evidence carries diagnostics.validation_rejections === 2', async () => {
     const def = makeDef();
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
 
     await executeStep(store, def, {
       runId: run.id,
@@ -397,7 +426,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
     });
 
     expect(success.status).toBe('ok');
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     const settleEvidence = after.evidence.find(
       (e) => e.step_id === 'draft' && e.status === 'success',
     );
@@ -415,7 +444,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
     }
     const undeclaredStore = new UndeclaredFieldStore(dir);
     const def = makeDef();
-    const { run } = await undeclaredStore.create({
+    const { record: run } = await undeclaredStore.create({
       workflowId: def.id,
       workflowVersion: 1,
       params: {},
@@ -436,7 +465,11 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
 
   it('(l) countdown with a PER-STEP THRESHOLD OVERRIDE: rejections 1, 2 with threshold: 2 ⇒ the SECOND rejection terminalizes at the OVERRIDE value, not the hardcoded default', async () => {
     const def = makeDef({ validation_exhaustion: { threshold: 2 } });
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
 
     const first = await executeStep(store, def, {
       runId: run.id,
@@ -467,15 +500,15 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
     // pre-bump snapshot) — this forces BOTH the first CAS (keyed on Step 1's snapshot) AND the
     // retry's own CAS (keyed on the retry's own snapshot) to lose to a "concurrent" writer.
     class DoubleFailureStore extends JsonFileStore {
-      override async get(runId: string): Promise<RunRecord> {
-        const rec = await super.get(runId);
+      override async get(runId: string): Promise<Snapshot> {
+        const { record: rec, at } = await super.get(runId);
         await super.update({ ...rec });
-        return rec;
+        return writtenSnapshot(rec, at);
       }
     }
     const doubleFailureStore = new DoubleFailureStore(dir);
     const def = makeDef();
-    const { run } = await doubleFailureStore.create({
+    const { record: run } = await doubleFailureStore.create({
       workflowId: def.id,
       workflowVersion: 1,
       params: {},
@@ -493,7 +526,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
     expect(envelope.warnings?.join(' ')).toContain('rejection count not persisted');
 
     // The double-failure attempt left the real stored count untouched (both its writes lost).
-    const afterDoubleFailure = await store.get(run.id);
+    const { record: afterDoubleFailure } = await store.get(run.id);
     expect(afterDoubleFailure.validation_rejections?.['draft'] ?? 0).toBe(0);
 
     // The FOLLOWING rejection, against a plain (non-double-failing) store, re-converges: it
@@ -506,7 +539,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
     });
     // issue #759 (Amendment 11): a refusal's countdown rides its typed facts, not `error_details`.
     expect((following.error?.facts as ValidationErrorFacts | undefined)?.rejections).toBe(1);
-    const afterFollowing = await store.get(run.id);
+    const { record: afterFollowing } = await store.get(run.id);
     expect(afterFollowing.validation_rejections?.['draft']).toBe(1);
   });
 
@@ -528,7 +561,11 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
         B: { description: 'B', execution: 'auto' },
       },
     };
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
 
     for (let i = 0; i < 3; i++) {
       const r = await executeStep(store, def, {
@@ -548,7 +585,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
       dispatcher: echoDispatcher,
     });
     expect(bResult.status).toBe('ok');
-    const afterB = await store.get(run.id);
+    const { record: afterB } = await store.get(run.id);
     expect(afterB.completed_steps).toContain('B');
     expect(afterB.validation_rejections?.['A']).toBe(3); // B settling never touched A's counter
 
@@ -563,14 +600,18 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
     }
     expect(last?.status).toBe('error');
     expect(last?.error_code).toBe('VALIDATION_EXHAUSTED');
-    const final = await store.get(run.id);
+    const { record: final } = await store.get(run.id);
     expect(final.validation_rejections?.['A']).toBe(6);
     expect(final.terminal_state).toBe(true);
   });
 
   it('(o) pooled-across-writers: two distinct writer nonces alternate rejections ⇒ terminalizes at the pooled threshold (never per-nonce-partitioned)', async () => {
     const def = makeDef();
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     // Declares writer_nonce_carriage so effectiveClaimantNonce genuinely differs between the two
     // nonces at the adoption layer — countRejection itself never reads nonce at all, but wiring
     // real nonce differentiation is what makes a per-nonce-keying mutant visible (undefined≡
@@ -591,7 +632,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
 
     expect(last?.status).toBe('error');
     expect(last?.error_code).toBe('VALIDATION_EXHAUSTED');
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.validation_rejections?.['draft']).toBe(DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD);
   });
 
@@ -604,7 +645,11 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
       },
       // output_schema (required: category) inherited from makeDef's base
     });
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await store.update({
       ...run,
       validation_rejections: { draft: DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD - 1 },
@@ -624,19 +669,23 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
       Array<{ instancePath?: string }> | undefined;
     // The 2b (input-schema) ajv error set is about the MISSING 'x' — never mentions 'category'.
     expect(JSON.stringify(lastAjvErrors)).not.toContain('category');
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.validation_rejections?.['draft']).toBe(DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD); // exactly ONE increment, not two
   });
 
   describe('(q) retry-countability, TWO-WITNESS', () => {
     it('(q1) abandon-mid-count ⇒ NO post-terminal write (the CAS-failure retry drops and swallows once the fresh record is terminal)', async () => {
       const def = makeDef();
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
 
       class AbandonMidCountStore extends JsonFileStore {
         private triggered = false;
-        override async get(runId: string): Promise<RunRecord> {
-          const rec = await super.get(runId);
+        override async get(runId: string): Promise<Snapshot> {
+          const { record: rec, at } = await super.get(runId);
           if (!this.triggered) {
             this.triggered = true;
             // Simulate a concurrent abandon landing between Step 1's read and countRejection's
@@ -648,7 +697,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
               terminal_reason: 'abandoned mid-count (test)',
             });
           }
-          return rec;
+          return writtenSnapshot(rec, at);
         }
       }
       const abandonStore = new AbandonMidCountStore(dir);
@@ -662,7 +711,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
 
       expect(envelope.status).toBe('error');
       expect(envelope.error_code).toBe('VALIDATION_OUTPUT_SCHEMA'); // never exhausted — dropped
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       expect(after.terminal_state).toBe(true); // the abandon itself persisted
       expect(after.validation_rejections?.['draft'] ?? 0).toBe(0); // NO post-terminal count write
     });
@@ -675,7 +724,11 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
       // together (the lone step settling always terminates a single-step run), masking whichever
       // one a mutant dropped.
       const def = makeDef({}, { other: { description: 'Other', execution: 'auto' } });
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
 
       let validSettleEnvelope: Awaited<ReturnType<typeof executeStep>> | undefined;
       class ConcurrentValidSettleStore extends JsonFileStore {
@@ -686,8 +739,8 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
         ) {
           super(runsDir);
         }
-        override async get(runId: string): Promise<RunRecord> {
-          const rec = await super.get(runId);
+        override async get(runId: string): Promise<Snapshot> {
+          const { record: rec, at } = await super.get(runId);
           if (!this.triggered) {
             this.triggered = true;
             // A genuinely CONCURRENT valid submission settles the step for real, between THIS
@@ -700,7 +753,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
               dispatcher: echoDispatcher,
             });
           }
-          return rec;
+          return writtenSnapshot(rec, at);
         }
       }
       const concurrentStore = new ConcurrentValidSettleStore(dir, def);
@@ -715,7 +768,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
       expect(validSettleEnvelope?.status).toBe('ok');
       expect(rejectingEnvelope.status).toBe('error');
       expect(rejectingEnvelope.error_code).toBe('VALIDATION_OUTPUT_SCHEMA'); // never exhausted
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       expect(after.completed_steps).toContain('draft'); // the valid settle's own success
       expect(after.validation_rejections?.['draft'] ?? 0).toBe(0); // retry performed NO write
     });
@@ -729,7 +782,11 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
       },
       trace_validation_mode: 'enforce',
     });
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const invalidTrace = [{ event: 'thinking' }];
 
     for (let i = 0; i < DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD + 1; i++) {
@@ -744,7 +801,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
       expect(r.error_code).toBe('VALIDATION_TRACE_SCHEMA');
     }
 
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.validation_rejections?.['draft']).toBeUndefined(); // never counted
     expect(after.in_progress_steps).not.toContain('draft'); // still claimable
 
@@ -779,7 +836,11 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
         },
       },
     };
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
 
     for (let i = 0; i < DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD + 1; i++) {
       const r = await executeStep(store, def, {
@@ -792,7 +853,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
       expect(r.error_code).toBe('VALIDATION_INPUT_SCHEMA');
     }
 
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.validation_rejections?.['work']).toBeUndefined();
     expect(after.in_progress_steps).not.toContain('work');
   });
@@ -814,7 +875,11 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
         },
       },
     };
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
 
     let last;
     for (let i = 0; i < DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD; i++) {
@@ -828,7 +893,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
 
     expect(last?.status).toBe('error');
     expect(last?.error_code).toBe('VALIDATION_EXHAUSTED');
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.validation_rejections?.['draft']).toBe(DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD);
     expect(after.terminal_state).toBe(true);
   });

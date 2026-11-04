@@ -13,13 +13,14 @@ import type {
   StampSealResult,
   WorkflowDefinition,
 } from '@sensigo/realm';
-import { WorkflowError } from '@sensigo/realm';
+import { WorkflowError, writtenSnapshot } from '@sensigo/realm';
 import { InMemoryStore } from './in-memory-store.js';
 import {
   STORE_CLOCK_LAWS,
   storeClockContract,
   type StoreClockLaw,
 } from './store-clock-contract.js';
+import type { Snapshot, Listing, CreateResult, SettlementDelta } from '@sensigo/realm';
 
 /** None: the clock route runs every law of the family. */
 const NOT_RUN: Partial<Record<StoreClockLaw, string>> = {};
@@ -30,7 +31,11 @@ const LAWS: readonly StoreClockLaw[] = STORE_CLOCK_LAWS.filter((law) => !(law in
  * insert, as `settlement-in-memory-store.test.ts` does: a terminal, UNSEALED run at its real version.
  */
 async function seedUnsealedInto(store: InMemoryStore, id: string): Promise<RunRecord> {
-  const { run } = await store.create({ workflowId: `seed-${id}`, workflowVersion: 1, params: {} });
+  const { record: run } = await store.create({
+    workflowId: `seed-${id}`,
+    workflowVersion: 1,
+    params: {},
+  });
   const legacy: RunRecord = {
     ...run,
     id,
@@ -75,9 +80,15 @@ class LossyClockStore implements RunStore {
   constructor(
     private readonly inner: InMemoryStore,
     private readonly mode: LossyMode,
-    private readonly clock: Clock,
+    readonly clock: Clock,
   ) {
     this.persistedRunRecordFields = inner.persistedRunRecordFields;
+  }
+
+  /** #715 (b): reads the inner store's record WITHOUT a reading (a `get` spends one,
+   *  READS_ONE_READING) — the channel `seedUnsealedInto` writes through. */
+  private peek(id: string): RunRecord | undefined {
+    return (this.inner as unknown as { runs: Map<string, RunRecord> }).runs.get(id);
   }
 
   private stamp(run: RunRecord, fields: Array<'created_at' | 'updated_at'>, at: string): RunRecord {
@@ -86,36 +97,36 @@ class LossyClockStore implements RunStore {
     return out;
   }
 
-  async create(options: CreateRunOptions): Promise<{ run: RunRecord; created: boolean }> {
+  async create(options: CreateRunOptions): Promise<CreateResult> {
     if (this.mode === 'reads-twice') this.clock.now();
     const res = await this.inner.create(options);
     if (this.mode === 'own-new-date' && res.created) {
       const now = new Date().toISOString();
-      return { ...res, run: this.stamp(res.run, ['created_at', 'updated_at'], now) };
+      return { ...res, record: this.stamp(res.record, ['created_at', 'updated_at'], now) };
     }
-    if (res.run.rerun_of !== undefined && res.created) {
-      const holder = await this.inner.get(res.run.rerun_of);
+    if (res.record.rerun_of !== undefined && res.created) {
+      const holder = this.peek(res.record.rerun_of)!;
       if (this.mode === 'no-cap') {
-        const at = Math.max(Date.parse(res.run.created_at), Date.parse(holder.created_at) + 1);
+        const at = Math.max(Date.parse(res.record.created_at), Date.parse(holder.created_at) + 1);
         const s = new Date(at).toISOString();
-        return { ...res, run: this.stamp(res.run, ['created_at', 'updated_at'], s) };
+        return { ...res, record: this.stamp(res.record, ['created_at', 'updated_at'], s) };
       }
       if (this.mode === 'no-floor') {
         const raw = this.clock.now().toISOString();
-        return { ...res, run: this.stamp(res.run, ['created_at', 'updated_at'], raw) };
+        return { ...res, record: this.stamp(res.record, ['created_at', 'updated_at'], raw) };
       }
     }
     return res;
   }
 
-  async get(runId: string): Promise<RunRecord> {
+  async get(runId: string): Promise<Snapshot> {
     if (this.mode === 'reads-on-get') this.clock.now();
     return this.inner.get(runId);
   }
 
-  async update(record: RunRecord): Promise<RunRecord> {
+  async update(record: RunRecord): Promise<Snapshot> {
     if (this.mode === 'reads-twice') this.clock.now();
-    const stored = await this.inner.get(record.id).catch(() => undefined);
+    const stored = this.peek(record.id);
     if (
       this.mode === 'refuses-unread' &&
       stored !== undefined &&
@@ -129,17 +140,17 @@ class LossyClockStore implements RunStore {
         details: { runId: record.id, expected: record.version, actual: stored.version },
       });
     }
-    const res = await this.inner.update(record);
+    const { record: res, at: written } = await this.inner.update(record);
     if (this.mode === 'own-new-date')
-      return this.stamp(res, ['updated_at'], new Date().toISOString());
+      return writtenSnapshot(this.stamp(res, ['updated_at'], new Date().toISOString()), written);
     if (this.mode === 'no-cap' && stored !== undefined) {
       const at = Math.max(Date.parse(res.updated_at), Date.parse(stored.updated_at));
-      return this.stamp(res, ['updated_at'], new Date(at).toISOString());
+      return writtenSnapshot(this.stamp(res, ['updated_at'], new Date(at).toISOString()), written);
     }
-    return res;
+    return writtenSnapshot(res, written);
   }
 
-  list(workflowId?: string): Promise<RunRecord[]> {
+  list(workflowId?: string): Promise<Listing> {
     return this.inner.list(workflowId);
   }
 
@@ -148,12 +159,17 @@ class LossyClockStore implements RunStore {
     stepName: string,
     definition: WorkflowDefinition,
     claimant?: Attributed,
-  ): Promise<RunRecord> {
+  ): Promise<Snapshot> {
     if (this.mode === 'reads-twice') this.clock.now();
-    const res = await this.inner.claimStep(runId, stepName, definition, claimant);
+    const { record: res, at } = await this.inner.claimStep(runId, stepName, definition, claimant);
     if (this.mode === 'own-new-date')
-      return this.stamp(res, ['updated_at'], new Date().toISOString());
-    return res;
+      return writtenSnapshot(this.stamp(res, ['updated_at'], new Date().toISOString()), at);
+    return writtenSnapshot(res, at);
+  }
+
+  settleStep(runId: string, delta: SettlementDelta, definition?: WorkflowDefinition) {
+    if (this.mode === 'reads-twice') this.clock.now();
+    return this.inner.settleStep(runId, delta, definition);
   }
 
   stampSeal(runId: string, sealedBy: SealedBy, expectedVersion: number): Promise<StampSealResult> {
@@ -167,7 +183,8 @@ const VIOLATES: ReadonlyArray<[LossyMode, StoreClockLaw]> = [
   ['no-cap', 'KEYED_CREATE_FLOOR_CAPPED'],
   ['no-floor', 'KEYED_CREATE_ORDERS_AFTER_HOLDER'],
   ['reads-twice', 'WRITE_ONE_READING'],
-  ['reads-on-get', 'READS_SPEND_NO_READING'],
+  ['reads-on-get', 'READS_ONE_READING'],
+  ['reads-twice', 'SETTLE_ONE_READING'],
 ];
 
 describe('#715 (a) C17 — each law fails on the store that breaks it, naming the law', () => {
@@ -228,11 +245,11 @@ describe('#715 (a) C17 — each law fails on the store that breaks it, naming th
     });
     let message = 'passed';
     await cases
-      .find((c) => c.law === 'READS_SPEND_NO_READING')!
+      .find((c) => c.law === 'READS_ONE_READING')!
       .run()
       .catch((err: Error) => {
         message = err.message;
       });
-    expect(message, message).toMatch(/^READS_SPEND_NO_READING: ADAPTER_WIRING: /);
+    expect(message, message).toMatch(/^READS_ONE_READING: ADAPTER_WIRING: /);
   });
 });

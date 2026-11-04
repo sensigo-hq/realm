@@ -28,7 +28,6 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type ExtensionRegistry,
   type PendingGate,
-  type RunRecord,
   type RunStore,
   type StepDefinition,
   type WorkflowDefinition,
@@ -37,6 +36,7 @@ import { runAgent } from './run-agent.js';
 import { LlmProvider } from './providers/llm-provider.js';
 import { buildReattachFlags } from '../commands/agent.js';
 import { lagless } from '../test-support/lag.js';
+import type { Snapshot } from '@sensigo/realm';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../../../..');
@@ -169,7 +169,7 @@ async function drive(def: WorkflowDefinition, o: DriveOptions = {}): Promise<Dri
   } finally {
     vi.restoreAllMocks();
   }
-  const runId = o.existingRunId ?? (await store.list())[0]!.id;
+  const runId = o.existingRunId ?? (await store.list()).snapshots.map((s) => s.record)[0]!.id;
   return { result, lines: lines.map((l) => l.split(runId).join('<run>')), calls, runId, store };
 }
 
@@ -248,7 +248,7 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
     expect({
       named,
       calls: d.calls,
-      completed: (await d.store.get(d.runId)).completed_steps,
+      completed: (await d.store.get(d.runId)).record.completed_steps,
     }).toEqual({
       named: [['x', 'input_schema', "Invalid input for step 'x': 'n' must be string"]],
       calls: 1,
@@ -347,7 +347,7 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
         );
         const { def, params } = member(m);
         const d = await drive(def, { params });
-        const run = await d.store.get(d.runId);
+        const { record: run } = await d.store.get(d.runId);
         // (a) red when the member's line changes (its check, the field and what it must be, the
         //     property not allowed), is printed other than once, or the ready agent step does not
         //     run; (b) prints the count, the model calls and the completed steps.
@@ -388,7 +388,7 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
       //     the named lines and the completed steps.
       expect({
         named: d.lines.filter((l) => l.includes('cannot run')),
-        completed: (await d.store.get(d.runId)).completed_steps.slice().sort(),
+        completed: (await d.store.get(d.runId)).record.completed_steps.slice().sort(),
       }).toEqual({ named: [], completed: ['review', 'x'] });
     });
   });
@@ -536,7 +536,7 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
       const d = await drive(def, {
         during: async (store, call) => {
           if (call !== 1) return;
-          const runId = (await store.list())[0]!.id;
+          const runId = (await store.list()).snapshots.map((s) => s.record)[0]!.id;
           const r = await executeStep(store, def, {
             runId,
             command: 'ask',
@@ -563,7 +563,7 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
       const d = await drive(def, {
         during: async (store, call) => {
           if (call !== 1) return;
-          const runId = (await store.list())[0]!.id;
+          const runId = (await store.list()).snapshots.map((s) => s.record)[0]!.id;
           const r = await executeStep(store, def, {
             runId,
             command: 'review',
@@ -594,14 +594,14 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
       claim(AGENT_PAGE, SENTENCE);
       class WindowStore extends InMemoryStore {
         hook: ((runId: string) => Promise<void>) | undefined;
-        override async get(runId: string): Promise<RunRecord> {
-          const record = await super.get(runId);
+        override async get(runId: string): Promise<Snapshot> {
+          const snapshot = await super.get(runId);
           const h = this.hook;
           if (h !== undefined) {
             this.hook = undefined;
             await h(runId);
           }
-          return record;
+          return snapshot;
         }
       }
       const store = new WindowStore();
@@ -661,7 +661,7 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
     );
     claim(
       AGENT_PAGE,
-      "| `⚠ gate '<gate>' on '<step>' had expired <how long> before this call — this agent call first carried out its declared …` | The run reaches a question whose time is already up and whose `on_expiry` the engine carries out | The expiry it carried out, in place of the gate's lines: such a question is not shown, since an answer could no longer be recorded. Added after version 0.46.0. |",
+      "| `⚠ gate '<gate>' on '<step>' had expired <how long> before this call (deadline <instant>) — this agent call first carried out its declared …` | The run reaches a question whose time is already up and whose `on_expiry` the engine carries out | The expiry it carried out, in place of the gate's lines: such a question is not shown, since an answer could no longer be recorded. Added after version 0.46.0. |",
     );
     const def = loadWorkflowFromString(
       [
@@ -686,7 +686,11 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
       ].join('\n'),
     );
     const store = new InMemoryStore();
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await executeChain(store, def, {
       runId: run.id,
       command: 'review',
@@ -694,7 +698,7 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
       dispatcher: async () => ({}),
       registry: createDefaultRegistry(),
     });
-    const open = await store.get(run.id);
+    const { record: open } = await store.get(run.id);
     const gate = open.pending_gate as PendingGate;
     await store.update({
       ...open,
@@ -713,11 +717,11 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
     expect(
       lagless(d.lines).filter((l) =>
         l.startsWith(
-          `log: ⚠ gate '${gate.gate_id}' on 'review' had expired <lag> before this call — this agent call first carried out its declared `,
+          `log: ⚠ gate '${gate.gate_id}' on 'review' had expired <lag> before this call (deadline <instant>) — this agent call first carried out its declared `,
         ),
       ),
     ).toEqual([
-      `log: ⚠ gate '${gate.gate_id}' on 'review' had expired <lag> before this call — this agent call first carried out its declared settle_default: the default choice 'hold' was recorded (enacted_via: agent).`,
+      `log: ⚠ gate '${gate.gate_id}' on 'review' had expired <lag> before this call (deadline <instant>) — this agent call first carried out its declared settle_default: the default choice 'hold' was recorded (enacted_via: agent).`,
     ]);
     expect(d.calls).toBe(0);
   });
@@ -802,7 +806,7 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
         AGENT_PAGE,
         'The lines that say why the drive stopped (`✗ Step …` and `⚠ Step … is blocked`) go to stderr, and so do the `Resume:` line after them',
       );
-      const run = await d.store.get(d.runId);
+      const { record: run } = await d.store.get(d.runId);
       // (a) red when the line names the step the drive called, drops the suffix, or the run does
       //     not end in failed; or (decision C205) the `Resume:` line is missing, names another
       //     step or goes to stdout; (b) prints the result, the last two lines and the phase.
@@ -840,7 +844,7 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
           file: auto({ input_schema: { type: 'object', required } }, ['classify']),
         });
       const d = await drive(schemaOf(['urgent']), { answer: { urgent: true } });
-      const run = await d.store.get(d.runId);
+      const { record: run } = await d.store.get(d.runId);
       // (a) red when the stop line differs from the page's (run id put in place), the refusal is
       //     not of the built input, or the run does not stay open in running; (b) prints them.
       expect({
@@ -871,7 +875,7 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
         `| Nothing else can run, and an agent step is refused before it is claimed | \`${LINE}\` | Open, in \`running\`. |`,
       );
       const d = await drive(wf({ ask: agent({ preconditions: ['run.params.ok == true'] }) }));
-      const run = await d.store.get(d.runId);
+      const { record: run } = await d.store.get(d.runId);
       // (a) red when the stop line differs from the page's (run id put in place) or the run does
       //     not stay open in running; (b) prints them.
       expect({
@@ -899,7 +903,7 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
           }),
         },
       );
-      const run = await d.store.get(d.runId);
+      const { record: run } = await d.store.get(d.runId);
       // (a) red when the stop line differs from the page's (run id put in place) or the run does
       //     not stay open in running; (b) prints them.
       expect({
@@ -1002,7 +1006,7 @@ describe(
               callsAtAnswer = calls;
               respond = realm(args);
               lines.push('ANSWERED');
-              void runStore.get(runIdOf(args)).then((r) => {
+              void runStore.get(runIdOf(args)).then(({ record: r }) => {
                 completedAtAnswer = r.completed_steps;
               });
             }, 150);
@@ -1059,7 +1063,7 @@ describe(
       ).toBe(true);
       expect(order.slice().sort((a, b) => a - b)).toEqual(order);
       expect(lines.slice(order[0]! + 1, order[1]!).filter((l) => l.includes('→'))).toEqual([]);
-      expect((await runStore.list())[0]!.completed_steps).toEqual([
+      expect((await runStore.list()).snapshots.map((s) => s.record)[0]!.completed_steps).toEqual([
         'confirm',
         'check',
         'after',
@@ -1089,8 +1093,8 @@ describe(
           '    calls += 1;',
           '    if (calls === 1) return { ok: true };',
           "    const store = new JsonFileStore(join(process.env.HOME, '.realm', 'runs'));",
-          '    const [run] = await store.list();',
-          '    const fresh = await store.get(run.id);',
+          '    const { snapshots } = await store.list();',
+          '    const { record: fresh } = await store.get(snapshots[0].record.id);',
           '    const evidence = fresh.evidence.map((e) =>',
           "      e.step_id === 'first' ? { ...e, output_summary: { ...e.output_summary, ok: false } } : e,",
           '    );',
@@ -1187,7 +1191,7 @@ describe(
       ]);
       const atExpiredQuestion = async (def: WorkflowDefinition) => {
         await workflowStore.register(def);
-        const { run } = await runStore.create({
+        const { record: run } = await runStore.create({
           workflowId: def.id,
           workflowVersion: 1,
           params: {},
@@ -1199,7 +1203,7 @@ describe(
           dispatcher: async () => ({}),
           registry: createDefaultRegistry(),
         });
-        const open = await runStore.get(run.id);
+        const { record: open } = await runStore.get(run.id);
         const gate = open.pending_gate as PendingGate;
         await runStore.update({
           ...open,
@@ -1299,7 +1303,7 @@ describe(
       ]).toEqual(shown);
       // `realm run advance <run-id>` runs the owed steps.
       const adv = realm(['run', 'advance', owed.runId]);
-      const after = await runStore.get(owed.runId);
+      const { record: after } = await runStore.get(owed.runId);
       // (a) red when advance does not run the owed step; (b) prints its exit, output and the record.
       expect(
         { code: adv.code, completed: after.completed_steps, phase: after.run_phase },

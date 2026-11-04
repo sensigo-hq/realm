@@ -4,7 +4,12 @@ import 'dotenv/config';
 import { Command } from 'commander';
 import { existsSync } from 'node:fs';
 import { shellWord } from '@sensigo/realm';
-import { workflowCommands, runCommands, topLevelCommands } from './commands-registry.js';
+import {
+  workflowCommands,
+  runCommands,
+  topLevelCommands,
+  installClockErrorSink,
+} from './commands-registry.js';
 import { reportExpectedRefusal } from './lib/expected-refusal.js';
 import { VERSION } from './version.js';
 
@@ -55,6 +60,9 @@ if (
 // #715 (a) correction 1 (C-6): awaited, so an error a command's action throws reaches this one catch.
 // An expected typed refusal is printed as one line with exit code 1; everything else is rethrown and
 // stays loud (the writer's fatal handler prints it with its stack).
+// #715 (b) (03 §A.1, D-22): the process's waiter-error sink, set once before any command runs (a
+// gate's expiry timer, `realm listen`'s sweeper and `realm mcp`'s store all wait on a store's clock).
+installClockErrorSink();
 try {
   await program.parseAsync();
 } catch (err) {

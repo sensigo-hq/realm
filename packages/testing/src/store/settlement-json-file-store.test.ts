@@ -56,11 +56,16 @@ describe('JsonFileStore — settlement TCK conformance (issue #279, increment 1 
           store,
           storeName: 'JsonFileStore',
           settlementFixture: defaultSettlementFixture,
+          // #715 (b): the time-moving families open a fresh store on a test location they move.
+          route: {
+            kind: 'location',
+            makeStore: ({ location }) => new JsonFileStore(location.runsDir),
+          },
           // issue #367 (part 3): the sanctioned channel for seeding a pre-#367 shape past the
           // store's own boundary — a direct file write. The stamp laws' SUCCESS legs need a
           // record the boundary would refuse if it were written through it.
           seedLegacyTerminal: async (id) => {
-            const { run } = await store.create({
+            const { record: run } = await store.create({
               workflowId: `tck-seed-${id}`,
               workflowVersion: 1,
               params: {},

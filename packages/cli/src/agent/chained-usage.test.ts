@@ -7,7 +7,13 @@
 // surfaces) is under test, not only the engine's recursion.
 import { declared } from '../test-support/declared.js';
 import { it, expect, vi } from 'vitest';
-import type { RunRecord, RunStore, UsageRecord, WorkflowDefinition } from '@sensigo/realm';
+import type {
+  RunRecord,
+  RunStore,
+  Snapshot,
+  UsageRecord,
+  WorkflowDefinition,
+} from '@sensigo/realm';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION, createDefaultRegistry } from '@sensigo/realm';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import { handleGetRunState } from '@sensigo/realm-mcp/dist/tools/get-run-state.js';
@@ -70,7 +76,7 @@ it('one model call is counted once: on the agent step, on both inspect and get_r
     { definition: def, params: {} },
   );
   expect(result).toBe('completed');
-  const run = (await store.list())[0]!;
+  const run = (await store.list()).snapshots.map((s) => s.record)[0]!;
   expect(run.completed_steps).toEqual(['draft', 'finish', 'wrap']);
 
   const screen = await inspectRun(run.id, store, workflowStore);
@@ -164,7 +170,7 @@ it("a chained step's REJECTED input does not re-attach the agent step's calls (c
     { definition: rejectDef, params: {} },
   );
   expect(result).toBe('failed');
-  const run = (await store.list())[0]!;
+  const run = (await store.list()).snapshots.map((s) => s.record)[0]!;
   expect(run.completed_steps).toEqual(['draft']);
   // The wedge is still recorded — it just does not carry calls that are already on draft's record.
   const entry = run.drive_failures!.entries[0]!;
@@ -205,12 +211,12 @@ function snapshotFailingStore(
   const inner = new InMemoryStore();
   let snapshotWrites = 0;
   let getFailuresArmed = false;
-  const update = async (record: RunRecord): Promise<RunRecord> => {
+  const update = async (record: RunRecord): Promise<Snapshot> => {
     if (record.workflow_context_snapshots !== undefined) {
       snapshotWrites += 1;
       if (snapshotWrites >= failOn) {
         if (opts.strayDraftEntry === true) {
-          const current = await inner.get(record.id);
+          const { record: current } = await inner.get(record.id);
           await inner.update({
             ...current,
             evidence: [
@@ -263,7 +269,7 @@ function snapshotFailingStore(
     }
     return inner.update(record);
   };
-  const get = async (id: string): Promise<RunRecord> => {
+  const get = async (id: string): Promise<Snapshot> => {
     if (getFailuresArmed) {
       getFailuresArmed = false;
       throw new Error('re-read failed');
@@ -305,7 +311,7 @@ async function driveContext(store: RunStore) {
       { definition: contextDef, params: {} },
     ),
   ).rejects.toThrow('snapshot write failed');
-  return (await store.list())[0]!;
+  return (await store.list()).snapshots.map((s) => s.record)[0]!;
 }
 
 it('a throw from a step run AFTER the agent step saved does not re-attach its calls (chokepoint 3)', async () => {

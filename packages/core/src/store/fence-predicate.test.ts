@@ -23,6 +23,7 @@ import {
   type FencePredicate,
   type FenceRunReader,
 } from './fence-predicate.js';
+import { snap } from '../test-support/snapshot-double.js';
 
 const RUN_ID = 'run-1';
 const STEP_ID = 'step-a';
@@ -675,7 +676,7 @@ describe('checkFenceWithReader — a malformed fence never costs a read', () => 
     const countingReader: FenceRunReader = declared({
       get: async () => {
         reads += 1;
-        return run();
+        return snap(run());
       },
     });
     for (const [label, fence, stepId] of [

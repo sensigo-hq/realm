@@ -10,6 +10,7 @@ import {
   withholdUnlessAccepted,
   writerCtx,
 } from '../output/writer.js';
+import { openRunStore } from '../lib/run-store.js';
 
 /**
  * #819 correction 1 (02 C2): an empty or blank `--reason` is refused. #819 follow-up 2 (R1, the
@@ -48,7 +49,6 @@ export const abandonCommand = new Command('abandon')
   .option('--reason <text>', 'Human-readable reason recorded as terminal_reason')
   .action(async (runId: string, opts: { reason?: string }) => {
     const {
-      JsonFileStore,
       JsonWorkflowStore,
       abandonRun,
       WorkflowError,
@@ -62,13 +62,13 @@ export const abandonCommand = new Command('abandon')
       process.exit(1);
       return;
     }
-    const runStore = new JsonFileStore();
+    const runStore = openRunStore();
     let before: RunRecord | undefined;
     try {
       // issue #367: read first, so the output can say whether THIS call changed anything —
       // abandoning an already-abandoned run is an idempotent no-op and used to print exactly the
       // same line as a real kill.
-      before = await runStore.get(runId);
+      before = (await runStore.get(runId)).record;
       // #729 PR-3 correction 4 (I-11): the reason printed below is stored text, so the run's
       // manifest is read first, as `attempts` reads it — the reason is masked with the run's
       // declared values, and shown as its type and size while they cannot all be read (this command

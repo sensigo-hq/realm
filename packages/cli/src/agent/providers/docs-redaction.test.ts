@@ -327,7 +327,7 @@ describe(`${TOOLS_PAGE} — what realm agent replaces (GHSA-gxfq)`, () => {
         },
         { definition, params: { key: SECRET }, pollIntervalMs: 50 },
       );
-      const runId = (await store.list())[0]?.id ?? '';
+      const runId = (await store.list()).snapshots.map((s) => s.record)[0]?.id ?? '';
       // What the model is SHOWN for the tool result: the tool_result block of the second request
       // (the tool_use arguments echo the secret by design, so the block, not the whole request).
       const second = (stub.requests[1] ?? {}) as { messages?: Array<{ content?: unknown }> };

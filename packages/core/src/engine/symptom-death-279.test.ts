@@ -18,7 +18,6 @@ import { executeStep } from './execution-loop.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepHandler } from '../extensions/step-handler.js';
-import type { RunRecord } from '../types/run-record.js';
 
 const def: WorkflowDefinition = {
   id: 'symptom-death-279-wf',
@@ -41,7 +40,7 @@ describe('THE symptom dies end-to-end (issue #279, increment 1, PR-B, verificati
     const dir = await mkdtemp(join(tmpdir(), 'realm-symptom-death-'));
     try {
       const store = new JsonFileStore(dir);
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: def.id,
         workflowVersion: 1,
         params: {},
@@ -58,7 +57,7 @@ describe('THE symptom dies end-to-end (issue #279, increment 1, PR-B, verificati
           handlerCallCount += 1;
           // Prove POST-COMMIT: by the time the finalizer's handler runs, BOTH siblings must
           // already be durably recorded — read a FRESH copy from disk, not an in-memory draft.
-          const fresh: RunRecord = await store.get(run.id);
+          const { record: fresh } = await store.get(run.id);
           membershipAtHandlerCallTime = { completed: [...fresh.completed_steps].sort() };
           return { data: {} };
         },
@@ -90,7 +89,7 @@ describe('THE symptom dies end-to-end (issue #279, increment 1, PR-B, verificati
       expect(resultA.errors).toEqual([]);
       expect(resultB.errors).toEqual([]);
 
-      const finalRun = await store.get(run.id);
+      const { record: finalRun } = await store.get(run.id);
       expect(finalRun.completed_steps.sort()).toEqual(['a', 'b', 'fin']);
       expect(finalRun.terminal_state).toBe(true);
       expect(finalRun.run_phase).toBe('completed');

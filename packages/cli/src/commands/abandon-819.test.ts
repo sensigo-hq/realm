@@ -65,7 +65,7 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
     if (copy !== undefined) await writeFile(join(wfDir, `${workflowId}.json`), copy);
     const { JsonFileStore } = await import('@sensigo/realm');
     const store = new JsonFileStore();
-    const { run } = await store.create({ workflowId, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({ workflowId, workflowVersion: 1, params: {} });
     await store.update({ ...run, pending_gate: { ...GATE } });
     return { store, id: run.id };
   }
@@ -286,7 +286,7 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
     const { store, id: runningId } = await (async () => {
       const { JsonFileStore } = await import('@sensigo/realm');
       const store = new JsonFileStore();
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'plain-gate',
         workflowVersion: 1,
         params: {},
@@ -296,7 +296,11 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
     const ended = await (async () => {
       const { JsonFileStore, abandonRun } = await import('@sensigo/realm');
       const s = new JsonFileStore();
-      const { run } = await s.create({ workflowId: 'plain-gate', workflowVersion: 1, params: {} });
+      const { record: run } = await s.create({
+        workflowId: 'plain-gate',
+        workflowVersion: 1,
+        params: {},
+      });
       await abandonRun(s, run.id, 'ended before');
       return run.id;
     })();
@@ -317,7 +321,7 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
     expect({
       empty: await abandon(runningId, '--reason', ''),
       blank: await abandon(runningId, '--reason', '   '),
-      phase: (await store.get(runningId)).run_phase,
+      phase: (await store.get(runningId)).record.run_phase,
       gated: (await abandon(id, '--reason', '')).err,
       abandoned: await abandon(ended, '--reason', ''),
       missing: await missing(),

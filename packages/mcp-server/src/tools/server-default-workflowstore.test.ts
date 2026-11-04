@@ -49,7 +49,7 @@ describe('createRealmMcpServer — default workflowStore enables get_run_state n
       steps: { review: { description: 'Agent step', execution: 'agent', depends_on: [] } },
     });
     const runStore = new JsonFileStore();
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'agentflow',
       workflowVersion: 1,
       params: {},

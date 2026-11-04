@@ -156,7 +156,7 @@ describe('#729 PR-3 — the MCP door', () => {
       command: 'a',
       params: { answer: 'yes', _debug: { n: 1 } },
     });
-    const evidence = (await runStore.get(runId)).evidence.find((e) => e.step_id === 'a')!;
+    const evidence = (await runStore.get(runId)).record.evidence.find((e) => e.step_id === 'a')!;
     // (a) red when the dispatcher returns its closed-over params (`_debug` would be in the output);
     //     (b) prints the key list and the debug output.
     expect(Object.keys(evidence.output_summary)).toEqual(['answer']);
@@ -270,7 +270,7 @@ describe('#729 PR-3 — an inbound answer carrying a marker (D1 D5)', () => {
       command: 'a',
       params: { answer: 'sent back [REDACTED] here' },
     });
-    const stored = (await runStore.get(runId)).evidence.find((e) => e.step_id === 'a')!;
+    const stored = (await runStore.get(runId)).record.evidence.find((e) => e.step_id === 'a')!;
     // (a) red when the warning is dropped, or the answer is changed before it is recorded; (b)
     //     prints booleans.
     expect({
@@ -427,7 +427,7 @@ describe('#729 PR-3 correction 1 — the door', () => {
       'run_id'
     ] as string;
     // One attempt with a request's usage, so the run's cost has something to price.
-    const run = await runStore.get(runId);
+    const { record: run } = await runStore.get(runId);
     await runStore.update({
       ...run,
       completed_steps: ['a'],

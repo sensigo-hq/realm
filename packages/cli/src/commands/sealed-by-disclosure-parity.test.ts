@@ -36,6 +36,7 @@ import type {
   SealedBy,
 } from '@sensigo/realm';
 import { inspectRun } from './inspect.js';
+import { snap, listing, doubleClock, noSettle } from '../test-support/snapshot-double.js';
 
 type DisclosureRoute =
   { surface: 'rendered'; probe: (out: string) => void } | { surface: 'waived'; reason: string };
@@ -102,10 +103,12 @@ const SEALED_BY_DISCLOSURE = {
 function makeRunStore(run: RunRecord): RunStore {
   return {
     persistsClaims: true,
-    get: async () => run,
-    create: async () => ({ run, created: true }),
-    update: async () => run,
-    list: async () => [run],
+    clock: doubleClock,
+    settleStep: noSettle,
+    get: async () => snap(run),
+    create: async () => ({ ...snap(run), created: true }),
+    update: async () => snap(run),
+    list: async () => listing([run]),
     claimStep: async () => {
       throw new Error('claimStep is not used by inspect');
     },
@@ -120,7 +123,11 @@ const definition: WorkflowDefinition = {
 } as unknown as WorkflowDefinition;
 
 function makeWorkflowStore(): WorkflowRegistrar {
-  return { register: async () => {}, get: async () => definition, list: async () => [definition] };
+  return {
+    register: async () => {},
+    get: async () => definition,
+    list: async () => [definition],
+  };
 }
 
 describe('#367 — every SealedBy field reaches an operator through `realm run inspect`', () => {

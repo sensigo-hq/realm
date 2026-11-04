@@ -17,6 +17,7 @@ import {
   shellWord,
   buildDisclosureSet,
   respondWayOfGate,
+  formatInstantWords,
   type DisclosureAudience,
   type DisclosureSet,
   type InspectWay,
@@ -525,6 +526,18 @@ export function viewSetFor(audience: DisclosureAudience): DisclosureSet {
 export function cutWayLine(runId: string, ctx: RenderCtx = PLAIN): string {
   const way: InspectWay = { verb: 'inspect', conditions: [], run_id: runId };
   return `The step's whole output: ${cliCommandOf(way, undefined, { driveFlags: '', ctx })!}`;
+}
+
+/**
+ * #715 (b) (03 §B.2 E, D6-72 (b)): a question's deadline on the terminal, judged at `at` (the reading
+ * of the snapshot the question was read from) through the one formatter —
+ * `   Deadline: in 5m (2026-10-27T14:08:07Z)`, or `   Deadline: EXPIRED 2m ago (…Z)` once it has
+ * passed. `undefined` for a question with no deadline, or one whose deadline does not parse.
+ */
+export function questionDeadlineLine(gate: PendingGate, at: Date): string | undefined {
+  if (gate.expires_at === undefined) return undefined;
+  const words = formatInstantWords(gate.expires_at, 'deadline', at);
+  return words !== undefined ? `   Deadline: ${words}` : undefined;
 }
 
 /**

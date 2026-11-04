@@ -343,7 +343,7 @@ describe('#729 PR-3 correction 2 (G1) — the pages hold on the first call of a 
         workflowVersion: 1,
         params: {},
       })
-    ).run.id;
+    ).record.id;
     const asked: Array<string | null> = [];
     const server = createRealmMcpServer({
       workflowStore,

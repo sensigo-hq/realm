@@ -26,7 +26,7 @@ async function atGate(workflowId: string, copy?: unknown) {
   if (copy !== undefined) await writeFile(join(wfDir, `${workflowId}.json`), JSON.stringify(copy));
   const runStore = new JsonFileStore(join(dir, 'runs'));
   const workflowStore = new JsonWorkflowStore(wfDir);
-  const { run } = await runStore.create({ workflowId, workflowVersion: 1, params: {} });
+  const { record: run } = await runStore.create({ workflowId, workflowVersion: 1, params: {} });
   await runStore.update({
     ...run,
     pending_gate: {
@@ -104,7 +104,7 @@ describe('#819 — abandon_run stays definition-blind', () => {
     //     never ends a person's question; (b) prints the code and the run's phase.
     expect({
       code: reply['error_code'],
-      phase: (await s.runStore.get(s.runId)).run_phase,
+      phase: (await s.runStore.get(s.runId)).record.run_phase,
     }).toEqual({ code: 'STATE_TRANSITION_DENIED', phase: 'gate_waiting' });
   });
 });

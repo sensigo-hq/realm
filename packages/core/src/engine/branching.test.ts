@@ -132,7 +132,7 @@ describe('trigger_rule: all_failed — recovery after step failure', () => {
     const registry = new ExtensionRegistry();
     registry.register('handler', 'always_fail', new FailingHandler());
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: 1,
       params: {},
@@ -148,7 +148,7 @@ describe('trigger_rule: all_failed — recovery after step failure', () => {
 
     expect(result.status).toBe('error');
 
-    const updatedRun = await store.get(run.id);
+    const { record: updatedRun } = await store.get(run.id);
     expect(updatedRun.failed_steps).toContain('validate');
     expect(updatedRun.run_phase).toBe('running'); // recovery step still eligible
     // continue_work has all_success on [validate] — permanently ineligible after failure.
@@ -164,7 +164,7 @@ describe('trigger_rule: all_failed — recovery after step failure', () => {
     const registry = new ExtensionRegistry();
     registry.register('handler', 'always_fail', new FailingHandler());
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: 1,
       params: {},
@@ -179,7 +179,7 @@ describe('trigger_rule: all_failed — recovery after step failure', () => {
     });
 
     expect(result.status).toBe('error');
-    const updatedRun = await store.get(run.id);
+    const { record: updatedRun } = await store.get(run.id);
     expect(updatedRun.run_phase).toBe('failed');
     expect(updatedRun.terminal_state).toBe(true);
   });
@@ -189,7 +189,7 @@ describe('trigger_rule: all_failed — recovery after step failure', () => {
     const registry = new ExtensionRegistry();
     registry.register('handler', 'always_fail', new FailingHandler());
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: 1,
       params: {},
@@ -215,7 +215,7 @@ describe('trigger_rule: all_failed — recovery after step failure', () => {
     });
     expect(recoveryResult.status).toBe('ok');
 
-    const finalRun = await store.get(run.id);
+    const { record: finalRun } = await store.get(run.id);
     expect(finalRun.run_phase).toBe('completed');
     expect(finalRun.completed_steps).toContain('auto_recover');
   });
@@ -276,7 +276,7 @@ describe('when condition routing', () => {
     const registry = new ExtensionRegistry();
     registry.register('handler', 'confidence_handler', new ConfidenceHandler('high'));
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: 1,
       params: {},
@@ -290,7 +290,7 @@ describe('when condition routing', () => {
       registry,
     });
 
-    const updatedRun = await store.get(run.id);
+    const { record: updatedRun } = await store.get(run.id);
     const eligible = findEligibleSteps(definition, updatedRun);
     expect(eligible).toContain('step_high');
     expect(eligible).not.toContain('step_low');
@@ -301,7 +301,7 @@ describe('when condition routing', () => {
     const registry = new ExtensionRegistry();
     registry.register('handler', 'confidence_handler', new ConfidenceHandler('low'));
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: 1,
       params: {},
@@ -315,7 +315,7 @@ describe('when condition routing', () => {
       registry,
     });
 
-    const updatedRun = await store.get(run.id);
+    const { record: updatedRun } = await store.get(run.id);
     const eligible = findEligibleSteps(definition, updatedRun);
     expect(eligible).toContain('step_low');
     expect(eligible).not.toContain('step_high');
@@ -326,7 +326,7 @@ describe('when condition routing', () => {
     const registry = new ExtensionRegistry();
     registry.register('handler', 'confidence_handler', new ConfidenceHandler('high'));
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: 1,
       params: {},
@@ -340,7 +340,7 @@ describe('when condition routing', () => {
       registry,
     });
 
-    const afterStepA = await store.get(run.id);
+    const { record: afterStepA } = await store.get(run.id);
     await executeStep(store, definition, {
       runId: afterStepA.id,
       command: 'step_high',
@@ -349,7 +349,7 @@ describe('when condition routing', () => {
       registry,
     });
 
-    const finalRun = await store.get(run.id);
+    const { record: finalRun } = await store.get(run.id);
     expect(finalRun.terminal_state).toBe(true);
     expect(finalRun.run_phase).toBe('completed');
     expect(finalRun.skipped_steps).toContain('step_low');
@@ -362,7 +362,7 @@ describe('when condition routing', () => {
     const registry = new ExtensionRegistry();
     registry.register('handler', 'confidence_handler', new ConfidenceHandler('low'));
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: 1,
       params: {},
@@ -376,7 +376,7 @@ describe('when condition routing', () => {
       registry,
     });
 
-    const afterStepA = await store.get(run.id);
+    const { record: afterStepA } = await store.get(run.id);
     await executeStep(store, definition, {
       runId: afterStepA.id,
       command: 'step_low',
@@ -385,7 +385,7 @@ describe('when condition routing', () => {
       registry,
     });
 
-    const finalRun = await store.get(run.id);
+    const { record: finalRun } = await store.get(run.id);
     expect(finalRun.terminal_state).toBe(true);
     expect(finalRun.run_phase).toBe('completed');
     expect(finalRun.skipped_steps).toContain('step_high');
@@ -422,7 +422,7 @@ describe('fan-out: multiple steps eligible simultaneously', () => {
         'step-c': { description: 'Branch 2', execution: 'agent', depends_on: ['step-a'] },
       },
     };
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: 1,
       params: {},
@@ -435,7 +435,7 @@ describe('fan-out: multiple steps eligible simultaneously', () => {
       dispatcher: passthroughDispatcher,
     });
 
-    const updatedRun = await store.get(run.id);
+    const { record: updatedRun } = await store.get(run.id);
     const eligible = findEligibleSteps(definition, updatedRun);
     expect(eligible).toContain('step-b');
     expect(eligible).toContain('step-c');
@@ -481,7 +481,7 @@ describe('gate-response flow', () => {
   });
 
   it('approve advances run — confirm moves to completed_steps, post-approve is eligible', async () => {
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: autoGateDef.id,
       workflowVersion: 1,
       params: {},
@@ -503,7 +503,7 @@ describe('gate-response flow', () => {
     });
 
     expect(approveResult.status).toBe('ok');
-    const finalRun = await store.get(run.id);
+    const { record: finalRun } = await store.get(run.id);
     expect(finalRun.completed_steps).toContain('confirm');
     expect(finalRun.pending_gate).toBeUndefined();
     expect(findEligibleSteps(autoGateDef, finalRun)).toContain('post-approve');
@@ -525,7 +525,7 @@ describe('gate-response flow', () => {
       },
     };
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: singleGateDef.id,
       workflowVersion: 1,
       params: {},
@@ -546,7 +546,7 @@ describe('gate-response flow', () => {
     });
 
     expect(rejectResult.status).toBe('ok');
-    const finalRun = await store.get(run.id);
+    const { record: finalRun } = await store.get(run.id);
     expect(finalRun.completed_steps).toContain('confirm');
     expect(finalRun.run_phase).toBe('completed');
   });

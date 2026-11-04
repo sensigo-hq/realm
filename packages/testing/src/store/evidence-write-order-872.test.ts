@@ -9,8 +9,8 @@ import { describe, it, expect } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { JsonFileStore } from '@sensigo/realm';
-import type { RunRecord, RunStore, WorkflowDefinition } from '@sensigo/realm';
+import { JsonFileStore, writtenSnapshot } from '@sensigo/realm';
+import type { RunStore, Snapshot, WorkflowDefinition } from '@sensigo/realm';
 import { InMemoryStore } from './in-memory-store.js';
 import { runStoreFidelityContract } from './run-store-fidelity-contract.js';
 
@@ -39,9 +39,9 @@ describe('#872 (b1) B9 — EVIDENCE_WRITE_ORDER', () => {
 
   it('REJECTS a store that reads evidence back reversed', async () => {
     class Reverses extends InMemoryStore {
-      override async get(runId: string): Promise<RunRecord> {
-        const run = await super.get(runId);
-        return { ...run, evidence: [...run.evidence].reverse() };
+      override async get(runId: string): Promise<Snapshot> {
+        const { record: run, at } = await super.get(runId);
+        return writtenSnapshot({ ...run, evidence: [...run.evidence].reverse() }, at);
       }
     }
     // (a) red when the law stops comparing the order; (b) prints the law's message.

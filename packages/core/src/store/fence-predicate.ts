@@ -506,7 +506,7 @@ export async function readRunForFence(
 ): Promise<RunRecord | null> {
   assertReleaseLine(reader, 'the run reader handed to readRunForFence');
   try {
-    return await reader.get(runId);
+    return (await reader.get(runId)).record;
   } catch (err) {
     if (
       err instanceof WorkflowError &&

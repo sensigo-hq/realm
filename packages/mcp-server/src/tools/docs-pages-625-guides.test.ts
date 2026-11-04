@@ -157,10 +157,10 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     // start_run's chain is the first attempt (it records the step's capability block).
     const s = await call('start_run', { workflow_id: 'issues' });
     const runId = s['run_id'] as string;
-    const attempted = await runStore.get(runId);
+    const { record: attempted } = await runStore.get(runId);
     const a = await call('advance_run', { run_id: runId });
     const e = await call('execute_step', { run_id: runId, command: 'open', params: {} });
-    const after = await runStore.get(runId);
+    const { record: after } = await runStore.get(runId);
     const state = await call('get_run_state', { run_id: runId });
     const CAPABILITY =
       "'open' cannot run here (capability): adapter 'github' is not registered here — load the missing extension, or run the step on a runner that has it.";
@@ -265,14 +265,14 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     });
     const second = (batch2['started'] as Array<{ run_id: string }>)[0]!.run_id;
     const named = await call('execute_step', { run_id: second, command: 'tally', params: {} });
-    const notRun = (await runStore.get(second)).completed_steps.includes('tally');
+    const notRun = (await runStore.get(second)).record.completed_steps.includes('tally');
     await call('advance_run', { run_id: second });
     // (a) red when the agent's answer is not recorded, execute_step runs the automatic step, or
     //     advance_run does not; (b) prints the statuses, the calls offered and what ran.
     expect({
       answer: answer['status'],
       named: [named['status'], tools(named), notRun],
-      advanced: (await runStore.get(second)).completed_steps.includes('tally'),
+      advanced: (await runStore.get(second)).record.completed_steps.includes('tally'),
     }).toEqual({
       answer: 'ok',
       named: ['blocked', ['execute_step', 'advance_run'], false],
@@ -354,13 +354,13 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       ]),
     );
     const runId = (await call('start_run', { workflow_id: 'ann' }))['run_id'] as string;
-    const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
+    const gateId = (await runStore.get(runId)).record.pending_gate!.gate_id;
     const r = await call('submit_human_response', {
       run_id: runId,
       gate_id: gateId,
       choice: 'send',
     });
-    const after = await runStore.get(runId);
+    const { record: after } = await runStore.get(runId);
     // (a) red when the answer's call runs `send` itself; (b) prints the reply and the steps.
     expect([r['run_phase'], after.completed_steps, after.in_progress_steps]).toEqual([
       'running',
@@ -400,15 +400,15 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     const started = await call('start_run', { workflow_id: 'c5-next' });
     const runId = started['run_id'] as string;
     await call('execute_step', { run_id: runId, command: 'first', params: { done: true } });
-    const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
+    const gateId = (await runStore.get(runId)).record.pending_gate!.gate_id;
     const answered = await call('submit_human_response', {
       run_id: runId,
       gate_id: gateId,
       choice: 'send',
     });
-    const before = await runStore.get(runId);
+    const { record: before } = await runStore.get(runId);
     const byName = await call('execute_step', { run_id: runId, command: 'send', params: {} });
-    const untouched = (await runStore.get(runId)).version === before.version;
+    const untouched = (await runStore.get(runId)).record.version === before.version;
     const advanced = await call('advance_run', { run_id: runId });
     // (a) red when the agent step is not offered as execute_step, the owed engine step is not
     //     offered as advance_run, execute_step naming it runs it, or advance_run does not run it;
@@ -417,7 +417,7 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       agentStep: nextCall(started),
       engineStep: tools(answered),
       byName: [byName['status'], tools(byName), untouched],
-      advanced: [advanced['run_phase'], (await runStore.get(runId)).completed_steps],
+      advanced: [advanced['run_phase'], (await runStore.get(runId)).record.completed_steps],
     }).toEqual({
       agentStep: 'execute_step first',
       engineStep: ['advance_run'],
@@ -593,7 +593,7 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     });
     const batchId = (batch['started'] as Array<{ run_id: string }>)[0]!.run_id;
     const a = await call('advance_run', { run_id: batchId });
-    const record = await runStore.get(s['run_id'] as string);
+    const { record: record } = await runStore.get(s['run_id'] as string);
     // (a) red when start_run refuses or leaves the block out of warnings, a hint leaves it out,
     //     or the run is failed; (b) prints what each said.
     expect({
@@ -801,7 +801,10 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       );
     // (a) red when a source is recorded wrong, its output is not the one the page names, or an
     //     agent or handler step's entry carries the field; (b) prints the entries.
-    expect([of(await runStore.get(named))['from_params'], of(await runStore.get(runId))]).toEqual([
+    expect([
+      of((await runStore.get(named)).record)['from_params'],
+      of((await runStore.get(runId)).record),
+    ]).toEqual([
       ['driven_step', { given: 2 }],
       {
         from_params: ['run_params', { p: 1 }],
@@ -900,8 +903,12 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       '    execution: auto',
       '    depends_on: [a]',
     ]);
-    const { run } = await store.create({ workflowId: 'lib', workflowVersion: 1, params: {} });
-    const before = JSON.stringify(await store.get(run.id));
+    const { record: run } = await store.create({
+      workflowId: 'lib',
+      workflowVersion: 1,
+      params: {},
+    });
+    const before = JSON.stringify((await store.get(run.id)).record);
     const bad = { caller: 'not-a-caller' } as never;
     const dispatcher = async () => ({});
     // A run that does not exist: had the call read the store, it would say STATE_RUN_NOT_FOUND.
@@ -940,7 +947,7 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
           executeEngineStep(store, def, {
             runId,
             step: 'go',
-            run: await store.get(run.id),
+            run: (await store.get(run.id)).record,
             ...(bad as object),
           }),
       ],
@@ -961,7 +968,7 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     const allRefused = ['VALIDATION_CALLER_INVALID', 'VALIDATION_CALLER_INVALID'];
     // (a) red when a function accepts a word not its own, raises another code, reads the store
     //     first (STATE_RUN_NOT_FOUND on the missing run) or writes the record; (b) prints each.
-    expect([codes, JSON.stringify(await store.get(run.id)) === before]).toEqual([
+    expect([codes, JSON.stringify((await store.get(run.id)).record) === before]).toEqual([
       {
         advanceRun: allRefused,
         executeStep: allRefused,
@@ -999,7 +1006,7 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       '    depends_on: [publish]',
     ]);
     // A program's own run: nothing runs the engine's step until advanceRun is called.
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: def.version,
       params: { input: 'hello' },
@@ -1029,7 +1036,7 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     }
     // (a) red when no advance way is offered while the engine owes `publish`, or the loop does not
     //     end the run with neither offered; (b) prints the calls made.
-    expect([seen, (await store.get(run.id)).run_phase, nextWay()]).toEqual([
+    expect([seen, (await store.get(run.id)).record.run_phase, nextWay()]).toEqual([
       ['advance', 'last'],
       'completed',
       undefined,

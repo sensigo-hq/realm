@@ -65,7 +65,11 @@ async function advance(
     const runs = new JsonFileStore(join(home, 'runs'));
     const workflows = new JsonWorkflowStore(join(home, 'wf'));
     await workflows.register(def);
-    const { run } = await runs.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runs.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await prep?.(runs, run.id);
     const lines: string[] = [];
     const code = await advanceRunFromShell(
@@ -77,7 +81,7 @@ async function advance(
       (l) => lines.push(l),
       registry,
     );
-    const after = await runs.get(run.id);
+    const { record: after } = await runs.get(run.id);
     const from = lines.findIndex((l) => l.startsWith('Owed to the engine:'));
     return {
       code,
@@ -92,7 +96,7 @@ async function advance(
 
 /** `p` recorded by a plain write that decides no guard, so the call's own loop decides `g`. */
 async function pRecordedWithoutItsGuard(runs: JsonFileStore, runId: string): Promise<void> {
-  const cur = await runs.get(runId);
+  const { record: cur } = await runs.get(runId);
   const now = new Date().toISOString();
   await runs.update({
     ...cur,

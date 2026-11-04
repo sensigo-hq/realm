@@ -11,6 +11,8 @@
 // The import census and a source-text ban on the clock witness it.
 import {
   agentActionOf,
+  formatInstantWords,
+  parseStamp,
   agentRenderedList,
   cannotGoOnUntilCorrected,
   cannotRunSummary,
@@ -198,6 +200,11 @@ export type McpEnvelope = Omit<
   elsewhere?: McpElsewhereEntry[];
   /** issue #729 PR-0 (P-2): on every `await` reply — call get_run_state no sooner than this. */
   poll_after_ms?: number;
+  /**
+   * #715 (b) (03 §C, D6-71): which deadline set `poll_after_ms` — a question's expiry that changes
+   * the run (`gate_expiry`), a claim's deadline (`claim_deadline`), or none (`fixed`, 30 s).
+   */
+  poll_reason?: PollReason;
   /** issue #729 PR-0 (P-2): on an `await` reply, the deadline the record states for the blocker. */
   until?: string;
   /** issue #729 PR-0 (T-1): the step a stop is about, when not the call's own. */
@@ -249,8 +256,76 @@ export interface McpHost {
   replyGateWithoutDisplay?: true;
 }
 
-/** P-2: how long an agent waits before reading the run again, on every `await` reply (a constant). */
+/**
+ * P-2: how long an agent waits before reading the run again on an `await` reply whose wait has no
+ * deadline after which the run changes (#715 (b), D6-71 (c): an agent-held step) — the fixed pace.
+ */
 export const MCP_POLL_AFTER_MS = 30_000;
+
+/** #715 (b) (03 §C, D6-71 (b)): the shortest deadline-paced `poll_after_ms` (a deadline due now, or past). */
+export const POLL_FLOOR_MS = 1_000;
+
+/**
+ * #715 (b) (03 §C, D6-71 (d)): the longest `poll_after_ms`. A deadline further away hands the agent
+ * the instant (`until`, and the await entry's "this question expires …, too far to wait for here")
+ * — never a longer interval (Amendment 12b).
+ */
+export const POLL_CAP_MS = 300_000;
+
+/** #715 (b) (03 §C): which deadline set `poll_after_ms`. */
+export type PollReason = 'gate_expiry' | 'claim_deadline' | 'fixed';
+
+/** #715 (b) (03 §C, D6-71): an `await` reply's pace — the interval, why, and the instant it names. */
+export interface Pace {
+  poll_after_ms: number;
+  poll_reason: PollReason;
+  until?: string;
+}
+
+/**
+ * #715 (b) (03 §C, D6-71, the owner 2026-10-21): the pace of an `await` reply, from the record's
+ * deadlines AFTER WHICH THE RUN CHANGES — a question's `expires_at` when it declares `on_expiry` (the
+ * form path's split) and a held claim's deadline — the earliest that parses: `poll_after_ms = until −
+ * at`, clamped to [{@link POLL_FLOOR_MS}, {@link POLL_CAP_MS}] (a deadline at or before `at` is due:
+ * the floor; the next call carries it out). `at` is the reply's ONE reading (`basis.as_of`; a read's
+ * snapshot `at`), so `until − as_of = poll_after_ms` whenever it is not clamped. No such deadline (an
+ * agent-held step), or no reading: the fixed {@link MCP_POLL_AFTER_MS} — and a question whose deadline
+ * only reports its expiry keeps that deadline as `until` ("when until passes, tell the user") without
+ * pulling the pace in. A deadline that does not parse paces nothing and is no `until`.
+ */
+export function paceOf(narrowed: Narrowed | undefined, at: Date | undefined): Pace {
+  const paced: { stamp: string; ms: number; reason: PollReason }[] = [];
+  const reportOnly: { stamp: string; ms: number }[] = [];
+  for (const u of narrowed?.unavailable ?? []) {
+    if (u.code !== 'held_elsewhere' || u.clears_at === undefined) continue;
+    const ms = parseStamp(u.clears_at);
+    if (ms !== undefined) paced.push({ stamp: u.clears_at, ms, reason: 'claim_deadline' });
+  }
+  for (const w of handedOffWays(narrowed)) {
+    if (w.expires_at === undefined) continue;
+    const ms = parseStamp(w.expires_at);
+    if (ms === undefined) continue;
+    if (w.on_expiry !== undefined) paced.push({ stamp: w.expires_at, ms, reason: 'gate_expiry' });
+    else reportOnly.push({ stamp: w.expires_at, ms });
+  }
+  const earliest = <T extends { ms: number }>(xs: readonly T[]): T | undefined =>
+    xs.reduce<T | undefined>((min, x) => (min === undefined || x.ms < min.ms ? x : min), undefined);
+  const next = earliest(paced);
+  if (next === undefined || at === undefined) {
+    const shown = next ?? earliest(reportOnly);
+    return {
+      poll_after_ms: MCP_POLL_AFTER_MS,
+      poll_reason: 'fixed',
+      ...(shown !== undefined ? { until: shown.stamp } : {}),
+    };
+  }
+  const wait = next.ms - at.getTime();
+  return {
+    poll_after_ms: Math.min(POLL_CAP_MS, Math.max(POLL_FLOOR_MS, wait)),
+    poll_reason: next.reason,
+    until: next.stamp,
+  };
+}
 
 /** The MCP door's policy (A-3, A-23, P-10): it serves the agent and the person a question is asked of. */
 export function mcpDoorPolicy(host: McpHost): DoorPolicy {
@@ -438,9 +513,42 @@ function handedOffOrientation(way: Pick<RespondWay, 'gate_id' | 'step'>): string
   return `Run is paused at gate '${way.gate_id}' on step '${way.step}', waiting for an answer outside this conversation.`;
 }
 
-/** #627 W: the await entry's pacing clause; its time clause iff the question has a deadline (cell 15). */
-function pacingClause(way: Pick<RespondWay, 'expires_at'>): string {
-  return `Check again no sooner than poll_after_ms${way.expires_at !== undefined ? '; when until passes, tell the user' : ''}.`;
+/**
+ * #627 W: the await entry's pacing clause; its time clause iff the question has a deadline (cell 15).
+ * #715 (b) (03 §C (d), D6-71; Amendment 12b): one instant per noun. The clause is keyed on whether the
+ * question's own stored stamp IS the reply's `until` (string equality: both are the stored stamp,
+ * never re-formatted) — `until` is the earliest deadline that paces the reply (`paceOf`), which a
+ * held step's or another question's deadline may set:
+ * 1. no deadline, or one that does not parse: the pace alone;
+ * 2. the question's stamp is `until`: (a) "when until passes (<words>)"; (b) the hand-over, when the
+ *    question declares `on_expiry` and expires further away than {@link POLL_CAP_MS} — "this question
+ *    expires <words>, too far to wait for here: tell the user to come back then";
+ * 3. it is not: "this question's own deadline is <words>, not the instant in until" — never the
+ *    hand-over (another deadline paces the poll; the hand-over appears when the question becomes the
+ *    pace).
+ * <words>: the one formatter at the reply's reading; with no reading, the stored stamp itself (2a keeps
+ * no parenthesis then, as before).
+ */
+function pacingClause(
+  way: Pick<RespondWay, 'expires_at' | 'on_expiry'>,
+  basis: Basis | undefined,
+  until: string | undefined,
+): string {
+  const deadlineMs = way.expires_at !== undefined ? parseStamp(way.expires_at) : undefined;
+  if (way.expires_at === undefined || deadlineMs === undefined) {
+    return 'Check again no sooner than poll_after_ms.';
+  }
+  const asOf = basis !== undefined ? parseStamp(basis.as_of) : undefined;
+  const at = asOf !== undefined ? new Date(asOf) : undefined;
+  const words = at !== undefined ? formatInstantWords(way.expires_at, 'deadline', at) : undefined;
+  if (way.expires_at !== until) {
+    return `Check again no sooner than poll_after_ms; this question's own deadline is ${words ?? way.expires_at}, not the instant in until: when it passes, tell the user.`;
+  }
+  const handsOver =
+    way.on_expiry !== undefined && at !== undefined && deadlineMs - at.getTime() > POLL_CAP_MS;
+  return handsOver
+    ? `Check again no sooner than poll_after_ms; this question expires ${words ?? way.expires_at}, too far to wait for here: tell the user to come back then.`
+    : `Check again no sooner than poll_after_ms; when until passes${words !== undefined ? ` (${words})` : ''}, tell the user.`;
 }
 
 /** `1 time`, `2 times`. */
@@ -452,7 +560,12 @@ const times = (n: number): string => `${n} ${n === 1 ? 'time' : 'times'}`;
  * door's facts, never what the person saw); under `withheld`, W-a1 on a reply that carries the
  * question's `gate`, else W-a2. No text names a tool that answers, or a person; no claim token.
  */
-function awaitEntryOf(way: RespondWay, host: McpHost): McpNextAction {
+function awaitEntryOf(
+  way: RespondWay,
+  basis: Basis | undefined,
+  host: McpHost,
+  until: string | undefined,
+): McpNextAction {
   const awaiting: McpAwaiting = {
     run_id: way.run_id,
     gate_id: way.gate_id,
@@ -460,7 +573,7 @@ function awaitEntryOf(way: RespondWay, host: McpHost): McpNextAction {
     choices: [...way.choice.one_of],
     ...(way.expires_at !== undefined ? { expires_at: way.expires_at } : {}),
   };
-  const pacing = pacingClause(way);
+  const pacing = pacingClause(way, basis, until);
   let words: string;
   if (answersRowOf(host.answers) === 'asked_forms') {
     const facts = host.formFacts?.(way.gate_id);
@@ -577,6 +690,7 @@ function nextActionsOf(
   narrowed: Narrowed | undefined,
   basis: Basis | undefined,
   host: McpHost,
+  until: string | undefined,
 ): McpNextAction[] {
   const progress = agentProgressWays(narrowed);
   const entries: { rank: number; entry: McpNextAction | null }[] = [
@@ -584,7 +698,10 @@ function nextActionsOf(
       rank: w.verb === 'run_step' ? 0 : w.verb === 'respond' ? 1 : 3,
       entry: renderWay(w, basis, host),
     })),
-    ...handedOffWays(narrowed).map((w) => ({ rank: 1, entry: awaitEntryOf(w, host) })),
+    ...handedOffWays(narrowed).map((w) => ({
+      rank: 1,
+      entry: awaitEntryOf(w, basis, host, until),
+    })),
     ...presentWays(narrowed).map((w) => ({ rank: 2, entry: renderWay(w, basis, host) })),
   ];
   return entries
@@ -615,22 +732,6 @@ function renderedListOf(
     (reply.run_phase !== undefined && TERMINAL_PHASES.has(reply.run_phase)) ||
     reply.unavailable.some((u) => u.code === 'run_ended');
   return agentRenderedList(narrowed ?? { ways: [], unavailable: [] }, ended);
-}
-
-/**
- * P-2: the deadline the record states for what an `await` waits on (the earliest), if any — a step
- * held elsewhere, and (#627 W) a question handed to the person, by its stored deadline.
- */
-function untilOf(narrowed: Narrowed | undefined): string | undefined {
-  const stated = [
-    ...(narrowed?.unavailable ?? [])
-      .filter((u) => u.code === 'held_elsewhere' && u.clears_at !== undefined)
-      .map((u) => u.clears_at!),
-    ...handedOffWays(narrowed)
-      .filter((w) => w.expires_at !== undefined)
-      .map((w) => w.expires_at!),
-  ].sort();
-  return stated[0];
 }
 
 // ─── The words of what comes next (Table rows 20–29; decisions C34, C51, C57, C94, C205) ────────
@@ -1078,7 +1179,11 @@ export function renderReply(reply: EngineReply, hostIn: McpHost): RenderedReply 
       : hostIn;
   const narrowed = narrowReply(reply, host);
   const progress = agentProgressWays(narrowed);
-  const next_actions = nextActionsOf(narrowed, reply.basis, host);
+  // #715 (b) (03 §C, D6-71): the pace from the record's deadlines, at the reply's one reading — its
+  // `until` keys each await entry's clause (Amendment 12b), so it is the one the reply carries.
+  const asOf = narrowed !== undefined ? parseStamp(narrowed.basis.as_of) : undefined;
+  const paceAtReading = paceOf(narrowed, asOf !== undefined ? new Date(asOf) : undefined);
+  const next_actions = nextActionsOf(narrowed, reply.basis, host, paceAtReading.until);
   // #627 W: an await entry is paced wherever it renders — on a `confirm_required` reply too, whose
   // `agent_action` D-8 leaves unset (its text tells the agent to wait poll_after_ms).
   const awaits = handedOffWays(narrowed).length > 0;
@@ -1100,7 +1205,7 @@ export function renderReply(reply: EngineReply, hostIn: McpHost): RenderedReply 
   const rendered = renderedListOf(reply, narrowed, progress);
   const agentAction = agentActionOf(reply.intrinsic_action, reply.reply_kind, rendered);
   const paced = agentAction === 'await' || awaits;
-  const until = paced ? untilOf(narrowed) : undefined;
+  const pace = paced ? paceAtReading : undefined;
   const details = errorDetailsOf(reply);
   const {
     ways: _ways,
@@ -1123,8 +1228,13 @@ export function renderReply(reply: EngineReply, hostIn: McpHost): RenderedReply 
     next_actions,
     ...(also.length > 0 ? { also } : {}),
     ...(elsewhere.length > 0 ? { elsewhere } : {}),
-    ...(paced ? { poll_after_ms: MCP_POLL_AFTER_MS } : {}),
-    ...(until !== undefined ? { until } : {}),
+    ...(pace !== undefined
+      ? {
+          poll_after_ms: pace.poll_after_ms,
+          poll_reason: pace.poll_reason,
+          ...(pace.until !== undefined ? { until: pace.until } : {}),
+        }
+      : {}),
     ...(error?.about !== undefined ? { error: { about: error.about } } : {}),
     ...(blocked_reason !== undefined
       ? {
@@ -1281,7 +1391,8 @@ export function renderWaysOf(
   also: McpAlsoEntry[];
   elsewhere: McpElsewhereEntry[];
   rendered: RenderedList;
-  until?: string;
+  /** #715 (b) (03 §C): the pace an `await` read gets, at the composition's reading (`basis.as_of`). */
+  pace: Pace;
   person?: string;
   next_sentence: string;
 } {
@@ -1300,7 +1411,11 @@ export function renderWaysOf(
   } as EngineReply;
   const narrowed = narrowReply(reply, host);
   const progress = agentProgressWays(narrowed);
-  const next_actions = nextActionsOf(narrowed, composed.basis, host);
+  // #715 (b) (03 §C; Amendment 12b): the pace at the composition's reading (`basis.as_of`); its
+  // `until` keys each await entry's clause.
+  const asOf = composed.basis !== undefined ? parseStamp(composed.basis.as_of) : undefined;
+  const pace = paceOf(narrowed, asOf !== undefined ? new Date(asOf) : undefined);
+  const next_actions = nextActionsOf(narrowed, composed.basis, host, pace.until);
   const also = (narrowed?.ways ?? [])
     .filter((w) => (w.verb === 'inspect' || w.verb === 'abandon') && forAgent(w))
     .map((w) => ({
@@ -1319,7 +1434,6 @@ export function renderWaysOf(
     human_readable: elsewhereWords(u, host),
   }));
   const rendered = renderedListOf(reply, narrowed, progress);
-  const until = untilOf(narrowed);
   const person = personBlockOf(elsewhereEntries, composed.basis, host);
   return {
     narrowed,
@@ -1327,7 +1441,7 @@ export function renderWaysOf(
     also,
     elsewhere,
     rendered,
-    ...(until !== undefined ? { until } : {}),
+    pace,
     ...(person !== undefined ? { person } : {}),
     next_sentence: nextSentence(narrowed, false),
   };
@@ -1476,6 +1590,7 @@ export const MCP_ENVELOPE_ROWS = {
   also: { class: { nested: ALSO_TABLE } },
   elsewhere: { class: 'fact' },
   poll_after_ms: { class: 'fact' },
+  poll_reason: { class: 'fact' },
   until: { class: 'fact' },
   // `about` published as `error.about`; the remedy worded into the hint; typed facts as error_details.
   error: {
@@ -2023,7 +2138,7 @@ export async function replySubject(
 ): Promise<ReplySubject> {
   let run: RunRecord | undefined;
   if (ids.runId !== undefined && stores?.runStore !== undefined) {
-    run = await stores.runStore.get(ids.runId).catch(() => undefined);
+    run = (await stores.runStore.get(ids.runId).catch(() => undefined))?.record;
   }
   const workflowId = ids.workflowId ?? run?.workflow_id;
   let definition: WorkflowDefinition | undefined;
@@ -2162,6 +2277,7 @@ export const DOOR_FACTS = {
     agent_action: 'enum',
     elsewhere: 'enum',
     until: 'time',
+    poll_reason: 'enum',
     error: 'enum',
   } satisfies FactProducers<typeof MCP_ENVELOPE_TABLE, McpEnvelope>,
   // #729 PR-3 correction 2 (G4): start_run's reply is the envelope plus the run it reran.
@@ -2182,6 +2298,7 @@ export const DOOR_FACTS = {
     agent_action: 'enum',
     elsewhere: 'enum',
     until: 'time',
+    poll_reason: 'enum',
     error: 'enum',
     rerun_of: 'id',
   } satisfies FactProducers<typeof START_RUN_TABLE, StartRunReply>,
@@ -2247,6 +2364,7 @@ export const DOOR_FACTS = {
     next_actions_status: 'enum',
     agent_action: 'enum',
     until: 'time',
+    poll_reason: 'enum',
     elsewhere: 'enum',
     basis: 'enum',
     stuck_claims: 'author_literal',

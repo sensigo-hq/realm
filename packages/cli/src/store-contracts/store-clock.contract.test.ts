@@ -12,8 +12,12 @@ import { STORE_CLOCK_LAWS, storeClockContract, type StoreClockLaw } from '@sensi
  * The laws of this family that THIS file deliberately does not run, each with its reason.
  */
 const NOT_RUN: Partial<Record<StoreClockLaw, string>> = {
-  READS_SPEND_NO_READING:
+  READS_ONE_READING:
     'a location store’s clock is internal (resolved from the clock file at construction), so its readings cannot be counted from outside; core’s json-file-store-clock-715.test.ts counts them (cell B1, J11–J15)',
+  KEYED_FIRST_CREATE_ONE_READING:
+    'counts readings, which a location store’s internal clock does not let this file see; core’s json-file-store-clock-715.test.ts counts the keyed create (J2–J7)',
+  SNAPSHOT_AT_SOUND:
+    'needs a clock whose reading triggers a write, which a location store’s file clock cannot be; core’s json-file-store-clock-715.test.ts has the JSON store’s cell (writing the run file)',
 };
 
 /** Every exported law, minus the ones named in NOT_RUN above. */
@@ -22,7 +26,7 @@ const LAWS: readonly StoreClockLaw[] = STORE_CLOCK_LAWS.filter((law) => !(law in
 describe('#715 (a) C16 — the store-clock contract on JsonFileStore (location route)', () => {
   // Correction 1 (C-4): the store's sanctioned channel past its boundary — a direct file write, as
   // `settlement-json-file-store.test.ts` does. The location route does not run
-  // READS_SPEND_NO_READING (NOT_RUN above), so the family never calls it here today; it is the
+  // READS_ONE_READING (NOT_RUN above), so the family never calls it here today; it is the
   // adapter's whole description of the store, for a route that will.
   let built: { store: JsonFileStore; runsDir: string } | undefined;
   const cases = storeClockContract({
@@ -35,7 +39,7 @@ describe('#715 (a) C16 — the store-clock contract on JsonFileStore (location r
       },
     },
     seedLegacyTerminal: async (id) => {
-      const { run } = await built!.store.create({
+      const { record: run } = await built!.store.create({
         workflowId: `seed-${id}`,
         workflowVersion: 1,
         params: {},

@@ -71,7 +71,7 @@ describe('recoverable incapability (#134) — Part A', () => {
 
   // Test 1a — handler-not-registered settles recoverably and RECOVERS on a fixed registry.
   it('handler-not-registered settles recoverably (not terminal-burned) and recovers', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'handler-wf',
       workflowVersion: 1,
       params: {},
@@ -88,7 +88,7 @@ describe('recoverable incapability (#134) — Part A', () => {
     expect(env.error_code).toBe('ENGINE_HANDLER_NOT_REGISTERED');
     expect(agentActionFor(env)).toBe('report_to_user'); // non-terminal mapping, not 'stop'
 
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.failed_steps).not.toContain('validate'); // NOT terminal-burned
     expect(after.in_progress_steps).not.toContain('validate'); // claim released
     expect(after.claims?.['validate']).toBeUndefined();
@@ -112,7 +112,7 @@ describe('recoverable incapability (#134) — Part A', () => {
       registry: good,
     });
     expect(recovered.status).toBe('ok');
-    const done = await store.get(run.id);
+    const { record: done } = await store.get(run.id);
     expect(done.completed_steps).toContain('validate');
     expect(done.terminal_state).toBe(true); // only step → run completes
     // Self-suppression: the lingering marker no longer surfaces once the step is settled.
@@ -121,7 +121,7 @@ describe('recoverable incapability (#134) — Part A', () => {
 
   // Test 1b — adapter-not-registered settles recoverably and RECOVERS on a fixed registry.
   it('adapter-not-registered settles recoverably (not terminal-burned) and recovers', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'adapter-wf',
       workflowVersion: 1,
       params: {},
@@ -137,7 +137,7 @@ describe('recoverable incapability (#134) — Part A', () => {
     expect(env.status).toBe('error');
     expect(env.error_code).toBe('ENGINE_ADAPTER_NOT_REGISTERED');
 
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.failed_steps).not.toContain('fetch_data');
     expect(after.terminal_state).toBe(false);
     expect(after.run_phase).toBe('running');
@@ -156,7 +156,7 @@ describe('recoverable incapability (#134) — Part A', () => {
       registry: good,
     });
     expect(recovered.status).toBe('ok');
-    expect((await store.get(run.id)).completed_steps).toContain('fetch_data');
+    expect((await store.get(run.id)).record.completed_steps).toContain('fetch_data');
   });
 
   // Test 2 — retry-wrap seam: max_attempts:1 + empty registry stays recoverable, NOT STEP_RETRY_EXHAUSTED.
@@ -167,7 +167,7 @@ describe('recoverable incapability (#134) — Part A', () => {
         validate: { ...handlerDef.steps['validate']!, retry: { max_attempts: 1 } },
       },
     };
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'handler-wf',
       workflowVersion: 1,
       params: {},
@@ -182,7 +182,7 @@ describe('recoverable incapability (#134) — Part A', () => {
 
     expect(env.error_code).toBe('ENGINE_HANDLER_NOT_REGISTERED'); // NOT wrapped to STEP_RETRY_EXHAUSTED
     expect(env.errors[0]).not.toContain('after 1 attempts');
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.failed_steps).not.toContain('validate');
     expect(after.terminal_state).toBe(false);
     expect(after.capability_blocks?.['validate']).toBeDefined();
@@ -204,7 +204,7 @@ describe('recoverable incapability (#134) — Part A', () => {
         },
       },
     };
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'handler-wf',
       workflowVersion: 1,
       params: {},
@@ -219,7 +219,7 @@ describe('recoverable incapability (#134) — Part A', () => {
 
     expect(env.error_code).toBe('ENGINE_HANDLER_NOT_REGISTERED'); // NOT wrapped to STEP_RETRY_EXHAUSTED
     expect(env.errors[0]).not.toContain('after 1 attempts');
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.failed_steps).not.toContain('validate'); // recoverable, not terminal-burned
     expect(after.terminal_state).toBe(false);
     expect(after.capability_blocks?.['validate']).toBeDefined();
@@ -240,7 +240,7 @@ describe('recoverable incapability (#134) — Part A', () => {
         throw new Error('boom');
       },
     });
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'handler-wf',
       workflowVersion: 1,
       params: {},
@@ -253,7 +253,7 @@ describe('recoverable incapability (#134) — Part A', () => {
       registry,
     });
     expect(env.status).toBe('error');
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.failed_steps).toContain('validate'); // terminal-burned
     expect(after.terminal_state).toBe(true);
     expect(after.capability_blocks).toBeUndefined(); // no recoverable marker
@@ -274,7 +274,7 @@ describe('recoverable incapability (#134) — Part A', () => {
         },
       },
     };
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'adapter-wf',
       workflowVersion: 1,
       params: {},
@@ -288,7 +288,7 @@ describe('recoverable incapability (#134) — Part A', () => {
     });
     expect(env.status).toBe('error');
     expect(env.error_code).not.toBe('ENGINE_ADAPTER_NOT_REGISTERED');
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.failed_steps).toContain('fetch_data');
     expect(after.terminal_state).toBe(true);
     expect(after.capability_blocks).toBeUndefined();
@@ -309,7 +309,7 @@ describe('recoverable incapability (#134) — Part A', () => {
         fetch_data: { ...adapterDef.steps['fetch_data']!, service_method: 'delete' },
       },
     };
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'adapter-wf',
       workflowVersion: 1,
       params: {},
@@ -323,7 +323,7 @@ describe('recoverable incapability (#134) — Part A', () => {
     });
     expect(env.status).toBe('error');
     expect(env.error_code).not.toBe('ENGINE_ADAPTER_NOT_REGISTERED');
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.failed_steps).toContain('fetch_data');
     expect(after.terminal_state).toBe(true);
   });

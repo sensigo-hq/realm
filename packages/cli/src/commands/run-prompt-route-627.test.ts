@@ -80,7 +80,7 @@ describe('#627 W — the dev prompt records its route (cell 5, the CLI door’s 
     const { JsonFileStore } = await import('@sensigo/realm');
     const runs = join(home, '.realm', 'runs');
     const files = readdirSync(runs).filter((f) => f.endsWith('.json'));
-    const run = await new JsonFileStore(runs).get(files[0]!.replace('.json', ''));
+    const { record: run } = await new JsonFileStore(runs).get(files[0]!.replace('.json', ''));
     const entry = run.evidence.find((e) => e.kind === 'gate_response');
     // (a) red when the prompt's answer drops the route or the principal's absence (it would read
     //     route_not_declared / principal_not_passed); (b) prints the prompt count and both facts.

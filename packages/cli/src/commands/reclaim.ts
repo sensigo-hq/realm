@@ -11,6 +11,8 @@ import type { RunRecord, StepDefinition, InProgressClaimInfo, ReclaimResult } fr
 import { parseDuration } from '../lib/parse-duration.js';
 import { listRunsDiagnosed, unreadableRunLines } from './list.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
+import { formatInstantWords, overdueOf } from '@sensigo/realm';
+import { openRunStore } from '../lib/run-store.js';
 
 /**
  * Pure outcome→(glyph, message) renderer (issue #221 [M4]) — the SINGLE source of both reclaim
@@ -68,7 +70,8 @@ export function isAutoReclaimable(
   run: Pick<RunRecord, 'terminal_state' | 'pending_gate'>,
   claim: InProgressClaimInfo,
   stepDef: StepDefinition | undefined,
-  opts: { olderThanMs?: number; now: number },
+  // #715 (b) (D-26): judged at the row's own snapshot's `at` (its `now: number` became `at`).
+  opts: { olderThanMs?: number; at: Date },
 ): boolean {
   if (run.terminal_state) return false; // §3.1
   if (claim.state !== 'claim_stale') return false; // §3.3 + §3.4a — concrete deadline AND past it
@@ -77,7 +80,10 @@ export function isAutoReclaimable(
   if (opts.olderThanMs !== undefined) {
     // §3.4b — a null deadline is NEVER "old enough" (defensive; claim_stale already implies concrete).
     if (claim.deadline === null) return false;
-    if (opts.now - new Date(claim.deadline).getTime() < opts.olderThanMs) return false;
+    // #715 (b) (D-25): through the one deadline reader — an unparseable deadline is never "old
+    // enough" (its NaN used to pass this test).
+    const overdue = overdueOf(claim.deadline, opts.at);
+    if (overdue === undefined || 'absent' in overdue || overdue.ms < opts.olderThanMs) return false;
   }
   return true;
 }
@@ -107,10 +113,15 @@ export const reclaimCommand = new Command('reclaim')
         olderThan?: string;
       },
     ) => {
-      const { JsonFileStore, JsonWorkflowStore, reclaimStep, classifyInProgressClaims, shellWord } =
-        await import('@sensigo/realm');
+      const {
+        JsonWorkflowStore,
+        reclaimStep,
+        classifyInProgressClaims,
+        shellWord,
+        writtenSnapshot,
+      } = await import('@sensigo/realm');
       const { JsonTraceBufferStore } = await import('@sensigo/realm-mcp');
-      const store = new JsonFileStore();
+      const store = openRunStore();
       // issue #198: wire the trace buffer so a reclaim clears the reclaimed step's stale WAL —
       // without this, reclaimStep's own clearStaleWal hook is inert (traceBufferStore stays
       // undefined) and the next attempt adopts the dead attempt's buffered lines, which is the
@@ -149,30 +160,29 @@ export const reclaimCommand = new Command('reclaim')
         }
 
         const workflowStore = new JsonWorkflowStore();
-        const now = Date.now();
-        const nowDate = new Date(now);
-        const selected: Array<{ runId: string; claim: InProgressClaimInfo }> = [];
+        // #715 (b) (D-26): no clock read here — each row is judged at its own snapshot's `at`.
+        const selected: Array<{ runId: string; claim: InProgressClaimInfo; at: Date }> = [];
         try {
           // issue #719 (B3): act on the readable runs; a damaged run file is reported, not acted on.
-          const { records: runs, unreadable } = await listRunsDiagnosed(store, opts.workflow);
+          const { snapshots, unreadable } = await listRunsDiagnosed(store, opts.workflow);
           for (const line of unreadableRunLines(
             unreadable,
             '; realm run reclaim --all did not act on them.',
           )) {
             console.error(line);
           }
-          for (const run of runs) {
+          for (const { record: run, at } of snapshots) {
             if (run.terminal_state) continue;
-            const claims = classifyInProgressClaims(run, nowDate);
+            const claims = classifyInProgressClaims(writtenSnapshot(run, at));
             if (claims.length === 0) continue;
             // Resolve the definition to read the `idempotent` hint. Unresolvable → cannot confirm
             // idempotent → exclude every claim (safe: never auto-reclaim an unverifiable step).
             const def = await workflowStore.get(run.workflow_id).catch(() => undefined);
             for (const claim of claims) {
               const stepDef = def?.steps[claim.step];
-              const selOpts = olderThanMs !== undefined ? { olderThanMs, now } : { now };
+              const selOpts = olderThanMs !== undefined ? { olderThanMs, at } : { at };
               if (isAutoReclaimable(run, claim, stepDef, selOpts)) {
-                selected.push({ runId: run.id, claim });
+                selected.push({ runId: run.id, claim, at });
               }
             }
           }
@@ -193,10 +203,13 @@ export const reclaimCommand = new Command('reclaim')
           console.log(
             `${selected.length} claim(s) WOULD be auto-reclaimed (idempotent ∧ past-deadline ∧ non-gated):`,
           );
-          for (const { runId: rid, claim } of selected) {
-            const ageMin = Math.round((now - new Date(claim.deadline!).getTime()) / 60_000);
+          for (const { runId: rid, claim, at } of selected) {
+            // #715 (b) (03 §B.2 A13): how far past its deadline, through the one formatter at this
+            // row's reading (a selected claim's deadline is concrete and past); the stored string
+            // stays beside the words.
+            const pastWords = formatInstantWords(claim.deadline!, 'deadline', at);
             console.log(
-              `  • ${rid} / ${claim.step}  (deadline ${claim.deadline}, ${ageMin}m past)`,
+              `  • ${rid} / ${claim.step}  (deadline ${claim.deadline}${pastWords !== undefined ? `, ${pastWords}` : ''})`,
             );
           }
           console.log(
@@ -252,7 +265,7 @@ export const reclaimCommand = new Command('reclaim')
       }
 
       try {
-        const run = await store.get(runId);
+        const { record: run, at: runAt } = await store.get(runId);
 
         // --- Reclaim path: --step (+ --force) ---
         if (opts.step !== undefined) {
@@ -263,7 +276,9 @@ export const reclaimCommand = new Command('reclaim')
             );
             process.exit(1);
           }
-          const info = classifyInProgressClaims(run).find((c) => c.step === opts.step);
+          const info = classifyInProgressClaims(writtenSnapshot(run, runAt)).find(
+            (c) => c.step === opts.step,
+          );
           if (info?.state === 'healthy') {
             console.warn(
               `⚠ '${opts.step}' currently has a HEALTHY claim (a live runner is presumed on it). ` +
@@ -289,7 +304,7 @@ export const reclaimCommand = new Command('reclaim')
           );
           return;
         }
-        const infos = classifyInProgressClaims(run);
+        const infos = classifyInProgressClaims(writtenSnapshot(run, runAt));
         if (infos.length === 0) {
           console.log(
             `Run '${runId}' (${writerCtx().word(run.run_phase, RUN_PHASE_WORDS)}) has no in-progress claims. Nothing to reclaim.`,

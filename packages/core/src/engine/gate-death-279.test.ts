@@ -14,7 +14,10 @@ import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepHandler } from '../extensions/step-handler.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { RunStore, CreateRunOptions } from '../store/store-interface.js';
-import type { SettlementDelta, SettlementResult } from '../types/settlement.js';
+import type { SettlementDelta } from '../types/settlement.js';
+import type { Snapshot } from './snapshot.js';
+import type { Listing, CreateResult, StoreSettlement } from '../store/store-interface.js';
+import type { Clock } from '../utils/clock.js';
 
 describe('R3-death for gates (issue #279, increment 2, PR-D) — the PR-B symptom-death-279.test.ts mechanism, applied to gate-open', () => {
   it('gate-open and an ALREADY-CLAIMED sibling settling CONCURRENTLY both record — the gate OPENS, the sibling commits, zero STATE_SNAPSHOT_MISMATCH', async () => {
@@ -36,7 +39,11 @@ describe('R3-death for gates (issue #279, increment 2, PR-D) — the PR-B sympto
     const dir = await mkdtemp(join(tmpdir(), 'realm-r3-gate-death-'));
     try {
       const store = new JsonFileStore(dir);
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
 
       // Pre-claim `sibling` FIRST (sequential, deterministic) — eligibility.ts's OWN documented
       // invariant ("Gate serialization: if a gate is open, no new steps are eligible") means a
@@ -45,7 +52,7 @@ describe('R3-death for gates (issue #279, increment 2, PR-D) — the PR-B sympto
       // writers hitting the SAME store), so both steps' CLAIMS must already exist before either
       // settles — mirroring a realistic fan-out where both steps were already dispatched to
       // agents before either one's outcome came back.
-      const claimedSibling = await store.claimStep(run.id, 'sibling', def);
+      const { record: claimedSibling } = await store.claimStep(run.id, 'sibling', def);
       const siblingToken = claimedSibling.claims?.['sibling']?.token;
 
       // THE race: gate-open (the full executeStep path, claim included) and the sibling's OWN
@@ -80,7 +87,7 @@ describe('R3-death for gates (issue #279, increment 2, PR-D) — the PR-B sympto
       // writes.
       expect(JSON.stringify(resultGate)).not.toContain('STATE_SNAPSHOT_MISMATCH');
 
-      const finalRun = await store.get(run.id);
+      const { record: finalRun } = await store.get(run.id);
       expect(finalRun.pending_gate?.step_name).toBe('gate_step');
       expect(finalRun.completed_steps).toContain('sibling');
       expect(finalRun.claims?.['gate_step']).toBeDefined(); // gate claim retained (G-1)
@@ -115,7 +122,11 @@ describe('R5-death (issue #279, increment 2, PR-D) — gate/guard terminal seals
     const dir = await mkdtemp(join(tmpdir(), 'realm-r5-gate-fin-'));
     try {
       const store = new JsonFileStore(dir);
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
 
       const opened = await executeStep(store, def, {
         runId: run.id,
@@ -133,7 +144,7 @@ describe('R5-death (issue #279, increment 2, PR-D) — gate/guard terminal seals
           handlerCallCount += 1;
           // Prove POST-COMMIT: by the time the finalizer's handler runs, the gate resolution must
           // already be durably recorded — read a FRESH copy from disk, not an in-memory draft.
-          const fresh: RunRecord = await store.get(run.id);
+          const { record: fresh } = await store.get(run.id);
           snapshotAtHandlerCallTime = {
             completed: [...fresh.completed_steps].sort(),
             terminal: fresh.terminal_state,
@@ -152,7 +163,7 @@ describe('R5-death (issue #279, increment 2, PR-D) — gate/guard terminal seals
       });
       expect(resolved.status).toBe('ok');
 
-      const finalRun = await store.get(run.id);
+      const { record: finalRun } = await store.get(run.id);
       expect(finalRun.completed_steps.sort()).toEqual(['fin', 'gate_step']);
       expect(finalRun.terminal_state).toBe(true);
       expect(handlerCallCount).toBe(1); // exactly once — never zero, never twice
@@ -186,7 +197,11 @@ describe('R5-death (issue #279, increment 2, PR-D) — gate/guard terminal seals
     const dir = await mkdtemp(join(tmpdir(), 'realm-r5-guard-fin-'));
     try {
       const store = new JsonFileStore(dir);
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
 
       let handlerCallCount = 0;
       let snapshotAtHandlerCallTime:
@@ -195,7 +210,7 @@ describe('R5-death (issue #279, increment 2, PR-D) — gate/guard terminal seals
         id: 'fin-handler',
         execute: async () => {
           handlerCallCount += 1;
-          const fresh: RunRecord = await store.get(run.id);
+          const { record: fresh } = await store.get(run.id);
           snapshotAtHandlerCallTime = {
             skipped: [...fresh.skipped_steps].sort(),
             terminal: fresh.terminal_state,
@@ -216,7 +231,7 @@ describe('R5-death (issue #279, increment 2, PR-D) — gate/guard terminal seals
       });
       expect(result.status).toBe('ok');
 
-      const finalRun = await store.get(run.id);
+      const { record: finalRun } = await store.get(run.id);
       expect(finalRun.skipped_steps).toContain('guard_b');
       expect(finalRun.completed_steps).toContain('fin');
       expect(finalRun.terminal_state).toBe(true);
@@ -240,6 +255,10 @@ describe('R5-death (issue #279, increment 2, PR-D) — gate/guard terminal seals
  * `lease_finalizer` call, post-recovery) passes straight through.
  */
 class RefusesFirstLeaseStore implements RunStore {
+  /** #715 (b): the store's clock is the wrapped store's. */
+  get clock(): Clock {
+    return this.inner.clock;
+  }
   // issue #620 PR-C: a test double declares this realm's release line.
   static {
     declareReleaseLine(this);
@@ -249,32 +268,31 @@ class RefusesFirstLeaseStore implements RunStore {
   constructor(private readonly inner: JsonFileStore) {
     this.persistsClaims = inner.persistsClaims;
   }
-  create(options: CreateRunOptions): Promise<{ run: RunRecord; created: boolean }> {
+  create(options: CreateRunOptions): Promise<CreateResult> {
     return this.inner.create(options);
   }
-  get(runId: string): Promise<RunRecord> {
+  get(runId: string): Promise<Snapshot> {
     return this.inner.get(runId);
   }
-  update(record: RunRecord): Promise<RunRecord> {
+  update(record: RunRecord): Promise<Snapshot> {
     return this.inner.update(record);
   }
-  list(workflowId?: string): Promise<RunRecord[]> {
+  list(workflowId?: string): Promise<Listing> {
     return this.inner.list(workflowId);
   }
-  claimStep(runId: string, stepName: string, definition: WorkflowDefinition): Promise<RunRecord> {
+  claimStep(runId: string, stepName: string, definition: WorkflowDefinition): Promise<Snapshot> {
     return this.inner.claimStep(runId, stepName, definition);
   }
   async settleStep(
     runId: string,
     delta: SettlementDelta,
-    definition: WorkflowDefinition,
-    options?: { now?: Date },
-  ): Promise<SettlementResult> {
+    definition?: WorkflowDefinition,
+  ): Promise<StoreSettlement> {
     if (!this.refused && delta.kind === 'lease_finalizer') {
       this.refused = true;
       throw new Error('simulated crash between settle_gate commit and the drain lease');
     }
-    return this.inner.settleStep(runId, delta, definition, options);
+    return this.inner.settleStep(runId, delta, definition);
   }
 }
 
@@ -303,7 +321,11 @@ describe('Drain-on-NOOP integration (issue #279, increment 2, PR-D, design recor
     const dir = await mkdtemp(join(tmpdir(), 'realm-drain-noop-'));
     try {
       const inner = new JsonFileStore(dir);
-      const { run } = await inner.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await inner.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const crashingStore = new RefusesFirstLeaseStore(inner);
 
       const opened = await executeStep(crashingStore, def, {
@@ -335,7 +357,7 @@ describe('Drain-on-NOOP integration (issue #279, increment 2, PR-D, design recor
         registry,
       });
       expect(firstSubmit.status).toBe('ok');
-      const afterCrash = await inner.get(run.id);
+      const { record: afterCrash } = await inner.get(run.id);
       expect(afterCrash.terminal_state).toBe(true);
       expect(afterCrash.finalizer_ledger?.['fin']?.status).toBe('pending');
       expect(handlerCallCount).toBe(0); // never delivered — the drain's lease call was refused
@@ -355,7 +377,7 @@ describe('Drain-on-NOOP integration (issue #279, increment 2, PR-D, design recor
       // envelope's own calm shape (status 'ok', no error) is asserted above.
       expect(duplicateSubmit.status).toBe('ok');
 
-      const finalRun = await inner.get(run.id);
+      const { record: finalRun } = await inner.get(run.id);
       expect(finalRun.completed_steps).toContain('fin');
       expect(finalRun.finalizer_ledger?.['fin']?.status).toBe('completed');
     } finally {

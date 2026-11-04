@@ -14,6 +14,7 @@ import {
   assertRegistryLine,
   buildPreExecutionErrorEnvelope,
   composeWaysOn,
+  waysStoreOf,
   deriveRunPhase,
   getWorkflowForRun,
   loadSnapshot,
@@ -124,7 +125,8 @@ export async function handlePresentQuestion(
   const ctx: WaysContext = {
     definition: { ok: definition },
     enactor: registry !== undefined ? { kind: 'this_program', registry } : { kind: 'observer' },
-    store: { persistsClaims: runStore.persistsClaims === true },
+    // #715 (b) (02 §C.1): with what the reply's instant stands on (`as_of_basis`).
+    store: waysStoreOf(runStore),
   };
   const open = run.pending_gate;
   const gate =
