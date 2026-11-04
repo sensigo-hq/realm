@@ -6,7 +6,14 @@ import type {
   StepDefinition,
   TriggerRule,
 } from '../types/workflow-definition.js';
-import type { RunRecord, SealArm, SkipDetail, StepDiagnostics } from '../types/run-record.js';
+import { createHash } from 'node:crypto';
+import type {
+  RunRecord,
+  SealArm,
+  SealedBy,
+  SkipDetail,
+  StepDiagnostics,
+} from '../types/run-record.js';
 import { SEAL_ARMS } from '../types/run-record.js';
 import type { RunPhase } from '../types/run-record.js';
 import { resolvePath } from './render-template.js';
@@ -87,6 +94,11 @@ const FAIL_PROSE = [/^Step '.+' failed:/, /^\d+ steps? failed:/, /^Guard step '.
 const CLEANUP_SWEEP_PROSE = 'Marked abandoned by realm cleanup';
 const HANDLER_ABORT_PROSE = /^Handler '.+' aborted the run:/;
 const GATE_EXPIRY_ABORT_PROSE = /^Gate '.+' expired and the run aborted/;
+// The three literal reasons the prose battery knows (#616 PR-1a unit 2b: named, so the fingerprint's
+// corpus lists them from one place).
+const COMPLETED_PROSE = 'Workflow completed.';
+const SPAWN_FAILED_PROSE = 'spawn_failed';
+const EXTENSIONS_LOAD_FAILED_PROSE = 'extensions_load_failed';
 
 /** The record shape both legacy classifiers read. */
 type ClassifiableRun = Pick<
@@ -97,9 +109,9 @@ type ClassifiableRun = Pick<
 /** The prose battery, reachable with NO markers — the marker-column-less store class. */
 function classifyByProse(run: ClassifiableRun): SealArm | undefined {
   const reason = run.terminal_reason;
-  if (reason === 'Workflow completed.') return 'complete'; // gate/guard variants NOT recoverable
-  if (reason === 'spawn_failed') return 'spawn_failure';
-  if (reason === 'extensions_load_failed') return 'extensions_load_failure';
+  if (reason === COMPLETED_PROSE) return 'complete'; // gate/guard variants NOT recoverable
+  if (reason === SPAWN_FAILED_PROSE) return 'spawn_failure';
+  if (reason === EXTENSIONS_LOAD_FAILED_PROSE) return 'extensions_load_failure';
   if (reason === CLEANUP_SWEEP_PROSE) return 'cleanup_sweep';
   if (reason !== undefined) {
     if (HANDLER_ABORT_PROSE.test(reason)) return 'handler_abort';
@@ -343,6 +355,136 @@ export function deriveRunPhase(
   // carrying a leftover pending_gate NEVER reaches this branch anymore.
   if (run.pending_gate !== undefined) return 'gate_waiting';
   return 'running';
+}
+
+// ---------------------------------------------------------------------------
+// #616 PR-1a unit 2b (design d4-frozen-r3 §3): the phase derivation's FINGERPRINT, the stamp a stored
+// phase index carries beside each row. It is the derivation's own answers over a corpus built from
+// its declared input, so it changes when an answer on the corpus changes, with no constant to
+// remember. The bound, stated: a change that alters no answer on the corpus keeps the stamp; only a
+// new value of an existing input, outside the corpus, can do that (`realm db check`, a later unit, is
+// the backstop). The golden of the stamp is `run-phase-fingerprint.test.ts`'s; a change of the
+// derivation's answers fails it until it is updated, with a CHANGELOG line naming `realm db migrate`.
+// ---------------------------------------------------------------------------
+
+/** What {@link deriveRunPhase} reads: its declared input. */
+export type RunPhaseDerivationInput = Parameters<typeof deriveRunPhase>[0];
+
+/**
+ * The values the corpus gives each input field. Every field of {@link RunPhaseDerivationInput} must
+ * have a row: a derivation that starts reading a new field does not compile until the corpus varies
+ * it. `undefined` stands for the field left out of the record.
+ */
+export type RunPhaseCorpusAxes = {
+  readonly [K in keyof RunPhaseDerivationInput]-?: readonly (
+    RunPhaseDerivationInput[K] | undefined
+  )[];
+};
+
+/**
+ * Every legacy prose value the classifier knows, each with its witness: the three literal reasons
+ * and the five constants and patterns (`FAIL_PROSE`'s three one by one). One list, read by the law
+ * that every pattern has its witness; the corpus takes its reasons from it.
+ */
+export const LEGACY_PROSE_WITNESSES: ReadonlyArray<readonly [string | RegExp, string]> = [
+  [COMPLETED_PROSE, COMPLETED_PROSE],
+  [SPAWN_FAILED_PROSE, SPAWN_FAILED_PROSE],
+  [EXTENSIONS_LOAD_FAILED_PROSE, EXTENSIONS_LOAD_FAILED_PROSE],
+  [CLEANUP_SWEEP_PROSE, CLEANUP_SWEEP_PROSE],
+  [HANDLER_ABORT_PROSE, "Handler 'h' aborted the run: stop"],
+  [GATE_EXPIRY_ABORT_PROSE, "Gate 'g' expired and the run aborted"],
+  [GUARD_RESOLUTION_PROSE, "Guard step 'g' failed: unresolvable path a.b"],
+  [FAIL_PROSE[0]!, "Step 's' failed: boom"],
+  [FAIL_PROSE[1]!, '2 steps failed: a, b'],
+  [FAIL_PROSE[2]!, "Guard step 'g' failed: the guard said no"],
+];
+
+/** The classifier's patterns, in the order its constants are declared (the law's other side). */
+export const LEGACY_PROSE_PATTERNS: ReadonlyArray<string | RegExp> = [
+  COMPLETED_PROSE,
+  SPAWN_FAILED_PROSE,
+  EXTENSIONS_LOAD_FAILED_PROSE,
+  CLEANUP_SWEEP_PROSE,
+  HANDLER_ABORT_PROSE,
+  GATE_EXPIRY_ABORT_PROSE,
+  GUARD_RESOLUTION_PROSE,
+  ...FAIL_PROSE,
+];
+
+const CORPUS_AT = '2026-01-01T00:00:00.000Z';
+
+/** The corpus's values per input field (design §3): every arm, adjudicated and not, and one outside
+ *  the vocabulary; each marker; a pending gate; empty and non-empty failed steps; every legacy
+ *  prose witness and one prose nothing matches. */
+export const RUN_PHASE_CORPUS_AXES = {
+  pending_gate: [
+    undefined,
+    { gate_id: 'g', step_name: 's', preview: {}, choices: ['yes', 'no'], opened_at: CORPUS_AT },
+  ],
+  terminal_state: [false, true],
+  failed_steps: [[], ['s']],
+  terminal_reason: [
+    undefined,
+    ...LEGACY_PROSE_WITNESSES.map(([, witness]) => witness),
+    'a reason no legacy pattern matches',
+  ],
+  aborted_at: [undefined, { step_id: 's' }],
+  abandoned_at: [undefined, CORPUS_AT],
+  sealed_by: [
+    undefined,
+    ...SEAL_ARMS.flatMap((arm): SealedBy[] => [
+      { arm },
+      { arm, adjudicated: { by: 'operator', at: CORPUS_AT, previous_arm: arm } },
+    ]),
+    { arm: 'an_arm_outside_the_vocabulary' as SealArm },
+  ],
+} satisfies RunPhaseCorpusAxes;
+
+let corpus: readonly RunPhaseDerivationInput[] | undefined;
+
+/**
+ * The corpus: every combination of {@link RUN_PHASE_CORPUS_AXES}' values, in a fixed order (the
+ * fields sorted by name, the last one varying fastest). Built once per process.
+ */
+export function runPhaseDerivationCorpus(): readonly RunPhaseDerivationInput[] {
+  if (corpus !== undefined) return corpus;
+  const axes = Object.entries(RUN_PHASE_CORPUS_AXES).sort(([a], [b]) => (a < b ? -1 : 1)) as Array<
+    [string, readonly unknown[]]
+  >;
+  const out: RunPhaseDerivationInput[] = [];
+  const at = axes.map(() => 0);
+  for (;;) {
+    const record: Record<string, unknown> = {};
+    axes.forEach(([field, values], i) => {
+      const value = values[at[i]!];
+      if (value !== undefined) record[field] = value;
+    });
+    out.push(record as unknown as RunPhaseDerivationInput);
+    let i = axes.length - 1;
+    while (i >= 0 && at[i] === axes[i]![1].length - 1) {
+      at[i] = 0;
+      i -= 1;
+    }
+    if (i < 0) break;
+    at[i] = at[i]! + 1;
+  }
+  corpus = Object.freeze(out);
+  return corpus;
+}
+
+let fingerprint: string | undefined;
+
+/**
+ * The phase derivation's fingerprint (design §3): the first 16 hex characters of the sha256 of
+ * {@link deriveRunPhase}'s answers over {@link runPhaseDerivationCorpus}, one per line, in the
+ * corpus's order. Two realms whose derivations answer the corpus alike share it. Computed once per
+ * process; it reads no clock and nothing random.
+ */
+export function runPhaseDerivationFingerprint(): string {
+  if (fingerprint !== undefined) return fingerprint;
+  const answers = runPhaseDerivationCorpus().map((run) => deriveRunPhase(run));
+  fingerprint = createHash('sha256').update(answers.join('\n')).digest('hex').slice(0, 16);
+  return fingerprint;
 }
 
 /**

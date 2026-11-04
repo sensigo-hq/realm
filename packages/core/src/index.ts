@@ -385,6 +385,8 @@ export {
   findEligibleSteps,
   isWorkflowComplete,
   deriveRunPhase,
+  // #616 PR-1a unit 2b: the stamp a stored phase index carries (design d4-frozen-r3 §3).
+  runPhaseDerivationFingerprint,
   buildEvidenceByStep,
   buildSettlementNamespace,
   propagateSkips,
