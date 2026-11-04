@@ -87,7 +87,9 @@ describe(
         },
         'a',
       );
-      // (a) red when the sizes are left out of the equality (equal raw heads would then share);
+      // (a) red when the sizes are left out of the describer's equality AND core compares two size
+      //     blocks by group alone: each check alone keeps these steps apart (equal raw heads differ
+      //     in disclosed size only through a moved cut, which changes the length core compares);
       //     (b) prints the line.
       expect(line.includes('shares its whole fixed part'), line).toBe(false);
     });
