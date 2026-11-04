@@ -1,10 +1,13 @@
-// Tests for FailedAttemptStore — the durable per-run failed-attempt sidecar (observability P3).
+// Tests for JsonFileFailedAttemptStore — the durable per-run failed-attempt sidecar (observability P3).
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, readdir, readFile, writeFile, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { FailedAttemptStore, FAILED_ATTEMPT_SIDECAR_MAX_BYTES } from './failed-attempt-store.js';
+import {
+  JsonFileFailedAttemptStore,
+  FAILED_ATTEMPT_SIDECAR_MAX_BYTES,
+} from './failed-attempt-store.js';
 import {
   buildFailedAttemptRecord as buildRecord,
   serializeFailedAttemptLine,
@@ -26,13 +29,13 @@ function line(over: Record<string, unknown> = {}): string {
   return serializeFailedAttemptLine({ ...rec, ...over }).line;
 }
 
-describe('FailedAttemptStore', () => {
+describe('JsonFileFailedAttemptStore', () => {
   let dir: string;
-  let store: FailedAttemptStore;
+  let store: JsonFileFailedAttemptStore;
 
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'fas-'));
-    store = new FailedAttemptStore(dir);
+    store = new JsonFileFailedAttemptStore(dir);
   });
 
   afterEach(async () => {
@@ -124,7 +127,7 @@ describe('FailedAttemptStore', () => {
   });
 
   it('append is best-effort: an unwritable runsDir does not throw', async () => {
-    const badStore = new FailedAttemptStore(join(dir, 'does', 'not', 'exist'));
+    const badStore = new JsonFileFailedAttemptStore(join(dir, 'does', 'not', 'exist'));
     await expect(badStore.append(RUN_ID, line())).resolves.toBeUndefined();
   });
 
@@ -167,6 +170,31 @@ describe('FailedAttemptStore', () => {
       expect(existsSync(join(dir, `${RUN_ID}.attempts.jsonl`))).toBe(false);
       expect(existsSync(join(dir, `${OTHER}.attempts.jsonl`))).toBe(true);
     });
+
+    it('a sidecar that cannot be deleted: the error names JsonFileFailedAttemptStore, in its message and in details.store (#616 B1)', async () => {
+      // The real case: an operator reads `realm run purge`'s failure. The sidecar's path holds a
+      // FOLDER (the contract test's failure, on every platform and any uid), so the unlink fails.
+      const { mkdir } = await import('node:fs/promises');
+      await mkdir(join(dir, `${RUN_ID}.attempts.jsonl`));
+      const err = (await store.deleteAllForRun(RUN_ID).catch((e: unknown) => e)) as {
+        code?: string;
+        message?: string;
+        details?: { store?: string };
+      };
+      // (1) red when the error names any other store (the break: the old name kept in
+      //     `toArtifactDeleteFailedError`'s store argument), or the delete does not fail; (2)
+      //     prints the code, the message's opening words and `details.store`.
+      const opening = `JsonFileFailedAttemptStore failed to delete artifact(s) for run '${RUN_ID}': `;
+      expect({
+        code: err.code,
+        opening: err.message?.slice(0, opening.length),
+        store: err.details?.store,
+      }).toEqual({
+        code: 'ENGINE_ARTIFACT_DELETE_FAILED',
+        opening,
+        store: 'JsonFileFailedAttemptStore',
+      });
+    });
   });
 
   describe('listOrphans (issue #163)', () => {
@@ -197,7 +225,7 @@ describe('FailedAttemptStore', () => {
     });
 
     it('a missing runsDir (ENOENT) resolves to [] — not a throw', async () => {
-      const missingStore = new FailedAttemptStore(join(dir, 'does', 'not', 'exist'));
+      const missingStore = new JsonFileFailedAttemptStore(join(dir, 'does', 'not', 'exist'));
       await expect(missingStore.listOrphans(new Set())).resolves.toEqual([]);
     });
 
@@ -205,7 +233,7 @@ describe('FailedAttemptStore', () => {
       // A file (not a directory) in place of runsDir — readdir on it fails with ENOTDIR, not ENOENT.
       const notADir = join(dir, 'i-am-a-file');
       await writeFile(notADir, 'x');
-      const brokenStore = new FailedAttemptStore(notADir);
+      const brokenStore = new JsonFileFailedAttemptStore(notADir);
 
       await expect(brokenStore.listOrphans(new Set())).rejects.toMatchObject({ code: 'ENOTDIR' });
     });

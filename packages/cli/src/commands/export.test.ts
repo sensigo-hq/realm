@@ -12,7 +12,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { buildExportBundle, resolveExportPath } from './export.js';
 import {
   JsonFileStore,
-  FailedAttemptStore,
+  JsonFileFailedAttemptStore,
   buildFailedAttemptRecord,
   serializeFailedAttemptLine,
   FsIoError,
@@ -24,7 +24,7 @@ import { JsonTraceBufferStore } from '@sensigo/realm-mcp';
 async function makeStores(): Promise<{
   dir: string;
   runStore: JsonFileStore;
-  failedAttemptStore: FailedAttemptStore;
+  failedAttemptStore: JsonFileFailedAttemptStore;
   traceBufferStore: JsonTraceBufferStore;
 }> {
   const dir = await mkdtemp(join(tmpdir(), 'export-test-'));
@@ -32,7 +32,7 @@ async function makeStores(): Promise<{
   return {
     dir,
     runStore,
-    failedAttemptStore: new FailedAttemptStore(dir),
+    failedAttemptStore: new JsonFileFailedAttemptStore(dir),
     // issue #616 PR-0: the trace buffer evaluates fences against the run store.
     traceBufferStore: new JsonTraceBufferStore(dir, runStore),
   };
@@ -64,7 +64,7 @@ function makeRun(overrides: Partial<RunRecord> & { id?: string }): RunRecord {
   };
 }
 
-async function appendSidecarLine(store: FailedAttemptStore, runId: string): Promise<void> {
+async function appendSidecarLine(store: JsonFileFailedAttemptStore, runId: string): Promise<void> {
   const rec = buildFailedAttemptRecord({
     run_id: runId,
     workflow_id: 'wf-1',

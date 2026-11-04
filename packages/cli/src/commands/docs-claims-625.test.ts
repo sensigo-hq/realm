@@ -27,7 +27,7 @@ import { readFileSync as readDoc625 } from 'node:fs';
 import { join as joinDoc625, dirname as dirDoc625 } from 'node:path';
 import { fileURLToPath as urlDoc625 } from 'node:url';
 import { lagless } from '../test-support/lag.js';
-import { executeChain, createDefaultRegistry, FailedAttemptStore } from '@sensigo/realm';
+import { executeChain, createDefaultRegistry, JsonFileFailedAttemptStore } from '@sensigo/realm';
 import { JsonTraceBufferStore } from '@sensigo/realm-mcp';
 import { inspectRun } from './inspect.js';
 import { buildExportBundle } from './export.js';
@@ -732,7 +732,7 @@ describe('#760 — a handler warning on `realm run inspect`, and the record in `
       );
       const { bundle } = await buildExportBundle(run.id, {
         runStore,
-        failedAttemptStore: new FailedAttemptStore(dir),
+        failedAttemptStore: new JsonFileFailedAttemptStore(dir),
         traceBufferStore: new JsonTraceBufferStore(dir, runStore),
       });
       const exported = bundle.run.evidence.find((e) => e.step_id === 'quote_check')

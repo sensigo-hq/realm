@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { JsonFileReplayStore } from './replay-store.js';
-import type { ReplayStepResult } from '../commands/replay.js';
+import type { ReplayStepResult } from '@sensigo/realm';
 
 const sampleResults: ReplayStepResult[] = [
   {

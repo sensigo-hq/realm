@@ -22,7 +22,7 @@ import {
   type EngineReply,
   type RunStore,
   type TraceBufferStore,
-  type FailedAttemptStore,
+  type JsonFileFailedAttemptStore,
   ExtensionRegistry,
   type Attributed,
   type Principal,
@@ -185,14 +185,16 @@ function logDedup(fields: Record<string, unknown>): void {
 }
 
 /**
- * Structural (not nominal) shape of `FailedAttemptStore`'s public surface, derived via `Pick` so a
- * duck-typed cloud-backed object can satisfy it too — the concrete `FailedAttemptStore` class has
- * a private `runsDir` field, so a plain object literal implementing these methods could never be
- * assignable to the class type itself (issue #188, PR-1: the co-location injection seam). Used
- * anywhere a `FailedAttemptStore`-like store is threaded through as an injectable option.
+ * Structural (not nominal) shape of `JsonFileFailedAttemptStore`'s public surface, derived via `Pick`
+ * so a duck-typed cloud-backed object can satisfy it too — the concrete `JsonFileFailedAttemptStore`
+ * class has a private `runsDir` field, so a plain object literal implementing these methods could
+ * never be assignable to the class type itself (issue #188, PR-1: the co-location injection seam).
+ * Used anywhere a `JsonFileFailedAttemptStore`-like store is threaded through as an injectable
+ * option. It keeps the class's `listOrphans`, which core's `FailedAttemptStore` interface does not
+ * carry (#616 B1).
  */
 export type FailedAttemptStoreLike = Pick<
-  FailedAttemptStore,
+  JsonFileFailedAttemptStore,
   'append' | 'read' | 'deleteAllForRun' | 'listOrphans'
 >;
 
