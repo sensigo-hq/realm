@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import {
   JsonFileStore,
   JsonWorkflowStore,
-  FailedAttemptStore,
+  JsonFileFailedAttemptStore,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD,
 } from '@sensigo/realm';
@@ -151,14 +151,14 @@ describe('execute_step failed-attempt telemetry', () => {
 describe('execute_step failed-attempt sidecar (P3 durable sink)', () => {
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
-  let failedAttemptStore: FailedAttemptStore;
+  let failedAttemptStore: JsonFileFailedAttemptStore;
   let errSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
     const runsDir = await mkdtemp(join(tmpdir(), 'fat3-run-'));
     runStore = new JsonFileStore(runsDir);
     workflowStore = new JsonWorkflowStore(await mkdtemp(join(tmpdir(), 'fat3-wf-')));
-    failedAttemptStore = new FailedAttemptStore(runsDir);
+    failedAttemptStore = new JsonFileFailedAttemptStore(runsDir);
     await workflowStore.register(wf);
     errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
@@ -223,7 +223,7 @@ describe('execute_step failed-attempt sidecar (P3 durable sink)', () => {
       workflowVersion: 1,
       params: {},
     });
-    const brokenStore = new FailedAttemptStore(join('/does', 'not', 'exist'));
+    const brokenStore = new JsonFileFailedAttemptStore(join('/does', 'not', 'exist'));
 
     const result = await handleExecuteStep(
       { run_id: run.id, command: 'classify', params: { wrong: 1 } },
@@ -243,14 +243,14 @@ describe('execute_step failed-attempt sidecar (P3 durable sink)', () => {
 describe('execute_step failed-attempt telemetry — VALIDATION_EXHAUSTED (issue #220, pin (t))', () => {
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
-  let failedAttemptStore: FailedAttemptStore;
+  let failedAttemptStore: JsonFileFailedAttemptStore;
   let errSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
     const runsDir = await mkdtemp(join(tmpdir(), 'fat4-run-'));
     runStore = new JsonFileStore(runsDir);
     workflowStore = new JsonWorkflowStore(await mkdtemp(join(tmpdir(), 'fat4-wf-')));
-    failedAttemptStore = new FailedAttemptStore(runsDir);
+    failedAttemptStore = new JsonFileFailedAttemptStore(runsDir);
     await workflowStore.register(wf);
     errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
@@ -324,14 +324,14 @@ describe('execute_step failed-attempt records: a chained step refused after the 
   };
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
-  let failedAttemptStore: FailedAttemptStore;
+  let failedAttemptStore: JsonFileFailedAttemptStore;
   let errSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
     const runsDir = await mkdtemp(join(tmpdir(), 'fat676-run-'));
     runStore = new JsonFileStore(runsDir);
     workflowStore = new JsonWorkflowStore(await mkdtemp(join(tmpdir(), 'fat676-wf-')));
-    failedAttemptStore = new FailedAttemptStore(runsDir);
+    failedAttemptStore = new JsonFileFailedAttemptStore(runsDir);
     await workflowStore.register(chained);
     errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });

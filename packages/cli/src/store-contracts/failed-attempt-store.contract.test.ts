@@ -1,4 +1,4 @@
-// PerRunArtifactStore TCK conformance for FailedAttemptStore (issue #183).
+// PerRunArtifactStore TCK conformance for JsonFileFailedAttemptStore (issue #183).
 //
 // See json-file-store.contract.test.ts (this directory) for why this lives in @sensigo/realm-cli
 // rather than @sensigo/realm's own test suite: @sensigo/realm-testing depends on @sensigo/realm,
@@ -8,7 +8,7 @@ import { mkdtemp, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { FailedAttemptStore } from '@sensigo/realm';
+import { JsonFileFailedAttemptStore } from '@sensigo/realm';
 import {
   perRunArtifactStoreContract,
   ARTIFACT_STORE_LAWS,
@@ -18,7 +18,7 @@ import {
 
 /**
  * The laws of this contract that THIS file deliberately does not run, each with its reason
- * (issue #625). Empty: FailedAttemptStore owns per-run artifacts, so every law of this contract applies.
+ * (issue #625). Empty: JsonFileFailedAttemptStore owns per-run artifacts, so every law of this contract applies.
  */
 const NOT_RUN: Partial<Record<ArtifactStoreLaw, string>> = {};
 
@@ -33,7 +33,7 @@ async function makeAdapter(): Promise<{
   cleanup: () => Promise<void>;
 }> {
   const dir = await mkdtemp(join(tmpdir(), 'failed-attempt-store-tck-'));
-  const store = new FailedAttemptStore(dir);
+  const store = new JsonFileFailedAttemptStore(dir);
   const runId = randomUUID();
   // This store owns exactly ONE artifact class (the sidecar), so a single seeded line is a
   // representative fixture here — unlike the two-artifact stores, whose adapters need more.
@@ -57,7 +57,7 @@ async function makeAdapter(): Promise<{
   return { adapter, cleanup: () => rm(dir, { recursive: true, force: true }) };
 }
 
-describe('FailedAttemptStore — PerRunArtifactStore TCK conformance (issue #183)', () => {
+describe('JsonFileFailedAttemptStore — PerRunArtifactStore TCK conformance (issue #183)', () => {
   for (const law of LAWS) {
     it(law, async () => {
       const { adapter, cleanup } = await makeAdapter();
@@ -73,7 +73,7 @@ describe('FailedAttemptStore — PerRunArtifactStore TCK conformance (issue #183
   }
 });
 
-describe('FailedAttemptStore artifact wiring — the run list is derived from the contract', () => {
+describe('JsonFileFailedAttemptStore artifact wiring — the run list is derived from the contract', () => {
   // (a) red when a law is dropped from the run list WITHOUT being named in NOT_RUN, or NOT_RUN
   //     names a law the contract no longer exports; (b) prints the unaccounted / unknown laws.
   it('every exported law is either run or named in NOT_RUN, and NOT_RUN names only exported laws (issue #625)', () => {

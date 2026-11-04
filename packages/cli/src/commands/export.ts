@@ -494,11 +494,11 @@ export const exportCommand = new Command('export')
     "Write the bundle even when the run's declared secrets are not all known (its manifest changed, could not be read, or the run has no project): it is masked with what is known, and its header says so",
   )
   .action(async (runId: string, opts: { out?: string; acceptPartialDisclosure?: boolean }) => {
-    const { JsonFileStore, FailedAttemptStore } = await import('@sensigo/realm');
+    const { JsonFileStore, JsonFileFailedAttemptStore } = await import('@sensigo/realm');
     const { JsonTraceBufferStore } = await import('@sensigo/realm-mcp');
     const runStore = new JsonFileStore();
     const runsDir = runStore.runsDirPath;
-    const failedAttemptStore = new FailedAttemptStore(runsDir);
+    const failedAttemptStore = new JsonFileFailedAttemptStore(runsDir);
     const traceBufferStore = new JsonTraceBufferStore(runsDir, runStore);
 
     try {

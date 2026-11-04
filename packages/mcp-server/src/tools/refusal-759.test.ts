@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import {
   JsonFileStore,
   JsonWorkflowStore,
-  FailedAttemptStore,
+  JsonFileFailedAttemptStore,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD,
 } from '@sensigo/realm';
@@ -42,14 +42,14 @@ const wf: WorkflowDefinition = {
 describe('issue #759 — the wire and the sidecar carry the same ten and the total', () => {
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
-  let failedAttemptStore: FailedAttemptStore;
+  let failedAttemptStore: JsonFileFailedAttemptStore;
   let errSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
     const runsDir = await mkdtemp(join(tmpdir(), 'r759-run-'));
     runStore = new JsonFileStore(runsDir);
     workflowStore = new JsonWorkflowStore(await mkdtemp(join(tmpdir(), 'r759-wf-')));
-    failedAttemptStore = new FailedAttemptStore(runsDir);
+    failedAttemptStore = new JsonFileFailedAttemptStore(runsDir);
     await workflowStore.register(wf);
     errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });

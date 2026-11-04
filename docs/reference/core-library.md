@@ -187,14 +187,14 @@ With an in-memory run store and both other stores given, `start_run` over this s
 
 ## The stores Realm ships
 
-| Class                      | Package                  | Keeps                                  | Built with                                                          |
-| -------------------------- | ------------------------ | -------------------------------------- | ------------------------------------------------------------------- |
-| `JsonFileStore`            | `@sensigo/realm`         | Runs, one JSON file each.              | `new JsonFileStore(dir?)`. The default is `~/.realm/runs`.          |
-| `JsonWorkflowStore`        | `@sensigo/realm`         | Registered workflows.                  | `new JsonWorkflowStore(dir?)`. The default is `~/.realm/workflows`. |
-| `FailedAttemptStore`       | `@sensigo/realm`         | Refused attempts, a file for each run. | `new FailedAttemptStore(dir)`.                                      |
-| `JsonTraceBufferStore`     | `@sensigo/realm-mcp`     | Trace entries, in files.               | See `createRealmMcpServer`'s defaults.                              |
-| `InMemoryTraceBufferStore` | `@sensigo/realm`         | Trace entries, in memory.              | `new InMemoryTraceBufferStore(runStore)`.                           |
-| `InMemoryStore`            | `@sensigo/realm-testing` | Runs, in memory.                       | `new InMemoryStore()`.                                              |
+| Class                        | Package                  | Keeps                                  | Built with                                                          |
+| ---------------------------- | ------------------------ | -------------------------------------- | ------------------------------------------------------------------- |
+| `JsonFileStore`              | `@sensigo/realm`         | Runs, one JSON file each.              | `new JsonFileStore(dir?)`. The default is `~/.realm/runs`.          |
+| `JsonWorkflowStore`          | `@sensigo/realm`         | Registered workflows.                  | `new JsonWorkflowStore(dir?)`. The default is `~/.realm/workflows`. |
+| `JsonFileFailedAttemptStore` | `@sensigo/realm`         | Refused attempts, a file for each run. | `new JsonFileFailedAttemptStore(dir)`.                              |
+| `JsonTraceBufferStore`       | `@sensigo/realm-mcp`     | Trace entries, in files.               | See `createRealmMcpServer`'s defaults.                              |
+| `InMemoryTraceBufferStore`   | `@sensigo/realm`         | Trace entries, in memory.              | `new InMemoryTraceBufferStore(runStore)`.                           |
+| `InMemoryStore`              | `@sensigo/realm-testing` | Runs, in memory.                       | `new InMemoryStore()`.                                              |
 
 `JsonFileStore` and `InMemoryStore` each have a `clock`: the time they stamp their writes with (added after version 0.48.0). `JsonFileStore` takes no clock: its clock is this computer's, or the clock file of a [test location](environment-and-files.md#the-clock-a-runs-times-come-from) when its folder is one. `InMemoryStore` takes one, `new InMemoryStore({ clock })`, and uses `systemClock` when none is given. Each `create`, `update` and `claimStep` reads the clock once and stamps everything it records with that reading: `created_at`, `updated_at`, and a claim's `since` and deadline. The clock does not stamp times taken outside the store, or durations. In this version `settleStep`, `stampSeal` and the reads do not use it.
 
@@ -310,12 +310,15 @@ A `Clock` has two functions: `now()`, which returns the current time as a new `D
 
 ## The other store interfaces
 
-| Interface              | Functions                                                                                                                                                                                                                   | Implemented by                                                |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| `TraceBufferStore`     | `append`, `read`, `delete`, `deleteAllForRun`, `statAllForRun`, `readAllForRun`. Optional: `appendFenced`, `deleteFenced`, `deleteAllForRunFenced`, `sealFenced`, `listSealedForRun`, and the property `traceCapabilities`. | `JsonTraceBufferStore`, `InMemoryTraceBufferStore`            |
-| `PerRunArtifactStore`  | `deleteAllForRun`, `statAllForRun`                                                                                                                                                                                          | `JsonFileStore`, `FailedAttemptStore`, `JsonTraceBufferStore` |
-| `OrphanSweepableStore` | `listOrphans`                                                                                                                                                                                                               | `FailedAttemptStore`, `JsonTraceBufferStore`                  |
-| `WorkflowRegistrar`    | `register`, `get`, `list`                                                                                                                                                                                                   | `JsonWorkflowStore`                                           |
+| Interface              | Functions                                                                                                                                                                                                                   | Implemented by                                                        |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `TraceBufferStore`     | `append`, `read`, `delete`, `deleteAllForRun`, `statAllForRun`, `readAllForRun`. Optional: `appendFenced`, `deleteFenced`, `deleteAllForRunFenced`, `sealFenced`, `listSealedForRun`, and the property `traceCapabilities`. | `JsonTraceBufferStore`, `InMemoryTraceBufferStore`                    |
+| `PerRunArtifactStore`  | `deleteAllForRun`, `statAllForRun`                                                                                                                                                                                          | `JsonFileStore`, `JsonFileFailedAttemptStore`, `JsonTraceBufferStore` |
+| `OrphanSweepableStore` | `listOrphans`                                                                                                                                                                                                               | `JsonFileFailedAttemptStore`, `JsonTraceBufferStore`                  |
+| `WorkflowRegistrar`    | `register`, `get`, `list`                                                                                                                                                                                                   | `JsonWorkflowStore`                                                   |
+| `FailedAttemptStore`   | `append`, `read`, `deleteAllForRun`, `statAllForRun`                                                                                                                                                                        | `JsonFileFailedAttemptStore`                                          |
+| `DedupStore`           | `check`, `record`, `cleanup` (each returns a promise)                                                                                                                                                                       | the CLI's file and in-memory dedup stores                             |
+| `ReplayStore`          | `save`, `get`                                                                                                                                                                                                               | the CLI's replay file store                                           |
 
 `createRealmMcpServer` takes its failed-attempt store as any object with the functions `append`, `read`, `deleteAllForRun` and `listOrphans`.
 

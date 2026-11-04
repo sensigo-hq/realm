@@ -164,7 +164,7 @@ describe('store-fs-guard — no raw unlink outside fs-io.ts / the atomic-write.t
 // than imported — these are two intentionally separate guard files, per issue #183's own
 // instruction to add this as a new file; duplicating three class-name literals is cheaper than
 // coupling the two guards' internals together).
-const WIRED_STORES = ['JsonTraceBufferStore', 'FailedAttemptStore', 'JsonFileStore'];
+const WIRED_STORES = ['JsonTraceBufferStore', 'JsonFileFailedAttemptStore', 'JsonFileStore'];
 
 /** This guard's OWN file — excluded from its own scan below (issue #197 PR-1, design §12: fixing
  *  the self-scan false positive that was DISCOVERED but deliberately left unfixed during issue

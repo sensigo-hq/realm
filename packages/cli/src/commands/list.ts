@@ -5,7 +5,8 @@ import {
   classifyRunHealth,
   deriveRunPhase,
   DEFAULT_IDLE_THRESHOLD_MS,
-  FailedAttemptStore,
+  JsonFileFailedAttemptStore,
+  type FailedAttemptStore,
   computeGateDueState,
   probeClassOf,
   shellWord,
@@ -610,7 +611,7 @@ export const listCommand = new Command('list')
       // getter (not duck-typed off `RunStore`, which stays plain). Constructed ONLY for --stuck,
       // at the SAME runsDir the run store persists to.
       const failedAttemptStore =
-        opts.stuck === true ? new FailedAttemptStore(store.runsDirPath) : undefined;
+        opts.stuck === true ? new JsonFileFailedAttemptStore(store.runsDirPath) : undefined;
 
       // issue #558 PR-T — the --stuck probe closure. The 4 MB parse cap lives HERE and NOWHERE
       // else: `get()` stays uncapped (#552's door B, its Resolution). Memoised per workflow id

@@ -7,7 +7,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { listRuns, formatGateAge, renderCauseSegment, listCommand } from './list.js';
 import {
-  FailedAttemptStore,
+  JsonFileFailedAttemptStore,
   FAILED_ATTEMPT_SIDECAR_MAX_BYTES,
   buildFailedAttemptRecord,
   serializeFailedAttemptLine,
@@ -785,7 +785,7 @@ describe('false-unity negative pin: no source file pairs "reclaim" with a derive
 });
 
 // ---------------------------------------------------------------------------
-// issue #219 — --stuck cause attribution, sourced from the FailedAttemptStore sidecar.
+// issue #219 — --stuck cause attribution, sourced from the JsonFileFailedAttemptStore sidecar.
 // ---------------------------------------------------------------------------
 
 describe('renderCauseSegment (issue #219, pure helper)', () => {
@@ -878,12 +878,12 @@ describe('renderCauseSegment (issue #219, pure helper)', () => {
 });
 
 describe('--stuck cause attribution end-to-end via listRuns (issue #219)', () => {
-  it('records present: a --stuck run with a real FailedAttemptStore sidecar renders "rejected: N× (...)" appended to its line, using the LATEST record', async () => {
+  it('records present: a --stuck run with a real JsonFileFailedAttemptStore sidecar renders "rejected: N× (...)" appended to its line, using the LATEST record', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'list-cause-present-'));
     try {
       const runId = 'run-cause-present';
       const run = makeIdleStuckRun({ id: runId });
-      const fas = new FailedAttemptStore(dir);
+      const fas = new JsonFileFailedAttemptStore(dir);
       const older = buildFailedAttemptRecord({
         run_id: runId,
         workflow_id: 'test-workflow',
@@ -932,7 +932,7 @@ describe('--stuck cause attribution end-to-end via listRuns (issue #219)', () =>
     try {
       const runId = 'run-cause-capped';
       const run = makeIdleStuckRun({ id: runId });
-      const fas = new FailedAttemptStore(dir);
+      const fas = new JsonFileFailedAttemptStore(dir);
       const validRec = buildFailedAttemptRecord({
         run_id: runId,
         workflow_id: 'test-workflow',
@@ -966,11 +966,11 @@ describe('--stuck cause attribution end-to-end via listRuns (issue #219)', () =>
     try {
       const run = makeIdleStuckRun({ id: 'run-cause-absent' });
       const store = makeStore([run]);
-      // A REAL FailedAttemptStore injected, over a real runs dir — but no sidecar file was ever
+      // A REAL JsonFileFailedAttemptStore injected, over a real runs dir — but no sidecar file was ever
       // written for this run (the CLI-driven / parked-between-drives case: absence, not an
       // error). Compared against injecting `undefined` (today's pre-#219 shape, what every OTHER
       // test in this file does).
-      const fas = new FailedAttemptStore(dir);
+      const fas = new JsonFileFailedAttemptStore(dir);
 
       const [resultWithStore, resultWithoutStore] = await Promise.all([
         listRuns(undefined, store, undefined, true, undefined, fas),
@@ -994,7 +994,7 @@ describe('--stuck cause attribution end-to-end via listRuns (issue #219)', () =>
       const brokenRun = makeIdleStuckRun({ id: brokenRunId });
       const okRun = makeIdleStuckRun({ id: okRunId });
 
-      const fas = new FailedAttemptStore(dir);
+      const fas = new JsonFileFailedAttemptStore(dir);
       const rec = buildFailedAttemptRecord({
         run_id: okRunId,
         workflow_id: 'test-workflow',

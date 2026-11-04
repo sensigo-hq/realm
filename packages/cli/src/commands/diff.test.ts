@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { captureEvidence } from '@sensigo/realm';
 import { diffRuns, diffReplays, diffSymbol, isReplayId } from './diff.js';
 import type { RunRecord, EvidenceSnapshot } from '@sensigo/realm';
-import type { ReplayRecord } from '../store/replay-store.js';
+import type { ReplayRecord } from '@sensigo/realm';
 
 function makeSnap(
   stepId: string,

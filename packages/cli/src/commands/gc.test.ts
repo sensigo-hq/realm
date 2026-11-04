@@ -23,7 +23,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   JsonFileStore,
-  FailedAttemptStore,
+  JsonFileFailedAttemptStore,
   deriveRunPhase,
   atomicWriteFile,
   WorkflowError,
@@ -330,7 +330,7 @@ describe('sweepOrphans', () => {
 // --- sweepOrphanArtifacts — the run-less WAL/sidecar sweep (issue #163) ---
 //
 // Unlike sweepOrphans above (pure path-list in, path-list out), this sweep's inputs are REAL
-// OrphanSweepableStore instances (JsonTraceBufferStore, FailedAttemptStore) plus a REAL
+// OrphanSweepableStore instances (JsonTraceBufferStore, JsonFileFailedAttemptStore) plus a REAL
 // JsonFileStore for computing `liveRunIds` — mirroring purge.test.ts's convention of testing
 // against real stores over a real tmp dir rather than mocks, since the thing actually under test
 // (correct runId-by-UUID-length parsing, correct live/orphan classification, the fail-closed
@@ -351,7 +351,7 @@ describe('sweepOrphanArtifacts (issue #163)', () => {
     try {
       const now = new Date();
       const traceBufferStore = new JsonTraceBufferStore(dir, new JsonFileStore(dir));
-      const failedAttemptStore = new FailedAttemptStore(dir);
+      const failedAttemptStore = new JsonFileFailedAttemptStore(dir);
       const runStore = new JsonFileStore(dir);
 
       // No run file is ever created for this id — it is run-less from the start.
@@ -406,7 +406,7 @@ describe('sweepOrphanArtifacts (issue #163)', () => {
     try {
       const now = new Date();
       const traceBufferStore = new JsonTraceBufferStore(dir, new JsonFileStore(dir));
-      const failedAttemptStore = new FailedAttemptStore(dir);
+      const failedAttemptStore = new JsonFileFailedAttemptStore(dir);
       const runStore = new JsonFileStore(dir);
 
       const { run } = await runStore.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
@@ -759,7 +759,7 @@ describe('sweepOrphanArtifacts — fenced reap path (issue #207 PR-2)', () => {
     const dir = await makeTmpRunsDir();
     try {
       const now = new Date();
-      const failedAttemptStore = new FailedAttemptStore(dir);
+      const failedAttemptStore = new JsonFileFailedAttemptStore(dir);
       const runStore = new JsonFileStore(dir);
 
       const orphanId = '55555555-5555-4555-8555-555555555555';
@@ -791,7 +791,7 @@ describe('fail-closed wiring: a listRunIds() failure must abort the orphan sweep
     try {
       const now = new Date();
       const traceBufferStore = new JsonTraceBufferStore(dir, new JsonFileStore(dir));
-      const failedAttemptStore = new FailedAttemptStore(dir);
+      const failedAttemptStore = new JsonFileFailedAttemptStore(dir);
       const runStore = new JsonFileStore(dir);
 
       // Seed BOTH a live run's WAL and a genuinely run-less orphan, ancient enough that either

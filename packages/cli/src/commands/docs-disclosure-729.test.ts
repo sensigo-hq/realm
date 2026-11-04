@@ -1999,7 +1999,7 @@ async function c3Run(
 /** Correction 4: one recorded failed attempt on `runId` whose problem's message holds the declared
  *  value (the sidecar, independent of the run's file). */
 async function c3Attempt(home: string, runId: string): Promise<void> {
-  const { FailedAttemptStore, buildFailedAttemptRecord, serializeFailedAttemptLine } =
+  const { JsonFileFailedAttemptStore, buildFailedAttemptRecord, serializeFailedAttemptLine } =
     await import('@sensigo/realm');
   const rec = buildFailedAttemptRecord({
     run_id: runId,
@@ -2019,7 +2019,7 @@ async function c3Attempt(home: string, runId: string): Promise<void> {
     params: {},
     trace_entry_count: 0,
   });
-  await new FailedAttemptStore(join(home, '.realm', 'runs')).append(
+  await new JsonFileFailedAttemptStore(join(home, '.realm', 'runs')).append(
     runId,
     serializeFailedAttemptLine({ ...rec }).line,
   );

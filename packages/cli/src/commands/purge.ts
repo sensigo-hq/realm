@@ -351,7 +351,7 @@ export async function purgeRuns(
             storesFreed++;
           }
         } else {
-          // Non-declaring artifact store (e.g. FailedAttemptStore — issue #207 PR-2, D3 §5
+          // Non-declaring artifact store (e.g. JsonFileFailedAttemptStore — issue #207 PR-2, D3 §5
           // residual 4): the sidecar delete remains UNFENCED, a named residual (telemetry-grade,
           // best-effort by that store's own contract — not run-record evidence, not
           // acknowledged-durable data; the anchor stays #184-protected regardless).
@@ -610,12 +610,12 @@ export const purgeCommand = new Command('purge')
         process.exit(1);
       }
 
-      const { JsonFileStore, FailedAttemptStore, JsonWorkflowStore } =
+      const { JsonFileStore, JsonFileFailedAttemptStore, JsonWorkflowStore } =
         await import('@sensigo/realm');
       const { JsonTraceBufferStore } = await import('@sensigo/realm-mcp');
       const runStore = new JsonFileStore();
       const runsDir = runStore.runsDirPath;
-      const failedAttemptStore = new FailedAttemptStore(runsDir);
+      const failedAttemptStore = new JsonFileFailedAttemptStore(runsDir);
       // The run reader is the anchor store: the `run_at_version` fence (issue #715 (a)) is evaluated
       // against it, inside the trace buffer's own critical section (issue #616 PR-0).
       const traceBufferStore = new JsonTraceBufferStore(runsDir, runStore);
@@ -626,7 +626,7 @@ export const purgeCommand = new Command('purge')
       // absence via source-text; do not re-add it here.
       const artifactStores: PerRunArtifactStore[] = [
         traceBufferStore, // JsonTraceBufferStore
-        failedAttemptStore, // FailedAttemptStore
+        failedAttemptStore, // JsonFileFailedAttemptStore
       ];
 
       const dryRun = opts.force !== true;

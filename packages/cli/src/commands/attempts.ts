@@ -68,14 +68,14 @@ export const attemptsCommand = new Command('attempts')
     const {
       JsonFileStore,
       JsonWorkflowStore,
-      FailedAttemptStore,
+      JsonFileFailedAttemptStore,
       getWorkflowForRun,
       moreOf,
       renderProblemsLines,
       WorkflowError,
     } = await import('@sensigo/realm');
     const runs = new JsonFileStore();
-    const store = new FailedAttemptStore(runs.runsDirPath);
+    const store = new JsonFileFailedAttemptStore(runs.runsDirPath);
     try {
       // #729 PR-3 correction 3 (H-7''): the run's declared values are read as `inspect` reads them,
       // so its stored values are masked with them — and withheld under a failed or changed manifest

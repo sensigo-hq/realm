@@ -2,9 +2,8 @@
 import { isDeepStrictEqual } from 'node:util';
 import chalk from 'chalk';
 import { Command } from 'commander';
-import type { RunRecord, EvidenceSnapshot } from '@sensigo/realm';
+import type { RunRecord, EvidenceSnapshot, ReplayRecord } from '@sensigo/realm';
 import { formatPrecondColumn } from './replay-format.js';
-import type { ReplayRecord } from '../store/replay-store.js';
 import {
   digestSpan,
   noteRunManifest,

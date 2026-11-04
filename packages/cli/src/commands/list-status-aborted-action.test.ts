@@ -8,7 +8,7 @@
 //
 // $HOME-override timing (drain.test.ts's own documented #285 leak class): `list.ts` has a
 // TOP-LEVEL VALUE import of `@sensigo/realm` (`classifyRunHealth`/`deriveRunPhase`/
-// `DEFAULT_IDLE_THRESHOLD_MS`/`FailedAttemptStore`) — merely importing `list.js`, even dynamically,
+// `DEFAULT_IDLE_THRESHOLD_MS`/`JsonFileFailedAttemptStore`) — merely importing `list.js`, even dynamically,
 // eagerly evaluates `@sensigo/realm`'s module graph, including `JsonFileStore`'s module-load-time
 // `DEFAULT_RUNS_DIR = join(homedir(), ...)` capture. A STATIC top-of-file `import { listCommand }
 // from './list.js'` would therefore freeze the REAL $HOME before `beforeAll` ever runs (unlike

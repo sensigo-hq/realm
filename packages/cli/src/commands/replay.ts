@@ -1,25 +1,13 @@
 // replay command — re-evaluates preconditions with modified step outputs (read-only simulation).
 import { Command } from 'commander';
-import type { RunRecord, WorkflowDefinition } from '@sensigo/realm';
+import type { ReplayStepResult, ReplayStore, RunRecord, WorkflowDefinition } from '@sensigo/realm';
 import { checkPreconditions, buildSettlementNamespace, getWorkflowForRun } from '@sensigo/realm';
 import { formatPrecondColumn } from './replay-format.js';
-import type { ReplayStore } from '../store/replay-store.js';
 
 export interface ReplayOverride {
   step: string;
   field: string;
   value: unknown;
-}
-
-export interface ReplayStepResult {
-  step_id: string;
-  /** All preconditions passed in the original run? */
-  preconditions_original: boolean;
-  /** All preconditions pass with overridden evidence? */
-  preconditions_replay: boolean;
-  changed: boolean;
-  /** True when the step has at least one precondition defined. */
-  has_preconditions: boolean;
 }
 
 /** Parses a literal string into a typed value (number, boolean, or string). */

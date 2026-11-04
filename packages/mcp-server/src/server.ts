@@ -8,7 +8,7 @@ import {
   ExtensionRegistry,
   JsonWorkflowStore,
   JsonFileStore,
-  FailedAttemptStore,
+  JsonFileFailedAttemptStore,
   WorkflowError,
   createDefaultRegistry,
   formWaitInert,
@@ -421,7 +421,7 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
     // inside the trace buffer's own critical section (issue #616 PR-0).
     traceBufferStore =
       options?.traceBufferStore ?? new JsonTraceBufferStore(runsDirPath, effectiveRunStore);
-    failedAttemptStore = options?.failedAttemptStore ?? new FailedAttemptStore(runsDirPath);
+    failedAttemptStore = options?.failedAttemptStore ?? new JsonFileFailedAttemptStore(runsDirPath);
   } else {
     // The run store cannot supply an artifact directory (e.g. a Postgres-backed RunStore) AND no
     // artifact stores were injected — a misconfiguration. Fail loud rather than silently deriving
