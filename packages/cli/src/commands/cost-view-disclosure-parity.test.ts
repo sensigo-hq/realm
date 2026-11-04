@@ -506,6 +506,15 @@ const STEP_LINE_COST_VIEW = {
           'or the endpoint dropped the request to cache',
       ),
   },
+  // caching 3-B (A6): on the split render.
+  cache_head: {
+    surface: 'rendered',
+    probe: () => expect(SPLIT.stepLine).toContain(`; ${SPLIT_WORDS.head}`),
+  },
+  cache_fields_refused: {
+    surface: 'rendered',
+    probe: () => expect(SPLIT.stepLine).toContain(`; ${SPLIT_WORDS.refused}`),
+  },
 } satisfies Record<keyof CostView, DisclosureRoute>;
 
 // issue #600 PR 2: each field of one ask, on the step line.
@@ -537,6 +546,11 @@ const STEP_LINE_CACHE_REQUESTED_ENTRY = {
         // #898: the fixture predates priced auto (gaps, no prices).
         "; auto: the last 5 gaps between this workflow's triggers were about 10 seconds, 10 seconds, 10 seconds, 2 hours and 2 hours; price source not recorded (this request was recorded before Realm priced auto from the price file))",
       ),
+  },
+  // caching 3-B (D2): the key branch, on the split render.
+  key_sent: {
+    surface: 'rendered',
+    probe: () => expect(SPLIT.stepLine).toContain(SPLIT_WORDS.ask),
   },
 } satisfies Record<keyof CacheRequestedEntry, DisclosureRoute>;
 
@@ -616,6 +630,51 @@ const STEP_LINE_STEP_VIEW = {
 /** issue #600 caching PR P: the priced renders, filled by each context's runner before its probes. */
 const PRICED = { stepLine: '', failureLine: '' };
 
+// caching 3-B (A6): a third render per context. An OpenAI drive to a custom endpoint whose setting
+// was stated: its first request carried the cache key; a later one was answered 400 naming
+// `prompt_cache_key`, was sent again without it, and that worked (the refusal on its record).
+const SPLIT = { stepLine: '', failureLine: '' };
+const SPLIT_FACTS = {
+  provider: 'openai',
+  endpoint: 'custom',
+  cache_requested: 'provider_rules',
+  cache_requested_source: 'stated',
+  cache_requested_by: 'realm agent',
+  prompt_tokens: 900,
+  output_tokens: 5,
+  prefix_sha256: 'a'.repeat(64),
+  prefix_chars: 48,
+  prefix_parts: { system: 'b'.repeat(64), prompt: 'a'.repeat(64) },
+  request_strict_sent: false,
+};
+const SPLIT_REQUESTS = [
+  {
+    request_index: 0,
+    request_start: '2026-01-01T00:00:00.000Z',
+    ...SPLIT_FACTS,
+    cache_marked: ['key'],
+    cache_key_sent: true,
+  },
+  {
+    request_index: 1,
+    request_start: '2026-01-01T00:00:01.000Z',
+    ...SPLIT_FACTS,
+    cache_controls_rejected: {
+      status: 400,
+      dropped: ['cache_fields'],
+      proven: 'cache_fields',
+      fields: ['prompt_cache_key'],
+    },
+  },
+];
+/** The split line's words, on either context. */
+const SPLIT_WORDS = {
+  ask: "asked for nothing but a cache key, a hint (the provider's own caching applies), then asked for nothing (the provider's own caching, if any, applies)",
+  head: 'cached head: 48 characters (marked: key), then 48 characters (nothing marked)',
+  refused:
+    'the endpoint refused the cache fields (400); sent without them for the rest of the drive — to stop sending them: --prompt-cache off',
+};
+
 // issue #600 caching PR P: a second run, rendered with `PRICES`. `gateway_step` is the gateway
 // fixture; `mixed_step` has two attempts (the second with a request per source and one with no
 // model); the three unmeasured attempts and a failed drive no longer on the record feed the run's
@@ -641,6 +700,15 @@ const pricedAttempt = (
     cache: { state, basis: 'provider_reported' as const, requests },
   },
 });
+// caching 3-B (A6): one step whose requests carry the split's facts.
+const splitStepRun = {
+  ...contextOneRun,
+  id: 'run_ctx1s',
+  in_progress_steps: [],
+  claims: undefined,
+  evidence: [pricedAttempt('split_step', 'success', 'never_engaged', SPLIT_REQUESTS)],
+  drive_failures: undefined,
+} as unknown as RunRecord;
 const pricedStepRun = {
   ...contextOneRun,
   id: 'run_ctx1p',
@@ -793,6 +861,7 @@ describe('#600 PR 1b (D4) — context 1, the step line', () => {
     PRICED.stepLine = await inspectRun('run_ctx1p', makeStore(pricedStepRun), workflowStore, {
       priceSource: PRICES,
     });
+    SPLIT.stepLine = await inspectRun('run_ctx1s', makeStore(splitStepRun), workflowStore);
     for (const registry of [
       STEP_LINE_COST_VIEW,
       STEP_LINE_CACHE_REQUESTED_ENTRY,
@@ -1136,10 +1205,30 @@ const FAILURE_COST_VIEW = {
           'or the endpoint dropped the request to cache',
       ),
   },
+  // caching 3-B (A6): on the split render's failure block.
+  cache_head: {
+    surface: 'rendered',
+    probe: () => expect(SPLIT.failureLine).toContain(`; ${SPLIT_WORDS.head}`),
+  },
+  cache_fields_refused: {
+    surface: 'rendered',
+    probe: () => expect(SPLIT.failureLine).toContain(`; ${SPLIT_WORDS.refused}`),
+  },
 } satisfies Record<keyof CostView, DisclosureRoute>;
 
 // issue #600 caching PR P: three failed drives, rendered with `PRICES` — the gateway fixture, the
 // mixed requests, and one request from the runner's file at its current price.
+// caching 3-B (A6): the split requests on a failed drive.
+const splitFailureRun = {
+  ...contextTwoRun,
+  id: 'run_ctx2s',
+  drive_failures: {
+    first_failed_at: ENTRY_A.at,
+    total: 1,
+    entries: [{ ...ENTRY_A, usage: SPLIT_REQUESTS }],
+  },
+} as unknown as RunRecord;
+
 const pricedFailureRun = {
   ...contextTwoRun,
   id: 'run_ctx2p',
@@ -1230,6 +1319,11 @@ const FAILURE_CACHE_REQUESTED_ENTRY = {
         "; auto: the last 5 gaps between this workflow's triggers were about 10 seconds, 10 seconds, 10 seconds, 2 hours and 2 hours; price source not recorded (this request was recorded before Realm priced auto from the price file))",
       ),
   },
+  // caching 3-B (D2): the key branch, on the split render's failure block.
+  key_sent: {
+    surface: 'rendered',
+    probe: () => expect(SPLIT.failureLine).toContain(SPLIT_WORDS.ask),
+  },
 } satisfies Record<keyof CacheRequestedEntry, DisclosureRoute>;
 
 const FAILURE_COST_FIGURE = {
@@ -1274,6 +1368,7 @@ describe('#600 PR 1b (D4) — context 2, the failure block', () => {
     PRICED.failureLine = await inspectRun('run_ctx2p', makeStore(pricedFailureRun), workflowStore, {
       priceSource: PRICES,
     });
+    SPLIT.failureLine = await inspectRun('run_ctx2s', makeStore(splitFailureRun), workflowStore);
     for (const registry of [
       FAILURE_COST_VIEW,
       FAILURE_CACHE_REQUESTED_ENTRY,

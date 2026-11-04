@@ -500,6 +500,42 @@ export type RequestFactAbsentCause = (typeof REQUEST_FACT_ABSENT_CAUSES)[number]
  * adapter maps its own provider's fields onto `prompt_tokens` and `uncached_input_tokens` using its
  * own provider's semantics — this record's own arithmetic must never be re-derived at a render site.
  */
+/**
+ * Caching 3-B (A6, C5): the cache field names Realm itself adds to a request — Anthropic's
+ * `cache_control` markers and OpenAI's `prompt_cache_key` — the closed set a recorded refusal names.
+ * Normalised at the write: any other name drops the fact.
+ */
+export const CACHE_CONTROL_FIELDS = ['cache_control', 'prompt_cache_key'] as const;
+export type CacheControlField = (typeof CACHE_CONTROL_FIELDS)[number];
+
+/**
+ * Caching 3-B (A6): what carried a cache marker, or OpenAI's key, on one request: Anthropic's
+ * `system` text and the prompt's head block, or OpenAI's `key`. (A `breakpoint` is #896's, not 3-B's.)
+ */
+export const CACHE_MARKED_PARTS = ['system', 'prompt', 'key'] as const;
+export type CacheMarkedPart = (typeof CACHE_MARKED_PARTS)[number];
+
+/** Caching 3-B (A6): the SHA-256 of each part of a request's cached start, as sent (64 lowercase hex). */
+export interface PrefixParts {
+  tools?: string;
+  system: string;
+  prompt?: string;
+  format?: string;
+}
+
+/**
+ * Caching 3-B (A6, E3, HB7): a custom endpoint answered 400 naming a cache field Realm added, and a
+ * retry without the cache fields worked. `proven` is `cache_fields` when the request that worked
+ * dropped only the cache fields, `none` when it also dropped strict (#311's ladder ran on the retry's
+ * 400). What the provider said stays in the verbatim error facts (`api_param`, `api_code`, #313).
+ */
+export interface CacheControlsRejected {
+  status: 400;
+  dropped: 'cache_fields'[];
+  proven: 'cache_fields' | 'none';
+  fields: readonly CacheControlField[];
+}
+
 export interface UsageRecord {
   /**
    * 0-based, in wire order — across a step's schema-repair calls too. A step is 1 to 21+ wire
@@ -596,6 +632,29 @@ export interface UsageRecord {
    * `sameRequest` answers `false` for such a record.
    */
   request_id?: string;
+  /**
+   * Caching 3-B (A6, B2): the SHA-256 of the prompt's cached HEAD as sent (its UTF-8 bytes), as 64
+   * lowercase hex characters with no prefix. On OpenAI it is also the cache key. On Anthropic's
+   * one-block shape the head is the whole prompt text. The system text's hash is
+   * `prefix_parts.system`'s. Written only on a request whose prompt was split.
+   */
+  prefix_sha256?: string;
+  /** Caching 3-B (A6): the head's length as sent, after disclosure, in UTF-16 code units. */
+  prefix_chars?: number;
+  /** Caching 3-B (A6): a SHA-256 per part of the request's cached start, as sent. */
+  prefix_parts?: PrefixParts;
+  /** Caching 3-B (A6): what carried a cache marker or the key on this request; absent after a
+   *  remembered drop (nothing carried one). */
+  cache_marked?: CacheMarkedPart[];
+  /** Caching 3-B (A6, C5): whether this request carried strict structured output (D3's
+   *  `strict_sent`, renamed: `tool_args.tools[].strict_sent` already uses that word). */
+  request_strict_sent?: boolean;
+  /** Caching 3-B (A6, E3): the endpoint's refusal of Realm's cache fields, recorded on the request
+   *  whose retry without them worked, and on every later request of the drive. */
+  cache_controls_rejected?: CacheControlsRejected;
+  /** Caching 3-B (A6, D2): this OpenAI request carried the cache key (`cache_requested` stays
+   *  `provider_rules`: the key is a hint, not an ask). */
+  cache_key_sent?: true;
 }
 
 /** Issue #600 — the per-step roll-up plus the per-request detail. */

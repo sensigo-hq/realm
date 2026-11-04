@@ -12,11 +12,13 @@
 // these functions — a non-array, `null` entries, non-object entries, `evidence` or
 // `drive_failures` shaped wrong — makes any of them throw. A malformed record degrades to an
 // absence or an `'unknown'` field, never an exception that takes the whole render down with it.
-import type {
-  CacheAuto,
-  CacheAutoPricesView,
-  RequestFactAbsentCause,
-  RunRecord,
+import {
+  CACHE_MARKED_PARTS,
+  type CacheAuto,
+  type CacheAutoPricesView,
+  type CacheMarkedPart,
+  type RequestFactAbsentCause,
+  type RunRecord,
 } from '../types/run-record.js';
 import { normalizeCacheAuto } from '../economics/cache-lifetime.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
@@ -94,6 +96,11 @@ export interface CostView {
    * (PR 2's rule). Present iff `requests > 0`.
    */
   endpoints?: CostEndpoints;
+  /** Caching 3-B (A6): the cached head the requests sent, and what marked it. */
+  cache_head?: CostCacheHead;
+  /** Caching 3-B (A6, E3): the requests on which the endpoint's refusal of the cache fields is
+   *  recorded. */
+  cache_fields_refused?: CostCacheFieldsRefused;
   /**
    * Issue #600 caching PR P — what the requests cost, priced at read by the host's price source.
    * Present only when a price source was given and `requests > 0`; never stored.
@@ -198,6 +205,26 @@ export interface CacheRequestedEntry {
   source?: string;
   by?: string;
   auto?: Omit<CacheAuto, 'prices'> & { prices?: CacheAutoPricesView };
+  /** Caching 3-B (D2): with `provider_rules`, the requests of this ask carried OpenAI's cache key. */
+  key_sent?: true;
+}
+
+/**
+ * Caching 3-B (A6): the cached head of a step's requests — each distinct `prefix_chars` with what
+ * carried a marker or the key (`marked`; absent after the endpoint refused the cache fields), in
+ * request order. Present iff a request records a readable `prefix_chars`.
+ */
+export interface CostCacheHead {
+  entries: { chars: number; marked?: CacheMarkedPart[] }[];
+}
+
+/**
+ * Caching 3-B (A6, E3): how many of a step's requests (`of`) recorded that the endpoint refused
+ * Realm's cache fields (`refused`). Present iff at least one did.
+ */
+export interface CostCacheFieldsRefused {
+  refused: number;
+  of: number;
 }
 
 /**
@@ -349,6 +376,7 @@ function composeCacheRequested(requests: readonly unknown[]): CostCacheRequested
       ...(typeof source === 'string' ? { source } : {}),
       ...(by !== undefined ? { by } : {}),
       ...(auto !== undefined ? { auto } : {}),
+      ...(fieldOf(r, 'cache_key_sent') === true ? { key_sent: true as const } : {}),
     };
     // `auto` is normalised (its keys in one order) and its typed absence derived deterministically
     // (#898), so two requests with the same basis, gaps and prices make one entry whatever key
@@ -360,6 +388,7 @@ function composeCacheRequested(requests: readonly unknown[]): CostCacheRequested
       entry.source,
       entry.by,
       entry.auto,
+      entry.key_sent,
     ]);
     if (seen.has(key)) continue;
     seen.add(key);
@@ -367,6 +396,40 @@ function composeCacheRequested(requests: readonly unknown[]): CostCacheRequested
   }
   if (reported === 0) return requestFactAbsence(requests);
   return { entries, reported, of: requests.length };
+}
+
+/** Caching 3-B (A6): the distinct heads the requests recorded, or `undefined` when none did. */
+function composeCacheHead(requests: readonly unknown[]): CostCacheHead | undefined {
+  const entries: CostCacheHead['entries'] = [];
+  const seen = new Set<string>();
+  for (const r of requests) {
+    const chars = fieldOf(r, 'prefix_chars');
+    if (typeof chars !== 'number' || !Number.isSafeInteger(chars) || chars < 0) continue;
+    const raw = fieldOf(r, 'cache_marked');
+    const marked =
+      Array.isArray(raw) &&
+      raw.length > 0 &&
+      raw.every((w) => (CACHE_MARKED_PARTS as readonly unknown[]).includes(w))
+        ? (raw as CacheMarkedPart[])
+        : undefined;
+    const key = JSON.stringify([chars, marked]);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    entries.push({ chars, ...(marked !== undefined ? { marked: [...marked] } : {}) });
+  }
+  return entries.length > 0 ? { entries } : undefined;
+}
+
+/** Caching 3-B (A6, E3): the requests whose record holds the endpoint's refusal of the cache fields. */
+function composeCacheFieldsRefused(
+  requests: readonly unknown[],
+): CostCacheFieldsRefused | undefined {
+  let refused = 0;
+  for (const r of requests) {
+    const rejected = fieldOf(r, 'cache_controls_rejected');
+    if (rejected !== null && typeof rejected === 'object' && !Array.isArray(rejected)) refused += 1;
+  }
+  return refused > 0 ? { refused, of: requests.length } : undefined;
 }
 
 /** Issue #600 caching PR P — the custom-endpoint count, or the typed absence by PR 2's rule. */
@@ -573,6 +636,11 @@ export function composeCostView(
   );
   if (write1h !== undefined) view.cache_write_1h = write1h;
   // issue #600 caching PR P: where the requests went, and what they cost.
+  // caching 3-B (A6): the cached head and the endpoint's refusal of the cache fields.
+  const head = composeCacheHead(requests);
+  if (head !== undefined) view.cache_head = head;
+  const refused = composeCacheFieldsRefused(requests);
+  if (refused !== undefined) view.cache_fields_refused = refused;
   if (requests.length > 0) {
     view.endpoints = composeEndpoints(requests);
     const source = deps?.priceSource;

@@ -659,16 +659,35 @@ const PEM_DASHES = '-----';
  */
 export function disclose(text: string, set: DisclosureSet, tier: DisclosureTier): Disclosed {
   const { marks, memberAt } = markText(text, set, tier);
-  const n = text.length;
-  const hidden: HiddenCounts = { declared: 0, environment: 0, pattern: 0 };
   const members = new Set<number>();
+  const { out, hidden } = emitRuns(text, marks, memberAt, 0, text.length, members);
+  return {
+    text: out,
+    hidden,
+    unchecked: 0,
+    ...(memberAt !== undefined ? { members: [...members].map((m) => set.sources[m]!) } : {}),
+  };
+}
+
+/** `disclose`'s emit loop over `text[from, to)`: each maximal marked run becomes ONE marker, counted by
+ *  the highest kind inside it; the members that marked it are added to `members`. A range whose ends
+ *  sit on run boundaries emits exactly its share of `disclose`'s text. */
+function emitRuns(
+  text: string,
+  marks: Uint8Array,
+  memberAt: Int32Array | undefined,
+  from: number,
+  to: number,
+  members: Set<number>,
+): { out: string; hidden: HiddenCounts } {
+  const hidden: HiddenCounts = { declared: 0, environment: 0, pattern: 0 };
   let out = '';
-  let k = 0;
-  while (k < n) {
-    const from = k;
+  let k = from;
+  while (k < to) {
+    const start = k;
     if (marks[k] !== 0) {
       let top = 0;
-      while (k < n && marks[k] !== 0) {
+      while (k < to && marks[k] !== 0) {
         top = Math.max(top, marks[k]!);
         if (memberAt !== undefined && memberAt[k]! >= 0) members.add(memberAt[k]!);
         k++;
@@ -678,16 +697,85 @@ export function disclose(text: string, set: DisclosureSet, tier: DisclosureTier)
       else hidden.pattern++;
       out += REDACTED_MARKER;
     } else {
-      while (k < n && marks[k] === 0) k++;
-      out += text.slice(from, k);
+      while (k < to && marks[k] === 0) k++;
+      out += text.slice(start, k);
     }
   }
+  return { out, hidden };
+}
+
+/** Caching 3-B (C2, A4): a text disclosed in two pieces, cut where a provider's cache head ends. */
+export interface DisclosedSplit {
+  /** The disclosed `text.slice(0, cutSent)`. */
+  head: string;
+  /** The disclosed rest. `head + tail` is `disclose(text, set, tier).text`. */
+  tail: string;
+  /** Where the cut landed, in the INPUT text's coordinates: `cut`, or moved back to the start of a
+   *  marked run that crossed it. Internal: never recorded. */
+  cutSent: number;
+  hiddenHead: HiddenCounts;
+  hiddenTail: HiddenCounts;
+  /** As {@link disclose} reports it. */
+  unchecked: number;
+}
+
+/**
+ * Caching 3-B (C2, M5, D4.6-5; MA 1's condition (d)): {@link disclose} cut in two at `cut` (input
+ * coordinates, clamped to `[0, text.length]`), from the ONE marking pass `disclose` uses. A marked run
+ * that crosses the cut (`marks[cut-1] ≠ 0 ∧ marks[cut] ≠ 0`) moves the cut back to the run's start —
+ * across two adjacent runs, to the first one's start, since adjacent marks are one run — so no head
+ * ever holds part of a hidden value, and `head + tail` is exactly `disclose`'s text (the law cell
+ * proves it at every cut). Callers (pinned by a source cell): `discloseForAgentSplit` (the CLI), the
+ * MCP door's `stable_prefix`, and {@link discloseSplitSize}. Never a print path or the writer.
+ */
+export function discloseSplit(
+  text: string,
+  cut: number,
+  set: DisclosureSet,
+  tier: DisclosureTier,
+): DisclosedSplit {
+  const { marks } = markText(text, set, tier);
+  const n = text.length;
+  let c = Math.max(0, Math.min(n, Math.trunc(cut)));
+  if (c > 0 && c < n && marks[c - 1] !== 0 && marks[c] !== 0) {
+    while (c > 0 && marks[c - 1] !== 0) c--;
+  }
+  const unused = new Set<number>();
+  const head = emitRuns(text, marks, undefined, 0, c, unused);
+  const tail = emitRuns(text, marks, undefined, c, n, unused);
   return {
-    text: out,
-    hidden,
+    head: head.out,
+    tail: tail.out,
+    cutSent: c,
+    hiddenHead: head.hidden,
+    hiddenTail: tail.hidden,
     unchecked: 0,
-    ...(memberAt !== undefined ? { members: [...members].map((m) => set.sources[m]!) } : {}),
   };
+}
+
+/**
+ * Caching 3-B (MA1-3B-01, MA 2's F2 ruling): the sizes of {@link discloseSplit}'s pieces, and NOTHING
+ * of their text — numbers only, so a caller that must never hold a disclosed head (PR 5's describer:
+ * `validate`, `register`, `watch`) imports this, never `discloseSplit`. `headAsciiChars` counts the
+ * head's UTF-16 code units below 0x80, so the describer's token interval is the one its text gives.
+ */
+export function discloseSplitSize(
+  text: string,
+  cut: number,
+  set: DisclosureSet,
+  tier: DisclosureTier,
+): DisclosedSplitSize {
+  const { head, tail } = discloseSplit(text, cut, set, tier);
+  let headAsciiChars = 0;
+  for (let i = 0; i < head.length; i += 1) if (head.charCodeAt(i) < 0x80) headAsciiChars += 1;
+  return { headChars: head.length, tailChars: tail.length, headAsciiChars };
+}
+
+/** {@link discloseSplitSize}'s return: numbers only (a source cell pins that no field is a string). */
+export interface DisclosedSplitSize {
+  headChars: number;
+  tailChars: number;
+  headAsciiChars: number;
 }
 
 /**

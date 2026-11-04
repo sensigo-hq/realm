@@ -588,7 +588,10 @@ function askEntryText(entry: CacheRequestedEntry): string {
   if (entry.value === 'off')
     return `asked for no caching (${askSourceText(entry)}${autoFor('off')})`;
   if (entry.value === 'provider_rules') {
-    return "asked for nothing (the provider's own caching, if any, applies)";
+    // caching 3-B (D2): OpenAI's cache key is a hint, not an ask.
+    return entry.key_sent === true
+      ? "asked for nothing but a cache key, a hint (the provider's own caching applies)"
+      : "asked for nothing (the provider's own caching, if any, applies)";
   }
   if (entry.value !== 'lifetime') return `asked: unrecognized ${quotedForTerminal(entry.value)}`;
   if (entry.lifetime_s === undefined) return 'asked for a lifetime the record does not state';
@@ -626,13 +629,17 @@ function requestFactsText(cost: CostView): { model?: string; ask?: string } {
         : base;
   }
   const asked = cost.cache_requested;
+  // caching 3-B (E4): a recorded refusal of the cache fields says why nothing was cached; the
+  // nothing-written clause and its gateway reason are not printed beside it.
+  const refused = cost.cache_fields_refused !== undefined;
+  const clauses: string[] = [];
   if (asked !== undefined && !('absent_cause' in asked)) {
-    const clauses = [
+    clauses.push(
       asked.entries.map(askEntryText).join(', then ') +
         (asked.reported < asked.of
           ? ` (recorded by ${asked.reported} of ${asked.of} requests)`
           : ''),
-    ];
+    );
     const only = asked.entries.length === 1 ? asked.entries[0] : undefined;
     if (only?.value === 'lifetime') {
       const kept5m = cost.cache_write_5m?.value ?? 0;
@@ -650,6 +657,7 @@ function requestFactsText(cost: CostView): { model?: string; ask?: string } {
     const zeroFromEvery = (fig: CostFigure | undefined): boolean =>
       fig !== undefined && fig.reported === fig.of && fig.value === 0;
     if (
+      !refused &&
       asked.entries.some((e) => e.value === 'lifetime') &&
       zeroFromEvery(cost.cache_read) &&
       zeroFromEvery(cost.cache_write)
@@ -662,8 +670,27 @@ function requestFactsText(cost: CostView): { model?: string; ask?: string } {
           (gateway ? ', or the endpoint dropped the request to cache' : ''),
       );
     }
-    out.ask = clauses.join('; ');
   }
+  // caching 3-B (A6): the cached head the requests sent, and what carried a marker or the key.
+  if (cost.cache_head !== undefined) {
+    clauses.push(
+      'cached head: ' +
+        cost.cache_head.entries
+          .map(
+            (e) =>
+              `${e.chars} characters (` +
+              (e.marked !== undefined ? `marked: ${e.marked.join(', ')}` : 'nothing marked') +
+              ')',
+          )
+          .join(', then '),
+    );
+  }
+  if (refused) {
+    clauses.push(
+      'the endpoint refused the cache fields (400); sent without them for the rest of the drive — to stop sending them: --prompt-cache off',
+    );
+  }
+  if (clauses.length > 0) out.ask = clauses.join('; ');
   return out;
 }
 

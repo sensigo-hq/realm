@@ -446,6 +446,27 @@ export interface RenderTemplateOptions {
    * scan for unresolved placeholders reads the same text it read before the hook.
    */
   onSubstitution?: (rendered: string, path: string) => string;
+  /**
+   * Caching 3-B (C1): a pure OBSERVER, called for EVERY placeholder — resolved or not — after its
+   * replacement text is final (after {@link onSubstitution} has returned). Its return is ignored: it
+   * cannot change the output. `start`/`end` are the replacement's offsets in the OUTPUT, accumulated
+   * from the actual replacement lengths (an unresolved placeholder's re-emitted text counts).
+   */
+  onPlaceholder?: (event: PlaceholderEvent) => void;
+}
+
+/**
+ * Caching 3-B (C1): one placeholder as rendered. `resolved` is true exactly when a value came out of
+ * it — the same funnel that calls {@link RenderTemplateOptions.onSubstitution}, never a comparison
+ * of the output with `{{ … }}` (a value can be that text). `filters` is its chain's filter names, in
+ * order; `path` is the text before the first `|`, trimmed.
+ */
+export interface PlaceholderEvent {
+  path: string;
+  filters: readonly string[];
+  resolved: boolean;
+  start: number;
+  end: number;
 }
 
 /**
@@ -472,10 +493,17 @@ export function renderTemplate(
   },
   options?: RenderTemplateOptions,
 ): string {
-  // A resolved value passes through the hook when one is given; an unresolved one never does.
-  const resolved = (rendered: string, path: string): string =>
-    options?.onSubstitution !== undefined ? options.onSubstitution(rendered, path) : rendered;
-  return template.replace(TEMPLATE_PLACEHOLDER, (_match, expr: string) => {
+  // One placeholder's replacement, and whether a value came out of it: a resolved value passes
+  // through the hook when one is given (and only a resolved one does — `resolved()` is the funnel the
+  // observer's `resolved` reads).
+  let came: boolean;
+  const resolved = (rendered: string, path: string): string => {
+    came = true;
+    return options?.onSubstitution !== undefined
+      ? options.onSubstitution(rendered, path)
+      : rendered;
+  };
+  const replacementOf = (expr: string): string => {
     const pipeIdx = expr.indexOf('|');
     const hasFilters = pipeIdx !== -1;
 
@@ -532,7 +560,126 @@ export function renderTemplate(
     if (current === undefined || current === null) return `{{ ${fullExpr} }}`;
     if (typeof current === 'string') return resolved(current, rawPath);
     return resolved(JSON.stringify(current, null, 2), rawPath);
+  };
+  // The text between placeholders is copied as is, and each placeholder's replacement is inserted
+  // literally (as `String.prototype.replace` inserts a replacer function's return): the output is
+  // byte-identical to the former `template.replace(TEMPLATE_PLACEHOLDER, …)`, with or without an
+  // observer.
+  let out = '';
+  let last = 0;
+  for (const m of template.matchAll(TEMPLATE_PLACEHOLDER)) {
+    const expr = m[1]!;
+    out += template.slice(last, m.index);
+    came = false;
+    const text = replacementOf(expr);
+    const start = out.length;
+    out += text;
+    last = m.index + m[0].length;
+    if (options?.onPlaceholder !== undefined) {
+      const pipeIdx = expr.indexOf('|');
+      options.onPlaceholder({
+        path: (pipeIdx === -1 ? expr : expr.slice(0, pipeIdx)).trim(),
+        filters: pipeIdx === -1 ? [] : parseFilters(expr).map((f) => f.name),
+        resolved: came,
+        start,
+        end: out.length,
+      });
+    }
+  }
+  return out + template.slice(last);
+}
+
+/**
+ * Caching 3-B (C1, D4.4-3): whether a filter's output depends only on its input. `from_now` reads
+ * the clock: UNSTABLE. `date` and `sort` are STABLE per runner only — `date` parses a zone-less
+ * string in the runner's zone, `sort` compares by the runner's locale — the named exceptions to the
+ * differential cell, their per-runner cost recorded. Keyed by EVERY case label of
+ * {@link applyFilter}'s switch (a witness cell parses the switch and compares the key sets);
+ * `wrapContent`'s three are not filters. A name not in the table is UNSTABLE.
+ */
+export const FILTER_STABILITY = {
+  bullets: 'stable',
+  join: 'stable',
+  default: 'stable',
+  upper: 'stable',
+  lower: 'stable',
+  capitalize: 'stable',
+  truncate: 'stable',
+  pluck: 'stable',
+  count: 'stable',
+  limit: 'stable',
+  compact: 'stable',
+  round: 'stable',
+  floor: 'stable',
+  ceil: 'stable',
+  abs: 'stable',
+  number_format: 'stable',
+  percent: 'stable',
+  replace: 'stable',
+  yesno: 'stable',
+  and_join: 'stable',
+  trim: 'stable',
+  first: 'stable',
+  last: 'stable',
+  sum: 'stable',
+  flatten: 'stable',
+  split: 'stable',
+  sort: 'stable',
+  unique: 'stable',
+  title: 'stable',
+  code: 'stable',
+  indent: 'stable',
+  date: 'stable',
+  from_now: 'unstable',
+  duration: 'stable',
+} as const satisfies Record<string, 'stable' | 'unstable'>;
+
+/**
+ * Caching 3-B (C1, D4.4-3): a placeholder is STABLE — its replacement is the same on every run of the
+ * workflow — iff a value came out of it, its path is `workflow.context.*` (the workflow's own files,
+ * loaded at the run's start), and every filter in its chain is STABLE in {@link FILTER_STABILITY}. An
+ * unresolved placeholder is unstable (its text may resolve on a later run), as is any other path (a
+ * run's parameters, a step's evidence). `default` rescuing an absent context path is stable.
+ */
+export function isStablePlaceholder(event: PlaceholderEvent): boolean {
+  return (
+    event.resolved &&
+    event.path.startsWith('workflow.context.') &&
+    event.filters.every(
+      (name) =>
+        Object.hasOwn(FILTER_STABILITY, name) &&
+        FILTER_STABILITY[name as keyof typeof FILTER_STABILITY] === 'stable',
+    )
+  );
+}
+
+/** Caching 3-B (C1): where a rendered text stops repeating between runs, in UTF-16 code units. */
+export interface StableBoundary {
+  chars: number;
+  unit: 'utf16';
+}
+
+/**
+ * Caching 3-B (C1): {@link renderTemplate} with an observer that finds the FIRST UNSTABLE placeholder.
+ * `stable.chars` is that placeholder's `start` in the output, or the text's length when none is
+ * unstable: everything before it repeats on every run, so a provider can cache it. The text is
+ * byte-identical to `renderTemplate`'s (the observer cannot change it). No digest of the raw head is
+ * computed: both consumers digest the DISCLOSED head (M4). The gate mint never calls this.
+ */
+export function renderTemplateWithBoundary(
+  template: string,
+  context: Parameters<typeof renderTemplate>[1],
+  options?: RenderTemplateOptions,
+): { text: string; stable: StableBoundary } {
+  let firstUnstable: number | undefined;
+  const text = renderTemplate(template, context, {
+    ...options,
+    onPlaceholder: (event) => {
+      options?.onPlaceholder?.(event);
+      if (firstUnstable === undefined && !isStablePlaceholder(event)) firstUnstable = event.start;
+    },
   });
+  return { text, stable: { chars: firstUnstable ?? text.length, unit: 'utf16' } };
 }
 
 function resolveWorkflowContextRef(

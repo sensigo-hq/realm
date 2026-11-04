@@ -228,6 +228,74 @@ async function pricedSummary(): Promise<RunStateSummary> {
   );
 }
 
+// caching 3-B (A6): an OpenAI drive to a custom endpoint whose setting was stated. Its first request
+// carried the cache key; a later one was answered 400 naming `prompt_cache_key`, was sent again
+// without it, and that worked (the refusal on its record). On a step and on a failed drive.
+const SPLIT_FACTS = {
+  provider: 'openai',
+  endpoint: 'custom',
+  cache_requested: 'provider_rules',
+  cache_requested_source: 'stated',
+  cache_requested_by: 'realm agent',
+  prompt_tokens: 900,
+  output_tokens: 5,
+  prefix_sha256: 'a'.repeat(64),
+  prefix_chars: 48,
+  prefix_parts: { system: 'b'.repeat(64), prompt: 'a'.repeat(64) },
+  request_strict_sent: false,
+};
+const SPLIT_REQUESTS = [
+  {
+    request_index: 0,
+    request_start: '2026-01-01T00:00:00.000Z',
+    ...SPLIT_FACTS,
+    cache_marked: ['key'],
+    cache_key_sent: true,
+  },
+  {
+    request_index: 1,
+    request_start: '2026-01-01T00:00:01.000Z',
+    ...SPLIT_FACTS,
+    cache_controls_rejected: {
+      status: 400,
+      dropped: ['cache_fields'],
+      proven: 'cache_fields',
+      fields: ['prompt_cache_key'],
+    },
+  },
+];
+/** The split response: one step and one failed drive, each with the split requests. */
+async function splitSummary(): Promise<RunStateSummary> {
+  const run = {
+    ...contextThreeRun,
+    id: 'r3s',
+    evidence: [pricedAttempt('split_step', 'success', SPLIT_REQUESTS)],
+    drive_failures: {
+      first_failed_at: '2026-01-01T00:04:00.000Z',
+      total: 1,
+      entries: [
+        {
+          at: '2026-01-01T00:04:00.000Z',
+          step: 'split_step',
+          provider: 'openai',
+          error_class: 'other',
+          message: 'connection reset',
+          elapsed_ms: 1,
+          usage: SPLIT_REQUESTS,
+        },
+      ],
+    },
+  } as unknown as RunRecord;
+  return handleGetRunState({ run_id: 'r3s', include_steps: true }, { runStore: makeStore(run) });
+}
+/** What the split requests compose to, on either context. */
+const SPLIT_VIEW = {
+  cache_head: {
+    entries: [{ chars: 48, marked: ['key'] }, { chars: 48 }],
+  },
+  cache_fields_refused: { refused: 1, of: 2 },
+};
+
 const moneyStepEarly = {
   step_id: 'money_step',
   kind: 'execution' as const,
@@ -454,6 +522,8 @@ describe('#600 PR 1b (D4) — context 3, get_run_state.steps', () => {
     const gateway = priced.steps!['gateway_step']!.attempts[0]!.cost!;
     const mixed = priced.steps!['mixed_step']!;
     const mixedMoney = mixed.attempts[1]!.cost!.money!;
+    // caching 3-B (A6): the split response.
+    const split = (await splitSummary()).steps!['split_step']!.attempts[0]!.cost!;
 
     const COST_VIEW = {
       requests: { surface: 'rendered', probe: () => expect(last.requests).toBe(2) },
@@ -584,6 +654,15 @@ describe('#600 PR 1b (D4) — context 3, get_run_state.steps', () => {
             { absent_cause: 'predates_request_facts' },
           ]),
       },
+      // caching 3-B (A6): as data, on the split response.
+      cache_head: {
+        surface: 'rendered',
+        probe: () => expect(split.cache_head).toEqual(SPLIT_VIEW.cache_head),
+      },
+      cache_fields_refused: {
+        surface: 'rendered',
+        probe: () => expect(split.cache_fields_refused).toEqual(SPLIT_VIEW.cache_fields_refused),
+      },
     } satisfies Record<keyof CostView, DisclosureRoute>;
 
     // issue #600 caching PR P: each field of one money figure, as data (unrounded).
@@ -679,6 +758,16 @@ describe('#600 PR 1b (D4) — context 3, get_run_state.steps', () => {
             gaps_s: [420, 720],
             prices: { from: 'not_recorded' },
           }),
+      },
+      // caching 3-B (D2): the key, as data, on the split response's first ask.
+      key_sent: {
+        surface: 'rendered',
+        probe: () =>
+          expect(
+            (split.cache_requested as { entries: CacheRequestedEntry[] }).entries.map(
+              (e) => e.key_sent,
+            ),
+          ).toEqual([true, undefined]),
       },
     } satisfies Record<keyof CacheRequestedEntry, DisclosureRoute>;
 
@@ -1037,6 +1126,8 @@ describe('#600 PR 1b (D4) — context 4, get_run_state.drive_failure_costs', () 
     const pricedCosts = (await pricedSummary()).drive_failure_costs!;
     const gatewayCost = pricedCosts[0]!.cost!;
     const mixedMoney = pricedCosts[1]!.cost!.money!;
+    // caching 3-B (A6): the split response's failed drive.
+    const splitCost = (await splitSummary()).drive_failure_costs![0]!.cost!;
 
     const ELEMENT = {
       at: { surface: 'rendered', probe: () => expect(a.at).toBe(ENTRY_A.at) },
@@ -1156,6 +1247,16 @@ describe('#600 PR 1b (D4) — context 4, get_run_state.drive_failure_costs', () 
             { absent_cause: 'predates_request_facts' },
           ]),
       },
+      // caching 3-B (A6): as data, on the split response's failed drive.
+      cache_head: {
+        surface: 'rendered',
+        probe: () => expect(splitCost.cache_head).toEqual(SPLIT_VIEW.cache_head),
+      },
+      cache_fields_refused: {
+        surface: 'rendered',
+        probe: () =>
+          expect(splitCost.cache_fields_refused).toEqual(SPLIT_VIEW.cache_fields_refused),
+      },
     } satisfies Record<keyof CostView, DisclosureRoute>;
 
     // issue #600 caching PR P: each field of one money figure, as data (unrounded).
@@ -1215,6 +1316,16 @@ describe('#600 PR 1b (D4) — context 4, get_run_state.drive_failure_costs', () 
             gaps_s: [420, 720],
             prices: { from: 'not_recorded' },
           }),
+      },
+      // caching 3-B (D2): the key, as data, on the split response's failed drive.
+      key_sent: {
+        surface: 'rendered',
+        probe: () =>
+          expect(
+            (splitCost.cache_requested as { entries: CacheRequestedEntry[] }).entries.map(
+              (e) => e.key_sent,
+            ),
+          ).toEqual([true, undefined]),
       },
     } satisfies Record<keyof CacheRequestedEntry, DisclosureRoute>;
 

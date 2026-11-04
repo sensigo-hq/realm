@@ -89,7 +89,9 @@ export interface RunStoreFidelityContractAdapter {
  * Issue #600 PR 2 — the request facts `USAGE_RECORD_ROUNDTRIP` writes, every one with a value no store
  * default could produce (`true` for the booleans, words other than `off` and `default`). The law
  * checks each field on this list; a field left off it is a field no store is held to. Issue #715 (R)
- * adds the request's identity, `request_id`: a fixed UUID no store default could produce.
+ * adds the request's identity, `request_id`: a fixed UUID no store default could produce. Caching
+ * 3-B adds the split's seven facts: digests, a count, closed words and booleans, the objects in the
+ * shape with the most keys.
  */
 const TCK_REQUEST_FACTS: Required<
   Pick<
@@ -105,6 +107,13 @@ const TCK_REQUEST_FACTS: Required<
     | 'endpoint'
     | 'cache_split_offered'
     | 'request_id'
+    | 'prefix_sha256'
+    | 'prefix_chars'
+    | 'prefix_parts'
+    | 'cache_marked'
+    | 'request_strict_sent'
+    | 'cache_controls_rejected'
+    | 'cache_key_sent'
   >
 > = {
   model: 'tck-model-2026-01-01',
@@ -114,7 +123,8 @@ const TCK_REQUEST_FACTS: Required<
   cache_requested_source: 'stated',
   cache_requested_by: 'tck-runner',
   // issue #600 (the lifetime unit): an object no store default produces; issue #898: its `prices`
-  // in the shape with the most keys, so a store that drops or reorders a nested key fails
+  // in the shape with the most keys, so a store that drops a nested key fails (the law compares by
+  // deep equality, so a store that keeps the keys in another order passes)
   cache_auto: {
     basis: 'listen_trigger_gaps',
     gaps_s: [61, 3599],
@@ -124,6 +134,24 @@ const TCK_REQUEST_FACTS: Required<
   endpoint: 'custom',
   cache_split_offered: true,
   request_id: '715a0000-0000-4000-8000-00000000715a',
+  // caching 3-B (A6): the split's facts
+  prefix_sha256: '3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b',
+  prefix_chars: 4321,
+  prefix_parts: {
+    tools: '1111111111111111111111111111111111111111111111111111111111111111',
+    system: '2222222222222222222222222222222222222222222222222222222222222222',
+    prompt: '3333333333333333333333333333333333333333333333333333333333333333',
+    format: '4444444444444444444444444444444444444444444444444444444444444444',
+  },
+  cache_marked: ['system', 'prompt'],
+  request_strict_sent: true,
+  cache_controls_rejected: {
+    status: 400,
+    dropped: ['cache_fields'],
+    proven: 'none',
+    fields: ['cache_control', 'prompt_cache_key'],
+  },
+  cache_key_sent: true,
 };
 
 /** The program the holder laws name — a synthetic label, never a real host or user. */
