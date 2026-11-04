@@ -456,8 +456,39 @@ const quoteList = (names: readonly string[]): string => quotedNames(names, NAMES
  * (U+E000, a kind and a tag, U+E001, the text, U+E002) and prints only the text; the sentence rules
  * below read through those marks, so a line that ends with a marked command still ends with it.
  */
-function visibleText(text: string): string {
-  return text.replace(/\uE000[^\uE001\uE002]*\uE001|\uE002/g, '');
+export function visibleText(text: string): string {
+  // The language of /\uE000[^\uE001\uE002]*\uE001|\uE002/g, scanned once (CodeQL #27: the regex
+  // re-walked a run of U+E000 from every position — quadratic on a hostile question).
+  let out = '';
+  let i = 0;
+  const n = text.length;
+  while (i < n) {
+    const c = text[i]!;
+    // The second alternative: a U+E002 is dropped.
+    if (c === '\uE002') {
+      i += 1;
+      continue;
+    }
+    // No alternative starts here: the character is kept.
+    if (c !== '\uE000') {
+      out += c;
+      i += 1;
+      continue;
+    }
+    // The nearest terminator after this U+E000.
+    let t = i + 1;
+    while (t < n && text[t] !== '\uE001' && text[t] !== '\uE002') t += 1;
+    // The first alternative: drop [i, t].
+    if (t < n && text[t] === '\uE001') {
+      i = t + 1;
+      continue;
+    }
+    // No U+E000 in [i, t) can match: they all meet the same terminator.
+    out += text.slice(i, t);
+    // t is a U+E002 (dropped next) or the end.
+    i = t;
+  }
+  return out;
 }
 
 export function withFullStop(text: string): string {

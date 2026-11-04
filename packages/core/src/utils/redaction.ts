@@ -4,12 +4,53 @@
 
 import { variantsOf } from './redaction-variants.js';
 
-/** The realistic PII an API error body or a resolved evidence value echoes back: an email address. */
-const EMAIL_PATTERN = /[\w.+-]+@[\w-]+\.[\w.-]+/g;
+// The realistic PII an API error body or a resolved evidence value echoes back: an email address.
+// The three tests below read one character each: no repetition, no backtracking.
+const isLocal = (c: string): boolean => /[A-Za-z0-9_.+-]/.test(c);
+const isLabel = (c: string): boolean => /[A-Za-z0-9_-]/.test(c);
+const isTail = (c: string): boolean => /[A-Za-z0-9_.-]/.test(c);
+
+/** The index after a domain `[\w-]+\.[\w.-]+` starting at `p`, or -1. */
+function domainEnd(s: string, p: number): number {
+  const n = s.length;
+  let q = p;
+  // `[\w-]+`, greedy; it cannot contain '.', so a shorter run never helps.
+  while (q < n && isLabel(s[q]!)) q += 1;
+  if (q === p || q >= n || s[q] !== '.') return -1;
+  let r = q + 1;
+  // `[\w.-]+`, greedy; nothing follows, so the longest run is the match.
+  while (r < n && isTail(s[r]!)) r += 1;
+  return r === q + 1 ? -1 : r;
+}
 
 /** Scrubs email addresses from `s`, replacing each with `[REDACTED_EMAIL]`. */
 export function scrubEmail(s: string): string {
-  return s.replace(EMAIL_PATTERN, '[REDACTED_EMAIL]');
+  // The language of /[\w.+-]+@[\w-]+\.[\w.-]+/g, scanned once (CodeQL #28: the regex re-walked a
+  // run of local-part characters from every position — quadratic on a hostile body).
+  let out = '';
+  let i = 0;
+  const n = s.length;
+  while (i < n) {
+    if (!isLocal(s[i]!)) {
+      out += s[i];
+      i += 1;
+      continue;
+    }
+    // The run of local-part characters from i.
+    let k = i;
+    while (k < n && isLocal(s[k]!)) k += 1;
+    const end = k < n && s[k] === '@' ? domainEnd(s, k + 1) : -1;
+    // The leftmost start of the run matches: the whole run is the local part.
+    if (end > 0) {
+      out += '[REDACTED_EMAIL]';
+      i = end;
+      continue;
+    }
+    // No start inside the run can match: all of them end at the same character.
+    out += s.slice(i, k);
+    i = k;
+  }
+  return out;
 }
 
 /** Shared length cap for a bounded string, in characters. */
