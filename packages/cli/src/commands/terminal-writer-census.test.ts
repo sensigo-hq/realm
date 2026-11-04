@@ -132,9 +132,11 @@ const EXPECTED: Record<string, CensusEntry> = {
     reason: 'Resume: the seal fact leaves in the write that makes the run live.',
   },
   'packages/core/src/engine/eligibility.ts': {
-    count: 1,
-    classes: ['writer-stamped'],
-    reason: '`sealRunLevel` — the one chokepoint for the four run-level bypass writers.',
+    // #616 PR-1a unit 2b: +1, the phase fingerprint's corpus table (`RUN_PHASE_CORPUS_AXES`).
+    count: 2,
+    classes: ['writer-stamped', 'fixture-input'],
+    reason:
+      "`sealRunLevel` — the one chokepoint for the four run-level bypass writers; and the phase fingerprint corpus table, which lists the field's values (`terminal_state: [false, true]`) to build records for `deriveRunPhase` and reaches no store.",
   },
   'packages/core/src/engine/execution-loop.ts': {
     // #715 (b), C.1: 12 → 4, and the buildFinalizedSeal disable went with that function — the
@@ -421,10 +423,11 @@ describe('#367 — the terminal-writer census', () => {
   // #729 PR-3: +3 class-table rows (disclosure-tables.ts, abandon-run.ts, get-run-state.ts).
   // #715 (a): +1 (store-clock-contract.ts, the store-clock TCK's holder run), in a new file.
   // #715 (b): -8 (execution-loop.ts's legacy blocks and buildFinalizedSeal, deleted).
-  it('the post-strip total is 76 across 16 files — the figure the map is built from', () => {
+  // #616 PR-1a unit 2b: +1 (eligibility.ts, the phase fingerprint's corpus table), in a mapped file.
+  it('the post-strip total is 77 across 16 files — the figure the map is built from', () => {
     const scan = scanTerminalWriters(REPO_ROOT);
     const total = Object.values(scan.hits).reduce((n, l) => n + l.length, 0);
-    expect(total).toBe(76);
+    expect(total).toBe(77);
     expect(Object.keys(scan.hits)).toHaveLength(16);
   });
 });
