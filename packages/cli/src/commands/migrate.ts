@@ -2,7 +2,9 @@
 import { Command } from 'commander';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { atomicWriteFile, realmHomePath } from '@sensigo/realm';
+import { atomicWriteFile } from '@sensigo/realm';
+// Its own line: migrate.test.ts's T3 pins the atomicWriteFile import line word for word.
+import { realmHomePath } from '@sensigo/realm';
 
 export const migrateCommand = new Command('migrate')
   .description(
