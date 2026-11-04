@@ -87,10 +87,11 @@ describe(
         },
         'a',
       );
-      // (a) red when the sizes are left out of the describer's equality AND core compares two size
-      //     blocks by group alone: each check alone keeps these steps apart (equal raw heads differ
-      //     in disclosed size only through a moved cut, which changes the length core compares);
-      //     (b) prints the line.
+      // (a) red only when all three checks that keep these steps apart are broken: the describer's
+      //     size condition, core's length comparison of two size blocks, and the whole-share rule's
+      //     equal totals. Each alone keeps them apart: equal raw heads differ in disclosed size only
+      //     through a moved cut, which changes the length. So the describer's size condition is
+      //     never the only one deciding here (red-first, VH-sizes*); (b) prints the line.
       expect(line.includes('shares its whole fixed part'), line).toBe(false);
     });
   },
