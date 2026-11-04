@@ -25,20 +25,32 @@ describe('caching 3-B E2 — the decider, one cell per message form', () => {
       'messages.2.content.0.tool_result.cache_control: Extra inputs are not permitted',
       'Invalid JSON payload received. Unknown name "cache_control" at \'system[0]\': Cannot find field.',
       'Malformed input request: extraneous key [cache_control] is not permitted',
+      // Constructed (red-first): each phrase with a form that only it matches, so removing any one
+      // phrase turns this cell red; the forms above carry `not permitted` and `extra inputs` together.
+      'system.0.cache_control: extra inputs are forbidden',
+      'messages.0.content.0: Unrecognized field "cache_control"',
+      'system.0: unrecognised property cache_control',
+      '/system/0 must NOT have additional properties (cache_control)',
+      'cache_control cannot be set on system. It will be ignored.',
     ];
-    // (a) red when a phrase or the token is removed (its form falls through); (b) prints each
-    //     message beside its verdict.
+    // (a) red when any one phrase, or the token, is removed: each has a form only it matches;
+    //     (b) prints each message beside its verdict.
     expect(forms.map((m) => [m, verdict(err400(m))])).toEqual(
       forms.map((m) => [m, ['cache_control']]),
     );
   });
 
   it('Realm’s own faults fall through', () => {
+    // Each form carries a refusal phrase, so only its own exclusion keeps it from matching; the
+    // marker-count message as Anthropic sends it has no phrase and falls through either way.
     const forms = [
-      'messages.0.content.0.text: cache_control cannot be set for empty text blocks — non-whitespace text required',
+      'messages.0.content.0.text: cache_control cannot be set for empty text blocks',
+      'system.0.text: cache_control cannot be set: non-whitespace text required',
       'A maximum of 4 blocks with cache_control may be provided. Found 5.',
+      'A maximum of 4 blocks with cache_control may be provided; a fifth is not permitted.',
     ];
-    // (a) red when an exclusion is removed (Realm's own fault would drop the markers); (b) prints.
+    // (a) red when any one exclusion is removed (Realm's own fault would drop the markers);
+    //     (b) prints each message beside its verdict.
     expect(forms.map((m) => [m, verdict(err400(m))])).toEqual(
       forms.map((m) => [m, 'falls through']),
     );
@@ -54,6 +66,13 @@ describe('caching 3-B E2 — the decider, one cell per message form', () => {
       [
         'Azure code',
         err400('Unrecognized request argument supplied: prompt_cache_key', {
+          param: null,
+          code: 'unrecognized_request_argument',
+        }),
+      ],
+      [
+        'Azure code alone (constructed: no phrase in the message)',
+        err400('Invalid request argument supplied: prompt_cache_key', {
           param: null,
           code: 'unrecognized_request_argument',
         }),
