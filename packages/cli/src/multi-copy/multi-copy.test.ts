@@ -26,6 +26,7 @@ import {
   type Copy,
   type Layout,
 } from './layout.js';
+import { snap } from '../test-support/snapshot-double.js';
 
 type Core = typeof import('@sensigo/realm');
 type Mcp = typeof import('@sensigo/realm-mcp');
@@ -149,15 +150,15 @@ async function purgeResumedRun(
         // Calls 1–2 are purge's own selection and pre-delete re-check (still terminal). Call 3 on is
         // the fence's read from inside the trace buffer — a `realm run resume` landing exactly there.
         if (getCalls <= 2) return runStore.get(runId);
-        const fresh = await runStore.get(runId);
+        const { record: fresh } = await runStore.get(runId);
         // A real resume bumps the version (issue #715 (a): the version fence lets a
         // same-version flip through, correctly).
-        return {
+        return snap({
           ...fresh,
           version: fresh.version + 1,
           run_phase: 'running' as const,
           terminal_state: false,
-        };
+        });
       },
       list: (workflowId?: string) => runStore.list(workflowId),
       statAllForRun: (runId: string, dirEntries?: readonly string[]) =>
@@ -208,7 +209,9 @@ async function reclaimWith(
   );
   // The trace buffer reads the run through a reader that sees it ALREADY CHANGED (version 8): the
   // reclaim decision was taken at version 1.
-  const reader = { get: async (runId: string) => ({ ...(await store.get(runId)), version: 8 }) };
+  const reader = {
+    get: async (runId: string) => snap({ ...(await store.get(runId)).record, version: 8 }),
+  };
   // issue #620 PR-C: a plain-object reader declares this release's line (the store rule).
   cliCore.declareReleaseLine(reader);
   const real = new mcp.JsonTraceBufferStore(dir, reader);
@@ -229,7 +232,7 @@ async function reclaimWith(
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   try {
     const result = await cliCore.reclaimStep(store, id, 'work', { traceBufferStore: trace });
-    const after = await store.get(id);
+    const { record: after } = await store.get(id);
     return {
       outcome: result.outcome,
       warnings: warn.mock.calls.map((call) => String(call[0])),
@@ -322,7 +325,11 @@ async function runRetryingStep(handlerSource: 'own' | { dir: string }): Promise<
     attempts = () => mod.calls.length;
     registry.register('handler', 'flaky', mod.default);
   }
-  const { run } = await store.create({ workflowId: 'retry-wf', workflowVersion: 1, params: {} });
+  const { record: run } = await store.create({
+    workflowId: 'retry-wf',
+    workflowVersion: 1,
+    params: {},
+  });
   const envelope = await cliCore.executeStep(store, retryDefinition, {
     runId: run.id,
     command: 'only',
@@ -613,7 +620,11 @@ async function drainWithBusyStore(
     id: 'cleanup_h',
     execute: async () => ({ data: { cleaned: true } }),
   });
-  const { run } = await real.create({ workflowId: 'drain-wf', workflowVersion: 1, params: {} });
+  const { record: run } = await real.create({
+    workflowId: 'drain-wf',
+    workflowVersion: 1,
+    params: {},
+  });
   let thrown: string | undefined;
   try {
     await engine.executeChain(store, drainDefinition, {
@@ -1070,7 +1081,7 @@ describe('12 — the advisory: the project’s @sensigo/realm is another version
       expect(node(['workflow', 'register', workflowDir]).status).toBe(0);
       const store = new cliCore.JsonFileStore(join(home, '.realm', 'runs'));
       const attach = async (flag: string[]): Promise<string> => {
-        const { run } = await store.create({
+        const { record: run } = await store.create({
           workflowId: 'flaky-flow',
           workflowVersion: 1,
           params: {},
@@ -1115,7 +1126,11 @@ describe('13 — realm mcp / serve hand realm-mcp’s engine a registry built by
       const mcpCore = await core(layout.cli.mcpCore);
       const dir = await tempDir('reg');
       const store = new mcpCore.JsonFileStore(dir);
-      const { run } = await store.create({ workflowId: 'w', workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: 'w',
+        workflowVersion: 1,
+        params: {},
+      });
       const def = {
         id: 'w',
         name: 'w',

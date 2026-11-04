@@ -9,13 +9,9 @@ import { describe, it, expect } from 'vitest';
 import { InMemoryStore } from './in-memory-store.js';
 import { runStoreFidelityContract } from './run-store-fidelity-contract.js';
 import { settlementContract, defaultSettlementFixture } from './settlement-contract.js';
-import type {
-  Attributed,
-  RunRecord,
-  SettlementDelta,
-  SettlementResult,
-  WorkflowDefinition,
-} from '@sensigo/realm';
+import type { Attributed, RunRecord, SettlementDelta, WorkflowDefinition } from '@sensigo/realm';
+import { writtenSnapshot } from '@sensigo/realm';
+import type { Clock, Snapshot, StoreSettlement } from '@sensigo/realm';
 
 const agentWf: WorkflowDefinition = {
   id: 'holder-laws-wf',
@@ -48,7 +44,7 @@ describe('CLAIM_NAMES_HOLDER', () => {
 
   it("REJECTS a store that ignores claimStep's fourth argument (red-first)", async () => {
     class IgnoresClaimant extends InMemoryStore {
-      override claimStep(runId: string, step: string, def: WorkflowDefinition): Promise<RunRecord> {
+      override claimStep(runId: string, step: string, def: WorkflowDefinition): Promise<Snapshot> {
         return super.claimStep(runId, step, def);
       }
     }
@@ -66,12 +62,12 @@ describe('CLAIM_NAMES_HOLDER', () => {
         step: string,
         def: WorkflowDefinition,
         claimant?: Attributed,
-      ): Promise<RunRecord> {
-        const claimed = await super.claimStep(runId, step, def, claimant);
+      ): Promise<Snapshot> {
+        const { record: claimed, at } = await super.claimStep(runId, step, def, claimant);
         const { since: _s, ...claim } = claimed.claims![step]!;
         const stripped = { ...claimed, claims: { ...claimed.claims, [step]: claim } };
         (this as unknown as { runs: Map<string, RunRecord> }).runs.set(runId, stripped);
-        return stripped;
+        return writtenSnapshot(stripped, at);
       }
     }
     const cases = fidelityCases(new NoSince()).filter((c) => c.law === 'CLAIM_NAMES_HOLDER');
@@ -85,12 +81,12 @@ describe('CLAIM_NAMES_HOLDER', () => {
         step: string,
         def: WorkflowDefinition,
         claimant?: Attributed,
-      ): Promise<RunRecord> {
-        const claimed = await super.claimStep(runId, step, def, claimant);
+      ): Promise<Snapshot> {
+        const { record: claimed, at } = await super.claimStep(runId, step, def, claimant);
         const claim = { ...claimed.claims![step]!, since: '2020-01-01T00:00:00.000Z' };
         const moved = { ...claimed, claims: { ...claimed.claims, [step]: claim } };
         (this as unknown as { runs: Map<string, RunRecord> }).runs.set(runId, moved);
-        return moved;
+        return writtenSnapshot(moved, at);
       }
     }
     const cases = fidelityCases(new StaleSince()).filter((c) => c.law === 'CLAIM_NAMES_HOLDER');
@@ -99,7 +95,7 @@ describe('CLAIM_NAMES_HOLDER', () => {
 
   it('REJECTS a store that writes a holder when none was passed', async () => {
     class InventsHolder extends InMemoryStore {
-      override claimStep(runId: string, step: string, def: WorkflowDefinition): Promise<RunRecord> {
+      override claimStep(runId: string, step: string, def: WorkflowDefinition): Promise<Snapshot> {
         return super.claimStep(runId, step, def, {
           by: 'invented',
           by_source: 'derived',
@@ -134,7 +130,7 @@ describe('EVIDENCE_KEEPS_DRIVER_AND_PROOF', () => {
   it('REJECTS a store that drops driven_by, and one that drops claim_proof (red-first)', async () => {
     for (const field of ['driven_by', 'claim_proof'] as const) {
       class Dropping extends InMemoryStore {
-        override update(record: RunRecord): Promise<RunRecord> {
+        override update(record: RunRecord): Promise<Snapshot> {
           return super.update({
             ...record,
             evidence: record.evidence.map((e) => {
@@ -154,9 +150,15 @@ describe('EVIDENCE_KEEPS_DRIVER_AND_PROOF', () => {
 });
 
 describe('GATE_PROOF_NEVER_GATES_THE_ANSWER', () => {
+  // #715 (b): the time-moving cases build a fresh store of the same class on a clock they set.
   const settle = (store: InMemoryStore) =>
     settlementContract({
       store,
+      route: {
+        kind: 'clock',
+        makeStore: ({ clock }) =>
+          new (store.constructor as new (o: { clock: Clock }) => InMemoryStore)({ clock }),
+      },
       storeName: 'InMemoryStore',
       settlementFixture: defaultSettlementFixture,
     }).filter((c) => c.law === 'GATE_PROOF_NEVER_GATES_THE_ANSWER');
@@ -166,16 +168,16 @@ describe('GATE_PROOF_NEVER_GATES_THE_ANSWER', () => {
       override async settleStep(
         runId: string,
         delta: SettlementDelta,
-        def: WorkflowDefinition,
-        options?: { now?: Date },
-      ): Promise<SettlementResult> {
+        def?: WorkflowDefinition,
+      ): Promise<StoreSettlement> {
         if (delta.kind === 'settle_gate' && delta.claimToken !== undefined) {
-          const run = await this.get(runId);
+          const { record: run, at } = await this.get(runId);
           const step = run.pending_gate?.step_name;
           const real = step !== undefined ? run.claims?.[step]?.token : undefined;
-          if (real !== delta.claimToken) return { applied: false, reason: 'gate_mismatch', run };
+          if (real !== delta.claimToken)
+            return { applied: false, reason: 'gate_mismatch', run, at };
         }
-        return super.settleStep(runId, delta, def, options);
+        return super.settleStep(runId, delta, def);
       }
     }
     // (a) red when the law stops pairing the token-bearing answer with a token-less twin; (b)
@@ -188,12 +190,11 @@ describe('GATE_PROOF_NEVER_GATES_THE_ANSWER', () => {
       override async settleStep(
         runId: string,
         delta: SettlementDelta,
-        def: WorkflowDefinition,
-        options?: { now?: Date },
-      ): Promise<SettlementResult> {
-        const result = await super.settleStep(runId, delta, def, options);
+        def?: WorkflowDefinition,
+      ): Promise<StoreSettlement> {
+        const result = await super.settleStep(runId, delta, def);
         const { gateClaim: _gone, ...rest } = result;
-        return rest as SettlementResult;
+        return rest as StoreSettlement;
       }
     }
     expect(await rejects(settle(new DropsVerdict()))).toBe(true);
@@ -210,6 +211,14 @@ describe('GATE_PROOF_NEVER_GATES_THE_ANSWER', () => {
     Object.defineProperty(store, 'persistsClaims', { value: false });
     const cases = settlementContract({
       store,
+      route: {
+        kind: 'clock',
+        makeStore: ({ clock }) => {
+          const s = new InMemoryStore({ clock });
+          Object.defineProperty(s, 'persistsClaims', { value: false });
+          return s;
+        },
+      },
       storeName: 'InMemoryStore (persistsClaims: false)',
       settlementFixture: defaultSettlementFixture,
     }).filter((c) => c.law === 'GATE_PROOF_NEVER_GATES_THE_ANSWER');
@@ -226,15 +235,14 @@ describe('GATE_PROOF_NEVER_GATES_THE_ANSWER', () => {
       override async settleStep(
         runId: string,
         delta: SettlementDelta,
-        def: WorkflowDefinition,
-        options?: { now?: Date },
-      ): Promise<SettlementResult> {
+        def?: WorkflowDefinition,
+      ): Promise<StoreSettlement> {
         const { applySettlement } = await import('@sensigo/realm');
-        const fresh = await this.get(runId);
-        const outcome = applySettlement(fresh, delta, def, { ...options, cascadeGuards: true });
-        if (!outcome.applied) return outcome;
-        const stored = await this.update({ ...outcome.run, version: fresh.version });
-        return { ...outcome, run: stored };
+        const { record: fresh, at } = await this.get(runId);
+        const outcome = applySettlement(fresh, delta, def, { at, cascadeGuards: true });
+        if (!outcome.applied) return { ...outcome, at };
+        const { record: stored } = await this.update({ ...outcome.run, version: fresh.version });
+        return { ...outcome, run: stored, at };
       }
     }
     // (a) red when the contract stops distinguishing no_claim from store_keeps_no_claims; (b)

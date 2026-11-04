@@ -5,7 +5,7 @@
 // so neither the page nor the reply can change alone. C163's rule, widened to every page.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -22,6 +22,27 @@ import {
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
+import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
+
+// #715 (b) 04 §D (B4): no cell here waits on the real clock for a question to expire. The run store a
+// cell opens sits at a TEST LOCATION (`located`), and `passes(ms)` moves the clock of every location
+// the cell opened, in place of a real sleep; the in-process server (or a spawned child) reads that
+// clock from the location's file.
+const OPENED: TestLocation[] = [];
+async function located(dir: string): Promise<string> {
+  // A second server on the same folder in one cell shares its location (and its clock).
+  const open = OPENED.find((l) => l.runsDir === join(dir, 'runs'));
+  if (open !== undefined) return open.runsDir;
+  const loc = await createTestLocation({ start: new Date(), root: dir });
+  OPENED.push(loc);
+  return loc.runsDir;
+}
+async function passes(ms: number): Promise<void> {
+  for (const loc of OPENED) await loc.clock.advance(ms);
+}
+afterEach(() => {
+  OPENED.length = 0;
+});
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const flat = (t: string) => t.replace(/\s+/g, ' ');
@@ -47,7 +68,7 @@ type Reply = Record<string, unknown>;
 
 async function connect(registry?: ExtensionRegistry) {
   const dir = await mkdtemp(join(tmpdir(), 'realm-sweep-625-'));
-  const runStore = new JsonFileStore(join(dir, 'runs'));
+  const runStore = new JsonFileStore(await located(dir));
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
   const server = createRealmMcpServer({
     runStore,
@@ -199,7 +220,7 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about MCP repli
       ),
     );
     const runId = (await call('start_run', { workflow_id: 'ann' }))['run_id'] as string;
-    const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
+    const gateId = (await runStore.get(runId)).record.pending_gate!.gate_id;
     const r = await call('submit_human_response', {
       run_id: runId,
       gate_id: gateId,
@@ -253,14 +274,14 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about MCP repli
       ),
     );
     const runId = (await call('start_run', { workflow_id: 'ann2' }))['run_id'] as string;
-    const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
+    const gateId = (await runStore.get(runId)).record.pending_gate!.gate_id;
     const r = await call('submit_human_response', {
       run_id: runId,
       gate_id: gateId,
       choice: 'send',
     });
     const ran = await call('advance_run', { run_id: runId });
-    const after = await runStore.get(runId);
+    const { record: after } = await runStore.get(runId);
     // (a) red when the reply's sentence reads as a promise that both run, or advance_run runs
     //     `notify` past the question; (b) prints them.
     expect({
@@ -448,7 +469,7 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about MCP repli
   it('step-fields.md, run-state-and-health.md: a guard ready at creation — start_run decides it; a batch run names advance_run and carries the finding until advance_run decides it', async () => {
     claim(
       'docs/reference/workflow/step-fields.md',
-      "A guard that is already ready when a run is created is decided by `start_run`, in the call that creates the run. One that is ready some other way — a run created by `start_run_batch` or by a program, or opened again by `realm run resume` at a failed guard — is decided by the run's next such write or by `advance_run` (`realm run advance`), which the run's `next_actions` then names. Until then the run carries the finding [`guard_awaiting_settlement`](../mcp/run-state-and-health.md#the-15-findings).",
+      "A guard that is already ready when a run is created is decided by `start_run`, in the call that creates the run. One that is ready some other way — a run created by `start_run_batch` or by a program, or opened again by `realm run resume` at a failed guard — is decided by the run's next such write or by `advance_run` (`realm run advance`), which the run's `next_actions` then names. Until then the run carries the finding [`guard_awaiting_settlement`](../mcp/run-state-and-health.md#the-16-findings).",
     );
     claim(
       'docs/reference/mcp/run-state-and-health.md',
@@ -550,7 +571,7 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about MCP repli
     // issue #688: (a) red when a bare step counts as consuming its map — its way out would name the
     //     input_map it never applies; (b) prints the hint.
     expect(String(r['context_hint'])).not.toContain('input_map');
-    expect((await runStore.get(runId)).completed_steps).toEqual(['order']);
+    expect((await runStore.get(runId)).record.completed_steps).toEqual(['order']);
   });
 
   it('#688: the same step with a handler runs — its schema checks what its input_map builds', async () => {
@@ -596,7 +617,7 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about MCP repli
     //     (b) prints the hint, the steps and the handler's input.
     expect({
       hint: r['context_hint'],
-      completed: (await runStore.get(runId)).completed_steps,
+      completed: (await runStore.get(runId)).record.completed_steps,
       received: seen,
     }).toMatchObject({ completed: ['order', 'show'], received: [{ sku: 'A-100' }] });
   });
@@ -770,7 +791,7 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about MCP repli
         ),
       );
       const runId = (await call('start_run', { workflow_id: id }))['run_id'] as string;
-      await new Promise((resolve) => setTimeout(resolve, 1_100));
+      await passes(1_100);
       const r = await call('advance_run', { run_id: runId });
       const ends = dflt === 'hold';
       // (a) red when the hint says "no step ran" beside the guard that ran, the reply carries

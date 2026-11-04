@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { isAutoReclaimable, renderReclaimOutcome } from './reclaim.js';
 import { classifyInProgressClaims, RECLAIM_REFUSES_GATE_STEP } from '@sensigo/realm';
 import type { RunRecord, StepDefinition, PendingGate } from '@sensigo/realm';
+import { writtenSnapshot } from '@sensigo/realm';
 
 const NOW = new Date('2026-07-08T12:00:00.000Z').getTime();
 const past = new Date(NOW - 60_000).toISOString(); // 60s past deadline
@@ -42,13 +43,15 @@ function selectable(
   stepDef: StepDefinition | undefined,
   olderThanMs?: number,
 ): boolean {
-  const claim = classifyInProgressClaims(run, new Date(NOW)).find((c) => c.step === step);
+  const claim = classifyInProgressClaims(writtenSnapshot(run, new Date(NOW))).find(
+    (c) => c.step === step,
+  );
   if (claim === undefined) return false;
   return isAutoReclaimable(
     run,
     claim,
     stepDef,
-    olderThanMs !== undefined ? { olderThanMs, now: NOW } : { now: NOW },
+    olderThanMs !== undefined ? { olderThanMs, at: new Date(NOW) } : { at: new Date(NOW) },
   );
 }
 

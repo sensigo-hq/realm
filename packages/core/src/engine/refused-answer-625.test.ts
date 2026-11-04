@@ -16,7 +16,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import {
   advanceRun,
   executeStep,
@@ -47,8 +47,27 @@ function refusalOf(reply: EngineReply, openGateId?: string) {
   };
 }
 import { JsonFileStore } from '../store/json-file-store.js';
-import type { RunStore } from '../store/store-interface.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
+import { writeTestClockFile } from '../store/test-clock-file.js';
+import { writtenSnapshot } from './snapshot.js';
+import { zOf } from '../test-support/instant.js';
+
+/** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
+ *  runs folder sits beside the location's clock file (first set to the host's reading), which
+ *  `setClockOf` rewrites. */
+async function testLocationRuns(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  await writeTestClockFile(root, new Date());
+  return join(root, 'runs');
+}
+async function clockedJsonStore(prefix: string): Promise<JsonFileStore> {
+  return new JsonFileStore(await testLocationRuns(prefix));
+}
+async function setClockOf(store: object, t: Date): Promise<void> {
+  const runsDir = (store as { runsDirPath?: string }).runsDirPath;
+  if (runsDir === undefined) throw new Error('setClockOf: this store is not a JSON store');
+  await writeTestClockFile(dirname(runsDir), t);
+}
 
 /** `q` (a question, 60 s, `on_expiry` as given, a message), then `after` (`auto`; a precondition that never holds when `stuck`). */
 function gated(
@@ -83,19 +102,18 @@ function gated(
   };
 }
 
-/** The store without `settleStep`: the legacy path of `submitHumanResponse`. */
-function legacyOf(store: JsonFileStore): JsonFileStore {
-  return Object.assign(Object.create(store) as JsonFileStore, { settleStep: undefined });
-}
-
 describe('#625 PR-2a, C117/C118/C122/C124/C125 — the clock required, the refused answer, who carried it out', () => {
   let store: JsonFileStore;
   beforeEach(async () => {
-    store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-ra-625-')));
+    store = await clockedJsonStore('realm-ra-625-');
   });
 
   async function atQuestion(d: WorkflowDefinition) {
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const opened = await executeStep(store, d, {
       runId: run.id,
       command: 'q',
@@ -103,20 +121,21 @@ describe('#625 PR-2a, C117/C118/C122/C124/C125 — the clock required, the refus
       dispatcher: async () => ({}),
     });
     if (opened.status !== 'confirm_required') throw new Error(`fixture: ${opened.status}`);
-    const gate = (await store.get(run.id)).pending_gate!;
+    const gate = (await store.get(run.id)).record.pending_gate!;
     const past = new Date(new Date(gate.expires_at!).getTime() + 5_000);
     return { runId: run.id, gateId: gate.gate_id, past };
   }
 
-  it('C117, C118: a wrong gate id on an EXPIRED question offers advance_run and says its time is up — resolve_precondition, on both store kinds', async () => {
+  it('C117, C118: a wrong gate id on an EXPIRED question offers advance_run and says its time is up — resolve_precondition, on the one store kind (#715 (b))', async () => {
     const d = gated('settle_default');
-    for (const legacy of [false, true]) {
+    // #715 (b): the legacy store kind (no `settleStep`) is gone — one kind left.
+    for (const legacy of [false]) {
       const { runId, gateId, past } = await atQuestion(d);
-      const reply = await submitHumanResponse(legacy ? legacyOf(store) : store, d, {
+      await setClockOf(store, past);
+      const reply = await submitHumanResponse(store, d, {
         runId,
         gateId: 'not-the-gate',
         choice: 'reject',
-        now: past,
       });
       const first = legacy
         ? `Gate ID mismatch on run '${runId}'.`
@@ -142,17 +161,21 @@ describe('#625 PR-2a, C117/C118/C122/C124/C125 — the clock required, the refus
         refusal: { code: 'gate_not_open', open_gate: [true, 'q'], remedy: ['advance'] },
         remedy: ['advance'],
       });
-      expect(describePending(d, await store.get(runId), undefined, past).owed.length).toBe(1);
+      expect(
+        describePending(d, writtenSnapshot((await store.get(runId)).record, past), undefined).owed
+          .length,
+      ).toBe(1);
       // (a) red when the refusal carried the expiry out itself; (b) prints the gate.
-      expect((await store.get(runId)).pending_gate?.gate_id).toBe(gateId);
+      expect((await store.get(runId)).record.pending_gate?.gate_id).toBe(gateId);
     }
   });
 
-  it('C117 CONTROL: the same wrong gate id on an open question whose time is not up offers its answer — the question named, on both store kinds', async () => {
+  it('C117 CONTROL: the same wrong gate id on an open question whose time is not up offers its answer — the question named, on the one store kind (#715 (b))', async () => {
     const d = gated('settle_default');
-    for (const legacy of [false, true]) {
+    // #715 (b): the legacy store kind (no `settleStep`) is gone — one kind left.
+    for (const legacy of [false]) {
       const { runId, gateId } = await atQuestion(d);
-      const reply = await submitHumanResponse(legacy ? legacyOf(store) : store, d, {
+      const reply = await submitHumanResponse(store, d, {
         runId,
         gateId: 'not-the-gate',
         choice: 'reject',
@@ -217,7 +240,8 @@ describe('#625 PR-2a, C117/C118/C122/C124/C125 — the clock required, the refus
   });
 
   it("C122 + F1: the late answer's line is C105's — this call carried the expiry out, naming itself (settle_default, both choices; abort), and how long before this call the question expired (5s), on both store kinds", async () => {
-    for (const legacy of [false, true]) {
+    // #715 (b): the legacy store kind (no `settleStep`) is gone — one kind left.
+    for (const legacy of [false]) {
       for (const [onExpiry, choice] of [
         ['settle_default', 'approve'],
         ['settle_default', 'reject'],
@@ -225,16 +249,16 @@ describe('#625 PR-2a, C117/C118/C122/C124/C125 — the clock required, the refus
       ] as const) {
         const d = gated(onExpiry);
         const { runId, gateId, past } = await atQuestion(d);
-        const reply = await submitHumanResponse(legacy ? legacyOf(store) : store, d, {
+        await setClockOf(store, past);
+        const reply = await submitHumanResponse(store, d, {
           runId,
           gateId,
           choice,
-          now: past,
         });
         const line =
           onExpiry === 'settle_default'
-            ? `gate '${gateId}' on 'q' had expired 5s before this call — this submitHumanResponse call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: submitHumanResponse).`
-            : `gate '${gateId}' on 'q' had expired 5s before this call — this submitHumanResponse call first carried out its declared abort: the run ended (enacted_via: submitHumanResponse).`;
+            ? `gate '${gateId}' on 'q' had expired 5s before this call (deadline ${zOf(reply.expiry!.expired_at)}) — this submitHumanResponse call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: submitHumanResponse).`
+            : `gate '${gateId}' on 'q' had expired 5s before this call (deadline ${zOf(reply.expiry!.expired_at)}) — this submitHumanResponse call first carried out its declared abort: the run ended (enacted_via: submitHumanResponse).`;
         // (a) red when the line drops the lag (F1), says "expired 0m ago", or is not the composer's;
         // (b) prints the warnings.
         expect({ legacy, onExpiry, choice, warnings: reply.warnings.slice(0, 1) }).toEqual({
@@ -252,40 +276,32 @@ describe('#625 PR-2a, C117/C118/C122/C124/C125 — the clock required, the refus
     }
   });
 
-  it('C122: a late answer that lost the race — another call had already carried the expiry out — says so, never "this call"', async () => {
+  it('C122 (#715 (b)): a late answer to a question another call had already expired is not recorded, and never says "this call" carried it out', async () => {
     const d = gated('settle_default');
     const { runId, gateId, past } = await atQuestion(d);
-    // Another process carries the expiry out between this answer's refusal (`gate_expired_pending`)
-    // and its own `expire_gate` write — so that write finds the question already settled.
-    const racing: RunStore = Object.assign(Object.create(store) as JsonFileStore, {
-      settleStep: async (...args: Parameters<NonNullable<RunStore['settleStep']>>) => {
-        const result = await store.settleStep(...args);
-        if (args[1].kind === 'settle_gate' && !result.applied) {
-          await store.settleStep(args[0], { kind: 'expire_gate', gateId }, args[2], { now: past });
-        }
-        return result;
-      },
-    });
-    const reply = await submitHumanResponse(racing, d, {
-      runId,
-      gateId,
-      choice: 'reject',
-      now: past,
-    });
-    // (a) red when the line claims this call carried it out, or names a via; (b) prints the warnings.
-    expect(reply.warnings[0]).toBe(
-      `gate '${gateId}' on 'q' had expired 5s before this call — another call had already carried out its declared settle_default: the default choice 'approve' was recorded.`,
-    );
+    await setClockOf(store, past);
+    // Another call carries the expiry out first — the write `realm run drain --expired --force`, the
+    // timer and the sweeper make. #715 (b): the answer's write sees the question settled; there is no
+    // longer a window between a refusal and a second write for another call to win (one write).
+    const enacted = await store.settleStep(runId, { kind: 'expire_gate', gateId }, d);
+    expect(enacted.applied).toBe(true);
+    const reply = await submitHumanResponse(store, d, { runId, gateId, choice: 'reject' });
+    // (a) red when the answer is recorded, or the reply claims this call carried the expiry out;
+    //     (b) prints the reply's sentences.
     expect(reply.answer_recorded).toBe(false);
+    expect(reply.errors.join(' ')).toContain(
+      "was settled by timeout with choice 'approve' — your choice 'reject' was not recorded",
+    );
+    expect(reply.warnings.join(' ')).not.toMatch(/this submitHumanResponse call first carried out/);
   });
 
   it('C124: advanceRun names its caller — the library default advanceRun, advance_run, advance — on the reply and on the line', async () => {
     for (const caller of [undefined, 'advance_run', 'advance'] as const) {
       const d = gated('settle_default');
       const { runId, gateId, past } = await atQuestion(d);
+      await setClockOf(store, past);
       const reply = await advanceRun(store, d, {
         runId,
-        now: past,
         ...(caller !== undefined ? { caller } : {}),
       });
       const named: AdvanceCaller = caller ?? 'advanceRun';
@@ -294,7 +310,7 @@ describe('#625 PR-2a, C117/C118/C122/C124/C125 — the clock required, the refus
       expect({ caller, command: reply.command, line: reply.warnings[0] }).toEqual({
         caller,
         command: named,
-        line: `gate '${gateId}' on 'q' had expired 5s before this call — this ${named} call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: ${named}).`,
+        line: `gate '${gateId}' on 'q' had expired 5s before this call (deadline ${zOf(reply.expiry!.expired_at)}) — this ${named} call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: ${named}).`,
       });
     }
   });
@@ -328,26 +344,15 @@ describe('#625 PR-2a, C117/C118/C122/C124/C125 — the clock required, the refus
         `gate 'g1' on 's' had expired 15s before this call — this ${call} call first carried out its declared abort: the run ended (enacted_via: ${via}).`,
       );
     }
-    // (a) red when the race form claims the call or names a via; (b) prints it.
-    expect(
-      expiryCarriedOutLine(
-        'g1',
-        's',
-        { on_expiry: 'settle_default', choice: 'c' },
-        'submitHumanResponse',
-        { ms: 15_000 },
-        false,
-      ),
-    ).toBe(
-      "gate 'g1' on 's' had expired 15s before this call — another call had already carried out its declared settle_default: the default choice 'c' was recorded.",
-    );
+    // #715 (b) (Amendment 3): the race form ("another call had already carried out …") is deleted
+    // with `byThisCall` — no call reports another call's expiry any more.
   });
 
   it("C125: the record keeps the question's text where the answer's words point; the answer outside the opening reply is presented alone (the MCP words: render-reply.test.ts)", async () => {
     const d = gated(undefined);
     const { runId } = await atQuestion(d);
     // (a) red when the record does not keep the gate's message where the pointer says; (b) prints it.
-    expect((await store.get(runId)).pending_gate?.resolved_message).toBe('Go ahead?');
+    expect((await store.get(runId)).record.pending_gate?.resolved_message).toBe('Go ahead?');
     // (a) red when a reply that did not open the question presents its answer with the gate (the
     //     door's words would then point at gate.display, which this reply has not); (b) prints it.
     const later = await advanceRun(store, d, { runId });

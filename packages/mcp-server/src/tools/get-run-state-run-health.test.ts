@@ -15,6 +15,7 @@ import {
 } from '@sensigo/realm';
 import type { RunRecord, RunStore, WorkflowDefinition } from '@sensigo/realm';
 import { handleGetRunState } from './get-run-state.js';
+import { snap, doubleClock, noSettle } from '../test-support/snapshot-double.js';
 
 function makeRun(over: Partial<RunRecord> = {}): RunRecord {
   return {
@@ -40,6 +41,8 @@ function makeRun(over: Partial<RunRecord> = {}): RunRecord {
  *  store-fidelity caveats already covered by get-run-state-fidelity-gate.test.ts. */
 function makeFullFidelityStore(run: RunRecord): RunStore {
   return declared({
+    clock: doubleClock,
+    settleStep: noSettle,
     persistsClaims: true,
     persistedRunRecordFields: new Set([
       'capability_blocks',
@@ -47,7 +50,7 @@ function makeFullFidelityStore(run: RunRecord): RunStore {
       'extension_identity',
     ]),
     async get() {
-      return run;
+      return snap(run);
     },
     async create() {
       throw new Error('not exercised by get_run_state');
@@ -216,6 +219,8 @@ describe('get_run_state — run_health (issue #221)', () => {
   it('the claims-field fidelity caveat fires when the store declares persistsClaims: false', async () => {
     const run = makeRun({ updated_at: new Date().toISOString() }); // recent — isolate from run_health
     const store: RunStore = declared({
+      clock: doubleClock,
+      settleStep: noSettle,
       persistsClaims: false,
       persistedRunRecordFields: new Set([
         'capability_blocks',
@@ -223,7 +228,7 @@ describe('get_run_state — run_health (issue #221)', () => {
         'extension_identity',
       ]),
       async get() {
-        return run;
+        return snap(run);
       },
       async create() {
         throw new Error('not exercised');

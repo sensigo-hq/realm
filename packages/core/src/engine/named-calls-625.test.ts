@@ -14,7 +14,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import {
   advanceRun,
   executeChain,
@@ -29,6 +29,24 @@ import { JsonFileStore } from '../store/json-file-store.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { EngineReply } from '../types/response-envelope.js';
 import { agentActionFor, nextCalls } from '../test-support/ways-view.js';
+import { writeTestClockFile } from '../store/test-clock-file.js';
+
+/** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
+ *  runs folder sits beside the location's clock file (first set to the host's reading), which
+ *  `setClockOf` rewrites. */
+async function testLocationRuns(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  await writeTestClockFile(root, new Date());
+  return join(root, 'runs');
+}
+async function clockedJsonStore(prefix: string): Promise<JsonFileStore> {
+  return new JsonFileStore(await testLocationRuns(prefix));
+}
+async function setClockOf(store: object, t: Date): Promise<void> {
+  const runsDir = (store as { runsDirPath?: string }).runsDirPath;
+  if (runsDir === undefined) throw new Error('setClockOf: this store is not a JSON store');
+  await writeTestClockFile(dirname(runsDir), t);
+}
 
 /** `q` (a question, 60 s, `on_expiry` as given), then `after` (a bare `auto` step). */
 function gated(onExpiry: 'settle_default' | 'abort'): WorkflowDefinition {
@@ -73,11 +91,15 @@ const dispatcher = async () => ({});
 describe('#625 PR-2a, C144/C149/C151 — each call names itself; the suggestion says what next_actions holds', () => {
   let store: JsonFileStore;
   beforeEach(async () => {
-    store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-nc-625-')));
+    store = await clockedJsonStore('realm-nc-625-');
   });
 
   async function atQuestion(d: WorkflowDefinition) {
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const opened = await executeStep(store, d, {
       runId: run.id,
       command: 'q',
@@ -85,9 +107,9 @@ describe('#625 PR-2a, C144/C149/C151 — each call names itself; the suggestion 
       dispatcher,
     });
     if (opened.status !== 'confirm_required') throw new Error(`fixture: ${opened.status}`);
-    const gate = (await store.get(run.id)).pending_gate!;
+    const gate = (await store.get(run.id)).record.pending_gate!;
     const past = new Date(new Date(gate.expires_at!).getTime() + 5_000);
-    return { runId: run.id, gateId: gate.gate_id, past };
+    return { runId: run.id, gateId: gate.gate_id, past, expiresAt: gate.expires_at! };
   }
 
   // C144: each entry's refusal of a word outside its own list.
@@ -140,7 +162,7 @@ describe('#625 PR-2a, C144/C149/C151 — each call names itself; the suggestion 
         executeEngineStep(s, d, {
           runId,
           step: 'after',
-          run: await store.get(runId),
+          run: (await store.get(runId)).record,
           caller: caller as never,
         }),
     ],
@@ -150,7 +172,7 @@ describe('#625 PR-2a, C144/C149/C151 — each call names itself; the suggestion 
     async (entry, call) => {
       const d = gated('settle_default');
       const { runId, gateId } = await atQuestion(d);
-      const before = JSON.stringify(await store.get(runId));
+      const before = JSON.stringify((await store.get(runId)).record);
       const calls: string[] = [];
       const watched = Object.create(store) as JsonFileStore;
       for (const m of ['get', 'update', 'settleStep', 'claimStep', 'create', 'list'] as const) {
@@ -177,21 +199,21 @@ describe('#625 PR-2a, C144/C149/C151 — each call names itself; the suggestion 
       }
       // (a) red when the refusal read or wrote the store; (b) prints the calls made.
       expect(calls).toEqual([]);
-      expect(JSON.stringify(await store.get(runId))).toBe(before);
+      expect(JSON.stringify((await store.get(runId)).record)).toBe(before);
     },
   );
 
   it("C155, W1-Y1: executeEngineStep's refusal names executeEngineStep — the entry the program called — and its own words, its default first", async () => {
     const d = gated('settle_default');
     const { runId } = await atQuestion(d);
-    const before = JSON.stringify(await store.get(runId));
+    const before = JSON.stringify((await store.get(runId)).record);
     // (a) red when executeEngineStep's caller is checked as executeStep's again (the message would
     // name executeStep and list executeStep first); (b) prints what was thrown.
     await expect(
       executeEngineStep(store, d, {
         runId,
         step: 'after',
-        run: await store.get(runId),
+        run: (await store.get(runId)).record,
         caller: 'executeChain' as never,
       }),
     ).rejects.toMatchObject({
@@ -201,7 +223,7 @@ describe('#625 PR-2a, C144/C149/C151 — each call names itself; the suggestion 
       details: { entry: 'executeEngineStep' },
     });
     // (a) red when the refusal wrote; (b) prints the record.
-    expect(JSON.stringify(await store.get(runId))).toBe(before);
+    expect(JSON.stringify((await store.get(runId)).record)).toBe(before);
   });
 
   it("C144: a word from another entry's list is refused too — executeChain is not executeStep", async () => {
@@ -240,75 +262,96 @@ describe('#625 PR-2a, C144/C149/C151 — each call names itself; the suggestion 
     [
       'executeStep',
       'executeStep',
-      (s, d, runId, _g, now) =>
-        executeStep(s, d, { runId, command: 'after', input: {}, dispatcher, now }),
+      async (s, d, runId, _g, now) => {
+        await setClockOf(s, now);
+        return executeStep(s, d, { runId, command: 'after', input: {}, dispatcher });
+      },
     ],
     [
       'executeChain',
       'executeChain',
-      (s, d, runId, _g, now) =>
-        executeChain(s, d, { runId, command: 'after', input: {}, dispatcher, now }),
+      async (s, d, runId, _g, now) => {
+        await setClockOf(s, now);
+        return executeChain(s, d, { runId, command: 'after', input: {}, dispatcher });
+      },
     ],
     [
       'submitHumanResponse',
       'submitHumanResponse',
-      (s, d, runId, gateId, now) =>
-        submitHumanResponse(s, d, { runId, gateId, choice: 'reject', now }),
+      async (s, d, runId, gateId, now) => {
+        await setClockOf(s, now);
+        return submitHumanResponse(s, d, { runId, gateId, choice: 'reject' });
+      },
     ],
     [
       'executeEngineStep',
       'executeEngineStep',
-      async (s, d, runId, _g, now) =>
-        executeEngineStep(s, d, { runId, step: 'after', run: await s.get(runId), now }),
+      async (s, d, runId, _g, now) => {
+        await setClockOf(s, now);
+        return executeEngineStep(s, d, { runId, step: 'after', run: (await s.get(runId)).record });
+      },
     ],
     [
       'executeChain, caller execute_step (the MCP tool)',
       'execute_step',
-      (s, d, runId, _g, now) =>
-        executeChain(s, d, {
+      async (s, d, runId, _g, now) => {
+        await setClockOf(s, now);
+        return executeChain(s, d, {
           runId,
           command: 'after',
           input: {},
           dispatcher,
-          now,
           caller: 'execute_step',
-        }),
+        });
+      },
     ],
     [
       'submitHumanResponse, caller submit_human_response (the MCP tool)',
       'submit_human_response',
-      (s, d, runId, gateId, now) =>
-        submitHumanResponse(s, d, {
+      async (s, d, runId, gateId, now) => {
+        await setClockOf(s, now);
+        return submitHumanResponse(s, d, {
           runId,
           gateId,
           choice: 'reject',
-          now,
           caller: 'submit_human_response',
-        }),
+        });
+      },
     ],
     [
       'submitHumanResponse, caller respond (realm run respond)',
       'respond',
-      (s, d, runId, gateId, now) =>
-        submitHumanResponse(s, d, { runId, gateId, choice: 'reject', now, caller: 'respond' }),
+      async (s, d, runId, gateId, now) => {
+        await setClockOf(s, now);
+        return submitHumanResponse(s, d, { runId, gateId, choice: 'reject', caller: 'respond' });
+      },
     ],
     [
       'executeChain, caller run (realm workflow run)',
       'run',
-      (s, d, runId, _g, now) =>
-        executeChain(s, d, { runId, command: 'after', input: {}, dispatcher, now, caller: 'run' }),
+      async (s, d, runId, _g, now) => {
+        await setClockOf(s, now);
+        return executeChain(s, d, {
+          runId,
+          command: 'after',
+          input: {},
+          dispatcher,
+          caller: 'run',
+        });
+      },
     ],
     [
       'executeEngineStep, caller agent (realm agent)',
       'agent',
-      async (s, d, runId, _g, now) =>
-        executeEngineStep(s, d, {
+      async (s, d, runId, _g, now) => {
+        await setClockOf(s, now);
+        return executeEngineStep(s, d, {
           runId,
           step: 'after',
-          run: await s.get(runId),
-          now,
+          run: (await s.get(runId)).record,
           caller: 'agent',
-        }),
+        });
+      },
     ],
   ];
   for (const onExpiry of ['settle_default', 'abort'] as const) {
@@ -316,8 +359,9 @@ describe('#625 PR-2a, C144/C149/C151 — each call names itself; the suggestion 
       `C151, W5-Y2: %s carries out an expired ${onExpiry} — the line names %s, and the record holds no enacted_via`,
       async (_label, via, carry) => {
         const d = gated(onExpiry);
-        const { runId, gateId, past } = await atQuestion(d);
+        const { runId, gateId, past, expiresAt } = await atQuestion(d);
         const reply = await carry(store, d, runId, gateId, past);
+        // #715 (b) (D6-72 (c)): the lag carries its deadline.
         const line = expiryCarriedOutLine(
           gateId,
           'q',
@@ -326,6 +370,7 @@ describe('#625 PR-2a, C144/C149/C151 — each call names itself; the suggestion 
             : { on_expiry: 'abort' },
           via,
           { ms: 5_000 },
+          expiresAt,
         );
         // (a) red when the function names another call (the MCP tool's, as before C151) or its
         // default is lost; (b) prints the reply's warnings.
@@ -336,11 +381,10 @@ describe('#625 PR-2a, C144/C149/C151 — each call names itself; the suggestion 
           step: 'q',
           on_expiry: onExpiry,
           enacted_via: via,
-          by_this_call: true,
           overdue: { ms: 5_000 },
         });
         // (a) red when enacted_via is written to the run's record; (b) prints the record's text.
-        expect(JSON.stringify(await store.get(runId))).not.toContain('enacted_via');
+        expect(JSON.stringify((await store.get(runId)).record)).not.toContain('enacted_via');
       },
     );
   }
@@ -351,7 +395,11 @@ describe('#625 PR-2a, C144/C149/C151 — each call names itself; the suggestion 
     command: string,
     setup?: (runId: string) => Promise<unknown>,
   ) {
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await setup?.(run.id);
     const reply = await executeStep(store, d, { runId: run.id, command, input: {}, dispatcher });
     // #729 PR-0: the suggestion is the MCP door's (render-reply.test.ts keeps C149's sentences);
@@ -423,7 +471,11 @@ describe('#625 PR-2a, C144/C149/C151 — each call names itself; the suggestion 
           b: { description: 'B.', execution: 'agent', depends_on: [] },
         },
       };
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await executeChain(store, d, {
         runId: run.id,
         command: 'a',
@@ -443,7 +495,7 @@ describe('#625 PR-2a, C144/C149/C151 — each call names itself; the suggestion 
               : dispatcher,
         });
       }
-      const before = await store.get(run.id);
+      const { record: before } = await store.get(run.id);
       let called = 0;
       const reply = await executeStep(store, d, {
         runId: run.id,
@@ -464,7 +516,7 @@ describe('#625 PR-2a, C144/C149/C151 — each call names itself; the suggestion 
         hint: reply.context_hint,
         next: nextCalls(reply),
         called,
-        version: (await store.get(run.id)).version,
+        version: (await store.get(run.id)).record.version,
         phase: reply.run_phase,
       }).toEqual({
         status: 'blocked',

@@ -443,7 +443,9 @@ describe('attachDriveCall — the last untotal link in the attribution chain', (
     expect(thrown).toBe(frozen);
     expect(payloadOf(thrown)).toBeUndefined();
     // And it still classifies, because shape classification never needed the payload.
-    expect(buildEntry(thrown, 's', 'anthropic', performance.now()).error_class).toBe('api_status');
+    expect(buildEntry(thrown, 's', 'anthropic', performance.now(), new Date()).error_class).toBe(
+      'api_status',
+    );
   });
 
   it('a proxy whose `has` trap throws survives the same way', () => {

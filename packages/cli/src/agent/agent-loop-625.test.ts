@@ -37,7 +37,7 @@ const agentOnly: WorkflowDefinition = {
 describe('#625 PR-2a — the realm agent loop', () => {
   it('D6.1: a step another process took is said as a fact (holder, since) — never "✓ → running"', async () => {
     const store = new InMemoryStore();
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: agentOnly.id,
       workflowVersion: 1,
       params: {},
@@ -78,7 +78,7 @@ describe('#625 PR-2a — the realm agent loop', () => {
     });
     const out = logSpy.mock.calls.flat().join('\n');
     vi.restoreAllMocks();
-    const since = (await store.get(run.id)).claims?.['review']?.since;
+    const since = (await store.get(run.id)).record.claims?.['review']?.since;
     expect(out).toContain(
       // decision C179 (round 23): the agent step the model answered says its answer was not recorded.
       `• Step 'review' was taken by other@host (from the OS user, via agent) at ${since}; this drive's answer was not recorded.`,
@@ -88,7 +88,7 @@ describe('#625 PR-2a — the realm agent loop', () => {
 
   it('D6.2: a healthy claim in flight — the loop watches and re-enters on change, then exits naming reclaim', async () => {
     const store = new InMemoryStore();
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: agentOnly.id,
       workflowVersion: 1,
       params: {},
@@ -222,7 +222,11 @@ describe('#625 PR-2a — the realm agent loop', () => {
       },
     };
     const store = new InMemoryStore();
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const realClaim = store.claimStep.bind(store);
     let first = true;
     (store as unknown as RunStore).claimStep = async (
@@ -255,14 +259,14 @@ describe('#625 PR-2a — the realm agent loop', () => {
     );
     const out = logSpy.mock.calls.flat().join('\n');
     vi.restoreAllMocks();
-    const since = (await store.get(run.id)).claims?.['x']?.since;
+    const since = (await store.get(run.id)).record.claims?.['x']?.since;
     expect(out).toContain('→ [auto] x');
     expect(out).toContain(
       `• Step 'x' was taken by other@host (from the OS user, via agent) at ${since}; not run here.`,
     );
     // The loop went on to the ready agent step.
     expect(provider.callStep).toHaveBeenCalledTimes(1);
-    expect((await store.get(run.id)).completed_steps).toEqual(['review']);
+    expect((await store.get(run.id)).record.completed_steps).toEqual(['review']);
   });
 
   it('D6.1, the eligibility path: a step another process claimed before executeStep read the record gets the same line, never `✓ → running`', async () => {
@@ -277,7 +281,11 @@ describe('#625 PR-2a — the realm agent loop', () => {
       },
     };
     const store = new InMemoryStore();
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     // The other process claims `x` between the loop's pick (`→ [auto] x` is printed) and
     // executeStep's own read of the record — so executeStep finds `x` not eligible, and never
     // reaches its claim.
@@ -315,7 +323,7 @@ describe('#625 PR-2a — the realm agent loop', () => {
       },
     );
     vi.restoreAllMocks();
-    const since = (await store.get(run.id)).claims?.['x']?.since;
+    const since = (await store.get(run.id)).record.claims?.['x']?.since;
     const at = lines.indexOf('→ [auto] x');
     expect(at).toBeGreaterThanOrEqual(0);
     expect(lines[at + 1]).toBe(
@@ -327,7 +335,7 @@ describe('#625 PR-2a — the realm agent loop', () => {
     expect(lines.indexOf('  ✓ → running')).toBeGreaterThan(lines.indexOf('→ [agent] review'));
     // The loop went on to the ready agent step.
     expect(provider.callStep).toHaveBeenCalledTimes(1);
-    expect((await store.get(run.id)).completed_steps).toEqual(['review']);
+    expect((await store.get(run.id)).record.completed_steps).toEqual(['review']);
   });
 
   it('L7: an engine step that is capability-blocked at the loop top is named; no model call follows', async () => {
@@ -355,7 +363,7 @@ describe('#625 PR-2a — the realm agent loop', () => {
     const err = errorSpy.mock.calls.flat().join('\n');
     vi.restoreAllMocks();
     expect(result).toBe('failed');
-    const runId = (await store.list())[0]!.id;
+    const runId = (await store.list()).snapshots.map((s) => s.record)[0]!.id;
     expect(err).toContain(
       `⚠ Step 'x' is blocked: handler 'missing_h' is not registered in this runner. The run is NOT failed — add handler 'missing_h' and re-attach (\`realm agent --run-id ${runId} --provider <provider> --model <model>\`).`,
     );
@@ -374,12 +382,14 @@ describe('#625 PR-2a — the realm agent loop', () => {
       },
     };
     const store = new InMemoryStore();
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     // The step's own settle write throws (not a WorkflowError): the throw leaves advanceRun.
     const realSettle = store.settleStep!.bind(store);
-    (store as unknown as RunStore).settleStep = async (
-      ...args: Parameters<NonNullable<RunStore['settleStep']>>
-    ) => {
+    store.settleStep = async (...args: Parameters<InMemoryStore['settleStep']>) => {
       if (args[1].kind === 'settle_step' && args[1].step === 'x') throw new Error('disk gone');
       return realSettle(...args);
     };
@@ -423,7 +433,11 @@ describe('#625 PR-2a — the realm agent loop', () => {
       },
     } as WorkflowDefinition;
     const inner = new InMemoryStore();
-    const { run } = await inner.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await inner.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const store = new Proxy(inner, {
       get(target, prop, receiver) {
         if (prop === 'update') {
@@ -431,7 +445,7 @@ describe('#625 PR-2a — the realm agent loop', () => {
             if (record.workflow_context_snapshots !== undefined) {
               throw new Error('snapshot write failed');
             }
-            return target.update(record);
+            return (await target.update(record)).record;
           };
         }
         const value = Reflect.get(target, prop, receiver) as unknown;
@@ -454,7 +468,7 @@ describe('#625 PR-2a — the realm agent loop', () => {
     const out = logSpy.mock.calls.flat().join('\n');
     vi.restoreAllMocks();
     expect(out).toContain('→ [auto] x');
-    expect((await inner.get(run.id)).drive_failures?.entries.at(-1)?.step).toBe('x');
+    expect((await inner.get(run.id)).record.drive_failures?.entries.at(-1)?.step).toBe('x');
     expect(provider.callStep).not.toHaveBeenCalled();
   });
 
@@ -517,7 +531,7 @@ describe('#625 PR-2a — the realm agent loop', () => {
       expect(err).not.toContain('Run ended in phase: running');
       expect(result).toBe('completed');
       expect(out).toContain('→ [auto] after');
-      const done = (await store.list())[0]!;
+      const done = (await store.list()).snapshots.map((s) => s.record)[0]!;
       expect(done.completed_steps).toEqual(
         guard ? ['confirm', 'check', 'after', 'finish'] : ['confirm', 'after', 'finish'],
       );
@@ -544,7 +558,11 @@ describe('#625 PR-2a — the realm agent loop', () => {
       },
     });
     const store = new InMemoryStore();
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const provider = new (class extends LlmProvider {
       callStep = vi.fn().mockImplementation(async () => {
         await new Promise((resolve) => setTimeout(resolve, 40));
@@ -574,7 +592,7 @@ describe('#625 PR-2a — the realm agent loop', () => {
     const out = logSpy.mock.calls.flat().join('\n');
     const err = errorSpy.mock.calls.flat().join('\n');
     vi.restoreAllMocks();
-    const done = await store.get(run.id);
+    const { record: done } = await store.get(run.id);
     expect(done.terminal_state).toBe(true);
     expect(done.completed_steps).toEqual(['slow', 'review']);
     for (const step of ['slow', 'review']) {

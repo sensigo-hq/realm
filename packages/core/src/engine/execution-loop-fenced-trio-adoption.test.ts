@@ -67,7 +67,7 @@ describe('execution-loop.ts — fenced-trio call-site adoption (issue #207 PR-2)
 
   // ── :1857-equivalent — success-settle WAL cleanup wrap ──────────────────────────────────────
   it('success-settle: a WAL cleanup failure degrades to a warning, never an error envelope', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'fenced-adoption-agent-wf',
       workflowVersion: 1,
       params: {},
@@ -92,13 +92,13 @@ describe('execution-loop.ts — fenced-trio call-site adoption (issue #207 PR-2)
         w.includes('Failed to clean up trace buffer after step completion'),
       ),
     ).toBe(true);
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.completed_steps).toContain('step-agent');
   });
 
   // ── :1566-equivalent — failure-settle persist-gate ──────────────────────────────────────────
   it('failure-settle: WAL delete never fires when the migrated settleStep itself fails (persist-gate)', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'fenced-adoption-agent-wf',
       workflowVersion: 1,
       params: {},
@@ -140,7 +140,7 @@ describe('execution-loop.ts — fenced-trio call-site adoption (issue #207 PR-2)
 
   // ── :1478-equivalent — capability-block delete removed entirely ─────────────────────────────
   it('capability-block settle: WAL delete is never invoked at all (removed entirely — disjoint auto/agent populations)', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'fenced-adoption-handler-wf',
       workflowVersion: 1,
       params: {},
@@ -171,7 +171,7 @@ describe('execution-loop.ts — fenced-trio call-site adoption (issue #207 PR-2)
 
   // ── :925-equivalent — pre-claim read envelope ────────────────────────────────────────────────
   it('pre-claim WAL read failure returns a typed retryable ENGINE_STORE_FAILED envelope, no claim consumed', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'fenced-adoption-agent-wf',
       workflowVersion: 1,
       params: {},
@@ -194,7 +194,7 @@ describe('execution-loop.ts — fenced-trio call-site adoption (issue #207 PR-2)
     expect(envelope.error_code).toBe('ENGINE_STORE_FAILED');
     expect(agentActionFor(envelope)).toBe('stop');
 
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.in_progress_steps).not.toContain('step-agent'); // no claim consumed
     expect(after.claims?.['step-agent']).toBeUndefined();
     // issue #207 correction (item 4b): sharper than the membership checks above — those alone
@@ -211,7 +211,7 @@ describe('execution-loop.ts — fenced-trio call-site adoption (issue #207 PR-2)
 
   // ── :1041-equivalent — post-claim compensating un-claim ─────────────────────────────────────
   it('post-claim WAL read failure performs a compensating un-claim (claim released, audit entry recorded), returns a typed retryable envelope', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'fenced-adoption-agent-wf',
       workflowVersion: 1,
       params: {},
@@ -237,7 +237,7 @@ describe('execution-loop.ts — fenced-trio call-site adoption (issue #207 PR-2)
     expect(envelope.error_code).toBe('ENGINE_STORE_FAILED');
     expect(agentActionFor(envelope)).toBe('stop');
 
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.in_progress_steps).not.toContain('step-agent'); // claim released
     expect(after.claims?.['step-agent']).toBeUndefined();
     const audit = after.evidence.find((e) => e.output_summary['compensating_unclaim'] === true);
@@ -246,7 +246,7 @@ describe('execution-loop.ts — fenced-trio call-site adoption (issue #207 PR-2)
   });
 
   it('post-claim compensating un-claim CAS-mismatch: a concurrent actor already resolved the claim → left AS-IS, still returns the typed retryable envelope (never stomped)', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'fenced-adoption-agent-wf',
       workflowVersion: 1,
       params: {},
@@ -259,7 +259,7 @@ describe('execution-loop.ts — fenced-trio call-site adoption (issue #207 PR-2)
         // Simulate a concurrent actor (e.g. a parallel reclaim) resolving this exact claim
         // between our own claimStep and this post-claim read failing — a REAL version bump via
         // a genuine store.update, out from under our own compensating un-claim's CAS baseline.
-        const current = await store.get(run.id);
+        const { record: current } = await store.get(run.id);
         await store.update({
           ...current,
           in_progress_steps: current.in_progress_steps.filter((s) => s !== 'step-agent'),
@@ -281,7 +281,7 @@ describe('execution-loop.ts — fenced-trio call-site adoption (issue #207 PR-2)
     expect(envelope.status).toBe('error');
     expect(envelope.error_code).toBe('ENGINE_STORE_FAILED');
 
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     // The concurrent actor's own resolution survives EXACTLY as it made it — our compensating
     // un-claim's CAS mismatch stopped us immediately rather than stomping it.
     expect(after.completed_steps).toContain('step-agent');

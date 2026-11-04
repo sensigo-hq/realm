@@ -46,35 +46,39 @@ describe('claimStep writes the liveness clock atomically (JsonFileStore)', () =>
   });
 
   it('an auto step in a finalizer-free workflow gets a concrete deadline, atomic with in_progress', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'clock-auto',
       workflowVersion: 1,
       params: {},
     });
-    const claimed = await store.claimStep(run.id, 'work', autoFree);
+    const { record: claimed } = await store.claimStep(run.id, 'work', autoFree);
     // Both the in_progress add AND the claim clock are present in the SAME persisted record.
     expect(claimed.in_progress_steps).toContain('work');
     expect(claimed.claims?.['work']?.deadline).toEqual(expect.any(String));
     expect(new Date(claimed.claims!['work']!.deadline!).getTime()).toBeGreaterThan(Date.now());
     // Re-read confirms it was persisted (not just returned).
-    const reread = await store.get(run.id);
+    const { record: reread } = await store.get(run.id);
     expect(reread.claims?.['work']?.deadline).toEqual(claimed.claims!['work']!.deadline);
   });
 
   it('an agent step gets deadline: null (unknown age)', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'clock-agent',
       workflowVersion: 1,
       params: {},
     });
-    const claimed = await store.claimStep(run.id, 'work', agentWf);
+    const { record: claimed } = await store.claimStep(run.id, 'work', agentWf);
     expect(claimed.in_progress_steps).toContain('work');
     expect(claimed.claims?.['work']?.deadline).toBeNull();
   });
 
   it('an auto step in a finalizer-BEARING workflow gets deadline: null', async () => {
-    const { run } = await store.create({ workflowId: 'clock-fin', workflowVersion: 1, params: {} });
-    const claimed = await store.claimStep(run.id, 'work', finalizerBearing);
+    const { record: run } = await store.create({
+      workflowId: 'clock-fin',
+      workflowVersion: 1,
+      params: {},
+    });
+    const { record: claimed } = await store.claimStep(run.id, 'work', finalizerBearing);
     expect(claimed.claims?.['work']?.deadline).toBeNull();
   });
 
@@ -82,15 +86,15 @@ describe('claimStep writes the liveness clock atomically (JsonFileStore)', () =>
   // dormant until PR-B, but real/present in every claim record starting with this PR. Verified
   // both in-memory (returned value) and on the re-read (actually persisted, not just returned).
   it('claimStep mints a token alongside the deadline, persisted (issue #279, dormant until PR-B)', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'clock-agent',
       workflowVersion: 1,
       params: {},
     });
-    const claimed = await store.claimStep(run.id, 'work', agentWf);
+    const { record: claimed } = await store.claimStep(run.id, 'work', agentWf);
     expect(claimed.claims?.['work']?.token).toEqual(expect.any(String));
     expect(claimed.claims!['work']!.token!.length).toBeGreaterThan(0);
-    const reread = await store.get(run.id);
+    const { record: reread } = await store.get(run.id);
     expect(reread.claims?.['work']?.token).toEqual(claimed.claims!['work']!.token);
   });
 });
@@ -111,7 +115,7 @@ describe('settle sites delete the claim clock (JsonFileStore)', () => {
     const registry = new ExtensionRegistry();
     const handler: StepHandler = { id: 'h', execute: async () => ({ data: {} }) };
     registry.register('handler', 'h', handler);
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'clock-auto',
       workflowVersion: 1,
       params: {},
@@ -123,7 +127,7 @@ describe('settle sites delete the claim clock (JsonFileStore)', () => {
       dispatcher: async () => ({}),
       registry,
     });
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.completed_steps).toContain('work');
     expect(after.claims?.['work']).toBeUndefined();
   });
@@ -142,7 +146,7 @@ describe('settle sites delete the claim clock (JsonFileStore)', () => {
       },
     };
     registry.register('handler', 'h', handler);
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'clock-auto',
       workflowVersion: 1,
       params: {},
@@ -154,7 +158,7 @@ describe('settle sites delete the claim clock (JsonFileStore)', () => {
       dispatcher: async () => ({}),
       registry,
     });
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.failed_steps).toContain('work');
     expect(after.claims?.['work']).toBeUndefined();
   });

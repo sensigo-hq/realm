@@ -4,7 +4,6 @@
 // names and type words only) and the store calls — never a value.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { runInNewContext } from 'node:vm';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -43,6 +42,8 @@ function trapStore(): { s: RunStore; calls: string[] } {
     list: trap('list'),
     claimStep: trap('claimStep'),
     settleStep: trap('settleStep'),
+    // #715 (b): every store holds a clock (admission checks its functions exist; a call is a use).
+    clock: { now: trap('clock.now'), at: trap('clock.at') },
   } as unknown as RunStore;
   declareReleaseLine(s);
   return { s, calls };
@@ -218,7 +219,6 @@ describe('issue #719 A2 — every required part: absent, null and a wrong type a
 const TYPED: Array<[EngineEntry, string, unknown]> = [
   ...(['executeStep', 'executeChain'] as const).flatMap(
     (e): Array<[EngineEntry, string, unknown]> => [
-      [e, 'options.now', '2026-01-01'],
       [e, 'options.stepMeta', 'x'],
       [e, 'options.trace', 'x'],
       [e, 'options.traceBufferStore', 'x'],
@@ -226,9 +226,7 @@ const TYPED: Array<[EngineEntry, string, unknown]> = [
     ],
   ),
   ['executeStep', 'options.outputSource', 'nope'],
-  ['executeEngineStep', 'options.now', 12345],
   ['executeEngineStep', 'options.traceBufferStore', 'x'],
-  ['advanceRun', 'options.now', new Date(Number.NaN)],
   ['advanceRun', 'options.traceBufferStore', 'x'],
   ['advanceRun', 'options.command', 7],
   ['advanceRun', 'options.onStep', 'x'],
@@ -236,13 +234,11 @@ const TYPED: Array<[EngineEntry, string, unknown]> = [
   ['advanceRun', 'options.onNotRecorded', 'x'],
   ['advanceRun', 'options.onGuard', 'x'],
   ['advanceRun', 'options.onExpiry', 'x'],
-  ['submitHumanResponse', 'options.now', '2026-01-01'],
   ['submitHumanResponse', 'options.respondedBy', 7],
   ['submitHumanResponse', 'options.claimToken', 7],
   ['abandonRun', 'reason', 7],
   ['getWorkflowForRun', 'opts.terminalOk', 'yes'],
   ['reclaimStep', 'options', 'x'],
-  ['reclaimStep', 'options.now', '2026-01-01'],
   ['reclaimStep', 'options.traceBufferStore', 'x'],
 ];
 
@@ -260,7 +256,7 @@ describe('issue #719 A2 (R3) — every typed optional member: a wrong type is re
 
 /** issue #719: two defects of the row, per entry — both are named, in table order. */
 const TWO: Array<[EngineEntry, [string, unknown], [string, unknown]]> = [
-  ['executeStep', ['options.runId', ABSENT], ['options.now', '2026-01-01']],
+  ['executeStep', ['options.runId', ABSENT], ['options.stepMeta', 'x']],
   ['executeChain', ['options.command', 7], ['options.trace', 'x']],
   ['executeEngineStep', ['options.step', ABSENT], ['options.run', null]],
   ['advanceRun', ['options.runId', 7], ['options.onStep', 'x']],
@@ -312,7 +308,7 @@ describe('issue #719 A2 — every defect of the parts at once', () => {
       command: 'work',
       input: {},
       dispatcher,
-      now: '2026-01-01',
+      stepMeta: 'x',
     } as never).catch((e: unknown) => e)) as Error;
     const run = (await executeEngineStep(s, BARE, {
       runId: 'r',
@@ -323,7 +319,7 @@ describe('issue #719 A2 — every defect of the parts at once', () => {
     //     value; (b) prints the three messages (type words only — no value is in them).
     expect([one.message, several.message, run.message]).toEqual([
       'abandonRun was called with 1 invalid option(s): runId must be a string (got number). Nothing was read or written.',
-      'executeStep was called with 2 invalid option(s): options.runId must be a string (got undefined); options.now must be a valid Date (got string). Nothing was read or written.',
+      'executeStep was called with 2 invalid option(s): options.runId must be a string (got undefined); options.stepMeta must be an object (got string). Nothing was read or written.',
       'executeEngineStep was called with 1 invalid option(s): options.run must be a run record (got object) (workflow_id is missing; workflow_version is missing; completed_steps is missing; in_progress_steps is missing; failed_steps is missing; skipped_steps is missing; run_phase is missing; version is not a number; params is missing; evidence is missing; created_at is missing; updated_at is missing; terminal_state is missing). Nothing was read or written.',
     ]);
   });
@@ -397,7 +393,11 @@ describe('issue #719 A2 (R1) — the dispatcher is required exactly for the step
     });
     it('blocked, as before', async () => {
       const store = new JsonFileStore(dir);
-      const { run } = await store.create({ workflowId: 'w', workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: 'w',
+        workflowVersion: 1,
+        params: {},
+      });
       const reply = await executeStep(store, AGENT, { runId: run.id, command: 'nope', input: {} });
       // (b) prints the reply's status and code.
       expect([reply.status, reply.error_code]).toEqual(['blocked', undefined]);
@@ -742,33 +742,6 @@ describe('issue #719 C4 — a step that is not an object, and a missing store', 
       });
     },
   );
-});
-
-describe('issue #719 C4 — the Date check is a brand check', () => {
-  it('a Date from another realm is accepted: the call goes on to its store', async () => {
-    const foreign = runInNewContext('new Date(0)') as unknown;
-    const o = await outcome('advanceRun', withPart(BASE.advanceRun(), 'options.now', foreign));
-    // (a) red when a valid Date of another realm is refused (`instanceof`); (b) prints the outcome.
-    expect({ refused: o.code === 'VALIDATION_OPTION_INVALID', used: o.calls.length > 0 }).toEqual({
-      refused: false,
-      used: true,
-    });
-  });
-
-  it('an object that only inherits Date.prototype is refused as not a valid Date, never a TypeError', async () => {
-    const fake = Object.create(Date.prototype) as unknown;
-    const { s, calls } = trapStore();
-    const err = (await advanceRun(s, AGENT, { runId: 'r', now: fake } as never).catch(
-      (e: unknown) => e,
-    )) as { code?: string; details?: { invalid?: unknown } };
-    // (a) red when `getTime()` throws inside admission ("this is not a Date object."); (b) prints
-    //     the code, the details and the store calls.
-    expect({ code: err.code, invalid: err.details?.invalid, calls }).toEqual({
-      code: 'VALIDATION_OPTION_INVALID',
-      invalid: [{ option: 'options.now', expected: 'a valid Date', given_type: 'object' }],
-      calls: [],
-    });
-  });
 });
 
 // issue #729 (the Q3 unit, A2): `party` is an option of executeStep and executeChain — the door's

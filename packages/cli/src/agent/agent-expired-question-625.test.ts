@@ -61,7 +61,11 @@ function gated(onExpiry: 'settle_default' | 'abort'): WorkflowDefinition {
 /** A run at the question; `expired` moves its deadline into the past. */
 async function atQuestion(def: WorkflowDefinition, expired: boolean) {
   const store = new InMemoryStore();
-  const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+  const { record: run } = await store.create({
+    workflowId: def.id,
+    workflowVersion: 1,
+    params: {},
+  });
   await executeChain(store, def, {
     runId: run.id,
     command: 'review',
@@ -69,7 +73,7 @@ async function atQuestion(def: WorkflowDefinition, expired: boolean) {
     dispatcher: async () => ({}),
     registry: createDefaultRegistry(),
   });
-  const open = await store.get(run.id);
+  const { record: open } = await store.get(run.id);
   const gate = open.pending_gate as PendingGate;
   if (expired) {
     await store.update({
@@ -134,7 +138,7 @@ describe('#625 PR-2a, C159 — realm agent carries out a question that is alread
       );
       // F1: the expiry line's lag follows the clock — `<lag>` in its place.
       const out = lagless([...logSpy.mock.calls, ...errSpy.mock.calls].map((c) => String(c[0])));
-      const line = `⚠ gate '${gateId}' on 'review' had expired <lag> before this call — ${tail}`;
+      const line = `⚠ gate '${gateId}' on 'review' had expired <lag> before this call (deadline <instant>) — ${tail}`;
       // (a) red when the question is announced before its expiry is carried out (the gate block,
       //     `Waiting for approval...`, a `realm run respond … --choice` command) or when the expiry
       //     line is not printed; (b) prints what the drive printed.
@@ -147,7 +151,7 @@ describe('#625 PR-2a, C159 — realm agent carries out a question that is alread
       expect(out.filter((l) => l === line)).toHaveLength(1);
       const at = out.indexOf(line);
       expect(out.slice(at + 1, at + 1 + after.length)).toEqual(after);
-      expect((await store.get(runId)).run_phase).toBe(phase);
+      expect((await store.get(runId)).record.run_phase).toBe(phase);
       // (a) red when the drive asked the model anything; (b) prints the calls.
       expect(llm.callStep).not.toHaveBeenCalled();
     },
@@ -178,6 +182,6 @@ describe('#625 PR-2a, C159 — realm agent carries out a question that is alread
     expect(out).toContain(`\n⏸  Gate: review | ID: ${gateId}`);
     expect(gateHandler).toHaveBeenCalledTimes(1);
     expect(out.filter((l) => l.includes('had expired'))).toEqual([]);
-    expect((await store.get(runId)).settled?.['review']).toMatchObject({ choice: 'ship' });
+    expect((await store.get(runId)).record.settled?.['review']).toMatchObject({ choice: 'ship' });
   }, 15_000);
 });

@@ -36,13 +36,13 @@ describe('loadWorkflowContext', () => {
 
   it('returns {} when workflow_context is undefined', async () => {
     const def = makeDefinition(undefined);
-    const result = await loadWorkflowContext(def);
+    const result = await loadWorkflowContext(def, new Date());
     expect(result).toEqual({});
   });
 
   it('returns {} when workflow_context is an empty object', async () => {
     const def = makeDefinition({});
-    const result = await loadWorkflowContext(def);
+    const result = await loadWorkflowContext(def, new Date());
     expect(result).toEqual({});
   });
 
@@ -52,7 +52,7 @@ describe('loadWorkflowContext', () => {
     await writeFile(filePath, content, 'utf-8');
 
     const def = makeDefinition({ schema: { source: { path: filePath } } });
-    const result = await loadWorkflowContext(def);
+    const result = await loadWorkflowContext(def, new Date());
 
     expect(result['schema']).toBeDefined();
     expect(result['schema']!.source_path).toBe(filePath);
@@ -67,7 +67,7 @@ describe('loadWorkflowContext', () => {
   it('records error snapshot (content and hash empty) when file does not exist — does not throw', async () => {
     const missing = join(dir, 'does-not-exist.md');
     const def = makeDefinition({ guidelines: { source: { path: missing } } });
-    const result = await loadWorkflowContext(def);
+    const result = await loadWorkflowContext(def, new Date());
 
     expect(result['guidelines']).toBeDefined();
     expect(result['guidelines']!.source_path).toBe(missing);
@@ -88,7 +88,7 @@ describe('loadWorkflowContext', () => {
       b: { source: { path: fileB } },
       missing: { source: { path: missing } },
     });
-    const result = await loadWorkflowContext(def);
+    const result = await loadWorkflowContext(def, new Date());
 
     expect(result['a']!.content).toBe('content-a');
     expect(result['b']!.content).toBe('content-b');

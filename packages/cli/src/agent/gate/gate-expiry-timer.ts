@@ -7,7 +7,7 @@
 // slack-gate-notifier.ts's `handleBidirectionalGate`, run-agent.ts's non-Slack poll loop, and
 // run.ts's interactive prompt.
 import {
-  applySettlement,
+  parseStamp,
   describeGuardLines,
   drainFinalizers,
   expiryCarriedOutLine,
@@ -22,20 +22,11 @@ import type {
   WorkflowDefinition,
   PendingGate,
   ExtensionRegistry,
-  SettlementResult,
   Attributed,
 } from '@sensigo/realm';
 
 /** The `enacted_via` word of this timer's line — a member of core's vocabulary (decision C124). */
 const TIMER_VIA: EnactedVia = 'timer';
-
-/** Node's `setTimeout` delay is a 32-bit signed int; a delay exceeding 2^31-1 ms (~24.8 days)
- *  overflows and fires IMMEDIATELY instead of throwing or clamping (lane-1 F-7) — self-reschedule
- *  in MAX_TIMEOUT_MS-sized hops so a >24.8-day `timeout_seconds` still gets an attended enactment
- *  at its REAL deadline, not instantly. The [F1] `not_expired` arm makes even an accidental
- *  premature fire safe (a harmless refusal, never a wrong enactment) — this clamping exists for
- *  ATTENDED-LIVENESS correctness (don't lose the attended lever for long timeouts), not safety. */
-const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 
 export interface GateExpiryTimerDeps {
   store: RunStore;
@@ -54,15 +45,18 @@ export interface GateExpiryTimerDeps {
 }
 
 /**
- * Schedules an `expire_gate` enactment attempt at `gate.expires_at` — a self-rescheduling
- * `setTimeout` chain when the delay exceeds Node's 32-bit ceiling. No-ops (returns a no-op cancel
- * function) for a finding-only gate (`on_expiry` absent) or one with no enforce clock at all
- * (`expires_at` absent) — nothing schedulable, matching every other enactment point's own gating.
- * Enactment refusals/failures are swallowed to a `console.warn` — this is a best-effort ATTENDED
- * lever, never a hard dependency: a race with any OTHER enactment point (submit/execute_step/
- * reclaim/drain --expired/the listen sweeper) is safe by construction via the [F1] arm matrix's
- * NOOPs. The returned cancel function MUST be called on gate resolution or process exit — every
- * call site wires it into its own `finally`/cleanup.
+ * Schedules an `expire_gate` enactment attempt at `gate.expires_at` on the STORE's clock (#715 (b),
+ * 03 §A.3; D6-7, D6-8): `deps.store.clock.at` — the system clock re-checks the wall clock in hops of
+ * at most a minute, a test clock runs it at the `advance` that reaches it, and a test location's
+ * clock when its file does. No-ops (returns a no-op cancel function) for a finding-only gate
+ * (`on_expiry` absent) or one with no enforce clock at all (`expires_at` absent, or one that is not an
+ * instant) — nothing schedulable, matching every other enactment point's own gating. Enactment
+ * refusals/failures are swallowed to a `console.warn` — this is a best-effort ATTENDED lever, never a
+ * hard dependency: a race with any OTHER enactment point (submit/execute_step/reclaim/drain
+ * --expired/the listen sweeper) is safe by construction via the [F1] arm matrix's NOOPs. The waiter
+ * returns its enactment's promise, so a test clock's `advance` awaits it (D6-20). The returned cancel
+ * function MUST be called on gate resolution or process exit — every call site wires it into its own
+ * `finally`/cleanup.
  */
 export function scheduleGateExpiryTimer(
   runId: string,
@@ -72,34 +66,20 @@ export function scheduleGateExpiryTimer(
   if (gate.expires_at === undefined || gate.on_expiry === undefined) {
     return (): void => {};
   }
-  const expiresAtMs = new Date(gate.expires_at).getTime();
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expiresAtMs = parseStamp(gate.expires_at);
+  if (expiresAtMs === undefined) return (): void => {};
   let cancelled = false;
 
   const fire = async (): Promise<void> => {
     if (cancelled) return;
-    const remainingMs = expiresAtMs - Date.now();
-    if (remainingMs > 0) {
-      schedule(remainingMs);
-      return;
-    }
     try {
       const delta = { kind: 'expire_gate' as const, gateId: gate.gate_id };
-      let outcome: SettlementResult;
-      const firedAt = new Date();
-      if (deps.store.settleStep !== undefined) {
-        outcome = await deps.store.settleStep(runId, delta, deps.definition, { now: firedAt });
-      } else {
-        const fresh = await deps.store.get(runId);
-        const pure = applySettlement(fresh, delta, deps.definition, { now: firedAt });
-        outcome = pure.applied ? { ...pure, run: await deps.store.update(pure.run) } : pure;
-      }
+      // #715 (b): the store's clock decides the gate is due, and the settle returns its reading.
+      const outcome = await deps.store.settleStep(runId, delta, deps.definition);
       if (outcome.applied) {
-        // issue #625: on a store that declares `settleStep` the expiry's write also settled the
-        // guards its default made eligible. This timer logs ONE line, so what they did is
-        // appended to it: the ending sentence and its `Reason:` when a guard ended the run,
-        // otherwise a passed line per guard. (The legacy branch above never sets the option, so
-        // it reports none.)
+        // issue #625: the expiry's write also settled the guards its default made eligible. This
+        // timer logs ONE line, so what they did is appended to it: the ending sentence and its
+        // `Reason:` when a guard ended the run, otherwise a passed line per guard.
         const guardLines = describeGuardLines(outcome);
         // #729 PR-0 (T-2, G7-18): the timer's line is the expiry receipt's — core's ONE line
         // composer, the same words every enactor's line carries (no second composer here).
@@ -115,8 +95,7 @@ export function scheduleGateExpiryTimer(
           { gate_id: gate.gate_id, step: gate.step_name, expires_at: gate.expires_at },
           carried,
           TIMER_VIA,
-          firedAt,
-          true,
+          outcome.at,
         );
         console.log(
           `⏰ ${receipt !== undefined ? expiryReceiptLine(receipt) : expiryCarriedOutLine(gate.gate_id, gate.step_name, carried, TIMER_VIA, undefined)}` +
@@ -157,14 +136,10 @@ export function scheduleGateExpiryTimer(
     }
   };
 
-  const schedule = (delayMs: number): void => {
-    const clamped = Math.max(0, Math.min(delayMs, MAX_TIMEOUT_MS));
-    timer = setTimeout(() => void fire(), clamped);
-  };
-  schedule(expiresAtMs - Date.now());
+  const cancelWaiter = deps.store.clock.at(new Date(expiresAtMs), () => fire());
 
   return (): void => {
     cancelled = true;
-    if (timer !== undefined) clearTimeout(timer);
+    cancelWaiter();
   };
 }

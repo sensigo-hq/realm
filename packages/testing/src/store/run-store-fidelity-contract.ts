@@ -44,7 +44,10 @@ import {
  * declared with what showed the question, the program that recorded it, whether the door asked the
  * user's app to ask the person, and the transport's principal, each read back exactly, typed
  * absences included) and `EVIDENCE_WRITE_ORDER` (#872 (b1) — a run's evidence reads back in the
- * order it was written: `get_run_state` pages a run's steps in that order, by a step's place in it).
+ * order it was written: `get_run_state` pages a run's steps in that order, by a step's place in it)
+ * and `DRIVE_FAILURE_KEEPS_ITS_FENCE` (#715 (b), 02 §D.2 — a failed drive's entry reads back with the
+ * evidence count and the open question's id it was appended at, and one written without them reads
+ * back without them: the `drive_failing` finding tells a legacy entry by their absence).
  */
 export const RUN_STORE_FIDELITY_LAWS = [
   'FIDELITY_HONESTY',
@@ -57,6 +60,7 @@ export const RUN_STORE_FIDELITY_LAWS = [
   'SUPPLIER_ROUND_TRIPS',
   'EVIDENCE_KEEPS_ANSWER_FACTS',
   'EVIDENCE_WRITE_ORDER',
+  'DRIVE_FAILURE_KEEPS_ITS_FENCE',
 ] as const;
 
 export type RunStoreFidelityLaw = (typeof RUN_STORE_FIDELITY_LAWS)[number];
@@ -288,14 +292,14 @@ export function runStoreFidelityContract(
       law: 'FIDELITY_HONESTY',
       name: `a store declaring '${field}' actually round-trips it (create → update → get)`,
       run: async () => {
-        const { run } = await adapter.store.create({
+        const { record: run } = await adapter.store.create({
           workflowId: `tck-fidelity-${field}`,
           workflowVersion: 1,
           params: {},
         });
         const sampleValue = SAMPLE_VALUES[field];
         await adapter.store.update({ ...run, [field]: sampleValue });
-        const reread = await adapter.store.get(run.id);
+        const { record: reread } = await adapter.store.get(run.id);
         const actual = (reread as unknown as Record<string, unknown>)[field];
         const wroteJson = JSON.stringify(sampleValue);
         const readJson = JSON.stringify(actual);
@@ -319,13 +323,13 @@ export function runStoreFidelityContract(
     name: "create's start entry: kept when the store declares 'extension_identity', absent when it does not",
     run: async () => {
       const entry = { ...SAMPLE_VALUES.extension_identity![0]!, origin: 'start' as const };
-      const { run } = await adapter.store.create({
+      const { record: run } = await adapter.store.create({
         workflowId: 'tck-fidelity-start-identity',
         workflowVersion: 1,
         params: {},
         extensionIdentity: [entry],
       });
-      const reread = await adapter.store.get(run.id);
+      const { record: reread } = await adapter.store.get(run.id);
       const declared = declaredFields.has('extension_identity');
       const want = declared ? JSON.stringify([entry]) : undefined;
       const read = JSON.stringify(reread.extension_identity);
@@ -344,7 +348,7 @@ export function runStoreFidelityContract(
       law: 'SEALED_BY_ROUNDTRIP',
       name: 'a store declaring sealed_by round-trips the seal arm through a PROPER terminal write',
       run: async () => {
-        const { run } = await adapter.store.create({
+        const { record: run } = await adapter.store.create({
           workflowId: 'tck-fidelity-sealed-by',
           workflowVersion: 1,
           params: {},
@@ -358,7 +362,7 @@ export function runStoreFidelityContract(
           sealed_by: { arm: 'complete', step: 'tck-step' },
           terminal_reason: 'Workflow completed.',
         });
-        const reread = await adapter.store.get(run.id);
+        const { record: reread } = await adapter.store.get(run.id);
         const wrote = JSON.stringify({ arm: 'complete', step: 'tck-step' });
         const read = JSON.stringify(reread.sealed_by);
         if (read !== wrote) {
@@ -382,13 +386,13 @@ export function runStoreFidelityContract(
         law: 'CLAIM_NAMES_HOLDER',
         name: 'a claim made with a claimant reads back with that holder and a since — returned and re-read',
         run: async () => {
-          const { run } = await adapter.store.create({
+          const { record: run } = await adapter.store.create({
             workflowId: `tck-holder-${Math.random().toString(36).slice(2)}`,
             workflowVersion: 1,
             params: {},
           });
           const before = Date.now();
-          const claimed = await adapter.store.claimStep(
+          const { record: claimed } = await adapter.store.claimStep(
             run.id,
             adapter.stepName,
             adapter.definition,
@@ -404,7 +408,7 @@ export function runStoreFidelityContract(
             'the returned record',
           );
           assertClaimNames(
-            await adapter.store.get(run.id),
+            (await adapter.store.get(run.id)).record,
             adapter.stepName,
             TCK_CLAIMANT,
             before,
@@ -417,7 +421,7 @@ export function runStoreFidelityContract(
         law: 'CLAIM_NAMES_HOLDER',
         name: 'a claim made WITHOUT a claimant reads back with a since and NO holder',
         run: async () => {
-          const { run } = await adapter.store.create({
+          const { record: run } = await adapter.store.create({
             workflowId: `tck-holder-${Math.random().toString(36).slice(2)}`,
             workflowVersion: 1,
             params: {},
@@ -426,7 +430,7 @@ export function runStoreFidelityContract(
           await adapter.store.claimStep(run.id, adapter.stepName, adapter.definition);
           const after = Date.now();
           assertClaimNames(
-            await adapter.store.get(run.id),
+            (await adapter.store.get(run.id)).record,
             adapter.stepName,
             undefined,
             before,
@@ -452,7 +456,7 @@ export function runStoreFidelityContract(
     law: 'EVIDENCE_KEEPS_DRIVER_AND_PROOF',
     name: 'an entry written with driven_by, a gate_response entry written with claim_proof and an entry written with output_source read back with all three',
     run: async () => {
-      const { run } = await adapter.store.create({
+      const { record: run } = await adapter.store.create({
         workflowId: `tck-evidence-${Math.random().toString(36).slice(2)}`,
         workflowVersion: 1,
         params: {},
@@ -476,7 +480,7 @@ export function runStoreFidelityContract(
           { ...base, output_source: 'dependency' },
         ],
       });
-      const reread = await adapter.store.get(run.id);
+      const { record: reread } = await adapter.store.get(run.id);
       const wroteDriver = JSON.stringify(TCK_CLAIMANT);
       const readDriver = JSON.stringify(reread.evidence[0]?.driven_by);
       if (readDriver !== wroteDriver) {
@@ -510,7 +514,7 @@ export function runStoreFidelityContract(
     law: 'SUPPLIER_ROUND_TRIPS',
     name: 'an entry written with supplied_by reads back with it, and one written without reads back without',
     run: async () => {
-      const { run } = await adapter.store.create({
+      const { record: run } = await adapter.store.create({
         workflowId: `tck-supplier-${Math.random().toString(36).slice(2)}`,
         workflowVersion: 1,
         params: {},
@@ -529,7 +533,7 @@ export function runStoreFidelityContract(
         ...run,
         evidence: [{ ...base, supplied_by: 'agent' }, { ...base }],
       });
-      const reread = await adapter.store.get(run.id);
+      const { record: reread } = await adapter.store.get(run.id);
       const read = reread.evidence[0]?.supplied_by;
       if (read !== 'agent') {
         throw new Error(
@@ -556,7 +560,7 @@ export function runStoreFidelityContract(
     law: 'EVIDENCE_KEEPS_ANSWER_FACTS',
     name: 'a gate_response entry written with answer, driven_by, client_prompt_requested and principal reads back with each one, and one written with the typed absences reads back with them',
     run: async () => {
-      const { run } = await adapter.store.create({
+      const { record: run } = await adapter.store.create({
         workflowId: `tck-answer-${Math.random().toString(36).slice(2)}`,
         workflowVersion: 1,
         params: {},
@@ -589,7 +593,7 @@ export function runStoreFidelityContract(
           { ...base, ...absent },
         ],
       });
-      const reread = await adapter.store.get(run.id);
+      const { record: reread } = await adapter.store.get(run.id);
       const pairs: [string, unknown, unknown][] = [
         ['answer', declared.answer, reread.evidence[0]?.answer],
         ['driven_by', declared.driven_by, reread.evidence[0]?.driven_by],
@@ -627,7 +631,7 @@ export function runStoreFidelityContract(
     law: 'EVIDENCE_WRITE_ORDER',
     name: "three steps' evidence written in three separate writes (a, b, c) reads back as a, b, c",
     run: async () => {
-      const { run } = await adapter.store.create({
+      const { record: run } = await adapter.store.create({
         workflowId: `tck-order-${Math.random().toString(36).slice(2)}`,
         workflowVersion: 1,
         params: {},
@@ -644,12 +648,12 @@ export function runStoreFidelityContract(
       });
       let current = run;
       for (const step of ['a', 'b', 'c']) {
-        current = await adapter.store.update({
+        ({ record: current } = await adapter.store.update({
           ...current,
           evidence: [...current.evidence, entry(step)],
-        });
+        }));
       }
-      const read = (await adapter.store.get(run.id)).evidence.map((e) => e.step_id);
+      const read = (await adapter.store.get(run.id)).record.evidence.map((e) => e.step_id);
       if (JSON.stringify(read) !== JSON.stringify(['a', 'b', 'c'])) {
         throw new Error(
           `a store must read a run's evidence back in the order it was written (#872): wrote a, b, c ` +
@@ -663,7 +667,7 @@ export function runStoreFidelityContract(
     law: 'CLAIM_SINGLE_OWNER',
     name: 'two concurrent claimStep calls for the same (runId, step) — exactly one succeeds',
     run: async () => {
-      const { run } = await adapter.store.create({
+      const { record: run } = await adapter.store.create({
         workflowId: `tck-claim-${Math.random().toString(36).slice(2)}`,
         workflowVersion: 1,
         params: {},
@@ -700,7 +704,7 @@ export function runStoreFidelityContract(
     law: 'USAGE_RECORD_ROUNDTRIP',
     name: "a request record written with every request fact, in a step's evidence and in a failed drive's usage, reads back with each one",
     run: async () => {
-      const { run } = await adapter.store.create({
+      const { record: run } = await adapter.store.create({
         workflowId: `tck-usage-${Math.random().toString(36).slice(2)}`,
         workflowVersion: 1,
         params: {},
@@ -745,7 +749,7 @@ export function runStoreFidelityContract(
           ],
         },
       });
-      const reread = await adapter.store.get(run.id);
+      const { record: reread } = await adapter.store.get(run.id);
       const places: Array<[string, unknown]> = [
         [
           'evidence[0].diagnostics.cache.requests[0]',
@@ -768,6 +772,55 @@ export function runStoreFidelityContract(
             );
           }
         }
+      }
+    },
+  });
+
+  // #715 (b) (02 §D.2) — DRIVE_FAILURE_KEEPS_ITS_FENCE. Always active: every store round-trips
+  // drive failures.
+  cases.push({
+    law: 'DRIVE_FAILURE_KEEPS_ITS_FENCE',
+    name: "a failed drive's entry reads back with the evidence count and question id it was appended at; one written without them reads back without them",
+    run: async () => {
+      const { record: run } = await adapter.store.create({
+        workflowId: `tck-fence-${Math.random().toString(36).slice(2)}`,
+        workflowVersion: 1,
+        params: {},
+      });
+      const base = {
+        at: '2026-01-01T00:00:02.000Z',
+        step: adapter.stepName,
+        provider: 'tck-provider',
+        error_class: 'other' as const,
+        message: 'tck',
+        elapsed_ms: 1,
+      };
+      await adapter.store.update({
+        ...run,
+        drive_failures: {
+          first_failed_at: base.at,
+          total: 2,
+          entries: [base, { ...base, evidence_count: 3, gate_id: 'tck-fence-gate' }],
+        },
+      });
+      const { record: reread } = await adapter.store.get(run.id);
+      const [legacy, fenced] = reread.drive_failures?.entries ?? [];
+      const got = {
+        legacy: [
+          legacy !== undefined && 'evidence_count' in legacy,
+          legacy !== undefined && 'gate_id' in legacy,
+        ],
+        fenced: [fenced?.evidence_count, fenced?.gate_id],
+      };
+      if (
+        got.legacy[0] !== false ||
+        got.legacy[1] !== false ||
+        got.fenced[0] !== 3 ||
+        got.fenced[1] !== 'tck-fence-gate'
+      ) {
+        throw new Error(
+          `a store must round-trip a failed drive's fence (#715 (b)): read back ${JSON.stringify(got)} — want the legacy entry without evidence_count and gate_id, the other with 3 and 'tck-fence-gate'`,
+        );
       }
     },
   });

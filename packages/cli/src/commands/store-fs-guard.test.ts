@@ -296,19 +296,16 @@ const RAW_TRACE_BUFFER_STORE_DELETE = /\btraceBufferStore\??\.(delete|deleteAllF
  *  contract-clause justification issue #207 PR-2 requires. */
 const RAW_DELETE_ALLOW_LIST: Record<string, { count: number; reason: string }> = {
   'core/src/engine/execution-loop.ts': {
-    count: 4,
+    // #715 (b), C.1: 4 → 2 — the two LEGACY deletes (the failure-settle and success-settle sites'
+    // store.update-gated twins) went with the legacy blocks that held them.
+    count: 2,
     reason:
-      'the LEGACY failure-settle delete (persist-gated on store.update succeeding — #186 posture) ' +
-      'and the LEGACY success-settle delete (clause (a) of the unified deletion contract: the ' +
-      'settlement already committed and is durably visible, so this delete never races an ' +
-      'unsettled step), PLUS their two MIGRATED-path twins (issue #279 increment 1, PR-B): the ' +
-      "fail site's migrated delete (gated on result.applied — BU-12, the settleStep equivalent " +
-      "of the same persist-gate) and the complete site's migrated delete (same clause-(a) " +
-      'reasoning, now gated on settleStep having committed instead of store.update). All FOUR are ' +
-      'intentionally UNFENCED for the identical reason: none can race a concurrent append_trace ' +
-      'once the run is claimed (appends are refused once in_progress/settled, per ' +
-      "append_trace.ts's own eligibility check) — the migration changes WHICH store method " +
-      'commits the settlement, not this invariant. The capability-block delete (formerly a fifth ' +
+      "the fail site's delete (gated on result.applied — BU-12, the settleStep persist-gate) and " +
+      "the complete site's delete (clause (a) of the unified deletion contract: the settlement " +
+      'already committed through settleStep and is durably visible, so this delete never races an ' +
+      'unsettled step). Both are intentionally UNFENCED: neither can race a concurrent ' +
+      'append_trace once the run is claimed (appends are refused once in_progress/settled, per ' +
+      "append_trace.ts's own eligibility check). The capability-block delete (formerly a fifth " +
       "site here) was REMOVED entirely, not fenced — see execution-loop.ts's own comment at that " +
       'call site.',
   },

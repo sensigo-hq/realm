@@ -24,6 +24,7 @@ import {
   describePending,
   composeNextActionsStatusWord,
   composeWaysOn,
+  waysStoreOf,
   definitionAbsenceOf,
   dueExpiry,
   loadSnapshot,
@@ -65,7 +66,6 @@ import { toolMeta } from '../tool-annotations.js';
 import {
   ALSO_TABLE,
   MCP_ENVELOPE_TABLE,
-  MCP_POLL_AFTER_MS,
   NEXT_ACTION_TABLE,
   PERSON_BLOCK,
   disclosureOfTool,
@@ -79,6 +79,7 @@ import {
   type McpElsewhereEntry,
   type McpNextAction,
   type OperatorRoute,
+  type PollReason,
   type WithPersonBlock,
   replySubject,
   setForSubject,
@@ -456,6 +457,7 @@ export const RUN_STATE_SUMMARY_TABLE = {
   next_actions_status: 'fact',
   agent_action: 'fact',
   poll_after_ms: 'fact',
+  poll_reason: 'fact',
   until: 'fact',
   also: { nested: ALSO_TABLE },
   elsewhere: 'fact',
@@ -614,6 +616,8 @@ export interface RunStateSummary {
   agent_action?: AgentAction;
   /** issue #729 PR-0 (P-2): on an `await` read — read the run again no sooner than this. */
   poll_after_ms?: number;
+  /** #715 (b) (03 §C): which deadline set `poll_after_ms`. */
+  poll_reason?: PollReason;
   /** issue #729 PR-0 (P-2): on an `await` read, the deadline the record states for the blocker. */
   until?: string;
   /** issue #729 PR-0 (A-1): reading and ending the run — never counted as a next step. */
@@ -990,7 +994,8 @@ export async function handleGetRunState(
             : registry !== undefined
               ? { kind: 'this_program', registry }
               : { kind: 'observer' },
-        store: { persistsClaims: runStore.persistsClaims === true },
+        // #715 (b) (02 §C.1): with what the reply's instant stands on (`as_of_basis`).
+        store: waysStoreOf(runStore),
       }),
       mcpHostOf(stores),
     );
@@ -1089,7 +1094,7 @@ export async function handleGetRunState(
           warnings.push(loadFailureWarning(run.workflow_id, loadFailed, err));
         }
       }
-      pending = describePending(definition, run, registry, now);
+      pending = describePending(definition, snap, registry);
       nextActionsStatus = composeNextActionsStatusWord(pending) ?? 'ok';
     }
 
@@ -1103,7 +1108,7 @@ export async function handleGetRunState(
       // The open question's own step holds a claim while it waits (decision C95 reaches this block
       // with a question open, when its time is up): it is not work in flight, as `stuck_claims`
       // below says too.
-      const claimStates = classifyInProgressClaims(run)
+      const claimStates = classifyInProgressClaims(snap)
         .filter((c) => c.step !== run.pending_gate?.step_name)
         .map((c) => c.state);
       if (claimStates.includes('claim_stale')) {
@@ -1144,7 +1149,7 @@ export async function handleGetRunState(
   // sibling claim on another fan-out branch is still surfaced here. The open-gate step is excluded.
   const stuckClaims = run.terminal_state
     ? []
-    : classifyInProgressClaims(run)
+    : classifyInProgressClaims(snap)
         .filter((c) => c.state !== 'healthy' && c.step !== run.pending_gate?.step_name)
         .map((c) => ({ step: c.step, state: c.state }));
 
@@ -1202,7 +1207,7 @@ export async function handleGetRunState(
   // finalized BEFORE this line runs — nothing below this point may write back to it.
   const runHealth: RunHealthFinding[] = run.terminal_state
     ? []
-    : classifyRunHealth(run, {
+    : classifyRunHealth(snap, {
         ...(definition !== undefined ? { definition } : {}),
         ...(definitionError !== undefined ? { definitionError } : {}),
         // issue #625 PR-2a (decision C46): a server that can run a step is not told the step is
@@ -1302,8 +1307,14 @@ export async function handleGetRunState(
     next_actions: ways.next_actions,
     next_actions_status: nextActionsStatus,
     ...(agentAction !== undefined ? { agent_action: agentAction } : {}),
-    ...(agentAction === 'await' ? { poll_after_ms: MCP_POLL_AFTER_MS } : {}),
-    ...(agentAction === 'await' && ways.until !== undefined ? { until: ways.until } : {}),
+    // #715 (b) (03 §C, D6-71): the pace from the record's deadlines, at this read's reading.
+    ...(agentAction === 'await'
+      ? {
+          poll_after_ms: ways.pace.poll_after_ms,
+          poll_reason: ways.pace.poll_reason,
+          ...(ways.pace.until !== undefined ? { until: ways.pace.until } : {}),
+        }
+      : {}),
     ...(ways.also.length > 0 ? { also: ways.also } : {}),
     ...(ways.elsewhere.length > 0 ? { elsewhere: ways.elsewhere } : {}),
     ...(ways.narrowed !== undefined ? { basis: ways.narrowed.basis } : {}),

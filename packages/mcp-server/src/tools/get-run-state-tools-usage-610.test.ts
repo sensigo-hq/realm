@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import { WorkflowError } from '@sensigo/realm';
 import type { JsonWorkflowStore, RunRecord, RunStore, UsageRecord } from '@sensigo/realm';
 import { handleGetRunState } from './get-run-state.js';
+import { snap, doubleClock, noSettle } from '../test-support/snapshot-double.js';
 
 const req = (i: number, prompt: number): UsageRecord => ({
   request_index: i,
@@ -59,8 +60,10 @@ function runWith(usage: UsageRecord[] | undefined): RunRecord {
 
 const runStore = (run: RunRecord): RunStore =>
   declared({
+    clock: doubleClock,
+    settleStep: noSettle,
     persistsClaims: true,
-    get: async () => run,
+    get: async () => snap(run),
     create: async () => {
       throw new Error('not exercised');
     },

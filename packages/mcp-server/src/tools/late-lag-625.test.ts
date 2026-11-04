@@ -17,6 +17,7 @@ import {
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
+import { zOf } from '../test-support/instant.js';
 
 type Reply = Record<string, unknown>;
 
@@ -75,7 +76,7 @@ describe('#625 PR-2a, F1 — over MCP the expiry line says how late; the late an
     const { call, runStore, workflowStore } = await connect();
     await workflowStore.register(gated(id, onExpiry));
     const runId = (await call('start_run', { workflow_id: id }))['run_id'] as string;
-    const record = await runStore.get(runId);
+    const { record: record } = await runStore.get(runId);
     const at = Date.now() - 15_000;
     const expiresAt = new Date(at).toISOString();
     await runStore.update({
@@ -123,7 +124,7 @@ describe('#625 PR-2a, F1 — over MCP the expiry line says how late; the late an
           overdue >= window[0] - q.at - 1 &&
           overdue <= window[1] - q.at + 1,
       }).toEqual({
-        line: `gate '${q.gateId}' on 'confirm' had expired ${lag} before this call — this submit_human_response call first carried out its declared ${did} (enacted_via: submit_human_response).`,
+        line: `gate '${q.gateId}' on 'confirm' had expired ${lag} before this call (deadline ${zOf(q.at)}) — this submit_human_response call first carried out its declared ${did} (enacted_via: submit_human_response).`,
         lagFits: true,
         expired_at: q.expiresAt,
         details: [undefined, undefined],
@@ -142,7 +143,7 @@ describe('#625 PR-2a, F1 — over MCP the expiry line says how late; the late an
     const lag = /had expired (\S+) before this call/.exec(line)?.[1] ?? '<no lag>';
     // (a) red when advance_run's line drops the lag or says it in minutes; (b) prints the line.
     expect({ line, lagFits: seconds(q.at, window).includes(lag) }).toEqual({
-      line: `gate '${q.gateId}' on 'confirm' had expired ${lag} before this call — this advance_run call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance_run).`,
+      line: `gate '${q.gateId}' on 'confirm' had expired ${lag} before this call (deadline ${zOf(q.at)}) — this advance_run call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance_run).`,
       lagFits: true,
     });
   });

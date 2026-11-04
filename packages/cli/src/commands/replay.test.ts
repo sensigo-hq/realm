@@ -464,7 +464,7 @@ describe('replayCommand — a workflow-absent run carries the remedy (issue #456
     // contaminate this cell's assertions without changing its point.
     const { JsonFileStore } = await import('@sensigo/realm');
     const runStore = new JsonFileStore();
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'replay-missing-wf',
       workflowVersion: 1,
       params: {},

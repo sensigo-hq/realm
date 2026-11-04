@@ -44,6 +44,8 @@ function trapStore(declared: boolean): { s: RunStore; calls: string[] } {
     list: trap('list'),
     claimStep: trap('claimStep'),
     settleStep: trap('settleStep'),
+    // #715 (b): every store holds a clock (admission checks its functions exist; a call is a use).
+    clock: { now: trap('clock.now'), at: trap('clock.at') },
   } as unknown as RunStore;
   if (declared) declareReleaseLine(s);
   return { s, calls };
@@ -140,11 +142,86 @@ describe('the admission table', () => {
     // (a) red when a row is added, dropped or moved without this list moving; (b) prints the ids.
     expect(HOST_WIRING_CHECKS.map((c) => c.id)).toEqual([
       'store_release_line',
+      'store_clock',
+      'store_settle_step',
       'registry_release_line',
       'driver_shape',
       'caller',
       'required_parts',
     ]);
+  });
+
+  // #715 (b) (D-18, D6-5): a run store without a callable clock, or without `settleStep`, is refused at
+  // the front door in its four clauses — never a late TypeError in the middle of a write.
+  it.each(ENGINE_ENTRIES.filter((e) => e !== 'getWorkflowForRun').map((e) => [e]))(
+    '%s: a run store with no clock is refused, naming store.clock, before any read',
+    async (entry) => {
+      const { s, calls } = trapStore(true);
+      delete (s as { clock?: unknown }).clock;
+      // (a) red when the row is dropped or reads the store; (b) prints the code and the option named.
+      await expect(CALLS[entry](s, undefined, undefined)).rejects.toMatchObject({
+        code: 'VALIDATION_OPTION_INVALID',
+        details: { invalid: [{ option: 'store.clock', given_type: 'undefined' }] },
+      });
+      expect(calls).toEqual([]);
+    },
+  );
+
+  it.each(ENGINE_ENTRIES.filter((e) => e !== 'getWorkflowForRun').map((e) => [e]))(
+    '%s: a run store with no settleStep is refused, naming store.settleStep, before any read',
+    async (entry) => {
+      const { s, calls } = trapStore(true);
+      delete (s as { settleStep?: unknown }).settleStep;
+      // (a) red when the row is dropped (a cast store would reach a TypeError mid-write); (b) prints
+      //     the code and the option named.
+      await expect(CALLS[entry](s, undefined, undefined)).rejects.toMatchObject({
+        code: 'VALIDATION_OPTION_INVALID',
+        details: { invalid: [{ option: 'store.settleStep', given_type: 'undefined' }] },
+      });
+      expect(calls).toEqual([]);
+    },
+  );
+
+  it('two defects — no release line and no clock: the release line is named first (the table is ordered)', async () => {
+    const { s } = trapStore(false);
+    delete (s as { clock?: unknown }).clock;
+    // (a) red when the clock row runs before the release-line row; (b) prints the code.
+    await expect(CALLS.executeStep(s, undefined, undefined)).rejects.toMatchObject({
+      code: 'ENGINE_RELEASE_LINE_UNDECLARED',
+    });
+  });
+
+  it('two defects — no clock and no settleStep: the clock is named first', async () => {
+    const { s } = trapStore(true);
+    delete (s as { clock?: unknown }).clock;
+    delete (s as { settleStep?: unknown }).settleStep;
+    // (a) red when the two rows swap; (b) prints the option named.
+    await expect(CALLS.advanceRun(s, undefined, undefined)).rejects.toMatchObject({
+      details: { invalid: [{ option: 'store.clock' }] },
+    });
+  });
+
+  it('a clock whose at is missing is refused too (a clock is now and at)', async () => {
+    const { s } = trapStore(true);
+    (s as { clock: unknown }).clock = { now: () => new Date() };
+    // (a) red when the row checks `now` alone; (b) prints the given type.
+    await expect(CALLS.executeStep(s, undefined, undefined)).rejects.toMatchObject({
+      details: { invalid: [{ option: 'store.clock', given_type: 'object' }] },
+    });
+  });
+
+  it('getWorkflowForRun admits a workflow store: no clock row runs for it', async () => {
+    const { s, calls } = trapStore(true);
+    delete (s as { clock?: unknown }).clock;
+    delete (s as { settleStep?: unknown }).settleStep;
+    // (a) red when the run-store rows refuse a workflow store; (b) prints what was thrown.
+    const err = await CALLS.getWorkflowForRun(s, undefined, undefined).then(
+      () => undefined,
+      (e: unknown) => (e as { details?: { invalid?: Array<{ option: string }> } }).details?.invalid,
+    );
+    expect(JSON.stringify(err ?? [])).not.toContain('store.clock');
+    expect(JSON.stringify(err ?? [])).not.toContain('store.settleStep');
+    void calls;
   });
 
   it('passes a call with nothing wrong, and with every optional part absent', () => {

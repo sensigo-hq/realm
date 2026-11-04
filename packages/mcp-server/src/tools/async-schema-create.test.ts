@@ -61,7 +61,7 @@ describe('create_workflow refuses a step input_schema whose root carries a truth
       remedy: first.includes('remove `$async` from the schema'),
       generic: GENERIC.filter((g) => first.includes(g)),
       workflowsAdded: (after?.length ?? 0) - (before?.length ?? 0),
-      runs: (await runStore.list()).length,
+      runs: (await runStore.list()).snapshots.map((s) => s.record).length,
     }).toEqual({
       status: 'error',
       agentAction: 'provide_input',

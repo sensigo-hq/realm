@@ -42,8 +42,8 @@ afterEach(async () => {
 
 /** A run waiting at gate `g-1` of `workflowId`. */
 async function atGate(workflowId = AGENT_ID): Promise<RunRecord> {
-  const { run } = await runs.create({ workflowId, workflowVersion: 1, params: {} });
-  return runs.update({ ...run, pending_gate: { ...GATE } });
+  const { record: run } = await runs.create({ workflowId, workflowVersion: 1, params: {} });
+  return (await runs.update({ ...run, pending_gate: { ...GATE } })).record;
 }
 
 const thrown = (p: Promise<unknown>) => p.then(() => undefined).catch((e: unknown) => e);
@@ -94,7 +94,7 @@ describe('#819 correction 1 (01) — at a live question, the repair is register,
 
   it("the listing: an agent's copy that is gone, at a live question → the register way, and abandon held by the open question; outside one (U5) → no register, the remedy is ending the run", async () => {
     const gated = await atGate();
-    const { run: running } = await runs.create({
+    const { record: running } = await runs.create({
       workflowId: AGENT_ID,
       workflowVersion: 1,
       params: {},

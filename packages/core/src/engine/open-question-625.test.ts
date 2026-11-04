@@ -12,7 +12,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import {
   advanceRun,
   executeChain,
@@ -28,6 +28,25 @@ import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { EngineReply } from '../types/response-envelope.js';
 import { agentActionFor, nextCalls, proofOf } from '../test-support/ways-view.js';
+import { writeTestClockFile } from '../store/test-clock-file.js';
+import { zOf } from '../test-support/instant.js';
+
+/** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
+ *  runs folder sits beside the location's clock file (first set to the host's reading), which
+ *  `setClockOf` rewrites. */
+async function testLocationRuns(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  await writeTestClockFile(root, new Date());
+  return join(root, 'runs');
+}
+async function clockedJsonStore(prefix: string): Promise<JsonFileStore> {
+  return new JsonFileStore(await testLocationRuns(prefix));
+}
+async function setClockOf(store: object, t: Date): Promise<void> {
+  const runsDir = (store as { runsDirPath?: string }).runsDirPath;
+  if (runsDir === undefined) throw new Error('setClockOf: this store is not a JSON store');
+  await writeTestClockFile(dirname(runsDir), t);
+}
 
 /** `q` (a question), then `after` (a bare `auto` step). `timeout`/`onExpiry` as given. */
 function gated(onExpiry?: 'settle_default' | 'abort'): WorkflowDefinition {
@@ -92,14 +111,18 @@ function respondsOf(reply: EngineReply): WayOn[] {
 describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named everywhere', () => {
   let store: JsonFileStore;
   beforeEach(async () => {
-    store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-oq-625-')));
+    store = await clockedJsonStore('realm-oq-625-');
   });
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
   async function atQuestion(d: WorkflowDefinition) {
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const opened = await executeStep(store, d, {
       runId: run.id,
       command: 'q',
@@ -107,7 +130,7 @@ describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named ever
       dispatcher: async () => ({}),
     });
     if (opened.status !== 'confirm_required') throw new Error(`fixture: ${opened.status}`);
-    const gate = (await store.get(run.id)).pending_gate!;
+    const gate = (await store.get(run.id)).record.pending_gate!;
     return { runId: run.id, gateId: gate.gate_id, opened };
   }
 
@@ -159,20 +182,23 @@ describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named ever
   it("C103, C117: describePending's open_question — before and after its time is up; none on a run with no question", async () => {
     const d = gated('settle_default');
     const { runId, gateId } = await atQuestion(d);
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     const question = { step: 'q', gate_id: gateId, choices: ['approve', 'reject'] };
     // (a) red when the view does not name the open question; (b) prints the view.
-    expect(describePending(d, run, undefined, new Date()).open_question).toEqual(question);
+    expect(describePending(d, writtenSnapshot(run, new Date()), undefined).open_question).toEqual(
+      question,
+    );
     // (a) red when a due question loses the field (it is still the open question); (b) prints it.
     const past = new Date(new Date(run.pending_gate!.expires_at!).getTime() + 5_000);
-    expect(describePending(d, run, undefined, past).open_question).toEqual(question);
+    expect(describePending(d, writtenSnapshot(run, past), undefined).open_question).toEqual(
+      question,
+    );
     // (a) red when a run with no question gets one; (b) prints it.
     expect(
       describePending(
         d,
-        { ...run, pending_gate: undefined } as unknown as RunRecord,
+        writtenSnapshot({ ...run, pending_gate: undefined } as unknown as RunRecord, new Date()),
         undefined,
-        new Date(),
       ).open_question,
     ).toBe(undefined);
     expect(openQuestionOf({ ...run, terminal_state: true } as RunRecord)).toBe(undefined);
@@ -219,7 +245,11 @@ describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named ever
 
   it('C104: a step not eligible behind a stranded dependency, nothing else callable — report_to_user and the way out', async () => {
     const d = stranded(false);
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const reply = await executeStep(store, d, {
       runId: run.id,
       command: 'c',
@@ -254,7 +284,11 @@ describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named ever
 
   it('C104: a step not eligible beside a callable step — resolve_precondition, that step in next_actions', async () => {
     const d = stranded(true);
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const reply = await executeStep(store, d, {
       runId: run.id,
       command: 'c',
@@ -339,7 +373,7 @@ describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named ever
     // a step another step's question holds.
     const q = gated('abort');
     const { runId, gateId } = await atQuestion(q);
-    const open = await store.get(runId);
+    const { record: open } = await store.get(runId);
     const past = new Date(new Date(open.pending_gate!.expires_at!).getTime() + 5_000);
     const judgeAt = (step: string, when: Date): string => {
       const admission = admitWay(
@@ -362,7 +396,7 @@ describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named ever
     expect(gateId.length).toBeGreaterThan(0);
     // upstream_cannot_run: a step whose dependency is refused before its claim.
     const s = stranded(false);
-    const { run: strandedRun } = await store.create({
+    const { record: strandedRun } = await store.create({
       workflowId: s.id,
       workflowVersion: 1,
       params: {},
@@ -389,9 +423,13 @@ describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named ever
 
   it('C104: a step called on a run that has ended — stop, nothing offered, the run named as ended', async () => {
     const d = stranded(false);
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await store.update({
-      ...(await store.get(run.id)),
+      ...(await store.get(run.id)).record,
       terminal_state: true,
       run_phase: 'abandoned',
       sealed_by: { arm: 'abandon_requested' },
@@ -420,13 +458,14 @@ describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named ever
     const d = gated('settle_default');
     const { runId, gateId } = await atQuestion(d);
     const past = new Date(
-      new Date((await store.get(runId)).pending_gate!.expires_at!).getTime() + 5_000,
+      new Date((await store.get(runId)).record.pending_gate!.expires_at!).getTime() + 5_000,
     );
     const warn = vi.spyOn(console, 'warn');
     const error = vi.spyOn(console, 'error');
     const log = vi.spyOn(console, 'log');
     const stderr = vi.spyOn(process.stderr, 'write');
-    const reply = await advanceRun(store, d, { runId, now: past });
+    await setClockOf(store, past);
+    const reply = await advanceRun(store, d, { runId });
     // (a) red when core prints the line (or anything) itself; (b) prints the calls.
     expect([warn.mock.calls, error.mock.calls, log.mock.calls, stderr.mock.calls]).toEqual([
       [],
@@ -437,7 +476,7 @@ describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named ever
     // (a) red when the line says "before this call", drops the default choice, or is missing; (b)
     // prints the warnings.
     expect(reply.warnings).toEqual([
-      `gate '${gateId}' on 'q' had expired 5s before this call — this advanceRun call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advanceRun).`,
+      `gate '${gateId}' on 'q' had expired 5s before this call (deadline ${zOf(reply.expiry!.expired_at)}) — this advanceRun call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advanceRun).`,
     ]);
   });
 
@@ -445,12 +484,13 @@ describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named ever
     const d = gated('abort');
     const { runId, gateId } = await atQuestion(d);
     const past = new Date(
-      new Date((await store.get(runId)).pending_gate!.expires_at!).getTime() + 5_000,
+      new Date((await store.get(runId)).record.pending_gate!.expires_at!).getTime() + 5_000,
     );
-    const reply = await advanceRun(store, d, { runId, now: past });
+    await setClockOf(store, past);
+    const reply = await advanceRun(store, d, { runId });
     // (a) red when the abort's line does not say the run ended; (b) prints the warnings.
     expect(reply.warnings).toEqual([
-      `gate '${gateId}' on 'q' had expired 5s before this call — this advanceRun call first carried out its declared abort: the run ended (enacted_via: advanceRun).`,
+      `gate '${gateId}' on 'q' had expired 5s before this call (deadline ${zOf(reply.expiry!.expired_at)}) — this advanceRun call first carried out its declared abort: the run ended (enacted_via: advanceRun).`,
     ]);
   });
 
@@ -458,16 +498,17 @@ describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named ever
     const d = gated('abort');
     const { runId, gateId } = await atQuestion(d);
     const past = new Date(
-      new Date((await store.get(runId)).pending_gate!.expires_at!).getTime() + 5_000,
+      new Date((await store.get(runId)).record.pending_gate!.expires_at!).getTime() + 5_000,
     );
     const real = store.settleStep!.bind(store);
     const failing = Object.create(store) as JsonFileStore;
-    failing.settleStep = async (id, delta, def, opts) => {
+    failing.settleStep = async (id, delta, def) => {
       if (delta.kind === 'expire_gate') throw new Error('store says no');
-      return real(id, delta, def, opts);
+      return real(id, delta, def);
     };
     const warn = vi.spyOn(console, 'warn');
-    const reply = await advanceRun(failing, d, { runId, now: past });
+    await setClockOf(failing, past);
+    const reply = await advanceRun(failing, d, { runId });
     // (a) red when core prints the could-not line itself; (b) prints the calls.
     expect(warn.mock.calls).toEqual([]);
     // (a) red when the could-not case returns no line; (b) prints the warnings.
@@ -482,13 +523,13 @@ describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named ever
     const d = gated('settle_default');
     const { runId } = await atQuestion(d);
     const past = new Date(
-      new Date((await store.get(runId)).pending_gate!.expires_at!).getTime() + 5_000,
+      new Date((await store.get(runId)).record.pending_gate!.expires_at!).getTime() + 5_000,
     );
+    await setClockOf(store, past);
     const reply = await executeChain(store, d, {
       runId,
       command: 'after',
       input: {},
-      now: past,
       dispatcher: async () => ({}),
     });
     expect(reply.run_phase).toBe('completed');
@@ -497,15 +538,12 @@ describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named ever
     expect(reply.warnings.filter((w) => w.includes('had expired'))).toHaveLength(1);
   });
 
-  it('C103: an answer with the wrong gate id is refused naming the question that IS open — its answer (no token), on both store kinds', async () => {
+  it('C103: an answer with the wrong gate id is refused naming the question that IS open — its answer (no token), on the one store kind (#715 (b))', async () => {
     const d = gated();
-    for (const legacy of [false, true]) {
+    // #715 (b): the legacy store kind (no `settleStep`) is gone — one kind left.
+    for (const legacy of [false]) {
       const { runId, gateId } = await atQuestion(d);
-      const target = legacy
-        ? (Object.assign(Object.create(store) as JsonFileStore, {
-            settleStep: undefined,
-          }) as JsonFileStore)
-        : store;
+      const target = store;
       const reply = await submitHumanResponse(target, d, {
         runId,
         gateId: 'not-the-gate',

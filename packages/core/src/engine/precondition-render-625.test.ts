@@ -12,6 +12,7 @@ import { advanceRun, executeStep } from './execution-loop.js';
 import { checkPreClaim, describePending } from './pending.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
+import { writtenSnapshot } from './snapshot.js';
 
 const INJECT: WorkflowDefinition = {
   id: 'inject',
@@ -36,15 +37,15 @@ describe('#625 PR-2a, F5 — the precondition refusal renders the value escaped;
   });
 
   it('the view’s refusal: one line, the value JSON-escaped (discrimination); executeStep’s refusal facts: the same escaped value (E1 (b): the one escaped, bounded value renderer — the byte-identical suggestion rule ends)', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: INJECT.id,
       workflowVersion: 1,
       params: { v: VALUE },
     });
     await advanceRun(store, INJECT, { runId: run.id });
-    const record = await store.get(run.id);
+    const { record: record } = await store.get(run.id);
     const refused = checkPreClaim({ definition: INJECT, run: record, step: 'check', input: {} });
-    const view = describePending(INJECT, record, undefined, new Date());
+    const view = describePending(INJECT, writtenSnapshot(record, new Date()), undefined);
     const blocked = await executeStep(store, INJECT, {
       runId: run.id,
       command: 'check',
@@ -70,13 +71,13 @@ describe('#625 PR-2a, F5 — the precondition refusal renders the value escaped;
   });
 
   it('E1 (b), Table row 54: a value that ends in a full stop keeps it inside its quotes, and the sentence still ends with its own', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: INJECT.id,
       workflowVersion: 1,
       params: { v: 'ends.' },
     });
     await advanceRun(store, INJECT, { runId: run.id });
-    const record = await store.get(run.id);
+    const { record: record } = await store.get(run.id);
     const refused = checkPreClaim({ definition: INJECT, run: record, step: 'check', input: {} });
     // (a) red when the value is printed raw (its stop then reads as the sentence's) or the
     //     sentence's stop is dropped because the value ends in one; (b) prints the refusal's tail.

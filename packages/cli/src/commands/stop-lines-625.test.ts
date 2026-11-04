@@ -142,7 +142,11 @@ describe('#625 PR-2a, F16 — realm agent: a run that has not ended is never sai
 
   async function drive(def: WorkflowDefinition, answer: Record<string, unknown>) {
     const store = new InMemoryStore();
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const provider = new (class extends LlmProvider {
       async callStep(): Promise<Record<string, unknown>> {
         return answer;
@@ -184,7 +188,7 @@ describe('#625 PR-2a, F16 — realm agent: a run that has not ended is never sai
     }
     return {
       result,
-      phase: (await store.get(run.id)).run_phase,
+      phase: (await store.get(run.id)).record.run_phase,
       last: lines.at(-1)!.split(run.id).join('<run>'),
     };
   }

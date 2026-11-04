@@ -61,9 +61,13 @@ describe('#625 PR-2a, F14 — get_run_state never says claim_unknown_age with no
     const runStore = new JsonFileStore(join(dir, 'runs'));
     const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
     if (register) await workflowStore.register(GATED);
-    const { run } = await runStore.create({ workflowId: GATED.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runStore.create({
+      workflowId: GATED.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await advanceRun(runStore, GATED, { runId: run.id });
-    const open = await runStore.get(run.id);
+    const { record: open } = await runStore.get(run.id);
     await runStore.update({
       ...open,
       pending_gate: {
@@ -71,7 +75,7 @@ describe('#625 PR-2a, F14 — get_run_state never says claim_unknown_age with no
         expires_at: new Date(Date.now() - 60_000).toISOString(),
       },
     });
-    const record = await runStore.get(run.id);
+    const { record: record } = await runStore.get(run.id);
     return { runStore, workflowStore, id: run.id, inProgress: record.in_progress_steps };
   }
 

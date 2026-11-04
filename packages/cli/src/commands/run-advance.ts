@@ -13,6 +13,8 @@ import {
   advanceRun,
   lastExecutionIdentity,
   describePending,
+  writtenSnapshot,
+  judgedSnapshotOf,
   stepsThatCannotRun,
   describeRunDriver,
   judgeProgramFit,
@@ -66,6 +68,7 @@ import {
   writerSetFor,
   type RenderCtx,
 } from '../output/writer.js';
+import { openRunStore } from '../lib/run-store.js';
 
 /** How the project code of this program compares with the run's last record, in words. */
 export const FIT_WORDS: Record<ProgramFit, string> = {
@@ -392,15 +395,15 @@ export async function advanceRunFromShell(
   print: (line: string) => void,
   registryOverride?: ExtensionRegistry,
 ): Promise<0 | 1> {
-  const run = await runStore.get(runId);
+  // decision C95: the reading the view judges the run at, so an open question whose time is up and
+  // that declares `on_expiry` is named as owed — and `advanceRun` carries it out first. #715 (b):
+  // the store's own reading, taken before the load; `advanceRun` takes its own.
+  const { record: run, at: now } = await runStore.get(runId);
   const workflow = await getWorkflowForRun(workflowStore, run, {
     retryVerb: 'advance again',
     verb: 'advance',
   });
   const projectDir = opts.project ?? process.cwd();
-  // decision C95: the clock the view reads, so an open question whose time is up and that declares
-  // `on_expiry` is named as owed — and `advanceRun` carries it out first.
-  const now = new Date();
   const loaded =
     registryOverride === undefined
       ? await loadProjectExtensions(workflow, {
@@ -410,7 +413,7 @@ export async function advanceRunFromShell(
       : undefined;
   const registry = registryOverride ?? loaded!.registry;
 
-  const pending = describePending(workflow, run, registry, now);
+  const pending = describePending(workflow, writtenSnapshot(run, now), registry);
   const keepsClaims = runStore.persistsClaims === true;
   // #729 PR-0 (A-10): the run's ways, composed by core and rendered here.
   const ways: ComposedWays = composeWaysAt(run, now, {
@@ -514,7 +517,6 @@ export async function advanceRunFromShell(
       runId,
       caller: 'advance',
       registry,
-      now,
       // #729 PR-4 (01): a question this call opens is minted with the writer's private set.
       ...((set) => (set !== undefined ? { disclosure: set } : {}))(writerSetFor('private')),
       ...(driver !== undefined ? { driver } : {}),
@@ -561,7 +563,10 @@ export async function advanceRunFromShell(
   const chainedGuards = (result.chained_auto_steps ?? [])
     .map((c) => c.step)
     .filter((step) => workflow.steps[step]?.execution === 'guard' && !guardsSaid.has(step));
-  const after = await runStore.get(runId);
+  // #715 (b) (D6-17, Amendment 4): the snapshot the engine judged its reply on — every line below
+  // about the record after the call is judged on it; the run is never read again for them. A reply
+  // that loaded no run carries none.
+  const judged = judgedSnapshotOf(result);
   if (endingLines.length > 0) {
     // F13: a guard that passed in this call before the one that ended the run (not yet said before
     // a step's line) gets its passed line first, as below — also now that the loop's own guard
@@ -573,7 +578,7 @@ export async function advanceRunFromShell(
   } else {
     // decision C174 (pinning lane A, F2): only the guard the record names as the run's ending ended
     // it — a guard that passed, before a later step completed the run, prints its passed line.
-    const guardEnding = guardEndingOfRun(after);
+    const guardEnding = judged !== undefined ? guardEndingOfRun(judged.record) : undefined;
     chainedGuards.forEach((guard) => {
       const endedTheRun = guardEnding?.step === guard;
       if (!endedTheRun) {
@@ -596,7 +601,19 @@ export async function advanceRunFromShell(
     print(`⚠ ${warning}`);
   }
 
-  const afterView = describePending(workflow, after, registry, new Date());
+  if (judged === undefined) {
+    // #715 (b) (Amendment 4 (4)): the reply loaded no run — nothing is said about the record after
+    // the call (no stop reasons from its ways, no phase line); the engine's own words stop the
+    // command, naming the step they are about as the reply does.
+    if (result.errors.length > 0) {
+      const about = stopAbout(result);
+      const words = result.errors.join(', ');
+      print(`Stopped: ${about === undefined ? words : `'${about}': ${words}`}`);
+    }
+    return result.status === 'ok' ? 0 : 1;
+  }
+  const { record: after, at: afterAt } = judged;
+  const afterView = describePending(workflow, judged, registry);
   // F7: the reply the call ended on, read by core's classifier against the record after the call —
   // `capability`, `failed` and `refused` stop the command; a race is never left here (core's loop
   // goes on past it).
@@ -637,7 +654,7 @@ export async function advanceRunFromShell(
   // #729 PR-0 (A-10): the stop reasons from the ways of the record as this call left it — what is
   // owed read from that record as it is; the step this call's refusal names is said once, by that
   // line, so it is never also listed as in flight in another program (its claim is this call's).
-  const composedAfter = composeWaysAt(after, new Date(), {
+  const composedAfter = composeWaysAt(after, afterAt, {
     definition: workflow,
     registry,
     persistsClaims: runStore.persistsClaims === true,
@@ -682,7 +699,7 @@ export async function advanceRunFromShell(
     for (const line of finalizerOutcomeLines(after, run)) print(line);
     // decision C211 (walk c14 W3-4): cleanup steps this ending left pending — the command that runs
     // them, with code that has their handlers.
-    const cleanup = pendingCleanupLine(after, new Date());
+    const cleanup = pendingCleanupLine(after, afterAt);
     if (cleanup !== undefined) print(cleanup);
   }
   // decision C44: when the run stops on a step refused before its claim with nothing else ready, the
@@ -713,8 +730,8 @@ export const runAdvanceCommand = new Command('advance')
       'advance',
       'it is written as the program that ran the steps, and advance checks it before reading the run, so nothing was run',
     );
-    const { JsonFileStore, JsonWorkflowStore } = await import('@sensigo/realm');
-    const runStore = new JsonFileStore();
+    const { JsonWorkflowStore } = await import('@sensigo/realm');
+    const runStore = openRunStore();
     const workflowStore = new JsonWorkflowStore();
     try {
       const code = await advanceRunFromShell(runId, opts, runStore, workflowStore, driver, (l) =>

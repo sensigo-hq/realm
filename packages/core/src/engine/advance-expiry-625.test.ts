@@ -9,13 +9,33 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { advanceRun, executeStep } from './execution-loop.js';
 import { describePending, composeNextActionsStatusWord, dueExpiry, owedList } from './pending.js';
 import { composeWaysAt } from './ways.js';
 import { nextCalls, owedOf } from '../test-support/ways-view.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
+import { writeTestClockFile } from '../store/test-clock-file.js';
+import { writtenSnapshot } from './snapshot.js';
+import { zOf } from '../test-support/instant.js';
+
+/** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
+ *  runs folder sits beside the location's clock file (first set to the host's reading), which
+ *  `setClockOf` rewrites. */
+async function testLocationRuns(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  await writeTestClockFile(root, new Date());
+  return join(root, 'runs');
+}
+async function clockedJsonStore(prefix: string): Promise<JsonFileStore> {
+  return new JsonFileStore(await testLocationRuns(prefix));
+}
+async function setClockOf(store: object, t: Date): Promise<void> {
+  const runsDir = (store as { runsDirPath?: string }).runsDirPath;
+  if (runsDir === undefined) throw new Error('setClockOf: this store is not a JSON store');
+  await writeTestClockFile(dirname(runsDir), t);
+}
 
 type OnExpiry = 'settle_default' | 'abort' | undefined;
 
@@ -46,12 +66,16 @@ function def(onExpiry: OnExpiry): WorkflowDefinition {
 describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view names it as owed', () => {
   let store: JsonFileStore;
   beforeEach(async () => {
-    store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-ae-625-')));
+    store = await clockedJsonStore('realm-ae-625-');
   });
 
   /** A run at its open question; returns the run id, the gate id, and a clock past its expiry. */
   async function atGate(d: WorkflowDefinition) {
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const opened = await executeStep(store, d, {
       runId: run.id,
       command: 'confirm',
@@ -59,7 +83,7 @@ describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view nam
       dispatcher: async () => ({}),
     });
     if (opened.status !== 'confirm_required') throw new Error(`fixture: ${opened.status}`);
-    const gate = (await store.get(run.id)).pending_gate!;
+    const gate = (await store.get(run.id)).record.pending_gate!;
     return {
       runId: run.id,
       gateId: gate.gate_id,
@@ -71,8 +95,9 @@ describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view nam
   it('settle_default through advanceRun: the default is settled, the owed step runs, the run completes; the disclosure is in warnings', async () => {
     const d = def('settle_default');
     const { runId, gateId, past } = await atGate(d);
-    const reply = await advanceRun(store, d, { runId, now: past });
-    const after = await store.get(runId);
+    await setClockOf(store, past);
+    const reply = await advanceRun(store, d, { runId });
+    const { record: after } = await store.get(runId);
     // (a) red when advanceRun no longer carries the expiry out first (nothing runs, the question
     // stays open); (b) prints the record's state.
     expect({
@@ -90,7 +115,7 @@ describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view nam
     });
     // (a) red when the disclosure is dropped or names the wrong call; (b) prints the warnings.
     expect(reply.warnings).toContain(
-      `gate '${gateId}' on 'confirm' had expired 5s before this call — this advanceRun call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advanceRun).`,
+      `gate '${gateId}' on 'confirm' had expired 5s before this call (deadline ${zOf(reply.expiry!.expired_at)}) — this advanceRun call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advanceRun).`,
     );
     // (a) red when the owed step the expiry made is not run in the same call; (b) prints the steps.
     expect(reply.chained_auto_steps?.map((c) => c.step)).toEqual(['after']);
@@ -99,8 +124,9 @@ describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view nam
   it('abort through advanceRun: the run ends aborted, nothing after the question runs; the hint says the expiry was carried out', async () => {
     const d = def('abort');
     const { runId, gateId, past } = await atGate(d);
-    const reply = await advanceRun(store, d, { runId, now: past });
-    const after = await store.get(runId);
+    await setClockOf(store, past);
+    const reply = await advanceRun(store, d, { runId });
+    const { record: after } = await store.get(runId);
     // (a) red when the abort is not carried out; (b) prints the record's state.
     expect({
       phase: after.run_phase,
@@ -116,15 +142,16 @@ describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view nam
       `Run '${runId}': its expired question was carried out as declared (see warnings); no step ran. The run ended (aborted).`,
     );
     expect(reply.warnings).toContain(
-      `gate '${gateId}' on 'confirm' had expired 5s before this call — this advanceRun call first carried out its declared abort: the run ended (enacted_via: advanceRun).`,
+      `gate '${gateId}' on 'confirm' had expired 5s before this call (deadline ${zOf(reply.expiry!.expired_at)}) — this advanceRun call first carried out its declared abort: the run ended (enacted_via: advanceRun).`,
     );
   });
 
   it('CONTROL — not yet expired: never touched; nothing ran, the question stays open', async () => {
     const d = def('settle_default');
     const { runId, gateId, before } = await atGate(d);
-    const reply = await advanceRun(store, d, { runId, now: before });
-    const after = await store.get(runId);
+    await setClockOf(store, before);
+    const reply = await advanceRun(store, d, { runId });
+    const { record: after } = await store.get(runId);
     // (a) red when an unexpired question is carried out; (b) prints the record's gate and the hint.
     expect({
       gate: after.pending_gate?.gate_id,
@@ -145,8 +172,9 @@ describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view nam
   it('CONTROL — a question with no on_expiry (a finding only): never touched, even past its time', async () => {
     const d = def(undefined);
     const { runId, gateId, past } = await atGate(d);
-    const reply = await advanceRun(store, d, { runId, now: past });
-    const after = await store.get(runId);
+    await setClockOf(store, past);
+    const reply = await advanceRun(store, d, { runId });
+    const { record: after } = await store.get(runId);
     // (a) red when a finding-only question is settled or aborted; (b) prints the gate and the warnings.
     expect({
       gate: after.pending_gate?.gate_id,
@@ -158,15 +186,15 @@ describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view nam
       warnings: [],
     });
     // (a) red when the view owes engine work for it; (b) prints the view's owed list.
-    expect(describePending(d, after, undefined, past).owed).toEqual([]);
+    expect(describePending(d, writtenSnapshot(after, past), undefined).owed).toEqual([]);
     expect(nextCalls(composeWaysAt(after, past, { definition: d }))).toEqual(['respond']);
   });
 
   it('the view, given a clock: a due expiry is owed engine work — the advance way, advance_owed; before its time is up, nothing', async () => {
     const d = def('settle_default');
     const { runId, gateId, past, before } = await atGate(d);
-    const run = await store.get(runId);
-    const view = describePending(d, run, undefined, past);
+    const { record: run } = await store.get(runId);
+    const view = describePending(d, writtenSnapshot(run, past), undefined);
     // (a) red when the view no longer reports a due expiry; (b) prints it.
     expect(view.expiry_due).toEqual({
       gate_id: gateId,
@@ -182,7 +210,7 @@ describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view nam
     const composed = composeWaysAt(run, past, { definition: d });
     expect([nextCalls(composed), owedOf(composed)]).toEqual([['advance'], [`expiry:${gateId}`]]);
     // (a) red when a view before the expiry reads one; (b) prints the acts.
-    expect(describePending(d, run, undefined, before).owed).toEqual([]);
+    expect(describePending(d, writtenSnapshot(run, before), undefined).owed).toEqual([]);
     expect(nextCalls(composeWaysAt(run, before, { definition: d }))).toEqual(['respond']);
     expect(dueExpiry(run.pending_gate, before)).toBeUndefined();
   });

@@ -2,8 +2,10 @@
 // a file beside its `runs/` folder, so every process that opens a store there (this one, a spawned
 // `realm` command, a spawned MCP server) reads the same time, which the test moves.
 //
-// Production code never creates one: a lint rule and a source scan keep `createTestLocation` out of
-// every production module (D6-52; #715 (a) correction 1, C-2).
+// No module outside `@sensigo/realm-testing` and tests creates one: a lint rule (static imports) and a
+// source scan keep `createTestLocation` out of every other module (D6-52; #715 (a) correction 1, C-2);
+// the scan reads the `.ts` and `.mjs` files of the four packages' `src` folders (no `.sh` or `.json`)
+// and skips `*.test.ts`, whose tests create test locations.
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, rmdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -42,9 +44,8 @@ export interface TestLocation {
  * `remove()` deletes only what this call made (#715 (a) correction 2, R-1): the clock file; `runs/`
  * only if this call made it; each folder this call made from the root up to the first one, deepest
  * first, with a non-recursive `rmdir`, stopping quietly at the first that is not empty or cannot be
- * removed (as CPython's `os.removedirs` and GNU `rmdir -p` do: what is left is litter, never data
- * loss); and the fresh folder made when no `root` is given, whole (its name is unique; as Python's
- * `TemporaryDirectory` and Rust's `tempfile::TempDir` do). What this call made is read from `mkdir`'s
+ * removed (what is left is litter, never data loss); and the fresh folder made when no `root` is given,
+ * whole (its name is unique). What this call made is read from `mkdir`'s
  * own answer: the first folder a recursive `mkdir` created (`undefined` when every folder existed).
  */
 export async function createTestLocation(options: {
@@ -118,7 +119,11 @@ export async function createTestLocation(options: {
           await rmdir(dir);
         } catch (err) {
           const code = (err as NodeJS.ErrnoException).code;
-          // Already gone, or a file now stands there: nothing of ours to remove; go on up.
+          // Already gone (ENOENT), or a symlink now stands where a folder we made was (ENOTDIR:
+          // `rmdir` does not follow it): nothing of ours to remove; go on up. (After ENOTDIR the parent
+          // holds the link, so the next `rmdir` stops there anyway.) A FILE standing at the root or a
+          // folder above it never reaches this loop: `rm` of the clock file throws ENOTDIR first, and
+          // nothing is deleted.
           if (code === 'ENOENT' || code === 'ENOTDIR') continue;
           // Not empty (it holds something that is not ours, so every folder above it does too), or
           // any other error: leave it and stop, without throwing.

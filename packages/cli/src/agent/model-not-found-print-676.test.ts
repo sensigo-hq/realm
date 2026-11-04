@@ -118,8 +118,8 @@ async function drive(site: Site, provider: FailingProvider) {
   } as unknown as AgentDeps;
   const result = await runAgent(deps, { definition: site.wf, params: {} });
   vi.restoreAllMocks();
-  const runs = await store.list();
-  const run = await store.get(runs[0]!.id);
+  const runs = (await store.list()).snapshots.map((s) => s.record);
+  const { record: run } = await store.get(runs[0]!.id);
   const entry = run.drive_failures!.entries[0]!;
   return {
     result,

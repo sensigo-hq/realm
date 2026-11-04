@@ -6,12 +6,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runAgent } from './run-agent.js';
 import type { AgentDeps } from './run-agent.js';
-import type {
-  WorkflowDefinition,
-  ToolCallRecord,
-  TraceBufferStore,
-  RunRecord,
-} from '@sensigo/realm';
+import type { WorkflowDefinition, ToolCallRecord, TraceBufferStore } from '@sensigo/realm';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   createDefaultRegistry,
@@ -27,6 +22,7 @@ import { agentCommand } from '../commands/agent.js';
 import { AnthropicProvider } from './providers/anthropic-provider.js';
 import { startAnthropicStub } from './test-support/anthropic-stub.js';
 import { leakedForms } from './test-support/redaction-oracle.js';
+import type { Snapshot } from '@sensigo/realm';
 
 // ---------------------------------------------------------------------------
 // MCP tools integration tests
@@ -200,7 +196,7 @@ describe('runAgent — MCP tools integration', () => {
 
     await runAgent(deps, { definition: mcpWorkflow, params: {} });
 
-    const runs = await store.list();
+    const runs = (await store.list()).snapshots.map((s) => s.record);
     const run = runs[0]!;
     const snap = run.evidence.find((e) => e.step_id === 'research');
     expect(snap).toBeDefined();
@@ -343,7 +339,7 @@ describe('runAgent — MCP tools integration', () => {
   it('--run-id attaches to a persisted run and drives it to completion', async () => {
     // Create the run first using the normal path.
     const store = new InMemoryStore();
-    const { run: initialRecord } = await store.create({
+    const { record: initialRecord } = await store.create({
       workflowId: 'agent-only',
       workflowVersion: 1,
       params: {},
@@ -385,14 +381,14 @@ describe('runAgent — MCP tools integration', () => {
     });
 
     expect(result).toBe('completed');
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     expect(run.terminal_state).toBe(true);
     expect(run.run_phase).toBe('completed');
   });
 
   it('--run-id on a terminal run throws error containing run id and terminal state', async () => {
     const store = new InMemoryStore();
-    const { run: initialRecord } = await store.create({
+    const { record: initialRecord } = await store.create({
       workflowId: 'agent-only',
       workflowVersion: 1,
       params: {},
@@ -467,7 +463,11 @@ describe('runAgent — wedge detection on attach (#101, detect-only)', () => {
 
   it('prints the claim state + reclaim remediation before exiting on a wedged run (no execution)', async () => {
     const store = new InMemoryStore();
-    const { run } = await store.create({ workflowId: 'wedge-wf', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'wedge-wf',
+      workflowVersion: 1,
+      params: {},
+    });
     // Wedge it: `review` claimed but never settled (unknown-age), and it is the only step, so
     // findEligibleSteps returns [] on attach → the wedge branch fires before the break.
     await store.update({
@@ -529,7 +529,7 @@ describe('runAgent — traceBufferStore threading (issue #207 PR-2, mixed-wiring
 
   it('deps.traceBufferStore threads all the way into executeChain — a pre-seeded WAL entry is adopted into evidence (was silently dropped pre-#207)', async () => {
     const store = new InMemoryStore();
-    const { run: initialRecord } = await store.create({
+    const { record: initialRecord } = await store.create({
       workflowId: 'wal-thread-wf',
       workflowVersion: 1,
       params: {},
@@ -558,7 +558,7 @@ describe('runAgent — traceBufferStore threading (issue #207 PR-2, mixed-wiring
     });
 
     expect(result).toBe('completed');
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     const evidence = run.evidence.find((e) => e.step_id === 'summarize');
     expect(evidence?.trace?.some((t) => t.event === 'streamed_before_execute')).toBe(true);
     // The WAL was adopted then cleared on settlement — not left as orphaned residue.
@@ -567,7 +567,7 @@ describe('runAgent — traceBufferStore threading (issue #207 PR-2, mixed-wiring
 
   it('omitting deps.traceBufferStore is unchanged — no trace adoption, no error (backward compatible)', async () => {
     const store = new InMemoryStore();
-    const { run: initialRecord } = await store.create({
+    const { record: initialRecord } = await store.create({
       workflowId: 'wal-thread-wf',
       workflowVersion: 1,
       params: {},
@@ -610,7 +610,7 @@ describe('runAgent — capability recovery (#134)', () => {
   it('not-registered handler → capability-aware guidance (not ✗ Step failed), then RECOVERS on re-attach with a fixed registry', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const store = new InMemoryStore();
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'handler-agent',
       workflowVersion: 1,
       params: {},
@@ -632,7 +632,7 @@ describe('runAgent — capability recovery (#134)', () => {
     expect(printed).toContain("handler 'enricher'");
     expect(printed).toContain('re-attach');
     expect(printed).not.toContain('✗ Step');
-    const afterBlock = await store.get(run.id);
+    const { record: afterBlock } = await store.get(run.id);
     expect(afterBlock.terminal_state).toBe(false); // NOT terminal-burned
     expect(afterBlock.failed_steps).not.toContain('enrich');
     expect(afterBlock.capability_blocks?.['enrich']).toBeDefined();
@@ -654,7 +654,7 @@ describe('runAgent — capability recovery (#134)', () => {
       { existingRunId: run.id, definition: handlerWorkflow, params: {} },
     );
     expect(recovered).toBe('completed');
-    const done = await store.get(run.id);
+    const { record: done } = await store.get(run.id);
     expect(done.terminal_state).toBe(true);
     expect(done.completed_steps).toContain('enrich');
   });
@@ -826,10 +826,10 @@ const throwingTraceBufferStore = {
 class ConcurrentWriterStore extends InMemoryStore {
   armed = false;
   private bumped = false;
-  override async get(runId: string): Promise<RunRecord> {
+  override async get(runId: string): Promise<Snapshot> {
     if (this.armed && !this.bumped) {
       this.bumped = true;
-      const current = await super.get(runId);
+      const { record: current } = await super.get(runId);
       await super.update({ ...current });
     }
     return super.get(runId);
@@ -963,7 +963,7 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
     })();
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const store = new InMemoryStore();
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: def.version,
       params: {},
@@ -975,7 +975,7 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
       { existingRunId: run.id, definition: def, params: {} },
     );
     expect(result1).toBe('failed');
-    const afterDrive1 = await store.get(run.id);
+    const { record: afterDrive1 } = await store.get(run.id);
     expect(afterDrive1.terminal_state).toBe(false); // 3 < 6 — not yet at threshold
     expect(afterDrive1.validation_rejections?.['draft']).toBe(3);
     expect(findEligibleSteps(def, afterDrive1)).toContain('draft'); // still re-drivable
@@ -989,7 +989,7 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
     expect(result2).toBe('failed');
     expect(provider.callStep).toHaveBeenCalledTimes(6);
 
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.terminal_state).toBe(true);
     expect(after.run_phase).toBe('failed');
     expect(after.failed_steps).toContain('draft');
@@ -1380,7 +1380,7 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
     const mockClient = makeMockMcpClient();
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const store = new InMemoryStore();
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: def.version,
       params: {},
@@ -1398,7 +1398,7 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
     );
 
     expect(result).toBe('failed'); // unchanged — a #220 rejection/terminalization is still an error envelope
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.validation_rejections?.['draft']).toBe(1); // COUNTED — proves Step 2c engaged
     errorSpy.mockRestore();
   });
@@ -1414,7 +1414,7 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
     const mockClient = makeMockMcpClient();
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const store = new InMemoryStore();
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: def.version,
       params: {},
@@ -1432,7 +1432,7 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
     );
 
     expect(result).toBe('failed');
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.validation_rejections?.['draft']).toBeUndefined(); // uncounted — never claimed/settled
     expect(after.terminal_state).toBe(false); // not even a #220 terminalization — the run was never touched
     errorSpy.mockRestore();
@@ -1587,7 +1587,11 @@ describe('issue #759 — the repair prompt carries the reply’s ten, in order, 
     });
     // The reply an agent gets for `{}` — the list the wire carries (core's one reader).
     const replyStore = new InMemoryStore();
-    const { run } = await replyStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await replyStore.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const reply = await executeStep(replyStore, def, {
       runId: run.id,
       command: 'draft',
@@ -1651,7 +1655,7 @@ describe('runAgent — the in-flight watch window is monotonic (issue #715 (a))'
       steps: { review: { description: 'Agent step', execution: 'agent', depends_on: [] } },
     };
     const store = new InMemoryStore();
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'watch-715a',
       workflowVersion: 1,
       params: {},

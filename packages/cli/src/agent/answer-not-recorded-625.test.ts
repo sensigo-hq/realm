@@ -86,10 +86,10 @@ async function drive(
   } = {},
 ): Promise<Drive> {
   const store = o.attach?.store ?? new InMemoryStore();
-  const { run } =
+  const run =
     o.attach !== undefined
-      ? { run: await store.get(o.attach.runId) }
-      : await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      ? (await store.get(o.attach.runId)).record
+      : (await store.create({ workflowId: def.id, workflowVersion: 1, params: {} })).record;
   await o.before?.(store, run.id);
   let calls = 0;
   const provider = new (class extends LlmProvider {
@@ -208,7 +208,7 @@ describe(
         },
         watching: async (store, runId) => {
           // The person answers at the prompt: the prompt lets its claim go, the engine takes it.
-          const held = await store.get(runId);
+          const { record: held } = await store.get(runId);
           await store.settleStep!(
             runId,
             { kind: 'release_step', step: 'write', claimToken: held.claims!['write']!.token! },
@@ -283,7 +283,7 @@ describe(
           if (call === 1) await store.claimStep(runId, 'write', def, PROMPT);
         },
         watching: async (store, runId) => {
-          const held = await store.get(runId);
+          const { record: held } = await store.get(runId);
           await store.settleStep!(
             runId,
             { kind: 'release_step', step: 'write', claimToken: held.claims!['write']!.token! },
@@ -353,7 +353,7 @@ describe(
           "log:   Go on:     once 'write' is no longer in flight, realm agent --run-id <run> --provider <provider> --model <model>",
         ],
       });
-      expect((await d.store.get(d.runId)).run_phase).toBe('running');
+      expect((await d.store.get(d.runId)).record.run_phase).toBe('running');
     });
 
     it('C195 (walk c10, W3-3): the stop gives the way on — this drive again, with the flags it was started with, one line for every step held; followed once the holder lets go, it completes the run', async () => {
@@ -380,7 +380,7 @@ describe(
       // The program that held both lets them go (its prompt is left): the line's command — this drive
       // again, on the same run — goes on and completes the run.
       for (const step of ['write', 'check']) {
-        const held = await d.store.get(d.runId);
+        const { record: held } = await d.store.get(d.runId);
         await d.store.settleStep!(
           d.runId,
           { kind: 'release_step', step, claimToken: held.claims![step]!.token! },
@@ -412,7 +412,7 @@ async function answerElsewhere(
   def: WorkflowDefinition,
   runId: string,
 ): Promise<void> {
-  const open = (await store.get(runId)).pending_gate!;
+  const open = (await store.get(runId)).record.pending_gate!;
   const r = await submitHumanResponse(store, def, {
     runId,
     gateId: open.gate_id,
@@ -566,10 +566,10 @@ describe(
             // the other process.
             const original = store.settleStep!.bind(store);
             let raced = false;
-            store.settleStep = async (id, delta, d2, o) => {
+            store.settleStep = async (id, delta, d2) => {
               if (!raced && delta.kind === 'settle_step' && delta.step === 'write') {
                 raced = true;
-                const held = await store.get(id);
+                const { record: held } = await store.get(id);
                 await original(
                   id,
                   {
@@ -582,12 +582,12 @@ describe(
                 if (holds) await store.claimStep(id, 'write', def, PROMPT);
                 else await promptAnswers(store, def, id, 'write');
               }
-              return original(id, delta, d2, o);
+              return original(id, delta, d2);
             };
           },
           watching: async (store, runId) => {
             // The other process answers the step it holds.
-            const held = await store.get(runId);
+            const { record: held } = await store.get(runId);
             await store.settleStep!(
               runId,
               { kind: 'release_step', step: 'write', claimToken: held.claims!['write']!.token! },
@@ -627,7 +627,7 @@ describe(
       const d = await drive(def, {
         before: async (store) => {
           const original = store.settleStep!.bind(store);
-          store.settleStep = async (id, delta, d2, o) => {
+          store.settleStep = async (id, delta, d2) => {
             if (
               delta.kind === 'settle_guard' &&
               delta.step === 'g' &&
@@ -638,12 +638,12 @@ describe(
               // Another call's pass: the same delta without the abort's own fields.
               const { abort: _abort, ...rest } = delta;
               void _abort;
-              await original(id, { ...rest, outcome: 'pass' }, d2, o);
+              await original(id, { ...rest, outcome: 'pass' }, d2);
             }
-            const r = await original(id, delta, d2, o);
+            const r = await original(id, delta, d2);
             if (delta.kind === 'settle_step' && delta.step === 'write' && !seen.includes('a')) {
               seen.push('a');
-              const cur = await store.get(id);
+              const { record: cur } = await store.get(id);
               const now = new Date().toISOString();
               await store.update({
                 ...cur,
@@ -676,7 +676,7 @@ describe(
         seen,
         notRecorded: d.lines.filter((l) => l.includes('answer was not recorded')),
         result: d.result,
-        writeRecorded: (await d.store.get(d.runId)).completed_steps.includes('write'),
+        writeRecorded: (await d.store.get(d.runId)).record.completed_steps.includes('write'),
       }).toEqual({
         seen: ['a', 'raced', 'this call: settled_outcome_divergence'],
         notRecorded: [],
@@ -705,7 +705,7 @@ describe(
       const d = await drive(def, {
         during: async (store, runId, call) => {
           // What the record shows while the model works: nothing — no claim, no step in flight.
-          const r = await store.get(runId);
+          const { record: r } = await store.get(runId);
           during.push({
             claimed: r.claims?.['write'] !== undefined,
             inFlight: r.in_progress_steps.includes('write'),
@@ -715,7 +715,7 @@ describe(
         },
         watching: async (store, runId) => {
           // The prompt is left (Ctrl+D): it lets its claim go, unanswered.
-          const held = await store.get(runId);
+          const { record: held } = await store.get(runId);
           await store.settleStep!(
             runId,
             { kind: 'release_step', step: 'write', claimToken: held.claims!['write']!.token! },

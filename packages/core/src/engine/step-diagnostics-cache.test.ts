@@ -109,7 +109,11 @@ describe('issue #600 PR 1a — StepDiagnostics.cache: mint discrimination + abse
           } as unknown as StepDefinition,
         },
       };
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await store.update({ ...run, validation_rejections: { draft: 3 } });
       let calls = 0;
       const flakyDispatcher: StepDispatcher = async () => {
@@ -141,7 +145,11 @@ describe('issue #600 PR 1a — StepDiagnostics.cache: mint discrimination + abse
 
     it('an EXHAUSTED snapshot carries validation_rejections but NOT settled_by_default, and defaulted_steps never names the step', async () => {
       const def = makeVxDef(); // no validation_exhaustion.mode: 'default' declared — terminalize
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await store.update({
         ...run,
         validation_rejections: { draft: DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD - 1 },
@@ -153,7 +161,7 @@ describe('issue #600 PR 1a — StepDiagnostics.cache: mint discrimination + abse
         dispatcher: echoDispatcher,
       });
       expect(envelope.status).toBe('error');
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       const exhaustedSnap = after.evidence.find(
         (e) => e.step_id === 'draft' && e.status === 'error',
       );
@@ -171,7 +179,11 @@ describe('issue #600 PR 1a — StepDiagnostics.cache: mint discrimination + abse
   describe('D4 — the absence rule, both ways, and presence on every mint kind', () => {
     it('cache is ABSENT when no stepMeta.usage was ever supplied (nothing was recorded)', async () => {
       const def = makePlainDef();
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const envelope = await executeStep(store, def, {
         runId: run.id,
         command: 'work',
@@ -185,7 +197,11 @@ describe('issue #600 PR 1a — StepDiagnostics.cache: mint discrimination + abse
 
     it('cache is PRESENT with state "unobservable" when a model call happened and reported nothing (usage: [])', async () => {
       const def = makePlainDef();
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const envelope = await executeStep(store, def, {
         runId: run.id,
         command: 'work',
@@ -205,7 +221,11 @@ describe('issue #600 PR 1a — StepDiagnostics.cache: mint discrimination + abse
       const def = makeVxDef({
         validation_exhaustion: { mode: 'default', default_output: { category: 'fallback' } },
       });
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await store.update({
         ...run,
         validation_rejections: { draft: DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD - 1 },
@@ -230,7 +250,11 @@ describe('issue #600 PR 1a — StepDiagnostics.cache: mint discrimination + abse
 
     it('cache is present on a synthesized EXHAUSTED snapshot too', async () => {
       const def = makeVxDef();
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await store.update({
         ...run,
         validation_rejections: { draft: DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD - 1 },
@@ -243,7 +267,7 @@ describe('issue #600 PR 1a — StepDiagnostics.cache: mint discrimination + abse
         stepMeta: { usage: [usage({ prompt_tokens: 300 })] },
       });
       expect(envelope.status).toBe('error');
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       const exhaustedSnap = after.evidence.find(
         (e) => e.step_id === 'draft' && e.status === 'error',
       );
@@ -510,7 +534,11 @@ describe("#600 — a chained step never inherits the driven step's usage or tool
       id: 'finish_handler',
       execute: async () => ({ data: { finished: true } }),
     });
-    const { run } = await store.create({ workflowId: chainDef.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: chainDef.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const envelope = await executeChain(store, chainDef, {
       runId: run.id,
       command: 'draft',
@@ -526,7 +554,7 @@ describe("#600 — a chained step never inherits the driven step's usage or tool
       },
     });
     expect(envelope.status).toBe('ok');
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.completed_steps).toEqual(['draft', 'finish', 'wrap']);
     const entry = (step: string) => after.evidence.find((e) => e.step_id === step)!;
     return { draft: entry('draft'), finish: entry('finish'), wrap: entry('wrap') };

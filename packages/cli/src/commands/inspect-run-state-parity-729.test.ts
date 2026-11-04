@@ -124,7 +124,11 @@ describe('#729 PR-0 — A-13: inspect and get_run_state say the same next step, 
     const found: [string, Said, Said][] = [];
     for (const [name, def, prepare] of cases) {
       await workflowStore.register(def);
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await prepare(run.id);
       const viaInspect = fromInspect(await inspectRun(run.id, store, workflowStore));
       const viaState = fromRunState(await read(run.id));

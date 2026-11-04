@@ -11,6 +11,7 @@ import { runAgent } from './run-agent.js';
 import { LlmProvider } from './providers/llm-provider.js';
 import { appendRequests } from './providers/agent-utils.js';
 import { inspectRun } from '../commands/inspect.js';
+import type { Snapshot } from '@sensigo/realm';
 
 const OUTPUT_SCHEMA = {
   type: 'object',
@@ -51,7 +52,11 @@ const agentThenAuto = {
 } as WorkflowDefinition;
 
 const workflowStore = (def: WorkflowDefinition) =>
-  ({ register: async () => {}, get: async () => def, list: async () => [def] }) as never;
+  ({
+    register: async () => {},
+    get: async () => def,
+    list: async () => [def],
+  }) as never;
 
 /** One scripted model call: an output (`BAD` is rejected by the schema), its billed tokens, or a throw. */
 type Call =
@@ -113,7 +118,7 @@ async function drive(
 }
 
 async function onlyRun(store: InMemoryStore): Promise<RunRecord> {
-  const runs = await store.list();
+  const runs = (await store.list()).snapshots.map((s) => s.record);
   expect(runs).toHaveLength(1);
   return runs[0]!;
 }
@@ -207,14 +212,15 @@ describe('issue #600 — a repaired step records every call it paid for', () => 
 
   it('cell 5 — exit 4 before anything was saved: the last-resort entry carries both calls', async () => {
     quiet();
-    // Throws once, from the SECOND `get` whose immediate caller is the public `executeChain`
-    // wrapper — the first such call belongs to the rejected attempt. That wrapper re-throws any
-    // read failure other than STATE_RUN_NOT_FOUND, so `executeChain` throws before claiming.
+    // Throws once, from the SECOND `get` whose immediate caller is `executeChain`'s own body — the
+    // first such call belongs to the rejected attempt. It re-throws any read failure other than
+    // STATE_RUN_NOT_FOUND, so `executeChain` throws before claiming. #715 (b) (Amendment 4): the
+    // body is `executeChainBody`, behind the public wrapper that attaches the judged snapshot.
     class FaultStore extends InMemoryStore {
       private wrapperReads = 0;
-      override async get(runId: string): Promise<RunRecord> {
+      override async get(runId: string): Promise<Snapshot> {
         const caller = (new Error().stack ?? '').split('\n')[2] ?? '';
-        if (/\bat executeChain \(/.test(caller)) {
+        if (/\bat executeChainBody \(/.test(caller)) {
           this.wrapperReads += 1;
           if (this.wrapperReads === 2) throw new Error('read failed');
         }
@@ -243,9 +249,10 @@ describe('issue #600 — a repaired step records every call it paid for', () => 
     // caught inside the engine and must not be the one that throws.
     class FaultStore extends InMemoryStore {
       private fired = false;
-      override async get(runId: string): Promise<RunRecord> {
+      override async get(runId: string): Promise<Snapshot> {
         const stack = new Error().stack ?? '';
-        const record = await super.get(runId);
+        const snapshot = await super.get(runId);
+        const record = snapshot.record;
         if (
           !this.fired &&
           !stack.includes('execution-loop') &&
@@ -254,7 +261,7 @@ describe('issue #600 — a repaired step records every call it paid for', () => 
           this.fired = true;
           throw new Error('read failed');
         }
-        return record;
+        return snapshot;
       }
     }
     const store = new FaultStore();
@@ -420,7 +427,7 @@ async function idsOf(def: WorkflowDefinition) {
   const run = await onlyRun(store);
   const entry = (r: RunRecord) => executionEvidence(r, 'draft').at(-1);
   const ids = (entry(run)?.diagnostics?.cache?.requests ?? []).map((q) => q.request_id);
-  const again = (entry(await store.get(run.id))?.diagnostics?.cache?.requests ?? []).map(
+  const again = (entry((await store.get(run.id)).record)?.diagnostics?.cache?.requests ?? []).map(
     (q) => q.request_id,
   );
   vi.restoreAllMocks();

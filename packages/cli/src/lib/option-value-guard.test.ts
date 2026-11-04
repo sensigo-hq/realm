@@ -525,7 +525,11 @@ describe('#920 C-2 — the other 20 options, one command family each (the built 
       steps: { a: { description: 'A.', execution: 'agent', depends_on: [] } },
     } as WorkflowDefinition;
     await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(def);
-    const { run } = await runs.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runs.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     return { runs, id: run.id };
   }
 
@@ -551,7 +555,11 @@ describe('#920 C-2 — the other 20 options, one command family each (the built 
       },
     } as WorkflowDefinition;
     await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(def);
-    const { run } = await runs.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runs.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const opened = await executeStep(runs, def, {
       runId: run.id,
       command: 'confirm',
@@ -569,7 +577,7 @@ describe('#920 C-2 — the other 20 options, one command family each (the built 
     // refused); (b) prints the run and the run's phase and cause, read from the store.
     const typo = await liveRun();
     const r = realm(['run', 'abandon', typo.id, '--reason', '--help']);
-    const after = await typo.runs.get(typo.id);
+    const after = (await typo.runs.get(typo.id)).record;
     expect(
       {
         code: r.code,
@@ -588,7 +596,7 @@ describe('#920 C-2 — the other 20 options, one command family each (the built 
     });
     const meant = await liveRun();
     const e = realm(['run', 'abandon', meant.id, '--reason=--help']);
-    const ended = await meant.runs.get(meant.id);
+    const ended = (await meant.runs.get(meant.id)).record;
     expect(
       { code: e.code, phase: ended.run_phase, cause: ended.terminal_reason },
       `${e.shown}; store: ${ended.run_phase}, cause ${String(ended.terminal_reason)}`,
@@ -612,7 +620,7 @@ describe('#920 C-2 — the other 20 options, one command family each (the built 
       '--by',
       '--project',
     ]);
-    const after = await typo.runs.get(typo.id);
+    const after = (await typo.runs.get(typo.id)).record;
     const stated = (run: typeof after): unknown[] =>
       run.evidence.map((ev) => ev.responded_by).filter((by) => by !== undefined);
     expect(
@@ -642,7 +650,7 @@ describe('#920 C-2 — the other 20 options, one command family each (the built 
       'approve',
       '--by=--project',
     ]);
-    const answered = await meant.runs.get(meant.id);
+    const answered = (await meant.runs.get(meant.id)).record;
     expect(
       {
         code: e.code,

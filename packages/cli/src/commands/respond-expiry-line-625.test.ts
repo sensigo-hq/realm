@@ -22,7 +22,7 @@ import {
   expiryCarriedOutLine,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
 } from '@sensigo/realm';
-import type { RunRecord, WorkflowDefinition } from '@sensigo/realm';
+import type { WorkflowDefinition } from '@sensigo/realm';
 import { respondCommand } from './respond.js';
 import { inspectRun } from './inspect.js';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
@@ -93,12 +93,19 @@ describe('#625 PR-2a, C146/C147 — a late `realm run respond` says which call c
   const stderr = (): string[] =>
     lagless(errSpy.mock.calls.flatMap((c: unknown[]) => String(c[0]).split('\n')));
 
+  /** #715 (b) (D6-72 (c)): the question's deadline, which the expiry line now names beside its lag. */
+  const EXPIRES_AT = '2020-01-01T01:00:00.000Z';
+
   /** Registers the workflow, creates a run, opens the question, and moves its expiry into the past. */
   async function expiredQuestion(
     def: WorkflowDefinition,
   ): Promise<{ runId: string; gateId: string }> {
     await workflowStore.register(def);
-    const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runStore.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const opened = await executeStep(runStore, def, {
       runId: run.id,
       command: 'confirm',
@@ -106,13 +113,13 @@ describe('#625 PR-2a, C146/C147 — a late `realm run respond` says which call c
       dispatcher: async () => ({}),
     });
     if (opened.status !== 'confirm_required') throw new Error(`fixture: ${opened.status}`);
-    const record: RunRecord = await runStore.get(run.id);
+    const { record: record } = await runStore.get(run.id);
     await runStore.update({
       ...record,
       pending_gate: {
         ...record.pending_gate!,
         opened_at: '2020-01-01T00:00:00.000Z',
-        expires_at: '2020-01-01T01:00:00.000Z',
+        expires_at: EXPIRES_AT,
       },
     });
     return { runId: run.id, gateId: opened.gate!.gate_id };
@@ -150,6 +157,7 @@ describe('#625 PR-2a, C146/C147 — a late `realm run respond` says which call c
         { on_expiry: 'settle_default', choice: 'approve' },
         'respond',
         { ms: 0 },
+        EXPIRES_AT,
       ),
     );
     // (a) red when the late arm drops the line, prints it after the refusal, or names another call;
@@ -173,7 +181,7 @@ describe('#625 PR-2a, C146/C147 — a late `realm run respond` says which call c
     const code = await respond(runId, gateId, 'approve');
     // (a) red when the same-choice arm drops the line or prints it later; (b) prints stdout.
     expect(stdout().slice(0, 3)).toEqual([
-      `⚠ ${lagless(expiryCarriedOutLine(gateId, 'confirm', { on_expiry: 'settle_default', choice: 'approve' }, 'respond', { ms: 0 }))}`,
+      `⚠ ${lagless(expiryCarriedOutLine(gateId, 'confirm', { on_expiry: 'settle_default', choice: 'approve' }, 'respond', { ms: 0 }, EXPIRES_AT))}`,
       'the outcome matches your choice, but it was settled by timeout; your response was not recorded.',
       `Not recorded: ${runId} | gate settled by timeout with choice 'approve' | state 'running'`,
     ]);
@@ -185,7 +193,7 @@ describe('#625 PR-2a, C146/C147 — a late `realm run respond` says which call c
     const code = await respond(runId, gateId, 'reject');
     // (a) red when the abort arm drops the line or names another call; (b) prints stderr.
     expect(stderr()).toEqual([
-      `⚠ ${lagless(expiryCarriedOutLine(gateId, 'confirm', { on_expiry: 'abort' }, 'respond', { ms: 0 }))}`,
+      `⚠ ${lagless(expiryCarriedOutLine(gateId, 'confirm', { on_expiry: 'abort' }, 'respond', { ms: 0 }, EXPIRES_AT))}`,
       `Gate '${gateId}' on 'confirm' expired and the run aborted per the workflow's declared on_expiry — your choice was NOT recorded.`,
     ]);
     expect({ code, stdout: stdout() }).toEqual({ code: 1, stdout: [] });

@@ -6,10 +6,13 @@
 // field and forgot to show it". The `satisfies Record<keyof DriveFailureRecord, …>` below is the
 // trigger: add a field and this stops compiling until someone routes it.
 //
-// v1 waives NOTHING. Every field renders.
+// v1 waived NOTHING; #715 (b) (02 §D.2) waives the two fields the `drive_failing` finding fences on
+// (`evidence_count`, `gate_id`): they are what the run held when the entry was appended, read by the
+// finding — not a fact about the failure an operator acts on.
 import { describe, it, expect } from 'vitest';
 import type { DriveFailureRecord, RunRecord, UsageRecord } from '@sensigo/realm';
 import { inspectRun } from './inspect.js';
+import { listing, snap } from '../test-support/snapshot-double.js';
 
 type DisclosureRoute =
   { surface: 'rendered'; probe: (out: string) => void } | { surface: 'waived'; reason: string };
@@ -42,6 +45,13 @@ const ENTRY: DriveFailureRecord = {
   usage: USAGE,
 };
 
+/**
+ * #715 (b) (02 §D.2, MA 3 Amendment 10, MA 1's ruling): why `inspect` does not print the two fence
+ * fields — their role, where they ARE visible, and what `inspect` shows instead.
+ */
+const FENCE_WAIVER =
+  "the fence against a stale drive-failure entry (the run's evidence count and open question when the entry was appended), consumed by the drive_failing finding; visible verbatim on the MCP door (get_run_state, so an agent can reason about staleness) and as record fields in `realm run export`; inspect shows the finding itself when the fence holds, and nothing of the fence when it does not";
+
 const DRIVE_FAILURE_DISCLOSURE = {
   at: { surface: 'rendered', probe: (out) => expect(out).toContain(ENTRY.at) },
   step: { surface: 'rendered', probe: (out) => expect(out).toContain('classify') },
@@ -73,6 +83,8 @@ const DRIVE_FAILURE_DISCLOSURE = {
   // at "Drive failures:" must see that on the same screen, not only the machine surface. The
   // prompt figure reported===of===1 here, so the cache clause also carries `included in the
   // prompt` — the D2 truth rule fires on the failure line too, not only the step line.
+  evidence_count: { surface: 'waived', reason: FENCE_WAIVER },
+  gate_id: { surface: 'waived', reason: FENCE_WAIVER },
   usage: {
     surface: 'rendered',
     probe: (out) => {
@@ -102,8 +114,8 @@ const run = {
 } as unknown as RunRecord;
 
 const store = {
-  get: async () => run,
-  list: async () => [run],
+  get: async () => snap(run),
+  list: async () => listing([run]),
 } as never;
 const workflowStore = {
   get: async () => {
@@ -128,7 +140,7 @@ describe('#401 — every DriveFailureRecord field reaches an inspect reader', ()
     }
   });
 
-  it('the registry covers every field, and v1 waives none', () => {
+  it('the registry covers every field, and waives only the two fence fields, for their written reason', () => {
     expect(Object.keys(DRIVE_FAILURE_DISCLOSURE).sort()).toEqual(
       [
         'at',
@@ -137,6 +149,8 @@ describe('#401 — every DriveFailureRecord field reaches an inspect reader', ()
         'derived_ceiling_ms',
         'elapsed_ms',
         'error_class',
+        'evidence_count',
+        'gate_id',
         'last_observed_status',
         'message',
         'provider',
@@ -145,10 +159,17 @@ describe('#401 — every DriveFailureRecord field reaches an inspect reader', ()
         'usage',
       ].sort(),
     );
+    // #715 (b) (02 §D.2): the two fields the drive_failing finding fences on are waived (what the run
+    // held when the entry was appended — not a fact about the failure an operator acts on); every
+    // other field renders, as in v1.
     expect(
-      Object.values(DRIVE_FAILURE_DISCLOSURE as Record<string, DisclosureRoute>).filter(
-        (r) => r.surface === 'waived',
-      ),
-    ).toEqual([]);
+      Object.entries(DRIVE_FAILURE_DISCLOSURE as Record<string, DisclosureRoute>)
+        .filter(([, r]) => r.surface === 'waived')
+        .map(([key, r]) => [key, (r as { reason: string }).reason])
+        .sort(),
+    ).toEqual([
+      ['evidence_count', FENCE_WAIVER],
+      ['gate_id', FENCE_WAIVER],
+    ]);
   });
 });

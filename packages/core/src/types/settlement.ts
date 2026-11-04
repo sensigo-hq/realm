@@ -12,7 +12,8 @@
 // MORE delta kinds — `open_gate`, `settle_gate`, `settle_guard`, `release_step` — but stays
 // engine-inert for them: no engine or MCP call site constructs one yet (enforced by a source-text
 // guard, deleted when PR-D migrates the five remaining legacy write sites).
-import type { EvidenceSnapshot, PendingGate } from './run-record.js';
+import type { EvidenceSnapshot, PendingGate, SealArm } from './run-record.js';
+import type { ExtensionIdentityEntry } from './extension-identity.js';
 import type { Attributed, GateClaimVerdict } from '../engine/holder.js';
 
 /** The three outcomes a `settle_step` delta's caller can report for the step being settled —
@@ -80,7 +81,7 @@ export interface LeaseFinalizerDelta {
 /**
  * Record a finalizer handler's outcome against the lease that authorized running it.
  * `evidence` is the ONE evidence snapshot for this finalizer's execution (mirrors
- * `buildFinalizedSeal`'s existing one-entry-per-finalizer-per-drain-pass cardinality) — singular,
+ * the one-entry-per-finalizer-per-drain-pass cardinality the deleted `buildFinalizedSeal` had) — singular,
  * not an array, unlike `SettleStepDelta.evidence`.
  */
 export interface MarkFinalizerDelta {
@@ -92,18 +93,30 @@ export interface MarkFinalizerDelta {
 }
 
 /**
+ * The gate an `open_gate` delta opens, WITHOUT its instants (#715 (b), D-20; D5 §2.4, D6-12): the
+ * caller builds everything a {@link PendingGate} holds (gate_id, choices, preview, the frozen
+ * enforce/notify fields) except `opened_at` and `expires_at`, which the transform mints from the
+ * write's one reading `at` — so no gate is ever born expired.
+ */
+export type OpeningGate = Omit<PendingGate, 'opened_at' | 'expires_at'>;
+
+/**
  * Opens a human gate on a claimed step (issue #279, increment 2, PR-C; design record
- * `design-d5-increment2.md` §2/§3 `openGateArms`). `pendingGate` is carried VERBATIM into
- * `RunRecord.pending_gate` — the transform never re-derives or re-shapes it; the caller (the
- * migrated gate-open site, PR-D) builds the full {@link PendingGate} object (gate_id, choices,
- * preview, etc.) exactly as the legacy `store.update()` call at execution-loop.ts:2956-2995 does
- * today. `claimToken` is compared the same absent≡absent way `SettleStepDelta.claimToken` is.
+ * `design-d5-increment2.md` §2/§3 `openGateArms`). #715 (b) (D-20, D6-12): the delta carries
+ * DURATIONS, never instants — `pendingGate` is the gate without `opened_at`/`expires_at`, and
+ * `timeoutSeconds` its declared timeout; the transform writes `opened_at = at` and, when
+ * `timeoutSeconds` is given, `expires_at = at + timeoutSeconds`. Everything else in `pendingGate` is
+ * carried verbatim. This is the OPENING kind only: a restore (none exists) carries the full
+ * `PendingGate` with its frozen instants in its own delta kind. `claimToken` is compared the same
+ * absent≡absent way `SettleStepDelta.claimToken` is.
  */
 export interface OpenGateDelta {
   kind: 'open_gate';
   step: string;
   claimToken?: string;
-  pendingGate: PendingGate;
+  pendingGate: OpeningGate;
+  /** The gate's declared `timeout_seconds`; absent ⇒ the gate has no `expires_at`. */
+  timeoutSeconds?: number;
   evidence: EvidenceSnapshot[];
 }
 
@@ -205,6 +218,28 @@ export interface ReleaseStepDelta {
 }
 
 /**
+ * Seals a run at the RUN level (#715 (b), D-21; D6-46, D6-56, D6-65, D6-66, D6-67): abandon, cleanup,
+ * a webhook spawn failure, an extension load failure. The transform seals through `sealRunLevel` with
+ * the write's one reading as every seal-tier instant (`abandoned_at`).
+ *
+ * - `expected_version` is the version the writer judged the run at: a stored record whose version
+ *   differs is REFUSED `moved` (the transform returns it; the store THROWS it as
+ *   `STATE_SNAPSHOT_MISMATCH`, exactly as `update()` does — D6-65).
+ * - a record already terminal returns `already_terminal` with the fresh record.
+ * - `release_claims` clears `claims` AND `in_progress_steps` in the same write (D6-66).
+ * - `identity_entry` is appended to `extension_identity` verbatim — its `captured_at` is outside
+ *   class, minted before any store, and never folded into the reading (D6-67).
+ */
+export interface SealRunDelta {
+  kind: 'seal_run';
+  arm: SealArm;
+  reason: string;
+  expected_version: number;
+  release_claims: boolean;
+  identity_entry?: ExtensionIdentityEntry;
+}
+
+/**
  * The delta kinds `RunStore.settleStep` accepts (design record §1/§2). A concrete discriminated
  * union — no structural intersections, no duck-typing.
  *
@@ -225,7 +260,8 @@ export type SettlementDelta =
   | SettleGateDelta
   | SettleGuardDelta
   | ReleaseStepDelta
-  | ExpireGateDelta;
+  | ExpireGateDelta
+  | SealRunDelta;
 
 /**
  * Every refusal/noop literal `applySettlement`/`settleStep` can RETURN as `SettlementResult.reason`
@@ -259,21 +295,24 @@ export type SettlementRefusalReason =
   | 'gate_choice_conflict'
   | 'choice_not_eligible'
   | 'gate_open_wait'
-  // issue #291 (design record [F1]/[F3]): expire_gate refusals + the settle_gate F3 write-free
-  // expiry-wins refusal.
-  /** expire_gate only: `now < fresh.pending_gate.expires_at` — the enactment attempt is
-   *  premature (arm-verified with the injectable `now`, never trusted from the caller). */
+  // issue #291 (design record [F1]/[F3]): expire_gate refusals. (#715 (b): the settle_gate F3
+  // write-free `gate_expired_pending` refusal is gone — a late answer's expiry is enacted in the
+  // same write, see `lateAnswer` on the applied result.)
+  /** expire_gate only: the store's reading is before `fresh.pending_gate.expires_at` — the
+   *  enactment attempt is premature (verified by the arm at the reading the store took from its own
+   *  clock, `applySettlement`'s `at`; since #715 (b) no caller passes a time). */
   | 'not_expired'
   /** expire_gate only: the gate's `expires_at` is present (so an expire delta was constructed
    *  at all) but `on_expiry` is absent — finding-only mode. Arm-level refusal, before APPLY;
    *  never enacted, only ever disclosed. */
   | 'no_disposition'
-  /** settle_gate only ([F3] shape c): the live gate this delta targets has expired unresolved —
-   *  a WRITE-FREE refusal (checked under the lock, before `choice_not_eligible`) so the caller
-   *  can issue the caller-composed `expire_gate` delta as ITS OWN settleStep and compose the
-   *  honest envelope from the enactment result, rather than resolving with a human choice that
-   *  arrived after the enforce clock already won. */
-  | 'gate_expired_pending';
+  // #715 (b) (D-21): seal_run refusals.
+  /** seal_run only: the stored version differs from the delta's `expected_version` — the run moved
+   *  between the writer's read and its seal. The transform RETURNS it; the store THROWS it as
+   *  `STATE_SNAPSHOT_MISMATCH` (D6-65), as `update()` does. */
+  | 'moved'
+  /** seal_run only: the run is already terminal; nothing is written. */
+  | 'already_terminal';
 
 /**
  * The ok-shaped NOOP subset of {@link SettlementRefusalReason} (design record §7: "ok-shaped
@@ -327,6 +366,23 @@ export type SettlementResult =
        *  present only on a `settle_gate` result (and on the `already_settled` result of an
        *  `expire_gate`/`settle_gate` that found the question settled), never on any other. */
       gateClaim?: GateClaimVerdict & { claim?: { holder?: Attributed; since?: string } };
+      /**
+       * Present ONLY on the result of a `settle_gate` delta whose gate was DUE at `at`: the answer was NOT
+       * recorded (the question's expiry beat it) and the gate's frozen expiry disposition was enacted in
+       * THIS write. `applied: true`, `run`, `transitioned`, `pendingFinalizers` and `guards` describe that
+       * enactment exactly as an `expire_gate` delta's applied result would. The answer and the expiry
+       * share this write's one `at`.
+       */
+      lateAnswer?: {
+        /** The live gate's id (equals the delta's `gateId`). */
+        gateId: string;
+        /** The choice the late answer carried. */
+        choice: string;
+        /** The verdict judged when the gate id matched, before the expiry was decided — the same value the write-free refusal carried as `gateClaim`. */
+        gateClaim: GateClaimVerdict & { claim?: { holder?: Attributed; since?: string } };
+        /** The question's `expires_at` as it stood BEFORE this write (the settled record no longer holds it). */
+        expiresAt: string;
+      };
     }
   | {
       applied: false;
@@ -347,9 +403,13 @@ export type SettlementResult =
        *  description of the persisted membership that conflicts with the delta's own outcome
        *  (issue #279, increment 2, PR-C; design record §3 `settleGuardArms`). */
       persisted?: string;
-      /** issue #625 (holder slice): the same verdict, on the refusals that carry one (the
-       *  write-free `gate_expired_pending`, and `already_settled` from either gate arm). `claim`
+      /** issue #625 (holder slice): the same verdict, on the refusals that carry one
+       *  (`already_settled` from either gate arm). `claim`
        *  is present exactly when the gate step had a claim at the read, copying `holder` and
        *  `since` as stored — NEVER the token. */
       gateClaim?: GateClaimVerdict & { claim?: { holder?: Attributed; since?: string } };
+      /** Present ONLY when `reason === 'moved'` (#715 (b), `seal_run`): the version the delta
+       *  expected, and the version stored. */
+      expected?: number;
+      stored?: number;
     };

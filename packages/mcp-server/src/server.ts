@@ -8,6 +8,8 @@ import {
   ExtensionRegistry,
   JsonWorkflowStore,
   JsonFileStore,
+  withTestClockNotice,
+  setClockErrorSink,
   JsonFileFailedAttemptStore,
   WorkflowError,
   createDefaultRegistry,
@@ -391,7 +393,14 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
   // WAL entries written by append_trace are visible when execute_step finalizes the step. #729 PR-3
   // correction 2 (E-10): it rides `effectiveOptions` too, so every reply reads its run from the same
   // store — the masking's subject (`replySubject`) included, on a fresh process's first call.
-  const effectiveRunStore: RunStore = options?.runStore ?? new JsonFileStore();
+  // #715 (b) (02 §C.3, D6-53): a store at a test location says so once per process on stderr (the
+  // MCP stdio transport's free channel), at its first read.
+  const effectiveRunStore: RunStore = withTestClockNotice(
+    options?.runStore ?? new JsonFileStore(),
+    (line) => {
+      process.stderr.write(`${line}\n`);
+    },
+  );
   const effectiveOptions = {
     ...options,
     registry: effectiveRegistry,
@@ -565,6 +574,12 @@ if (isRunDirectly()) {
   // This program's name, which may itself refuse with one line — then no start line is printed.
   const driver = composeBinIdentity();
   console.error(gateAnswersStartLine(settings.answers, false, 'realm-mcp'));
+  // #715 (b) (03 §A.1, D-22): the bin's waiter-error sink — a waiter on the store's clock that fails is
+  // one masked line on stderr (stdout carries the protocol). An embedded server sets none: it is a
+  // library, and core's loud default applies.
+  setClockErrorSink((err: unknown): void => {
+    logMasked(`realm-mcp: ${err instanceof Error ? err.message : String(err)}`);
+  });
   // #627 W (§5.8): the stdio transport authenticates no one, so this bin's answers name no principal.
   // #715 (a) correction 1 (C-6): a run store opened on a copy of a test location refuses with one line
   // on stderr, masked for a log as `realm mcp`'s line is, and exit 1 — never Node's crash dump, and

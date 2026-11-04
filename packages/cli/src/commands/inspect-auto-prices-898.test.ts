@@ -24,6 +24,7 @@ import {
   promptCacheStartLine,
   type ResolvedPromptCache,
 } from '../agent/prompt-cache.js';
+import { doubleClock, listing, noSettle, snap } from '../test-support/snapshot-double.js';
 
 const DEF: WorkflowDefinition = {
   id: 'wf-898',
@@ -87,10 +88,12 @@ function runOf(requests: UsageRecord[]): RunRecord {
 const stores = (run: RunRecord): { runStore: RunStore; workflowStore: WorkflowRegistrar } => ({
   runStore: declared({
     persistsClaims: true,
-    get: async () => run,
-    create: async () => ({ run, created: true }),
-    update: async () => run,
-    list: async () => [run],
+    clock: doubleClock,
+    settleStep: noSettle,
+    get: async () => snap(run),
+    create: async () => ({ ...snap(run), created: true }),
+    update: async () => snap(run),
+    list: async () => listing([run]),
     claimStep: async () => {
       throw new Error('claimStep is not used here');
     },

@@ -23,6 +23,8 @@ import {
 } from '@sensigo/realm';
 import type { RunRecord, RunStore, PerRunArtifactStore } from '@sensigo/realm';
 import { JsonTraceBufferStore } from '@sensigo/realm-mcp';
+import { snap } from '../test-support/snapshot-double.js';
+import { writtenSnapshot } from '@sensigo/realm';
 
 /** Recompute the pointer-file path the store uses (sha256 of workflowId\0key) — test-side only,
  *  mirroring json-file-store.test.ts's own helper; NOT a production code path. */
@@ -108,7 +110,7 @@ describe('isPurgeEligible (the purge selection predicate — mode-aware, issue #
     'rejects a non-terminal (running) run regardless of explicit mode (explicit=%s)',
     (explicit) => {
       const run = makeRun({ run_phase: 'running', terminal_state: false });
-      const v = isPurgeEligible(run, { explicit });
+      const v = isPurgeEligible(writtenSnapshot(run, new Date()), { explicit });
       expect(v.eligible).toBe(false);
       if (!v.eligible) expect(v.reason).toMatch(/not terminal/);
     },
@@ -118,7 +120,7 @@ describe('isPurgeEligible (the purge selection predicate — mode-aware, issue #
     'rejects a gate_waiting run regardless of explicit mode (explicit=%s)',
     (explicit) => {
       const run = makeRun({ run_phase: 'gate_waiting', terminal_state: false });
-      const v = isPurgeEligible(run, { explicit });
+      const v = isPurgeEligible(writtenSnapshot(run, new Date()), { explicit });
       expect(v.eligible).toBe(false);
       if (!v.eligible) expect(v.reason).toMatch(/not terminal/);
     },
@@ -128,8 +130,12 @@ describe('isPurgeEligible (the purge selection predicate — mode-aware, issue #
     'accepts a plain terminal run (phase: %s) with no in-progress claims, in BOTH modes',
     (phase) => {
       const run = makeRun({ run_phase: phase, terminal_state: true });
-      expect(isPurgeEligible(run, { explicit: true })).toEqual({ eligible: true });
-      expect(isPurgeEligible(run, { explicit: false })).toEqual({ eligible: true });
+      expect(isPurgeEligible(writtenSnapshot(run, new Date()), { explicit: true })).toEqual({
+        eligible: true,
+      });
+      expect(isPurgeEligible(writtenSnapshot(run, new Date()), { explicit: false })).toEqual({
+        eligible: true,
+      });
     },
   );
 
@@ -150,7 +156,7 @@ describe('isPurgeEligible (the purge selection predicate — mode-aware, issue #
     it.each([true, false])(
       'refuses when explicit=%s — a runner died mid-claim, and there is no override for a provably-live claim',
       (explicit) => {
-        const v = isPurgeEligible(run, { explicit });
+        const v = isPurgeEligible(writtenSnapshot(run, new Date()), { explicit });
         expect(v.eligible).toBe(false);
         if (!v.eligible) {
           expect(v.reason).toMatch(/future-deadline/);
@@ -171,7 +177,7 @@ describe('isPurgeEligible (the purge selection predicate — mode-aware, issue #
     });
 
     it('refuses in BATCH mode (explicit: false) — with an actionable reason: names the step, states the indeterminacy, and points at the override verbatim', () => {
-      const v = isPurgeEligible(run, { explicit: false });
+      const v = isPurgeEligible(writtenSnapshot(run, new Date()), { explicit: false });
       expect(v.eligible).toBe(false);
       if (!v.eligible) {
         expect(v.reason).toMatch(/indeterminate-age claim/);
@@ -183,7 +189,7 @@ describe('isPurgeEligible (the purge selection predicate — mode-aware, issue #
     });
 
     it('is ELIGIBLE in single-id mode (explicit: true) — the explicit override — and reports which step was overridden', () => {
-      const v = isPurgeEligible(run, { explicit: true });
+      const v = isPurgeEligible(writtenSnapshot(run, new Date()), { explicit: true });
       expect(v).toEqual({ eligible: true, overriddenClaimStep: 'charge' });
     });
   });
@@ -198,7 +204,9 @@ describe('isPurgeEligible (the purge selection predicate — mode-aware, issue #
         in_progress_steps: ['charge'],
         claims: { charge: { deadline: PAST } },
       });
-      expect(isPurgeEligible(run, { explicit })).toEqual({ eligible: true });
+      expect(isPurgeEligible(writtenSnapshot(run, new Date()), { explicit })).toEqual({
+        eligible: true,
+      });
     },
   );
 });
@@ -212,7 +220,7 @@ describe('purgeRuns — single-run mode', () => {
     const { dir, runStore, failedAttemptStore, traceBufferStore, artifactStores } =
       await makeStores();
     try {
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'wf-1',
         workflowVersion: 1,
         params: {},
@@ -654,7 +662,7 @@ describe('purgeRuns — supersede soundness (mutation-probe #2 companion, at the
   it('purging a superseded (old) run never deletes the live successor’s pointer', async () => {
     const { dir, runStore, artifactStores } = await makeStores();
     try {
-      const { run: oldRun } = await runStore.create({
+      const { record: oldRun } = await runStore.create({
         workflowId: 'wf-1',
         workflowVersion: 1,
         params: {},
@@ -666,7 +674,7 @@ describe('purgeRuns — supersede soundness (mutation-probe #2 companion, at the
         terminal_state: true,
         sealed_by: { arm: 'complete' },
       });
-      const { run: newRun } = await runStore.create({
+      const { record: newRun } = await runStore.create({
         workflowId: 'wf-1',
         workflowVersion: 1,
         params: {},
@@ -679,7 +687,7 @@ describe('purgeRuns — supersede soundness (mutation-probe #2 companion, at the
       expect(result.purged).toEqual([oldRun.id]);
       const ptr = JSON.parse(await readFile(keyPointerPath(dir, 'wf-1', 'k1'), 'utf8'));
       expect(ptr.run_id).toBe(newRun.id);
-      expect((await runStore.get(newRun.id)).id).toBe(newRun.id);
+      expect((await runStore.get(newRun.id)).record.id).toBe(newRun.id);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -912,15 +920,15 @@ describe('purgeRuns — fenced WAL delete (issue #207 PR-2)', () => {
           // inside deleteAllForRunFenced — simulate a concurrent `realm run resume` landing exactly
           // there.
           if (getCalls <= 2) return runStore.get(id);
-          const fresh = await runStore.get(id);
+          const { record: fresh } = await runStore.get(id);
           // A real resume bumps the version (issue #715 (a): the version fence lets a
           // same-version flip through, correctly).
-          return {
+          return snap({
             ...fresh,
             version: fresh.version + 1,
             run_phase: 'running' as const,
             terminal_state: false,
-          };
+          });
         },
         list: (wf?: string) => runStore.list(wf),
         statAllForRun: (id: string, dirEntries?: readonly string[]) =>
@@ -1382,11 +1390,11 @@ describe('purge — disposal coherence (issue #558 PR-C)', () => {
     // decision at `isPurgeEligible` already derived; only the rendered reason did not.
     const run = makeRun({ id: 'r-divergent', run_phase: 'completed', terminal_state: false });
 
-    expect(isPurgeEligible(run, { explicit: true })).toEqual({
+    expect(isPurgeEligible(writtenSnapshot(run, new Date()), { explicit: true })).toEqual({
       eligible: false,
       reason: "not terminal (phase: 'running')",
     });
-    expect(isPurgeEligible(run, { explicit: false })).toEqual({
+    expect(isPurgeEligible(writtenSnapshot(run, new Date()), { explicit: false })).toEqual({
       eligible: false,
       reason: "not terminal (phase: 'running')",
     });
@@ -1414,7 +1422,7 @@ describe('purgeRuns — a run that changed after it was selected (issue #715 (a)
   function anchorOver(
     runStore: JsonFileStore,
     move: (id: string) => Promise<void>,
-    after: (id: string) => Promise<RunRecord> = (id) => runStore.get(id),
+    after: (id: string) => Promise<RunRecord> = (id) => runStore.get(id).then((s) => s.record),
     order?: Order,
   ): Anchor {
     let gets = 0;
@@ -1423,7 +1431,7 @@ describe('purgeRuns — a run that changed after it was selected (issue #715 (a)
       get: async (id: string) => {
         gets++;
         if (gets === 2) await move(id);
-        return gets <= 2 ? runStore.get(id) : after(id);
+        return gets <= 2 ? runStore.get(id) : snap(await after(id));
       },
       list: (wf?: string) => runStore.list(wf),
       statAllForRun: (id: string, dirEntries?: readonly string[]) =>
@@ -1441,7 +1449,7 @@ describe('purgeRuns — a run that changed after it was selected (issue #715 (a)
 
   /** A real write that bumps the version and leaves the run terminal. */
   const bump = (runStore: JsonFileStore) => async (id: string) => {
-    await runStore.update(await runStore.get(id));
+    await runStore.update((await runStore.get(id)).record);
   };
 
   async function seeded(id: string): Promise<{ s: Stores; run: RunRecord }> {
@@ -1538,7 +1546,7 @@ describe('purgeRuns — a run that changed after it was selected (issue #715 (a)
         'resumed',
         (s) =>
           anchorOver(s.runStore, bump(s.runStore), async (id) => ({
-            ...(await s.runStore.get(id)),
+            ...(await s.runStore.get(id)).record,
             run_phase: 'running' as const,
             terminal_state: false,
           })),
@@ -1685,7 +1693,7 @@ describe('purgeRuns — a run that changed after it was selected (issue #715 (a)
     // trace buffer" beside "were already freed"); (b) prints the blocked entries and the stderr
     // lines, ids written `<id>`.
     const resumedAfter = (s: Stores) => async (id: string) => ({
-      ...(await s.runStore.get(id)),
+      ...(await s.runStore.get(id)).record,
       run_phase: 'running' as const,
       terminal_state: false,
     });

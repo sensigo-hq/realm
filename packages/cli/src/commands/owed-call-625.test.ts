@@ -17,6 +17,7 @@ import {
   type RunRecord,
 } from '@sensigo/realm';
 import { printChildrenWhenATestFails } from '../test-support/child-output.js';
+import { createTestLocation } from '@sensigo/realm-testing';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 if (!existsSync(CLI_ENTRY)) {
@@ -61,7 +62,7 @@ async function setup(): Promise<{
   const home = mkdtempSync(join(tmpdir(), 'realm-owed-cli-625-'));
   const runs = new JsonFileStore(join(home, '.realm', 'runs'));
   await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(gateThenAuto);
-  const { run } = await runs.create({
+  const { record: run } = await runs.create({
     workflowId: gateThenAuto.id,
     workflowVersion: 1,
     params: {},
@@ -72,7 +73,7 @@ async function setup(): Promise<{
     input: {},
     dispatcher: async () => ({}),
   });
-  const gateId = (await runs.get(run.id)).pending_gate!.gate_id;
+  const gateId = (await runs.get(run.id)).record.pending_gate!.gate_id;
   return { home, runs, run, gateId };
 }
 
@@ -169,7 +170,11 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
       };
       await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(d);
       const runs = new JsonFileStore(join(home, '.realm', 'runs'));
-      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const advanced = realm(home, ['run', 'advance', run.id]);
       expect(advanced.status).toBe(1);
       expect(advanced.stdout).toContain('→ b');
@@ -225,15 +230,23 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
         },
       };
       await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(d);
+      // #715 (b) 04 §D (B4): `~/.realm` is a test location, made BEFORE the store opens (a store takes
+      // its clock when it is built); the cell moves the clock the spawned `realm` reads instead of
+      // waiting on the real one.
+      const loc = await createTestLocation({ start: new Date(), root: join(home, '.realm') });
       const runs = new JsonFileStore(join(home, '.realm', 'runs'));
-      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await executeStep(runs, d, {
         runId: run.id,
         command: 'confirm',
         input: {},
         dispatcher: async () => ({}),
       });
-      await new Promise((r) => setTimeout(r, 1300));
+      await loc.clock.advance(1300);
       const drained = realm(home, ['run', 'drain', run.id, '--expired', '--force']);
       expect(drained.status).toBe(0);
       expect(drained.stdout).toContain(

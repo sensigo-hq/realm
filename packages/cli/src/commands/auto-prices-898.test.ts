@@ -103,7 +103,7 @@ async function deployment(
     trust_root: proj,
   } as unknown as WorkflowDefinition;
   await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(definition);
-  const { run } = await new JsonFileStore(join(home, '.realm', 'runs')).create({
+  const { record: run } = await new JsonFileStore(join(home, '.realm', 'runs')).create({
     workflowId: definition.id,
     workflowVersion: 1,
     params: {},

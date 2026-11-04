@@ -62,7 +62,11 @@ describe('#625 PR-2a, F17 — the CHANGELOG and step-kinds.md quote what the CLI
       } as StepDefinition,
     });
     const store = new InMemoryStore();
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const lines: string[] = [];
     for (const kind of ['log', 'error', 'warn'] as const) {
       vi.spyOn(console, kind).mockImplementation((...a: unknown[]) => {
@@ -136,14 +140,18 @@ describe('#625 PR-2a, F17 — the CHANGELOG and step-kinds.md quote what the CLI
         },
       });
       await workflows.register(def);
-      const { run } = await runs.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await executeStep(runs, def, {
         runId: run.id,
         command: 'decide',
         input: {},
         dispatcher: async () => ({}),
       });
-      const gate = (await runs.get(run.id)).pending_gate!.gate_id;
+      const gate = (await runs.get(run.id)).record.pending_gate!.gate_id;
       const out = await respondToGate(
         run.id,
         { gate, choice: 'approve' },
@@ -181,7 +189,7 @@ describe('#625 PR-2a, F17 — the CHANGELOG and step-kinds.md quote what the CLI
             ...(pre ? { preconditions: ['run.params.ok == true'] } : {}),
           }) as StepDefinition;
         await workflows.register(wf(`f17-fix-${kind}`, { ask: step(true) }));
-        const { run } = await runs.create({
+        const { record: run } = await runs.create({
           workflowId: `f17-fix-${kind}`,
           workflowVersion: 1,
           params: {},
@@ -207,7 +215,7 @@ describe('#625 PR-2a, F17 — the CHANGELOG and step-kinds.md quote what the CLI
         expect({
           refused: refused.code,
           fixed,
-          done: (await runs.get(run.id)).completed_steps,
+          done: (await runs.get(run.id)).record.completed_steps,
         }).toEqual(
           kind === 'agent'
             ? {

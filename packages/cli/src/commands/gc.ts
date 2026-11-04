@@ -69,6 +69,7 @@ import type {
 import { parseDuration } from '../lib/parse-duration.js';
 import { listRunsDiagnosed } from './list.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
+import { openRunStore } from '../lib/run-store.js';
 
 /**
  * Minimum `--older-than` EITHER sweep will ever honor (1 hour) — a conservative floor for hygiene
@@ -501,7 +502,8 @@ export async function sweepStalePhases(
   },
   options: SweepStalePhasesOptions,
 ): Promise<SweepStalePhasesResult> {
-  const { records, unreadable } = await listRunsDiagnosed(store);
+  const { snapshots, unreadable } = await listRunsDiagnosed(store);
+  const records = snapshots.map((s) => s.record);
   if (unreadable.length > 0) {
     throw unreadableRunFilesError(
       options.command ?? `realm run gc --heal${options.force ? ' --force' : ''}`,
@@ -855,10 +857,9 @@ export const gcCommand = new Command('gc')
     // deriveRunPhase destructured from the SAME existing dynamic import as JsonFileStore/
     // JsonFileFailedAttemptStore — gc.ts's top-level `@sensigo/realm` VALUE import (line 36) stays
     // byte-unchanged; only this dynamic import widens.
-    const { JsonFileStore, JsonFileFailedAttemptStore, deriveRunPhase } =
-      await import('@sensigo/realm');
+    const { JsonFileFailedAttemptStore, deriveRunPhase } = await import('@sensigo/realm');
     const { JsonTraceBufferStore } = await import('@sensigo/realm-mcp');
-    const runStore = new JsonFileStore();
+    const runStore = openRunStore();
     const runsDir = runStore.runsDirPath;
     const failedAttemptStore = new JsonFileFailedAttemptStore(runsDir);
     // The run reader is the run store this sweep enumerates: the `run_absent` fence is evaluated

@@ -55,6 +55,33 @@ All notable changes to this project are documented here.
   `storeClockContract` with its laws `STORE_CLOCK_LAWS`. A test location's clock is the file
   `.realm-test-clock` beside its `runs/` folder. A store opened on a copy of a test location in
   another folder refuses with the new code `STATE_TEST_CLOCK_FOREIGN`.
+- **A store's clock runs waits, and says when one fails (issue #715).** `systemClock`'s `at` runs a
+  function at its time; it threw before. A function that fails goes to the program's sink, which
+  `setClockErrorSink` sets and `clockErrorSink` returns; with none set, it is thrown again as an
+  uncaught exception. The `realm` command and the `realm-mcp` server set one that prints the error's
+  message. A test location's clock runs such functions too, in every program that has its store
+  open.
+- **What a reply's time stands on (issue #715).** An MCP reply judged on a test clock carries
+  `as_of_basis: "test_clock"` in its `basis`, and the `realm` command and the `realm-mcp` server say
+  once, on standard error, that they opened a store at a test location. `judgedSnapshotOf(reply)`
+  returns the record and the time a library reply was judged on, so a program writes its words
+  about the reply without reading the run again.
+- **The finding `record_stamped_ahead` (issue #715).** A run whose last change is stamped more than 5
+  seconds after the reader's clock is reported, with both times. It does not select a run in
+  `realm run list --stuck`.
+- **`poll_reason` on an MCP reply that waits (issue #715).** It says which deadline set
+  `poll_after_ms`: `gate_expiry`, `claim_deadline` or `fixed`.
+- **New exports (issue #715).** `@sensigo/realm` exports `setClockErrorSink`, `clockErrorSink`,
+  `takeRawReading`, `floorAtRecord`, `parseStamp`, `formatInstantWords`, `isIdleForCleanup`,
+  `judgedSnapshotOf`, `reminderScheduleOf`, `reminderScheduleWords`, `withTestClockNotice`,
+  `testClockNoticeLine`, `markTestClock`, `isTestLocationClock`, `clockBasis`, `waysStoreOf`,
+  `recordStampedAheadOf`, `CLOCK_READ_CLASSES`, `RUN_HEALTH_KINDS`, `RUN_HEALTH_STUCK_EXCLUDED` and
+  `REMINDER_BASIS_CLAUSE`, and the types `ClockReadClass`, `Listing`, `CreateResult`,
+  `StoreSettlement`, `OpeningGate`, `SealRunDelta`, `ReminderSchedule` and `ReminderOccurrence`.
+  `storeClockContract` gains the laws `READ_AT_CAPPED`, `READS_ONE_READING` (in
+  place of `READS_SPEND_NO_READING`), `SNAPSHOT_AT_SOUND`, `SETTLE_ONE_READING`,
+  `OPEN_GATE_MINTS_AT_AT`, `LATE_ANSWER_ONE_WRITE`, `SEAL_RUN_ONE_WRITE` and
+  `KEYED_FIRST_CREATE_ONE_READING`; `runStoreFidelityContract` gains `DRIVE_FAILURE_KEEPS_ITS_FENCE`.
 - **When `realm agent` or `realm listen` drives a step that calls tools, it now asks Anthropic to cache the step's fixed instructions and the conversation so far at each turn, so a turn can read what the turn before wrote once that part reaches the model's minimum.** The request a step makes after using up its tool calls is sent with no cache marker. `--prompt-cache off` sends what it sent before. A workflow whose every agent step calls tools no longer refuses `--prompt-cache`. **Upgrading:** a gateway or proxy that rejects `cache_control` now also fails steps that call tools, which worked before; run with `--prompt-cache off`. (#899)
 - **`DedupStore`, `ReplayStore`, `ReplayRecord` and `ReplayStepResult` are exported from
   `@sensigo/realm` (issue #616).** `DedupStore`'s `check`, `record` and `cleanup` return promises.
@@ -130,6 +157,65 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
   `new JsonFileFailedAttemptStore(dir)`. A value typed `FailedAttemptStore` has `append`, `read`,
   `deleteAllForRun` and `statAllForRun`; for `listOrphans`, type it `JsonFileFailedAttemptStore`.
   Errors that name the store now name `JsonFileFailedAttemptStore`.
+
+- **BREAKING — every run store call returns the time it was judged at (issue #715).** `get`,
+  `update` and `claimStep` return `{ record, at }`; `create` returns `{ record, at, created }`;
+  `list` returns `{ snapshots, read_at, consistent_snapshot }`; `settleStep` returns its result with
+  `at`. A store must have `clock` and `settleStep`: Realm refuses one without either with
+  `VALIDATION_OPTION_INVALID`. `settleStep` takes no options, and a `seal_run` change takes no
+  workflow. **Upgrading:** a store of your own reads its clock once per call; `InMemoryStore` and the
+  store contracts show how. Its `settlementContract` adapter must supply `route`, which builds a
+  store on a clock the case sets; the contract gains the laws `SEAL_RUN_NEEDS_NO_DEFINITION` and
+  `ROUTE_CLOCK_IS_STORE_CLOCK`, and a store with neither `settleStep` nor `stampSeal` no longer
+  passes with no cases.
+- **BREAKING — Realm's functions that judge a run take the run as read (issue #715).** The engine
+  reads time only through the store's clock. The functions that judge a run (`describePending`,
+  `classifyRunHealth`, `classifyInProgressClaims` and the others `@sensigo/realm` exports) take what
+  `store.get` returns, `{ record, at }`, in place of a record and a time; `applySettlement` takes
+  `at`. These still take the time you give them, as a parameter `now`: `classifyClaim`,
+  `computeClaimDeadline`, `computeGateDueState`, `dueExpiry`, `durationWords`,
+  `endedRunWaysSentence`, `pendingCleanupLine`, `pendingCleanupSentence`, `pendingCleanupWay`,
+  `sealRunLevel`, `terminalAnswerRefusalMessage`, `withEndedRunWays` and `withPendingCleanup`; and
+  `composePersonNotice` (a reminder's event) and `describeAnswerEnding` (the answer) take it as a
+  field `now`. A claim is stale at its deadline.
+- **Every age and deadline people read carries its time (issue #715).** `realm run inspect`,
+  `realm run list`, `realm run drain`, `realm run reclaim --all`, run health, the expiry line,
+  Slack's reminders and `realm agent`'s question say, for example, `4h 12m ago
+(2026-10-27T14:03:07Z)`, `in 5m (…)` or `EXPIRED 2m ago (…)`, judged at the time of the read. A
+  time stamped after the read is said as such, never as a negative age. The reminder lines say when
+  each reminder is scheduled; the `due` and `overdue` lines are gone, as nothing records a reminder
+  as sent. Slack's reminders are written at the time each was scheduled for, and a restarted
+  `realm agent` skips the ones it missed.
+- **BREAKING — `realm run list`'s time column is the run's stored `updated_at`, in UTC with
+  milliseconds (issue #715).** It was the time in this computer's local format. A script that
+  parses the row must read the new form.
+- **BREAKING — four signatures change (issue #715).** `PersonNotice` gains `since` and `deadline`.
+  `expiryCarriedOutLine`'s sixth argument was `byThisCall` and is now the question's deadline, said
+  beside the lag: `had expired 5m before this call (deadline …)`. `reminderScheduleWords(schedule)`
+  is now `reminderScheduleWords(schedule, at)`. `realm agent`'s `startGateReminderTimers` takes the
+  run as read, `{ record, at }`, in place of the gate.
+- **An MCP reply that waits says check back at the next deadline (issue #715).** `poll_after_ms` is
+  the time from the reply's `basis.as_of` to the next deadline after which the run changes — a
+  question's that declares `on_expiry`, or a claim's — at least 1 s and at most 5 minutes; with no
+  such deadline, 30 s. The await entry names the question's own deadline: as `until` when it is
+  `until`, and as its own when another deadline sets `until`; a question that changes the run, and
+  whose deadline sets `until` more than 5 minutes away, is handed over: tell the user to come back
+  then.
+- **`realm run cleanup` no longer abandons a run whose step still has a live claim (issue #715).**
+  Each run is judged at the time of the read that found it.
+- **BREAKING — `from_now` reads no clock (issue #715).** In a step's `prompt` and `instructions` it
+  says how long before or after the reply's time the date is; in a gate's `message`, which Realm
+  stores, it writes the date itself. `renderTemplate` takes the time to render at (`time`); with
+  none, a `from_now` stays as written.
+
+### Removed
+
+- **BREAKING — `ExpiryReceipt.by_this_call` (issue #715).** A reply's `expiry` no longer has
+  `by_this_call`: it could no longer be false. A late answer to a question another call had already
+  expired is answered as any answer to an expired question is — not recorded, settled by timeout —
+  without the line "… another call had already carried out its declared …".
+- **The refusal reason `gate_expired_pending` (issue #715).** A late answer to a question whose time
+  is up carries out its expiry in the same write.
 
 ### Fixed
 

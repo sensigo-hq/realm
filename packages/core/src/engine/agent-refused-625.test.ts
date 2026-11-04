@@ -26,6 +26,7 @@ import type { StepDispatcher } from './execution-loop.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition, StepDefinition } from '../types/workflow-definition.js';
 import { nextCalls } from '../test-support/ways-view.js';
+import { writtenSnapshot } from './snapshot.js';
 
 const echo: StepDispatcher = async (_name, input) => ({ ...input });
 
@@ -58,7 +59,7 @@ const TRUST_REFUSAL =
   "'trust: \"bogus_value\"' is not a recognized value — the engine will refuse this step at dispatch (VALIDATION_TRUST_VALUE). Accepts auto, human_confirmed, human_reviewed — correct the value and 'realm workflow register <path>'.";
 
 async function freshRun(store: JsonFileStore, d: WorkflowDefinition) {
-  const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+  const { record: run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
   return run;
 }
 
@@ -81,7 +82,7 @@ describe('#625 PR-2a, C82 — the view judges an agent step by its pre-claim che
     await withStore(async (store) => {
       const d = def({ pre: agent(PRE), tru: agent(TRUST), ok: agent() });
       const run = await freshRun(store, d);
-      const view = describePending(d, run, undefined, new Date());
+      const view = describePending(d, writtenSnapshot(run, new Date()), undefined);
       // (a) red when the view drops its agent check, or either member; (b) prints the three lists.
       expect({
         agent_steps: view.agent_steps,
@@ -120,7 +121,11 @@ describe('#625 PR-2a, C82 — the view judges an agent step by its pre-claim che
           dispatcher: echo,
         });
         expect(r.status).toBe('ok');
-        const view = describePending(d, await store.get(run.id), undefined, new Date());
+        const view = describePending(
+          d,
+          writtenSnapshot((await store.get(run.id)).record, new Date()),
+          undefined,
+        );
         // (a) red when the agent check is dropped (ok:false) or refuses a passing step (ok:true);
         // (b) prints the two lists.
         expect({
@@ -147,7 +152,11 @@ describe('#625 PR-2a, C82 — the view judges an agent step by its pre-claim che
   it('CONTROL — an agent step’s input schema is never judged by the view (its input is the agent’s answer)', async () => {
     await withStore(async (store) => {
       const d = def({ ask: agent(NEEDS_N) });
-      const view = describePending(d, await freshRun(store, d), undefined, new Date());
+      const view = describePending(
+        d,
+        writtenSnapshot(await freshRun(store, d), new Date()),
+        undefined,
+      );
       // (a) red when the view also judges the input schema of an agent step; (b) prints both lists.
       expect({ agent_steps: view.agent_steps, agent_refused: view.agent_refused }).toEqual({
         agent_steps: ['ask'],
@@ -172,7 +181,11 @@ describe('#625 PR-2a, C82 — the view judges an agent step by its pre-claim che
         mid: agent(TRUST),
         ok: agent(),
       });
-      const view = describePending(d, await freshRun(store, d), undefined, new Date());
+      const view = describePending(
+        d,
+        writtenSnapshot(await freshRun(store, d), new Date()),
+        undefined,
+      );
       // (a) red when the accessor returns engine steps only, or one list after the other; (b) prints
       // the steps with their checks.
       expect(stepsThatCannotRun(view).map((e) => [e.step, e.refused_by])).toEqual([
@@ -192,9 +205,11 @@ describe('#625 PR-2a, C82 — the view judges an agent step by its pre-claim che
       ] as const) {
         const d = def({ ask: agent(extra) });
         const run = await freshRun(store, d);
-        const refused = describePending(d, run, undefined, new Date()).agent_refused.map(
-          (e) => e.refused_by,
-        );
+        const refused = describePending(
+          d,
+          writtenSnapshot(run, new Date()),
+          undefined,
+        ).agent_refused.map((e) => e.refused_by);
         const reply = await executeStep(store, d, {
           runId: run.id,
           command: 'ask',
@@ -235,7 +250,7 @@ describe('#625 PR-2a, C82 — what every consumer reads', () => {
     await withStore(async (store) => {
       const d = def({ ask: agent(PRE) });
       const run = await freshRun(store, d);
-      const view = describePending(d, run, undefined, new Date());
+      const view = describePending(d, writtenSnapshot(run, new Date()), undefined);
       const composed = waysOf(d, run);
       // (a) red when any consumer reads the engine steps alone (the agent member falls out) or the
       // ways offer the step; (b) prints the ways, both predicates and the entry.
@@ -261,7 +276,7 @@ describe('#625 PR-2a, C82 — what every consumer reads', () => {
       // #482 — so the passing case is the step without one; the chained cells pass one on evidence.)
       const d = def({ ask: agent() });
       const run = await freshRun(store, d);
-      const view = describePending(d, run, undefined, new Date());
+      const view = describePending(d, writtenSnapshot(run, new Date()), undefined);
       const composed = waysOf(d, run);
       expect({
         next: nextCalls(composed),
@@ -333,7 +348,11 @@ describe('#625 PR-2a, C82 — what every consumer reads', () => {
       evidence: [],
       terminal_state: true,
     } as unknown as RunRecord;
-    const view = describePending(def({ ask: agent(PRE) }), run, undefined, new Date());
+    const view = describePending(
+      def({ ask: agent(PRE) }),
+      writtenSnapshot(run, new Date()),
+      undefined,
+    );
     expect({ agent_refused: view.agent_refused, cannot_run: view.cannot_run }).toEqual({
       agent_refused: [],
       cannot_run: [],

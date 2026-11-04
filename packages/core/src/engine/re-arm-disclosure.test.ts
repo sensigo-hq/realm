@@ -26,7 +26,11 @@ describe('re-arm disclosure (issue #279, increment 1, PR-B, final-gate F10b)', (
     const dir = await mkdtemp(join(tmpdir(), 'realm-re-arm-'));
     try {
       const store = new JsonFileStore(dir);
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
 
       // 1. Fail 'work' — terminalizes (single step), mints 'fin' pending (on_outcome: 'always').
       // executeStep claims the step itself (Step 3) — no manual pre-claim needed/allowed.
@@ -39,7 +43,7 @@ describe('re-arm disclosure (issue #279, increment 1, PR-B, final-gate F10b)', (
         },
       });
       expect(firstFail.status).toBe('error');
-      const afterFirstFail = await store.get(run.id);
+      const { record: afterFirstFail } = await store.get(run.id);
       expect(afterFirstFail.finalizer_ledger?.['fin']?.status).toBe('pending');
 
       // 2. Operator --void's it directly (mirrors drain.ts's --void action).
@@ -50,10 +54,10 @@ describe('re-arm disclosure (issue #279, increment 1, PR-B, final-gate F10b)', (
 
       // 3. Resume 'work' (applyResume never touches an already-voided entry — it stays voided).
       const { applyResume } = await import('./apply-resume.js');
-      const beforeResume = await store.get(run.id);
+      const { record: beforeResume } = await store.get(run.id);
       const { run: resumed } = applyResume(beforeResume, 'work', def);
       await store.update(resumed);
-      const afterResume = await store.get(run.id);
+      const { record: afterResume } = await store.get(run.id);
       expect(afterResume.finalizer_ledger?.['fin']?.status).toBe('voided'); // untouched by resume
 
       // 4. Re-fail 'work' — a NEW terminal false→true edge. selectFinalizers re-selects 'fin'
@@ -74,7 +78,7 @@ describe('re-arm disclosure (issue #279, increment 1, PR-B, final-gate F10b)', (
           (w) => w.includes("finalizer 'fin' was operator-voided") && w.includes('re-armed'),
         ),
       ).toBe(true);
-      const finalRun = await store.get(run.id);
+      const { record: finalRun } = await store.get(run.id);
       expect(finalRun.finalizer_ledger?.['fin']?.status).toBe('pending');
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -85,7 +89,11 @@ describe('re-arm disclosure (issue #279, increment 1, PR-B, final-gate F10b)', (
     const dir = await mkdtemp(join(tmpdir(), 'realm-re-arm-clean-'));
     try {
       const store = new JsonFileStore(dir);
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const result = await executeStep(store, def, {
         runId: run.id,
         command: 'work',

@@ -13,6 +13,7 @@ import { JsonFileStore } from '@sensigo/realm';
 import type { EvidenceSnapshot, RunRecord, RunStore, WorkflowDefinition } from '@sensigo/realm';
 import { InMemoryStore } from './in-memory-store.js';
 import { runStoreFidelityContract } from './run-store-fidelity-contract.js';
+import type { Snapshot } from '@sensigo/realm';
 
 const agentWf: WorkflowDefinition = {
   id: 'tck-answer-facts',
@@ -33,7 +34,7 @@ function lawOf(store: RunStore) {
 /** A store that drops one evidence field on every write — the lossy store the law must refuse. */
 function dropping(field: keyof EvidenceSnapshot): RunStore {
   class Drops extends InMemoryStore {
-    override update(record: RunRecord): Promise<RunRecord> {
+    override update(record: RunRecord): Promise<Snapshot> {
       return super.update({
         ...record,
         evidence: record.evidence.map((entry) => {
@@ -65,7 +66,7 @@ describe('#627 W — EVIDENCE_KEEPS_ANSWER_FACTS', () => {
 
   it('REJECTS a store that fills in an answer fact the entry was written without', async () => {
     class FillsIn extends InMemoryStore {
-      override update(record: RunRecord): Promise<RunRecord> {
+      override update(record: RunRecord): Promise<Snapshot> {
         return super.update({
           ...record,
           evidence: record.evidence.map((entry) => ({ ...entry, client_prompt_requested: true })),
@@ -79,7 +80,7 @@ describe('#627 W — EVIDENCE_KEEPS_ANSWER_FACTS', () => {
 
   it('correction 1 (C5b): REJECTS a store that invents driven_by on an entry written without it', async () => {
     class InventsDriver extends InMemoryStore {
-      override update(record: RunRecord): Promise<RunRecord> {
+      override update(record: RunRecord): Promise<Snapshot> {
         return super.update({
           ...record,
           // Only where the entry was written without one: the declared entry round-trips intact,
@@ -102,7 +103,7 @@ describe('#627 W — EVIDENCE_KEEPS_ANSWER_FACTS', () => {
 
   it('correction 1 (C5c): REJECTS a store that drops principal only when it has a kind', async () => {
     class DropsKindedPrincipal extends InMemoryStore {
-      override update(record: RunRecord): Promise<RunRecord> {
+      override update(record: RunRecord): Promise<Snapshot> {
         return super.update({
           ...record,
           evidence: record.evidence.map((entry) => {

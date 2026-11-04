@@ -278,7 +278,7 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
       runs: [],
     });
     const store = new JsonFileStore(runsDir());
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'prompt-cache-600',
       workflowVersion: 1,
       params: {},
@@ -406,10 +406,10 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
     await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(definition);
     const store = new JsonFileStore(runsDir());
     const live = (await store.create({ workflowId: definition.id, workflowVersion: 1, params: {} }))
-      .run;
+      .record;
     const failed = (
       await store.create({ workflowId: definition.id, workflowVersion: 1, params: {} })
-    ).run;
+    ).record;
     await store.update({
       ...failed,
       terminal_state: true,
@@ -465,7 +465,7 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
     await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(definition);
     const store = new JsonFileStore(runsDir());
     const run = (await store.create({ workflowId: definition.id, workflowVersion: 1, params: {} }))
-      .run;
+      .record;
     const file = join(runsDir(), `${run.id}.json`);
     const before = readFileSync(file);
     const r = await runCli(

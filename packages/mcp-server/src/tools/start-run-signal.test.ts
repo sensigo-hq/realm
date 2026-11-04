@@ -57,13 +57,13 @@ describe('start_run idempotency signal', () => {
   });
 
   it('terminal match → deduped:true, run_phase set, accurate hint, run byte-unchanged', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'agentflow',
       workflowVersion: 1,
       params: {},
       idempotencyKey: 'k1',
     });
-    const aborted = await runStore.update({
+    const { record: aborted } = await runStore.update({
       ...run,
       run_phase: 'aborted',
       terminal_state: true,
@@ -71,7 +71,7 @@ describe('start_run idempotency signal', () => {
       terminal_reason: 'aborted by guard',
       aborted_at: { step_id: 'review' },
     });
-    const before = await runStore.get(run.id);
+    const { record: before } = await runStore.get(run.id);
 
     const env = await handleStartRun(
       { workflow_id: 'agentflow', idempotency_key: 'k1' },
@@ -83,7 +83,7 @@ describe('start_run idempotency signal', () => {
     expect(env.context_hint).toContain('Matched existing run');
     expect(env.context_hint).not.toContain('created for workflow');
     // No re-drive: the record is byte-unchanged.
-    const after = await runStore.get(run.id);
+    const { record: after } = await runStore.get(run.id);
     expect(after).toEqual(before);
     expect(after.version).toBe(aborted.version);
   });
@@ -105,7 +105,7 @@ describe('start_run idempotency signal', () => {
   });
 
   it('param mismatch on a re-encounter → warning, original run returned', async () => {
-    const { run: owner } = await runStore.create({
+    const { record: owner } = await runStore.create({
       workflowId: 'agentflow',
       workflowVersion: 1,
       params: { a: 1 },
@@ -139,7 +139,7 @@ describe('start_run_batch idempotency signal (per-item)', () => {
 
   it('each started item carries deduped, run_phase, terminal_reason, warnings', async () => {
     // Pre-seed a terminal run for key 'dup'.
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'agentflow',
       workflowVersion: 1,
       params: {},
@@ -203,7 +203,7 @@ describe('start_run / start_run_batch re-encounter policy (#92 PR 2)', () => {
   });
 
   async function seedCompleted(key: string): Promise<string> {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'agentflow',
       workflowVersion: 1,
       params: {},

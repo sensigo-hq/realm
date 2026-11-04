@@ -17,6 +17,7 @@ import {
   type RunRecord,
 } from '@sensigo/realm';
 import { JsonTraceBufferStore, DEFAULT_LOCK_PROFILE } from './json-trace-buffer-store.js';
+import { snap } from './test-support/snapshot-double.js';
 
 /** Recomputes the exact on-disk WAL filename `walPath` uses — test-side only. */
 function walFileName(runId: string, stepId: string): string {
@@ -58,7 +59,7 @@ describe('JsonTraceBufferStore', () => {
         reads.push(runId);
         const run = runs.get(runId);
         if (run === undefined) throw runNotFoundError(runId);
-        return run;
+        return snap(run);
       },
     });
     store = new JsonTraceBufferStore(dir, reader);

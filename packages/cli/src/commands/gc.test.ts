@@ -409,7 +409,11 @@ describe('sweepOrphanArtifacts (issue #163)', () => {
       const failedAttemptStore = new JsonFileFailedAttemptStore(dir);
       const runStore = new JsonFileStore(dir);
 
-      const { run } = await runStore.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+      const { record: run } = await runStore.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+      });
       await traceBufferStore.append(run.id, 'step-a', [{ event: 'x' }]);
       await failedAttemptStore.append(run.id, '{}');
 
@@ -509,7 +513,7 @@ describe('sweepOrphanArtifacts (issue #163)', () => {
 
       // 'step->' -> base64url 'c3RlcC0-' (ends in '-'); 'step-?' -> 'c3RlcC0_' (ends in '_'). Both
       // are realistic step ids whose encoding could be misparsed by a delimiter-split approach.
-      const { run: liveRun } = await runStore.create({
+      const { record: liveRun } = await runStore.create({
         workflowId: 'wf-1',
         workflowVersion: 1,
         params: {},
@@ -603,7 +607,11 @@ describe('sweepOrphanArtifacts — sealed artifacts (issue #197 PR-2, deliverabl
       const traceBufferStore = new JsonTraceBufferStore(dir, new JsonFileStore(dir));
       const runStore = new JsonFileStore(dir);
 
-      const { run } = await runStore.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+      const { record: run } = await runStore.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+      });
       await traceBufferStore.append(run.id, 'step-a', [{ event: 'x' }]);
       await traceBufferStore.sealFenced!(run.id, 'step-a', {
         kind: 'run_at_version',
@@ -730,7 +738,7 @@ describe('sweepOrphanArtifacts — fenced reap path (issue #207 PR-2)', () => {
       // Force the re-imported run to have the EXACT id the WAL names (create() mints a fresh
       // uuid; overwrite the file directly to land on resurrectedId, mirroring how save() would
       // re-import a specific, already-known id).
-      const created = await runStore.list();
+      const created = (await runStore.list()).snapshots.map((s) => s.record);
       const justCreated = created.find((r) => r.workflow_id === 'wf-1')!;
       await rm(join(dir, `${justCreated.id}.json`));
       await writeFile(
@@ -797,7 +805,11 @@ describe('fail-closed wiring: a listRunIds() failure must abort the orphan sweep
       // Seed BOTH a live run's WAL and a genuinely run-less orphan, ancient enough that either
       // would be reaped by a correctly-computed sweep — this is what a fabricated empty
       // liveRunIds (the catastrophic bug the mutation-probe below simulates) would wrongly reap.
-      const { run } = await runStore.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+      const { record: run } = await runStore.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+      });
       await traceBufferStore.append(run.id, 'step-a', [{ event: 'live' }]);
       const liveWalPath = walPathFor(dir, run.id, 'step-a');
 
@@ -867,7 +879,11 @@ async function writeStalePhaseFixture(
   runStore: JsonFileStore,
   dir: string,
 ): Promise<{ id: string; stale: RunRecord }> {
-  const { run } = await runStore.create({ workflowId: 'wf-282', workflowVersion: 1, params: {} });
+  const { record: run } = await runStore.create({
+    workflowId: 'wf-282',
+    workflowVersion: 1,
+    params: {},
+  });
   const stale: RunRecord = {
     ...run,
     completed_steps: ['a', 'b'],
@@ -896,7 +912,7 @@ describe('sweepStalePhases (issue #293)', () => {
       const before = await stat(path);
       const beforeContent = await readFile(path, 'utf8');
 
-      const { run: matching } = await runStore.create({
+      const { record: matching } = await runStore.create({
         workflowId: 'wf-clean',
         workflowVersion: 1,
         params: {},
@@ -974,12 +990,12 @@ describe('sweepStalePhases (issue #293)', () => {
     const dir = await makeTmpRunsDir();
     try {
       const runStore = new JsonFileStore(dir);
-      const { run: clean1 } = await runStore.create({
+      const { record: clean1 } = await runStore.create({
         workflowId: 'wf-a',
         workflowVersion: 1,
         params: {},
       });
-      const { run: clean2 } = await runStore.create({
+      const { record: clean2 } = await runStore.create({
         workflowId: 'wf-b',
         workflowVersion: 1,
         params: {},

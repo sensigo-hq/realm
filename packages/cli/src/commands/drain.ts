@@ -19,6 +19,7 @@ import type {
 } from '@sensigo/realm';
 import { CLI_COMMANDS, advanceNeedsWords, cannotGoOnLines, writerHost } from './ways-renderer.js';
 import {
+  parseStamp,
   describePending,
   owedList,
   owedWords,
@@ -28,22 +29,25 @@ import {
   type PendingView,
   WorkflowError,
   applySettlement,
+  overdueOf,
   deriveRunPhase,
   getWorkflowForRun,
   describeGuardLines,
   guardEndingOf,
   // issue #625 PR-2a (F1): how long ago a gate expired — core's one duration formatter (seconds
   // under a minute, never `0m`).
-  formatDuration,
+  formatInstantWords,
   shellWord,
   pendingCleanupLine,
   pendingCleanupWay,
+  writtenSnapshot,
 } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
 import { agentReadyReason, inFlightReasons } from './run-advance.js';
 import { listRunsDiagnosed, unreadableRunLines } from './list.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
+import { openRunStore } from '../lib/run-store.js';
 
 /**
  * issue #558 PR-C: ONE mint, rendered by BOTH surfaces that can find nothing to drain — the
@@ -140,7 +144,7 @@ const wayOutOf = (runId: string, run: RunRecord, now: Date, pending?: OwedView):
   const expiry = classifyGateExpiry(run, now);
   if (expiry.kind === 'enactable') {
     return [
-      `Its gate expired ${formatDuration(expiry.overdueMs)} ago. To see what the expiry ` +
+      `Its gate ${expiry.words}. To see what the expiry ` +
         `will do: realm run drain ${runId} --expired`,
       `To carry it out: realm run drain ${runId} --expired --force`,
     ];
@@ -165,46 +169,51 @@ const wayOutOf = (runId: string, run: RunRecord, now: Date, pending?: OwedView):
 export type GateExpiryClass =
   | { kind: 'none' }
   | { kind: 'not_expired' }
-  | { kind: 'finding_only'; overdueMs: number }
-  | { kind: 'enactable'; disposition: 'settle_default' | 'abort'; overdueMs: number };
+  | { kind: 'finding_only'; overdueMs: number; words: string }
+  | {
+      kind: 'enactable';
+      disposition: 'settle_default' | 'abort';
+      overdueMs: number;
+      words: string;
+    };
 
 export function classifyGateExpiry(run: RunRecord, now: Date): GateExpiryClass {
   const gate = run.pending_gate;
   if (gate === undefined || gate.expires_at === undefined) return { kind: 'none' };
-  const overdueMs = now.getTime() - new Date(gate.expires_at).getTime();
-  if (overdueMs < 0) return { kind: 'not_expired' };
-  if (gate.on_expiry === undefined) return { kind: 'finding_only', overdueMs };
-  return { kind: 'enactable', disposition: gate.on_expiry, overdueMs };
+  // #715 (b) (D-25): through core's one deadline reader. An unparseable `expires_at` is never past
+  // (nothing is carried out on a deadline the record does not state readably) — it used to read as
+  // NaN and fall through to `enactable`.
+  const overdue = overdueOf(gate.expires_at, now);
+  if (overdue === undefined || 'absent' in overdue) return { kind: 'not_expired' };
+  const overdueMs = overdue.ms;
+  // #715 (b) (03 §B.2 B2-B5): the expiry in words through the one formatter, at the same reading —
+  // `EXPIRED 2m ago (2026-10-27T13:58:07Z)`; the deadline parsed above, so the words are there.
+  const words = formatInstantWords(gate.expires_at, 'deadline', now)!;
+  if (gate.on_expiry === undefined) return { kind: 'finding_only', overdueMs, words };
+  return { kind: 'enactable', disposition: gate.on_expiry, overdueMs, words };
 }
 
 /**
- * Issue #291 ([F5]/[F4]): enacts an expired, enactable gate via the SAME dormancy-discriminated
- * pattern `submitHumanResponse`/`enactExpiredGateIfDue` use — `store.settleStep` when declared,
- * else the pure `applySettlement` transform + `store.update`'s CAS write. Returns the resulting
- * run (unchanged on a benign refusal/race) and whether it actually applied.
+ * Issue #291 ([F5]/[F4]): enacts an expired, enactable gate through the store's `settleStep`
+ * (`expire_gate`; #715 (b): the one path — the store's own clock decides it is due). Returns the
+ * resulting run (unchanged on a benign refusal/race) and whether it actually applied.
  */
 async function enactGateExpiry(
   runStore: RunStore,
   definition: WorkflowDefinition,
   run: RunRecord,
-  now: Date,
-): Promise<{ run: RunRecord; applied: boolean; guardLines: string[] }> {
+): Promise<{ run: RunRecord; at: Date; applied: boolean; guardLines: string[] }> {
   const gateId = run.pending_gate!.gate_id;
-  const delta = { kind: 'expire_gate' as const, gateId };
-  let outcome: SettlementResult;
-  if (runStore.settleStep !== undefined) {
-    outcome = await runStore.settleStep(run.id, delta, definition, { now });
-  } else {
-    const pure = applySettlement(run, delta, definition, { now });
-    if (!pure.applied) return { run: pure.run, applied: false, guardLines: [] };
-    const persisted = await runStore.update(pure.run);
-    outcome = { ...pure, run: persisted };
-  }
-  // issue #625: on a store that declares `settleStep` the expiry's write also settled the guards
-  // its default made eligible — the ending sentence and its `Reason:` when one ended the run,
-  // otherwise a passed line per guard. The legacy branch above never sets the option (a store
-  // without `settleStep` settles no guard in this write), so it reports none.
-  return { run: outcome.run, applied: outcome.applied, guardLines: describeGuardLines(outcome) };
+  const outcome = await runStore.settleStep(run.id, { kind: 'expire_gate', gateId }, definition);
+  // issue #625: the expiry's write also settled the guards its default made eligible — the ending
+  // sentence and its `Reason:` when one ended the run, otherwise a passed line per guard.
+  // #715 (b): with the write's reading — what follows judges the run at it.
+  return {
+    run: outcome.run,
+    at: outcome.at,
+    applied: outcome.applied,
+    guardLines: describeGuardLines(outcome),
+  };
 }
 
 /** issue #625: what an expired gate's frozen disposition enacts, naming the choice a
@@ -219,24 +228,19 @@ function describeEnactment(run: RunRecord, disposition: 'settle_default' | 'abor
 /**
  * issue #625: what `--force` would do to this run's guards, one clause per guard — PREDICTED by
  * running the same pure transform the store's `settleStep` runs, and never persisted (the record
- * and its version are untouched). Empty when the expiry would settle no guard, when the store
- * declares no `settleStep` (there `--force` settles no guard, so none is predicted), or when the
+ * and its version are untouched). Empty when the expiry would settle no guard, or when the
  * prediction cannot be made.
  */
-function predictExpiryGuards(
-  runStore: RunStore,
-  definition: WorkflowDefinition,
-  run: RunRecord,
-  now: Date,
-): string[] {
-  if (runStore.settleStep === undefined || run.pending_gate === undefined) return [];
+function predictExpiryGuards(definition: WorkflowDefinition, run: RunRecord, now: Date): string[] {
+  if (run.pending_gate === undefined) return [];
   let predicted: SettlementResult;
   try {
+    // #715 (b) (D-19): the pure transform at the reading the run was judged at.
     predicted = applySettlement(
       run,
       { kind: 'expire_gate', gateId: run.pending_gate.gate_id },
       definition,
-      { now, cascadeGuards: true },
+      { at: now, cascadeGuards: true },
     );
   } catch {
     return [];
@@ -331,7 +335,7 @@ export function classifyDrainRankPass(
     const isHeld =
       entry.lease_token !== undefined &&
       entry.lease_deadline !== undefined &&
-      new Date(entry.lease_deadline).getTime() > now.getTime();
+      (parseStamp(entry.lease_deadline) ?? NaN) > now.getTime();
     if (isHeld) {
       result.push({
         name,
@@ -372,11 +376,10 @@ function renderGateExpiryDryRun(
   if (!expiredFlag) return false;
   const cls = classifyGateExpiry(run, now);
   if (cls.kind === 'enactable') {
-    const overdue = formatDuration(cls.overdueMs);
     // issue #625: the line names the choice a `settle_default` would settle, then what the
     // guards that choice unlocks would do — one clause per guard.
     console.log(
-      `Run '${runId}': gate expired ${overdue} ago — would enact ` +
+      `Run '${runId}': gate ${cls.words} — would enact ` +
         describeEnactment(run, cls.disposition) +
         predictedGuards.map((clause) => `; ${clause}`).join('') +
         ' on --force.',
@@ -384,9 +387,8 @@ function renderGateExpiryDryRun(
     return true;
   }
   if (cls.kind === 'finding_only') {
-    const overdue = formatDuration(cls.overdueMs);
     console.log(
-      `Run '${runId}': gate expired ${overdue} ago — finding-only (no on_expiry declared, nothing to enact).`,
+      `Run '${runId}': gate ${cls.words} — finding-only (no on_expiry declared, nothing to enact).`,
     );
     return false;
   }
@@ -503,6 +505,8 @@ export interface DrainRuntimeDeps {
     // nothing" from "drained something".
   ) => Promise<{
     run: RunRecord;
+    /** #715 (b): the reading of the write (or load) `run` comes from. */
+    at: Date;
     warnings: string[];
     leftPending: string[];
     attempted: string[];
@@ -537,7 +541,7 @@ export async function runDrainAction(
   workflowStore: WorkflowRegistrar,
   deps: DrainRuntimeDeps,
 ): Promise<void> {
-  const now = new Date();
+  // #715 (b) (D6-17, D-26): no clock read here — each run is judged at its own snapshot's `at`.
 
   // ============================ --void <finalizer> ============================
   if (opts.void !== undefined) {
@@ -550,7 +554,7 @@ export async function runDrainAction(
       process.exit(1);
     }
     try {
-      const run = await runStore.get(runId);
+      const { record: run, at: runAt } = await runStore.get(runId);
       const entry = run.finalizer_ledger?.[opts.void];
       if (entry === undefined) {
         console.error(`No finalizer ledger entry named '${opts.void}' on run '${runId}'.`);
@@ -565,7 +569,7 @@ export async function runDrainAction(
       const isHeld =
         entry.lease_token !== undefined &&
         entry.lease_deadline !== undefined &&
-        new Date(entry.lease_deadline).getTime() > now.getTime();
+        (parseStamp(entry.lease_deadline) ?? NaN) > runAt.getTime();
       if (isHeld) {
         console.error(
           `Finalizer '${opts.void}' has an active drain lease (expires ` +
@@ -580,10 +584,12 @@ export async function runDrainAction(
         ? `finalizer '${opts.void}' voided by operator — never executed`
         : `finalizer '${opts.void}' voided by operator — may have executed without a ` +
           `recorded mark (its lease had already expired)`;
+      // #715 (b) (A.9): the void's instant is an EVENT on the store's clock (start = end, zero-ms).
+      const voidAt = runStore.clock.now();
       const voidEvidence = deps.captureEvidence({
         stepId: opts.void,
-        startedAt: now,
-        completedAt: now,
+        startedAt: voidAt,
+        completedAt: voidAt,
         input: {},
         output: { voided: true, provenance: 'operator', never_leased: neverLeased },
       });
@@ -613,9 +619,12 @@ export async function runDrainAction(
     // here, never an unhandled rejection. The readable runs are acted on; a damaged run file is
     // reported, not acted on.
     let runs: RunRecord[];
+    // #715 (b) (D-26): each row is judged at its own snapshot's `at`.
+    let atOf: Map<string, Date>;
     try {
       const listing = await listRunsDiagnosed(runStore);
-      runs = listing.records;
+      runs = listing.snapshots.map((s) => s.record);
+      atOf = new Map(listing.snapshots.map((s) => [s.record.id, s.at]));
       for (const line of unreadableRunLines(
         listing.unreadable,
         '; realm run drain --all did not act on them.',
@@ -626,19 +635,24 @@ export async function runDrainAction(
       console.error(err instanceof Error ? err.message : String(err));
       process.exit(1);
     }
-    const finalizerActionable = runs.filter((r) => r.terminal_state && isBatchActionable(r, now));
+    const finalizerActionable = runs.filter(
+      (r) => r.terminal_state && isBatchActionable(r, atOf.get(r.id)!),
+    );
     // issue #291 ([F5]): OPT-IN — without --expired, batch mode is byte-stable terminal-only
     // (a non-terminal run with an expired gate is invisible to bare `drain --all`, exactly as
     // before). finalizerActionable requires terminal_state; gateActionable/findingOnlyGates
     // require !terminal_state — mutually exclusive by construction, no dedup needed.
     const gateActionable =
       opts.expired === true
-        ? runs.filter((r) => !r.terminal_state && classifyGateExpiry(r, now).kind === 'enactable')
+        ? runs.filter(
+            (r) => !r.terminal_state && classifyGateExpiry(r, atOf.get(r.id)!).kind === 'enactable',
+          )
         : [];
     const findingOnlyGates =
       opts.expired === true
         ? runs.filter(
-            (r) => !r.terminal_state && classifyGateExpiry(r, now).kind === 'finding_only',
+            (r) =>
+              !r.terminal_state && classifyGateExpiry(r, atOf.get(r.id)!).kind === 'finding_only',
           )
         : [];
     const actionable = [...finalizerActionable, ...gateActionable];
@@ -655,11 +669,9 @@ export async function runDrainAction(
           console.log(`  • ${r.id}`);
         }
         for (const r of gateActionable) {
-          const cls = classifyGateExpiry(r, now);
+          const cls = classifyGateExpiry(r, atOf.get(r.id)!);
           if (cls.kind === 'enactable') {
-            console.log(
-              `  • ${r.id}: gate expired ${formatDuration(cls.overdueMs)} ago — would enact ${cls.disposition}`,
-            );
+            console.log(`  • ${r.id}: gate ${cls.words} — would enact ${cls.disposition}`);
           }
         }
       }
@@ -715,9 +727,10 @@ export async function runDrainAction(
         });
         const {
           run: enactedRun,
+          at: enactedAt,
           applied,
           guardLines,
-        } = await enactGateExpiry(runStore, workflow, r, now);
+        } = await enactGateExpiry(runStore, workflow, r);
         if (!applied) {
           console.log(`  • ${r.id}: gate expiry already resolved (race) — skipped`);
           continue;
@@ -727,7 +740,7 @@ export async function runDrainAction(
         // issue #625: what the guards the expiry unlocked did — a run a guard ended is never
         // reported as "gate enacted" alone.
         for (const line of guardLines) console.log(`    ${line}`);
-        if (enactedRun.terminal_state && isBatchActionable(enactedRun, now)) {
+        if (enactedRun.terminal_state && isBatchActionable(enactedRun, enactedAt)) {
           // issue #466 — the resolve call alone, in place: the enactment above already ran and
           // stays counted (`drained` already incremented, `✓ gate enacted` already printed) — a
           // broken module here means the finalizer pass didn't run, not that the gate didn't.
@@ -764,23 +777,24 @@ export async function runDrainAction(
   }
 
   try {
-    const run = await runStore.get(runId);
+    const { record: run, at: runAt } = await runStore.get(runId);
     // issue #625 PR-2a: what the engine owes on a live run with no open question — a JSON read of
     // the registered copy; when it cannot be read, nothing is added to the line.
-    const ownedWork = async (r: RunRecord): Promise<OwedView | undefined> => {
+    // #715 (b) (D6-17): `r` judged at `at` — the reading its record was read or written at.
+    const ownedWork = async (r: RunRecord, at: Date): Promise<OwedView | undefined> => {
       if (r.terminal_state || r.pending_gate !== undefined) return undefined;
       try {
         const wf = await getWorkflowForRun(workflowStore, r, {
           retryVerb: 'drain again',
           verb: 'drain',
         });
-        return { ...describePending(wf, r, undefined, now), workflow: wf };
+        return { ...describePending(wf, writtenSnapshot(r, at), undefined), workflow: wf };
       } catch (err) {
         if (!(err instanceof WorkflowError)) throw err;
         return undefined;
       }
     };
-    const gateClass = classifyGateExpiry(run, now);
+    const gateClass = classifyGateExpiry(run, runAt);
     const hasEnactableGate = opts.expired === true && gateClass.kind === 'enactable';
 
     if (opts.force !== true) {
@@ -815,7 +829,7 @@ export async function runDrainAction(
             verb: 'drain',
             terminalOk: true,
           });
-          predictedGuards = predictExpiryGuards(runStore, workflowForGate, run, now);
+          predictedGuards = predictExpiryGuards(workflowForGate, run, runAt);
         } catch (err) {
           if (!(err instanceof WorkflowError)) throw err;
         }
@@ -823,17 +837,17 @@ export async function runDrainAction(
       renderDryRun(
         runId,
         run,
-        now,
+        runAt,
         opts.expired === true,
         declared,
         predictedGuards,
-        await ownedWork(run),
+        await ownedWork(run, runAt),
       );
       return;
     }
 
     if (!run.terminal_state && !hasEnactableGate) {
-      const [first, ...more] = wayOutOf(runId, run, now, await ownedWork(run));
+      const [first, ...more] = wayOutOf(runId, run, runAt, await ownedWork(run, runAt));
       console.error(
         `Run '${runId}' is not terminal (phase: '${writerCtx().word(deriveRunPhase(run), RUN_PHASE_WORDS)}') — nothing to drain. ${first}`,
       );
@@ -842,6 +856,7 @@ export async function runDrainAction(
     }
 
     let workingRun = run;
+    let workingAt = runAt;
     if (hasEnactableGate) {
       // issue #456: this run may be non-terminal (an enactable expired gate bypasses the
       // terminal refusal above) — a LIVE dev-run the operator walked away from, the class's
@@ -854,9 +869,11 @@ export async function runDrainAction(
       });
       const {
         run: enactedRun,
+        at: enactedAt,
         applied,
         guardLines,
-      } = await enactGateExpiry(runStore, workflowForGate, run, now);
+      } = await enactGateExpiry(runStore, workflowForGate, run);
+      workingAt = enactedAt;
       if (applied) {
         console.log(
           `✓ gate enacted (${gateClass.kind === 'enactable' ? describeEnactment(run, gateClass.disposition) : ''}).`,
@@ -881,13 +898,13 @@ export async function runDrainAction(
         `Run '${runId}' is not terminal (phase: '${writerCtx().word(deriveRunPhase(workingRun), RUN_PHASE_WORDS)}') — nothing further to drain.`,
       );
       // issue #625 PR-2a (decision C7): the expiry left steps owed to the engine — name the call.
-      const owed = await ownedWork(workingRun);
+      const owed = await ownedWork(workingRun, workingAt);
       // #729 PR-0 (A-10): the run's ways, composed once by core with no registry (an observer,
-      // C33), for both lines below.
+      // C33), for both lines below. #715 (b): at the working record's own reading.
       const composed =
         owed === undefined
           ? undefined
-          : composeWaysAt(workingRun, now, { definition: owed.workflow });
+          : composeWaysAt(workingRun, workingAt, { definition: owed.workflow });
       if (owed !== undefined && owed.owed.length > 0) {
         // decision C207: with several owed, where the call stops.
         const { steps, until } = owedWords(owed);
@@ -955,7 +972,8 @@ export async function runDrainAction(
     // F12 (review G2-R4, G3-1): the pass halted at another drainer's lease (its `⚠` line above says
     // so) and left that cleanup step pending: said as held, with the lease's deadline and the command
     // for after it — never "no pending finalizers"; exit 1, as for any pass that left a step pending.
-    const afterPass = new Date();
+    // #715 (b): the pass's last write's reading (drainFinalizers returns it).
+    const afterPass = outcome.at;
     if (pendingCleanupWay(outcome.run, afterPass)?.held_until !== undefined) {
       if (outcome.attempted.length > 0) {
         console.log(`Drained run '${runId}' (${outcome.attempted.length} ran).`);
@@ -1007,9 +1025,9 @@ export const drainCommand = new Command('drain')
     // issue #625 (holder slice): this program's name, made once, before any other output. A name
     // that cannot be used prints one line and exits 1 here; nothing has been started.
     const driver = resolveProgramIdentity('drain');
-    const { JsonFileStore, JsonWorkflowStore, drainFinalizers, captureEvidence, DRAIN_LEASE_MAX } =
+    const { JsonWorkflowStore, drainFinalizers, captureEvidence, DRAIN_LEASE_MAX } =
       await import('@sensigo/realm');
-    const runStore = new JsonFileStore();
+    const runStore = openRunStore();
     const workflowStore = new JsonWorkflowStore();
     await runDrainAction(runId, opts, runStore, workflowStore, {
       drainFinalizers,

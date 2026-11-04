@@ -56,9 +56,12 @@ import { ExtensionRegistry } from '../extensions/registry.js';
 import type { RunStore, CreateRunOptions } from '../store/store-interface.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
-import type { SettlementDelta, SettlementResult } from '../types/settlement.js';
+import type { SettlementDelta } from '../types/settlement.js';
 import type { StepHandler } from '../extensions/step-handler.js';
 import { agentActionFor } from '../test-support/ways-view.js';
+import type { Snapshot } from './snapshot.js';
+import type { Listing, CreateResult, StoreSettlement } from '../store/store-interface.js';
+import type { Clock } from '../utils/clock.js';
 
 /**
  * Delegates every RunStore method to a real, functional JsonFileStore. `settleStep` is
@@ -67,6 +70,10 @@ import { agentActionFor } from '../test-support/ways-view.js';
  * sibling writer that got there first. Every subsequent call passes straight through.
  */
 class InjectBeforeSettleStore implements RunStore {
+  /** #715 (b): the store's clock is the wrapped store's. */
+  get clock(): Clock {
+    return this.inner.clock;
+  }
   // issue #620 PR-C: a test double declares this realm's release line.
   static {
     declareReleaseLine(this);
@@ -87,32 +94,31 @@ class InjectBeforeSettleStore implements RunStore {
   ) {
     this.persistsClaims = inner.persistsClaims;
   }
-  create(options: CreateRunOptions): Promise<{ run: RunRecord; created: boolean }> {
+  create(options: CreateRunOptions): Promise<CreateResult> {
     return this.inner.create(options);
   }
-  get(runId: string): Promise<RunRecord> {
+  get(runId: string): Promise<Snapshot> {
     return this.inner.get(runId);
   }
-  update(record: RunRecord): Promise<RunRecord> {
+  update(record: RunRecord): Promise<Snapshot> {
     return this.inner.update(record);
   }
-  list(workflowId?: string): Promise<RunRecord[]> {
+  list(workflowId?: string): Promise<Listing> {
     return this.inner.list(workflowId);
   }
-  claimStep(runId: string, stepName: string, definition: WorkflowDefinition): Promise<RunRecord> {
+  claimStep(runId: string, stepName: string, definition: WorkflowDefinition): Promise<Snapshot> {
     return this.inner.claimStep(runId, stepName, definition);
   }
   async settleStep(
     runId: string,
     delta: SettlementDelta,
-    definition: WorkflowDefinition,
-    options?: { now?: Date },
-  ): Promise<SettlementResult> {
+    definition?: WorkflowDefinition,
+  ): Promise<StoreSettlement> {
     if (!this.injected && this.matches(delta)) {
       this.injected = true;
       await this.inject();
     }
-    return this.inner.settleStep(runId, delta, definition, options);
+    return this.inner.settleStep(runId, delta, definition);
   }
 }
 
@@ -179,19 +185,21 @@ async function leaveGuardEligible(
   run: RunRecord,
   stepAOutput: Record<string, unknown>,
 ): Promise<RunRecord> {
-  return inner.update({
-    ...run,
-    completed_steps: ['step_a'],
-    evidence: [
-      captureEvidence({
-        stepId: 'step_a',
-        startedAt: new Date(),
-        completedAt: new Date(),
-        input: {},
-        output: stepAOutput,
-      }),
-    ],
-  });
+  return (
+    await inner.update({
+      ...run,
+      completed_steps: ['step_a'],
+      evidence: [
+        captureEvidence({
+          stepId: 'step_a',
+          startedAt: new Date(),
+          completedAt: new Date(),
+          input: {},
+          output: stepAOutput,
+        }),
+      ],
+    })
+  ).record;
 }
 
 function makeGuardEvidence(outcome: 'pass' | 'resolution_error' | 'abort') {
@@ -209,7 +217,11 @@ describe('GUARD_CHAIN_CONSUMPTION — the chain-consumption table (issue #279, i
     const dir = await mkdtemp(join(tmpdir(), 'realm-gcc-a-'));
     try {
       const inner = new JsonFileStore(dir);
-      const { run } = await inner.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await inner.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const store = new InjectBeforeSettleStore(
         inner,
         (d) => d.kind === 'settle_guard' && d.step === 'guard_b',
@@ -240,7 +252,7 @@ describe('GUARD_CHAIN_CONSUMPTION — the chain-consumption table (issue #279, i
       expect(result.errors).toEqual([]);
       expect(result.error_code).toBeUndefined();
       expect(JSON.stringify(result)).not.toContain('STATE_STEP_ALREADY_SETTLED');
-      const finalRun = await inner.get(run.id);
+      const { record: finalRun } = await inner.get(run.id);
       expect(finalRun.completed_steps).toContain('guard_b'); // settled exactly once, by the sibling
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -251,7 +263,11 @@ describe('GUARD_CHAIN_CONSUMPTION — the chain-consumption table (issue #279, i
     const dir = await mkdtemp(join(tmpdir(), 'realm-gcc-b-'));
     try {
       const inner = new JsonFileStore(dir);
-      const { run } = await inner.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await inner.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const store = new InjectBeforeSettleStore(
         inner,
         (d) => d.kind === 'settle_guard' && d.step === 'guard_b',
@@ -286,7 +302,7 @@ describe('GUARD_CHAIN_CONSUMPTION — the chain-consumption table (issue #279, i
       expect(result.status).toBe('ok');
       expect(result.error_code).toBeUndefined();
       expect(result.warnings.some((w) => w.includes('guard') && w.includes('diverged'))).toBe(true);
-      const finalRun = await inner.get(run.id);
+      const { record: finalRun } = await inner.get(run.id);
       // The SIBLING's outcome won (persisted) — resolution_error ⇒ failed_steps + terminal 'failed'.
       expect(finalRun.failed_steps).toContain('guard_b');
       expect(finalRun.terminal_state).toBe(true);
@@ -299,7 +315,11 @@ describe('GUARD_CHAIN_CONSUMPTION — the chain-consumption table (issue #279, i
     const dir = await mkdtemp(join(tmpdir(), 'realm-gcc-c-'));
     try {
       const inner = new JsonFileStore(dir);
-      const { run } = await inner.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await inner.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const store = new InjectBeforeSettleStore(
         inner,
         (d) => d.kind === 'settle_guard' && d.step === 'guard_b',
@@ -331,7 +351,7 @@ describe('GUARD_CHAIN_CONSUMPTION — the chain-consumption table (issue #279, i
       expect(result.error_code).toBe('STATE_STEP_ALREADY_SETTLED');
       expect(agentActionFor(result)).toBe('report_to_user');
       expect(result.errors[0]).toContain('NOT recorded');
-      const finalRun = await inner.get(run.id);
+      const { record: finalRun } = await inner.get(run.id);
       // The SIBLING's 'pass' won — our abort was never recorded.
       expect(finalRun.completed_steps).toContain('guard_b');
       expect(finalRun.aborted_at).toBeUndefined();
@@ -344,7 +364,7 @@ describe('GUARD_CHAIN_CONSUMPTION — the chain-consumption table (issue #279, i
     const dir = await mkdtemp(join(tmpdir(), 'realm-gcc-d-'));
     try {
       const inner = new JsonFileStore(dir);
-      const { run } = await inner.create({
+      const { record: run } = await inner.create({
         workflowId: defWithRecheck.id,
         workflowVersion: 1,
         params: {},
@@ -354,7 +374,7 @@ describe('GUARD_CHAIN_CONSUMPTION — the chain-consumption table (issue #279, i
         (d) => d.kind === 'settle_guard' && d.step === 'guard_b',
         async () => {
           // Open a gate on the UNRELATED `gated_step` — claim it first, then open_gate.
-          const claimed = await inner.claimStep(run.id, 'gated_step', defWithRecheck);
+          const { record: claimed } = await inner.claimStep(run.id, 'gated_step', defWithRecheck);
           await inner.settleStep(
             run.id,
             {
@@ -366,7 +386,6 @@ describe('GUARD_CHAIN_CONSUMPTION — the chain-consumption table (issue #279, i
                 step_name: 'gated_step',
                 preview: {},
                 choices: ['approve', 'reject'],
-                opened_at: new Date().toISOString(),
               },
               evidence: [],
             },
@@ -390,7 +409,7 @@ describe('GUARD_CHAIN_CONSUMPTION — the chain-consumption table (issue #279, i
       // (the gate now blocks everything), no error.
       expect(result.status).toBe('ok');
       expect(result.error_code).toBeUndefined();
-      const midRun = await inner.get(run.id);
+      const { record: midRun } = await inner.get(run.id);
       expect(midRun.completed_steps).not.toContain('guard_b');
       expect(midRun.failed_steps).not.toContain('guard_b');
       expect(midRun.skipped_steps).not.toContain('guard_b');
@@ -417,7 +436,7 @@ describe('GUARD_CHAIN_CONSUMPTION — the chain-consumption table (issue #279, i
       });
       expect(finalChain.status).toBe('ok');
       expect(finalChain.error_code).toBeUndefined();
-      const finalRun = await inner.get(run.id);
+      const { record: finalRun } = await inner.get(run.id);
       expect(finalRun.skipped_steps).toContain('guard_b');
       expect(finalRun.aborted_at?.step_id).toBe('guard_b');
       expect(finalRun.terminal_state).toBe(true);
@@ -430,7 +449,7 @@ describe('GUARD_CHAIN_CONSUMPTION — the chain-consumption table (issue #279, i
     const dir = await mkdtemp(join(tmpdir(), 'realm-gcc-e-'));
     try {
       const inner = new JsonFileStore(dir);
-      const { run } = await inner.create({
+      const { record: run } = await inner.create({
         workflowId: defWithFinalizer.id,
         workflowVersion: 1,
         params: {},
@@ -488,7 +507,7 @@ describe('GUARD_CHAIN_CONSUMPTION — the chain-consumption table (issue #279, i
       expect(result.errors).toEqual([]);
       expect(result.error_code).toBeUndefined();
 
-      const finalRun = await inner.get(run.id);
+      const { record: finalRun } = await inner.get(run.id);
       // Delivered, not merely settled-terminal: the NOOP-leg's drain-on-already_settled clause
       // recovered the crashed-drain state left by the raw sibling commit.
       expect(finalRun.finalizer_ledger?.['fin']?.status).toBe('completed');
