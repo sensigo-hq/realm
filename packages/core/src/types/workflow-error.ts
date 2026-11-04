@@ -276,7 +276,9 @@ export interface ErrorFactsByCode {
  */
 export interface NewerDefinitionFacts {
   scope: 'newer_definition';
-  path: string;
+  /** The file of a JSON-registry copy; absent for a copy that has no file (#616 B2: a database's
+   *  row). */
+  path?: string;
   schema_version: number;
   reads_up_to: number;
 }

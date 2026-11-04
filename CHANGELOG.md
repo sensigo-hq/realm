@@ -56,6 +56,9 @@ All notable changes to this project are documented here.
   `.realm-test-clock` beside its `runs/` folder. A store opened on a copy of a test location in
   another folder refuses with the new code `STATE_TEST_CLOCK_FOREIGN`.
 - **When `realm agent` or `realm listen` drives a step that calls tools, it now asks Anthropic to cache the step's fixed instructions and the conversation so far at each turn, so a turn can read what the turn before wrote once that part reaches the model's minimum.** The request a step makes after using up its tool calls is sent with no cache marker. `--prompt-cache off` sends what it sent before. A workflow whose every agent step calls tools no longer refuses `--prompt-cache`. **Upgrading:** a gateway or proxy that rejects `cache_control` now also fails steps that call tools, which worked before; run with `--prompt-cache off`. (#899)
+- **`classifyRegisteredCopy`, `workflowNotFoundError`, `legacyCopyError`, `newerCopyError` and
+  `storedCopyFaultError` are exported from `@sensigo/realm` (issue #616).** They judge and refuse a
+  registered workflow copy that has no file, with the words a copy with a file gets.
 
 ### Changed
 
@@ -123,6 +126,8 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
   cleanup step is blocked as `drain_pending` after its trace files and refused answers were deleted,
   and a dry run lists it among the runs that would be purged.
 - **BREAKING — a precondition or a guard (`abort_unless`) whose path starts outside the workflow's steps is refused when the workflow file is loaded (issue #933).** That covers a path on the run (`run`, `run.params.…`, `run.id`), the `input_map` form `context.resources.…`, and a name that is no step of the workflow. Such a check could never be read: the step stayed blocked, or the guard failed the run. Each refusal says what to write instead. For the run's input, declare it in `params_schema` to refuse a run that does not fit, or, on a step that depends on another, put the condition under `when` to skip it. A `when` that uses the `context.resources.…` form now says how to write the path, in place of telling you to add `context` to `depends_on`. A copy registered before this version keeps running as registered; `realm workflow validate --registered <id>` shows whether it would now be refused.
+- **BREAKING — `NewerDefinitionFacts.path` is optional (issue #616).** It is absent for a registered
+  copy that has no file; code that reads it handles `undefined`.
 
 ### Fixed
 
