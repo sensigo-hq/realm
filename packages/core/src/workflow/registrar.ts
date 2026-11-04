@@ -1,7 +1,7 @@
 // JsonWorkflowStore — persists registered WorkflowDefinition objects to ~/.realm/workflows/.
 import { readFileSync, mkdirSync, readdirSync, statSync, accessSync, constants } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { realmHomePath } from '../store/realm-home.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { RunRecord } from '../types/run-record.js';
 import {
@@ -407,7 +407,7 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
   private readonly dir: string;
 
   constructor(baseDir?: string) {
-    this.dir = baseDir ?? join(homedir(), '.realm', 'workflows');
+    this.dir = baseDir ?? join(realmHomePath(), 'workflows');
     mkdirSync(this.dir, { recursive: true });
   }
 

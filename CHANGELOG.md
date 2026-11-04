@@ -124,6 +124,8 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
   and a dry run lists it among the runs that would be purged.
 - **BREAKING — a precondition or a guard (`abort_unless`) whose path starts outside the workflow's steps is refused when the workflow file is loaded (issue #933).** That covers a path on the run (`run`, `run.params.…`, `run.id`), the `input_map` form `context.resources.…`, and a name that is no step of the workflow. Such a check could never be read: the step stayed blocked, or the guard failed the run. Each refusal says what to write instead. For the run's input, declare it in `params_schema` to refuse a run that does not fit, or, on a step that depends on another, put the condition under `when` to skip it. A `when` that uses the `context.resources.…` form now says how to write the path, in place of telling you to add `context` to `depends_on`. A copy registered before this version keeps running as registered; `realm workflow validate --registered <id>` shows whether it would now be refused.
 
+- **One function in core names realm's home (`~/.realm`, read when a command opens its stores) (issue #616).** A command run with `HOME` empty or not absolute now stops with one line instead of keeping its runs under the current folder; one run on an account with no home stops with the same line instead of a stack.
+
 ### Fixed
 
 - **`realm listen` and `realm serve` refuse a bad option value when the command line is read,

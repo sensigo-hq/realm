@@ -568,7 +568,8 @@ if (isRunDirectly()) {
   // #627 W (§5.8): the stdio transport authenticates no one, so this bin's answers name no principal.
   // #715 (a) correction 1 (C-6): a run store opened on a copy of a test location refuses with one line
   // on stderr, masked for a log as `realm mcp`'s line is, and exit 1 — never Node's crash dump, and
-  // nothing on stdout. Any other error escapes as before. Read by its code, never `instanceof`.
+  // nothing on stdout. #616 PR-2a (i): an unusable home (`STATE_HOME_UNUSABLE`) the same way. Any
+  // other error escapes as before. Read by its code, never `instanceof`.
   let server: ReturnType<typeof createRealmMcpServer>;
   try {
     server = createRealmMcpServer({
@@ -576,7 +577,8 @@ if (isRunDirectly()) {
       principal: { absent: 'door_authenticates_no_principal' },
     });
   } catch (err) {
-    if ((err as { code?: unknown } | null)?.code !== 'STATE_TEST_CLOCK_FOREIGN') throw err;
+    const code = (err as { code?: unknown } | null)?.code;
+    if (code !== 'STATE_TEST_CLOCK_FOREIGN' && code !== 'STATE_HOME_UNUSABLE') throw err;
     logMasked(`realm-mcp: ${(err as Error).message}`);
     process.exit(1);
   }

@@ -3,13 +3,17 @@
 // trace. npm, pip and Cargo do this at one catch at their entry, and keep the stack for unexpected
 // errors; so does this.
 //
-// The list has ONE member: a run store opened on a copy of a test location. Every other error keeps
+// The list has TWO members: a run store opened on a copy of a test location, and a home that cannot be
+// used (#616 PR-2a (i): HOME empty or not an absolute path, or no home at all). Every other error keeps
 // escaping loud, a `WorkflowError` included — "bugs stay loud" (`validate.ts`, #123); the writer's
 // fatal handler prints those with their stack. The code is read from the error's fields, never by
 // `instanceof`: the CLI and the library it loads can be separate copies.
 
 /** The codes printed as one line. Each is a refusal an operator meets and can act on from its text. */
-const EXPECTED_CODES: ReadonlySet<string> = new Set(['STATE_TEST_CLOCK_FOREIGN']);
+const EXPECTED_CODES: ReadonlySet<string> = new Set([
+  'STATE_TEST_CLOCK_FOREIGN',
+  'STATE_HOME_UNUSABLE',
+]);
 
 /**
  * When `err` carries a code in the list: writes `Error: <message>` to stderr, sets the exit code to 1,

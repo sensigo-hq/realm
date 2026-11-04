@@ -489,6 +489,8 @@ export {
   readTestClockFile,
   fileClock,
 } from './store/test-clock-file.js';
+// issue #616 PR-2a (i): realm's home (`~/.realm`), the one place that asks the system for it.
+export { realmHomePath } from './store/realm-home.js';
 // issue #600 PR 1b: one cost view per step, derived once and rendered by inspect + get_run_state.
 export {
   composeCostView,

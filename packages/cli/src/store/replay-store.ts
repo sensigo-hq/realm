@@ -1,8 +1,8 @@
 // ReplayStore — interface and JsonFileReplayStore for persisting replay results locally.
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { realmHomePath } from '@sensigo/realm';
 import type { ReplayStepResult } from '../commands/replay.js';
 
 /** A persisted replay snapshot: the result of replayRun() + the metadata that produced it. */
@@ -32,7 +32,7 @@ export class JsonFileReplayStore implements ReplayStore {
   private readonly replaysDir: string;
 
   constructor(replaysDir?: string) {
-    this.replaysDir = replaysDir ?? join(homedir(), '.realm', 'replays');
+    this.replaysDir = replaysDir ?? join(realmHomePath(), 'replays');
   }
 
   async save(record: Omit<ReplayRecord, 'id' | 'created_at'>): Promise<ReplayRecord> {
