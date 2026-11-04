@@ -16,6 +16,8 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { makeProjectProviders } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
 import { hostRefusalLine } from '../lib/host-refusal-line.js';
+import { parseHost, parseWholeNumber } from '../lib/option-parsers.js';
+import { bindFailureLine } from '../lib/bind-failure.js';
 import { cliDisclosureProvider, writerCtx, writerInstalled } from '../output/writer.js';
 import {
   checkValueLine,
@@ -213,6 +215,15 @@ function isListenFailure(err: unknown): boolean {
 }
 
 /**
+ * `serve`'s start line. An IPv6 host (one holding a `:`) is written in brackets, so the line is a
+ * URL that can be pasted (`http://[::1]:3001/`); a zone id is kept as it is, not percent-encoded.
+ */
+export function serveStartLine(host: string, port: number): string {
+  const hostInUrl = host.includes(':') ? `[${host}]` : host;
+  return `Realm MCP server listening on http://${hostInUrl}:${port}/`;
+}
+
+/**
  * `realm serve` — starts the Realm MCP server over HTTP.
  * Designed for hosted agent platforms (OpenClaw, Claude.ai, custom backends) that
  * cannot spawn a local stdio subprocess.
@@ -221,8 +232,15 @@ export const serveCommand = new Command('serve')
   .description(
     'Start the Realm MCP server over HTTP (for hosted agent platforms that cannot use stdio)',
   )
-  .option('--port <number>', 'Port to listen on', '3001')
-  .option('--host <address>', 'Bind address', '127.0.0.1')
+  // issues #944, #949: `--port` and `--host` are checked when the command line is read
+  // (`option-parsers.ts`), so a mistyped value is refused before anything is built or bound.
+  .option(
+    '--port <number>',
+    'Port to listen on: a whole number from 0 to 65535; 0 lets the system pick',
+    parseWholeNumber('--port', 0, 65535),
+    3001,
+  )
+  .option('--host <address>', 'Bind address', parseHost('--host'), '127.0.0.1')
   .option('--dev', 'Disable authentication (for local development only)')
   .option(
     '--extensions-module <path>',
@@ -278,7 +296,7 @@ export const serveCommand = new Command('serve')
     // issue #625 (holder slice): this program's name, made once outside the per-request handler,
     // before anything is bound. A name that cannot be used prints one line and exits 1.
     const driver = resolveProgramIdentity('mcp-http');
-    const port = parseInt(options.port, 10);
+    const port = options.port as number;
     const host = options.host as string;
     const devMode = options.dev === true || process.env.REALM_DEV === '1';
     const token = process.env.REALM_SERVE_TOKEN;
@@ -305,8 +323,10 @@ export const serveCommand = new Command('serve')
 
     // issue #620 PR-C: a server that cannot be built is one line on stderr and exit 1 — never a
     // `listening` line over a server that fails every request (a release-line refusal there means
-    // this command's own install is split: `hostRefusalLine` says so). A failure to listen (the
-    // port in use) is not a construction refusal and propagates as before.
+    // this command's own install is split: `hostRefusalLine` says so). Issue #949: a failure to
+    // listen (the port in use, permission denied, an address that is not this machine's, a name
+    // that does not resolve) is first told as such, in one line naming the host and the port; a
+    // listen failure it does not know still propagates.
     let httpServer: Server;
     try {
       httpServer = await startHttpMcpServer({
@@ -322,11 +342,21 @@ export const serveCommand = new Command('serve')
           : {}),
       });
     } catch (err) {
+      const line = bindFailureLine(err, host, port);
+      if (line !== undefined) {
+        console.error(line);
+        process.exit(1);
+      }
       if (isListenFailure(err)) throw err;
       console.error(hostRefusalLine('serve', err));
       process.exit(1);
     }
-    console.log(`Realm MCP server listening on http://${host}:${port}/`);
+    // The port the server is on: with `--port 0` the system picked it, and the start line says
+    // which (a TCP server's `address()` is an object; a pipe path or a closed server falls back to
+    // the requested port).
+    const address = httpServer.address();
+    const listeningPort = typeof address === 'object' && address !== null ? address.port : port;
+    console.log(serveStartLine(host, listeningPort));
     if (!devMode) {
       console.log('Authentication: Bearer token (REALM_SERVE_TOKEN)');
     }

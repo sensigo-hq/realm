@@ -377,7 +377,7 @@ describe('#920 C-1 — the pages say what the guard does', () => {
     );
     claim(
       'docs/reference/cli/realm-listen.md',
-      '`--model`, `--port`, `--host`, `--dedup-store`, `--log-level` and `--sweep-expired-gates` refuse a value that starts with `-`, except a lone `-`; write `--option=value` for one.',
+      '`--model` refuses a value that starts with `-`, except a lone `-`; write `--option=value` for one.',
     );
     expect(flat(unreleased()), 'the CHANGELOG [Unreleased] #920 bullet').toContain(
       flat(
@@ -395,7 +395,7 @@ function guardLines(flags: string, long: string, word: string): string[] {
   ];
 }
 
-describe('#920 C-2 — the other 26 options, one command family each (the built realm)', () => {
+describe('#920 C-2 — the other 20 options, one command family each (the built realm)', () => {
   // Each: the option typed with a real flag of the command after it, as the typo; the run exits 1
   // with the guard's two lines, prints nothing on standard output and does nothing. (a) red when the
   // family's row is missing from the guarded table (the command then runs: it writes, drains, starts
@@ -485,20 +485,31 @@ describe('#920 C-2 — the other 26 options, one command family each (the built 
     );
   }, 20_000);
 
-  it('serve --dev --port -1: refused with the message, not a Node RangeError', () => {
-    refusedBy(realm(['serve', '--dev', '--port', '-1'], 8_000), '--port <number>', '--port', '-1');
+  // Issues #944, #949 (old → new): `serve --port` and `listen --port` left the guard; their own
+  // parser refuses `-1` first, with its one sentence. (a) red when the parser is removed (the guard
+  // no longer holds the option, so the value reaches the bind); (b) prints the run.
+  const portRefused = (r: Run, flags: string): void => {
+    expect([r.code, r.stdout, r.stderr.split('\n').filter((l) => l !== '')], r.shown).toEqual([
+      1,
+      '',
+      [
+        `error: option '${flags}' argument '-1' is invalid. --port must be a whole number from 0 to 65535.`,
+      ],
+    ]);
+  };
+
+  it('serve --dev --port -1: refused by its parser, not a Node RangeError', () => {
+    portRefused(realm(['serve', '--dev', '--port', '-1'], 8_000), '--port <number>');
   }, 20_000);
 
-  it('listen <workflow> --port -1: refused with the message, not an uncaught stack', () => {
+  it('listen <workflow> --port -1: refused by its parser, not an uncaught stack', () => {
     const hook = triggerProject();
-    refusedBy(
+    portRefused(
       realm(
         ['listen', hook, '--port', '-1', '--provider', 'anthropic', '--model', 'claude-sonnet-5-5'],
         8_000,
       ),
       '--port <n>',
-      '--port',
-      '-1',
     );
   }, 20_000);
   /** A live run of a one-step workflow, made in this HOME's store; returns the store and its id. */
@@ -699,10 +710,15 @@ describe('#920 C-2 — the pages name every guarded option', () => {
     claim(ACTING, one('--reason'));
     claim(ACTING, two('--step', '--workflow'));
     claim(MCP, two('--project', '--extensions-module'));
-    claim(
-      MCP,
-      '`--port`, `--project` and `--extensions-module` refuse a value that starts with `-`, except a lone `-`; write `--option=value` for one.',
-    );
+    // `realm mcp` and `realm serve` each hold the two-option sentence (`serve --port` left the
+    // guard: issues #944, #949).
+    // Counted as whole lines: the two-option sentence is also the tail of the old three-option one.
+    expect(
+      read(MCP)
+        .split('\n')
+        .filter((l) => l === two('--project', '--extensions-module')).length,
+      `${MCP}: the --project and --extensions-module sentence, under realm mcp and realm serve`,
+    ).toBe(2);
     // On realm-run-acting.md the --project single-option sentence stands after one section
     // (advance) and the --workflow one after two (purge, reconcile); reclaim holds the two-option
     // sentence for --step and --workflow, respond the one for --by and --project, abandon the
@@ -720,7 +736,7 @@ describe('#920 C-2 — the pages name every guarded option', () => {
     ).toEqual({ project: 1, workflow: 2, reason: 1, stepAndWorkflow: 1 });
     expect(flat(unreleased()), 'the CHANGELOG [Unreleased] #920 bullet, C-2 clause').toContain(
       flat(
-        'The same now holds for 26 other options that took any word: `--project` (on `workflow run`, `agent`, `run drain`, `run respond`, `run advance`, `mcp` and `serve`), `--extensions-module` (`run drain`, `mcp`, `serve`), `--workflow` (`run list`, `reclaim`, `purge`, `reconcile`), `run export --out`, `run abandon --reason`, `run respond --by`, `run reclaim --step`, `agent --params` and `--base-url`, `serve --port`, and `listen --port`, `--host`, `--dedup-store`, `--log-level` and `--sweep-expired-gates`.',
+        'The same now holds for 20 other options that took any word: `--project` (on `workflow run`, `agent`, `run drain`, `run respond`, `run advance`, `mcp` and `serve`), `--extensions-module` (`run drain`, `mcp`, `serve`), `--workflow` (`run list`, `reclaim`, `purge`, `reconcile`), `run export --out`, `run abandon --reason`, `run respond --by`, `run reclaim --step`, and `agent --params` and `--base-url`.',
       ),
     );
   });

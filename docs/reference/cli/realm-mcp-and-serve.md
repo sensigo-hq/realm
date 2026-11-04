@@ -57,17 +57,17 @@ The same run started through `realm mcp` ran the step.
 realm serve [--port <number>] [--host <address>] [--dev] [--project <dir>] [--extensions-module <path>] [--gate-answers <value>] [--check]
 ```
 
-| Flag                         | Default            | What it does                                                                           |
-| ---------------------------- | ------------------ | -------------------------------------------------------------------------------------- |
-| `--port <number>`            | `3001`             | The port to listen on.                                                                 |
-| `--host <address>`           | `127.0.0.1`        | The address to listen on. The default accepts connections from the same machine only.  |
-| `--dev`                      | Off                | Turns the token check off.                                                             |
-| `--project <dir>`            | The current folder | The project whose `realm.yaml` applies to workflows that have no project of their own. |
-| `--extensions-module <path>` | None               | Loads this code file in place of the files named by every workflow's `extensions`.     |
-| `--gate-answers <value>`     | `asked`            | As for `realm mcp`. Added after version 0.47.0.                                        |
-| `--check`                    | Off                | As for `realm mcp`. Added after version 0.47.0.                                        |
+| Flag                         | Default            | What it does                                                                                                                                             |
+| ---------------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--port <number>`            | `3001`             | The port to listen on: a whole number from 0 to 65535; 0 lets the system pick, and the start line prints the port it picked. Added after version 0.48.0. |
+| `--host <address>`           | `127.0.0.1`        | The address to listen on. The default accepts connections from the same machine only. An IP address or a host name.                                      |
+| `--dev`                      | Off                | Turns the token check off.                                                                                                                               |
+| `--project <dir>`            | The current folder | The project whose `realm.yaml` applies to workflows that have no project of their own.                                                                   |
+| `--extensions-module <path>` | None               | Loads this code file in place of the files named by every workflow's `extensions`.                                                                       |
+| `--gate-answers <value>`     | `asked`            | As for `realm mcp`. Added after version 0.47.0.                                                                                                          |
+| `--check`                    | Off                | As for `realm mcp`. Added after version 0.47.0.                                                                                                          |
 
-`--port`, `--project` and `--extensions-module` refuse a value that starts with `-`, except a lone `-`; write `--option=value` for one.
+`--project` and `--extensions-module` refuse a value that starts with `-`, except a lone `-`; write `--option=value` for one.
 
 `realm serve` sends no forms, so `--form-wait-seconds`, or `REALM_MCP_FORM_WAIT_SECONDS`, stops it from starting, as it stops `realm mcp` under `withheld` or `offered`: the setting is refused at start wherever no form is sent. Added after version 0.47.0.
 
@@ -122,10 +122,15 @@ On Ctrl+C or a `SIGTERM`, `realm serve` stops accepting connections and exits wi
 
 It does not start in these cases:
 
-| Case                                | Message                                                                                                                        |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| No token, and the token check is on | `Error: REALM_SERVE_TOKEN is not set.` then `Set it to a secret token, or use --dev / REALM_DEV=1 for local development only.` |
-| The port is in use                  | `Error: listen EADDRINUSE: address already in use 127.0.0.1:3001`, inside an error trace                                       |
+| Case                                                                                                      | Message                                                                                                                                                                       |
+| --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No token, and the token check is on                                                                       | `Error: REALM_SERVE_TOKEN is not set.` then `Set it to a secret token, or use --dev / REALM_DEV=1 for local development only.`                                                |
+| The port is in use (changed after version 0.48.0)                                                         | `Error: cannot listen on 127.0.0.1:3001: the port is already in use. Stop the program using it, or choose another --port.`                                                    |
+| `--port` is not a whole number from 0 to 65535 (added after version 0.48.0)                               | `error: option '--port <number>' argument 'abc' is invalid. --port must be a whole number from 0 to 65535.`                                                                   |
+| `--host` is empty, holds a space or starts with `-` (added after version 0.48.0)                          | `error: option '--host <address>' argument 'a b' is invalid. --host must be an IP address or a host name.`                                                                    |
+| The port needs rights `realm serve` does not have, or the system reserves it (added after version 0.48.0) | `Error: cannot listen on 127.0.0.1:80: permission denied. A port below 1024 usually needs extra rights, and on Windows the system can reserve a port. Choose another --port.` |
+| `--host` is not an address of this machine (added after version 0.48.0)                                   | `Error: cannot listen on 192.0.2.1:3001: 192.0.2.1 is not an address of this machine. Check --host.`                                                                          |
+| `--host` is a name that cannot be resolved (added after version 0.48.0)                                   | `Error: cannot listen on no-such-host.invalid:3001: the name no-such-host.invalid cannot be resolved. Check --host.`                                                          |
 
 ### A store or registry from another realm version
 

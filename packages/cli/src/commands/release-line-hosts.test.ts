@@ -235,7 +235,9 @@ describe('realm’s own hosts with a refusing createRealmMcpServer', () => {
     });
   }
 
-  it('realm serve: a port in use is not a construction refusal — it propagates as before, no `realm serve:` line', async () => {
+  // issue #949 (old → new): a port in use used to propagate as Node's EADDRINUSE error with no
+  // `realm serve:` line; now `serve` says it in one line naming the host and the port, and exits 1.
+  it('realm serve: a port in use is one line naming the host and the port, then exit 1 (issue #949)', async () => {
     mode.value = 'after-first';
     const errors: unknown[][] = [];
     vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => {
@@ -255,14 +257,22 @@ describe('realm’s own hosts with a refusing createRealmMcpServer', () => {
     try {
       await expect(
         serveCommand.parseAsync(['node', 'serve', '--dev', '--port', String(port)]),
-      ).rejects.toMatchObject({ code: 'EADDRINUSE' });
+      ).rejects.toThrow('exit 1');
     } finally {
       process.env['HOME'] = savedHome;
       rmSync(home, { recursive: true, force: true });
       await new Promise<void>((r) => busy.close(() => r()));
     }
-    expect(exit).not.toHaveBeenCalled();
-    expect(errors.filter((e) => String(e[0]).startsWith('realm serve:'))).toEqual([]);
+    // (a) red when the port in use propagates as Node's error again, or the line changes; (b)
+    //     prints the exit calls and the error lines.
+    expect({ exits: exit.mock.calls, errors }).toEqual({
+      exits: [[1]],
+      errors: [
+        [
+          `Error: cannot listen on 127.0.0.1:${port}: the port is already in use. Stop the program using it, or choose another --port.`,
+        ],
+      ],
+    });
   });
 
   it('realm serve: an error while a request is handled → 500 and one stderr line', async () => {

@@ -201,6 +201,16 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
 
 ### Fixed
 
+- **`realm listen` and `realm serve` refuse a bad option value when the command line is read,
+  and say a failure to listen in one line (issues #944 and #949).** They refuse a bad `--port`,
+  `--host`, `--dedup-store`, `--log-level` or `--sweep-expired-gates`. Before, a mistyped log level
+  turned debug logging on, a mistyped dedup store selected the file store, a sweep interval of 0 or a
+  word made the gate sweeper run about every millisecond, and on `realm listen` a bad port or host ended in a stack
+  trace. A failure to listen is one line naming the host and the port: a port in use, permission
+  denied, an address that is not the machine's, a name that cannot be resolved.
+  `realm serve --port 0` now prints the port the system picked in its start line (it printed `:0`),
+  and the start line writes an IPv6 host in brackets (`http://[::1]:3001/`; it was
+  `http://::1:3001/`, which is not a URL).
 - **A Slack post that is refused or does not answer within 30 s is reported, and the person's
   terminal way is printed (issue #729 PR-4).** `realm agent` names the cause
   (`Slack did not answer within 30 s`, `Slack refused the post: …`) and prints one
@@ -237,12 +247,15 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
   `realm listen`, `realm workflow validate`, `register` and `watch` now refuse a value that starts
   with `-` (a lone `-` is accepted) as the value of `--model`; `--model --strict` used to take
   `--strict` as the model id and drop the flag, so a CI gate passed. Write `--model=<id>` for a
-  value that starts with `-`. The same now holds for 26 other options that took any word:
+  value that starts with `-`. The same now holds for 20 other options that took any word:
   `--project` (on `workflow run`, `agent`, `run drain`, `run respond`, `run advance`, `mcp` and
   `serve`), `--extensions-module` (`run drain`, `mcp`, `serve`), `--workflow` (`run list`,
   `reclaim`, `purge`, `reconcile`), `run export --out`, `run abandon --reason`, `run respond --by`,
-  `run reclaim --step`, `agent --params` and `--base-url`, `serve --port`, and `listen --port`,
-  `--host`, `--dedup-store`, `--log-level` and `--sweep-expired-gates`.
+  `run reclaim --step`, and `agent --params` and `--base-url`.
+- `realm run inspect`, `realm run drain` and `realm run resume` no longer list a step as something
+  `realm run advance` runs without saying what it needs: when an owed step needs a handler or
+  adapter other than the `filesystem` adapter and the `check_quotes` handler, which every Realm
+  program has, the line names it before the command (issue #923).
 
 ## [0.48.0] — 2026-10-26
 

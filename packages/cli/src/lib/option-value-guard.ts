@@ -20,7 +20,7 @@ export interface GuardedOption {
 }
 
 /**
- * The options whose value is refused when it is a flag-like word typed as the next word (31). Keyed by
+ * The options whose value is refused when it is a flag-like word typed as the next word (25). Keyed by
  * the leaf command's name (a command parsed on its own has no parent, so a path cannot be read) and
  * the long flag. Each takes any word without a check of its own (the census, `plans/issue-920/census/`).
  * `option-value-guard-classes.test.ts` holds the other class: the options that already refuse such a
@@ -33,7 +33,7 @@ export const GUARDED_OPTIONS: readonly GuardedOption[] = [
   { command: 'watch', option: '--model' },
   { command: 'agent', option: '--model' },
   { command: 'listen', option: '--model' },
-  // C-2: the other options that take any word without a check of their own (26). Each accepts the word
+  // C-2: the other options that take any word without a check of their own (20). Each accepts the word
   // and goes on, and a dropped flag changes what the command does (`reconcile --workflow --dry-run`
   // writes; `drain <id> --extensions-module --force` drains nothing) or its message misleads.
   { command: 'run', option: '--project' }, // realm workflow run
@@ -46,14 +46,10 @@ export const GUARDED_OPTIONS: readonly GuardedOption[] = [
   { command: 'drain', option: '--extensions-module' },
   { command: 'serve', option: '--project' },
   { command: 'serve', option: '--extensions-module' },
-  { command: 'serve', option: '--port' },
   { command: 'mcp', option: '--project' },
   { command: 'mcp', option: '--extensions-module' },
-  { command: 'listen', option: '--port' },
-  { command: 'listen', option: '--host' },
-  { command: 'listen', option: '--dedup-store' },
-  { command: 'listen', option: '--log-level' },
-  { command: 'listen', option: '--sweep-expired-gates' },
+  // `listen`'s `--port`, `--host`, `--dedup-store`, `--log-level` and `--sweep-expired-gates`, and
+  // `serve --port`, refuse such a word with their own parser (issues #944, #949): OWN_CHECK.
   { command: 'list', option: '--workflow' }, // realm run list
   { command: 'reclaim', option: '--workflow' },
   { command: 'purge', option: '--workflow' },

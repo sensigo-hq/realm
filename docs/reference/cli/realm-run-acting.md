@@ -243,8 +243,10 @@ When the step that is ready again is one only the engine runs, one line names it
 
 ```text
 Resumed run '8bc06d55-77fb-43f4-937f-8d166fad20cf': step 'a' re-enabled and run reset to 'running'.
-To run the step the engine owes ('a') without a model: realm run advance 8bc06d55-77fb-43f4-937f-8d166fad20cf
+To run the step the engine owes ('a') without a model, from a program that has handler 'boom': realm run advance 8bc06d55-77fb-43f4-937f-8d166fad20cf
 ```
+
+When a step it names needs a handler or adapter other than the `filesystem` adapter and the `check_quotes` handler, which every Realm program has, `, from a program that has handler '<name>'` (or `adapter '<name>'`) comes before the `:` (resume loads no project code, so it cannot check). Added after version 0.48.0.
 
 When the step that is ready again cannot run — the workflow was registered again with a check the step fails — and nothing else can run, driving the run would only stop on that step: the step and the way out take the place of the `Drive it with:` lines. Added after version 0.46.0, which prints the `Drive it with:` lines in this case too:
 
@@ -529,6 +531,8 @@ Run 'daeede5e-c0dd-4b88-9caf-6efa089902dd' is not terminal (phase: 'running') �
 To run the step the engine owes ('after'): realm run advance daeede5e-c0dd-4b88-9caf-6efa089902dd
 ```
 
+When a step it names needs a handler or adapter other than the `filesystem` adapter and the `check_quotes` handler, which every Realm program has, `, from a program that has handler '<name>'` (or `adapter '<name>'`) comes before the `:`. drain loads a project's code only with `--force` on a run that has ended, so for a run still going it cannot check. Added after version 0.48.0.
+
 When it leaves nothing that can run from here, the steps that cannot run and the way out follow instead. Added after version 0.46.0:
 
 ```text
@@ -586,6 +590,8 @@ No runs with an actionable pending finalizer.
 ```
 
 The runs after the second — the work the engine owes, a step that cannot run and the way out, an agent step that is ready, a step in flight in another program, each with the way out after it — were added after version 0.46.0, which prints the second line's `To end the run: realm run abandon <id>` for every run in `running`. The second line is now for a run with none of these. A command ends its line: where the way out follows it, it is the next line (added after version 0.46.0, which printed them on one line, the command followed by a full stop). At a question, the second line says that after the answer `realm run respond` names what the run owes next (added after version 0.46.0, which named only `realm run abandon` for a run still open after the answer).
+
+In the `To run … the engine owes` line of a run still going, `, from a program that has handler '<name>'` (or `adapter '<name>'`) comes before the `:` when a step it names needs a handler or adapter other than the `filesystem` adapter and the `check_quotes` handler, which every Realm program has. Added after version 0.48.0.
 
 **Exit code:** 0 if every cleanup step it tried ran, and when there is nothing to do. With `--all`, a run file that cannot be read as a run, except a copy of a run whose own file reads, is not acted on: it is named on standard error with what is wrong with it and the way out, then `⚠ <n> run file(s) in '<runs folder>' could not be read; realm run drain --all did not act on them.`, and the exit code is that of the runs acted on (added after version 0.47.0, which crashed). 1 if a cleanup step is left owed after `--force`, if `--force` prints one of the seven `is not terminal … nothing to drain` lines above, or for one of:
 
