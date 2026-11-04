@@ -257,7 +257,7 @@ export interface OrphanArtifactSweepResult {
 /**
  * Reaps run-less orphaned WAL/sidecar artifacts (issue #163) — the second sweep behind
  * `realm run gc`. `stores` is every `OrphanSweepableStore` gc knows about (today:
- * `JsonTraceBufferStore`, `FailedAttemptStore`); `liveRunIds` is the caller's ALREADY-COMPUTED
+ * `JsonTraceBufferStore`, `JsonFileFailedAttemptStore`); `liveRunIds` is the caller's ALREADY-COMPUTED
  * `JsonFileStore.listRunIds()` result (computed once, shared across every store, and — this is
  * load-bearing — the caller's responsibility to have fail-closed on: see the CLI action for why
  * this function never calls `listRunIds()` itself).
@@ -855,13 +855,13 @@ export const gcCommand = new Command('gc')
     }
 
     // deriveRunPhase destructured from the SAME existing dynamic import as JsonFileStore/
-    // FailedAttemptStore — gc.ts's top-level `@sensigo/realm` VALUE import (line 36) stays
+    // JsonFileFailedAttemptStore — gc.ts's top-level `@sensigo/realm` VALUE import (line 36) stays
     // byte-unchanged; only this dynamic import widens.
-    const { FailedAttemptStore, deriveRunPhase } = await import('@sensigo/realm');
+    const { JsonFileFailedAttemptStore, deriveRunPhase } = await import('@sensigo/realm');
     const { JsonTraceBufferStore } = await import('@sensigo/realm-mcp');
     const runStore = openRunStore();
     const runsDir = runStore.runsDirPath;
-    const failedAttemptStore = new FailedAttemptStore(runsDir);
+    const failedAttemptStore = new JsonFileFailedAttemptStore(runsDir);
     // The run reader is the run store this sweep enumerates: the `run_absent` fence is evaluated
     // against it, inside the trace buffer's own critical section (issue #616 PR-0).
     const traceBufferStore = new JsonTraceBufferStore(runsDir, runStore);

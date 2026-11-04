@@ -461,7 +461,11 @@ describe('#729 PR-3 correction 5 (J-5) — the in-process creators', () => {
     const handler = makeListenHandler(routes, {
       workflowStore: { register: async () => {} },
       runStore,
-      dedupStoreFor: () => ({ check: () => false, record: () => {}, cleanup: () => {} }),
+      dedupStoreFor: () => ({
+        check: async () => false,
+        record: async () => {},
+        cleanup: async () => {},
+      }),
       spawnAgent: async () => ({ pid: 4242 }),
       logger,
     } as never);

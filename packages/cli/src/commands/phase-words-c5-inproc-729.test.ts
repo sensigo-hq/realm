@@ -736,7 +736,11 @@ describe("#729 PR-3 correction 5 (J-2) — `realm listen`'s log lines carry the 
     return makeListenHandler(routes, {
       workflowStore: { register: async () => {} },
       runStore,
-      dedupStoreFor: () => ({ check: () => false, record: () => {}, cleanup: () => {} }),
+      dedupStoreFor: () => ({
+        check: async () => false,
+        record: async () => {},
+        cleanup: async () => {},
+      }),
       spawnAgent,
       logger,
     } as never);

@@ -45,12 +45,27 @@ export interface FailedAttemptReadResult {
 }
 
 /**
+ * #616 B1: a store of failed agent-attempt records, kept per run — the interface the core owns, so
+ * a store in another package (SQLite, a cloud store) implements it. `append` is best-effort and
+ * never throws; `read` returns the run's records in append order (the engine's ranking reads that
+ * order); the per-run artifact methods delete or measure what the store holds for a run.
+ * `JsonFileFailedAttemptStore` is Realm's file store; a holder that also needs `listOrphans` takes
+ * that class.
+ */
+export interface FailedAttemptStore extends PerRunArtifactStore {
+  /** Append one already-serialized record line for `runId`. Best-effort: never throws. */
+  append(runId: string, line: string): Promise<void>;
+  /** The run's records, in append order, and whether the store stopped recording (`capped`). */
+  read(runId: string): Promise<FailedAttemptReadResult>;
+}
+
+/**
  * File-backed store for failed agent-attempt sidecars. Append (MCP server) + read (CLI). Best-effort:
  * append never throws/propagates. Lock-free: each line is ≤PIPE_BUF, so a single O_APPEND write is
  * atomic and interleave-safe across concurrent processes (the size bound is what buys lock-freedom —
  * the deliberate difference from the WAL store).
  */
-export class FailedAttemptStore implements PerRunArtifactStore, OrphanSweepableStore {
+export class JsonFileFailedAttemptStore implements FailedAttemptStore, OrphanSweepableStore {
   private readonly runsDir: string;
 
   constructor(runsDir: string) {
@@ -137,7 +152,7 @@ export class FailedAttemptStore implements PerRunArtifactStore, OrphanSweepableS
       const didDelete = await deleteIfExists(path);
       return { bytes_deleted: didDelete ? bytes : 0 };
     } catch (err) {
-      throw toArtifactDeleteFailedError(runId, 'FailedAttemptStore', [], path, err);
+      throw toArtifactDeleteFailedError(runId, 'JsonFileFailedAttemptStore', [], path, err);
     }
   }
 
@@ -185,4 +200,8 @@ export class FailedAttemptStore implements PerRunArtifactStore, OrphanSweepableS
   }
 }
 
-brandClass(FailedAttemptStore, Symbol.for('@sensigo/realm/FailedAttemptStore'), REALM_BRAND);
+brandClass(
+  JsonFileFailedAttemptStore,
+  Symbol.for('@sensigo/realm/JsonFileFailedAttemptStore'),
+  REALM_BRAND,
+);

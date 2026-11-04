@@ -1,22 +1,11 @@
 // Dedup stores — at-least-once duplicate suppression for webhook events.
-// FileDedupStore survives process restarts; InMemoryDedupStore does not.
+// FileDedupStore survives process restarts; InMemoryDedupStore does not. Both implement core's
+// `DedupStore` (#616 B1: the interface lives in `@sensigo/realm`, and every method returns a
+// promise; the logic of both stores is unchanged).
 import { createHash } from 'node:crypto';
 import { mkdirSync, openSync, closeSync, statSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-
-export interface DedupStore {
-  /**
-   * Returns true if the key has been seen within its TTL window.
-   * `ttlMs` is required by FileDedupStore (it determines how many hour-buckets to
-   * scan back); InMemoryDedupStore ignores it because expiry is stored at record
-   * time. It is typed optional here so both implementations satisfy this contract.
-   */
-  check(key: string, ttlMs?: number): boolean;
-  /** Records the key as seen for the given TTL. */
-  record(key: string, ttlMs: number): void;
-  /** Removes entries older than maxAgeMs. For InMemoryDedupStore, evicts expired entries. */
-  cleanup(maxAgeMs: number): void;
-}
+import type { DedupStore } from '@sensigo/realm';
 
 const ONE_HOUR_MS = 3_600_000;
 
@@ -54,7 +43,7 @@ export class FileDedupStore implements DedupStore {
     return `${year}${month}${day}${hour}`;
   }
 
-  check(key: string, ttlMs = 0): boolean {
+  async check(key: string, ttlMs = 0): Promise<boolean> {
     const hash = this.hashKey(key);
     const now = Date.now();
     const buckets = Math.floor(ttlMs / ONE_HOUR_MS) + 2;
@@ -69,7 +58,7 @@ export class FileDedupStore implements DedupStore {
     return false;
   }
 
-  record(key: string, _ttlMs: number): void {
+  async record(key: string, _ttlMs: number): Promise<void> {
     const hash = this.hashKey(key);
     const bucketDir = join(this.dir, this.bucketName(Date.now()));
     const filePath = join(bucketDir, hash);
@@ -86,7 +75,7 @@ export class FileDedupStore implements DedupStore {
     }
   }
 
-  cleanup(maxAgeMs: number): void {
+  async cleanup(maxAgeMs: number): Promise<void> {
     try {
       const now = Date.now();
       let entries: string[];
@@ -124,17 +113,17 @@ export class FileDedupStore implements DedupStore {
 export class InMemoryDedupStore implements DedupStore {
   private map: Map<string, number> = new Map(); // key → expiry timestamp
 
-  check(key: string): boolean {
+  async check(key: string): Promise<boolean> {
     this.evictExpired();
     const expiry = this.map.get(key);
     return expiry !== undefined && Date.now() < expiry;
   }
 
-  record(key: string, ttlMs: number): void {
+  async record(key: string, ttlMs: number): Promise<void> {
     this.map.set(key, Date.now() + ttlMs);
   }
 
-  cleanup(_maxAgeMs: number): void {
+  async cleanup(_maxAgeMs: number): Promise<void> {
     this.evictExpired();
   }
 

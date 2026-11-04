@@ -64,6 +64,7 @@ import type {
   TriggerFilter,
   FilterCondition,
   DedupConfig,
+  DedupStore,
   RunStore,
   RunListing,
   UnreadableRunFileEntry,
@@ -79,7 +80,7 @@ import {
   verifySharedSecret,
 } from '../lib/webhook-verifiers.js';
 import { extractParams, extractDedupId, resolveDotPath } from '../lib/webhook-params.js';
-import { FileDedupStore, InMemoryDedupStore, type DedupStore } from '../lib/dedup-store.js';
+import { FileDedupStore, InMemoryDedupStore } from '../lib/dedup-store.js';
 import { parseHost, parseOneOf, parseWholeNumber } from '../lib/option-parsers.js';
 import { bindFailureLine } from '../lib/bind-failure.js';
 import { listRunsDiagnosed } from './list.js';
@@ -613,7 +614,7 @@ export function makeListenHandler(
           deps.logger.warn('webhook: dedup id unresolvable, proceeding without dedup', { path });
         } else {
           dedupStore = deps.dedupStoreFor(entry.definition.id);
-          if (dedupStore.check(dedupId, ttlMs)) {
+          if (await dedupStore.check(dedupId, ttlMs)) {
             deps.logger.debug('webhook: deduplicated', { path });
             respond(res, 200, { status: 'deduplicated' });
             return;
@@ -695,7 +696,7 @@ export function makeListenHandler(
         }
         if (dedupId !== undefined && dedupStore !== undefined) {
           try {
-            dedupStore.record(dedupId, ttlMs);
+            await dedupStore.record(dedupId, ttlMs);
           } catch (err) {
             deps.logger.error('webhook: failed to record dedup id', {
               run_id: run.id,
@@ -800,7 +801,7 @@ export function makeListenHandler(
       }
       if (dedupId !== undefined && dedupStore !== undefined) {
         try {
-          dedupStore.record(dedupId, ttlMs);
+          await dedupStore.record(dedupId, ttlMs);
         } catch (err) {
           deps.logger.error('webhook: failed to record dedup id', {
             run_id: run.id,

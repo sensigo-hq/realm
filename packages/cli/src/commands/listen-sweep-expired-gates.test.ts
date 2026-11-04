@@ -355,7 +355,11 @@ describe('issue #719 — the expiry sweeper on a store with a damaged run file (
       const deps: ListenDeps = {
         workflowStore: makeWorkflowStore([]) as unknown as ListenDeps['workflowStore'],
         runStore: new JsonFileStore(runsDir),
-        dedupStoreFor: () => ({ check: () => false, record: () => {}, cleanup: () => {} }),
+        dedupStoreFor: () => ({
+          check: async () => false,
+          record: async () => {},
+          cleanup: async () => {},
+        }),
         spawnAgent: async () => ({ pid: 1 }),
         logger,
       };
@@ -407,7 +411,11 @@ describe('issue #719 — the expiry sweeper on a store with a damaged run file (
         const deps: ListenDeps = {
           workflowStore: makeWorkflowStore([]) as unknown as ListenDeps['workflowStore'],
           runStore: new JsonFileStore(runsDir),
-          dedupStoreFor: () => ({ check: () => false, record: () => {}, cleanup: () => {} }),
+          dedupStoreFor: () => ({
+            check: async () => false,
+            record: async () => {},
+            cleanup: async () => {},
+          }),
           spawnAgent: async () => ({ pid: 1 }),
           logger,
         };
