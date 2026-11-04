@@ -33,6 +33,8 @@ import {
   extractHttpStatus,
   extractApiErrorFields,
   sha256Hex,
+  sendUnderGatewayRule,
+  type CacheFieldMemory,
   driveCreate,
   makeCountingFetch,
   MAX_RETRIES,
@@ -242,6 +244,8 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
   private readonly endpoint: RequestEndpoint;
   /** Caching 3-B (D3): the runner's setting, which decides whether the cache key is sent. */
   private readonly promptCache: PromptCacheRequest | undefined;
+  /** Caching 3-B (E3): this drive's memory of a gateway's refusal of the cache key. */
+  private readonly cacheFields: CacheFieldMemory = {};
 
   constructor(
     model: string,
@@ -285,6 +289,13 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       promptCache: 'provider',
       endpoint: this.endpoint,
     };
+  }
+
+  /** Caching 3-B (E3): the gateway's refusal, on the request that worked and every later one. */
+  private rejectedFact(): Partial<UsageRecord> {
+    return this.cacheFields.rejected !== undefined
+      ? { cache_controls_rejected: this.cacheFields.rejected }
+      : {};
   }
 
   /**
@@ -364,13 +375,19 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       if (this.capabilities().jsonMode) {
         base['response_format'] = { type: 'json_object' };
       }
-      const opts = withCacheKey(base, plan);
       const requestStart = new Date().toISOString();
-      const response = await bounded(opts);
+      // caching 3-B (E3): under the gateway rule — a custom endpoint that refuses the key gets the
+      // request once more without it.
+      let opts = base;
+      const response = await sendUnderGatewayRule(this.cacheFields, this.endpoint, (withCache) => {
+        opts = withCache ? withCacheKey(base, plan) : base;
+        return bounded(opts);
+      });
       requests.push(
         toUsageRecord(requests.length, requestStart, readOpenAiUsage(response), {
           ...openAiRequestFacts(response, client),
           ...(plan !== undefined ? openAiSplitFacts(opts, plan, systemPrompt) : {}),
+          ...this.rejectedFact(),
         }),
       );
       return (response.choices[0]?.message?.content as string | undefined) ?? '';
@@ -439,7 +456,9 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
    *   ALWAYS explicit. Omitting `strict` is NOT a neutral default — probe P1 executed it: an
    *   omitted flag yields 200 with the schema unenforced, i.e. a silent non-enforcement mode.
    *
-   * The ladder is status-keyed, never message-keyed: a 400 on a strict-carrying request drops
+   * The strict ladder is status-keyed (caching 3-B: on a custom endpoint, a 400 that names the cache
+   * key Realm added drops that key first — the gateway rule; owner, 2026-11-03): a 400 on a
+   * strict-carrying request drops
    * strict and retries the turn once; a second 400 throws an error CARRYING the meta. Anything
    * else — 5xx, transport, timeouts — propagates untouched and never drops or sticks, because
    * OpenAI has no 503-grammar analog and a slow first strict call (schema compilation) must be
@@ -519,8 +538,8 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     // caching 3-B (D2, site 2): the cache key, on the strict request and on its drop retry.
     const plan = openAiCachePlan(prompt, opts.cachePrefixChars, this.endpoint, this.promptCache);
 
-    const buildOpts = (strict: boolean): Record<string, unknown> =>
-      withCacheKey(
+    const buildOpts = (strict: boolean, withCache: boolean): Record<string, unknown> =>
+      (withCache ? withCacheKey : (body: Record<string, unknown>) => body)(
         {
           model: this.model,
           messages,
@@ -555,6 +574,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
           toUsageRecord(requests.length, requestStart, readOpenAiUsage(response), {
             ...openAiRequestFacts(response, client),
             ...(plan !== undefined ? openAiSplitFacts(o, plan, systemPrompt) : {}),
+            ...this.rejectedFact(),
           }),
         );
         return response as Record<string, unknown>;
@@ -588,37 +608,40 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
         );
       };
 
-      try {
-        const response = await timedCreate(buildOpts(true));
-        return {
-          output: readContent(response),
-          meta: { requested: true, sent: true },
-          usage: requests,
-        };
-      } catch (err) {
-        const status = extractHttpStatus(err);
-        // 5xx / transport / timeout: NEVER a downgrade and never sticky — the schema is not what
-        // failed. Propagates so the caller's own retry treats it as the transport error it is.
-        if (status !== 400) throw err;
-        const api_message = err instanceof Error ? err.message : String(err);
-        const meta: StructuredOutputMeta = {
-          requested: true,
-          sent: false,
-          downgrade_reason: 'api_rejected_schema',
-          api_message,
-          ...extractApiErrorFields(err),
-        };
-        try {
-          const retry = await timedCreate(buildOpts(false));
-          return { output: readContent(retry), meta, usage: requests };
-        } catch (retryErr) {
-          throw new OpenAIStructuredOutputLadderError(
-            retryErr instanceof Error ? retryErr.message : String(retryErr),
-            meta,
-            { cause: retryErr },
-          );
-        }
-      }
+      // caching 3-B (E3, D4.5): the gateway rule first, then #313's status-keyed strict ladder on
+      // anything it does not take (a 400 drops strict and retries once; anything else propagates).
+      let meta: StructuredOutputMeta = { requested: true, sent: true };
+      const response = await sendUnderGatewayRule(
+        this.cacheFields,
+        this.endpoint,
+        (withCache) => timedCreate(buildOpts(true, withCache)),
+        async (err, withCache) => {
+          const status = extractHttpStatus(err);
+          // 5xx / transport / timeout: NEVER a downgrade and never sticky — the schema is not what
+          // failed. Propagates so the caller's own retry treats it as the transport error it is.
+          if (status !== 400) throw err;
+          const api_message = err instanceof Error ? err.message : String(err);
+          const dropped: StructuredOutputMeta = {
+            requested: true,
+            sent: false,
+            downgrade_reason: 'api_rejected_schema',
+            api_message,
+            ...extractApiErrorFields(err),
+          };
+          try {
+            const retry = await timedCreate(buildOpts(false, withCache));
+            meta = dropped;
+            return retry;
+          } catch (retryErr) {
+            throw new OpenAIStructuredOutputLadderError(
+              retryErr instanceof Error ? retryErr.message : String(retryErr),
+              dropped,
+              { cause: retryErr },
+            );
+          }
+        },
+      );
+      return { output: readContent(response), meta, usage: requests };
     } catch (err) {
       attachBilledUsage(err, requests);
       throw err;
@@ -722,6 +745,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
         toUsageRecord(requests.length, requestStart, readOpenAiUsage(response), {
           ...openAiRequestFacts(response, client),
           ...(plan !== undefined ? openAiSplitFacts(body, plan, systemText) : {}),
+          ...this.rejectedFact(),
         }),
       );
       return response;
@@ -795,7 +819,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       { role: 'user', content: prompt },
     ];
 
-    const buildMainCallOpts = (): Record<string, unknown> => {
+    const buildMainCallOpts = (withCache = true): Record<string, unknown> => {
       const opts: Record<string, unknown> = { model: this.model, messages: history };
       if (openaiTools.length > 0) {
         // issue #313: after a drop, later turns send STRIPPED COPIES rather than the mutated
@@ -811,7 +835,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
           : openaiTools;
       }
       if (responseFormat !== undefined) opts['response_format'] = responseFormat;
-      return withCacheKey(opts, plan);
+      return withCache ? withCacheKey(opts, plan) : opts;
     };
 
     // -------------------------------------------------------------------------------------------
@@ -833,30 +857,38 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const createMainTurn = async (): Promise<any> => {
       const carriedStrict = toolArgsStrictActive;
-      try {
-        const response = await bounded(buildMainCallOpts());
-        if (carriedStrict) strictTurnsBeforeDrop += 1;
-        return response;
-      } catch (err) {
-        // A turn that carried no strict is none of this ladder's business.
-        if (!carriedStrict) throw err;
-        if (extractHttpStatus(err) !== 400) throw err;
-        toolArgsStrictDrop = {
-          reason: 'api_rejected_schema',
-          api_message: err instanceof Error ? err.message : String(err),
-          strict_turns_before_drop: strictTurnsBeforeDrop,
-          ...extractApiErrorFields(err),
-        };
-        toolArgsStrictActive = false;
-        toolArgsStrictStripped = true;
-        return await bounded(buildMainCallOpts());
-      }
+      return sendUnderGatewayRule(
+        this.cacheFields,
+        this.endpoint,
+        async (withCache) => {
+          const sentStrict = toolArgsStrictActive;
+          const response = await bounded(buildMainCallOpts(withCache));
+          if (sentStrict) strictTurnsBeforeDrop += 1;
+          return response;
+        },
+        // A turn that carried strict: #313's tools ladder (a 400 drops strict, retries once; a second
+        // 400 propagates plainly), after the gateway rule (caching 3-B, D4.5).
+        carriedStrict
+          ? async (err, withCache) => {
+              if (extractHttpStatus(err) !== 400) throw err;
+              toolArgsStrictDrop = {
+                reason: 'api_rejected_schema',
+                api_message: err instanceof Error ? err.message : String(err),
+                strict_turns_before_drop: strictTurnsBeforeDrop,
+                ...extractApiErrorFields(err),
+              };
+              toolArgsStrictActive = false;
+              toolArgsStrictStripped = true;
+              return await bounded(buildMainCallOpts(withCache));
+            }
+          : undefined,
+      );
     };
 
-    const buildFinalCallOpts = (): Record<string, unknown> => {
+    const buildFinalCallOpts = (withCache = true): Record<string, unknown> => {
       const opts: Record<string, unknown> = { model: this.model, messages: history };
       if (responseFormat !== undefined) opts['response_format'] = responseFormat;
-      return withCacheKey(opts, plan);
+      return withCache ? withCacheKey(opts, plan) : opts;
     };
 
     // Injects the over-budget message and calls the API without tools to produce a final answer.
@@ -866,7 +898,10 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
         content:
           'You have reached the maximum number of tool calls. Produce your final JSON answer now using only what you have already gathered. No further tool calls will be executed.',
       });
-      const final = await bounded(buildFinalCallOpts());
+      // caching 3-B (E3): the final request under the gateway rule too.
+      const final = await sendUnderGatewayRule(this.cacheFields, this.endpoint, (withCache) =>
+        bounded(buildFinalCallOpts(withCache)),
+      );
       const text: string = (final.choices[0].message.content as string | null) ?? '';
       const parsed = extractJsonObject(text);
       // issue #224 (D4, §4 budget-exhaustion terminal): RETURN the best-effort output

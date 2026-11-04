@@ -24,6 +24,8 @@ import {
   type WireCounters,
   attachBilledUsage,
   passedSnippet,
+  sendUnderGatewayRule,
+  type CacheFieldMemory,
 } from './agent-utils.js';
 
 /**
@@ -124,6 +126,8 @@ export class OpenAIReasoningProvider extends LlmProvider {
   private readonly endpoint: RequestEndpoint;
   /** Caching 3-B (D3): the runner's setting, which decides whether the cache key is sent. */
   private readonly promptCache: PromptCacheRequest | undefined;
+  /** Caching 3-B (E3): this drive's memory of a gateway's refusal of the cache key. */
+  private readonly cacheFields: CacheFieldMemory = {};
 
   constructor(
     model: string,
@@ -218,19 +222,25 @@ export class OpenAIReasoningProvider extends LlmProvider {
     const requests: UsageRecord[] = billed ?? [];
     const makeRequest = async (msgs: Message[]): Promise<string> => {
       const requestStart = new Date().toISOString();
-      const body = withCacheKey(
-        {
-          model: this.model,
-          max_completion_tokens: resolveMaxCompletionTokens(this.model),
-          messages: msgs,
-        },
-        plan,
-      );
-      const response = await bounded(body);
+      const base = {
+        model: this.model,
+        max_completion_tokens: resolveMaxCompletionTokens(this.model),
+        messages: msgs,
+      };
+      // caching 3-B (E3): under the gateway rule — a custom endpoint that refuses the key gets the
+      // request once more without it.
+      let body: Record<string, unknown> = base;
+      const response = await sendUnderGatewayRule(this.cacheFields, this.endpoint, (withCache) => {
+        body = withCache ? withCacheKey(base, plan) : base;
+        return bounded(body);
+      });
       requests.push(
         toUsageRecord(requests.length, requestStart, readOpenAiReasoningUsage(response), {
           ...reasoningRequestFacts(response, client),
           ...(plan !== undefined ? openAiSplitFacts(body, plan, systemPrompt) : {}),
+          ...(this.cacheFields.rejected !== undefined
+            ? { cache_controls_rejected: this.cacheFields.rejected }
+            : {}),
         }),
       );
       return (response.choices[0]?.message?.content as string | undefined) ?? '';

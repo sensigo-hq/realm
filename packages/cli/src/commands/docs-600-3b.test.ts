@@ -190,3 +190,25 @@ describe('caching 3-B Part D — OpenAI’s cache key (rows 3, 4, 5, 9, 11–15,
     );
   });
 });
+
+describe('caching 3-B Part E — the gateway rule (rows 21, 23)', () => {
+  it('row 21: ANTHROPIC_BASE_URL on both pages', () => {
+    // The retry, the memory and inspect's words: `gateway-rule-3b.test.ts`, `inspect-split-3b.test.ts`.
+    const sentence =
+      "A service there that refuses the request to cache with a 400 saying `cache_control` is not allowed is sent that request again without Realm's cache fields; when that works, every later request of the drive goes without them, and `realm run inspect` says so. A refusal in other words still makes each agent step fail: use `--prompt-cache off` (added after version 0.47.0).";
+    claim(AGENT_REF, sentence);
+    claim('docs/reference/environment-and-files.md', sentence);
+  });
+
+  it('row 23: the refusal replaces the gateway clause, with its words and one real sample', () => {
+    // The suppression and the words: `inspect-split-3b.test.ts` (M10 cross cell; E4).
+    claim(
+      'docs/reference/cli/realm-run-reading.md',
+      "When the endpoint's refusal of the cache fields was recorded, that clause is not printed, and the step's cache line says instead `the endpoint refused the cache fields (400); sent without them for the rest of the drive — to stop sending them: --prompt-cache off` (added after version 0.48.0), as in `cache: not engaged — read 0, wrote 0 (provider-reported, 1 request); asked for 5 minutes (the provider's default lifetime; realm agent's default); the endpoint refused the cache fields (400); sent without them for the rest of the drive — to stop sending them: --prompt-cache off`.",
+    );
+    claim(
+      'docs/reference/run-record-and-export.md',
+      "When the endpoint's refusal of the cache fields was recorded (`cache_controls_rejected`), that clause is not printed, and `realm run inspect` says the endpoint refused the cache fields instead (added after version 0.48.0).",
+    );
+  });
+});

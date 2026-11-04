@@ -1,5 +1,11 @@
 // agent-utils.ts — Shared utility functions for LLM provider agentic loops.
-import type { AgentSubmissionValidation, UsageRecord } from '@sensigo/realm';
+import type {
+  AgentSubmissionValidation,
+  CacheControlField,
+  CacheControlsRejected,
+  RequestEndpoint,
+  UsageRecord,
+} from '@sensigo/realm';
 import { describeValidationProblems, renderProblemsLines } from '@sensigo/realm';
 import { createHash } from 'node:crypto';
 import {
@@ -394,7 +400,9 @@ export function extractHttpStatus(err: unknown): number | undefined {
 /**
  * Issue #313: the provider's machine-readable error fields, captured VERBATIM for evidence.
  * `null` is preserved and meaningful — OpenAI returns `param: null, code: null` for the
- * model-unsupported class, where the message is prose-only. Realm never keys on these.
+ * model-unsupported class, where the message is prose-only. Strict stays status-keyed: the strict
+ * ladders never key on these. On a custom endpoint, a 400 that names a cache field Realm added drops
+ * that field ({@link cacheFieldRefusal}; owner, 2026-11-03).
  */
 export function extractApiErrorFields(err: unknown): {
   api_param?: string | null;
@@ -857,4 +865,117 @@ export function mintRequestIds(requests: readonly UsageRecord[]): UsageRecord[] 
       ? entry
       : { ...entry, request_id: crypto.randomUUID() },
   );
+}
+
+// =================================================================================================
+// Caching 3-B (Part E; owner, 2026-11-03: "Claude Code's way, on gateways only") — the gateway rule.
+// =================================================================================================
+
+/** The phrases a gateway's 400 uses when it refuses a field it does not know (HB7-02…06, -10). */
+const CACHE_REFUSAL_PHRASES = [
+  'not permitted',
+  'unknown field',
+  'unrecognized',
+  'unrecognised',
+  'additional propert',
+  'extra inputs',
+  'cannot be set',
+  'unknown name',
+] as const;
+
+/** Realm's own faults with a cache marker (B1 prevents the first two; the count is Realm's to
+ *  keep): a 400 that says one of these is never a gateway's refusal. */
+const OWN_CACHE_FAULTS = ['non-whitespace', 'empty text block', 'a maximum of'] as const;
+
+/**
+ * Caching 3-B (E2) — the ONE decider every adapter uses: the cache fields a custom endpoint's 400
+ * refused, or `undefined`. On a provider's own endpoint, for any other status, and for Realm's own
+ * faults, nothing matches and the error goes on as before.
+ * - `cache_control` (Anthropic's markers, at `system.0`, on the head block or #899's last block, or
+ *   its `.ttl`): the message carries `capability_rejected: cache_control_field`, or names
+ *   `cache_control` beside a refusal phrase — whatever path comes before it;
+ * - `prompt_cache_key` (OpenAI's key): `error.param` is it or ends with `.prompt_cache_key` (vLLM's
+ *   `body.<path>`), or the message names it beside a refusal phrase or with Azure's
+ *   `code: 'unrecognized_request_argument'`.
+ */
+export function cacheFieldRefusal(
+  error: unknown,
+  endpoint: RequestEndpoint,
+): CacheControlField[] | undefined {
+  if (endpoint !== 'custom' || extractHttpStatus(error) !== 400) return undefined;
+  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  if (OWN_CACHE_FAULTS.some((fault) => message.includes(fault))) return undefined;
+  const refusal = CACHE_REFUSAL_PHRASES.some((phrase) => message.includes(phrase));
+  const { api_param, api_code } = extractApiErrorFields(error);
+  const fields: CacheControlField[] = [];
+  if (
+    message.includes('capability_rejected: cache_control_field') ||
+    (message.includes('cache_control') && refusal)
+  ) {
+    fields.push('cache_control');
+  }
+  if (
+    api_param === 'prompt_cache_key' ||
+    (typeof api_param === 'string' && api_param.endsWith('.prompt_cache_key')) ||
+    (message.includes('prompt_cache_key') &&
+      (refusal || api_code === 'unrecognized_request_argument'))
+  ) {
+    fields.push('prompt_cache_key');
+  }
+  return fields.length > 0 ? fields : undefined;
+}
+
+/**
+ * Caching 3-B (E3) — what a drive remembers about a gateway's refusal: set once a request without
+ * the cache fields worked, then every later request of the drive goes without them and records it.
+ * One per provider instance, which lives for one drive.
+ */
+export interface CacheFieldMemory {
+  rejected?: CacheControlsRejected;
+}
+
+/**
+ * Caching 3-B (E3) — one request under the gateway rule. `send(withCache)` makes the request with or
+ * without Realm's cache fields (strict as the caller decides); with a remembered drop it goes
+ * without. On a turn that carried strict the caller passes `strictLadder` (#311's status-keyed
+ * ladder: drop strict, retry once, `withCache` as given), and this decider runs FIRST (D4.5):
+ * - a refusal ({@link cacheFieldRefusal}) is retried ONCE without the cache fields, strict kept;
+ *   when that works, the drop is remembered (`proven: 'cache_fields'`);
+ * - when that retry answers 400 on a strict turn, `strictLadder` runs on THAT answer with the cache
+ *   fields still dropped; when its request works, the drop is remembered (`proven: 'none'`);
+ * - any other failure of the retry propagates, and nothing is remembered (HB7-07);
+ * - an error that is not a refusal goes to `strictLadder` unchanged, or is thrown.
+ */
+export async function sendUnderGatewayRule<R>(
+  memory: CacheFieldMemory,
+  endpoint: RequestEndpoint,
+  send: (withCache: boolean) => Promise<R>,
+  strictLadder?: (err: unknown, withCache: boolean) => Promise<R>,
+): Promise<R> {
+  const withCache = memory.rejected === undefined;
+  try {
+    return await send(withCache);
+  } catch (err) {
+    const fields = withCache ? cacheFieldRefusal(err, endpoint) : undefined;
+    if (fields === undefined) {
+      if (strictLadder !== undefined) return strictLadder(err, withCache);
+      throw err;
+    }
+    // The drop is held while its retry is in flight, so the record a request writes as its answer
+    // arrives carries it; a retry that fails takes it back (only a retry that worked is remembered).
+    try {
+      memory.rejected = { status: 400, dropped: ['cache_fields'], proven: 'cache_fields', fields };
+      return await send(false);
+    } catch (retryErr) {
+      delete memory.rejected;
+      if (strictLadder === undefined || extractHttpStatus(retryErr) !== 400) throw retryErr;
+      try {
+        memory.rejected = { status: 400, dropped: ['cache_fields'], proven: 'none', fields };
+        return await strictLadder(retryErr, false);
+      } catch (ladderErr) {
+        delete memory.rejected;
+        throw ladderErr;
+      }
+    }
+  }
 }
