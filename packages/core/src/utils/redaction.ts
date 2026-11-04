@@ -658,32 +658,8 @@ const PEM_DASHES = '-----';
  * `hidden` counts the runs by the highest kind inside each; `unchecked` is 0 (PR-M1 fills it).
  */
 export function disclose(text: string, set: DisclosureSet, tier: DisclosureTier): Disclosed {
+  const { marks, memberAt } = markText(text, set, tier);
   const n = text.length;
-  const marks = new Uint8Array(n);
-  const blocked = new Uint8Array(n);
-  for (const m of text.matchAll(NAMED_MARKER)) blocked.fill(1, m.index, m.index + m[0].length);
-  const memberAt = set.audience === 'private' ? new Int32Array(n).fill(-1) : undefined;
-  const isBlocked = (from: number, to: number): boolean => {
-    for (let k = from; k < to; k++) if (blocked[k] === 1) return true;
-    return false;
-  };
-  const mark = (from: number, to: number, kind: number, member = -1): void => {
-    for (let k = from; k < to; k++) {
-      if (blocked[k] === 1) continue;
-      if (marks[k]! < kind) {
-        marks[k] = kind;
-        if (memberAt !== undefined) memberAt[k] = member;
-      }
-    }
-  };
-  for (const { form, kind, member } of set.forms) {
-    if (tier === 'declared' && kind !== KIND.declared) continue;
-    for (let i = text.indexOf(form); i !== -1; i = text.indexOf(form, i + 1)) {
-      if (!isBlocked(i, i + form.length)) mark(i, i + form.length, kind, member);
-    }
-  }
-  if (tier === 'all')
-    markPatterns(text, marks, blocked, (from, to) => mark(from, to, KIND.pattern));
   const hidden: HiddenCounts = { declared: 0, environment: 0, pattern: 0 };
   const members = new Set<number>();
   let out = '';
@@ -712,6 +688,47 @@ export function disclose(text: string, set: DisclosureSet, tier: DisclosureTier)
     unchecked: 0,
     ...(memberAt !== undefined ? { members: [...members].map((m) => set.sources[m]!) } : {}),
   };
+}
+
+/**
+ * {@link disclose}'s one marking pass (caching 3-B, A0): every member form and, with `tier: 'all'`,
+ * every pattern, marked on the ORIGINAL text. `marks[k]` is the highest kind covering character `k`
+ * (0: not hidden); `memberAt[k]` is the member that marked it, kept only for a private audience (the
+ * only surface that names members). Module-private: `disclose` and `discloseSplit` consume it, so
+ * the head and tail of a split are cut from exactly the marks `disclose` writes.
+ */
+function markText(
+  text: string,
+  set: DisclosureSet,
+  tier: DisclosureTier,
+): { marks: Uint8Array; memberAt: Int32Array | undefined } {
+  const n = text.length;
+  const marks = new Uint8Array(n);
+  const blocked = new Uint8Array(n);
+  for (const m of text.matchAll(NAMED_MARKER)) blocked.fill(1, m.index, m.index + m[0].length);
+  const memberAt = set.audience === 'private' ? new Int32Array(n).fill(-1) : undefined;
+  const isBlocked = (from: number, to: number): boolean => {
+    for (let k = from; k < to; k++) if (blocked[k] === 1) return true;
+    return false;
+  };
+  const mark = (from: number, to: number, kind: number, member = -1): void => {
+    for (let k = from; k < to; k++) {
+      if (blocked[k] === 1) continue;
+      if (marks[k]! < kind) {
+        marks[k] = kind;
+        if (memberAt !== undefined) memberAt[k] = member;
+      }
+    }
+  };
+  for (const { form, kind, member } of set.forms) {
+    if (tier === 'declared' && kind !== KIND.declared) continue;
+    for (let i = text.indexOf(form); i !== -1; i = text.indexOf(form, i + 1)) {
+      if (!isBlocked(i, i + form.length)) mark(i, i + form.length, kind, member);
+    }
+  }
+  if (tier === 'all')
+    markPatterns(text, marks, blocked, (from, to) => mark(from, to, KIND.pattern));
+  return { marks, memberAt };
 }
 
 /** Marks the patterns of {@link disclose}'s `all` tier. Every scan is linear in the text: each
