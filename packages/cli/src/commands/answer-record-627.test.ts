@@ -55,9 +55,13 @@ async function home(message = true) {
   const def = loadWorkflowFromString(YAML(message));
   await new JsonWorkflowStore(join(dir, '.realm', 'workflows')).register(def);
   const store = new JsonFileStore(join(dir, '.realm', 'runs'));
-  const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+  const { record: run } = await store.create({
+    workflowId: def.id,
+    workflowVersion: 1,
+    params: {},
+  });
   await advanceRun(store, def, { runId: run.id });
-  const gateId = (await store.get(run.id)).pending_gate!.gate_id;
+  const gateId = (await store.get(run.id)).record.pending_gate!.gate_id;
   const realm = (args: string[], env: Record<string, string> = {}) => {
     const r = spawnSync(process.execPath, [CLI, ...args], {
       env: { PATH: process.env['PATH'] ?? '', HOME: dir, ...env },
@@ -78,7 +82,9 @@ describe('#627 W — the CLI door records its route (cell 5, CLI half)', () => {
         REALM_OPERATOR: 'ops',
       },
     );
-    const entry = (await h.store.get(h.runId)).evidence.find((e) => e.kind === 'gate_response');
+    const entry = (await h.store.get(h.runId)).record.evidence.find(
+      (e) => e.kind === 'gate_response',
+    );
     const inspected = h.realm(['run', 'inspect', h.runId]);
     // (a) red when the route parameter is dropped, the principal absence is not written, or the
     //     door's words are not the CLI's; (b) prints the exit, the record's facts and the line.
@@ -233,7 +239,7 @@ describe('#627 W — cell 13: inspect’s open-gate block', () => {
   it('the two absences: a gate that declares no message; a gate an earlier version opened without keeping it', async () => {
     const none = await home(false);
     const legacy = await home(true);
-    const record = await legacy.store.get(legacy.runId);
+    const { record: record } = await legacy.store.get(legacy.runId);
     const { resolved_message: _gone, ...gate } = record.pending_gate!;
     await legacy.store.update({ ...record, pending_gate: gate });
     const questionOf = (h: Awaited<ReturnType<typeof home>>) =>

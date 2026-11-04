@@ -50,7 +50,7 @@ describe('human gate', () => {
 
   it('trust: human_confirmed step opens gate after dispatcher runs', async () => {
     const store = new JsonFileStore(dir);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'auto-gate-wf',
       workflowVersion: 1,
       params: {},
@@ -70,7 +70,7 @@ describe('human gate', () => {
     expect(envelope.gate!.choices).toContain('approve');
     expect(envelope.data).toEqual({});
 
-    const updated = await store.get(run.id);
+    const { record: updated } = await store.get(run.id);
     expect(updated.run_phase).toBe('gate_waiting');
     expect(updated.pending_gate).toBeDefined();
     expect(updated.pending_gate!.gate_id).toBe(envelope.gate!.gate_id);
@@ -78,7 +78,7 @@ describe('human gate', () => {
 
   it('agent step with trust: human_confirmed exposes agent output as gate preview', async () => {
     const store = new JsonFileStore(dir);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'agent-gate-wf',
       workflowVersion: 1,
       params: {},
@@ -98,7 +98,7 @@ describe('human gate', () => {
 
   it('submitHumanResponse with valid choice advances state', async () => {
     const store = new JsonFileStore(dir);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'auto-gate-wf',
       workflowVersion: 1,
       params: {},
@@ -120,14 +120,14 @@ describe('human gate', () => {
     expect(result.status).toBe('ok');
     expect(result.data['choice']).toBe('approve');
 
-    const final = await store.get(run.id);
+    const { record: final } = await store.get(run.id);
     expect(final.run_phase).toBe('completed');
     expect(final.pending_gate).toBeUndefined();
   });
 
   it('submitHumanResponse with wrong gate_id returns error', async () => {
     const store = new JsonFileStore(dir);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'auto-gate-wf',
       workflowVersion: 1,
       params: {},
@@ -158,7 +158,7 @@ describe('human gate', () => {
 
   it('submitHumanResponse with invalid choice returns error', async () => {
     const store = new JsonFileStore(dir);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'auto-gate-wf',
       workflowVersion: 1,
       params: {},
@@ -183,7 +183,7 @@ describe('human gate', () => {
 
   it('submitHumanResponse records a gate_response evidence entry', async () => {
     const store = new JsonFileStore(dir);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'auto-gate-wf',
       workflowVersion: 1,
       params: {},
@@ -206,7 +206,7 @@ describe('human gate', () => {
 
     expect(result.status).toBe('ok');
 
-    const final = await store.get(run.id);
+    const { record: final } = await store.get(run.id);
     // The dispatch run produced one evidence entry; submitHumanResponse must add a second.
     expect(final.evidence).toHaveLength(2);
 

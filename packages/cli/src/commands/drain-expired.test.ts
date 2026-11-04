@@ -88,26 +88,28 @@ describe('runDrainAction --expired (issue #291, [F5])', () => {
     // (the class's most natural member — a live dev-run the operator walked away from).
     workflowId: string = gatedWf.id,
   ) {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId,
       workflowVersion: 1,
       params: {},
     });
-    return store.update({
-      ...run,
-      in_progress_steps: ['approve'],
-      claims: { approve: { deadline: null } },
-      pending_gate: {
-        gate_id: 'gate-1',
-        step_name: 'approve',
-        preview: {},
-        choices: ['approve', 'reject'],
-        opened_at: '2020-01-01T00:00:00.000Z',
-        expires_at: '2020-01-01T00:05:00.000Z',
-        ...(on_expiry !== undefined ? { on_expiry } : {}),
-        ...(default_choice !== undefined ? { default_choice } : {}),
-      },
-    });
+    return (
+      await store.update({
+        ...run,
+        in_progress_steps: ['approve'],
+        claims: { approve: { deadline: null } },
+        pending_gate: {
+          gate_id: 'gate-1',
+          step_name: 'approve',
+          preview: {},
+          choices: ['approve', 'reject'],
+          opened_at: '2020-01-01T00:00:00.000Z',
+          expires_at: '2020-01-01T00:05:00.000Z',
+          ...(on_expiry !== undefined ? { on_expiry } : {}),
+          ...(default_choice !== undefined ? { default_choice } : {}),
+        },
+      })
+    ).record;
   }
 
   describe('bare drain (no --expired) — never predicts or enacts the expiry', () => {
@@ -124,7 +126,7 @@ describe('runDrainAction --expired (issue #291, [F5])', () => {
           (l) => l.includes('not terminal') && l.includes(`realm run drain ${run.id} --expired`),
         ),
       ).toBe(true);
-      const reloaded = await store.get(run.id);
+      const { record: reloaded } = await store.get(run.id);
       expect(reloaded.pending_gate).toBeDefined(); // untouched
       expect(reloaded.version).toBe(run.version); // nothing written
     });
@@ -134,7 +136,7 @@ describe('runDrainAction --expired (issue #291, [F5])', () => {
       await expect(
         runDrainAction(run.id, { force: true }, store, workflowStore, DEPS),
       ).rejects.toThrow('process.exit');
-      const reloaded = await store.get(run.id);
+      const { record: reloaded } = await store.get(run.id);
       expect(reloaded.pending_gate).toBeDefined(); // untouched
     });
 
@@ -151,7 +153,7 @@ describe('runDrainAction --expired (issue #291, [F5])', () => {
     it('--all --force: byte-stable, never enacts', async () => {
       const run = await seedExpiredGateRun('abort');
       await runDrainAction(undefined, { all: true, force: true }, store, workflowStore, DEPS);
-      const reloaded = await store.get(run.id);
+      const { record: reloaded } = await store.get(run.id);
       expect(reloaded.pending_gate).toBeDefined();
     });
   });
@@ -181,7 +183,7 @@ describe('runDrainAction --expired (issue #291, [F5])', () => {
     it('settle_default: enacts, completes the step, and (sole step) drains straight through to terminal', async () => {
       const run = await seedExpiredGateRun('settle_default', 'approve');
       await runDrainAction(run.id, { expired: true, force: true }, store, workflowStore, DEPS);
-      const reloaded = await store.get(run.id);
+      const { record: reloaded } = await store.get(run.id);
       expect(reloaded.pending_gate).toBeUndefined();
       expect(reloaded.completed_steps).toContain('approve');
       expect(reloaded.settled?.['approve']).toMatchObject({ resolved_by: 'timeout' });
@@ -190,7 +192,7 @@ describe('runDrainAction --expired (issue #291, [F5])', () => {
     it('settle_default with a dependent step behind the gate: enacts, stays non-terminal, and the mid-drain line renders the DERIVED phase (issue #558 PR-C)', async () => {
       const run = await seedExpiredGateRun('settle_default', 'approve', gatedTwoStepWf.id);
       await runDrainAction(run.id, { expired: true, force: true }, store, workflowStore, DEPS);
-      const reloaded = await store.get(run.id);
+      const { record: reloaded } = await store.get(run.id);
       expect(reloaded.terminal_state).toBe(false);
       expect(reloaded.completed_steps).toContain('approve');
       const logged = logSpy.mock.calls.map((c: unknown[]) => String(c[0]));
@@ -206,7 +208,7 @@ describe('runDrainAction --expired (issue #291, [F5])', () => {
     it('abort: enacts, terminalizes, and the SAME invocation runs the native finalizer pass', async () => {
       const run = await seedExpiredGateRun('abort');
       await runDrainAction(run.id, { expired: true, force: true }, store, workflowStore, DEPS);
-      const reloaded = await store.get(run.id);
+      const { record: reloaded } = await store.get(run.id);
       expect(reloaded.terminal_state).toBe(true);
       expect(reloaded.pending_gate).toBeUndefined();
       expect(reloaded.skip_details?.['approve']).toEqual({
@@ -223,7 +225,7 @@ describe('runDrainAction --expired (issue #291, [F5])', () => {
       await expect(
         runDrainAction(run.id, { expired: true, force: true }, store, workflowStore, DEPS),
       ).rejects.toThrow('process.exit');
-      const reloaded = await store.get(run.id);
+      const { record: reloaded } = await store.get(run.id);
       expect(reloaded.pending_gate).toBeDefined();
     });
   });
@@ -249,7 +251,7 @@ describe('runDrainAction --expired (issue #291, [F5])', () => {
         workflowStore,
         DEPS,
       );
-      const reloaded = await store.get(run.id);
+      const { record: reloaded } = await store.get(run.id);
       expect(reloaded.completed_steps).toContain('approve');
       expect(
         logSpy.mock.calls.some((c: unknown[]) => String(c[0]).includes(`${run.id}: gate enacted`)),
@@ -271,7 +273,7 @@ describe('runDrainAction --expired (issue #291, [F5])', () => {
         workflowStore,
         DEPS,
       );
-      const reloaded = await store.get(run.id);
+      const { record: reloaded } = await store.get(run.id);
       expect(reloaded.pending_gate).toBeDefined(); // untouched — finding-only never enacted
     });
   });

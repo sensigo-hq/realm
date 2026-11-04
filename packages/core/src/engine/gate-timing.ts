@@ -5,7 +5,9 @@
 // PendingGate fields — never the workflow definition (F2's doctrine, generalized to every
 // read-time consumer).
 import type { PendingGate } from '../types/run-record.js';
-import { isPastDeadline, overdueOf } from './instants.js';
+import type { Snapshot } from './snapshot.js';
+import { isPastDeadline, overdueOf, parseStamp } from './instants.js';
+import { formatInstantWords } from '../utils/duration.js';
 
 /**
  * Read-time due/overdue state for a live gate. `overdue_ms` is present iff `expired`.
@@ -29,8 +31,10 @@ export function computeGateDueState(gate: PendingGate, now: Date): GateDueState 
   const expired = gate.expires_at !== undefined && isPastDeadline(gate.expires_at, now);
 
   let nextReminderDueAt: string | undefined;
-  if (gate.reminder_seconds !== undefined) {
-    const openedAtMs = new Date(gate.opened_at).getTime();
+  // #715 (b) (D-25): `opened_at` through the one stamp parser — an unparseable stamp yields NO
+  // occurrence (it used to throw RangeError from `new Date(NaN).toISOString()`).
+  const openedAtMs = parseStamp(gate.opened_at);
+  if (gate.reminder_seconds !== undefined && openedAtMs !== undefined) {
     const reminderMs = gate.reminder_seconds * 1000;
     const elapsedMs = Math.max(0, nowMs - openedAtMs);
     const n = Math.floor(elapsedMs / reminderMs) + 1; // next-undelivered occurrence number
@@ -42,4 +46,70 @@ export function computeGateDueState(gate: PendingGate, now: Date): GateDueState 
     ...(expired && overdue !== undefined && 'ms' in overdue ? { overdue_ms: overdue.ms } : {}),
     ...(nextReminderDueAt !== undefined ? { next_reminder_due_at: nextReminderDueAt } : {}),
   };
+}
+
+/** #715 (b) (02 §D.3): one scheduled reminder of an open question — the k-th, at its instant. */
+export interface ReminderOccurrence {
+  /** 1-based: the first reminder is `opened_at + reminder_seconds`. */
+  k: number;
+  /** `opened_at + k·reminder_seconds`, ISO 8601. */
+  at: string;
+}
+
+/**
+ * #715 (b) (02 §D.3, D6-21, Amendment 9): an open question's authored reminder schedule — what is
+ * SCHEDULED, never what was sent (no send is recorded on the run; a reminder is sent only while a
+ * process attends the question).
+ */
+export interface ReminderSchedule {
+  /** The frozen `reminder_max` (the mint default, 3, when a grandfathered gate carries none). */
+  max: number;
+  /** Every scheduled occurrence: k = 1…`max`, each before the question's `expires_at`. */
+  occurrences: ReminderOccurrence[];
+  /** The first occurrence the snapshot's reading has not passed (`isPastDeadline`: one exactly at it has passed). */
+  next?: ReminderOccurrence;
+}
+
+/**
+ * #715 (b) (02 §D.3, D6-21): the ONE function every view and sender reads an open question's
+ * reminder schedule from — pure, of a snapshot: occurrence k at `opened_at + k·reminder_seconds`,
+ * k ≤ the frozen `reminder_max`, each before the frozen `expires_at` (the notifier's last message at
+ * or after it is the expiry's, not a reminder). `undefined` when the run has no open question or
+ * the question has no AUTHORED reminder; no occurrence when `opened_at` cannot be read. `next` is the
+ * first occurrence not past at the snapshot's `at` (`isPastDeadline`, the engine's one due test,
+ * `at ≥ deadline`: an occurrence exactly at `at` has passed).
+ */
+export function reminderScheduleOf(snapshot: Snapshot): ReminderSchedule | undefined {
+  const gate = snapshot.record.pending_gate;
+  if (gate === undefined || gate.reminder_seconds === undefined) return undefined;
+  const max = gate.reminder_max ?? 3;
+  const openedAtMs = parseStamp(gate.opened_at);
+  if (openedAtMs === undefined) return { max, occurrences: [] };
+  const expiresAtMs = gate.expires_at !== undefined ? parseStamp(gate.expires_at) : undefined;
+  const occurrences: ReminderOccurrence[] = [];
+  for (let k = 1; k <= max; k++) {
+    const atMs = openedAtMs + k * gate.reminder_seconds * 1000;
+    if (expiresAtMs !== undefined && atMs >= expiresAtMs) break;
+    occurrences.push({ k, at: new Date(atMs).toISOString() });
+  }
+  const next = occurrences.find((o) => !isPastDeadline(o.at, snapshot.at));
+  return { max, occurrences, ...(next !== undefined ? { next } : {}) };
+}
+
+/** #715 (b) (02 §D.3, D6-21, R14): what a reminder view says it does not know. */
+export const REMINDER_BASIS_CLAUSE =
+  'no send is recorded; reminders are sent only while a process attends this question';
+
+/**
+ * #715 (b) (02 §D.3, Amendment 9): a reminder schedule in words, for `inspect` and `list` — the
+ * next scheduled occurrence and how many are scheduled (each before the question's deadline), or
+ * that none is left; always with the basis clause. "Scheduled", never "due", "overdue" or "sent".
+ */
+export function reminderScheduleWords(schedule: ReminderSchedule, at: Date): string {
+  if (schedule.next === undefined)
+    return `no further reminder is scheduled (${REMINDER_BASIS_CLAUSE})`;
+  // #715 (b) (03 §B.2, Amendment 9): the next occurrence's instant through the one formatter, at the
+  // reading the schedule was taken at (`in 3m (…Z)`; it has not passed there, by `next`'s rule).
+  const when = formatInstantWords(schedule.next.at, 'deadline', at);
+  return `next reminder: ${schedule.next.k} of ${schedule.occurrences.length} scheduled${when !== undefined ? ` ${when}` : ''} (${REMINDER_BASIS_CLAUSE})`;
 }

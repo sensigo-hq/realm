@@ -250,7 +250,11 @@ describe('#367 — the ORPHAN is refused a purge (the destructive consequence, e
     // (direct writeFile — the ONE way to get a shape past the store boundary), then show the
     // destructive path treats it as the live run it is.
     const store = await freshStore();
-    const { run } = await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'wf',
+      workflowVersion: 1,
+      params: {},
+    });
     const orphan = { ...run, terminal_state: false, sealed_by: { arm: 'complete' as const } };
     await writeFile(join(store.runsDirPath, `${run.id}.json`), JSON.stringify(orphan, null, 2));
 
@@ -407,16 +411,22 @@ describe('#367 — the store boundary, clause by clause', () => {
   });
 
   async function live(): Promise<RunRecord> {
-    const { run } = await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'wf',
+      workflowVersion: 1,
+      params: {},
+    });
     return run;
   }
   async function sealed(arm: SealArm = 'complete'): Promise<RunRecord> {
-    return store.update({
-      ...(await live()),
-      terminal_state: true,
-      sealed_by: { arm },
-      terminal_reason: 'Workflow completed.',
-    });
+    return (
+      await store.update({
+        ...(await live()),
+        terminal_state: true,
+        sealed_by: { arm },
+        terminal_reason: 'Workflow completed.',
+      })
+    ).record;
   }
 
   it('clause 1 — a fresh seal with no arm is REFUSED', async () => {
@@ -431,9 +441,11 @@ describe('#367 — the store boundary, clause by clause', () => {
     const run = await live();
     const legacy = { ...run, terminal_state: true, terminal_reason: 'legacy prose' };
     await writeFile(join(store.runsDirPath, `${run.id}.json`), JSON.stringify(legacy, null, 2));
-    const reread = await store.get(run.id);
+    const { record: reread } = await store.get(run.id);
     expect(reread.sealed_by).toBeUndefined();
-    await expect(store.update({ ...reread, terminal_reason: 'touched' })).resolves.toBeDefined();
+    await expect(
+      store.update({ ...reread, terminal_reason: 'touched' }).then((s) => s.record),
+    ).resolves.toBeDefined();
   });
 
   it('clause 2 — a terminal → live write that KEEPS the seal is REFUSED', async () => {
@@ -444,7 +456,9 @@ describe('#367 — the store boundary, clause by clause', () => {
 
   it('clause 2 NEGATIVE CONTROL — the same transition with the seal stripped passes', async () => {
     const { sealed_by: _dropped, ...base } = await sealed();
-    await expect(store.update({ ...base, terminal_state: false })).resolves.toBeDefined();
+    await expect(
+      store.update({ ...base, terminal_state: false }).then((s) => s.record),
+    ).resolves.toBeDefined();
   });
 
   it('clause 3 — a terminal rewrite that DROPS a stored seal is REFUSED', async () => {
@@ -456,7 +470,9 @@ describe('#367 — the store boundary, clause by clause', () => {
 
   it('clause 3 NEGATIVE CONTROL — the same rewrite KEEPING the seal passes', async () => {
     const s = await sealed();
-    await expect(store.update({ ...s, updated_at: 'later' })).resolves.toBeDefined();
+    await expect(
+      store.update({ ...s, updated_at: 'later' }).then((s) => s.record),
+    ).resolves.toBeDefined();
   });
 
   it('clause 4 — an arm outside SEAL_ARMS never persists', async () => {
@@ -494,7 +510,7 @@ describe('#367 — the store boundary, clause by clause', () => {
     // 'Workflow completed.', so a cross-phase ruling would be refused by SEAL_COHERENT instead —
     // see the composition cell below, which pins that on purpose.
     const record = await sealed('complete');
-    const ruled = await store.update({
+    const { record: ruled } = await store.update({
       ...record,
       sealed_by: {
         arm: 'guard_pass_complete',
@@ -507,7 +523,7 @@ describe('#367 — the store boundary, clause by clause', () => {
       },
     });
     expect(ruled.sealed_by?.arm).toBe('guard_pass_complete');
-    const reread = await store.get(record.id);
+    const { record: reread } = await store.get(record.id);
     expect(reread.sealed_by?.adjudicated).toEqual({
       by: 'mihai',
       at: '2026-08-20T00:00:00.000Z',
@@ -551,7 +567,7 @@ describe('#367 — the store boundary, clause by clause', () => {
 
     // And the lawful shape: "I looked at this and ruled it stays as it is" — how a parked record
     // that turns out to be correctly stamped gets closed out instead of re-examined forever.
-    const acknowledged = await store.update({
+    const { record: acknowledged } = await store.update({
       ...record,
       sealed_by: {
         arm: 'complete',
@@ -589,7 +605,7 @@ describe('#367 — the store boundary, clause by clause', () => {
     // A ruling that can be quietly dropped is a ruling nobody can rely on afterwards — the same
     // reason the arm it explains is erase-proof.
     const record = await sealed('complete');
-    const ruled = await store.update({
+    const { record: ruled } = await store.update({
       ...record,
       sealed_by: {
         arm: 'complete',
@@ -609,7 +625,7 @@ describe('#367 — the store boundary, clause by clause', () => {
     // The prose stays exactly as written — it is historical evidence of what the engine said, and
     // the ruling resolves the disagreement without falsifying the record.
     const record = await sealed('complete');
-    const ruled = await store.update({
+    const { record: ruled } = await store.update({
       ...record,
       sealed_by: {
         arm: 'step_failure',
@@ -622,7 +638,7 @@ describe('#367 — the store boundary, clause by clause', () => {
       },
     });
     expect(ruled.sealed_by?.arm).toBe('step_failure');
-    const reread = await store.get(record.id);
+    const { record: reread } = await store.get(record.id);
     expect(reread.sealed_by?.adjudicated?.reason).toBe('it really failed');
     // The prose is NEVER rewritten to match.
     expect(reread.terminal_reason).toBe(record.terminal_reason);
@@ -642,9 +658,9 @@ describe('#367 — the store boundary, clause by clause', () => {
       sealed_by: { arm: 'complete' as const },
     };
     await writeFile(join(store.runsDirPath, `${run.id}.json`), JSON.stringify(scarred, null, 2));
-    const stored = await store.get(run.id);
+    const { record: stored } = await store.get(run.id);
 
-    const acked = await store.update({
+    const { record: acked } = await store.update({
       ...stored,
       sealed_by: {
         arm: 'complete',
@@ -676,8 +692,10 @@ describe('#367 — the store boundary, clause by clause', () => {
       },
     };
     await writeFile(join(store.runsDirPath, `${run.id}.json`), JSON.stringify(scarred, null, 2));
-    const stored = await store.get(run.id);
-    await expect(store.update({ ...stored, updated_at: 'later' })).resolves.toBeDefined();
+    const { record: stored } = await store.get(run.id);
+    await expect(
+      store.update({ ...stored, updated_at: 'later' }).then((s) => s.record),
+    ).resolves.toBeDefined();
   });
 
   it('1b — an arm flip RIDING a stored ruling is refused (cross-phase spelling)', async () => {
@@ -698,7 +716,7 @@ describe('#367 — the store boundary, clause by clause', () => {
       join(store.runsDirPath, `${run.id}.json`),
       JSON.stringify(ruledRecord, null, 2),
     );
-    const stored = await store.get(run.id);
+    const { record: stored } = await store.get(run.id);
     await expect(
       store.update({ ...stored, sealed_by: { ...stored.sealed_by!, arm: 'step_failure' } }),
     ).rejects.toMatchObject({ code: 'STATE_SEAL_REWRITTEN' });
@@ -723,7 +741,7 @@ describe('#367 — the store boundary, clause by clause', () => {
       join(store.runsDirPath, `${run.id}.json`),
       JSON.stringify(ruledRecord, null, 2),
     );
-    const stored = await store.get(run.id);
+    const { record: stored } = await store.get(run.id);
     await expect(
       store.update({
         ...stored,
@@ -749,8 +767,8 @@ describe('#367 — the store boundary, clause by clause', () => {
       join(store.runsDirPath, `${run.id}.json`),
       JSON.stringify(ruledRecord, null, 2),
     );
-    const stored = await store.get(run.id);
-    const flipped = await store.update({
+    const { record: stored } = await store.get(run.id);
+    const { record: flipped } = await store.update({
       ...stored,
       sealed_by: {
         arm: 'guard_pass_complete',
@@ -771,8 +789,8 @@ describe('#367 — the store boundary, clause by clause', () => {
       terminal_reason: 'prose nothing recognises',
     };
     await writeFile(join(store.runsDirPath, `${run.id}.json`), JSON.stringify(parked, null, 2));
-    const stored = await store.get(run.id);
-    const ruled = await store.update({
+    const { record: stored } = await store.get(run.id);
+    const { record: ruled } = await store.update({
       ...stored,
       sealed_by: {
         arm: 'abandon_requested',
@@ -780,7 +798,7 @@ describe('#367 — the store boundary, clause by clause', () => {
       },
     });
     expect(ruled.sealed_by?.arm).toBe('abandon_requested');
-    const reread = await store.get(run.id);
+    const { record: reread } = await store.get(run.id);
     expect(reread.sealed_by?.adjudicated?.previous_arm).toBeNull();
   });
 
@@ -807,7 +825,7 @@ describe('#367 — the store boundary, clause by clause', () => {
     const run = await live();
     const legacy = { ...run, terminal_state: true, terminal_reason: 'Workflow completed.' };
     await writeFile(join(store.runsDirPath, `${run.id}.json`), JSON.stringify(legacy, null, 2));
-    const reread = await store.get(run.id);
+    const { record: reread } = await store.get(run.id);
     const stamped = await store.stampSeal!(
       run.id,
       { arm: 'complete', classified: true },
@@ -815,8 +833,8 @@ describe('#367 — the store boundary, clause by clause', () => {
     );
     expect(stamped.stamped).toBe(true);
 
-    const current = await store.get(run.id);
-    const ruled = await store.update({
+    const { record: current } = await store.get(run.id);
+    const { record: ruled } = await store.update({
       ...current,
       sealed_by: {
         arm: 'guard_pass_complete',
@@ -832,7 +850,9 @@ describe('#367 — the store boundary, clause by clause', () => {
     // Every ordinary terminal rewrite spreads the record, so this is the common case: without it
     // passing, clause 6 would wedge the whole engine.
     const record = await sealed('complete');
-    await expect(store.update({ ...record, updated_at: 'later' })).resolves.toBeDefined();
+    await expect(
+      store.update({ ...record, updated_at: 'later' }).then((s) => s.record),
+    ).resolves.toBeDefined();
   });
 
   it('SEAL_COHERENT — a stale arm preserved over a record whose prose says otherwise is REFUSED', async () => {
@@ -846,7 +866,7 @@ describe('#367 — the store boundary, clause by clause', () => {
       aborted_at: { step_id: 'g' },
     };
     await writeFile(join(store.runsDirPath, `${run.id}.json`), JSON.stringify(stale, null, 2));
-    const reread = await store.get(run.id);
+    const { record: reread } = await store.get(run.id);
     await expect(store.update({ ...reread, updated_at: 'later' })).rejects.toMatchObject({
       code: 'STATE_SEAL_INCOHERENT',
     });
@@ -863,8 +883,10 @@ describe('#367 — the store boundary, clause by clause', () => {
       abandoned_at: 'now',
     };
     await writeFile(join(store.runsDirPath, `${run.id}.json`), JSON.stringify(stale, null, 2));
-    const reread = await store.get(run.id);
-    await expect(store.update({ ...reread, updated_at: 'later' })).resolves.toBeDefined();
+    const { record: reread } = await store.get(run.id);
+    await expect(
+      store.update({ ...reread, updated_at: 'later' }).then((s) => s.record),
+    ).resolves.toBeDefined();
   });
 
   it('the SETTLE tail is guarded too, not just update', async () => {
@@ -876,7 +898,7 @@ describe('#367 — the store boundary, clause by clause', () => {
     // A settle on a terminal run refuses upstream (run_terminal) — so the observable here is that
     // the tail is wired at all: the update path above proves the clauses, and this proves settle
     // shares the same store instance and record.
-    const reread = await store.get(run.id);
+    const { record: reread } = await store.get(run.id);
     expect(reread.sealed_by?.arm).toBe('complete');
   });
 });
@@ -886,7 +908,11 @@ describe('#367 — operator-facing messages say no more than their branch guards
   // that produces it. Each of these pins the TEXT against the branch it actually fires on.
   it('the unstamped-seal message names the TRANSITION it guards, not "every terminal write"', async () => {
     const store = await freshStore();
-    const { run } = await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'wf',
+      workflowVersion: 1,
+      params: {},
+    });
     let message = '';
     try {
       await store.update({ ...run, terminal_state: true, terminal_reason: 'x' });
@@ -993,10 +1019,13 @@ describe('#367 — resume discloses the ruling it destroys', () => {
   });
 });
 
+/** #715 (b): `sealRunLevel` takes the seal-tier instant (the `seal_run` write's reading). */
+const SEALED_AT = new Date('2026-01-01T00:00:00.000Z');
+
 describe('#367 — sealRunLevel, the run-level writer chokepoint', () => {
   it('stamps the arm, the reason and terminal_state in one record, and drops any prior seal', () => {
     const prior = record({ terminal_state: true, sealed_by: { arm: 'complete' } });
-    const out = sealRunLevel(prior, 'abandon_requested', 'Abandoned by operator');
+    const out = sealRunLevel(prior, 'abandon_requested', 'Abandoned by operator', SEALED_AT);
     expect(out.sealed_by).toEqual({ arm: 'abandon_requested' });
     expect(out.terminal_state).toBe(true);
     expect(out.terminal_reason).toBe('Abandoned by operator');
@@ -1010,12 +1039,14 @@ describe('#367 — sealRunLevel, the run-level writer chokepoint', () => {
       'spawn_failure',
       'extensions_load_failure',
     ] as const) {
-      expect(sealRunLevel(record(), arm, 'r').sealed_by?.step).toBeUndefined();
+      expect(sealRunLevel(record(), arm, 'r', SEALED_AT).sealed_by?.step).toBeUndefined();
     }
   });
 
   it('sets the marker its arm requires, and only that one', () => {
-    expect(sealRunLevel(record(), 'spawn_failure', 'spawn_failed').abandoned_at).toBeUndefined();
-    expect(sealRunLevel(record(), 'cleanup_sweep', 'x').abandoned_at).toBeDefined();
+    expect(
+      sealRunLevel(record(), 'spawn_failure', 'spawn_failed', SEALED_AT).abandoned_at,
+    ).toBeUndefined();
+    expect(sealRunLevel(record(), 'cleanup_sweep', 'x', SEALED_AT).abandoned_at).toBeDefined();
   });
 });

@@ -17,6 +17,7 @@ import {
   loadWorkflowFromString,
   type WorkflowDefinition,
 } from '@sensigo/realm';
+import { zOf } from '../test-support/instant.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../../../..');
@@ -100,14 +101,18 @@ describe(
     /** A run at its question, whose time was up `ago` ms before now. */
     async function lateQuestion(def: WorkflowDefinition, ago: number) {
       await workflowStore.register(def);
-      const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runStore.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await executeStep(runStore, def, {
         runId: run.id,
         command: 'approve',
         input: {},
         dispatcher: async () => ({}),
       });
-      const record = await runStore.get(run.id);
+      const { record: record } = await runStore.get(run.id);
       const expiresAt = Date.now() - ago;
       await runStore.update({
         ...record,
@@ -142,7 +147,7 @@ describe(
         first: r.out[0],
         lagFits: seconds(q.expiresAt, r.window).includes(lag ?? ''),
       }).toEqual({
-        first: `⚠ gate '${q.gateId}' on 'approve' had expired ${lag ?? '<no lag>'} before this call — this respond call first carried out its declared settle_default: the default choice 'ship' was recorded (enacted_via: respond).`,
+        first: `⚠ gate '${q.gateId}' on 'approve' had expired ${lag ?? '<no lag>'} before this call (deadline ${zOf(q.expiresAt)}) — this respond call first carried out its declared settle_default: the default choice 'ship' was recorded (enacted_via: respond).`,
         lagFits: true,
       });
     });
@@ -153,32 +158,36 @@ describe(
       expect(changelog).toContain(
         '`realm run drain` says how long ago a gate expired in seconds under a minute (`gate expired 12s ago`; it printed `0m`).',
       );
-      const page = pageLine(ACTING, "Run '0e0ace7e-e57c-400c-a63a-eaf685688d19': gate expired ");
+      const page = pageLine(ACTING, "Run '0e0ace7e-e57c-400c-a63a-eaf685688d19': gate EXPIRED ");
       // (a) red when the page's example says minutes (`0m ago`) or another sentence; (b) prints it.
       expect(page).toBe(
-        "Run '0e0ace7e-e57c-400c-a63a-eaf685688d19': gate expired 18s ago — would enact settle_default 'hold'; guard 'only_if_shipping' would then abort the run (The order was held.) on --force.",
+        "Run '0e0ace7e-e57c-400c-a63a-eaf685688d19': gate EXPIRED 18s ago (2026-10-09T09:14:00Z) — would enact settle_default 'hold'; guard 'only_if_shipping' would then abort the run (The order was held.) on --force.",
       );
       // (a) red when gates.md's copy of the example differs; (b) prints it.
-      expect(pageLine(GATES, "Run '0e0ace7e-e57c-400c-a63a-eaf685688d19': gate expired ")).toBe(
+      expect(pageLine(GATES, "Run '0e0ace7e-e57c-400c-a63a-eaf685688d19': gate EXPIRED ")).toBe(
         page,
       );
-      expect(pageLine(ACTING, "Run '230b0939-9c61-40e4-8b6f-910594a81e92': gate expired ")).toBe(
-        "Run '230b0939-9c61-40e4-8b6f-910594a81e92': gate expired 17s ago — would enact settle_default 'ship'; guard 'only_if_shipping' would pass on --force.",
+      expect(pageLine(ACTING, "Run '230b0939-9c61-40e4-8b6f-910594a81e92': gate EXPIRED ")).toBe(
+        "Run '230b0939-9c61-40e4-8b6f-910594a81e92': gate EXPIRED 17s ago (2026-10-09T09:14:01Z) — would enact settle_default 'ship'; guard 'only_if_shipping' would pass on --force.",
       );
       const hold = await lateQuestion(shipping('hold'), 18_000);
       const ship = await lateQuestion(shipping('ship'), 17_000);
       for (const [q, example] of [
         [hold, page],
-        [ship, pageLine(ACTING, "Run '230b0939-9c61-40e4-8b6f-910594a81e92': gate expired ")],
+        [ship, pageLine(ACTING, "Run '230b0939-9c61-40e4-8b6f-910594a81e92': gate EXPIRED ")],
       ] as const) {
         const r = realm('run', 'drain', q.id, '--expired');
-        const lag = /gate expired (\S+) ago/.exec(r.out[0] ?? '')?.[1] ?? '<no lag>';
+        const lag = /gate EXPIRED (\S+) ago/.exec(r.out[0] ?? '')?.[1] ?? '<no lag>';
         // (a) red when drain says `0m` (its own formatter), or its line is not the page's with this
         //     run's id and lag; (b) prints the line and the example as this run would print it.
         expect({ line: r.out[0], lagFits: seconds(q.expiresAt, r.window).includes(lag) }).toEqual({
           line: example
             .replace(/^Run '[0-9a-f-]+'/, `Run '${q.id}'`)
-            .replace(/gate expired \d+s ago/, `gate expired ${lag} ago`),
+            // #715 (b) (03 §B.2 B3): the words through the one formatter, the deadline beside them.
+            .replace(
+              /gate EXPIRED \d+s ago \(\S+Z\)/,
+              `gate EXPIRED ${lag} ago (${zOf(q.expiresAt)})`,
+            ),
           lagFits: true,
         });
       }
@@ -188,7 +197,7 @@ describe(
       const listed = [
         '962cb7f0-a894-4592-aadc-a4907ef14c9c',
         'ce8296d1-c5d3-4ea6-b62c-7dc0f795fb09',
-      ].map((id) => pageLine(ACTING, `  • ${id}: gate expired `));
+      ].map((id) => pageLine(ACTING, `  • ${id}: gate EXPIRED `));
       const notEnded = pageLine(
         ACTING,
         "Run '94bf33c8-3933-47c4-ad50-556d0b298e6c' is not terminal",
@@ -196,32 +205,38 @@ describe(
       // (a) red when an example says `0m ago`; (b) prints the three lines.
       expect({ listed, notEnded }).toEqual({
         listed: [
-          '  • 962cb7f0-a894-4592-aadc-a4907ef14c9c: gate expired 41s ago — would enact settle_default',
-          '  • ce8296d1-c5d3-4ea6-b62c-7dc0f795fb09: gate expired 40s ago — would enact settle_default',
+          '  • 962cb7f0-a894-4592-aadc-a4907ef14c9c: gate EXPIRED 41s ago (2026-10-09T09:13:37Z) — would enact settle_default',
+          '  • ce8296d1-c5d3-4ea6-b62c-7dc0f795fb09: gate EXPIRED 40s ago (2026-10-09T09:13:38Z) — would enact settle_default',
         ],
         notEnded:
-          "Run '94bf33c8-3933-47c4-ad50-556d0b298e6c' is not terminal (phase: 'gate_waiting') — nothing to drain. Its gate expired 25s ago. To see what the expiry will do: realm run drain 94bf33c8-3933-47c4-ad50-556d0b298e6c --expired",
+          "Run '94bf33c8-3933-47c4-ad50-556d0b298e6c' is not terminal (phase: 'gate_waiting') — nothing to drain. Its gate EXPIRED 25s ago (2026-10-09T09:13:53Z). To see what the expiry will do: realm run drain 94bf33c8-3933-47c4-ad50-556d0b298e6c --expired",
       });
       const q = await lateQuestion(shipping('ship'), 41_000);
       const all = realm('run', 'drain', '--all', '--expired');
       const row = all.out.find((l) => l.startsWith(`  • ${q.id}: `)) ?? '<no row>';
-      const rowLag = /gate expired (\S+) ago/.exec(row)?.[1] ?? '<no lag>';
+      const rowLag = /gate EXPIRED (\S+) ago/.exec(row)?.[1] ?? '<no lag>';
       // (a) red when the list says `0m`; (b) prints the row.
       expect({ row, lagFits: seconds(q.expiresAt, all.window).includes(rowLag) }).toEqual({
         row: listed[0]!
           .replace('962cb7f0-a894-4592-aadc-a4907ef14c9c', q.id)
-          .replace(/gate expired \d+s ago/, `gate expired ${rowLag} ago`),
+          .replace(
+            /gate EXPIRED \d+s ago \(\S+Z\)/,
+            `gate EXPIRED ${rowLag} ago (${zOf(q.expiresAt)})`,
+          ),
         lagFits: true,
       });
       const one = realm('run', 'drain', q.id);
       const line = one.out[0] ?? '<no line>';
-      const lag = /Its gate expired (\S+) ago/.exec(line)?.[1] ?? '<no lag>';
+      const lag = /Its gate EXPIRED (\S+) ago/.exec(line)?.[1] ?? '<no lag>';
       // (a) red when the not-ended line says `0m`; (b) prints the line.
       expect({ line, lagFits: seconds(q.expiresAt, one.window).includes(lag) }).toEqual({
         line: notEnded
           .split('94bf33c8-3933-47c4-ad50-556d0b298e6c')
           .join(q.id)
-          .replace(/Its gate expired \d+s ago/, `Its gate expired ${lag} ago`),
+          .replace(
+            /Its gate EXPIRED \d+s ago \(\S+Z\)/,
+            `Its gate EXPIRED ${lag} ago (${zOf(q.expiresAt)})`,
+          ),
         lagFits: true,
       });
     });

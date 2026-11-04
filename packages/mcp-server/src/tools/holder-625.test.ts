@@ -16,11 +16,16 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { JsonFileStore, JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
+import {
+  JsonFileStore,
+  JsonWorkflowStore,
+  CURRENT_WORKFLOW_SCHEMA_VERSION,
+  writeTestClockFile,
+} from '@sensigo/realm';
 import type { Attributed, WorkflowDefinition } from '@sensigo/realm';
 import type { McpEnvelope } from '../render-reply.js';
 import { handleStartRun } from './start-run.js';
@@ -33,6 +38,18 @@ import { handleGetRunState } from './get-run-state.js';
 import { handleAbandonRun } from './abandon-run.js';
 import { generateProtocol } from '../protocol/generator.js';
 import { createRealmMcpServer } from '../server.js';
+
+/** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
+ *  runs folder beside the location's clock file (first set to the host's reading), which
+ *  `setClockOf` rewrites. */
+async function testLocationRuns(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  await writeTestClockFile(root, new Date());
+  return join(root, 'runs');
+}
+async function setClockOf(store: JsonFileStore, t: Date): Promise<void> {
+  await writeTestClockFile(dirname(store.runsDirPath), t);
+}
 
 const DRIVER: Attributed = { by: 'server@host', by_source: 'derived', channel: 'mcp-stdio' };
 
@@ -56,7 +73,7 @@ let runStore: JsonFileStore;
 let workflowStore: JsonWorkflowStore;
 
 beforeEach(async () => {
-  runStore = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-holder-mcp-run-')));
+  runStore = new JsonFileStore(await testLocationRuns('realm-holder-mcp-run-'));
   workflowStore = new JsonWorkflowStore(await mkdtemp(join(tmpdir(), 'realm-holder-mcp-wf-')));
   await workflowStore.register(definition);
 });
@@ -74,7 +91,7 @@ async function openGate(driver: Attributed | null = DRIVER): Promise<Opened> {
     { workflow_id: definition.id },
     { runStore, workflowStore, ...(driver !== null ? { driver } : {}) },
   );
-  const run = await runStore.get(reply.run_id);
+  const { record: run } = await runStore.get(reply.run_id);
   return {
     runId: reply.run_id,
     gateId: run.pending_gate!.gate_id,
@@ -129,7 +146,7 @@ describe('the opening reply hands the claim’s token out — ONE door — and t
     expect(
       (action.instruction as { call_with: Record<string, unknown> }).call_with['claim_token'],
     ).toBe(o.token);
-    const run = await runStore.get(o.runId);
+    const { record: run } = await runStore.get(o.runId);
     expect(run.claims?.['step-one']?.holder).toEqual(DRIVER);
     expect(typeof run.claims?.['step-one']?.since).toBe('string');
     expect(run.claims?.['step-one']?.token).toBe(o.token);
@@ -138,7 +155,7 @@ describe('the opening reply hands the claim’s token out — ONE door — and t
   it('start_run with NO driver: the claim carries since and no holder; the token is still handed out', async () => {
     const o = await openGate(null);
     expect(o.token !== '').toBe(true);
-    const claim = (await runStore.get(o.runId)).claims!['step-one']!;
+    const claim = (await runStore.get(o.runId)).record.claims!['step-one']!;
     expect('holder' in claim).toBe(false);
     expect(typeof claim.since).toBe('string');
   });
@@ -167,7 +184,7 @@ describe('submit_human_response — the verdict on every ok reply, the answer de
     expect(reply.warnings).toEqual([
       'No claim_token was passed; the answer was recorded. Only the conversation that opened the question has one to pass.',
     ]);
-    expect((await runStore.get(o.runId)).pending_gate).toBeUndefined();
+    expect((await runStore.get(o.runId)).record.pending_gate).toBeUndefined();
   });
 
   it('a wrong token and the EMPTY token: mismatch, and the answer is recorded all the same', async () => {
@@ -180,7 +197,7 @@ describe('submit_human_response — the verdict on every ok reply, the answer de
       // (a) red when a wrong token refuses or alters the answer; (b) prints the reply’s status.
       expect(reply.status).toBe('ok');
       expect(reply.gate_claim?.proof).toBe('mismatch');
-      expect((await runStore.get(o.runId)).pending_gate).toBeUndefined();
+      expect((await runStore.get(o.runId)).record.pending_gate).toBeUndefined();
     }
   });
 });
@@ -195,7 +212,7 @@ describe('the REGISTERED tool — the SDK’s argument handling, never a reason 
     //     nothing; (b) prints the status.
     expect(reply.status).toBe('ok');
     expect(reply.gate_claim?.proof).toBe('mismatch');
-    expect((await runStore.get(o.runId)).pending_gate).toBeUndefined();
+    expect((await runStore.get(o.runId)).record.pending_gate).toBeUndefined();
   });
 
   it('a misnamed `claimToken`: absent, and the reply names the key and the near miss', async () => {
@@ -280,7 +297,7 @@ describe('responded_by is bounded exactly as `realm run respond --by` is — ref
       expect((reply as unknown as { error_code?: string }).error_code).toBe(
         'VALIDATION_ACTOR_INVALID',
       );
-      const after = await runStore.get(o.runId);
+      const { record: after } = await runStore.get(o.runId);
       expect(after.pending_gate?.gate_id).toBe(o.gateId);
       expect(after.evidence.filter((e) => e.kind === 'gate_response')).toEqual([]);
     },
@@ -311,7 +328,9 @@ describe('C3 — responded_by: spaces at either end are removed before it is sto
       { run_id: o.runId, gate_id: o.gateId, choice: 'approve', responded_by: '  alice  ' },
       { runStore, workflowStore },
     );
-    const entry = (await runStore.get(o.runId)).evidence.find((e) => e.kind === 'gate_response');
+    const entry = (await runStore.get(o.runId)).record.evidence.find(
+      (e) => e.kind === 'gate_response',
+    );
     // (a) red when the tool passes the raw argument on instead of the checked name; (b) prints it.
     expect(entry?.responded_by).toBe('alice');
   });
@@ -341,12 +360,12 @@ describe('C2 — get_run_state on a run whose gate expired to its default (a rea
       { workflow_id: expiring.id },
       { runStore, workflowStore, driver: DRIVER },
     );
-    const gate = (await runStore.get(started.run_id)).pending_gate!;
-    const enacted = await runStore.settleStep!(
+    const gate = (await runStore.get(started.run_id)).record.pending_gate!;
+    await setClockOf(runStore, new Date(new Date(gate.expires_at!).getTime() + 60_000));
+    const enacted = await runStore.settleStep(
       started.run_id,
       { kind: 'expire_gate', gateId: gate.gate_id },
       expiring,
-      { now: new Date(new Date(gate.expires_at!).getTime() + 60_000) },
     );
     expect(enacted.applied).toBe(true);
     const summary = await handleGetRunState(
@@ -383,12 +402,12 @@ describe('C2 — get_run_state on a run whose gate expired to its default (a rea
       { workflow_id: aborting.id },
       { runStore, workflowStore, driver: DRIVER },
     );
-    const gate = (await runStore.get(started.run_id)).pending_gate!;
-    const enacted = await runStore.settleStep!(
+    const gate = (await runStore.get(started.run_id)).record.pending_gate!;
+    await setClockOf(runStore, new Date(new Date(gate.expires_at!).getTime() + 60_000));
+    const enacted = await runStore.settleStep(
       started.run_id,
       { kind: 'expire_gate', gateId: gate.gate_id },
       aborting,
-      { now: new Date(new Date(gate.expires_at!).getTime() + 60_000) },
     );
     expect(enacted.applied).toBe(true);
     const summary = await handleGetRunState(
@@ -434,7 +453,7 @@ describe('get_run_state — who took each step; the token has one door and this 
 
   it('a HAND-PLANTED holder carrying an escape sequence is withheld: name_unreadable, never the string', async () => {
     const o = await openGate();
-    const run = await runStore.get(o.runId);
+    const { record: run } = await runStore.get(o.runId);
     await runStore.update({
       ...run,
       claims: {
@@ -484,7 +503,9 @@ describe('createRealmMcpServer({ driver }) threads the program’s name to the t
       });
       const text = (result.content as Array<{ type: string; text: string }>)[0]!.text;
       const reply = JSON.parse(text) as McpEnvelope;
-      expect((await runStore.get(reply.run_id)).claims?.['step-one']?.holder).toEqual(DRIVER);
+      expect((await runStore.get(reply.run_id)).record.claims?.['step-one']?.holder).toEqual(
+        DRIVER,
+      );
     } finally {
       await client.close();
     }
@@ -534,7 +555,7 @@ describe('the answer as data — an answer-only step, a planted name, a long nam
       { run_id: o.runId, gate_id: o.gateId, choice: 'approve' },
       { runStore, workflowStore },
     );
-    const run = await runStore.get(o.runId);
+    const { record: run } = await runStore.get(o.runId);
     await runStore.update({
       ...run,
       evidence: run.evidence

@@ -13,6 +13,7 @@ import {
   type PlaceholderEvent,
 } from './render-template.js';
 import { stepBrief } from './ways.js';
+import { writtenSnapshot } from './snapshot.js';
 import type { RunRecord, WorkflowContextSnapshot } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 
@@ -30,6 +31,8 @@ const ctx = {
     wrapper: 'xml' as const,
   },
 };
+/** #715 (b): a fixed render instant for the cells that render `from_now`. */
+const AT = { at: new Date('2026-01-01T00:00:00Z') };
 /** A template that runs every filter of `applyFilter` once, plus unresolved and context ones. */
 const EVERY_FILTER =
   'Start. {{ workflow.context.rules }} {{ workflow.context.tone.raw | upper }} ' +
@@ -49,8 +52,10 @@ const EVERY_FILTER =
 describe('caching 3-B A1 — the placeholder observer is pure', () => {
   it('(a) the output is byte-identical with and without an observer, over every filter', () => {
     const events: PlaceholderEvent[] = [];
-    const plain = renderTemplate(EVERY_FILTER, ctx);
+    // #715 (b): a fixed render instant, so `from_now` resolves (with none it is left as written).
+    const plain = renderTemplate(EVERY_FILTER, ctx, { time: AT });
     const watched = renderTemplate(EVERY_FILTER, ctx, {
+      time: AT,
       onPlaceholder: (e) => {
         events.push(e);
         return 'ignored' as never;
@@ -64,6 +69,8 @@ describe('caching 3-B A1 — the placeholder observer is pure', () => {
     });
     // Every placeholder was seen, and each event's span is its replacement in the output.
     expect(events).toHaveLength([...EVERY_FILTER.matchAll(/\{\{([^{}]+)\}\}/g)].length);
+    // `from_now` ran at the fixed instant (its placeholder is not left as written).
+    expect(plain.includes('from_now')).toBe(false);
   });
 
   it('(b) the observer sees the unresolved placeholders onSubstitution never sees', () => {
@@ -163,6 +170,22 @@ describe('caching 3-B A2 — one derivation, never at the gate mint', () => {
     ).toEqual({
       chars: 'All static Be kind..'.length,
       unit: 'utf16',
+    });
+  });
+
+  it('#715 (b): the render instant is forwarded, and a `from_now` at it is where the head ends', () => {
+    const template = 'Rules: {{ workflow.context.tone.raw }} Due {{ run.params.when | from_now }}.';
+    const { text, stable } = renderTemplateWithBoundary(template, ctx, { time: AT });
+    // (a) red when the wrapper drops `time` (the `from_now` placeholder is then left as written, and
+    //     the text differs from renderTemplate's at the same instant); (b) prints the text and boundary.
+    expect({
+      text,
+      same: text === renderTemplate(template, ctx, { time: AT }),
+      head: text.slice(0, stable.chars),
+    }).toEqual({
+      text: expect.not.stringContaining('from_now'),
+      same: true,
+      head: 'Rules: Be kind. Due ',
     });
   });
 
@@ -287,12 +310,14 @@ describe('caching 3-B A3 — which placeholders are stable', () => {
       failed_steps: [],
       workflow_context_snapshots: { rules: snap('Be brief.') },
     } as unknown as RunRecord;
-    const brief = stepBrief(def, run, 'ask');
+    // #715 (b): the brief is rendered at a snapshot's reading; this prompt has no `from_now`.
+    const snapshot = writtenSnapshot(run, new Date('2026-01-01T00:00:00Z'));
+    const brief = stepBrief(def, snapshot, 'ask');
     // (a) red when stepBrief drops the boundary or computes it from another render; (b) prints them.
     expect({ prompt: brief.prompt, stable: brief.stable_prefix }).toEqual({
       prompt: 'Rules:\n<rules>\nBe brief.\n</rules>\nName: Ada',
       stable: { chars: 'Rules:\n<rules>\nBe brief.\n</rules>\nName: '.length, unit: 'utf16' },
     });
-    expect('stable_prefix' in stepBrief(def, run, 'plain')).toBe(false);
+    expect('stable_prefix' in stepBrief(def, snapshot, 'plain')).toBe(false);
   });
 });

@@ -16,14 +16,20 @@
 //
 // issue #291 (Deliverable 4a): submitHumanResponse's migrated path gained a NINTH site — the
 // `expire_gate` settleStep call issued when the [F3] `gate_expired_pending` write-free refusal
-// fires ([F3] shape c: the caller reacts to the refusal with its OWN settleStep, rather than
-// applySettleGate enacting anything itself). The legacy (non-declaring-store) path does NOT add
-// a tenth site: per [F4]'s explicit decision, it enacts via the pure `applySettlement` transform
-// directly + this store's OWN `store.update()` CAS write (it has no `settleStep` to call at
-// all) — so the count stays keyed on `.settleStep(` invocations specifically, not on "every
-// expiry-enactment call site" more broadly. A future accidental TENTH `.settleStep(` call site
-// (or a stray call outside execution-loop.ts) fails this test loudly, the same anti-recurrence
-// discipline the deleted PR-A guard had, inverted.
+// fired ([F3] shape c: the caller reacted to the refusal with its OWN settleStep). A future
+// accidental extra `.settleStep(` call site (or a stray call outside the files named below) fails
+// this test loudly, the same anti-recurrence discipline the deleted PR-A guard had, inverted.
+//
+// #715 (b) — the set, member by member, and the mechanism that puts each one here (12):
+//   execution-loop.ts (11): complete, fail, handler-abort (PR-B); gate-open, gate-resolution,
+//     guard-chain, capability-release, compensating-unclaim (PR-D); expire_gate in
+//     `enactExpiredGateIfDue` (#291 4b); lease_finalizer and mark_finalizer in `drainFinalizers` —
+//     before #715 (b) these two were calls through a bound alias (`const settleStep =
+//     store.settleStep?.bind(store)`, the dormancy guard C.1 deletes) that this literal scan
+//     could not see; they are direct calls now.
+//   abandon-run.ts (1): the `seal_run` delta (D-21) — the run-level seal moved off `update()`.
+// GONE: #291 4a's second write — the late answer's expiry is enacted INSIDE the settle_gate write
+// (A.8 (iii)), so submitHumanResponse no longer issues an `expire_gate` after a refusal.
 //
 // Invocation-scoped (matches `.settleStep(` literally, not a bare `settleStep` name match) so this
 // module's own JSDoc prose can mention the identifier freely without self-tripping the count.
@@ -43,12 +49,10 @@ const SCANNED_ROOTS = [
 ];
 
 const INVOCATION = '.settleStep(';
-// complete/fail/handler-abort (PR-B) + gate-open/gate-resolution/guard-chain/capability-release/
-// compensating-unclaim (PR-D, increment 2) + expire_gate on the [F3] gate_expired_pending
-// refusal leg (submitHumanResponse) + expire_gate on the execute_step pre-refusal enact-then-
-// proceed leg (`enactExpiredGateIfDue`) — both issue #291, Deliverable 4a/4b.
-const EXPECTED_SITE_COUNT = 10;
+// The twelve members, each with its mechanism, are listed in the header (#715 (b)).
+const EXPECTED_SITE_COUNT = 12;
 const MIGRATED_FILE = join(PACKAGES_DIR, 'core', 'src', 'engine', 'execution-loop.ts');
+const SEAL_RUN_FILE = join(PACKAGES_DIR, 'core', 'src', 'engine', 'abandon-run.ts');
 
 /** Every non-test, non-declaration .ts source file under `root`, recursively. */
 function sourceFiles(root: string): string[] {
@@ -82,7 +86,7 @@ function findInvocationSites(): { file: string; line: number; text: string }[] {
   return sites;
 }
 
-describe('RunStore.settleStep is MIGRATED at exactly ten sites — increment 2 PR-D + issue #291', () => {
+describe('RunStore.settleStep is MIGRATED at exactly twelve sites — increment 2 PR-D + issue #291 + #715 (b)', () => {
   it('the scan itself is wired correctly (finds at least one .ts source file per root)', () => {
     for (const root of SCANNED_ROOTS) {
       expect(
@@ -92,7 +96,7 @@ describe('RunStore.settleStep is MIGRATED at exactly ten sites — increment 2 P
     }
   });
 
-  it(`EXACTLY ${EXPECTED_SITE_COUNT} '.settleStep(' invocation sites exist (complete/fail/handler-abort/gate-open/gate-resolution/guard-chain/capability-release/compensating-unclaim/expire-gate-submit/expire-gate-execute-step)`, () => {
+  it(`EXACTLY ${EXPECTED_SITE_COUNT} '.settleStep(' invocation sites exist (complete/fail/handler-abort/gate-open/gate-resolution/guard-chain/capability-release/compensating-unclaim/expire-gate-execute-step/lease-finalizer/mark-finalizer/seal-run-abandon)`, () => {
     const sites = findInvocationSites();
     expect(
       sites.length,
@@ -103,17 +107,16 @@ describe('RunStore.settleStep is MIGRATED at exactly ten sites — increment 2 P
     ).toBe(EXPECTED_SITE_COUNT);
   });
 
-  it('every invocation site lives in execution-loop.ts — none anywhere else (mcp-server stays clean)', () => {
+  it('every invocation site lives in execution-loop.ts, but the ONE seal_run in abandon-run.ts — none anywhere else (mcp-server stays clean)', () => {
     const sites = findInvocationSites();
     const elsewhere = sites.filter((s) => s.file !== MIGRATED_FILE);
+    // (a) red when a settle call appears in any other file, or abandon-run.ts's seal leaves or
+    // doubles; (b) prints each site found outside execution-loop.ts.
     expect(
-      elsewhere,
-      elsewhere.length > 0
-        ? `Found '.settleStep(' invocation site(s) OUTSIDE execution-loop.ts (increment 2 ` +
-            `territory — gate-open/gate-resolution/guard seals must stay on the legacy path this ` +
-            `increment):\n${elsewhere.map((s) => `  ${s.file}:${s.line}: ${s.text}`).join('\n')}`
-        : '',
-    ).toEqual([]);
+      elsewhere.map((s) => s.file),
+      `'.settleStep(' invocation site(s) OUTSIDE execution-loop.ts:\n` +
+        elsewhere.map((s) => `  ${s.file}:${s.line}: ${s.text}`).join('\n'),
+    ).toEqual([SEAL_RUN_FILE]);
   });
 
   it('settlement.ts declares applySettlement and selectFinalizers as its exported surface (sanity check on the module this pin is about)', () => {
@@ -181,8 +184,8 @@ describe('applySettlement is deterministic — same inputs + fixed now ⇒ deep-
     };
     const now = new Date('2026-03-15T09:30:00.000Z');
 
-    const first = applySettlement(fresh, delta, definition, { now });
-    const second = applySettlement(fresh, delta, definition, { now });
+    const first = applySettlement(fresh, delta, definition, { at: now });
+    const second = applySettlement(fresh, delta, definition, { at: now });
 
     expect(first).toEqual(second);
     // Sanity: the fixture actually exercises the applied path (a vacuously-equal pair of

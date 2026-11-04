@@ -42,7 +42,7 @@ describe('workflow end-to-end', () => {
     const definition = loadWorkflowFromString(WORKFLOW_YAML);
     const dispatcher = async () => ({});
 
-    const { run: run0 } = await store.create({
+    const { record: run0 } = await store.create({
       workflowId: definition.id,
       workflowVersion: definition.version,
       params: {},
@@ -64,7 +64,7 @@ describe('workflow end-to-end', () => {
     });
     expect(res2.status).toBe('ok');
 
-    const finalRun = await store.get(run0.id);
+    const { record: finalRun } = await store.get(run0.id);
     expect(finalRun.run_phase).toBe('completed');
     expect(finalRun.terminal_state).toBe(true);
     expect(finalRun.evidence).toHaveLength(2);
@@ -74,7 +74,7 @@ describe('workflow end-to-end', () => {
     const definition = loadWorkflowFromString(WORKFLOW_YAML);
     const dispatcher = async () => ({});
 
-    const { run: run0 } = await store.create({
+    const { record: run0 } = await store.create({
       workflowId: definition.id,
       workflowVersion: definition.version,
       params: {},
@@ -94,7 +94,7 @@ describe('workflow end-to-end', () => {
       dispatcher,
     });
 
-    const finalRun = await store.get(run0.id);
+    const { record: finalRun } = await store.get(run0.id);
     expect(finalRun.evidence[0]?.step_id).toBe('step_one');
     expect(finalRun.evidence[0]?.status).toBe('success');
     expect(finalRun.evidence[1]?.step_id).toBe('step_two');
@@ -104,7 +104,7 @@ describe('workflow end-to-end', () => {
   it('depends_on blocks out-of-order execution', async () => {
     const definition = loadWorkflowFromString(WORKFLOW_YAML);
 
-    const { run: run0 } = await store.create({
+    const { record: run0 } = await store.create({
       workflowId: definition.id,
       workflowVersion: definition.version,
       params: {},
@@ -150,7 +150,7 @@ steps:
     const registry = new ExtensionRegistry();
     registry.register('handler', 'config_capture', captureHandler);
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: definition.version,
       params: {},
@@ -193,7 +193,7 @@ describe('workflow_context integration', () => {
     );
     const definition = loadWorkflowFromFile(join(wfDir, 'workflow.yaml'));
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: definition.version,
       params: {},
@@ -206,7 +206,7 @@ describe('workflow_context integration', () => {
       dispatcher: async () => ({ result: 'done' }),
     });
 
-    const finalRun = await store.get(run.id);
+    const { record: finalRun } = await store.get(run.id);
     expect(finalRun.workflow_context_snapshots).toBeDefined();
     expect(finalRun.workflow_context_snapshots!['rules']).toBeDefined();
     expect(finalRun.workflow_context_snapshots!['rules']!.content).toBe('# Rules\nBe concise.');
@@ -221,7 +221,7 @@ describe('workflow_context integration', () => {
     );
     const definition = loadWorkflowFromFile(join(wfDir, 'workflow.yaml'));
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: definition.version,
       params: {},
@@ -237,7 +237,7 @@ describe('workflow_context integration', () => {
     expect(res1.status).toBe('ok');
 
     // The run now has workflow_context_snapshots loaded. step_two prompt should be resolved.
-    const res1Run = await store.get(run.id);
+    const { record: res1Run } = await store.get(run.id);
     // Snapshot was loaded at step_one — verify it exists.
     expect(res1Run.workflow_context_snapshots?.['schema']?.content).toBe('{"type":"object"}');
 
@@ -259,7 +259,7 @@ describe('workflow_context integration', () => {
     );
     const definition = loadWorkflowFromFile(join(wfDir, 'workflow.yaml'));
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: definition.version,
       params: {},
@@ -274,7 +274,7 @@ describe('workflow_context integration', () => {
     // Step still executes — not blocked by missing context file.
     expect(result.status).toBe('ok');
 
-    const finalRun = await store.get(run.id);
+    const { record: finalRun } = await store.get(run.id);
     expect(finalRun.workflow_context_snapshots!['rules']!.error).toBeTruthy();
     expect(finalRun.workflow_context_snapshots!['rules']!.content).toBe('');
   });
@@ -288,7 +288,7 @@ describe('workflow_context integration', () => {
     );
     const definition = loadWorkflowFromFile(join(wfDir, 'workflow.yaml'));
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: definition.version,
       params: {},
@@ -301,7 +301,7 @@ describe('workflow_context integration', () => {
       dispatcher: async () => ({}),
     });
 
-    const finalRun = await store.get(run.id);
+    const { record: finalRun } = await store.get(run.id);
     expect(finalRun.completed_steps).not.toContain('rules');
     expect(finalRun.in_progress_steps).not.toContain('rules');
     expect(finalRun.evidence.map((e) => e.step_id)).not.toContain('rules');

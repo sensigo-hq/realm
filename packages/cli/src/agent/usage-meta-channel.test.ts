@@ -45,8 +45,8 @@ const CS1_SHAPED_WF = {
 } as unknown as WorkflowDefinition;
 
 async function onlyRun(store: InMemoryStore): Promise<RunRecord> {
-  const runs = await store.list();
-  return store.get(runs[0]!.id);
+  const runs = (await store.list()).snapshots.map((s) => s.record);
+  return (await store.get(runs[0]!.id)).record;
 }
 
 describe('issue #600 PR 1a (D1b) — GREEN: on this branch, the same arm is re-routed, and usage reaches the persisted record', () => {

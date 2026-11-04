@@ -135,8 +135,12 @@ describe(
           throw new Error('fake failure');
         },
       });
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
-      for (let i = 0; i < 20 && !(await store.get(run.id)).terminal_state; i += 1) {
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
+      for (let i = 0; i < 20 && !(await store.get(run.id)).record.terminal_state; i += 1) {
         await advanceRun(store, def, { runId: run.id, registry }).catch(() => undefined);
       }
       const r = spawnSync(process.execPath, [CLI, 'run', 'inspect', run.id], {
@@ -148,7 +152,7 @@ describe(
       // (a) red when the placeholder holds every step, or breaks the line in two; (b) prints the
       //     phase and the line.
       expect({
-        phase: (await store.get(run.id)).terminal_state,
+        phase: (await store.get(run.id)).record.terminal_state,
         lines: lines.length,
         bounded: lines[0]?.includes(`--from <one of: ${steps.slice(0, 10).join(', ')} and 1 more>`),
       }).toEqual({ phase: true, lines: 1, bounded: true });

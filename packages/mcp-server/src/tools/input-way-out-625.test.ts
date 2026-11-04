@@ -57,7 +57,7 @@ async function advance(def: WorkflowDefinition, params: Record<string, unknown>)
   const runStore = new JsonFileStore(join(dir, 'runs'));
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
   await workflowStore.register(def);
-  const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params });
+  const { record: run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params });
   const reply = await handleAdvanceRun({ run_id: run.id }, { runStore, workflowStore });
   return { reply, runStore, workflowStore, id: run.id };
 }
@@ -106,7 +106,7 @@ describe('#625 PR-2a, F15 — the input-schema way out is true for both kinds of
       status: ran.status,
       code: ran.error_code,
       action: ran.agent_action,
-      done: (await r.runStore.get(r.id)).completed_steps,
+      done: (await r.runStore.get(r.id)).record.completed_steps,
       way: hint.slice(hint.indexOf(' For ')),
     }).toEqual({
       status: 'error',

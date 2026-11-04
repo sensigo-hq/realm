@@ -13,6 +13,7 @@ import { declared } from '../test-support/declared.js';
 import { describe, it, expect } from 'vitest';
 import type { RunRecord, RunStore, SealedBy } from '@sensigo/realm';
 import { handleGetRunState } from './get-run-state.js';
+import { snap, doubleClock, noSettle } from '../test-support/snapshot-double.js';
 
 const RULING = {
   by: 'mihai',
@@ -46,9 +47,11 @@ function makeRun(sealedBy: SealedBy | undefined, over: Partial<RunRecord> = {}):
 
 function makeStore(run: RunRecord): RunStore {
   return declared({
+    clock: doubleClock,
+    settleStep: noSettle,
     persistsClaims: true,
     async get() {
-      return run;
+      return snap(run);
     },
     async create() {
       throw new Error('not exercised by get_run_state');

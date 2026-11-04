@@ -2861,13 +2861,13 @@ describe('issue #933 — a precondition or a guard whose path starts outside the
     const dir = mkdtempSync(join(tmpdir(), 'realm-933-when-'));
     try {
       const store = new JsonFileStore(dir);
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: definition.id,
         workflowVersion: 1,
         params: { mode: 'stop' },
       });
       await advanceRun(store, definition, { runId: run.id });
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       expect({
         skipped: after.skipped_steps,
         why: after.skip_details?.['s']?.kind,

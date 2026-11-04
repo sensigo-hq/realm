@@ -10,7 +10,7 @@ import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   JsonFileStore,
@@ -21,10 +21,12 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type StepDefinition,
   type WorkflowDefinition,
+  writeTestClockFile,
 } from '@sensigo/realm';
 import { inspectRun } from './inspect.js';
 import { sweepExpiredGates } from './listen.js';
 import { printChildrenWhenATestFails } from '../test-support/child-output.js';
+import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 if (!existsSync(CLI_ENTRY)) {
@@ -90,29 +92,37 @@ const inputWayOut = (id: string, deps: boolean): string =>
       : 'start a run with params that fit, or correct its input_schema and register the workflow again'
   }; then, after a fix, realm run advance ${id} — or end it: realm run abandon ${id}`;
 
-async function stores(): Promise<{
+async function stores(located = false): Promise<{
   home: string;
   runs: JsonFileStore;
   workflows: JsonWorkflowStore;
+  clock?: TestLocation['clock'];
 }> {
   const home = mkdtempSync(join(tmpdir(), 'realm-cannot-go-on-625-'));
+  // #715 (b) 04 §D (B4): `located` makes `~/.realm` a test location BEFORE the store opens (a store
+  // takes its clock when it is built), so a cell moves the clock the spawned `realm` reads instead of
+  // waiting on the real one.
+  const loc = located
+    ? await createTestLocation({ start: new Date(), root: join(home, '.realm') })
+    : undefined;
   return {
     home,
     runs: new JsonFileStore(join(home, '.realm', 'runs')),
     workflows: new JsonWorkflowStore(join(home, '.realm', 'workflows')),
+    ...(loc !== undefined ? { clock: loc.clock } : {}),
   };
 }
 
 /** A run at its open gate: `decide` opened, unanswered. */
 async function atGate(runs: JsonFileStore, d: WorkflowDefinition): Promise<[string, string]> {
-  const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+  const { record: run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
   await executeStep(runs, d, {
     runId: run.id,
     command: 'decide',
     input: {},
     dispatcher: async () => ({}),
   });
-  return [run.id, (await runs.get(run.id)).pending_gate!.gate_id];
+  return [run.id, (await runs.get(run.id)).record.pending_gate!.gate_id];
 }
 
 describe('#625 PR-2a, C62 — realm run respond and realm run inspect in the "cannot go on" state', () => {
@@ -170,13 +180,17 @@ describe('#625 PR-2a, C62 — realm run respond and realm run inspect in the "ca
       });
       await workflows.register(stuck);
       await workflows.register(ready);
-      const { run } = await runs.create({ workflowId: stuck.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: stuck.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const lines = (await inspectRun(run.id, runs, workflows)).split('\n');
       const at = lines.indexOf(`Cannot run 'compute' (input_schema): ${REFUSAL}`);
       expect(at).toBeGreaterThan(-1);
       expect(lines[at + 1]).toBe(LEVER_FACT);
       expect(lines[at + 2]).toBe(inputWayOut(run.id, false));
-      const { run: c } = await runs.create({
+      const { record: c } = await runs.create({
         workflowId: ready.id,
         workflowVersion: 1,
         params: {},
@@ -201,13 +215,17 @@ describe('#625 PR-2a, C64 — the census: drain, resume and the sweeper name the
       });
       await workflows.register(stuck);
       await workflows.register(ready);
-      const { run } = await runs.create({ workflowId: stuck.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: stuck.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const r = realm(home, ['run', 'drain', run.id]);
       expect(r.status).toBe(0);
       expect(r.stdout.trim()).toBe(
         `Run '${run.id}' is not terminal (phase: 'running') — nothing to drain. ${clause} ${LEVER} ${inputWayOut(run.id, false)}`,
       );
-      const { run: c } = await runs.create({
+      const { record: c } = await runs.create({
         workflowId: ready.id,
         workflowVersion: 1,
         params: {},
@@ -223,12 +241,12 @@ describe('#625 PR-2a, C64 — the census: drain, resume and the sweeper name the
   }, 60000);
 
   it('drain --expired --force whose expiry leaves the run unable to go on: the step and the way out after its line', async () => {
-    const { home, runs, workflows } = await stores();
+    const { home, runs, workflows, clock } = await stores(true);
     try {
       const d = wf('c64-expiry', { decide: gate(true), compute: needsN(['decide']) });
       await workflows.register(d);
       const [id] = await atGate(runs, d);
-      await new Promise((r) => setTimeout(r, 1300));
+      await clock!.advance(1300);
       const r = realm(home, ['run', 'drain', id, '--expired', '--force']);
       expect(r.status).toBe(0);
       expect(r.stdout).toContain(
@@ -246,7 +264,11 @@ describe('#625 PR-2a, C64 — the census: drain, resume and the sweeper name the
         a: { description: 'A', execution: 'auto', depends_on: [], handler: 'boom' },
       });
       await workflows.register(v1);
-      const { run } = await runs.create({ workflowId: v1.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: v1.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const registry = new ExtensionRegistry();
       registry.register('handler', 'boom', {
         id: 'boom',
@@ -261,7 +283,7 @@ describe('#625 PR-2a, C64 — the census: drain, resume and the sweeper name the
         dispatcher: async () => ({}),
         registry,
       });
-      expect((await runs.get(run.id)).failed_steps).toEqual(['a']);
+      expect((await runs.get(run.id)).record.failed_steps).toEqual(['a']);
       await workflows.register(
         wf('c64-resume', {
           a: {
@@ -293,7 +315,11 @@ describe('#625 PR-2a, C64 — the census: drain, resume and the sweeper name the
         a: { description: 'A', execution: 'auto', depends_on: [], handler: 'boom' },
       });
       await workflows.register(v1);
-      const { run } = await runs.create({ workflowId: v1.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: v1.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const registry = new ExtensionRegistry();
       registry.register('handler', 'boom', {
         id: 'boom',
@@ -351,10 +377,13 @@ describe('#625 PR-2a, C64 — the census: drain, resume and the sweeper name the
         warn: () => {},
         error: () => {},
       };
-      await sweepExpiredGates(
-        { runStore: runs, workflowStore: workflows, logger } as never,
-        new Date(Date.now() + 3_600_000),
-      );
+      // #715 (b): the store's clock decides — the same folder reopened as a test location an hour on.
+      await writeTestClockFile(dirname(runs.runsDirPath), new Date(Date.now() + 3_600_000));
+      await sweepExpiredGates({
+        runStore: new JsonFileStore(runs.runsDirPath),
+        workflowStore: workflows,
+        logger,
+      } as never);
       const fields = (runId: string) =>
         logged.find(
           ([m, f]) => m === 'listen: sweeper enacted an expired gate' && f['run_id'] === runId,

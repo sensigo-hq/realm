@@ -484,7 +484,7 @@ describe('check_quotes on the engine — the step records, the author’s guard 
 
   async function drive(def: WorkflowDefinition) {
     const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-760-')));
-    const { run: created } = await store.create({
+    const { record: created } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
       params: {},
@@ -496,7 +496,7 @@ describe('check_quotes on the engine — the step records, the author’s guard 
       input: { text: SOURCE, candidates: [FOUND, INVENTED('repairs')] },
       dispatcher: async (_name, input) => ({ ...input }),
     });
-    return { reply, run: await store.get(created.id) };
+    return { reply, run: (await store.get(created.id)).record };
   }
 
   it('with depends_on: the check warns, the guard aborts the run, and the check’s record is kept', async () => {
@@ -694,7 +694,7 @@ describe('check_quotes — correction 1 (H6): the re-admission clause, by how th
 
   async function started(definition: WorkflowDefinition) {
     const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-760-r-')));
-    const { run: created } = await store.create({
+    const { record: created } = await store.create({
       workflowId: definition.id,
       workflowVersion: 1,
       params: {},
@@ -712,12 +712,12 @@ describe('check_quotes — correction 1 (H6): the re-admission clause, by how th
   it('a run that ends failed: resume runs the check again on the newly registered workflow', async () => {
     const faulty = def({ quote_feild: 'quote' });
     const { store, runId } = await started(faulty);
-    const failed = await store.get(runId);
+    const { record: failed } = await store.get(runId);
     const fixed = def({});
     const offer = offeredResumeWay(failed, fixed);
     await store.update(applyResume(failed, 'quote_check', fixed).run);
     await advanceRun(store, fixed, { runId, registry: createDefaultRegistry() });
-    const after = await store.get(runId);
+    const { record: after } = await store.get(runId);
     const check = [...after.evidence].reverse().find((e) => e.step_id === 'quote_check');
     // (a) red when the clause promises a resume that does not run the check again; (b) prints the
     //     phases, the offered command's step and the re-run check's flag.
@@ -743,7 +743,7 @@ describe('check_quotes — correction 1 (H6): the re-admission clause, by how th
     // and fails; the run goes on and completes.
     const definition = def({}, false);
     const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-760-c-')));
-    const { run: created } = await store.create({
+    const { record: created } = await store.create({
       workflowId: definition.id,
       workflowVersion: 1,
       params: {},
@@ -757,7 +757,7 @@ describe('check_quotes — correction 1 (H6): the re-admission clause, by how th
       input: { text: SOURCE, candidates: [FOUND] },
       dispatcher: async (_name, input) => ({ ...input }),
     });
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     const failure = run.evidence.find((e) => e.step_id === 'quote_check');
     const message = JSON.stringify(failure ?? {});
     // (a) red when the message promises a resume unconditionally ("runs the step again" with no

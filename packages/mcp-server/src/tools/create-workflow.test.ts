@@ -440,7 +440,7 @@ describe('end-to-end — create_workflow + execute_step walk to completion', () 
     expect(step2Result.next_actions.length).toBe(0);
 
     // Verify the run itself reached the terminal state.
-    const finalRun = await stores.runStore.get(step2Result.run_id);
+    const { record: finalRun } = await stores.runStore.get(step2Result.run_id);
     expect(finalRun.run_phase).toBe('completed');
   });
 });

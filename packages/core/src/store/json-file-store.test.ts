@@ -69,7 +69,7 @@ describe('JsonFileStore', () => {
   });
 
   it('create() produces a record with correct fields', async () => {
-    const { run: record } = await store.create({
+    const { record: record } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: { key: 'value' },
@@ -90,7 +90,7 @@ describe('JsonFileStore', () => {
   });
 
   it('create() writes file to disk', async () => {
-    const { run: record } = await store.create({
+    const { record: record } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -100,12 +100,12 @@ describe('JsonFileStore', () => {
   });
 
   it('get() returns the created record', async () => {
-    const { run: created } = await store.create({
+    const { record: created } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
     });
-    const fetched = await store.get(created.id);
+    const { record: fetched } = await store.get(created.id);
     expect(fetched).toEqual(created);
   });
 
@@ -117,13 +117,13 @@ describe('JsonFileStore', () => {
   });
 
   it('update() increments version and updates updated_at', async () => {
-    const { run: created } = await store.create({
+    const { record: created } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
     });
 
-    const updated = await store.update({
+    const { record: updated } = await store.update({
       ...created,
       completed_steps: ['step-one'],
     });
@@ -131,13 +131,13 @@ describe('JsonFileStore', () => {
     expect(updated.completed_steps).toContain('step-one');
     expect(updated.updated_at >= created.updated_at).toBe(true);
 
-    const fetched = await store.get(created.id);
+    const { record: fetched } = await store.get(created.id);
     expect(fetched.version).toBe(1);
     expect(fetched.completed_steps).toContain('step-one');
   });
 
   it('update() throws STATE_SNAPSHOT_MISMATCH on version conflict', async () => {
-    const { run: created } = await store.create({
+    const { record: created } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -159,7 +159,7 @@ describe('JsonFileStore', () => {
     await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
     await store.create({ workflowId: 'wf-2', workflowVersion: 1, params: {} });
 
-    const all = await store.list();
+    const all = (await store.list()).snapshots.map((s) => s.record);
     expect(all).toHaveLength(3);
   });
 
@@ -167,25 +167,25 @@ describe('JsonFileStore', () => {
     await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
     await store.create({ workflowId: 'wf-2', workflowVersion: 1, params: {} });
 
-    const filtered = await store.list('wf-1');
+    const filtered = (await store.list('wf-1')).snapshots.map((s) => s.record);
     expect(filtered).toHaveLength(1);
     expect(filtered[0]?.workflow_id).toBe('wf-1');
   });
 
   it('claimStep() returns run with step in in_progress_steps', async () => {
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
     });
 
-    const claimed = await store.claimStep(run.id, 'step-one', minimalDef);
+    const { record: claimed } = await store.claimStep(run.id, 'step-one', minimalDef);
     expect(claimed.in_progress_steps).toContain('step-one');
     expect(claimed.version).toBeGreaterThan(run.version);
   });
 
   it('claimStep() throws STATE_STEP_ALREADY_CLAIMED when step already in progress', async () => {
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -209,7 +209,7 @@ describe('JsonFileStore', () => {
       },
     };
 
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -238,7 +238,7 @@ describe('JsonFileStore.save()', () => {
   });
 
   it('writes a new record to disk', async () => {
-    const { run: record } = await store.create({
+    const { record: record } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -246,13 +246,13 @@ describe('JsonFileStore.save()', () => {
     // Delete it and re-save as an import.
     const newRecord = { ...record, id: 'imported-run-1' };
     await store.save(newRecord);
-    const fetched = await store.get('imported-run-1');
+    const { record: fetched } = await store.get('imported-run-1');
     expect(fetched.id).toBe('imported-run-1');
     expect(fetched.version).toBe(record.version);
   });
 
   it('is a no-op when called twice with the same record (same version)', async () => {
-    const { run: record } = await store.create({
+    const { record: record } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -264,7 +264,7 @@ describe('JsonFileStore.save()', () => {
   });
 
   it('throws STATE_RUN_DIVERGED when same ID exists with a different version', async () => {
-    const { run: record } = await store.create({
+    const { record: record } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -311,7 +311,7 @@ describe('JsonFileStore.save()', () => {
 
     // The on-disk file is a complete, valid record matching EXACTLY one of the two inputs —
     // never a torn/mixed write.
-    const finalRun = await store.get('concurrent-save-race');
+    const { record: finalRun } = await store.get('concurrent-save-race');
     expect([1, 2]).toContain(finalRun.version);
     const winner = finalRun.version === 1 ? recordA : recordB;
     expect(finalRun.params).toEqual(winner.params);
@@ -337,19 +337,27 @@ describe('JsonFileStore idempotency', () => {
   });
 
   it('create() without idempotencyKey always creates a new run', async () => {
-    const { run: r1 } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
-    const { run: r2 } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+    const { record: r1 } = await store.create({
+      workflowId: 'wf-1',
+      workflowVersion: 1,
+      params: {},
+    });
+    const { record: r2 } = await store.create({
+      workflowId: 'wf-1',
+      workflowVersion: 1,
+      params: {},
+    });
     expect(r1.id).not.toBe(r2.id);
   });
 
   it('create() with idempotencyKey returns the same run on second call', async () => {
-    const { run: r1 } = await store.create({
+    const { record: r1 } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
       idempotencyKey: 'k1',
     });
-    const { run: r2 } = await store.create({
+    const { record: r2 } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -359,7 +367,7 @@ describe('JsonFileStore idempotency', () => {
   });
 
   it('create() stores idempotency_key on the record', async () => {
-    const { run: record } = await store.create({
+    const { record: record } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -369,7 +377,7 @@ describe('JsonFileStore idempotency', () => {
   });
 
   it('create() with parentRunId stores parent_run_id on the record', async () => {
-    const { run: record } = await store.create({
+    const { record: record } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -379,13 +387,13 @@ describe('JsonFileStore idempotency', () => {
   });
 
   it('idempotency is scoped per workflow — same key on different workflowId creates a new run', async () => {
-    const { run: r1 } = await store.create({
+    const { record: r1 } = await store.create({
       workflowId: 'wf-a',
       workflowVersion: 1,
       params: {},
       idempotencyKey: 'k1',
     });
-    const { run: r2 } = await store.create({
+    const { record: r2 } = await store.create({
       workflowId: 'wf-b',
       workflowVersion: 1,
       params: {},
@@ -424,11 +432,11 @@ describe('JsonFileStore pointer index', () => {
       idempotencyKey: 'k1',
     });
     expect(second.created).toBe(false);
-    expect(second.run.id).toBe(first.run.id);
+    expect(second.record.id).toBe(first.record.id);
   });
 
   it('writes a pointer file under keys/ and keeps it invisible to list()', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: { a: 1 },
@@ -440,7 +448,7 @@ describe('JsonFileStore pointer index', () => {
     expect(ptr.run_id).toBe(run.id);
     expect(ptr.params_hash).toMatch(/^[0-9a-f]{64}$/);
     // The keys/ subdir must not surface in list().
-    const all = await store.list();
+    const all = (await store.list()).snapshots.map((s) => s.record);
     expect(all).toHaveLength(1);
     expect(all[0]!.id).toBe(run.id);
   });
@@ -455,15 +463,17 @@ describe('JsonFileStore pointer index', () => {
     const [a, b] = await Promise.all([store.create({ ...opts }), store.create({ ...opts })]);
     const createdFlags = [a.created, b.created].sort();
     expect(createdFlags).toEqual([false, true]);
-    expect(a.run.id).toBe(b.run.id);
+    expect(a.record.id).toBe(b.record.id);
     // Exactly one run file for the key.
-    const matches = (await store.list('wf-1')).filter((r) => r.idempotency_key === 'race');
+    const matches = (await store.list('wf-1')).snapshots
+      .map((s) => s.record)
+      .filter((r) => r.idempotency_key === 'race');
     expect(matches).toHaveLength(1);
     expect(await countRunFiles(dir)).toBe(1);
   });
 
   it('deterministic resolution: repeated create returns the same run regardless of other runs', async () => {
-    const { run: owner } = await store.create({
+    const { record: owner } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -473,7 +483,7 @@ describe('JsonFileStore pointer index', () => {
     await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
     await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
     for (let i = 0; i < 3; i++) {
-      const { run, created } = await store.create({
+      const { record: run, created } = await store.create({
         workflowId: 'wf-1',
         workflowVersion: 1,
         params: {},
@@ -485,7 +495,7 @@ describe('JsonFileStore pointer index', () => {
   });
 
   it('self-heal: a pointer to a deleted run reclaims (created:true, repoints)', async () => {
-    const { run: first } = await store.create({
+    const { record: first } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -493,7 +503,7 @@ describe('JsonFileStore pointer index', () => {
     });
     // Simulate a crash-orphan: delete the run file but leave the pointer.
     await unlink(join(dir, `${first.id}.json`));
-    const { run: second, created } = await store.create({
+    const { record: second, created } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -512,7 +522,7 @@ describe('JsonFileStore pointer index', () => {
     await writeFile(join(dir, 'legacy-1.json'), JSON.stringify(legacy, null, 2), 'utf8');
     expect(existsSync(keyPointerPath(dir, 'wf-1', 'k1'))).toBe(false);
 
-    const { run, created } = await store.create({
+    const { record: run, created } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -543,7 +553,7 @@ describe('JsonFileStore pointer index', () => {
     await writeFile(join(dir, 'dup-terminal.json'), JSON.stringify(terminal, null, 2), 'utf8');
     await writeFile(join(dir, 'dup-live.json'), JSON.stringify(live, null, 2), 'utf8');
 
-    const { run, created } = await store.create({
+    const { record: run, created } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -554,13 +564,13 @@ describe('JsonFileStore pointer index', () => {
   });
 
   it('param mismatch is detectable: matched run keeps its original params', async () => {
-    const { run: owner } = await store.create({
+    const { record: owner } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: { a: 1 },
       idempotencyKey: 'k1',
     });
-    const { run, created } = await store.create({
+    const { record: run, created } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: { a: 2 }, // different payload, same key
@@ -680,7 +690,7 @@ describe('JsonFileStore.save() index routing', () => {
     const ptr = JSON.parse(await readFile(keyPointerPath(dir, 'wf-1', 'k1'), 'utf8'));
     expect(ptr.run_id).toBe('imp-1');
     // A later create() with the same key resolves to the imported run.
-    const { run, created } = await store.create({
+    const { record: run, created } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -692,7 +702,7 @@ describe('JsonFileStore.save() index routing', () => {
 
   it('throws when the key is already owned by a different live run', async () => {
     // create() establishes a live owner for k1.
-    const { run: owner } = await store.create({
+    const { record: owner } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -743,7 +753,7 @@ describe('JsonFileStore re-encounter policy', () => {
     key: string,
     phase: 'completed' | 'failed' | 'aborted' | 'abandoned',
   ): Promise<string> {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -784,7 +794,7 @@ describe('JsonFileStore re-encounter policy', () => {
 
   it('terminal reuse (default) returns the existing run', async () => {
     const id = await seedTerminal('k1', 'failed');
-    const { run, created } = await store.create({
+    const { record: run, created } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -809,7 +819,7 @@ describe('JsonFileStore re-encounter policy', () => {
 
   it('rerun_if_failed supersedes a failed match (new run + repoint + old still gettable)', async () => {
     const oldId = await seedTerminal('k1', 'failed');
-    const { run, created } = await store.create({
+    const { record: run, created } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -821,12 +831,12 @@ describe('JsonFileStore re-encounter policy', () => {
     const ptr = JSON.parse(await readFile(keyPointerPath(dir, 'wf-1', 'k1'), 'utf8'));
     expect(ptr.run_id).toBe(run.id);
     // Old run remains on disk (auditable).
-    expect((await store.get(oldId)).id).toBe(oldId);
+    expect((await store.get(oldId)).record.id).toBe(oldId);
   });
 
   it('rerun_if_failed reuses a completed match (no new run)', async () => {
     const id = await seedTerminal('k1', 'completed');
-    const { run, created } = await store.create({
+    const { record: run, created } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -839,7 +849,7 @@ describe('JsonFileStore re-encounter policy', () => {
 
   it('rerun supersedes a completed match (new run + repoint)', async () => {
     const oldId = await seedTerminal('k1', 'completed');
-    const { run, created } = await store.create({
+    const { record: run, created } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -855,13 +865,13 @@ describe('JsonFileStore re-encounter policy', () => {
   // --- Live axis ---
 
   it('live use_existing (default) returns the running run', async () => {
-    const { run: owner } = await store.create({
+    const { record: owner } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
       idempotencyKey: 'k1',
     });
-    const { run, created } = await store.create({
+    const { record: run, created } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -890,7 +900,7 @@ describe('JsonFileStore re-encounter policy', () => {
   });
 
   it('live fail throws on a gate_waiting match too', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -921,7 +931,7 @@ describe('JsonFileStore re-encounter policy', () => {
 
   it('after rerun, deleting the pointer self-heals to the NEW run (not the superseded one)', async () => {
     const oldId = await seedTerminal('k1', 'completed');
-    const { run: newRun } = await store.create({
+    const { record: newRun } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -930,7 +940,7 @@ describe('JsonFileStore re-encounter policy', () => {
     });
     // Delete the pointer → force the lazy-legacy fallback to re-pick the canonical run.
     await unlink(keyPointerPath(dir, 'wf-1', 'k1'));
-    const { run: healed, created } = await store.create({
+    const { record: healed, created } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -943,7 +953,7 @@ describe('JsonFileStore re-encounter policy', () => {
 
   it('supersede writes the run file before repointing (both run files on disk, pointer at new)', async () => {
     const oldId = await seedTerminal('k1', 'failed');
-    const { run: newRun } = await store.create({
+    const { record: newRun } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -970,7 +980,7 @@ describe('JsonFileStore re-encounter policy', () => {
       failed_steps: ['s'],
     });
     await writeFile(join(dir, 'legacy-failed.json'), JSON.stringify(legacy, null, 2), 'utf8');
-    const { run, created } = await store.create({
+    const { record: run, created } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -987,7 +997,7 @@ describe('JsonFileStore re-encounter policy', () => {
 
   it('omitting both policy params reproduces PR 1 behavior (terminal match → reuse)', async () => {
     const id = await seedTerminal('k1', 'aborted');
-    const { run, created } = await store.create({
+    const { record: run, created } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -1013,7 +1023,7 @@ describe('JsonFileStore — atomic writes (torn-read safety)', () => {
   it('T1 — concurrency hammer: K updates × N concurrent reads, zero torn reads', async () => {
     const { store, dir } = await makeTmpStore();
     try {
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'hammer-wf',
         workflowVersion: 1,
         params: { pad: PAD_32KB },
@@ -1038,7 +1048,7 @@ describe('JsonFileStore — atomic writes (torn-read safety)', () => {
       let rec = run;
       for (let i = 0; i < 120; i++) {
         // K = 120 sequential updates, each writing the ≥32 KB record; version feeds the next.
-        rec = await store.update({ ...rec, params: { pad: PAD_32KB, i } });
+        rec = (await store.update({ ...rec, params: { pad: PAD_32KB, i } })).record;
       }
       done = true;
       await Promise.all(readers);
@@ -1069,7 +1079,7 @@ describe('JsonFileStore — atomic writes (torn-read safety)', () => {
 
       for (let i = 0; i < 12; i++) {
         // fresh-run write
-        const { run } = await store.create({
+        const { record: run } = await store.create({
           workflowId: 'wf-1',
           workflowVersion: 1,
           params: { pad: PAD_32KB, i },
@@ -1138,7 +1148,11 @@ describe('JsonFileStore.deleteAllForRun (issue #107)', () => {
   it('deletes the run file for a plain (no idempotency key) run', async () => {
     const { store, dir } = await makeTmpStore();
     try {
-      const { run } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+      });
       expect(existsSync(join(dir, `${run.id}.json`))).toBe(true);
       // issue #184: deleteAllForRun now re-verifies terminal state under its lock — a fresh
       // store.create() run is 'running' by default, so mark it terminal before purging it.
@@ -1160,7 +1174,7 @@ describe('JsonFileStore.deleteAllForRun (issue #107)', () => {
   it('deletes the owned idempotency pointer alongside the run file', async () => {
     const { store, dir } = await makeTmpStore();
     try {
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'wf-1',
         workflowVersion: 1,
         params: {},
@@ -1188,7 +1202,7 @@ describe('JsonFileStore.deleteAllForRun (issue #107)', () => {
   it('does NOT delete a pointer that a rerun/supersede has repointed to a newer run (mutation-probe #2 target)', async () => {
     const { store, dir } = await makeTmpStore();
     try {
-      const { run: oldRun } = await store.create({
+      const { record: oldRun } = await store.create({
         workflowId: 'wf-1',
         workflowVersion: 1,
         params: {},
@@ -1201,7 +1215,7 @@ describe('JsonFileStore.deleteAllForRun (issue #107)', () => {
         sealed_by: { arm: 'complete' },
         terminal_reason: 'Workflow completed.',
       });
-      const { run: newRun } = await store.create({
+      const { record: newRun } = await store.create({
         workflowId: 'wf-1',
         workflowVersion: 1,
         params: {},
@@ -1218,7 +1232,7 @@ describe('JsonFileStore.deleteAllForRun (issue #107)', () => {
       expect(existsSync(join(dir, `${oldRun.id}.json`))).toBe(false); // old run file gone
       expect(existsSync(ptrPath)).toBe(true); // pointer untouched
       expect(JSON.parse(await readFile(ptrPath, 'utf8')).run_id).toBe(newRun.id); // still the successor
-      expect((await store.get(newRun.id)).id).toBe(newRun.id); // successor completely unaffected
+      expect((await store.get(newRun.id)).record.id).toBe(newRun.id); // successor completely unaffected
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -1227,7 +1241,11 @@ describe('JsonFileStore.deleteAllForRun (issue #107)', () => {
   it('is idempotent: a second call, or a call on an already-gone run, is a no-op (never throws)', async () => {
     const { store, dir } = await makeTmpStore();
     try {
-      const { run } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+      });
       // issue #184: mark terminal before purging (see the first test in this describe for why).
       await store.update({
         ...run,
@@ -1251,7 +1269,11 @@ describe('JsonFileStore.deleteAllForRun (issue #107)', () => {
   it('ignores dirEntries (exact-path store — the batch hint is for glob-based stores only)', async () => {
     const { store, dir } = await makeTmpStore();
     try {
-      const { run } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+      });
       // issue #184: mark terminal before purging (see the first test in this describe for why).
       await store.update({
         ...run,
@@ -1280,7 +1302,11 @@ describe('JsonFileStore.deleteAllForRun — purge correctness (issue #184)', () 
     // trust a caller's earlier selection-time snapshot.
     const { store, dir } = await makeTmpStore();
     try {
-      const { run } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+      });
       await store.update({
         ...run,
         run_phase: 'abandoned',
@@ -1291,7 +1317,7 @@ describe('JsonFileStore.deleteAllForRun — purge correctness (issue #184)', () 
       // The "concurrent resume" — mirrors resume.ts's own field flip exactly, which since #367
       // includes STRIPPING `sealed_by` in the same write (a live run carrying a seal is an
       // orphan, and the store boundary refuses it).
-      const resumed = await store.get(run.id);
+      const { record: resumed } = await store.get(run.id);
       const { sealed_by: _sb, ...resumedBase } = resumed;
       await store.update({ ...resumedBase, run_phase: 'running', terminal_state: false });
 
@@ -1302,7 +1328,7 @@ describe('JsonFileStore.deleteAllForRun — purge correctness (issue #184)', () 
 
       // The run file MUST survive, completely intact — not partially deleted.
       expect(existsSync(join(dir, `${run.id}.json`))).toBe(true);
-      const survivor = await store.get(run.id);
+      const { record: survivor } = await store.get(run.id);
       expect(survivor.terminal_state).toBe(false);
       expect(survivor.run_phase).toBe('running');
     } finally {
@@ -1317,7 +1343,11 @@ describe('JsonFileStore.deleteAllForRun — purge correctness (issue #184)', () 
   it('drain_pending: refuses (STATE_RUN_BUSY, reason drain_pending) when a finalizer ledger entry is still pending, and the run file survives intact', async () => {
     const { store, dir } = await makeTmpStore();
     try {
-      const { run } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+      });
       await store.update({
         ...run,
         run_phase: 'completed',
@@ -1333,7 +1363,7 @@ describe('JsonFileStore.deleteAllForRun — purge correctness (issue #184)', () 
       });
 
       expect(existsSync(join(dir, `${run.id}.json`))).toBe(true);
-      const survivor = await store.get(run.id);
+      const { record: survivor } = await store.get(run.id);
       expect(survivor.finalizer_ledger?.['fin']?.status).toBe('pending');
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -1343,7 +1373,11 @@ describe('JsonFileStore.deleteAllForRun — purge correctness (issue #184)', () 
   it('drain_pending: a run whose finalizer ledger has NO pending entries (completed/failed/voided only) deletes normally', async () => {
     const { store, dir } = await makeTmpStore();
     try {
-      const { run } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+      });
       await store.update({
         ...run,
         run_phase: 'completed',
@@ -1378,7 +1412,11 @@ describe('JsonFileStore.deleteAllForRun — purge correctness (issue #184)', () 
   it('ELOCKED: refuses (STATE_RUN_BUSY, reason locked) when another writer holds the run-file lock, and the run file survives untouched', async () => {
     const { store, dir } = await makeTmpStore();
     try {
-      const { run } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+      });
       await store.update({
         ...run,
         run_phase: 'completed',
@@ -1424,7 +1462,7 @@ describe('JsonFileStore.deleteAllForRun — purge correctness (issue #184)', () 
     // a few ms regardless of this external hold) and then succeeds once it's free.
     const { store, dir } = await makeTmpStore();
     try {
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'wf-1',
         workflowVersion: 1,
         params: {},
@@ -1491,7 +1529,7 @@ describe('JsonFileStore ENOENT hardening (issue #107)', () => {
     try {
       const ids: string[] = [];
       for (let i = 0; i < 40; i++) {
-        const { run } = await store.create({
+        const { record: run } = await store.create({
           workflowId: 'wf-1',
           workflowVersion: 1,
           params: { i },
@@ -1538,17 +1576,17 @@ describe('JsonFileStore ENOENT hardening (issue #107)', () => {
     // ordering — either way, list() must return every OTHER run's record intact.
     const { store, dir } = await makeTmpStore();
     try {
-      const { run: keep1 } = await store.create({
+      const { record: keep1 } = await store.create({
         workflowId: 'wf-1',
         workflowVersion: 1,
         params: {},
       });
-      const { run: victim } = await store.create({
+      const { record: victim } = await store.create({
         workflowId: 'wf-1',
         workflowVersion: 1,
         params: {},
       });
-      const { run: keep2 } = await store.create({
+      const { record: keep2 } = await store.create({
         workflowId: 'wf-1',
         workflowVersion: 1,
         params: {},
@@ -1563,7 +1601,7 @@ describe('JsonFileStore ENOENT hardening (issue #107)', () => {
       });
 
       const [, all] = await Promise.all([store.deleteAllForRun(victim.id), store.list()]);
-      const ids = all.map((r) => r.id);
+      const ids = all.snapshots.map((x) => x.record.id);
       expect(ids).toContain(keep1.id);
       expect(ids).toContain(keep2.id);
     } finally {
@@ -1576,8 +1614,16 @@ describe('JsonFileStore.listRunIds (issue #163)', () => {
   it('returns the raw <id>.json basename set — no record parse', async () => {
     const { store, dir } = await makeTmpStore();
     try {
-      const { run: a } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
-      const { run: b } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+      const { record: a } = await store.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+      });
+      const { record: b } = await store.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+      });
 
       const ids = await store.listRunIds();
 
@@ -1607,7 +1653,7 @@ describe('JsonFileStore.listRunIds (issue #163)', () => {
   it('ignores the keys/ subdirectory and any non-.json entries', async () => {
     const { store, dir } = await makeTmpStore();
     try {
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'wf-1',
         workflowVersion: 1,
         params: {},
@@ -1717,7 +1763,11 @@ describe('JsonFileStore — exhausted ELOCKED reclassified as STATE_RUN_BUSY (is
   it('update(): a mocked exhausted lock acquisition throws STATE_RUN_BUSY (retryable:true, reason:locked) — not a fatal error', async () => {
     const { store, dir } = await makeTmpStore();
     try {
-      const { run } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+      });
       vi.spyOn(lockfile, 'lock').mockRejectedValueOnce(elockedErr());
 
       await expect(store.update({ ...run, run_phase: 'running' })).rejects.toMatchObject({
@@ -1733,7 +1783,11 @@ describe('JsonFileStore — exhausted ELOCKED reclassified as STATE_RUN_BUSY (is
   it('claimStep(): a mocked exhausted lock acquisition throws STATE_RUN_BUSY (retryable:true, reason:locked) — the release()/finally shape for the SUCCESS path is untouched', async () => {
     const { store, dir } = await makeTmpStore();
     try {
-      const { run } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+      });
       vi.spyOn(lockfile, 'lock').mockRejectedValueOnce(elockedErr());
 
       await expect(store.claimStep(run.id, 'step-one', minimalDef)).rejects.toMatchObject({
@@ -1744,7 +1798,7 @@ describe('JsonFileStore — exhausted ELOCKED reclassified as STATE_RUN_BUSY (is
 
       // The mock was one-shot (mockRejectedValueOnce) — a genuine, unmocked claimStep still
       // succeeds afterward, proving the try/catch wrap didn't disturb the success path at all.
-      const claimed = await store.claimStep(run.id, 'step-one', minimalDef);
+      const { record: claimed } = await store.claimStep(run.id, 'step-one', minimalDef);
       expect(claimed.in_progress_steps).toContain('step-one');
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -1771,7 +1825,11 @@ describe('JsonFileStore — exhausted ELOCKED reclassified as STATE_RUN_BUSY (is
   it('update(): ENOENT is STILL mapped to STATE_RUN_NOT_FOUND — the new ELOCKED branch does not clobber the pre-existing TOCTOU mapping (a file present at the existsSync guard but gone by the time the lock is attempted)', async () => {
     const { store, dir } = await makeTmpStore();
     try {
-      const { run } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+      });
       // The file genuinely exists (existsSync passes) — mock ONLY the lock call itself to
       // reproduce the documented TOCTOU race (issue #107's own comment on this catch block).
       vi.spyOn(lockfile, 'lock').mockRejectedValueOnce(
@@ -1789,7 +1847,11 @@ describe('JsonFileStore — exhausted ELOCKED reclassified as STATE_RUN_BUSY (is
   it('update(): an unrecognized lock-acquisition errno is neither swallowed nor reclassified — it propagates as-is', async () => {
     const { store, dir } = await makeTmpStore();
     try {
-      const { run } = await store.create({ workflowId: 'wf-1', workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+      });
       vi.spyOn(lockfile, 'lock').mockRejectedValueOnce(
         Object.assign(new Error('permission denied'), { code: 'EACCES' }),
       );
@@ -1824,17 +1886,17 @@ describe('JsonFileStore — rerun_of, the supersede link (issue #558 PR-C)', () 
   it('the pointer-target path: abandon then `rerun` stamps rerun_of and leaves the old record untouched', async () => {
     const first = await store.create({ ...opts });
     expect(first.created).toBe(true);
-    expect(first.run.rerun_of).toBeUndefined();
-    const abandoned = await abandonRun(store, first.run.id, 'Abandoned via realm run abandon');
+    expect(first.record.rerun_of).toBeUndefined();
+    const abandoned = await abandonRun(store, first.record.id, 'Abandoned via realm run abandon');
     const versionAfterAbandon = abandoned.version;
 
     const second = await store.create({ ...opts, onTerminalMatch: 'rerun' });
 
     expect(second.created).toBe(true);
-    expect(second.run.id).not.toBe(first.run.id);
-    expect(second.run.rerun_of).toBe(first.run.id);
+    expect(second.record.id).not.toBe(first.record.id);
+    expect(second.record.rerun_of).toBe(first.record.id);
     // The superseded run stays on disk, byte-for-byte as the abandon left it.
-    const old = await store.get(first.run.id);
+    const { record: old } = await store.get(first.record.id);
     expect(old.version).toBe(versionAfterAbandon);
     expect(old.run_phase).toBe('abandoned');
     expect(old.rerun_of).toBeUndefined();
@@ -1842,17 +1904,17 @@ describe('JsonFileStore — rerun_of, the supersede link (issue #558 PR-C)', () 
 
   it('a `reuse` re-encounter returns the SAME run and stamps nothing', async () => {
     const first = await store.create({ ...opts });
-    await abandonRun(store, first.run.id, 'Abandoned via realm run abandon');
+    await abandonRun(store, first.record.id, 'Abandoned via realm run abandon');
 
     const second = await store.create({ ...opts, onTerminalMatch: 'reuse' });
 
     expect(second.created).toBe(false);
-    expect(second.run.id).toBe(first.run.id);
-    expect(second.run.rerun_of).toBeUndefined();
+    expect(second.record.id).toBe(first.record.id);
+    expect(second.record.rerun_of).toBeUndefined();
   });
 
   it('a fresh key carries no link at all (the field is absent, not null)', async () => {
-    const { run } = await store.create({ ...opts, idempotencyKey: 'never-seen' });
+    const { record: run } = await store.create({ ...opts, idempotencyKey: 'never-seen' });
 
     expect(run.rerun_of).toBeUndefined();
     expect(Object.prototype.hasOwnProperty.call(run, 'rerun_of')).toBe(false);
@@ -1860,7 +1922,7 @@ describe('JsonFileStore — rerun_of, the supersede link (issue #558 PR-C)', () 
 
   it('the LEGACY-CANONICAL path (pointer gone, run adopted by scan) stamps it too', async () => {
     const first = await store.create({ ...opts });
-    await abandonRun(store, first.run.id, 'Abandoned via realm run abandon');
+    await abandonRun(store, first.record.id, 'Abandoned via realm run abandon');
     // Delete the pointer: the next create falls through to the canonical scan (`:339`), the second
     // supersede call site. Without its own `supersededId` argument this path stamped nothing.
     await unlink(keyPointerPath(dir, 'wf-1', 'k4'));
@@ -1868,7 +1930,7 @@ describe('JsonFileStore — rerun_of, the supersede link (issue #558 PR-C)', () 
     const second = await store.create({ ...opts, onTerminalMatch: 'rerun' });
 
     expect(second.created).toBe(true);
-    expect(second.run.rerun_of).toBe(first.run.id);
+    expect(second.record.rerun_of).toBe(first.record.id);
   });
 });
 
@@ -1930,9 +1992,9 @@ describe('issue #719 — a damaged run file through every reader of the JSON sto
     steps: { a: { description: 'A.', execution: 'agent' } },
   } as unknown as WorkflowDefinition;
   const READERS: Array<[string, () => Promise<unknown>]> = [
-    ['get', () => st.get('x')],
-    ['update', () => st.update(full('x'))],
-    ['claimStep', () => st.claimStep('x', 'a', def)],
+    ['get', () => st.get('x').then((s) => s.record)],
+    ['update', () => st.update(full('x')).then((s) => s.record)],
+    ['claimStep', () => st.claimStep('x', 'a', def).then((s) => s.record)],
     ['settleStep', () => st.settleStep('x', { kind: 'expire_gate', gateId: 'g' }, def)],
     ['stampSeal', () => st.stampSeal('x', { arm: 'run_abandoned' } as never, 0)],
     ['save', () => st.save(full('x'))],
@@ -1977,7 +2039,7 @@ describe('issue #719 — a damaged run file through every reader of the JSON sto
     for (const [i, params] of kinds.entries()) {
       await writeFile(join(d, `p${i}.json`), JSON.stringify(full(`p${i}`, { params } as never)));
     }
-    const read = await Promise.all(kinds.map((_, i) => st.get(`p${i}`)));
+    const read = await Promise.all(kinds.map((_, i) => st.get(`p${i}`).then((s) => s.record)));
     // (b) prints the params read back.
     expect(read.map((r) => r.params)).toEqual(kinds);
   });
@@ -2000,7 +2062,7 @@ describe('issue #719 — a damaged run file through every reader of the JSON sto
     // (a) red when a damaged file hides the run, a file is missed, or a class is wrong; (b) prints
     //     the ids read and each entry's file, class and path.
     expect({
-      records: listing.records.map((r) => r.id),
+      records: listing.snapshots.map((x) => x.record.id),
       unreadable: listing.unreadable.map((u) => [u.file, u.class, u.path]),
     }).toEqual({
       records: ['good'],
@@ -2159,7 +2221,7 @@ describe('issue #719 — a damaged run file through every reader of the JSON sto
       await writeFile(join(d, 'r1.bak.json'), JSON.stringify(run));
       const r = await create();
       // (a) red when the copy refuses the key the real run answers; (b) prints created and the id.
-      expect([r.created, r.run.id]).toEqual([false, 'r1']);
+      expect([r.created, r.record.id]).toEqual([false, 'r1']);
     });
 
     it('a copy holding an id text may not show, carrying the key: never looked up, so not a copy — this key refused (fail-closed, F5)', async () => {
@@ -2193,7 +2255,7 @@ describe('issue #719 — a damaged run file through every reader of the JSON sto
       const first = await create();
       await writeFile(join(d, 'x.json'), '{not json');
       const again = await create();
-      expect([again.created, again.run.id]).toEqual([false, first.run.id]);
+      expect([again.created, again.record.id]).toEqual([false, first.record.id]);
     });
   });
 
@@ -2208,7 +2270,7 @@ describe('issue #719 — a damaged run file through every reader of the JSON sto
 
     it("list('wb') and reconcileKeys('wb') read past a damaged object naming workflow 'wa'", async () => {
       const listed = await st.list('wb').then(
-        (rs) => rs.map((r) => r.id),
+        (rs) => rs.snapshots.map((x) => x.record.id),
         (e: unknown) => (e as WorkflowError).code,
       );
       const reconciled = await st.reconcileKeys('wb').then(
@@ -2224,7 +2286,7 @@ describe('issue #719 — a damaged run file through every reader of the JSON sto
       await rm(join(d, 'x.json'));
       await mkdir(join(d, 'x.json'));
       const listed = await st.list('wb').then(
-        (rs) => rs.map((r) => r.id),
+        (rs) => rs.snapshots.map((x) => x.record.id),
         (e: unknown) => (e as WorkflowError).code,
       );
       const reconciled = await st.reconcileKeys('wb').then(
@@ -2257,7 +2319,7 @@ describe('issue #719 — a damaged run file through every reader of the JSON sto
       const listing = await st.listWithDiagnostics('wb');
       // (b) prints the ids and the damaged files.
       expect({
-        records: listing.records.map((r) => r.id),
+        records: listing.snapshots.map((x) => x.record.id),
         unreadable: listing.unreadable.map((u) => u.file),
       }).toEqual({ records: ['b1'], unreadable: ['x.json'] });
     });
@@ -2358,7 +2420,7 @@ describe('issue #719 — a damaged run file through every reader of the JSON sto
       await seedCopy();
       const listing = await st.listWithDiagnostics();
       const listed = await st.list().then(
-        (rs) => rs.map((r) => r.id),
+        (rs) => rs.snapshots.map((x) => x.record.id),
         (e: unknown) => (e as WorkflowError).code,
       );
       const reconciled = await st.reconcileKeys().then(
@@ -2406,7 +2468,7 @@ describe('issue #719 — a damaged run file through every reader of the JSON sto
         params: {},
         idempotencyKey: 'k-import',
       });
-      await writeFile(join(d, `${owner.run.id}.json`), '{not json');
+      await writeFile(join(d, `${owner.record.id}.json`), '{not json');
       const imported = full('imp', { idempotency_key: 'k-import' } as never);
       const err = await st.save(imported).then(
         () => undefined,
@@ -2427,7 +2489,7 @@ describe('issue #719 — a damaged run file through every reader of the JSON sto
       }).toEqual({
         code: 'RESOURCE_FORMAT_INVALID',
         class: 'parse',
-        pointerReads: join(d, `${owner.run.id}.json`),
+        pointerReads: join(d, `${owner.record.id}.json`),
       });
     });
   });

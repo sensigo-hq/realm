@@ -20,6 +20,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../index.js';
 import { REPLY_CEILING_CHARS } from '../render-reply.js';
 import { handleGetRunState } from './get-run-state.js';
+import { doubleClock, noSettle, snap } from '../test-support/snapshot-double.js';
 import { declared } from '../test-support/declared.js';
 import type { RunRecord, RunStore } from '@sensigo/realm';
 
@@ -57,10 +58,14 @@ async function setup(n: number) {
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
   const def = fan(n);
   await workflowStore.register(def);
-  const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+  const { record: run } = await runStore.create({
+    workflowId: def.id,
+    workflowVersion: 1,
+    params: {},
+  });
   /** Writes one evidence entry per name, in order (a name already written is a re-attempt). */
   const attempt = async (...names: string[]) => {
-    const current = await runStore.get(run.id);
+    const { record: current } = await runStore.get(run.id);
     await runStore.update({
       ...current,
       evidence: [...current.evidence, ...names.map(entry)],
@@ -254,8 +259,10 @@ describe('#872 (b1) B4 — "asked" at all five gates, on a run whose status path
       },
     } as unknown as RunRecord;
     const runStore = declared({
+      clock: doubleClock,
+      settleStep: noSettle,
       persistsClaims: true,
-      get: async () => run,
+      get: async () => snap(run),
     } as unknown as RunStore);
     const workflowStore = declared({
       register: async () => {},

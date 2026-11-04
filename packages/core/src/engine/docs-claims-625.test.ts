@@ -6,7 +6,7 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -45,6 +45,28 @@ import type { RunStore } from '../store/store-interface.js';
 import { agentActionFor, nextCalls, owedOf } from '../test-support/ways-view.js';
 import { composeWaysAt, stepBrief } from './ways.js';
 import { compareStrings } from '../handlers/primitives/compare-strings.js';
+import { writeTestClockFile } from '../store/test-clock-file.js';
+import { writtenSnapshot } from './snapshot.js';
+import { zOf } from '../test-support/instant.js';
+
+/** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
+ *  runs folder sits beside the location's clock file (first set to the host's reading), which
+ *  `setClockOf` rewrites. */
+async function testLocationRuns(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  await writeTestClockFile(root, new Date());
+  // The runs folder exists from the start: some cells write a file into it before any run.
+  await mkdir(join(root, 'runs'), { recursive: true });
+  return join(root, 'runs');
+}
+async function clockedJsonStore(prefix: string): Promise<JsonFileStore> {
+  return new JsonFileStore(await testLocationRuns(prefix));
+}
+async function setClockOf(store: object, t: Date): Promise<void> {
+  const runsDir = (store as { runsDirPath?: string }).runsDirPath;
+  if (runsDir === undefined) throw new Error('setClockOf: this store is not a JSON store');
+  await writeTestClockFile(dirname(runsDir), t);
+}
 
 const PAGE = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -101,12 +123,18 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
   let store: JsonFileStore;
   let dir: string;
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-dc-625-'));
+    dir = await testLocationRuns('realm-dc-625-');
     store = new JsonFileStore(dir);
   });
 
   async function atQuestion(d: WorkflowDefinition = gated()) {
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    // #715 (b): each question opens at the host's time (a cell may have moved the store's clock).
+    await setClockOf(store, new Date());
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const opened = await executeStep(store, d, {
       runId: run.id,
       command: 'q',
@@ -114,7 +142,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       dispatcher,
     });
     if (opened.status !== 'confirm_required') throw new Error(`fixture: ${opened.status}`);
-    return { runId: run.id, gateId: (await store.get(run.id)).pending_gate!.gate_id };
+    return { runId: run.id, gateId: (await store.get(run.id)).record.pending_gate!.gate_id };
   }
 
   // --- the expiry line names the call (line 80) -----------------------------------------------
@@ -123,27 +151,35 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
   it.each([
     [
       'advanceRun',
-      (d: WorkflowDefinition, runId: string) => advanceRun(store, d, { runId, now: LATER() }),
+      async (d: WorkflowDefinition, runId: string) => {
+        await setClockOf(store, LATER());
+        return advanceRun(store, d, { runId });
+      },
     ],
     [
       'executeStep',
-      (d: WorkflowDefinition, runId: string) =>
-        executeStep(store, d, { runId, command: 'after', input: {}, dispatcher, now: LATER() }),
+      async (d: WorkflowDefinition, runId: string) => {
+        await setClockOf(store, LATER());
+        return executeStep(store, d, { runId, command: 'after', input: {}, dispatcher });
+      },
     ],
     [
       'executeChain',
-      (d: WorkflowDefinition, runId: string) =>
-        executeChain(store, d, { runId, command: 'after', input: {}, dispatcher, now: LATER() }),
+      async (d: WorkflowDefinition, runId: string) => {
+        await setClockOf(store, LATER());
+        return executeChain(store, d, { runId, command: 'after', input: {}, dispatcher });
+      },
     ],
     [
       'executeEngineStep',
-      async (d: WorkflowDefinition, runId: string) =>
-        executeEngineStep(store, d, {
+      async (d: WorkflowDefinition, runId: string) => {
+        await setClockOf(store, LATER());
+        return executeEngineStep(store, d, {
           runId,
           step: 'after',
-          run: await store.get(runId),
-          now: LATER(),
-        }),
+          run: (await store.get(runId)).record,
+        });
+      },
     ],
   ] as const)(
     'C163 line 80: %s carries out an expired question — the line is in warnings, names the function, and nothing is printed',
@@ -165,7 +201,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       }
       // (a) red when the line names another call, is missing, or is printed; (b) prints the reply.
       expect(reply.warnings).toContain(
-        `gate '${gateId}' on 'q' had expired 1m before this call — this ${fn} call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: ${fn}).`,
+        `gate '${gateId}' on 'q' had expired 1m before this call (deadline ${zOf(reply.expiry!.expired_at)}) — this ${fn} call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: ${fn}).`,
       );
       expect(printed).toEqual([]);
     },
@@ -178,14 +214,14 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     );
     const d = gated();
     const { runId, gateId } = await atQuestion(d);
+    await setClockOf(store, LATER());
     const reply = await submitHumanResponse(store, d, {
       runId,
       gateId,
       choice: 'reject',
-      now: LATER(),
     });
     expect(reply.warnings).toContain(
-      `gate '${gateId}' on 'q' had expired 1m before this call — this submitHumanResponse call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: submitHumanResponse).`,
+      `gate '${gateId}' on 'q' had expired 1m before this call (deadline ${zOf(reply.expiry!.expired_at)}) — this submitHumanResponse call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: submitHumanResponse).`,
     );
   });
 
@@ -256,12 +292,12 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
             return executeEngineStep(store, d, {
               runId,
               step: 'after',
-              run: await store.get(runId),
+              run: (await store.get(runId)).record,
               caller: c,
             });
         }
       };
-      const before = JSON.stringify(await store.get(runId));
+      const before = JSON.stringify((await store.get(runId)).record);
       // (a) red when a listed word is refused, or another word is taken; (b) prints the throw.
       await expect(call('nightly')).rejects.toMatchObject({
         code: 'VALIDATION_CALLER_INVALID',
@@ -269,7 +305,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
           new RegExp(`^${fn}'s caller is one of ${words.join(', ')}; `),
         ),
       });
-      expect(JSON.stringify(await store.get(runId))).toBe(before);
+      expect(JSON.stringify((await store.get(runId)).record)).toBe(before);
       for (const w of words) {
         const r = await call(w).catch((e: unknown) => e);
         expect(
@@ -287,13 +323,14 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     );
     const d = gated();
     const a = await atQuestion(d);
-    const named = await advanceRun(store, d, { runId: a.runId, caller: 'advance', now: LATER() });
+    await setClockOf(store, LATER());
+    const named = await advanceRun(store, d, { runId: a.runId, caller: 'advance' });
     const b = await atQuestion(d);
+    await setClockOf(store, LATER());
     const labelled = await advanceRun(store, d, {
       runId: b.runId,
       caller: 'advance',
       command: 'nightly',
-      now: LATER(),
     });
     // (a) red when caller stops labelling the reply, or command renames the line; (b) prints them.
     expect([named.command, labelled.command]).toEqual(['advance', 'nightly']);
@@ -314,7 +351,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       'The replies are `EngineReply`: the fields of an MCP tool reply (see [MCP tools](mcp/tools.md)) without `next_actions`, `agent_action` and `blocked_reason.suggestion`, and with what can be done next as data',
     );
     claim(
-      'A program reads the run with `store.get(runId)`, and takes a way with the function that matches it: `executeStep` for a `run_step` way, `advanceRun` for an `advance` way, `submitHumanResponse` for a `respond` way; `LIBRARY_WORDS` says each way in those words.',
+      'A program reads the run with `store.get(runId)`, which returns `{ record, at }` (added after version 0.48.0), and takes a way with the function that matches it: `executeStep` for a `run_step` way, `advanceRun` for an `advance` way, `submitHumanResponse` for a `respond` way; `LIBRARY_WORDS` says each way in those words.',
     );
     claim(
       'Your program then calls `advanceRun` (also imported from `@sensigo/realm`), which runs `file`:',
@@ -338,9 +375,13 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
         file: { description: 'F.', execution: 'auto', depends_on: ['decide'] },
       },
     };
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await executeStep(store, d, { runId: run.id, command: 'decide', input: {}, dispatcher });
-    const gateId = (await store.get(run.id)).pending_gate!.gate_id;
+    const gateId = (await store.get(run.id)).record.pending_gate!.gate_id;
     const answered = await submitHumanResponse(store, d, {
       runId: run.id,
       gateId,
@@ -362,7 +403,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       ['advance'],
       ['file'],
     ]);
-    expect((await store.get(run.id)).completed_steps).not.toContain('file');
+    expect((await store.get(run.id)).record.completed_steps).not.toContain('file');
     const advanced = await advanceRun(store, d, { runId: run.id });
     expect([advanced.status, advanced.run_phase]).toEqual(['ok', 'completed']);
   });
@@ -375,9 +416,9 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     const d = gated();
     const { runId } = await atQuestion(d);
     const seen: string[] = [];
+    await setClockOf(store, LATER());
     const r = await advanceRun(store, d, {
       runId,
-      now: LATER(),
       onExpiry: (line) => seen.push(`expiry: ${line.slice(0, 20)}`),
       onStep: (step) => seen.push(`step: ${step}`),
     });
@@ -416,9 +457,9 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     };
     const { runId } = await atQuestion(d);
     const seen: string[] = [];
+    await setClockOf(store, LATER());
     const r = await advanceRun(store, d, {
       runId,
-      now: LATER(),
       onExpiry: () => seen.push('expiry'),
       onStep: (step) => seen.push(`step: ${step}`),
       onGuard: (guard) => seen.push(`guard: ${guard}`),
@@ -460,7 +501,11 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
           fin: { description: 'Fin.', execution: 'auto', depends_on: ['g'] },
         },
       };
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const now = new Date().toISOString();
       await store.update({
         ...run,
@@ -483,12 +528,12 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       let first = true;
       // Another call settles `g` with the same delta just before this call's own settle reaches the
       // store (the race the code's already_settled arm meets).
-      store.settleStep = async (id, delta, def, o) => {
+      store.settleStep = async (id, delta, def) => {
         if (raced && first && delta.kind === 'settle_guard') {
           first = false;
-          settles.push(`other: ${(await original(id, delta, def, o)).applied}`);
+          settles.push(`other: ${(await original(id, delta, def)).applied}`);
         }
-        const mine = await original(id, delta, def, o);
+        const mine = await original(id, delta, def);
         if (delta.kind === 'settle_guard') {
           settles.push(`this call: ${mine.applied ? 'applied' : mine.reason}`);
         }
@@ -539,7 +584,8 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       },
     };
     const { runId } = await atQuestion(d);
-    const r = await advanceRun(store, d, { runId, now: LATER() });
+    await setClockOf(store, LATER());
+    const r = await advanceRun(store, d, { runId });
     // (a) red when the hint says "no step ran" beside the guards that ran, names one of two, or
     //     the singular for two; (b) prints the hint.
     expect([r.context_hint, r.names_next, nextCalls(r)]).toEqual([
@@ -549,11 +595,13 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     ]);
   });
 
-  it.each(['settleStep', 'legacy update'] as const)(
+  // #715 (b), C.1: the `legacy update` member of this cell (a Proxy store declaring no
+  // `settleStep`) is deleted with the legacy path it tested; the settleStep member stays.
+  it.each(['settleStep'] as const)(
     'round 22 finding 10 (decided in round 23): the question from the step’s prompt is rendered from the record alone — the gate-open write (%s) carries the step’s evidence entry, its output equal to the gate’s preview; #729 PR-4 (f): the reply carries no gate.display for a gate with no message',
     async (path) => {
       const d: WorkflowDefinition = {
-        id: `dc-f10-${path === 'settleStep' ? 'settle' : 'legacy'}`,
+        id: `dc-f10-${path === 'settleStep' ? 'settle' : path}`,
         name: 'docs claims',
         version: 1,
         steps: {
@@ -568,20 +616,8 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
           },
         },
       } as WorkflowDefinition;
-      // A store whose gate-open write takes the legacy path: it declares no `settleStep`.
-      const s: RunStore =
-        path === 'settleStep'
-          ? store
-          : new Proxy(store, {
-              get(target, key) {
-                if (key === 'settleStep') return undefined;
-                const value: unknown = Reflect.get(target, key, target);
-                return typeof value === 'function'
-                  ? (value as (...a: unknown[]) => unknown).bind(target)
-                  : value;
-              },
-            });
-      const { run } = await s.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const s: RunStore = store;
+      const { record: run } = await s.create({ workflowId: d.id, workflowVersion: 1, params: {} });
       const output = { subject: 'Office closed', lines: 3 };
       const opened = await executeStep(s, d, {
         runId: run.id,
@@ -589,7 +625,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
         input: output,
         dispatcher: async () => output,
       });
-      const record = await s.get(run.id);
+      const { record: record } = await s.get(run.id);
       const entry = [...record.evidence]
         .reverse()
         .find((e) => e.step_id === 'draft' && e.kind !== 'gate_response');
@@ -601,7 +637,8 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
         status: opened.status,
         entryIsPreview:
           JSON.stringify(entry?.output_summary) === JSON.stringify(record.pending_gate?.preview),
-        question: pendingGateQuestion(d, record),
+        // #715 (b) (02 §D.4): the fallback renders at a read's reading.
+        question: pendingGateQuestion(d, writtenSnapshot(record, new Date())),
         display: opened.gate?.display,
       }).toEqual({
         status: 'confirm_required',
@@ -759,72 +796,30 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     },
   );
 
-  // --- now (lines 102, 119: C150, C157) -------------------------------------------------------
-  it('C163 line 102: advanceRun given a number, a string or an invalid Date as now rejects VALIDATION_OPTION_INVALID before anything is read or written — at an open question and on a run with none', async () => {
-    claim(
-      "`now` is a `Date`, the time the call judges a question's expiry by (default: the current time).",
-    );
-    claim(
-      'Given anything else (a number, a string, or a `Date` that is not a valid time), the call rejects with `VALIDATION_OPTION_INVALID` before anything is read or written.',
-    );
-    const d = gated();
-    const { runId } = await atQuestion(d);
-    const before = JSON.stringify(await store.get(runId));
-    const plain: WorkflowDefinition = {
-      id: 'dc-plain',
-      name: 'p',
-      version: 1,
-      steps: { only: { description: 'O.', execution: 'auto', depends_on: [] } },
-    };
-    const { run } = await store.create({ workflowId: plain.id, workflowVersion: 1, params: {} });
-    const plainBefore = JSON.stringify(await store.get(run.id));
-    for (const [now, type] of [
-      [Date.now(), 'number'],
-      [new Date().toISOString(), 'string'],
-      [new Date(Number.NaN), 'Date (invalid)'],
-    ] as const) {
-      // (a) red when a call runs on such a `now`, or throws anything else; (b) prints the rejection.
-      for (const [def, id] of [
-        [d, runId],
-        [plain, run.id],
-      ] as const) {
-        await expect(
-          advanceRun(store, def, { runId: id, now: now as never }),
-        ).rejects.toMatchObject({
-          code: 'VALIDATION_OPTION_INVALID',
-          details: { invalid: [{ option: 'options.now', given_type: type }] },
-        });
-      }
-    }
-    // issue #719 (C5): booleans — a failure prints whether each record is unchanged, never it.
-    expect([
-      JSON.stringify(await store.get(runId)) === before,
-      JSON.stringify(await store.get(run.id)) === plainBefore,
-    ]).toEqual([true, true]);
-  });
-
   const NOW_ROW =
-    "A `Date`, the time the call judges an open question's expiry by (default: the current time): the call carries out an expired question's declared `on_expiry` first only when the question's time is up at `now`.";
+    "A call judges an open question's expiry by its store's clock: it carries out an expired question's declared `on_expiry` first only when the question's time is up at the store's reading (the `now` option that set this time is removed after version 0.48.0).";
   it.each(['executeStep', 'executeChain'] as const)(
-    'C157, W1-Y3: %s judges the question by now — time up at now: carried out first; not up at now: left open',
+    "C157, W1-Y3: %s judges the question by the store's clock — time up at its reading: carried out first; not up: left open",
     async (fn) => {
       claim(NOW_ROW);
       const d = gated();
-      const call = (runId: string, now: Date) =>
-        fn === 'executeStep'
-          ? executeStep(store, d, { runId, command: 'after', input: {}, dispatcher, now })
-          : executeChain(store, d, { runId, command: 'after', input: {}, dispatcher, now });
+      const call = async (runId: string, now: Date) => {
+        await setClockOf(store, now);
+        return fn === 'executeStep'
+          ? executeStep(store, d, { runId, command: 'after', input: {}, dispatcher })
+          : executeChain(store, d, { runId, command: 'after', input: {}, dispatcher });
+      };
       const up = await atQuestion(d);
       const carried = await call(up.runId, LATER());
       const notUp = await atQuestion(d);
       const left = await call(notUp.runId, EARLIER());
-      // (a) red when the call judges by the clock instead of `now`; (b) prints the replies.
+      // (a) red when the call judges by another clock than the store's; (b) prints the replies.
       expect([
         carried.status,
         carried.warnings.some((w) => w.includes(`this ${fn} call first carried out`)),
       ]).toEqual(['ok', true]);
       expect([left.status, left.warnings]).toEqual(['blocked', []]);
-      expect((await store.get(notUp.runId)).pending_gate?.gate_id).toBe(notUp.gateId);
+      expect((await store.get(notUp.runId)).record.pending_gate?.gate_id).toBe(notUp.gateId);
     },
   );
 
@@ -837,13 +832,17 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       version: 1,
       steps: { only: { description: 'O.', execution: 'auto', depends_on: [] } },
     };
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const r = await executeEngineStep(store, d, {
       runId: run.id,
       step: 'only',
-      run: await store.get(run.id),
+      run: (await store.get(run.id)).record,
     });
-    expect([r.status, r.run_phase, (await store.get(run.id)).completed_steps]).toEqual([
+    expect([r.status, r.run_phase, (await store.get(run.id)).record.completed_steps]).toEqual([
       'ok',
       'completed',
       ['only'],
@@ -864,7 +863,9 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     });
     expect(r.status).toBe('ok');
     const { composeStepViews } = await import('./step-view.js');
-    expect(composeStepViews(await store.get(runId))['q']?.answers?.[0]?.answered_by).toMatchObject({
+    expect(
+      composeStepViews((await store.get(runId)).record)['q']?.answers?.[0]?.answered_by,
+    ).toMatchObject({
       by: 'alice',
     });
   });
@@ -878,7 +879,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     );
     const d = gated();
     const { runId } = await atQuestion(d);
-    const record = await store.get(runId);
+    const { record: record } = await store.get(runId);
     await writeFile(join(dir, 'broken.json'), '{not json');
     const missing = await executeEngineStep(store, d, {
       runId: 'nope',
@@ -897,7 +898,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       'RESOURCE_FORMAT_INVALID',
     ]);
     expect(broken.errors[0]).toMatch(/^The run file '.*broken\.json' is not JSON\. Restore /);
-    const before = JSON.stringify(await store.get(runId));
+    const before = JSON.stringify((await store.get(runId)).record);
     // (a) red when a call runs without a run record, or throws anything else; (b) prints the rejection.
     await expect(
       executeEngineStep(store, d, { runId, step: 'after' } as never),
@@ -927,7 +928,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       fieldsNamed: false,
     });
     // issue #719 (C5): a boolean — a failure prints whether the record is unchanged, never it.
-    expect(JSON.stringify(await store.get(runId)) === before).toBe(true);
+    expect(JSON.stringify((await store.get(runId)).record) === before).toBe(true);
     // C174: a step with no `depends_on` — the same refusal, before any read.
     const lone: WorkflowDefinition = {
       id: 'dc-lone',
@@ -935,7 +936,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       version: 1,
       steps: { only: { description: 'Only.', execution: 'auto', depends_on: [] } },
     };
-    const { run: loneRun } = await store.create({
+    const { record: loneRun } = await store.create({
       workflowId: lone.id,
       workflowVersion: 1,
       params: {},
@@ -955,12 +956,20 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       version: 1,
       steps: { a: { description: 'A.', execution: 'agent', depends_on: [] } },
     };
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
-    const before = JSON.stringify(await store.get(run.id));
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const before = JSON.stringify((await store.get(run.id)).record);
     await expect(
-      executeEngineStep(store, d, { runId: run.id, step: 'a', run: await store.get(run.id) }),
+      executeEngineStep(store, d, {
+        runId: run.id,
+        step: 'a',
+        run: (await store.get(run.id)).record,
+      }),
     ).rejects.toBeInstanceOf(WorkflowError);
-    expect(JSON.stringify(await store.get(run.id))).toBe(before);
+    expect(JSON.stringify((await store.get(run.id)).record)).toBe(before);
   });
 
   it('C163 line 117: the dispatcher is called for the step command names (an agent step, a bare auto step), not for the steps executeChain runs after it', async () => {
@@ -985,11 +994,19 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     };
     const calls: string[] = [];
     const disp = async (step: string) => (calls.push(step), { ok: true });
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await executeChain(store, d, { runId: run.id, command: 'a', input: {}, dispatcher: disp });
     // (a) red when the dispatcher is skipped for the named agent step or called for chained steps; (b) prints the calls.
     expect(calls).toEqual(['a']);
-    const { run: run2 } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run2 } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await executeStep(store, d, {
       runId: run2.id,
       command: 'a',
@@ -1004,10 +1021,12 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       dispatcher: async (step: string) => (calls2.push(step), {}),
     });
     expect(calls2).toEqual(['bare']);
-    const ev = (await store.get(run.id)).evidence.find((e) => e.step_id === 'a') as unknown as {
+    const ev = (await store.get(run.id)).record.evidence.find(
+      (e) => e.step_id === 'a',
+    ) as unknown as {
       output_summary?: unknown;
     };
-    const ev2 = (await store.get(run2.id)).evidence.find(
+    const ev2 = (await store.get(run2.id)).record.evidence.find(
       (e) => e.step_id === 'bare',
     ) as unknown as { output_summary?: unknown };
     expect([JSON.stringify(ev?.output_summary), JSON.stringify(ev2?.output_summary)]).toEqual([
@@ -1017,13 +1036,17 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
   });
 
   it('C163 line 103: describePending says what a run waits for, with every field the row names', async () => {
-    claim('`registry` may be `undefined`; `now` is required — pass `new Date()`.');
+    // #715 (b) (02 §A.1): the row names the snapshot `store.get` returns, in place of `run` and `now`.
+    claim(
+      '`registry` may be `undefined`; `snapshot` is what `store.get(runId)` returns, `{ record, at }`, and the run is judged at its `at` (added after version 0.48.0, in place of `run` and `now`).',
+    );
     claim(
       'Says what a run is waiting for, as an object with: `agent_steps` (the agent steps ready for an answer), `agent_refused` (the ready agent steps the run refuses before their claim, and why), `pending_guards` (the guard steps ready to be decided), `engine_runnable` (the `auto` steps it owes, each with `runnable_here`), `cannot_run` (every step that cannot run, and why),',
     );
     const d = gated();
     const { runId, gateId } = await atQuestion(d);
-    const p = describePending(d, await store.get(runId), undefined, new Date());
+    // The row's own call: the snapshot `store.get` returns.
+    const p = describePending(d, await store.get(runId), undefined);
     // (a) red when a field the row names is dropped; (b) prints the keys.
     for (const k of [
       'agent_steps',
@@ -1040,14 +1063,24 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       gate_id: gateId,
       choices: ['approve', 'reject'],
     });
-    expect(describePending(d, await store.get(runId), undefined, LATER()).expiry_due).toBeDefined();
+    expect(
+      describePending(d, writtenSnapshot((await store.get(runId)).record, LATER()), undefined)
+        .expiry_due,
+    ).toBeDefined();
     // #729 PR-0 (D-L): what the engine owes is `owed` (it replaced `act`): the due expiry first.
-    expect(describePending(d, await store.get(runId), undefined, LATER()).owed).toEqual([
-      { expiry: { gate_id: gateId, step: 'q', on_expiry: 'settle_default' } },
-    ]);
-    expect(describePending(d, await store.get(runId), undefined, new Date()).owed).toEqual([]);
+    expect(
+      describePending(d, writtenSnapshot((await store.get(runId)).record, LATER()), undefined).owed,
+    ).toEqual([{ expiry: { gate_id: gateId, step: 'q', on_expiry: 'settle_default' } }]);
+    expect(
+      describePending(d, writtenSnapshot((await store.get(runId)).record, new Date()), undefined)
+        .owed,
+    ).toEqual([]);
     await submitHumanResponse(store, d, { runId, gateId, choice: 'approve' });
-    const owed = describePending(d, await store.get(runId), undefined, new Date());
+    const owed = describePending(
+      d,
+      writtenSnapshot((await store.get(runId)).record, new Date()),
+      undefined,
+    );
     expect(owed.engine_runnable.map((e) => [e.step, typeof e.runnable_here])).toEqual([
       ['after', 'boolean'],
     ]);
@@ -1078,7 +1111,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       );
       const d = gated();
       const { runId, gateId } = await atQuestion(d);
-      const before = JSON.stringify(await store.get(runId));
+      const before = JSON.stringify((await store.get(runId)).record);
       const dr = driver as never;
       for (const call of [
         () => advanceRun(store, d, { runId, driver: dr }),
@@ -1089,7 +1122,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       ]) {
         await expect(call()).rejects.toMatchObject({ code: 'VALIDATION_ACTOR_INVALID', message });
       }
-      expect(JSON.stringify(await store.get(runId))).toBe(before);
+      expect(JSON.stringify((await store.get(runId)).record)).toBe(before);
     },
   );
 
@@ -1108,13 +1141,17 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       steps: { only: { description: 'O.', execution: 'auto', depends_on: [] } },
     };
     for (const by_source of ['stated', 'ambient', 'derived'] as const) {
-      const { run } = await store.create({ workflowId: plain.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: plain.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const r = await advanceRun(store, plain, {
         runId: run.id,
         driver: { by: 'n'.repeat(200), by_source, channel: 'a_b-9' },
       });
       expect([r.status, r.run_phase]).toEqual(['ok', 'completed']);
-      const ev = (await store.get(run.id)).evidence.find(
+      const ev = (await store.get(run.id)).record.evidence.find(
         (e) => e.step_id === 'only',
       ) as unknown as { driven_by?: { by: string } };
       expect(ev?.driven_by?.by).toBe('n'.repeat(200));
@@ -1144,10 +1181,16 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about the libra
     expect(members).toHaveLength(7);
   });
   beforeEach(async () => {
-    store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-dc-sweep-625-')));
+    store = await clockedJsonStore('realm-dc-sweep-625-');
   });
   async function atQuestion(d: WorkflowDefinition) {
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    // #715 (b): each question opens at the host's time (a cell may have moved the store's clock).
+    await setClockOf(store, new Date());
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await executeStep(store, d, { runId: run.id, command: 'q', input: {}, dispatcher });
     return { runId: run.id };
   }
@@ -1165,7 +1208,11 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about the libra
         y: { description: 'Y.', execution: 'auto', depends_on: [] },
       },
     };
-    const { run } = await store.create({ workflowId: owes.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: owes.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const d = gated();
     const { runId } = await atQuestion(d);
     const reply = await executeStep(store, owes, {
@@ -1178,7 +1225,7 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about the libra
     //     (b) prints both lists.
     expect([
       nextCalls(reply),
-      nextCalls(composeWaysAt(await store.get(runId), new Date(), { definition: d })),
+      nextCalls(composeWaysAt((await store.get(runId)).record, new Date(), { definition: d })),
     ]).toEqual([['run_step:x', 'advance'], ['respond']]);
     // The call's own verdict rides `refusal` (D-A); the reply's ways stay the run's.
     expect(reply.refusal?.code).toBe('not_a_step');
@@ -1207,14 +1254,15 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about the libra
       },
     };
     const { runId } = await atQuestion(d);
-    const reply = await advanceRun(store, d, { runId, now: LATER() });
+    await setClockOf(store, LATER());
+    const reply = await advanceRun(store, d, { runId });
     // (a) red when advanceRun does not carry out the expired question first, or leaves the guard or
     //     the auto step it made owed; (b) prints the reply's fields.
     expect({
       status: reply.status,
       expiry: reply.warnings.some((w) => w.includes('this advanceRun call first carried out')),
       ran: reply.chained_auto_steps?.map((c) => c.step),
-      phase: (await store.get(runId)).run_phase,
+      phase: (await store.get(runId)).record.run_phase,
     }).toEqual({ status: 'ok', expiry: true, ran: ['after'], phase: 'completed' });
   });
 
@@ -1310,8 +1358,12 @@ describe('#760 — handlers.md: check_quotes and locateQuote', () => {
         },
       },
     } as unknown as WorkflowDefinition;
-    const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-dc-760-old-')));
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const store = await clockedJsonStore('realm-dc-760-old-');
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const reply = await executeChain(store, def, {
       runId: run.id,
       command: 'extract',
@@ -1319,7 +1371,7 @@ describe('#760 — handlers.md: check_quotes and locateQuote', () => {
       input: { text: 'x' },
       dispatcher: async (_n, i) => ({ ...i }),
     });
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     // (a) red when check_quotes is not registered, an old name is, or a step naming it ends the run;
     //     (b) prints three booleans, the code and the run's end.
     expect({
@@ -1491,8 +1543,8 @@ describe('#760 — handlers.md: check_quotes and locateQuote', () => {
       "A whole workflow: the document's text comes in the run's params, the agent extracts the values, the check reads both, and the guard stops the run:",
     );
     const def = loadWorkflowFromString(block(HANDLERS, 'handler: check_quotes'));
-    const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-dc-760-')));
-    const { run } = await store.create({
+    const store = await clockedJsonStore('realm-dc-760-');
+    const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
       params: { text: DOC },
@@ -1500,6 +1552,7 @@ describe('#760 — handlers.md: check_quotes and locateQuote', () => {
     await advanceRun(store, def, { runId: run.id, registry: createDefaultRegistry() });
     // Correction 2 (03, D4): the agent step's prompt carries the document, read from the record
     // after `advanceRun` ran `fetch_document` (the record as first created renders none).
+    // #715 (b) (02 §D.4): the brief renders at the read's own reading.
     const prompt = stepBrief(def, await store.get(run.id), 'extract_fields').prompt;
     const reply = await executeChain(store, def, {
       runId: run.id,
@@ -1513,7 +1566,7 @@ describe('#760 — handlers.md: check_quotes and locateQuote', () => {
       },
       dispatcher: async (_n, i) => ({ ...i }),
     });
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     const check = after.evidence.find((e) => e.step_id === 'quote_check');
     // (a) red when the workflow does not load, its agent step's prompt does not carry the document,
     //     its guard cannot stop the run, the record is lost, or the warning does not reach the reply;
@@ -1714,8 +1767,8 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
     const shown = block(HANDLERS, 'handler: check_quotes');
     const without = shown.replace('    depends_on: [fetch_document, extract_fields]\n', '');
     const def = loadWorkflowFromString(without);
-    const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-dc-760-w4-')));
-    const { run: created } = await store.create({
+    const store = await clockedJsonStore('realm-dc-760-w4-');
+    const { record: created } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
       params: { text: SOURCE },
@@ -1728,7 +1781,7 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
       input: { fields: [{ field: 'rent', value: 'x', quote: 'nothing like this at all' }] },
       dispatcher: async (_n, i) => ({ ...i }),
     });
-    const after = await store.get(created.id);
+    const { record: after } = await store.get(created.id);
     // (a) red when only the first fault is named, the depends_on line was not the one taken out, or
     //     the run does not complete with the check failed and the guard skipped by its trigger rule;
     //     (b) prints two booleans, the phase, the failed steps, the guard's skip kind and the seal.

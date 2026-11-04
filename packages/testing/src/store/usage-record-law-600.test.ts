@@ -20,6 +20,7 @@ import { JsonFileStore } from '@sensigo/realm';
 import type { RunRecord, RunStore, WorkflowDefinition } from '@sensigo/realm';
 import { InMemoryStore } from './in-memory-store.js';
 import { runStoreFidelityContract } from './run-store-fidelity-contract.js';
+import type { Snapshot } from '@sensigo/realm';
 
 const agentWf: WorkflowDefinition = {
   id: 'tck-usage-record',
@@ -102,7 +103,7 @@ function changing(change: (r: Record<string, unknown>) => Record<string, unknown
   const strip = (requests: unknown): unknown =>
     Array.isArray(requests) ? requests.map((r: Record<string, unknown>) => change(r)) : requests;
   return class extends InMemoryStore {
-    override update(record: RunRecord): Promise<RunRecord> {
+    override update(record: RunRecord): Promise<Snapshot> {
       return super.update({
         ...record,
         evidence: record.evidence.map((e) =>
@@ -158,7 +159,7 @@ describe('issue #600 PR 2 — USAGE_RECORD_ROUNDTRIP', () => {
     // the law's message.
     await lawOf(store).run();
     // The double did reverse the keys: the law ran against a reordered `cache_auto`.
-    const runs = await store.list();
+    const runs = (await store.list()).snapshots.map((s) => s.record);
     const stored = runs
       .flatMap((r) => r.evidence)
       .flatMap((e) => e.diagnostics?.cache?.requests ?? [])

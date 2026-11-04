@@ -42,18 +42,18 @@ import {
   CACHE_GAP_MAX_S,
   type PromptCacheSetting,
   loadWorkflowFromFile,
-  JsonFileStore,
   JsonWorkflowStore,
   validateRunParams,
   WorkflowError,
-  sealRunLevel,
   renderLoaderWarning,
   describePending,
+  writtenSnapshot,
   owedNames,
   composeWaysAt,
   deriveRunPhase,
   hashParams,
   isPastDeadline,
+  parseStamp,
   persistsField,
   startIdentityEntry,
 } from '@sensigo/realm';
@@ -69,6 +69,8 @@ import type {
   UnreadableRunFileEntry,
   WorkflowRegistrar,
   ExtensionIdentityEntry,
+  PendingGate,
+  RunRecord,
 } from '@sensigo/realm';
 import {
   verifyGithub,
@@ -87,6 +89,7 @@ import {
 } from '../extensions/load-project-extensions.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
 import { addDeclaredValues } from '../output/writer.js';
+import { openRunStore } from '../lib/run-store.js';
 
 const DEFAULT_TTL_MINUTES = 60;
 // Fixed signature-header names for the body-signature presets.
@@ -109,15 +112,16 @@ export interface ListenDeps {
   // gate's workflow definition before it can construct an expire_gate delta.
   workflowStore: Pick<WorkflowRegistrar, 'register' | 'get'>;
   // issue #291 (Deliverable 4f): widened to add 'list' (the sweep's own store-scan) + 'settleStep'
-  // (the enactment write). Both OPTIONAL-shaped on the real RunStore interface already — Pick
-  // preserves that optionality, so a store that doesn't declare settleStep still satisfies this.
+  // (the enactment write) — required on `RunStore` since #715 (b).
   // issue #719 (B3): the JSON store's `listWithDiagnostics`, optional — when present the sweep acts
   // on the readable runs and logs each run file it cannot read instead of failing every pass.
   // #729 PR-3 correction 5 (J-5): `persistedRunRecordFields` (optional) says whether the start entry
   // can be written.
+  // #715 (b) (03 §A.4, D6-8): and the store's `clock` — the instants this server writes and the
+  // expiry waits of the sweeper are the store's.
   runStore: Pick<
     RunStore,
-    'create' | 'get' | 'update' | 'list' | 'settleStep' | 'persistedRunRecordFields'
+    'create' | 'get' | 'update' | 'list' | 'settleStep' | 'persistedRunRecordFields' | 'clock'
   > & {
     listWithDiagnostics?: (workflowId?: string) => Promise<RunListing>;
   };
@@ -127,7 +131,6 @@ export interface ListenDeps {
   // issue #600 (the lifetime unit): the workflow id keys the spawner's trigger gaps; optional, so a
   // double that ignores it still fits.
   spawnAgent: (runId: string, cwd: string, workflowId?: string) => Promise<SpawnResult>;
-  clock: () => number;
   logger: Logger;
 }
 
@@ -654,7 +657,7 @@ export function makeListenHandler(
         // does not recognise the delivery; the run store's match on the idempotency key (= dedupId)
         // does. So listen reads `created`: a delivery that matched an existing run starts nothing
         // and writes nothing to it (below).
-        ({ run, created } = await deps.runStore.create({
+        ({ record: run, created } = await deps.runStore.create({
           workflowId: entry.definition.id,
           workflowVersion: entry.definition.version,
           params,
@@ -756,10 +759,18 @@ export function makeListenHandler(
           error: String(spawnResult.error),
         });
         try {
-          // issue #367: run-level seal through the ONE bypass-writer chokepoint — it stamps
-          // sealed_by {arm: 'spawn_failure'}; the fossil hand-written run_phase is retired (the
-          // store write tail derives it) and the field-assignment writer shape is gone.
-          await deps.runStore.update(sealRunLevel(run, 'spawn_failure', 'spawn_failed'));
+          // issue #367: run-level seal through the ONE bypass-writer chokepoint (`sealRunLevel`) — it
+          // stamps sealed_by {arm: 'spawn_failure'}. #715 (b) (D-21): through the `seal_run`
+          // settlement delta, so the seal's instant is the write's own reading; a run that moved
+          // since this webhook created it is thrown as STATE_SNAPSHOT_MISMATCH and logged below, as
+          // update() threw. No definition (Amendment 1).
+          await deps.runStore.settleStep(run.id, {
+            kind: 'seal_run',
+            arm: 'spawn_failure',
+            reason: 'spawn_failed',
+            expected_version: run.version,
+            release_claims: false,
+          });
         } catch (err) {
           // issue #367 residual: this catch used to swallow the store's throw anonymously. The
           // seal-integrity boundary throws TYPED codes (STATE_SEAL_*), so log the code explicitly
@@ -778,7 +789,8 @@ export function makeListenHandler(
       // Record agent pid/started_at (non-critical metadata), then the dedup record.
       try {
         run.agent_pid = spawnResult.pid;
-        run.agent_started_at = new Date(deps.clock()).toISOString();
+        // #715 (b) (03 §A.4): the store's clock, as every instant a run record holds.
+        run.agent_started_at = deps.runStore.clock.now().toISOString();
         await deps.runStore.update(run);
       } catch (err) {
         deps.logger.error('webhook: failed to record agent pid', {
@@ -1007,6 +1019,98 @@ async function logSkippedRunFiles(
 }
 
 /**
+ * #715 (b) (03 §A.4): carries out one expired gate the sweeper found — the gate's workflow from this
+ * process's store, the store's `settleStep` (which decides, at its own reading, that the gate is
+ * due), the log lines. Counts into `result`. Refusals (another enactment point won) are absorbed;
+ * a run another writer holds is skipped; any other failure is logged and counted.
+ */
+async function enactSweptGate(
+  deps: Pick<ListenDeps, 'runStore' | 'workflowStore' | 'logger'>,
+  run: RunRecord,
+  gate: PendingGate,
+  result: SweepResult,
+): Promise<void> {
+  // Unregistered-workflow skip arm: this store may hold runs for workflows this `listen`
+  // process's own workflowStore has never registered.
+  let definition: WorkflowDefinition;
+  try {
+    definition = await deps.workflowStore.get(run.workflow_id);
+  } catch {
+    result.skipped_unregistered += 1;
+    return;
+  }
+
+  try {
+    const outcome = await deps.runStore.settleStep(
+      run.id,
+      { kind: 'expire_gate', gateId: gate.gate_id },
+      definition,
+    );
+    if (outcome.applied) {
+      result.enacted += 1;
+      // issue #625 PR-2a (D7.7): an expiry that leaves the run open with engine work owed names
+      // it — nothing else is attending a run the sweeper just moved on.
+      const owedView = outcome.run.terminal_state
+        ? undefined
+        : describePending(definition, writtenSnapshot(outcome.run, outcome.at), undefined);
+      // decision C64: an expiry that leaves nothing able to run from here names the steps and the
+      // way out — the CLI renderer's lines over the ways core composes (#729 PR-0, A-10).
+      const cannotGoOn =
+        owedView === undefined
+          ? []
+          : cannotGoOnLines(
+              composeWaysAt(outcome.run, outcome.at, { definition }),
+              outcome.run.id,
+              deriveRunPhase(outcome.run),
+            );
+      deps.logger.info('listen: sweeper enacted an expired gate', {
+        run_id: run.id,
+        gate_id: gate.gate_id,
+        disposition: gate.on_expiry,
+        ...(owedView !== undefined && owedView.owed.length > 0
+          ? { owed: owedNames(owedView) }
+          : {}),
+        // #729 PR-3 (L-2): the lines with the writer's context, inside the print call.
+        ...(cannotGoOn.length > 0
+          ? {
+              cannot_go_on: cannotGoOnLines(
+                composeWaysAt(outcome.run, outcome.at, { definition }),
+                outcome.run.id,
+                deriveRunPhase(outcome.run),
+                writerCtx(),
+              ),
+            }
+          : {}),
+      });
+      if (outcome.transitioned) {
+        deps.logger.info(
+          'listen: the enactment terminalized the run — it may carry pending finalizers; ' +
+            "run 'realm run drain --expired' (or plain drain, once terminal) to deliver them " +
+            '(the sweeper never drains finalizers itself — no extension registry for an ' +
+            'unmounted workflow)',
+          { run_id: run.id },
+        );
+      }
+    }
+    // Any refusal (already_settled/not_expired/gate_mismatch/run_terminal) is a benign race
+    // with another enactment point — silently absorbed, exactly like every other enactment
+    // point's own advisory-not-crash posture.
+  } catch (err) {
+    // ELOCKED catch-and-continue arm: another writer holds this run's lock right now.
+    if (err instanceof WorkflowError && err.code === 'STATE_RUN_BUSY') {
+      result.skipped_locked += 1;
+      return;
+    }
+    result.errors += 1;
+    deps.logger.error('listen: sweeper failed to enact an expired gate', {
+      run_id: run.id,
+      gate_id: gate.gate_id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
  * Issue #291 (Deliverable 4f, Amendment 4 — the `realm listen` opt-in sweeper): one store-wide
  * scan for expired, enactable gates across EVERY run this store holds (not just the workflows
  * THIS `listen` process has mounted — a gate opened by any process on the same store is
@@ -1015,15 +1119,20 @@ async function logSkippedRunFiles(
  * a terminalizing enactment logs an advisory pointing at `realm run drain --expired` (or plain
  * `drain`) instead. Multi-process safe: races with ANY other enactment point (submit/
  * execute_step/reclaim/drain --expired/another listen process/the attending timer) resolve via
- * the [F1] arm matrix's NOOPs — this function absorbs every refusal silently. Dormant when the
- * store declares no `settleStep` (nothing to enact with — a fast no-op). Pure I/O orchestration,
- * `now`-injectable for deterministic tests.
+ * the [F1] arm matrix's NOOPs — this function absorbs every refusal silently. Pure I/O
+ * orchestration. #715 (b) (D-26, D6-9, D6-41): each run is judged at its OWN snapshot's reading —
+ * no clock is passed in — and the store's own `settleStep` decides, at its reading, that the gate is
+ * due; a test sets the store's clock. #715 (b) (03 §A.4, D6-8): given `waits`, a gate the pass finds
+ * NOT yet due gets one waiter on the store's clock at its `expires_at` (`runStore.clock.at`), which
+ * carries it out when the clock reaches it — the pass is the discovery of gates other processes
+ * open, a real-time interval; the wait for a stored instant is the store's clock's. A waiter whose
+ * gate the pass no longer finds open is cancelled.
  */
 export async function sweepExpiredGates(
   deps: Pick<ListenDeps, 'runStore' | 'workflowStore' | 'logger'> & {
     sweepSeen?: SweepSeenFiles;
+    waits?: SweepGateWaits;
   },
-  now: Date = new Date(),
 ): Promise<SweepResult> {
   const result: SweepResult = {
     scanned: 0,
@@ -1032,103 +1141,56 @@ export async function sweepExpiredGates(
     skipped_locked: 0,
     errors: 0,
   };
-  if (deps.runStore.settleStep === undefined) return result;
 
   // issue #719 (B3): the readable runs are swept; a run file that cannot be read is logged, never
   // allowed to fail the whole pass.
-  const { records: runs, unreadable } = await listRunsDiagnosed(deps.runStore);
+  const { snapshots, unreadable } = await listRunsDiagnosed(deps.runStore);
   await logSkippedRunFiles(deps.logger, unreadable, deps.sweepSeen);
-  for (const run of runs) {
+  const open = new Set<string>();
+  for (const { record: run, at } of snapshots) {
     if (run.terminal_state || run.pending_gate === undefined) continue;
     const gate = run.pending_gate;
     // Finding-only (no on_expiry) or no enforce clock at all — nothing this sweep can enact.
     if (gate.expires_at === undefined || gate.on_expiry === undefined) continue;
-    // #729 PR-0 (A2): core's one due test of a stored deadline.
-    if (!isPastDeadline(gate.expires_at, now)) continue;
-
-    result.scanned += 1;
-
-    // Unregistered-workflow skip arm: this store may hold runs for workflows this `listen`
-    // process's own workflowStore has never registered.
-    let definition: WorkflowDefinition;
-    try {
-      definition = await deps.workflowStore.get(run.workflow_id);
-    } catch {
-      result.skipped_unregistered += 1;
+    // #729 PR-0 (A2): core's one due test of a stored deadline — at this row's own reading.
+    if (!isPastDeadline(gate.expires_at, at)) {
+      // #715 (b) (03 §A.4): not yet due — one waiter on the store's clock at its deadline.
+      const expiresAtMs = parseStamp(gate.expires_at);
+      if (deps.waits !== undefined && expiresAtMs !== undefined) {
+        open.add(gate.gate_id);
+        if (!deps.waits.has(gate.gate_id)) {
+          const waits = deps.waits;
+          const cancel = deps.runStore.clock.at(new Date(expiresAtMs), async () => {
+            waits.delete(gate.gate_id);
+            await enactSweptGate(deps, run, gate, emptySweepResult());
+          });
+          waits.set(gate.gate_id, cancel);
+        }
+      }
       continue;
     }
 
-    try {
-      const outcome = await deps.runStore.settleStep(
-        run.id,
-        { kind: 'expire_gate', gateId: gate.gate_id },
-        definition,
-        { now },
-      );
-      if (outcome.applied) {
-        result.enacted += 1;
-        // issue #625 PR-2a (D7.7): an expiry that leaves the run open with engine work owed names
-        // it — nothing else is attending a run the sweeper just moved on.
-        const owedView = outcome.run.terminal_state
-          ? undefined
-          : describePending(definition, outcome.run, undefined, now);
-        // decision C64: an expiry that leaves nothing able to run from here names the steps and the
-        // way out — the CLI renderer's lines over the ways core composes (#729 PR-0, A-10).
-        const cannotGoOn =
-          owedView === undefined
-            ? []
-            : cannotGoOnLines(
-                composeWaysAt(outcome.run, now, { definition }),
-                outcome.run.id,
-                deriveRunPhase(outcome.run),
-              );
-        deps.logger.info('listen: sweeper enacted an expired gate', {
-          run_id: run.id,
-          gate_id: gate.gate_id,
-          disposition: gate.on_expiry,
-          ...(owedView !== undefined && owedView.owed.length > 0
-            ? { owed: owedNames(owedView) }
-            : {}),
-          // #729 PR-3 (L-2): the lines with the writer's context, inside the print call.
-          ...(cannotGoOn.length > 0
-            ? {
-                cannot_go_on: cannotGoOnLines(
-                  composeWaysAt(outcome.run, now, { definition }),
-                  outcome.run.id,
-                  deriveRunPhase(outcome.run),
-                  writerCtx(),
-                ),
-              }
-            : {}),
-        });
-        if (outcome.transitioned) {
-          deps.logger.info(
-            'listen: the enactment terminalized the run — it may carry pending finalizers; ' +
-              "run 'realm run drain --expired' (or plain drain, once terminal) to deliver them " +
-              '(the sweeper never drains finalizers itself — no extension registry for an ' +
-              'unmounted workflow)',
-            { run_id: run.id },
-          );
-        }
-      }
-      // Any refusal (already_settled/not_expired/gate_mismatch/run_terminal) is a benign race
-      // with another enactment point — silently absorbed, exactly like every other enactment
-      // point's own advisory-not-crash posture.
-    } catch (err) {
-      // ELOCKED catch-and-continue arm: another writer holds this run's lock right now.
-      if (err instanceof WorkflowError && err.code === 'STATE_RUN_BUSY') {
-        result.skipped_locked += 1;
-        continue;
-      }
-      result.errors += 1;
-      deps.logger.error('listen: sweeper failed to enact an expired gate', {
-        run_id: run.id,
-        gate_id: gate.gate_id,
-        error: err instanceof Error ? err.message : String(err),
-      });
+    result.scanned += 1;
+
+    await enactSweptGate(deps, run, gate, result);
+  }
+  // A waiter whose gate this pass no longer finds open (answered, expired elsewhere, the run ended or
+  // cannot be read now) is cancelled; a later pass registers it again if it is open then.
+  if (deps.waits !== undefined) {
+    for (const [gateId, cancel] of deps.waits) {
+      if (open.has(gateId)) continue;
+      cancel();
+      deps.waits.delete(gateId);
     }
   }
   return result;
+}
+
+/** #715 (b) (03 §A.4): the sweeper's waiters on the store's clock, by gate id — each one's cancel. */
+export type SweepGateWaits = Map<string, () => void>;
+
+function emptySweepResult(): SweepResult {
+  return { scanned: 0, enacted: 0, skipped_unregistered: 0, skipped_locked: 0, errors: 0 };
 }
 
 export interface ListenHandle {
@@ -1320,10 +1382,12 @@ export function startListen(
   // skipped, never thrown) is caught and logged here. One `sweepSeen` map for the server's life,
   // so a damaged file is logged once until it changes.
   const sweepSeen: SweepSeenFiles = new Map();
+  // #715 (b) (03 §A.4): the waiters the passes register on the store's clock, cancelled at shutdown.
+  const gateWaits: SweepGateWaits = new Map();
   const sweepTimer =
     options.sweepExpiredGatesIntervalMs !== undefined
       ? setInterval(() => {
-          sweepExpiredGates({ ...deps, sweepSeen }).catch((err) => {
+          sweepExpiredGates({ ...deps, sweepSeen, waits: gateWaits }).catch((err) => {
             deps.logger.error('listen: sweeper pass failed', { error: String(err) });
           });
         }, options.sweepExpiredGatesIntervalMs)
@@ -1335,6 +1399,8 @@ export function startListen(
     shuttingDown = true;
     deps.logger.info('listen: shutting down', { reason });
     if (sweepTimer !== undefined) clearInterval(sweepTimer);
+    for (const cancel of gateWaits.values()) cancel();
+    gateWaits.clear();
     return new Promise((resolve) => server.close(() => resolve()));
   };
   const onSignal = (sig: string): void => {
@@ -1790,7 +1856,7 @@ export const listenCommand = new Command('listen')
       const memoryStores = new Map<string, DedupStore>();
       const deps: ListenDeps = {
         workflowStore: new JsonWorkflowStore(),
-        runStore: new JsonFileStore(),
+        runStore: openRunStore(),
         dedupStoreFor: (workflowId: string): DedupStore => {
           if (dedupKind === 'memory') {
             let s = memoryStores.get(workflowId);
@@ -1803,7 +1869,6 @@ export const listenCommand = new Command('listen')
           return new FileDedupStore(dedupBase, workflowId);
         },
         spawnAgent: makeAgentSpawner({ ...opts, model }, logger),
-        clock: () => Date.now(),
         logger,
       };
 

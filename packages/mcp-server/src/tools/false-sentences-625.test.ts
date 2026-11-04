@@ -161,7 +161,7 @@ describe('#625 PR-2a, F17 — the MCP pages say what the build does', () => {
     });
     const id = String((batch['started'] as Reply[])[0]!['run_id']);
     const fresh = await call('get_run_state', { run_id: id });
-    const r = await runStore.get(id);
+    const { record: r } = await runStore.get(id);
     await runStore.update({
       ...r,
       in_progress_steps: ['x'],
@@ -192,7 +192,7 @@ describe('#625 PR-2a, F17 — the MCP pages say what the build does', () => {
       },
     });
     const { call, runStore, workflowStore } = await connect(registry);
-    const done = async (id: string) => [...(await runStore.get(id)).completed_steps];
+    const done = async (id: string) => [...(await runStore.get(id)).record.completed_steps];
     // Refused before its claim: `b` (its input) beside `c`, both after `a`.
     await workflowStore.register(
       wf('f17-fork', {
@@ -229,7 +229,11 @@ describe('#625 PR-2a, F17 — the MCP pages say what the build does', () => {
     //     a failed step or a refused named call goes on; (b) prints what each call left done.
     expect({
       fork: [forked['status'], await done(fork)],
-      fail: [failed['status'], await done(failId), (await runStore.get(failId)).failed_steps],
+      fail: [
+        failed['status'],
+        await done(failId),
+        (await runStore.get(failId)).record.failed_steps,
+      ],
       called: [refused['status'], await done(called), refused['agent_action']],
     }).toEqual({
       fork: ['ok', ['a', 'c']],
@@ -305,7 +309,7 @@ describe('#625 PR-2a, F17 — the MCP pages say what the build does', () => {
     // The CHANGELOG line is 0.47.0's history; after #729's Q3 unit an agent's execute_step naming the
     // engine's step is refused and told advance_run — which runs it, as the protocol text says.
     const named = await call('execute_step', { run_id: id, command: 's', params: {} });
-    const notRun = (await runStore.get(id)).completed_steps;
+    const notRun = (await runStore.get(id)).record.completed_steps;
     const advanced = await call('advance_run', { run_id: id });
     const tools = (r: Reply) =>
       ((r['next_actions'] as Array<{ instruction: { tool: string } | null }>) ?? []).map(
@@ -317,7 +321,7 @@ describe('#625 PR-2a, F17 — the MCP pages say what the build does', () => {
     expect({
       involvement: s.agent_involvement,
       named: [named['status'], tools(named), notRun],
-      advanced: [advanced['status'], (await runStore.get(id)).completed_steps],
+      advanced: [advanced['status'], (await runStore.get(id)).record.completed_steps],
     }).toEqual({
       involvement: 'none — the engine runs this step; when next_actions names advance_run, call it',
       // the agent step `a` is ready too: next_actions offers it beside advance_run.

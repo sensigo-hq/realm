@@ -93,7 +93,7 @@ describe('listen child failure path (spawn-based)', () => {
     await workflowStore.register(definition);
 
     const runStore = new JsonFileStore(join(home, '.realm', 'runs'));
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'child-ext-wf',
       workflowVersion: 1,
       params: {},
@@ -103,7 +103,7 @@ describe('listen child failure path (spawn-based)', () => {
     expect(code).not.toBe(0);
     expect(stderr).toContain('broken module: top-level import failure');
 
-    const marked = await runStore.get(run.id);
+    const { record: marked } = await runStore.get(run.id);
     expect(marked.terminal_state).toBe(true);
     expect(marked.terminal_reason).toBe('extensions_load_failed');
   }, 20_000);

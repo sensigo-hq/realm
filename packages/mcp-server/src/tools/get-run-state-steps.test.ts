@@ -19,11 +19,14 @@ import type {
 import { handleGetRunState } from './get-run-state.js';
 import { loadPriceSource } from '../price-source.js';
 import { createRealmMcpServer } from '../server.js';
+import { snap, doubleClock, noSettle } from '../test-support/snapshot-double.js';
 
 function makeStore(run: RunRecord): RunStore {
   return declared({
+    clock: doubleClock,
+    settleStep: noSettle,
     persistsClaims: true,
-    get: async () => run,
+    get: async () => snap(run),
     create: async () => {
       throw new Error('not exercised');
     },

@@ -217,7 +217,6 @@ function makeDeps(overrides: Partial<ListenDeps> = {}): ListenDeps & {
     runStore,
     dedupStoreFor: () => dedup,
     spawnAgent,
-    clock: () => 1_700_000_000_000,
     logger: silentLogger,
     ...overrides,
   } as ListenDeps & { runStore: InMemoryStore; spawnAgent: ReturnType<typeof vi.fn> };
@@ -539,7 +538,7 @@ describe('makeListenHandler — request pipeline', () => {
     expect(status).toBe(202);
     expect(body['status']).toBe('accepted');
     expect(deps.spawnAgent).toHaveBeenCalledOnce();
-    const run = await deps.runStore.get(body['run_id'] as string);
+    const { record: run } = await deps.runStore.get(body['run_id'] as string);
     expect(run.params['ticket_id']).toBe('ticket-99');
     expect(run.agent_pid).toBe(4242);
     expect(run.agent_started_at).toBeDefined();
@@ -557,7 +556,7 @@ describe('makeListenHandler — request pipeline', () => {
     });
     expect(status).toBe(500);
     expect(body['error']).toBe('spawn_failed');
-    const run = await deps.runStore.get(body['run_id'] as string);
+    const { record: run } = await deps.runStore.get(body['run_id'] as string);
     expect(run.terminal_reason).toBe('spawn_failed');
     expect(run.terminal_state).toBe(true);
     // issue #367 census path: a spawn death is a FAILURE, recorded as one. Before the substrate it
@@ -565,6 +564,45 @@ describe('makeListenHandler — request pipeline', () => {
     // is the #372 misfiling this closes.
     expect(run.sealed_by).toEqual({ arm: 'spawn_failure' });
     expect(run.run_phase).toBe('failed');
+  });
+
+  it('#715 (b) D-21: spawn failure on a run another writer moved meanwhile — the seal is refused (STATE_SNAPSHOT_MISMATCH, logged as update() was), the reply stays 500 spawn_failed, the run stays live', async () => {
+    // (a) red when the seal ignores expected_version (the moved run is sealed and no
+    //     `failed to mark` line is logged); (b) prints the reply, the logged lines and the run.
+    const errors: Array<[string, unknown]> = [];
+    const deps = makeDeps({
+      logger: { ...silentLogger, error: (m: string, d?: unknown) => errors.push([m, d]) },
+    });
+    // The spawned agent wrote the run before its start was reported as failed.
+    deps.spawnAgent.mockImplementation(async (runId: string): Promise<SpawnResult> => {
+      const { record } = await deps.runStore.get(runId);
+      await deps.runStore.update(record);
+      return { error: new Error('boom') };
+    });
+    const handler = makeListenHandler(routesFor(wf(SHARED_SECRET_TRIGGER)), deps);
+    const { status, body } = await invoke(handler, {
+      url: '/wf',
+      headers: { ...JSON_CT, authorization: SECRET },
+      body: '{}',
+    });
+    const { record: run } = await deps.runStore.get(body['run_id'] as string);
+    expect({
+      status,
+      error: body['error'],
+      lines: errors.map(([m]) => m),
+      mark: errors[1]?.[1],
+      terminal: run.terminal_state,
+    }).toEqual({
+      status: 500,
+      error: 'spawn_failed',
+      lines: ['webhook: spawn failed', 'webhook: failed to mark spawn_failed'],
+      mark: {
+        run_id: run.id,
+        error_code: 'STATE_SNAPSHOT_MISMATCH',
+        error: 'WorkflowError: Version conflict — run was modified by another process',
+      },
+      terminal: false,
+    });
   });
 
   it('auth mode none → 202 without any header', async () => {
@@ -611,7 +649,7 @@ describe('makeListenHandler — request pipeline', () => {
     expect(status).toBe(500);
     expect(body['error']).toBe('spawn_failed');
     expect(body['run_id']).toBeDefined();
-    const run = await deps.runStore.get(body['run_id'] as string);
+    const { record: run } = await deps.runStore.get(body['run_id'] as string);
     expect(run.terminal_reason).toBe('spawn_failed');
     expect(run.terminal_state).toBe(true);
     // No dedup record on failure. A retry with the same id still does not get a fresh run: the
@@ -627,7 +665,7 @@ describe('makeListenHandler — request pipeline', () => {
     const recordsBefore = recordSpy.mock.calls.length;
     const warnsBefore = warns.length;
     const second = await invoke(handler, reqOpts);
-    const after = await deps.runStore.get(body['run_id'] as string);
+    const { record: after } = await deps.runStore.get(body['run_id'] as string);
     // (a) red when the retry is answered with anything but the first reply (before this
     //     correction: `200 deduplicated, run_phase failed`; a leaked counter: `503`), when it
     //     spawns, writes the run, records the delivery id, or logs no `matched_spawn_failed_run`
@@ -661,7 +699,7 @@ describe('makeListenHandler — request pipeline', () => {
   // ── issue #735: a delivery the run store matches starts nothing and writes nothing ──────────
   // The window expires by the clock the dedup stores read (`Date.now()`), so only Date is faked:
   // a bare vi.useFakeTimers() also fakes setImmediate, which makeReq uses, and hangs the handler.
-  // `deps.clock` stamps only `agent_started_at`; it does not expire the window.
+  // The run store's clock stamps only `agent_started_at` (#715 (b)); it does not expire the window.
   // Beside each cell: (a) the change that turns it red; (b) what it prints when it fails.
   const DEDUP_1M: WebhookTrigger = {
     ...SHARED_SECRET_TRIGGER,
@@ -707,12 +745,12 @@ describe('makeListenHandler — request pipeline', () => {
       const first = await invoke(handler, evt(opts.first));
       const runId = first.body['run_id'] as string;
       await opts.between?.(deps, runId);
-      const before = await deps.runStore.get(runId);
+      const { record: before } = await deps.runStore.get(runId);
       const kept = { version: before.version, agent_pid: before.agent_pid };
       vi.setSystemTime(T0 + 60_001);
       const second = await invoke(handler, evt(opts.second));
       const spawns = deps.spawnAgent.mock.calls.length;
-      const after = await deps.runStore.get(runId);
+      const { record: after } = await deps.runStore.get(runId);
       const record = { version: after.version, agent_pid: after.agent_pid };
       const third = opts.third === true ? await invoke(handler, evt(opts.second)) : undefined;
       const deduplicated = infos.filter(([m]) => m === 'webhook: deduplicated');
@@ -791,7 +829,7 @@ describe('makeListenHandler — request pipeline', () => {
       // step, the step in `failed_steps`, the engine's one-failure `terminal_reason`. Its phase
       // derives `failed`, as a failed start's does; its first copy was answered `202`.
       between: async (deps, runId) => {
-        const run = await deps.runStore.get(runId);
+        const { record: run } = await deps.runStore.get(runId);
         await deps.runStore.update({
           ...run,
           terminal_state: true,
@@ -971,7 +1009,7 @@ describe('makeListenHandler — request pipeline', () => {
         body: '{}',
       });
       const runId = reply.body['run_id'] as string;
-      const run = await inner.get(runId);
+      const { record: run } = await inner.get(runId);
       // (a) red when listen's pid write lands on the sealed record, or a seal stops being refused
       //     by the version check; (b) prints the reply, the seal, agent_pid, the version and the
       //     logged lines (each with whether it names the version conflict).
@@ -2147,7 +2185,7 @@ describe('issue #744 — an agent start that fails later', () => {
     const handler = makeListenHandler(routesIn(cwd), deps);
     const first = await invoke(handler, delivery('evt-744-a'));
     const runId = first.body['run_id'] as string;
-    const run = await deps.runStore.get(runId);
+    const { record: run } = await deps.runStore.get(runId);
     // The folder comes back before the second delivery, as the stub's `{ pid }` then claims.
     mkdirSync(cwd);
     const second = await invoke(handler, delivery('evt-744-b'));
@@ -2188,7 +2226,7 @@ describe('issue #744 — an agent start that fails later', () => {
     });
     const handler = makeListenHandler(routesIn(cwd), deps);
     const reply = await invoke(handler, delivery('evt-744-c'));
-    const run = await deps.runStore.get(reply.body['run_id'] as string);
+    const { record: run } = await deps.runStore.get(reply.body['run_id'] as string);
     // (a) red when the spawn result is not awaited (before #744: `agent_pid` undefined); (b) prints
     //     the reply's status and the run's agent_pid.
     expect({ status: reply.status, agent_pid: run.agent_pid }).toEqual({
@@ -2239,7 +2277,7 @@ describe('issue #744 — an agent start that fails later', () => {
     const handler = makeListenHandler(routesIn(cwd), deps);
     const reply = await invoke(handler, delivery('evt-744-e'));
     const runId = reply.body['run_id'] as string;
-    const run = await deps.runStore.get(runId);
+    const { record: run } = await deps.runStore.get(runId);
     // (a) red when the awaited spawn is not inside the handler's `try` (the rejection escapes the
     //     handler and fails this cell; through the real server, `500 internal_error`); (b) prints
     //     the reply, the run's seal and agent_pid, and the spawn-failed lines' data.

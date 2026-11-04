@@ -51,7 +51,7 @@ function realm(args: string[]): { code: number | null; out: string; err: string[
 
 /** One readable run, of workflow `w`. */
 async function readableRun(): Promise<string> {
-  const { run } = await new JsonFileStore(runs).create({
+  const { record: run } = await new JsonFileStore(runs).create({
     workflowId: 'w',
     workflowVersion: 1,
     params: {},

@@ -193,7 +193,7 @@ describe('#729 PR-3 — export v5', () => {
 
   it('F26: the export walks the bundle with its marks removed first, and the file holds none', async () => {
     const store = new JsonFileStore(join(root, 'runs'));
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'records-729',
       workflowVersion: 1,
       params: { note: `x ${ENV_CANARY.slice(0, 5)}\uE001${ENV_CANARY.slice(5)}` },
@@ -225,7 +225,7 @@ describe('#729 PR-3 — export v5', () => {
 
   it('the masked line counts the declared values too short to hide, and says a question was masked at the declared tier only (F14, F16)', async () => {
     const store = new JsonFileStore(join(root, 'runs'));
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'records-729',
       workflowVersion: 1,
       params: { key: SECRET },
@@ -260,7 +260,7 @@ describe('#729 PR-3 — export v5', () => {
   it('the bundle is version 5, masked by the file audience, carries its receipt; the record stays raw', async () => {
     const runs = join(root, 'runs');
     const store = new JsonFileStore(runs);
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'records-729',
       workflowVersion: 1,
       params: { key: SECRET, note: 'ordinary' },
@@ -287,7 +287,7 @@ describe('#729 PR-3 — export v5', () => {
       version: bundle.realm_export_version,
       params: bundle.run.params,
       receipt: [bundle.disclosure.declared, bundle.disclosure.hidden.declared],
-      storeRaw: (await store.get(run.id)).params['key'] === SECRET,
+      storeRaw: (await store.get(run.id)).record.params['key'] === SECRET,
     }).toEqual({
       version: 5,
       params: { key: '[REDACTED]', note: 'ordinary' },
@@ -301,7 +301,7 @@ describe('#729 PR-3 — export v5', () => {
     const runs = join(home, '.realm', 'runs');
     mkdirSync(runs, { recursive: true });
     // A run whose workflow copy cannot be read: the declared secrets are unknown (load_failed).
-    const { run } = await new JsonFileStore(runs).create({
+    const { record: run } = await new JsonFileStore(runs).create({
       workflowId: 'not-registered',
       workflowVersion: 1,
       params: {},
@@ -380,7 +380,7 @@ describe('#729 PR-3 — inspect prints one receipt line', () => {
     manifest(project, MANIFEST, `SVC_TOKEN=${SECRET}\n`);
     await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(definitionAt(project));
     const store = new JsonFileStore(runs);
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'records-729',
       workflowVersion: 1,
       params: { key: SECRET },
@@ -496,7 +496,11 @@ describe('#729 PR-3 correction 1 (F28) — inspect shows a guard abort', () => {
     } as WorkflowDefinition;
     await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(def);
     const store = new JsonFileStore(runs);
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     // The engine writes the record: a real guard abort, its conditions and its marker.
     await executeChain(store, def, {
       runId: run.id,
@@ -700,10 +704,10 @@ describe('#729 PR-3 correction 2 (G1-b, E-10) — the built realm mcp, fresh, re
     await workflows.register(definitionAt(bad, { id: 'bad-729' }));
     const runs = new JsonFileStore(join(home, '.realm', 'runs'));
     const goodRun = (await runs.create({ workflowId: 'good-729', workflowVersion: 1, params: {} }))
-      .run.id;
+      .record.id;
     await abandonRun(runs, goodRun, `stopped: the token ${SECRET} was rejected`);
     const badRun = (await runs.create({ workflowId: 'bad-729', workflowVersion: 1, params: {} }))
-      .run.id;
+      .record.id;
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
     // Rebuild before the break: this cell runs the built CLI.
@@ -797,8 +801,8 @@ async function damagedCopyRun(home: string): Promise<{ runId: string; file: stri
   const file = join(home, '.realm', 'workflows', 'blockedwf.json');
   writeFileSync(file, 'not json');
   const runs = new JsonFileStore(join(home, '.realm', 'runs'));
-  const runId = (await runs.create({ workflowId: 'blockedwf', workflowVersion: 1, params: {} })).run
-    .id;
+  const runId = (await runs.create({ workflowId: 'blockedwf', workflowVersion: 1, params: {} }))
+    .record.id;
   return { runId, file };
 }
 
@@ -826,7 +830,7 @@ describe("#729 PR-3 correction 2 (C1) — realm's own words print whole", () => 
     await workflows.register(definitionAt(undefined));
     const runs = new JsonFileStore(join(home, '.realm', 'runs'));
     const runId = (await runs.create({ workflowId: 'records-729', workflowVersion: 1, params: {} }))
-      .run.id;
+      .record.id;
     await abandonRun(runs, runId, 'Held.');
     const r = piped(['run', 'inspect', runId], {
       HOME: home,
@@ -881,7 +885,7 @@ describe("#729 PR-3 correction 2 (C1) — realm's own words print whole", () => 
     mkdirSync(project);
     manifest(project, MANIFEST, `SVC_TOKEN=${SECRET}\n`);
     const runs = new JsonFileStore(join(home, '.realm', 'runs'));
-    const recorded = await runs.get(runId);
+    const { record: recorded } = await runs.get(runId);
     const manifestPath = join(project, 'realm.yaml');
     await runs.update({
       ...recorded,
@@ -940,7 +944,7 @@ describe("#729 PR-3 correction 2 (C1) — realm's own words print whole", () => 
     const runs = new JsonFileStore(join(home, '.realm', 'runs'));
     // A run that completed: its reason is core's fixed sentence.
     const done = (await runs.create({ workflowId: 'records-729', workflowVersion: 1, params: {} }))
-      .run.id;
+      .record.id;
     await executeStep(runs, definitionAt(undefined), {
       runId: done,
       command: 'a',
@@ -949,7 +953,7 @@ describe("#729 PR-3 correction 2 (C1) — realm's own words print whole", () => 
     });
     // A run abandoned with a reason that starts with the CLI's fixed sentence and holds a value.
     const mixed = (await runs.create({ workflowId: 'records-729', workflowVersion: 1, params: {} }))
-      .run.id;
+      .record.id;
     await abandonRun(runs, mixed, `Abandoned via realm run abandon ${ENV_CANARY}`);
     const env = {
       HOME: home,
@@ -1005,7 +1009,7 @@ describe('#729 PR-3 correction 2 (C2) — inspect shows a question as every othe
         workflowVersion: 1,
         params: { region: ENV_CANARY, key: SECRET },
       })
-    ).run.id;
+    ).record.id;
     await executeStep(runs, def, {
       runId,
       command: 'g',
@@ -1079,7 +1083,8 @@ describe('#729 PR-3 correction 2 (C5) — a misspelt name in a manifest’s `dis
     const def = definitionAt(project, { id: 'c5' });
     await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(def);
     const runs = new JsonFileStore(join(home, '.realm', 'runs'));
-    const runId = (await runs.create({ workflowId: 'c5', workflowVersion: 1, params: {} })).run.id;
+    const runId = (await runs.create({ workflowId: 'c5', workflowVersion: 1, params: {} })).record
+      .id;
     await abandonRun(runs, runId, 'Held.');
     const env = { HOME: home, REALM_NOT_SECRET: 'HOME', ANTHROPIC_API_KEY: 'fake-key-0729' };
     const warning =
@@ -1137,7 +1142,7 @@ async function damagedCopyWithRecordedManifest(): Promise<{ home: string; runId:
   const workflows = new JsonWorkflowStore(join(home, '.realm', 'workflows'));
   await workflows.register(definitionAt(project, { id: 'damaged-729' }));
   const store = new JsonFileStore(join(home, '.realm', 'runs'));
-  const { run } = await store.create({
+  const { record: run } = await store.create({
     workflowId: 'damaged-729',
     workflowVersion: 1,
     params: { key: SECRET },
@@ -1210,7 +1215,7 @@ describe("#729 PR-3 correction 3 (H-8'') — realm's fixed words print whole at 
     await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(definition);
     const runs = new JsonFileStore(join(home, '.realm', 'runs'));
     const create = async () =>
-      (await runs.create({ workflowId: 'records-729', workflowVersion: 1, params: {} })).run.id;
+      (await runs.create({ workflowId: 'records-729', workflowVersion: 1, params: {} })).record.id;
     return { definition, runs, create };
   }
 
@@ -1489,7 +1494,7 @@ async function withheldRun(
   } as Partial<WorkflowDefinition>);
   await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(definition);
   const store = new JsonFileStore(join(home, '.realm', 'runs'));
-  const { run } = await store.create({
+  const { record: run } = await store.create({
     workflowId: 'held-729',
     workflowVersion: 1,
     params: { key: SECRET },
@@ -1508,7 +1513,7 @@ async function withheldRun(
   });
   if (state !== 'no_manifest') {
     const path = join(project, 'realm.yaml');
-    const recorded = await store.get(run.id);
+    const { record: recorded } = await store.get(run.id);
     await store.update({
       ...recorded,
       extension_identity: [
@@ -1828,9 +1833,13 @@ async function endedRuns(
   const store = new JsonFileStore(join(home, '.realm', 'runs'));
   const path = join(project, 'realm.yaml');
   const create = async (): Promise<string> => {
-    const { run } = await store.create({ workflowId: 'ended-729', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'ended-729',
+      workflowVersion: 1,
+      params: {},
+    });
     await store.update({
-      ...(await store.get(run.id)),
+      ...(await store.get(run.id)).record,
       extension_identity: [
         {
           captured_at: '2024-01-01T00:00:00.000Z',
@@ -1884,7 +1893,7 @@ async function diffRuns3(output: string): Promise<{
   const store = new JsonFileStore(join(home, '.realm', 'runs'));
   const real = join(project, 'realm.yaml');
   const run = async (manifestPath: string): Promise<[string, string]> => {
-    const { run: created } = await store.create({
+    const { record: created } = await store.create({
       workflowId: 'diff-729',
       workflowVersion: 1,
       params: {},
@@ -1895,7 +1904,7 @@ async function diffRuns3(output: string): Promise<{
       input: {},
       dispatcher: async () => ({ note: output }),
     });
-    const recorded = await store.get(created.id);
+    const { record: recorded } = await store.get(created.id);
     await store.update({
       ...recorded,
       extension_identity: [
@@ -1919,7 +1928,7 @@ async function diffRuns3(output: string): Promise<{
         },
       ],
     } as unknown as RunRecord);
-    const hash = (await store.get(created.id)).evidence[0]!.evidence_hash;
+    const hash = (await store.get(created.id)).record.evidence[0]!.evidence_hash;
     return [created.id, hash];
   };
   const [a, ha] = await run(real);
@@ -1942,7 +1951,11 @@ describe('#729 PR-3 correction 4 — the read commands and the two un-read surfa
     const home = join(root, 'home-damaged-record');
     mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
     const store = new JsonFileStore(join(home, '.realm', 'runs'));
-    const { run } = await store.create({ workflowId: 'held-729', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'held-729',
+      workflowVersion: 1,
+      params: {},
+    });
     writeFileSync(join(home, '.realm', 'runs', `${run.id}.json`), 'not json');
     await failedAttemptHolding(home, run.id);
     const plain = read(home, ['run', 'attempts', run.id]);
@@ -2145,11 +2158,13 @@ describe('#729 PR-3 correction 4 — the read commands and the two un-read surfa
     const withheld = read(held.home, ['run', 'inspect', held.runId]);
     const intact = await withheldRun('intact', true);
     const shown = read(intact.home, ['run', 'inspect', intact.runId]);
-    const record = await new JsonFileStore(join(intact.home, '.realm', 'runs')).get(intact.runId);
+    const { record: record } = await new JsonFileStore(join(intact.home, '.realm', 'runs')).get(
+      intact.runId,
+    );
     // inspect's other site: a step with two execution attempts prints a hash per attempt.
     const multi = await withheldRun('unreadable');
     const multiStore = new JsonFileStore(join(multi.home, '.realm', 'runs'));
-    const stored = await multiStore.get(multi.runId);
+    const { record: stored } = await multiStore.get(multi.runId);
     const firstA = stored.evidence.find((e) => e.step_id === 'a')!;
     await multiStore.update({
       ...stored,
@@ -2233,7 +2248,7 @@ describe('#729 PR-3 correction 4 — the read commands and the two un-read surfa
     // inspect's per-attempt site: a step with two execution attempts, its output's value hidden.
     const multi = await withheldRun('intact', false, 'multi');
     const multiStore = new JsonFileStore(join(multi.home, '.realm', 'runs'));
-    const stored = await multiStore.get(multi.runId);
+    const { record: stored } = await multiStore.get(multi.runId);
     const firstA = stored.evidence.find((e) => e.step_id === 'a')!;
     await multiStore.update({
       ...stored,
@@ -2352,7 +2367,7 @@ describe('#729 PR-3 correction 5 (J-1) — an unclosed quote in a stored reason 
         workflowVersion: 1,
         params: {},
       })
-    ).run.id;
+    ).record.id;
     piped(['run', 'abandon', runId, '--reason', 'password=" FAKEj10'], { HOME: home });
     const lines = piped(['run', 'inspect', runId], { HOME: home }).stdout.split('\n');
     const at = lines.findIndex((l) => l.startsWith('Cause:'));
@@ -2390,8 +2405,8 @@ describe("#729 PR-3 correction 5 (J-6) — diff's hash columns take the longer o
       id: 'diff-729',
     });
     const store = new JsonFileStore(join(home, '.realm', 'runs'));
-    const dirty = await store.get(ids.a);
-    const { run: created } = await store.create({
+    const { record: dirty } = await store.get(ids.a);
+    const { record: created } = await store.create({
       workflowId: 'diff-729',
       workflowVersion: 1,
       params: {},
@@ -2403,7 +2418,7 @@ describe("#729 PR-3 correction 5 (J-6) — diff's hash columns take the longer o
       dispatcher: async () => ({ note: 'FAKEplain0729c5' }),
     });
     await store.update({
-      ...(await store.get(created.id)),
+      ...(await store.get(created.id)).record,
       extension_identity: dirty.extension_identity,
     } as RunRecord);
     const lines = piped(['run', 'diff', ids.a, created.id], {
@@ -2412,7 +2427,7 @@ describe("#729 PR-3 correction 5 (J-6) — diff's hash columns take the longer o
     }).stdout.split('\n');
     const header = lines.find((l) => l.startsWith('Step')) ?? '';
     const row = lines.find((l) => l.startsWith('a ')) ?? '';
-    const cleanHash = (await store.get(created.id)).evidence[0]!.evidence_hash.slice(0, 8);
+    const cleanHash = (await store.get(created.id)).record.evidence[0]!.evidence_hash.slice(0, 8);
     // (a) red when the hash columns keep a fixed width (the shaped cell pushes `B hash` and `Δ ms`
     //     right of the header's); (b) prints the header's and the row's column starts (numbers) and
     //     whether the row holds a shape.

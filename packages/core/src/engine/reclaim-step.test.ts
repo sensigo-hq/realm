@@ -19,6 +19,8 @@ import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { TraceBufferStore } from '../store/trace-buffer-store.js';
 import type { StepHandler } from '../extensions/step-handler.js';
+import { snap, doubleClock, noSettle } from '../test-support/snapshot-double.js';
+import { writtenSnapshot } from './snapshot.js';
 
 const autoWf: WorkflowDefinition = {
   id: 'reclaim-wf',
@@ -45,12 +47,12 @@ describe('reclaimStep — guards and action (JsonFileStore)', () => {
   });
 
   it('removes a stale claim → the step is eligible again; appends audit evidence; not left settled', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'reclaim-wf',
       workflowVersion: 1,
       params: {},
     });
-    const claimed = await store.claimStep(run.id, 'work', autoWf);
+    const { record: claimed } = await store.claimStep(run.id, 'work', autoWf);
     expect(claimed.in_progress_steps).toContain('work');
     expect(findEligibleSteps(autoWf, claimed)).not.toContain('work'); // in_progress → excluded
     // Force staleness (claimStep set a future deadline; overwrite to the past).
@@ -60,7 +62,7 @@ describe('reclaimStep — guards and action (JsonFileStore)', () => {
     expect(result.outcome).toBe('reclaimed');
     expect(result.priorState).toBe('claim_stale');
 
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.in_progress_steps).not.toContain('work');
     expect(after.claims?.['work']).toBeUndefined();
     expect(findEligibleSteps(autoWf, after)).toContain('work'); // eligible again
@@ -75,12 +77,12 @@ describe('reclaimStep — guards and action (JsonFileStore)', () => {
   });
 
   it('reclaims an unknown-age (deadline: null) claim too', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'reclaim-wf',
       workflowVersion: 1,
       params: {},
     });
-    const claimed = await store.claimStep(run.id, 'work', autoWf);
+    const { record: claimed } = await store.claimStep(run.id, 'work', autoWf);
     await store.update({ ...claimed, claims: { work: { deadline: null } } });
     const result = await reclaimStep(store, run.id, 'work');
     expect(result.outcome).toBe('reclaimed');
@@ -88,7 +90,7 @@ describe('reclaimStep — guards and action (JsonFileStore)', () => {
   });
 
   it('refuses a terminal run', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'reclaim-wf',
       workflowVersion: 1,
       params: {},
@@ -106,7 +108,7 @@ describe('reclaimStep — guards and action (JsonFileStore)', () => {
   });
 
   it(`refuses the pending_gate step but ALLOWS a non-gated in_progress sibling (${RECLAIM_REFUSES_GATE_STEP})`, async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'reclaim-wf',
       workflowVersion: 1,
       params: {},
@@ -126,13 +128,13 @@ describe('reclaimStep — guards and action (JsonFileStore)', () => {
     await expect(reclaimStep(store, run.id, 'gated')).rejects.toThrow(/gate/i);
     const res = await reclaimStep(store, run.id, 'sibling');
     expect(res.outcome).toBe('reclaimed');
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.in_progress_steps).toContain('gated'); // gated claim untouched
     expect(after.in_progress_steps).not.toContain('sibling');
   });
 
   it('is idempotent on a step that was never claimed (issue #221: this IS the never-claimed case — no active claim, not settled, no positive evidence of any prior touch)', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'reclaim-wf',
       workflowVersion: 1,
       params: {},
@@ -140,12 +142,12 @@ describe('reclaimStep — guards and action (JsonFileStore)', () => {
     const result = await reclaimStep(store, run.id, 'work');
     expect(result.outcome).toBe('no_active_claim');
     expect(result.detail).toBeUndefined();
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.version).toBe(run.version); // no mutation
   });
 
   it('a step already in completed_steps ⇒ already_settled (issue #221, direct path — genuinely settled)', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'reclaim-wf',
       workflowVersion: 1,
       params: {},
@@ -162,7 +164,7 @@ describe('reclaimStep — guards and action (JsonFileStore)', () => {
   // the CLI's no_active_claim message ("it is not settled") would be asserted about a step that
   // genuinely IS settled (failed or skipped).
   it('a step already in failed_steps ⇒ already_settled (issue #221, settle-arm witness)', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'reclaim-wf',
       workflowVersion: 1,
       params: {},
@@ -174,7 +176,7 @@ describe('reclaimStep — guards and action (JsonFileStore)', () => {
   });
 
   it('a step already in skipped_steps ⇒ already_settled (issue #221, settle-arm witness)', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'reclaim-wf',
       workflowVersion: 1,
       params: {},
@@ -186,12 +188,12 @@ describe('reclaimStep — guards and action (JsonFileStore)', () => {
   });
 
   it('a step reclaimed once, then reclaimed again ⇒ no_active_claim + detail previously_reclaimed (issue #221 — exercises the RE-reclaim flow)', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'reclaim-wf',
       workflowVersion: 1,
       params: {},
     });
-    const claimed = await store.claimStep(run.id, 'work', autoWf);
+    const { record: claimed } = await store.claimStep(run.id, 'work', autoWf);
     await store.update({ ...claimed, claims: { work: { deadline: pastIso() } } });
 
     const first = await reclaimStep(store, run.id, 'work');
@@ -205,7 +207,7 @@ describe('reclaimStep — guards and action (JsonFileStore)', () => {
   });
 
   it('a capability-blocked step ⇒ no_active_claim + detail capability_blocked (issue #221)', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'reclaim-wf',
       workflowVersion: 1,
       params: {},
@@ -232,7 +234,7 @@ describe('reclaimStep — guards and action (JsonFileStore)', () => {
   // (a plausible real sequence: reclaimed once, re-driven, then hit a capability block) ⇒
   // capability_blocked wins as the more specific, more-actionable-now signal.
   it('both markers present (reclaim-audit evidence AND capability_blocks) ⇒ no_active_claim + detail capability_blocked (capability wins — MA-ratified precedence)', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'reclaim-wf',
       workflowVersion: 1,
       params: {},
@@ -266,6 +268,8 @@ describe('reclaimStep — guards and action (JsonFileStore)', () => {
 
   it('loud-fails when the store does not persist claims', async () => {
     const fake = declared({
+      clock: doubleClock,
+      settleStep: noSettle,
       persistsClaims: false,
       get: async () => {
         throw new Error('should not be called');
@@ -309,8 +313,10 @@ function scriptedStore(
   let updateCall = 0;
   const updateCalls: RunRecord[] = [];
   const store = declared({
+    clock: doubleClock,
+    settleStep: noSettle,
     persistsClaims: true,
-    get: async () => records[Math.min(getIdx++, records.length - 1)]!,
+    get: async () => snap(records[Math.min(getIdx++, records.length - 1)]!),
     update: async (rec: RunRecord) => {
       updateCall += 1;
       if (mismatchOnUpdateCall.includes(updateCall)) {
@@ -322,7 +328,7 @@ function scriptedStore(
         });
       }
       updateCalls.push(rec);
-      return { ...rec, version: rec.version + 1 };
+      return snap({ ...rec, version: rec.version + 1 });
     },
   } as unknown as RunStore);
   return { store, updateCalls };
@@ -436,7 +442,7 @@ describe('reclaimStep — finalizer-wedge recovery (headline)', () => {
   });
 
   it('a run crashed mid-buildFinalizedSeal (domain pinned, claim_unknown_age) recovers and fires finalizers', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'wedge-fin-wf',
       workflowVersion: 1,
       params: {},
@@ -444,9 +450,9 @@ describe('reclaimStep — finalizer-wedge recovery (headline)', () => {
 
     // Simulate the crash: the domain step is claimed (finalizer-bearing wf → deadline null) but
     // never settled — the buildFinalizedSeal crash-wedge. It is a claim_unknown_age wedge.
-    const claimed = await store.claimStep(run.id, 'work', finalizerWf);
+    const { record: claimed } = await store.claimStep(run.id, 'work', finalizerWf);
     expect(claimed.in_progress_steps).toContain('work');
-    expect(classifyInProgressClaims(claimed)[0]).toMatchObject({
+    expect(classifyInProgressClaims(writtenSnapshot(claimed, new Date()))[0]).toMatchObject({
       step: 'work',
       state: 'claim_unknown_age',
     });
@@ -456,7 +462,7 @@ describe('reclaimStep — finalizer-wedge recovery (headline)', () => {
     // Recover: reclaim the domain step → it becomes eligible again.
     const result = await reclaimStep(store, run.id, 'work');
     expect(result.outcome).toBe('reclaimed');
-    expect(findEligibleSteps(finalizerWf, await store.get(run.id))).toContain('work');
+    expect(findEligibleSteps(finalizerWf, (await store.get(run.id)).record)).toContain('work');
 
     // Re-drive the domain step → it re-reaches the seal → the finalizer runs.
     const cleanupRan = vi.fn();
@@ -480,7 +486,7 @@ describe('reclaimStep — finalizer-wedge recovery (headline)', () => {
       registry,
     });
 
-    const final = await store.get(run.id);
+    const { record: final } = await store.get(run.id);
     expect(final.run_phase).toBe('completed');
     expect(final.terminal_state).toBe(true);
     expect(cleanupRan).toHaveBeenCalledTimes(1);
@@ -514,12 +520,12 @@ describe('reclaimStep — clearing the stale trace buffer (issue #198)', () => {
   });
 
   it("clears the reclaimed step's WAL — a subsequent claim + executeStep adopts NO stale lines (no buffered_lines_adopted caveat)", async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'reclaim-agent-wf',
       workflowVersion: 1,
       params: {},
     });
-    const claimed = await store.claimStep(run.id, 'step-agent', agentReclaimWf);
+    const { record: claimed } = await store.claimStep(run.id, 'step-agent', agentReclaimWf);
     await store.update({ ...claimed, claims: { 'step-agent': { deadline: pastIso() } } });
 
     const traceBufferStore = new InMemoryTraceBufferStore(store);
@@ -549,12 +555,12 @@ describe('reclaimStep — clearing the stale trace buffer (issue #198)', () => {
   });
 
   it('clearStaleWal warns loudly (never rethrows) on a real I/O failure — the reclaim itself still succeeds', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'reclaim-wf',
       workflowVersion: 1,
       params: {},
     });
-    const claimed = await store.claimStep(run.id, 'work', autoWf);
+    const { record: claimed } = await store.claimStep(run.id, 'work', autoWf);
     await store.update({ ...claimed, claims: { work: { deadline: pastIso() } } });
 
     const failingTraceBufferStore: TraceBufferStore = declared({
@@ -577,7 +583,7 @@ describe('reclaimStep — clearing the stale trace buffer (issue #198)', () => {
       });
       // Not blocked — the reclaim itself succeeded despite the WAL clear failing.
       expect(result.outcome).toBe('reclaimed');
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       expect(after.in_progress_steps).not.toContain('work');
 
       // But it was NOT silently swallowed (issue #183 contract) — a warning was emitted naming
@@ -593,12 +599,12 @@ describe('reclaimStep — clearing the stale trace buffer (issue #198)', () => {
   });
 
   it('reclaimStep without a traceBufferStore is unchanged — the undefined early-return still holds (no regression for any caller that omits it)', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'reclaim-wf',
       workflowVersion: 1,
       params: {},
     });
-    const claimed = await store.claimStep(run.id, 'work', autoWf);
+    const { record: claimed } = await store.claimStep(run.id, 'work', autoWf);
     await store.update({ ...claimed, claims: { work: { deadline: pastIso() } } });
 
     // No options at all — mirrors every pre-#198 caller.
@@ -625,12 +631,12 @@ describe('reclaimStep — fenced pre-update clear (issue #207 PR-2)', () => {
   });
 
   it('call-order recorder: sealFenced fires BEFORE the update on BOTH the primary and the CAS-retry path (forced first-update STATE_SNAPSHOT_MISMATCH), and warns with the seal outcome (issue #197 PR-2: InMemoryTraceBufferStore now declares seal, so reclaim PRESERVES rather than destroys — see the sibling non-seal-fallback test below for the deleteFenced-drain path this test exercised before #197 PR-1 shipped seal capability)', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'reclaim-agent-wf',
       workflowVersion: 1,
       params: {},
     });
-    const claimed = await store.claimStep(run.id, 'step-agent', agentReclaimWf);
+    const { record: claimed } = await store.claimStep(run.id, 'step-agent', agentReclaimWf);
     await store.update({ ...claimed, claims: { 'step-agent': { deadline: pastIso() } } });
 
     const traceBufferStore = new InMemoryTraceBufferStore(store);
@@ -686,12 +692,12 @@ describe('reclaimStep — fenced pre-update clear (issue #207 PR-2)', () => {
   });
 
   it('non-seal fallback stays byte-frozen: a store declaring the fenced trio WITHOUT seal still drains via deleteFenced exactly as before #197 PR-1 shipped seal capability', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'reclaim-agent-wf',
       workflowVersion: 1,
       params: {},
     });
-    const claimed = await store.claimStep(run.id, 'step-agent', agentReclaimWf);
+    const { record: claimed } = await store.claimStep(run.id, 'step-agent', agentReclaimWf);
     await store.update({ ...claimed, claims: { 'step-agent': { deadline: pastIso() } } });
 
     // Trio-only stub — deliberately WITHOUT sealFenced/listSealedForRun/traceCapabilities, so
@@ -796,8 +802,10 @@ describe('reclaimStep — fenced pre-update clear (issue #207 PR-2)', () => {
       },
     });
     const scriptedRunStore = declared({
+      clock: doubleClock,
+      settleStep: noSettle,
       persistsClaims: true,
-      get: async () => records[Math.min(getIdx++, records.length - 1)]!,
+      get: async () => snap(records[Math.min(getIdx++, records.length - 1)]!),
       update: async (rec: RunRecord) => {
         updateCallNum += 1;
         if (updateCallNum === 1) {
@@ -809,7 +817,7 @@ describe('reclaimStep — fenced pre-update clear (issue #207 PR-2)', () => {
           });
         }
         updateCalls.push(rec);
-        return { ...rec, version: rec.version + 1 };
+        return snap({ ...rec, version: rec.version + 1 });
       },
     } as unknown as RunStore);
 

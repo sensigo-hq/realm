@@ -180,7 +180,8 @@ export function classifyForCoherence(run: ClassifiableRun): SealArm | undefined 
 
 /**
  * issue #367 — `SEAL_MARKERS_AGREE`, TRANSFORM-SCOPED: asserted on the records
- * `applyTerminalPostconditions` / `buildFinalizedSeal` THEMSELVES produce, where congruence is
+ * `applyTerminalPostconditions` THEMSELVES produce (`buildFinalizedSeal` too, until #715 (b)
+ * deleted it with the legacy path), where congruence is
  * theirs to guarantee. Never universal, and ONE-DIRECTIONAL (`armMarker(arm)` present ⇒ assert;
  * foreign markers are NOT forbidden): a transform's INPUT may legitimately carry a marker it did
  * not write — the published `TERMINAL_STATE_ONLY` law seeds `abandoned_at`/`aborted_at` on a live
@@ -234,13 +235,11 @@ export function assertSealOutcomeCoherent(
  * those writers' fossil `run_phase` hand-writes — phase is derived at every store write tail, never
  * hand-stamped (the #282 class). `step` is deliberately NOT accepted: every run-level arm is
  * step-less by definition, so `SealedBy.step` stays ABSENT rather than becoming an `''` sentinel.
+ * #715 (b) (D-21): the four writers reach it through the `seal_run` settlement delta, whose transform
+ * passes the write's one reading as `now` — the seal-tier instant (`abandoned_at`). No default: the
+ * caller always has the reading.
  */
-export function sealRunLevel(
-  run: RunRecord,
-  arm: SealArm,
-  reason: string,
-  now: Date = new Date(),
-): RunRecord {
+export function sealRunLevel(run: RunRecord, arm: SealArm, reason: string, now: Date): RunRecord {
   const { sealed_by: _priorSeal, ...base } = run;
   // The carried run_phase may be stale here — every store write tail re-derives it
   // (PHASE_IS_GENERATED), which is exactly why the callers' fossil hand-writes were deletable.

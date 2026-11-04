@@ -532,7 +532,7 @@ describe('#872 (b1) B2 — a cut changes nothing but the cut list', () => {
 
   it('execute_step (through the door): data {} and evidence [] as the tool set them, the cut made', async () => {
     const { call, runStore } = await door();
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: AFTER_FIRST.id,
       workflowVersion: 1,
       params: {},
@@ -558,7 +558,7 @@ describe('#872 (b1) B2 — a cut changes nothing but the cut list', () => {
 
   it('advance_run (through the door): continued_by, data {} and evidence [] as the tool set them, the cut made', async () => {
     const { call, runStore } = await door();
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: AFTER_HEAD.id,
       workflowVersion: 1,
       params: {},

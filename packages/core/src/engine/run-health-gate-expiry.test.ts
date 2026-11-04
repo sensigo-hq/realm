@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { classifyRunHealth } from './run-health.js';
 import type { RunRecord, PendingGate } from '../types/run-record.js';
+import { writtenSnapshot } from './snapshot.js';
 
 const NOW = new Date('2026-07-20T12:00:00.000Z');
 
@@ -49,7 +50,7 @@ describe('classifyRunHealth — gate_expired_awaiting_drive (issue #291)', () =>
         default_choice: 'approve',
       }),
     });
-    const findings = classifyRunHealth(run, { now: NOW });
+    const findings = classifyRunHealth(writtenSnapshot(run, NOW));
     const f = findings.find((x) => x.kind === 'gate_expired_awaiting_drive');
     expect(f).toBeDefined();
     expect(f?.step).toBe('approve');
@@ -64,7 +65,7 @@ describe('classifyRunHealth — gate_expired_awaiting_drive (issue #291)', () =>
     const run = makeRun({
       pending_gate: makeGate({ expires_at: '2026-07-20T11:30:00.000Z', on_expiry: 'abort' }),
     });
-    const findings = classifyRunHealth(run, { now: NOW });
+    const findings = classifyRunHealth(writtenSnapshot(run, NOW));
     const f = findings.find((x) => x.kind === 'gate_expired_awaiting_drive');
     expect(f?.evidence).toMatchObject({ disposition: 'abort' });
   });
@@ -73,7 +74,7 @@ describe('classifyRunHealth — gate_expired_awaiting_drive (issue #291)', () =>
     const run = makeRun({
       pending_gate: makeGate({ expires_at: '2026-07-20T11:30:00.000Z' }), // no on_expiry
     });
-    const findings = classifyRunHealth(run, { now: NOW });
+    const findings = classifyRunHealth(writtenSnapshot(run, NOW));
     const f = findings.find((x) => x.kind === 'gate_expired_awaiting_drive');
     expect(f).toBeDefined();
     expect(f?.evidence).toMatchObject({ disposition: 'finding_only' });
@@ -84,13 +85,13 @@ describe('classifyRunHealth — gate_expired_awaiting_drive (issue #291)', () =>
     const run = makeRun({
       pending_gate: makeGate({ expires_at: '2026-07-20T13:00:00.000Z', on_expiry: 'abort' }),
     });
-    const findings = classifyRunHealth(run, { now: NOW });
+    const findings = classifyRunHealth(writtenSnapshot(run, NOW));
     expect(findings.some((f) => f.kind === 'gate_expired_awaiting_drive')).toBe(false);
   });
 
   it('does NOT fire for a gate with no expires_at at all (grandfathered/no timeout)', () => {
     const run = makeRun({ pending_gate: makeGate() });
-    const findings = classifyRunHealth(run, { now: NOW });
+    const findings = classifyRunHealth(writtenSnapshot(run, NOW));
     expect(findings.some((f) => f.kind === 'gate_expired_awaiting_drive')).toBe(false);
   });
 
@@ -102,7 +103,7 @@ describe('classifyRunHealth — gate_expired_awaiting_drive (issue #291)', () =>
         on_expiry: 'abort',
       }),
     });
-    const findings = classifyRunHealth(run, { now: NOW });
+    const findings = classifyRunHealth(writtenSnapshot(run, NOW));
     expect(findings).toEqual([]);
   });
 
@@ -113,7 +114,7 @@ describe('classifyRunHealth — gate_expired_awaiting_drive (issue #291)', () =>
       in_progress_steps: [],
       pending_gate: makeGate({ expires_at: '2026-07-20T11:30:00.000Z', on_expiry: 'abort' }),
     });
-    const findings = classifyRunHealth(run, { now: NOW });
+    const findings = classifyRunHealth(writtenSnapshot(run, NOW));
     expect(findings.some((f) => f.kind === 'gate_expired_awaiting_drive')).toBe(false);
     // It DOES still get terminal_with_stale_gate — a different, pre-existing finding.
     expect(findings.some((f) => f.kind === 'terminal_with_stale_gate')).toBe(true);

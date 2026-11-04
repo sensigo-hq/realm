@@ -67,7 +67,10 @@ const PARAMS = {
 
 const DIST = fileURLToPath(new URL('../../dist/engine/render-template.js', import.meta.url));
 
-/** Renders every sample in a child process under `env`, with `Date.now` fixed at `now`. */
+/**
+ * Renders every sample in a child process under `env`, at the render instant `now` (#715 (b): the
+ * `time.at` a filter may read) with `Date.now` fixed there too (a filter that read the clock itself).
+ */
 function renderIn(env: Record<string, string>, now: number): Record<string, string> {
   const script = `
     Date.now = () => ${now};
@@ -76,7 +79,11 @@ function renderIn(env: Record<string, string>, now: number): Record<string, stri
     const params = JSON.parse(process.argv[2]);
     const out = {};
     for (const [name, template] of Object.entries(samples)) {
-      out[name] = renderTemplate(template, { evidenceByStep: {}, runParams: params });
+      out[name] = renderTemplate(
+        template,
+        { evidenceByStep: {}, runParams: params },
+        { time: { at: new Date(${now}) } },
+      );
     }
     process.stdout.write(JSON.stringify(out));
   `;

@@ -225,7 +225,7 @@ describe('a definition stored with a root $async is refused at its first check o
       code: reply['error_code'],
       validity: message.includes(asyncSchemaValidity(true)),
       noRun: message.includes('No run was created'),
-      runs: (await runStore.list()).length,
+      runs: (await runStore.list()).snapshots.map((s) => s.record).length,
     }).toEqual({
       status: 'error',
       code: 'VALIDATION_WORKFLOW_SCHEMA',
@@ -257,7 +257,7 @@ describe('a definition stored with a root $async is refused at its first check o
       validity: message.includes(asyncSchemaValidity(true)),
       noRunSaid: message.includes('No run was created'),
       itemsFailed: message.includes('item(s) failed'),
-      runs: (await runStore.list()).length,
+      runs: (await runStore.list()).snapshots.map((s) => s.record).length,
     }).toEqual({
       status: 'error',
       code: 'VALIDATION_WORKFLOW_SCHEMA',

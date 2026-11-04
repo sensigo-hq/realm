@@ -108,7 +108,11 @@ describe(
       const reg = realm('workflow', 'register', proj);
       expect(reg.code, `fixture: register — ${reg.err}`).toBe(0);
       const def = (await workflows.get(`held-${lease}`)) as WorkflowDefinition;
-      const { run } = await runs.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await advanceRun(runs, def, { runId: run.id, registry: new ExtensionRegistry() });
       await runs.settleStep!(
         run.id,
@@ -121,7 +125,7 @@ describe(
         def,
       );
       if (lease === 'expired') await pastDeadline(run.id);
-      const tidy = (await runs.get(run.id)).finalizer_ledger!['tidy']!;
+      const tidy = (await runs.get(run.id)).record.finalizer_ledger!['tidy']!;
       expect({ status: tidy.status, token: tidy.lease_token }, 'fixture').toEqual({
         status: 'pending',
         token: 'other-drain',
@@ -131,7 +135,7 @@ describe(
 
     /** Moves `tidy`'s lease deadline a minute into the past (the other drainer's lease has passed). */
     async function pastDeadline(id: string) {
-      const r = await runs.get(id);
+      const { record: r } = await runs.get(id);
       await runs.update({
         ...r,
         finalizer_ledger: {
@@ -175,7 +179,7 @@ describe(
         expect({
           code: d.code,
           out: d.out,
-          status: (await runs.get(r.id)).finalizer_ledger!['tidy']!.status,
+          status: (await runs.get(r.id)).record.finalizer_ledger!['tidy']!.status,
         }).toEqual(
           lease === 'live'
             ? {
@@ -214,7 +218,11 @@ describe(
           },
         };
         await workflows.register(def);
-        const { run } = await runs.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+        const { record: run } = await runs.create({
+          workflowId: def.id,
+          workflowVersion: 1,
+          params: {},
+        });
         let fired = false;
         // Another program leases `tidy` the moment this call's drain tries to.
         const racing = new Proxy(runs, {
@@ -257,7 +265,7 @@ describe(
           (l) => lines.push(l),
           registry,
         );
-        const tidy = (await runs.get(run.id)).finalizer_ledger!['tidy']!;
+        const tidy = (await runs.get(run.id)).record.finalizer_ledger!['tidy']!;
         const from = lines.findIndex((l) => l.startsWith('→ s'));
         // (a) red when the drain halts at the held lease with no `⚠` line and the cleanup line offers the
         //     command as if it ran the step now (G7-13); (b) prints the lines after the step.

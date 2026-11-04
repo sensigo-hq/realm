@@ -13,6 +13,7 @@ import {
   capabilityWarning,
   createDefaultRegistry,
   deriveRunPhase,
+  writtenSnapshot,
   type RunPhase,
   type DisclosureClass,
   persistsField,
@@ -239,9 +240,14 @@ export async function handleStartRunBatch(
   for (let i = 0; i < args.items.length; i++) {
     const item = args.items[i]!;
     let run;
+    let createdAt: Date;
     let created;
     try {
-      ({ run, created } = await runStore.create({
+      ({
+        record: run,
+        at: createdAt,
+        created,
+      } = await runStore.create({
         workflowId: definition.id,
         workflowVersion: definition.version,
         params: item.params,
@@ -295,9 +301,10 @@ export async function handleStartRunBatch(
 
     // decision C117: one clock for the entry's ways and its hint. #729 PR-0: the ways composed by
     // core, rendered by the MCP door (next_actions, and on a live run the sentence of what comes next).
-    const now = new Date();
+    // #715 (b) (02 §B.2, D6-17): that one reading is the create's — the snapshot the item describes.
+    const handedBack = writtenSnapshot(run, createdAt);
     const rendered = renderWaysOf(
-      composeToolWays(runStore, definition, run, registry, now),
+      composeToolWays(runStore, definition, run, registry, handedBack.at),
       mcpHostOf(stores),
     );
     started.push({
@@ -309,7 +316,7 @@ export async function handleStartRunBatch(
       ...(run.terminal_reason !== undefined ? { terminal_reason: run.terminal_reason } : {}),
       warnings,
       next_actions: rendered.next_actions,
-      context_hint: `${handBackHint({ run, current: run, definition, deduped })}${run.terminal_state ? '' : rendered.next_sentence}`,
+      context_hint: `${handBackHint({ run, current: handedBack, definition, deduped })}${run.terminal_state ? '' : rendered.next_sentence}`,
     });
   }
   if (dedupHits > 0) {

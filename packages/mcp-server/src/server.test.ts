@@ -18,6 +18,12 @@ import {
   findEligibleSteps,
   deriveRunPhase,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
+  applySettlement,
+  floorAtRecord,
+  systemClock,
+  takeRawReading,
+  takeReading,
+  writtenSnapshot,
 } from '@sensigo/realm';
 import type {
   RunStore,
@@ -29,6 +35,13 @@ import type {
 import { createRealmMcpServer } from './server.js';
 import { JsonTraceBufferStore } from './json-trace-buffer-store.js';
 import type { FailedAttemptStoreLike } from './tools/start-run.js';
+import type {
+  Snapshot,
+  Listing,
+  CreateResult,
+  SettlementDelta,
+  StoreSettlement,
+} from '@sensigo/realm';
 
 /**
  * Minimal hand-rolled `RunStore` — deliberately does NOT expose `runsDirPath` (no filesystem
@@ -42,9 +55,12 @@ class MinimalRunStore implements RunStore {
   }
   private readonly runs = new Map<string, RunRecord>();
   readonly persistsClaims = true;
+  /** #715 (b): every store reads the time only through its clock — here the host's. */
+  readonly clock = systemClock;
 
-  async create(options: CreateRunOptions): Promise<{ run: RunRecord; created: boolean }> {
-    const now = new Date().toISOString();
+  async create(options: CreateRunOptions): Promise<CreateResult> {
+    const at = takeReading(this.clock);
+    const now = at.toISOString();
     const record: RunRecord = {
       id: randomUUID(),
       workflow_id: options.workflowId,
@@ -62,10 +78,15 @@ class MinimalRunStore implements RunStore {
       terminal_state: false,
     };
     this.runs.set(record.id, record);
-    return { run: record, created: true };
+    return { ...writtenSnapshot(record, at), created: true };
   }
 
-  async get(runId: string): Promise<RunRecord> {
+  async get(runId: string): Promise<Snapshot> {
+    const r = takeRawReading(this.clock);
+    return writtenSnapshot(this.stored(runId), floorAtRecord(r, this.stored(runId)));
+  }
+
+  private stored(runId: string): RunRecord {
     const record = this.runs.get(runId);
     if (record === undefined) {
       throw new WorkflowError(`Run '${runId}' not found`, {
@@ -78,16 +99,9 @@ class MinimalRunStore implements RunStore {
     return record;
   }
 
-  async update(record: RunRecord): Promise<RunRecord> {
-    const existing = this.runs.get(record.id);
-    if (existing === undefined) {
-      throw new WorkflowError(`Run '${record.id}' not found`, {
-        code: 'STATE_RUN_NOT_FOUND',
-        category: 'STATE',
-        agentAction: 'report_to_user',
-        retryable: false,
-      });
-    }
+  async update(record: RunRecord): Promise<Snapshot> {
+    const existing = this.stored(record.id);
+    const at = takeReading(this.clock, existing);
     if (existing.version !== record.version) {
       throw new WorkflowError('Version conflict — run was modified by another process', {
         code: 'STATE_SNAPSHOT_MISMATCH',
@@ -100,18 +114,19 @@ class MinimalRunStore implements RunStore {
       ...record,
       run_phase: deriveRunPhase(record),
       version: record.version + 1,
-      updated_at: new Date().toISOString(),
+      updated_at: at.toISOString(),
     };
     this.runs.set(updated.id, updated);
-    return updated;
+    return writtenSnapshot(updated, at);
   }
 
   async claimStep(
     runId: string,
     stepName: string,
     definition: WorkflowDefinition,
-  ): Promise<RunRecord> {
-    const run = await this.get(runId);
+  ): Promise<Snapshot> {
+    const run = this.stored(runId);
+    const at = takeReading(this.clock, run);
     const alreadyDone = [
       ...run.completed_steps,
       ...run.in_progress_steps,
@@ -137,16 +152,45 @@ class MinimalRunStore implements RunStore {
     const updated: RunRecord = {
       ...run,
       in_progress_steps: [...run.in_progress_steps, stepName],
+      // #715 (b): the settle reads the claim it fences (`claims[step]`) — a store that keeps claims
+      // writes one (token-less here); the legacy path this double used to take never read it.
+      claims: { ...run.claims, [stepName]: { since: at.toISOString(), deadline: null } },
       version: run.version + 1,
-      updated_at: new Date().toISOString(),
+      updated_at: at.toISOString(),
     };
     this.runs.set(updated.id, updated);
-    return updated;
+    return writtenSnapshot(updated, at);
   }
 
-  async list(workflowId?: string): Promise<RunRecord[]> {
+  /** #715 (b): `settleStep` is required — the shared transform, at this write's one reading. */
+  async settleStep(
+    runId: string,
+    delta: SettlementDelta,
+    definition?: WorkflowDefinition,
+  ): Promise<StoreSettlement> {
+    const fresh = this.stored(runId);
+    const at = takeReading(this.clock, fresh, delta);
+    const outcome = applySettlement(fresh, delta, definition, { at, cascadeGuards: true });
+    if (!outcome.applied) return { ...outcome, at };
+    const updated: RunRecord = {
+      ...outcome.run,
+      run_phase: deriveRunPhase(outcome.run),
+      version: fresh.version + 1,
+    };
+    this.runs.set(runId, updated);
+    return { ...outcome, run: updated, at };
+  }
+
+  async list(workflowId?: string): Promise<Listing> {
+    const r = takeRawReading(this.clock);
     const all = [...this.runs.values()];
-    return workflowId !== undefined ? all.filter((r) => r.workflow_id === workflowId) : all;
+    const kept =
+      workflowId !== undefined ? all.filter((rec) => rec.workflow_id === workflowId) : all;
+    return {
+      snapshots: kept.map((rec) => writtenSnapshot(rec, floorAtRecord(r, rec))),
+      read_at: r,
+      consistent_snapshot: true,
+    };
   }
 }
 

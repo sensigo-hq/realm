@@ -14,7 +14,7 @@
 // params.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -96,15 +96,17 @@ const keyed = (extra: Record<string, unknown> = {}) => ({
 
 /** Ends a run the way the supersede journey of #558 PR-C (C-6) does. */
 async function terminalize(store: JsonFileStore, run: RunRecord): Promise<RunRecord> {
-  const fresh = await store.get(run.id);
-  return store.update({
-    ...fresh,
-    run_phase: 'abandoned',
-    terminal_state: true,
-    abandoned_at: fresh.updated_at,
-    sealed_by: { arm: 'abandon_requested' },
-    terminal_reason: 'Abandoned via realm run abandon',
-  });
+  const { record: fresh } = await store.get(run.id);
+  return (
+    await store.update({
+      ...fresh,
+      run_phase: 'abandoned',
+      terminal_state: true,
+      abandoned_at: fresh.updated_at,
+      sealed_by: { arm: 'abandon_requested' },
+      terminal_reason: 'Abandoned via realm run abandon',
+    })
+  ).record;
 }
 
 /**
@@ -113,7 +115,11 @@ async function terminalize(store: JsonFileStore, run: RunRecord): Promise<RunRec
  * itself refuses to write a terminal run without a seal).
  */
 async function seedUnsealed(store: JsonFileStore, runsDir: string, id: string): Promise<RunRecord> {
-  const { run } = await store.create({ workflowId: `seed-${id}`, workflowVersion: 1, params: {} });
+  const { record: run } = await store.create({
+    workflowId: `seed-${id}`,
+    workflowVersion: 1,
+    params: {},
+  });
   const legacy: RunRecord = {
     ...run,
     id,
@@ -161,11 +167,11 @@ describe('#715 (a) B1 — readings per member (JSON store)', () => {
 
   it('J3 a superseding keyed create (pointer present) spends one', async () => {
     const { store } = await location(T);
-    const { run } = await store.create(keyed());
+    const { record: run } = await store.create(keyed());
     await terminalize(store, run);
     const n = reads(store);
     const next = await store.create(keyed({ onTerminalMatch: 'rerun' }));
-    expect(next.run.rerun_of, 'J3 supersedes').toBe(run.id);
+    expect(next.record.rerun_of, 'J3 supersedes').toBe(run.id);
     expect(n.count(), 'J3').toBe(1);
   });
 
@@ -182,22 +188,22 @@ describe('#715 (a) B1 — readings per member (JSON store)', () => {
 
   it('J5 a keyed create that ADOPTS a legacy run (no pointer) spends one', async () => {
     const { store, runsDir } = await location(T);
-    const { run } = await store.create(keyed());
+    const { record: run } = await store.create(keyed());
     await unlink(pointerPath(runsDir));
     const n = reads(store);
     const again = await store.create(keyed());
-    expect(again.run.id, 'J5 adopted').toBe(run.id);
+    expect(again.record.id, 'J5 adopted').toBe(run.id);
     expect(n.count(), 'J5').toBe(1);
   });
 
   it('J6 a superseding keyed create over a legacy run (no pointer) spends one', async () => {
     const { store, runsDir } = await location(T);
-    const { run } = await store.create(keyed());
+    const { record: run } = await store.create(keyed());
     await terminalize(store, run);
     await unlink(pointerPath(runsDir));
     const n = reads(store);
     const next = await store.create(keyed({ onTerminalMatch: 'rerun' }));
-    expect(next.run.rerun_of, 'J6 supersedes').toBe(run.id);
+    expect(next.record.rerun_of, 'J6 supersedes').toBe(run.id);
     expect(n.count(), 'J6').toBe(1);
   });
 
@@ -210,7 +216,7 @@ describe('#715 (a) B1 — readings per member (JSON store)', () => {
 
   it('J8 update spends one — applied or refused; a missing run spends none', async () => {
     const { store } = await location(T);
-    const { run } = await store.create({ workflowId: WF, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({ workflowId: WF, workflowVersion: 1, params: {} });
     const n = reads(store);
     await store.update(run);
     expect(n.count(), 'J8 applied').toBe(1);
@@ -226,7 +232,7 @@ describe('#715 (a) B1 — readings per member (JSON store)', () => {
 
   it('J9 claimStep spends one — applied or refused; a missing run spends none', async () => {
     const { store } = await location(T);
-    const { run } = await store.create({ workflowId: WF, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({ workflowId: WF, workflowVersion: 1, params: {} });
     const n = reads(store);
     await store.claimStep(run.id, 'work', AUTO);
     expect(n.count(), 'J9 applied').toBe(1);
@@ -242,9 +248,9 @@ describe('#715 (a) B1 — readings per member (JSON store)', () => {
     expect(n.count(), 'J9 missing run').toBe(0);
   });
 
-  it('J11–J15 stampSeal, save, reconcileKeys, deleteAllForRun and every read spend none', async () => {
+  it('J11–J14 stampSeal, save, reconcileKeys, deleteAllForRun, listRunIds and statAllForRun spend none; J15 (#715 (b)): get, list and listWithDiagnostics spend one each', async () => {
     const { store, runsDir } = await location(T);
-    const { run } = await store.create(keyed());
+    const { record: run } = await store.create(keyed());
     const ended = await terminalize(store, run);
     const other = await location(T);
     // Correction 1 (C-4): J11 stamps a terminal UNSEALED run (a sealed one answers `already_stamped`
@@ -263,12 +269,19 @@ describe('#715 (a) B1 — readings per member (JSON store)', () => {
     expect(m.count(), 'J12 save (keyed)').toBe(0);
     await other.store.reconcileKeys();
     expect(m.count(), 'J13 reconcileKeys').toBe(0);
-    await store.get(ended.id);
-    await store.list();
-    await store.listWithDiagnostics();
     await store.listRunIds();
     await store.statAllForRun(ended.id);
-    expect(n.count(), 'J15 get, list, listWithDiagnostics, listRunIds, statAllForRun').toBe(0);
+    expect(n.count(), 'J14 listRunIds, statAllForRun').toBe(0);
+    // #715 (b) (D-16, the reversal of (a)'s J15): a read spends ONE reading, taken before it loads.
+    await store.get(ended.id);
+    expect(n.count(), 'J15 get').toBe(1);
+    n.reset();
+    await store.list();
+    expect(n.count(), 'J15 list').toBe(1);
+    n.reset();
+    await store.listWithDiagnostics();
+    expect(n.count(), 'J15 listWithDiagnostics').toBe(1);
+    n.reset();
     await store.deleteAllForRun(ended.id);
     expect(n.count(), 'J14 deleteAllForRun').toBe(0);
   });
@@ -295,7 +308,7 @@ describe('#715 (a) correction 1 (C-7) — a refusal after the lock spends its on
   // the cell's name and the count. Store-local cells, not clauses of the published law.
   it('a keyed create refused by policy (`fail` on a live key, `reject` on an ended one) spends one', async () => {
     const { store } = await location(T);
-    const { run } = await store.create(keyed());
+    const { record: run } = await store.create(keyed());
     const n = reads(store);
     expect(await rejected(store.create(keyed({ onLiveMatch: 'fail' }))), 'fail').toBe(
       'STATE_RUN_ALREADY_ACTIVE',
@@ -311,7 +324,7 @@ describe('#715 (a) correction 1 (C-7) — a refusal after the lock spends its on
 
   it('a claim refused as not eligible spends one', async () => {
     const { store } = await location(T);
-    const { run } = await store.create({ workflowId: WF, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({ workflowId: WF, workflowVersion: 1, params: {} });
     const n = reads(store);
     expect(await rejected(store.claimStep(run.id, 'after', TWO)), 'not eligible').toBe(
       'STATE_STEP_NOT_ELIGIBLE',
@@ -320,18 +333,20 @@ describe('#715 (a) correction 1 (C-7) — a refusal after the lock spends its on
   });
 });
 
-describe('#715 (a) B1 — J10, settleStep (unchanged until #715 (b))', () => {
-  it('J10 settleStep on an ordinary directory reads no store clock', async () => {
-    // (a) red when settleStep starts reading the shared system clock through `takeReading` before
-    // #715 (b) moves it; (b) prints the count. An ordinary directory, never a test location: the one
-    // cell that settles on a test location is correction 1's C-9 cell below.
+// #715 (b), D-16/D-19 — REVERSED from (a): J10 pinned that settleStep read no store clock until this
+// unit moved it; it now spends exactly one reading (SETTLE_ONE_READING), refused by predicate too.
+describe('#715 (b) — J10, settleStep spends one reading', () => {
+  it('J10 settleStep on an ordinary directory spends ONE reading of its clock (the host’s), even when its predicate refuses', async () => {
+    // (a) red when settleStep stops taking the store's reading (the (a)-era shape) or takes it twice;
+    // (b) prints the count. An ordinary directory: the store's clock IS the shared system clock. The
+    // delta names a gate the run does not have, so the predicate refuses — and the reading is spent.
     const root = await mkdtemp(join(tmpdir(), 'realm-715a-plain-'));
     roots.push(root);
     const store = new JsonFileStore(join(root, 'runs'));
-    const { run } = await store.create({ workflowId: WF, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({ workflowId: WF, workflowVersion: 1, params: {} });
     const spy = vi.spyOn(systemClock, 'now');
-    await store.settleStep(run.id, { kind: 'expire_gate', gateId: 'none' }, AUTO);
-    expect(spy.mock.calls.length, 'J10 settleStep').toBe(0);
+    const result = await store.settleStep(run.id, { kind: 'expire_gate', gateId: 'none' }, AUTO);
+    expect([spy.mock.calls.length, result.applied], 'J10 settleStep').toEqual([1, false]);
   });
 });
 
@@ -340,11 +355,11 @@ describe('#715 (a) B2 — every instant a write records equals its reading', () 
   it('J1, J7, J3, J8, J9: created_at = updated_at (= the pointer’s); updated_at; since and deadline', async () => {
     const loc = await location(T);
     const { store, runsDir } = loc;
-    const { run: j1 } = await store.create({ workflowId: WF, workflowVersion: 1, params: {} });
+    const { record: j1 } = await store.create({ workflowId: WF, workflowVersion: 1, params: {} });
     expect([j1.created_at, j1.updated_at], 'J1 created_at, updated_at').toEqual([iso(T), iso(T)]);
 
     await loc.set(T + 1_000);
-    const { run: j7 } = await store.create(keyed());
+    const { record: j7 } = await store.create(keyed());
     const p7 = await readPointer(runsDir);
     expect(
       [j7.created_at, j7.updated_at, p7.updated_at],
@@ -354,7 +369,7 @@ describe('#715 (a) B2 — every instant a write records equals its reading', () 
     await loc.set(T + 2_000);
     await terminalize(store, j7);
     await loc.set(T + 3_000);
-    const { run: j3 } = await store.create(keyed({ onTerminalMatch: 'rerun' }));
+    const { record: j3 } = await store.create(keyed({ onTerminalMatch: 'rerun' }));
     const p3 = await readPointer(runsDir);
     expect(
       [j3.created_at, j3.updated_at, p3.updated_at],
@@ -362,11 +377,11 @@ describe('#715 (a) B2 — every instant a write records equals its reading', () 
     ).toEqual([iso(T + 3_000), iso(T + 3_000), iso(T + 3_000)]);
 
     await loc.set(T + 4_000);
-    const j8 = await store.update(await store.get(j1.id));
+    const { record: j8 } = await store.update((await store.get(j1.id)).record);
     expect(j8.updated_at, 'J8 updated_at').toBe(iso(T + 4_000));
 
     await loc.set(T + 5_000);
-    const j9 = await store.claimStep(j1.id, 'work', AUTO);
+    const { record: j9 } = await store.claimStep(j1.id, 'work', AUTO);
     const expected = computeClaimDeadline(AUTO, 'work', new Date(T + 5_000));
     expect(typeof expected, 'the auto step has a deadline (not vacuous)').toBe('string');
     expect(
@@ -383,11 +398,11 @@ describe('#715 (a) B2 — every instant a write records equals its reading', () 
     const loc = await location(T);
     const { store, runsDir } = loc;
     // Ended, so J6's legacy scan below finds no live run to reuse.
-    await terminalize(store, (await store.create(keyed())).run);
+    await terminalize(store, (await store.create(keyed())).record);
     const p = await readPointer(runsDir);
     await writeFile(pointerPath(runsDir), JSON.stringify({ ...p, run_id: crypto.randomUUID() }));
     await loc.set(T + 10_000);
-    const { run: j4 } = await store.create(keyed());
+    const { record: j4 } = await store.create(keyed());
     const p4 = await readPointer(runsDir);
     expect(
       [j4.created_at, j4.updated_at, p4.updated_at],
@@ -396,7 +411,7 @@ describe('#715 (a) B2 — every instant a write records equals its reading', () 
     await terminalize(store, j4);
     await unlink(pointerPath(runsDir));
     await loc.set(T + 20_000);
-    const { run: j6 } = await store.create(keyed({ onTerminalMatch: 'rerun' }));
+    const { record: j6 } = await store.create(keyed({ onTerminalMatch: 'rerun' }));
     const p6 = await readPointer(runsDir);
     expect(
       [j6.created_at, j6.updated_at, p6.updated_at],
@@ -415,20 +430,22 @@ describe('#715 (a) correction 1 (C-4) — J5, J12, J13: the pointer carries the 
 
   it('J5 a keyed create that ADOPTS a run with no pointer', async () => {
     const loc = await location(T);
-    const { run } = await loc.store.create(keyed());
+    const { record: run } = await loc.store.create(keyed());
     await unlink(pointerPath(loc.runsDir));
     await loc.set(T + 60_000);
     const again = await loc.store.create(keyed());
-    expect(again.run.id, 'J5 adopted').toBe(run.id);
+    expect(again.record.id, 'J5 adopted').toBe(run.id);
     const pointer = (await readPointer(loc.runsDir)).updated_at;
-    const shown = `J5 pointer ${pointer}, record ${again.run.updated_at}`;
-    expect(pointer, shown).toBe(again.run.updated_at);
-    expect(yearOf(again.run.updated_at), `${shown}; the wall year ${wallYear}`).not.toBe(wallYear);
+    const shown = `J5 pointer ${pointer}, record ${again.record.updated_at}`;
+    expect(pointer, shown).toBe(again.record.updated_at);
+    expect(yearOf(again.record.updated_at), `${shown}; the wall year ${wallYear}`).not.toBe(
+      wallYear,
+    );
   });
 
   it('J12 a save of a keyed record', async () => {
     const source = await location(T);
-    const { run } = await source.store.create(keyed());
+    const { record: run } = await source.store.create(keyed());
     const target = await location(T + 60_000);
     await target.store.save(run);
     const pointer = (await readPointer(target.runsDir)).updated_at;
@@ -439,7 +456,7 @@ describe('#715 (a) correction 1 (C-4) — J5, J12, J13: the pointer carries the 
 
   it('J13 a reconcileKeys that writes a missing pointer', async () => {
     const loc = await location(T);
-    const { run } = await loc.store.create(keyed());
+    const { record: run } = await loc.store.create(keyed());
     await unlink(pointerPath(loc.runsDir));
     await loc.set(T + 60_000);
     await loc.store.reconcileKeys();
@@ -450,14 +467,20 @@ describe('#715 (a) correction 1 (C-4) — J5, J12, J13: the pointer carries the 
   });
 });
 
-describe('#715 (a) correction 1 (C-9) — on a test location, claimStep stamps the location; settleStep the wall clock', () => {
-  it('claimStep stamps the location’s T; a settleStep after it stamps updated_at with the wall clock, earlier than created_at', async () => {
-    // (a) red when settleStep is given the store's reading (#715 (b)'s change: its `updated_at` would be
-    // the location's T, not the wall clock's year); (b) prints the three instants and the wall year.
+// #715 (b), D-19 — REVERSED from (a) correction 1's C-9, which pinned that settleStep stamped the
+// wall clock (earlier than created_at on a future-dated location) until this unit gave it the reading.
+describe('#715 (b) (C-9 reversed) — on a test location, claimStep and settleStep both stamp the location', () => {
+  it('claimStep stamps the location’s T; a settleStep after it stamps updated_at with the location’s T too, never the wall clock', async () => {
+    // (a) red when settleStep stamps the wall clock again (the (a)-era shape: the wall year, and an
+    // updated_at earlier than created_at); (b) prints the three instants and the wall year.
     const wallYear = new Date(Date.now()).getUTCFullYear();
     const loc = await location(T);
-    const { run } = await loc.store.create({ workflowId: WF, workflowVersion: 1, params: {} });
-    const claimed = await loc.store.claimStep(run.id, 'work', AUTO);
+    const { record: run } = await loc.store.create({
+      workflowId: WF,
+      workflowVersion: 1,
+      params: {},
+    });
+    const { record: claimed } = await loc.store.claimStep(run.id, 'work', AUTO);
     const token = claimed.claims?.['work']?.token;
     await loc.store.settleStep(
       run.id,
@@ -470,14 +493,14 @@ describe('#715 (a) correction 1 (C-9) — on a test location, claimStep stamps t
       },
       AUTO,
     );
-    const settled = await loc.store.get(run.id);
+    const { record: settled } = await loc.store.get(run.id);
     const shown = `created ${run.created_at}, claimed ${claimed.updated_at}, settled ${settled.updated_at}; the wall year ${wallYear}`;
     expect(
       {
         claimSince: claimed.claims?.['work']?.since,
         claimed: claimed.updated_at,
         completed: settled.completed_steps,
-        settledYear: new Date(settled.updated_at).getUTCFullYear(),
+        settled: settled.updated_at,
         updatedBeforeCreated: Date.parse(settled.updated_at) < Date.parse(settled.created_at),
       },
       shown,
@@ -485,8 +508,8 @@ describe('#715 (a) correction 1 (C-9) — on a test location, claimStep stamps t
       claimSince: iso(T),
       claimed: iso(T),
       completed: ['work'],
-      settledYear: wallYear,
-      updatedBeforeCreated: true,
+      settled: iso(T),
+      updatedBeforeCreated: false,
     });
   });
 });
@@ -494,10 +517,14 @@ describe('#715 (a) correction 1 (C-9) — on a test location, claimStep stamps t
 /** Imports `run` into `loc`'s store as a NEW run (fresh id) stamped `updated_at`/`created_at`. */
 async function importRun(loc: Loc, fields: Partial<RunRecord>): Promise<RunRecord> {
   const source = await location(T);
-  const { run } = await source.store.create({ workflowId: WF, workflowVersion: 1, params: {} });
+  const { record: run } = await source.store.create({
+    workflowId: WF,
+    workflowVersion: 1,
+    params: {},
+  });
   const record: RunRecord = { ...run, ...fields };
   await loc.store.save(record);
-  return loc.store.get(record.id);
+  return (await loc.store.get(record.id)).record;
 }
 
 describe('#715 (a) B3 — MONOTONE capped through the store', () => {
@@ -507,7 +534,7 @@ describe('#715 (a) B3 — MONOTONE capped through the store', () => {
     const results: string[] = [];
     for (const lead of [3_600_000, 3_000, -3_600_000]) {
       const imported = await importRun(loc, { updated_at: iso(T + lead) });
-      results.push((await loc.store.update(imported)).updated_at);
+      results.push((await loc.store.update(imported)).record.updated_at);
     }
     expect(results, 'updated_at after +1 h, +3 s, −1 h').toEqual([
       iso(T + EPS),
@@ -531,7 +558,7 @@ async function successorVia(
 ): Promise<{ holder: RunRecord; successor: RunRecord }> {
   const { store, runsDir } = loc;
   await loc.set(holderMs);
-  const { run: holder } = await store.create(keyed());
+  const { record: holder } = await store.create(keyed());
   const ended = await terminalize(store, holder);
   if (path === 'J4') {
     const p = await readPointer(runsDir);
@@ -539,7 +566,7 @@ async function successorVia(
   }
   if (path === 'J6') await unlink(pointerPath(runsDir));
   await loc.set(clockMs);
-  const { run: successor } = await store.create(keyed({ onTerminalMatch: 'rerun' }));
+  const { record: successor } = await store.create(keyed({ onTerminalMatch: 'rerun' }));
   return { holder: ended, successor };
 }
 
@@ -563,14 +590,14 @@ describe('#715 (a) B4 — the per-key floor reaches every create path that has a
         await terminalize(loc.store, successor);
         await unlink(pointerPath(loc.runsDir));
         const canonical = await loc.store.create(keyed());
-        expect(canonical.run.id, `${msg}: canonical ${canonical.run.id}`).toBe(successor.id);
+        expect(canonical.record.id, `${msg}: canonical ${canonical.record.id}`).toBe(successor.id);
       });
     }
   }
 
   it('J7 (no holder): the control — the successor is stamped exactly the reading', async () => {
     const loc = await location(T + 7_000);
-    const { run } = await loc.store.create(keyed({ idempotencyKey: 'fresh' }));
+    const { record: run } = await loc.store.create(keyed({ idempotencyKey: 'fresh' }));
     expect(run.created_at, 'J7 created_at').toBe(iso(T + 7_000));
   });
 
@@ -595,7 +622,7 @@ describe('#715 (a) B5 — the floor is capped', () => {
       sealed_by: { arm: 'abandon_requested' },
       terminal_reason: 'Abandoned via realm run abandon',
     });
-    const { run: successor } = await loc.store.create(keyed({ onTerminalMatch: 'rerun' }));
+    const { record: successor } = await loc.store.create(keyed({ onTerminalMatch: 'rerun' }));
     expect(successor.rerun_of, 'supersedes the import').toBe(holder.id);
     expect(successor.created_at, `holder ${holder.created_at}`).toBe(iso(T + EPS));
   });
@@ -605,7 +632,7 @@ describe('#715 (a) B6 — an unparseable holder stamp floors nothing', () => {
   it('a hand-edited `created_at: "garbage"` does not throw and the successor is stamped r', async () => {
     // (a) red when the guard is missing (NaN reaches toISOString); (b) prints the thrown message.
     const loc = await location(T);
-    const { run } = await loc.store.create(keyed());
+    const { record: run } = await loc.store.create(keyed());
     const ended = await terminalize(loc.store, run);
     const file = join(loc.runsDir, `${ended.id}.json`);
     await writeFile(file, JSON.stringify({ ...ended, created_at: 'garbage' }, null, 2));
@@ -613,7 +640,7 @@ describe('#715 (a) B6 — an unparseable holder stamp floors nothing', () => {
     let message = '';
     let successor: RunRecord | undefined;
     try {
-      successor = (await loc.store.create(keyed({ onTerminalMatch: 'rerun' }))).run;
+      successor = (await loc.store.create(keyed({ onTerminalMatch: 'rerun' }))).record;
     } catch (err) {
       message = (err as Error).message;
     }
@@ -640,7 +667,7 @@ describe('#715 (a) B7 — compareCanonical compares by value', () => {
     await importRun(loc, { ...ended, ...a, abandoned_at: a.created_at, updated_at: a.created_at });
     await importRun(loc, { ...ended, ...b, abandoned_at: b.created_at, updated_at: b.created_at });
     await unlink(pointerPath(loc.runsDir));
-    return (await loc.store.create(keyed())).run.id;
+    return (await loc.store.create(keyed())).record.id;
   }
 
   it('`…:00Z` vs `…:00.001Z`: the later wins, in either input order', async () => {
@@ -683,7 +710,7 @@ describe('#715 (a) B8 — the no-holder scan never turns into a refusal', () => 
       JSON.stringify({ workflow_id: WF, idempotency_key: KEY, created_at: iso(T + 3_000) }),
     );
     await loc.set(T + 1_000);
-    const { run } = await loc.store.create(keyed());
+    const { record: run } = await loc.store.create(keyed());
     expect(run.created_at, 'stamped r').toBe(iso(T + 1_000));
   });
 
@@ -702,7 +729,7 @@ describe('#715 (a) B8 — the no-holder scan never turns into a refusal', () => 
       .spyOn(loc.store as unknown as { scanRunFiles(): Promise<unknown> }, 'scanRunFiles')
       .mockRejectedValue(new Error('the runs folder cannot be read'));
     await loc.set(T + 1_000);
-    const { run } = await loc.store.create(keyed());
+    const { record: run } = await loc.store.create(keyed());
     expect(scan, 'the scan was attempted').toHaveBeenCalled();
     expect(run.created_at, 'stamped r').toBe(iso(T + 1_000));
   });
@@ -712,8 +739,8 @@ describe('#715 (a) B9 — an unkeyed create stamps the location’s instant and 
   it('two unkeyed creates at a frozen instant both carry it', async () => {
     // (a) red when an unkeyed create is floored; (b) prints the stamps.
     const { store } = await location(T);
-    const a = (await store.create({ workflowId: WF, workflowVersion: 1, params: {} })).run;
-    const b = (await store.create({ workflowId: WF, workflowVersion: 1, params: {} })).run;
+    const a = (await store.create({ workflowId: WF, workflowVersion: 1, params: {} })).record;
+    const b = (await store.create({ workflowId: WF, workflowVersion: 1, params: {} })).record;
     expect([a.created_at, b.created_at], 'both stamps').toEqual([iso(T), iso(T)]);
   });
 });
@@ -734,9 +761,13 @@ describe('#715 (a) B11 — an ordinary directory stamps with the wall clock, as 
     try {
       vi.setSystemTime(X);
       const store = new JsonFileStore(runsDir);
-      const { run } = await store.create({ workflowId: WF, workflowVersion: 1, params: {} });
-      const updated = await store.update(run);
-      const claimed = await store.claimStep(run.id, 'work', AUTO);
+      const { record: run } = await store.create({
+        workflowId: WF,
+        workflowVersion: 1,
+        params: {},
+      });
+      const { record: updated } = await store.update(run);
+      const { record: claimed } = await store.claimStep(run.id, 'work', AUTO);
       expect(
         [run.created_at, updated.updated_at, claimed.claims?.['work']?.since, claimed.updated_at],
         `X = ${iso(X)}`,
@@ -752,7 +783,7 @@ describe('#715 (a) D1 — deleteAllForRun’s expectVersion (the anchor’s vers
     // (a) red when the version check is missing, or runs after deletion; (b) prints the code and
     // details.
     const loc = await location(T);
-    const { run } = await loc.store.create(keyed());
+    const { record: run } = await loc.store.create(keyed());
     const ended = await terminalize(loc.store, run);
     let caught: { code?: string; details?: Record<string, unknown> } = {};
     try {
@@ -773,5 +804,36 @@ describe('#715 (a) D1 — deleteAllForRun’s expectVersion (the anchor’s vers
       true,
     );
     expect(existsSync(join(loc.runsDir, `${ended.id}.json`)), 'the run file is gone').toBe(false);
+  });
+});
+
+// #715 (b) B.1, D6-16 — SNAPSHOT_AT_SOUND on the JSON store (the TCK's law runs on the clock route;
+// this store's clock is the location's or the host's, so its cell lives here). The clock's now()
+// SYNCHRONOUSLY rewrites the run file — another writer's settle landing at the reading itself. With
+// the reading taken before the load, the load sees the rewritten file; taken after, it sees the old one.
+describe('#715 (b) B.1 — SNAPSHOT_AT_SOUND: get takes its reading BEFORE it loads', () => {
+  it('a write that lands when get() reads the clock is in the snapshot', async () => {
+    // (a) red when get() loads the record before it takes its reading (the snapshot holds the old
+    //     version); (b) prints whether the hook fired and both versions.
+    const root = await mkdtemp(join(tmpdir(), 'realm-715b-sound-'));
+    roots.push(root);
+    const store = new JsonFileStore(join(root, 'runs'));
+    const { record: run } = await store.create({ workflowId: WF, workflowVersion: 1, params: {} });
+    const file = join(root, 'runs', `${run.id}.json`);
+    const real = systemClock.now.bind(systemClock);
+    let fired = false;
+    vi.spyOn(systemClock, 'now').mockImplementation(() => {
+      if (!fired) {
+        fired = true;
+        writeFileSync(file, JSON.stringify({ ...run, version: run.version + 1 }, null, 2));
+      }
+      return real();
+    });
+    const snap = await store.get(run.id);
+    expect({ fired, stored: run.version + 1, snapshot: snap.record.version }).toEqual({
+      fired: true,
+      stored: run.version + 1,
+      snapshot: run.version + 1,
+    });
   });
 });

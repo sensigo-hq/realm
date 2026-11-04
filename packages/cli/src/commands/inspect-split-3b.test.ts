@@ -7,6 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import type { RunRecord } from '@sensigo/realm';
 import { inspectRun } from './inspect.js';
+import { listing, snap } from '../test-support/snapshot-double.js';
 
 const HEX = 'a'.repeat(64);
 const workflowStore = {
@@ -53,7 +54,7 @@ async function lineOf(requests: Record<string, unknown>[]): Promise<string> {
   } as unknown as RunRecord;
   const out = await inspectRun(
     'run_split',
-    { get: async () => run, list: async () => [run] } as never,
+    { get: async () => snap(run), list: async () => listing([run]) } as never,
     workflowStore,
   );
   return out.split('\n').find((l) => l.includes('cache:')) ?? '(no cache line)';

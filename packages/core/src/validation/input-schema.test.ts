@@ -337,7 +337,11 @@ describe('validateAgentSubmission (issue #224)', () => {
       it(`${label}: executeStep and validateAgentSubmission agree (both ${expectValid ? 'accept' : 'reject'})`, async () => {
         const dir = await mkdtemp(join(tmpdir(), 'realm-parity-test-'));
         const store = new JsonFileStore(dir);
-        const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+        const { record: run } = await store.create({
+          workflowId: def.id,
+          workflowVersion: 1,
+          params: {},
+        });
 
         const envelope = await executeStep(store, def, {
           runId: run.id,
@@ -1139,7 +1143,11 @@ describe('issue #759 — every problem, capped, with the total', () => {
         },
       },
     } as unknown as WorkflowDefinition;
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const envelope = await executeStep(store, def, {
       runId: run.id,
       command: 's',

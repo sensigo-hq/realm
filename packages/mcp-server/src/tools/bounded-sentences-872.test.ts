@@ -117,7 +117,7 @@ describe('#872 (b1) correction 1 HC2 (H2) — names in the MCP sentences: at mos
     const { call, runStore } = await door([gates('hc2-owed', 12)]);
     const started = await call('start_run', { workflow_id: 'hc2-owed' });
     const runId = String(started['run_id']);
-    const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
+    const gateId = (await runStore.get(runId)).record.pending_gate!.gate_id;
     const r = await call('submit_human_response', {
       run_id: runId,
       gate_id: gateId,
@@ -154,8 +154,8 @@ describe('#872 (b1) correction 1 HC2 (H2) — names in the MCP sentences: at mos
       ),
     ]);
     const hold = async (workflowId: string, ids: readonly string[]) => {
-      const { run } = await runStore.create({ workflowId, workflowVersion: 1, params: {} });
-      const current = await runStore.get(run.id);
+      const { record: run } = await runStore.create({ workflowId, workflowVersion: 1, params: {} });
+      const { record: current } = await runStore.get(run.id);
       const until = new Date(Date.now() + 3_600_000).toISOString();
       await runStore.update({
         ...current,
@@ -349,12 +349,12 @@ describe('#872 (b1) correction 1 HC5 (H5) — run_health: ten findings of a kind
         ),
       ),
     ]);
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'hc5-cap',
       workflowVersion: 1,
       params: {},
     });
-    const current = await runStore.get(run.id);
+    const { record: current } = await runStore.get(run.id);
     await runStore.update({
       ...current,
       capability_blocks: Object.fromEntries(
@@ -405,7 +405,7 @@ describe('#872 (b1) correction 1 HC5 (H5) — run_health: ten findings of a kind
     const { runStore, workflowStore } = await door([
       refused('hc5-evidence', ids, () => "run.params.go == 'yes'"),
     ]);
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'hc5-evidence',
       workflowVersion: 1,
       params: { go: 'no' },
@@ -486,12 +486,12 @@ describe('#872 (b1) correction 1 HC7 (H7) — resumable.steps and a failed drive
     const { runStore, workflowStore } = await door([
       wf('hc7-usage', { s: { description: 'S.', execution: 'agent' } }),
     ]);
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'hc7-usage',
       workflowVersion: 1,
       params: {},
     });
-    const current = await runStore.get(run.id);
+    const { record: current } = await runStore.get(run.id);
     const usage = Array.from({ length: 5 }, (_, i) => ({
       request_index: i,
       request_start: '2026-10-28T00:00:00.000Z',

@@ -307,6 +307,8 @@ const DRIVE_FAILURE_TABLE = {
   provider: 'fact',
   error_class: 'fact',
   message: 'bounded',
+  evidence_count: 'fact',
+  gate_id: 'fact',
   attempts_sdk: 'fact',
   elapsed_ms: 'fact',
   declared_per_attempt_ms: 'fact',
@@ -598,6 +600,8 @@ export const DRIVE_FAILURE_FACTS = {
   step: 'author_literal',
   provider: 'enum',
   error_class: 'enum',
+  // #715 (b) (02 §D.2): the open question's id when the entry was appended.
+  gate_id: 'id',
 } as const satisfies FactProducers<typeof DRIVE_FAILURE_TABLE, DriveFailureRecord>;
 
 export const DRIVE_FAILURES_FACTS = {

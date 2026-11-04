@@ -64,7 +64,11 @@ describe('#625 PR-2a, F11 — the ended-run refusal never says "nothing is owed"
     const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
     const d = def(!withTidyMissing);
     await workflowStore.register(d);
-    const { run } = await runStore.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runStore.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     // the run completes; its cleanup step has no handler here, so the ending leaves it pending
     await advanceRun(runStore, d, { runId: run.id });
     return { runStore, workflowStore, d, id: run.id };
@@ -76,7 +80,7 @@ describe('#625 PR-2a, F11 — the ended-run refusal never says "nothing is owed"
       "`it completed, and nothing is owed.` for a completed run, or, when its ending left a cleanup step pending, `it completed; cleanup step left pending: '<name>' — 'realm run drain <id> --force' runs it with code that has its handler.`, said once (added after version 0.46.0);",
     );
     const r = await completed(true);
-    const ledger = (await r.runStore.get(r.id)).finalizer_ledger?.['tidy']?.status;
+    const ledger = (await r.runStore.get(r.id)).record.finalizer_ledger?.['tidy']?.status;
     const lib = await submitHumanResponse(r.runStore, r.d, {
       runId: r.id,
       gateId: 'g-old',

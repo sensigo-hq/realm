@@ -73,7 +73,11 @@ describe('#625 PR-2a, F13 — the loop’s own guard ending carries guards and e
       '`chained_auto_steps` lists what ran, guards included, `guards` and `ended_by` what a guard that ended the run settled',
     );
     const { runStore, workflowStore } = await stores();
-    const { run } = await runStore.create({ workflowId: DEF.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runStore.create({
+      workflowId: DEF.id,
+      workflowVersion: 1,
+      params: {},
+    });
     // `p` answered with nothing at `ok`: its write decides `gr` (a resolution error), the run fails
     await executeStep(runStore, DEF, {
       runId: run.id,
@@ -82,8 +86,8 @@ describe('#625 PR-2a, F13 — the loop’s own guard ending carries guards and e
       dispatcher: async () => ({}),
     });
     // `realm run resume --from gr`: the guard is pending again, and no write decides it
-    await runStore.update(applyResume(await runStore.get(run.id), 'gr', DEF).run);
-    expect((await runStore.get(run.id)).run_phase, 'fixture: resumed').toBe('running');
+    await runStore.update(applyResume((await runStore.get(run.id)).record, 'gr', DEF).run);
+    expect((await runStore.get(run.id)).record.run_phase, 'fixture: resumed').toBe('running');
     const reply = await handleAdvanceRun({ run_id: run.id }, { runStore, workflowStore });
     // (a) red when the loop's own guard ending leaves out `guards` or `ended_by` (F-R4); (b) prints
     //     the reply's fields.
@@ -102,7 +106,11 @@ describe('#625 PR-2a, F13 — the loop’s own guard ending carries guards and e
 
   it('execute_step’s chain (the same loop): another writer makes the guard eligible after the named step’s write — the chain decides it — guards and ended_by', async () => {
     const { runStore, workflowStore } = await stores();
-    const { run } = await runStore.create({ workflowId: DEF.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runStore.create({
+      workflowId: DEF.id,
+      workflowVersion: 1,
+      params: {},
+    });
     let wroteP = false;
     // After `x`'s own write, another writer records `p` with a plain update (it decides no guard),
     // so the chain's loop meets `gr` and decides it itself.
@@ -113,7 +121,7 @@ describe('#625 PR-2a, F13 — the loop’s own guard ending carries guards and e
             const r = await target.settleStep!(...a);
             if (a[1].kind === 'settle_step' && a[1].step === 'x' && !wroteP) {
               wroteP = true;
-              const cur = await target.get(a[0]);
+              const { record: cur } = await target.get(a[0]);
               const now = new Date().toISOString();
               await target.update({
                 ...cur,

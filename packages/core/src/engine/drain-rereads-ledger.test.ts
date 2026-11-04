@@ -27,13 +27,20 @@ import { ExtensionRegistry } from '../extensions/registry.js';
 import type { RunStore, CreateRunOptions } from '../store/store-interface.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
-import type { SettlementDelta, SettlementResult } from '../types/settlement.js';
+import type { SettlementDelta } from '../types/settlement.js';
 import type { StepHandler } from '../extensions/step-handler.js';
+import type { Snapshot } from './snapshot.js';
+import type { Listing, CreateResult, StoreSettlement } from '../store/store-interface.js';
+import type { Clock } from '../utils/clock.js';
 
 /** Delegates everything to a real JsonFileStore, counting `settleStep` calls per finalizer name
  *  (lease + mark both count) — the observable proxy for "did drainFinalizers even ATTEMPT this
  *  entry", independent of its outcome. */
 class CountingStore implements RunStore {
+  /** #715 (b): the store's clock is the wrapped store's. */
+  get clock(): Clock {
+    return this.inner.clock;
+  }
   // issue #620 PR-C: a test double declares this realm's release line.
   static {
     declareReleaseLine(this);
@@ -45,34 +52,33 @@ class CountingStore implements RunStore {
     this.persistsClaims = inner.persistsClaims;
   }
 
-  create(options: CreateRunOptions): Promise<{ run: RunRecord; created: boolean }> {
+  create(options: CreateRunOptions): Promise<CreateResult> {
     return this.inner.create(options);
   }
-  get(runId: string): Promise<RunRecord> {
+  get(runId: string): Promise<Snapshot> {
     return this.inner.get(runId);
   }
-  update(record: RunRecord): Promise<RunRecord> {
+  update(record: RunRecord): Promise<Snapshot> {
     return this.inner.update(record);
   }
-  list(workflowId?: string): Promise<RunRecord[]> {
+  list(workflowId?: string): Promise<Listing> {
     return this.inner.list(workflowId);
   }
-  claimStep(runId: string, stepName: string, definition: WorkflowDefinition): Promise<RunRecord> {
+  claimStep(runId: string, stepName: string, definition: WorkflowDefinition): Promise<Snapshot> {
     return this.inner.claimStep(runId, stepName, definition);
   }
   settleStep(
     runId: string,
     delta: SettlementDelta,
-    definition: WorkflowDefinition,
-    options?: { now?: Date },
-  ): Promise<SettlementResult> {
+    definition?: WorkflowDefinition,
+  ): Promise<StoreSettlement> {
     if (delta.kind === 'lease_finalizer' || delta.kind === 'mark_finalizer') {
       this.settleStepCallsByFinalizer.set(
         delta.finalizer,
         (this.settleStepCallsByFinalizer.get(delta.finalizer) ?? 0) + 1,
       );
     }
-    return this.inner.settleStep(runId, delta, definition, options);
+    return this.inner.settleStep(runId, delta, definition);
   }
 }
 
@@ -104,7 +110,11 @@ describe('drainFinalizers re-derives pending-by-rank from fresh state every iter
           },
         },
       };
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
 
       const registry = new ExtensionRegistry();
       // fin0's handler stands in for a CONCURRENT operator: while fin0 is executing (after this
@@ -113,7 +123,7 @@ describe('drainFinalizers re-derives pending-by-rank from fresh state every iter
       const fin0Handler: StepHandler = {
         id: 'fin0-handler',
         execute: async () => {
-          const mid = await inner.get(run.id);
+          const { record: mid } = await inner.get(run.id);
           await inner.update({
             ...mid,
             finalizer_ledger: {
@@ -142,7 +152,7 @@ describe('drainFinalizers re-derives pending-by-rank from fresh state every iter
       });
       expect(result.status).toBe('ok');
 
-      const finalRun = await inner.get(run.id);
+      const { record: finalRun } = await inner.get(run.id);
       // fin0 genuinely ran (leased + marked): exactly one lease + one mark = 2 calls.
       expect(store.settleStepCallsByFinalizer.get('fin0')).toBe(2);
       // fin1 was voided DURING fin0's execution — a fresh-derivation drain never attempts to

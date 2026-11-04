@@ -56,7 +56,7 @@ describe('abandon_run MCP tool', () => {
   });
 
   it('success: abandons a running run, returns a terminal summary', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'agentflow',
       workflowVersion: 1,
       params: {},
@@ -71,7 +71,7 @@ describe('abandon_run MCP tool', () => {
   });
 
   it('issue #367: re-abandoning an already-abandoned run says so — it is a no-op, and looked identical before', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'agentflow',
       workflowVersion: 1,
       params: {},
@@ -103,7 +103,7 @@ describe('abandon_run MCP tool', () => {
       },
     };
     await workflowStore.register(withFinalizer);
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'agentflow-with-finalizer',
       workflowVersion: 1,
       params: {},
@@ -120,7 +120,7 @@ describe('abandon_run MCP tool', () => {
     expect(summary.terminal_reason).toBe('Abandoned via abandon_run');
     // core abandonRun has no handler-dispatch code path at all — structurally impossible for
     // 'cleanup' to have run; this re-confirms it at the record level, alongside the new note.
-    const finalRun = await runStore.get(run.id);
+    const { record: finalRun } = await runStore.get(run.id);
     expect(finalRun.completed_steps).not.toContain('cleanup');
     expect(finalRun.failed_steps).not.toContain('cleanup');
     expect(finalRun.evidence.some((e) => e.step_id === 'cleanup')).toBe(false);
@@ -134,7 +134,7 @@ describe('abandon_run MCP tool', () => {
   });
 
   it('error envelope: terminal run → STATE_RUN_TERMINAL', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'agentflow',
       workflowVersion: 1,
       params: {},
@@ -152,7 +152,7 @@ describe('abandon_run MCP tool', () => {
   });
 
   it('error envelope: gate_waiting run → STATE_TRANSITION_DENIED', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'agentflow',
       workflowVersion: 1,
       params: {},
@@ -189,7 +189,7 @@ describe('abandon_run MCP tool', () => {
   });
 
   it('the #432-class divergent record (persisted gate_waiting, NO pending_gate) is abandoned, not refused', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'agentflow',
       workflowVersion: 1,
       params: {},
@@ -222,7 +222,7 @@ describe('get_run_state — next_actions_status', () => {
   });
 
   it('ok: running with an eligible agent step → next_actions non-empty', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'agentflow',
       workflowVersion: 1,
       params: {},
@@ -233,7 +233,7 @@ describe('get_run_state — next_actions_status', () => {
   });
 
   it('advance_owed: running with only an auto step eligible → the one act names it (issue #625 PR-2a)', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'autoflow',
       workflowVersion: 1,
       params: {},
@@ -244,7 +244,7 @@ describe('get_run_state — next_actions_status', () => {
   });
 
   it('awaiting_human: a gate is open', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'agentflow',
       workflowVersion: 1,
       params: {},
@@ -265,7 +265,7 @@ describe('get_run_state — next_actions_status', () => {
   });
 
   it('skipped_terminal: terminal run', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'agentflow',
       workflowVersion: 1,
       params: {},
@@ -283,7 +283,7 @@ describe('get_run_state — next_actions_status', () => {
   });
 
   it('workflow_unresolved: no workflow store provided', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'agentflow',
       workflowVersion: 1,
       params: {},
@@ -307,7 +307,7 @@ describe('get_run_state — claim liveness (issue #101 wedge detection)', () => 
   async function wedgeRun(
     claims: Record<string, { deadline: string | null }> | undefined,
   ): Promise<string> {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'autoflow',
       workflowVersion: 1,
       params: {},
@@ -374,7 +374,7 @@ describe('get_run_state — gate_waiting + fan-out wedge (issue #101 gate/fan-ou
     claims: Record<string, { deadline: string | null }>,
     inProgress: string[],
   ): Promise<string> {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'agentflow',
       workflowVersion: 1,
       params: {},
@@ -442,7 +442,7 @@ describe('get_run_state — skip_details surfacing (issue #111)', () => {
   });
 
   it('present when non-empty — a run with a recorded skip reason surfaces skip_details', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'agentflow',
       workflowVersion: 1,
       params: {},
@@ -457,7 +457,7 @@ describe('get_run_state — skip_details surfacing (issue #111)', () => {
   });
 
   it('omitted when empty — a run with no skips has no skip_details key at all', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'agentflow',
       workflowVersion: 1,
       params: {},
@@ -467,7 +467,7 @@ describe('get_run_state — skip_details surfacing (issue #111)', () => {
   });
 
   it('omitted when skipped_steps is non-empty but skip_details is absent (legacy run)', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'agentflow',
       workflowVersion: 1,
       params: {},
@@ -547,7 +547,7 @@ describe('the rerun is linked — start_run → abandon_run → start_run(rerun)
       stores,
     );
     const oldId = first.run_id!;
-    expect((await runStore.get(oldId)).terminal_state).toBe(true);
+    expect((await runStore.get(oldId)).record.terminal_state).toBe(true);
     expect(first.rerun_of).toBeUndefined();
 
     const second = await handleStartRun(
@@ -556,7 +556,7 @@ describe('the rerun is linked — start_run → abandon_run → start_run(rerun)
     );
     expect(second.run_id).not.toBe(oldId);
     expect(second.rerun_of).toBe(oldId);
-    expect((await runStore.get(second.run_id!)).rerun_of).toBe(oldId);
+    expect((await runStore.get(second.run_id!)).record.rerun_of).toBe(oldId);
     expect(second.context_hint).toContain(
       `supersedes run '${oldId}' under the same idempotency key`,
     );

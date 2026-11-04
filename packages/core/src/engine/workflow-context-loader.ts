@@ -13,12 +13,15 @@ import type { WorkflowContextSnapshot } from '../types/run-record.js';
  */
 export async function loadWorkflowContext(
   definition: WorkflowDefinition,
+  // #715 (b) (A.9): `loaded_at` is an EVENT instant on the store's clock, read by the caller when the
+  // files are loaded (the write that records the snapshots folds nothing: `update` stamps its own).
+  loadedAtInstant: Date,
 ): Promise<Record<string, WorkflowContextSnapshot>> {
   const entries = definition.workflow_context;
   if (!entries || Object.keys(entries).length === 0) return {};
 
   const snapshots: Record<string, WorkflowContextSnapshot> = {};
-  const loadedAt = new Date().toISOString();
+  const loadedAt = loadedAtInstant.toISOString();
 
   for (const [name, entry] of Object.entries(entries)) {
     const absolutePath = entry.source.path;

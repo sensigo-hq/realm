@@ -150,7 +150,7 @@ describe('issue #625 PR-H — the host rows that run in-process', () => {
 
   async function openGate(definition: Awaited<ReturnType<typeof registerFinalizerWorkflow>>) {
     const store = new JsonFileStore();
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: 1,
       params: {},
@@ -181,7 +181,7 @@ describe('issue #625 PR-H — the host rows that run in-process', () => {
     const id = readdirSync(join(home, '.realm', 'runs'))
       .filter((f) => f.endsWith('.json'))[0]!
       .replace('.json', '');
-    const run = await new JsonFileStore().get(id);
+    const { record: run } = await new JsonFileStore().get(id);
     // (a) red when `run.ts` stops passing its identity, or uses another channel; (b) prints it.
     expect(
       run.evidence.find((e) => e.step_id === 'confirm' && e.kind !== 'gate_response')?.driven_by,
@@ -196,7 +196,7 @@ describe('issue #625 PR-H — the host rows that run in-process', () => {
       [runId, '--gate', gateId, '--choice', 'approve', '--project', proj],
       { from: 'user' },
     );
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     expect(run.run_phase).toBe('completed');
     // (a) red when respond stops passing its driver to the drain it triggers, or names the
     //     program as the person who answered; (b) prints the entries.
@@ -218,9 +218,9 @@ describe('issue #625 PR-H — the host rows that run in-process', () => {
       choice: 'approve',
       registry: new ExtensionRegistry(),
     });
-    expect((await store.get(runId)).finalizer_ledger?.['fin']?.status).toBe('pending');
+    expect((await store.get(runId)).record.finalizer_ledger?.['fin']?.status).toBe('pending');
     await drainCommand.parseAsync([runId, '--force', '--project', proj], { from: 'user' });
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     expect(run.finalizer_ledger?.['fin']?.status).toBe('completed');
     // (a) red when drain's identity is not threaded to its three deps.drainFinalizers calls;
     //     (b) prints the entries.
@@ -237,7 +237,7 @@ describe('issue #625 PR-H — the host rows that run in-process', () => {
       [runId, '--gate', gateId, '--choice', 'approve', '--by', '  alice  ', '--project', proj],
       { from: 'user' },
     );
-    const answer = (await store.get(runId)).evidence.find((e) => e.kind === 'gate_response');
+    const answer = (await store.get(runId)).record.evidence.find((e) => e.kind === 'gate_response');
     // (a) red when respond passes the raw option on instead of the checked name; (b) prints it.
     expect(answer?.responded_by).toBe('alice');
   }, 30_000);
@@ -255,7 +255,9 @@ describe('issue #625 PR-H — the host rows that run in-process', () => {
     await drainCommand.parseAsync([runId, '--force', '--project', proj], { from: 'user' });
     // (a) red when the variable is stored with its padding; (b) prints the entries.
     expect(
-      (await store.get(runId)).evidence.filter((e) => e.step_id === 'fin').map((e) => e.driven_by),
+      (await store.get(runId)).record.evidence
+        .filter((e) => e.step_id === 'fin')
+        .map((e) => e.driven_by),
     ).toEqual([{ by: 'ops-team', by_source: 'ambient', channel: 'drain' }]);
   }, 30_000);
 
@@ -273,7 +275,9 @@ describe('issue #625 PR-H — the host rows that run in-process', () => {
     const { userInfo, hostname } = await import('node:os');
     // (a) red when a blank REALM_OPERATOR is refused or stored blank; (b) prints the entries.
     expect(
-      (await store.get(runId)).evidence.filter((e) => e.step_id === 'fin').map((e) => e.driven_by),
+      (await store.get(runId)).record.evidence
+        .filter((e) => e.step_id === 'fin')
+        .map((e) => e.driven_by),
     ).toEqual([
       { by: `${userInfo().username}@${hostname()}`, by_source: 'derived', channel: 'drain' },
     ]);
@@ -290,7 +294,9 @@ describe('issue #625 PR-H — the host rows that run in-process', () => {
       registry: new ExtensionRegistry(),
     });
     await drainCommand.parseAsync([runId, '--force', '--project', proj], { from: 'user' });
-    const driven = (await store.get(runId)).evidence.find((e) => e.step_id === 'fin')?.driven_by;
+    const driven = (await store.get(runId)).record.evidence.find(
+      (e) => e.step_id === 'fin',
+    )?.driven_by;
     expect(driven?.channel).toBe('drain');
     expect(driven?.by_source).toBe('derived');
     expect(driven?.by).toMatch(/.@./);

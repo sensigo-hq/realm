@@ -36,7 +36,7 @@ if (kind === 'params') {
     steps: { ask: step },
   };
   await workflowStore.register(definition);
-  const { run } = await runStore.create({
+  const { record: run } = await runStore.create({
     workflowId: definition.id,
     workflowVersion: 1,
     params: {},

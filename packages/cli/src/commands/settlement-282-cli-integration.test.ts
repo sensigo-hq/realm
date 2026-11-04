@@ -163,7 +163,7 @@ describe('RESUME_STRIPS_ZOMBIE_GATE / RESUME_ADMITS_GRANDFATHERED (issue #279, i
       expect(disclosures).toHaveLength(1);
       expect(disclosures[0]).toMatch(/zombie gate 'stale' on 'a' cleared by resume/);
 
-      const resumed = await runStore.get(run.id);
+      const { record: resumed } = await runStore.get(run.id);
       expect(resumed.pending_gate).toBeUndefined();
       expect(resumed.failed_steps).not.toContain('a');
       expect(resumed.terminal_state).toBe(false);
@@ -179,8 +179,12 @@ describe('EXPORT_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
     try {
       const runStore = new JsonFileStore(dir);
       const traceBufferStore = new JsonTraceBufferStore(dir, runStore);
-      const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
-      const sealed = await runStore.update({
+      const { record: run } = await runStore.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
+      const { record: sealed } = await runStore.update({
         ...run,
         completed_steps: ['a', 'b'],
         terminal_state: true,
@@ -264,7 +268,7 @@ describe('SAVE_DERIVES_ON_IMPORT (issue #279, increment 2, PR-C)', () => {
       });
 
       await runStore.save(run);
-      const reread = await runStore.get(run.id);
+      const { record: reread } = await runStore.get(run.id);
 
       expect(reread.run_phase).toBe('failed');
       expect(reread.pending_gate).toBeDefined(); // NOT stripped — save() is a verbatim import

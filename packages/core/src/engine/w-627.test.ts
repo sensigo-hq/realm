@@ -99,9 +99,13 @@ async function newStore(): Promise<JsonFileStore> {
 /** A run whose `q` question is open, its record, and its gate id. */
 async function atGate(def: WorkflowDefinition = gated()) {
   const store = await newStore();
-  const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+  const { record: run } = await store.create({
+    workflowId: def.id,
+    workflowVersion: 1,
+    params: {},
+  });
   await advanceRun(store, def, { runId: run.id });
-  const record = await store.get(run.id);
+  const { record: record } = await store.get(run.id);
   return { store, def, record, gateId: record.pending_gate!.gate_id };
 }
 
@@ -353,7 +357,7 @@ describe('#627 W — present: offered only on asked with forms, re-judged on the
       gateId: settled.gateId,
       choice: 'approve',
     });
-    const afterAnswer = await settled.store.get(settled.record.id);
+    const { record: afterAnswer } = await settled.store.get(settled.record.id);
     const s = admitWay('present', writtenSnapshot(afterAnswer, new Date()), ctxOf(settled.def), {
       run_id: afterAnswer.id,
       gate_id: settled.gateId,
@@ -465,7 +469,7 @@ describe('#627 W — each answer records how it arrived', () => {
       choice: 'reject',
     });
     const entryOf = async (s: Awaited<ReturnType<typeof atGate>>) =>
-      (await s.store.get(s.record.id)).evidence.find((e) => e.kind === 'gate_response')!;
+      (await s.store.get(s.record.id)).record.evidence.find((e) => e.kind === 'gate_response')!;
     const a = await entryOf(withRoute);
     const b = await entryOf(without);
     // (a) red when the route parameter is dropped, an absent route is left unstated, a driver is
@@ -484,34 +488,6 @@ describe('#627 W — each answer records how it arrived', () => {
       bare: [{ absent: 'route_not_declared' }, false, false, { absent: 'principal_not_passed' }],
       bareDriver: { by: null, absent_cause: 'driver_not_recorded' },
     });
-  });
-
-  it('cell 5 — both write paths: a store without settleStep (the legacy inline write) records the same answer facts', async () => {
-    const s = await atGate();
-    const legacy = Object.create(s.store) as JsonFileStore;
-    Object.defineProperty(legacy, 'settleStep', { value: undefined });
-    await submitHumanResponse(legacy, s.def, {
-      runId: s.record.id,
-      gateId: s.gateId,
-      choice: 'approve',
-      route: 'cli',
-      principal: { absent: 'not_a_server_door' },
-      driver: { by: 'ops', by_source: 'ambient', channel: 'respond' },
-      clientPromptRequested: true,
-    });
-    const entry = (await s.store.get(s.record.id)).evidence.find((e) => e.kind === 'gate_response');
-    // (a) red when the legacy path drops a fact the migrated path writes; (b) prints the facts.
-    expect([
-      entry?.answer,
-      entry?.principal,
-      entry?.driven_by,
-      entry?.client_prompt_requested,
-    ]).toEqual([
-      { route: 'cli' },
-      { absent: 'not_a_server_door' },
-      { by: 'ops', by_source: 'ambient', channel: 'respond' },
-      true,
-    ]);
   });
 
   it('cell 29 — outcome.via: a repeat answer’s reply carries the WINNING entry’s route, never the losing call’s', async () => {
@@ -576,7 +552,9 @@ describe('#627 W — each answer records how it arrived', () => {
       route: 'mcp',
       principal: embedderPrincipal as never,
     });
-    const entry = (await s.store.get(s.record.id)).evidence.find((e) => e.kind === 'gate_response');
+    const entry = (await s.store.get(s.record.id)).record.evidence.find(
+      (e) => e.kind === 'gate_response',
+    );
     // (a) red when the principal is written as given (its extra key persisted in the run file);
     //     (b) prints the recorded principal's keys — never a value.
     expect(Object.keys((entry?.principal ?? {}) as object).sort()).toEqual(['id', 'kind']);
@@ -604,7 +582,7 @@ describe('#627 W — each answer records how it arrived', () => {
         refused instanceof WorkflowError
           ? refused.code
           : (refused as { error_code?: string }).error_code;
-      const recorded = (await s.store.get(s.record.id)).evidence.filter(
+      const recorded = (await s.store.get(s.record.id)).record.evidence.filter(
         (e) => e.kind === 'gate_response',
       ).length;
       // (a) red when the option is written as given, or the refusal's words change; (b) prints the
@@ -654,7 +632,7 @@ describe('#627 W — each answer records how it arrived', () => {
       choice: 'approve',
       driver: { by: 'recorder', by_source: 'stated', channel: 'respond' },
     });
-    const run = await s.store.get(s.record.id);
+    const { record: run } = await s.store.get(s.record.id);
     // (a) red when the answer's recorder is taken as the run's driver; (b) prints the reading.
     expect(describeRunDriver(run, s.def).driver).toEqual({
       by: null,
@@ -1241,7 +1219,11 @@ describe('#627 W correction 2 (2.1); #729 PR-4 (f) — a re-read gate shows no q
       }
     }
     const store = new SecondCaller(await mkdtemp(join(tmpdir(), 'realm-w627-prompt-')));
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const again = await executeStep(store, def, {
       runId: run.id,
       command: 'q',
@@ -1305,7 +1287,7 @@ describe('#627 W correction 2 (3.3) — a form’s answer gets no token sentence
       'past expires_at (its settle_default enacted by this answer)',
       async () => {
         const s = await atGate(settlesDefault());
-        const record = await s.store.get(s.record.id);
+        const { record: record } = await s.store.get(s.record.id);
         await s.store.update({
           ...record,
           pending_gate: {
@@ -1314,15 +1296,6 @@ describe('#627 W correction 2 (3.3) — a form’s answer gets no token sentence
           },
         });
         return form(s);
-      },
-    ],
-    [
-      'a store without settleStep (the legacy write)',
-      async () => {
-        const s = await atGate();
-        const legacy = Object.create(s.store) as JsonFileStore;
-        Object.defineProperty(legacy, 'settleStep', { value: undefined });
-        return form(s, legacy);
       },
     ],
   ] as const)('%s: no warning names claim_token', async (_branch, answer) => {

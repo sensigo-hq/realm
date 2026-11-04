@@ -64,7 +64,11 @@ describe('#625 PR-2a, C94 — a refusal before the claim says what can be called
   });
 
   async function callRefused(d: WorkflowDefinition): Promise<EngineReply> {
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     return executeStep(store, d, {
       runId: run.id,
       command: 'refused',
@@ -155,7 +159,11 @@ describe('#625 PR-2a, C94 — a refusal before the claim says what can be called
         c: { description: 'C.', execution: 'agent', depends_on: ['a'] },
       },
     };
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const reply = await executeStep(store, d, {
       runId: run.id,
       command: 'c',

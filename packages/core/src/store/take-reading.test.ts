@@ -4,7 +4,11 @@
 import { describe, expect, it } from 'vitest';
 import { CLOCK_SKEW_EPSILON_MS as EPS } from '../engine/instants.js';
 import type { Clock } from '../utils/clock.js';
-import { floorAtHolder, takeReading } from './take-reading.js';
+import { floorAtHolder, floorAtRecord, takeRawReading, takeReading } from './take-reading.js';
+import { eventInstantsOf } from '../engine/settlement-instants.js';
+import type { EvidenceSnapshot } from '../types/run-record.js';
+import type { SettlementDelta } from '../types/settlement.js';
+import type { ExtensionIdentityEntry } from '../types/extension-identity.js';
 
 const R = Date.parse('2030-06-01T12:00:00.000Z');
 const iso = (ms: number): string => new Date(ms).toISOString();
@@ -109,5 +113,118 @@ describe('#715 (a) A.2 — floorAtHolder', () => {
       );
     }
     expect(r.toISOString(), 'the reading is not mutated').toBe(iso(R));
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// #715 (b) A.1 (D-17) — the reads' helpers: `takeRawReading` (one clock.now(), no floor) and the pure
+// `floorAtRecord` (a read's `at`: the raw reading floored by the record's own `updated_at`, ε-capped).
+// ---------------------------------------------------------------------------------------------
+describe('#715 (b) A.1 — takeRawReading and floorAtRecord', () => {
+  it('B1 floorAtRecord: within ε lifts to the record’s stamp; beyond ε caps at r + ε; behind or unparseable returns r', () => {
+    // (a) red when the min(…, r+ε) cap is dropped (the beyond-ε row), the max is dropped (the within
+    //     row), or NaN leaks (the unparseable row); (b) prints each row's label and ISO result.
+    const r = new Date(R);
+    const rows: Array<[string, string, number]> = [
+      ['within ε', iso(R + 3_000), R + 3_000],
+      ['beyond ε', iso(R + 3_600_000), R + EPS],
+      ['behind', iso(R - 60_000), R],
+      ['unparseable', 'garbage', R],
+    ];
+    expect(
+      rows.map(([label, u]) => `${label}: ${floorAtRecord(r, { updated_at: u }).toISOString()}`),
+    ).toEqual(rows.map(([label, , want]) => `${label}: ${iso(want)}`));
+  });
+
+  it('B2 a returned Date is fresh: mutating it changes neither the reading passed in nor a second call', () => {
+    // (a) red when floorAtRecord returns `r` itself, or takeRawReading returns the clock's own Date;
+    //     (b) prints the instants after the mutation.
+    const r = new Date(R);
+    floorAtRecord(r, { updated_at: iso(R - 60_000) }).setTime(0);
+    floorAtRecord(r, { updated_at: 'garbage' }).setTime(0);
+    const shared = new Date(R);
+    const clock = counting(() => shared); // a clock that hands out the SAME Date every call
+    takeRawReading(clock).setTime(0);
+    expect([r.toISOString(), takeRawReading(clock).toISOString()]).toEqual([iso(R), iso(R)]);
+  });
+
+  it('B3 takeRawReading spends exactly one now() and never floors; an invalid Date throws after that one call', () => {
+    // (a) red when a second now() is added, or a floor creeps in; (b) prints the count and the instant.
+    const clock = counting(() => new Date(R));
+    expect([takeRawReading(clock).toISOString(), clock.calls]).toEqual([iso(R), 1]);
+    const broken = counting(() => new Date(Number.NaN));
+    expect(() => takeRawReading(broken)).toThrow(/clock\.now\(\)/);
+    expect(broken.calls, 'calls before the throw').toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// #715 (b) A.3 (D6-3, D6-10, D6-67) — a settle's reading folds the EVENT instants its delta carries
+// (`eventInstantsOf`): `at = max(floored reading, …started_at/completed_at)`, never ε-capped; an
+// identity entry's `captured_at` is outside class and never folded.
+// ---------------------------------------------------------------------------------------------
+describe('#715 (b) A.3 — takeReading folds the delta’s event instants', () => {
+  const ev = (started: number, completed: number): EvidenceSnapshot =>
+    ({
+      step_id: 's',
+      started_at: iso(started),
+      completed_at: iso(completed),
+      duration_ms: completed - started,
+      input_summary: {},
+      output_summary: {},
+      status: 'success',
+      evidence_hash: 'h',
+    }) as EvidenceSnapshot;
+  const settle = (evidence: EvidenceSnapshot[]): SettlementDelta => ({
+    kind: 'settle_step',
+    step: 's',
+    outcome: 'complete',
+    evidence,
+  });
+
+  it('B4 an evidence completed_at after the reading sets at — 2 s, and 1 h (events are not ε-capped)', () => {
+    // (a) red when the fold is dropped (both rows give r) or capped by ε (the 1 h row gives r + ε);
+    //     (b) prints both results.
+    const at2s = takeReading(
+      counting(() => new Date(R)),
+      undefined,
+      settle([ev(R, R + 2_000)]),
+    );
+    const at1h = takeReading(
+      counting(() => new Date(R)),
+      undefined,
+      settle([ev(R, R + 3_600_000)]),
+    );
+    expect([at2s.toISOString(), at1h.toISOString()]).toEqual([iso(R + 2_000), iso(R + 3_600_000)]);
+  });
+
+  it('B5 a seal_run identity entry captured 1 h ahead does NOT move at (captured_at is outside class)', () => {
+    // (a) red when captured_at is folded (at becomes r + 1 h); (b) prints the result.
+    const seal: SettlementDelta = {
+      kind: 'seal_run',
+      arm: 'abandon_requested',
+      reason: 'r',
+      expected_version: 1,
+      release_claims: true,
+      identity_entry: { captured_at: iso(R + 3_600_000) } as unknown as ExtensionIdentityEntry,
+    };
+    expect(eventInstantsOf(seal)).toEqual([]);
+    expect(
+      takeReading(
+        counting(() => new Date(R)),
+        undefined,
+        seal,
+      ).toISOString(),
+    ).toBe(iso(R));
+  });
+
+  it('B6 a delta with no evidence leaves at = the floored reading', () => {
+    // (a) red when an empty delta moves at, or the floor is skipped with a delta; (b) prints it.
+    const at = takeReading(
+      counting(() => new Date(R)),
+      { updated_at: iso(R + 1_000) },
+      { kind: 'expire_gate', gateId: 'g' },
+    );
+    expect(at.toISOString()).toBe(iso(R + 1_000));
   });
 });

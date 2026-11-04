@@ -263,7 +263,11 @@ describe('issue #944 — the sweeper waits the seconds it is given', () => {
       ].join('\n'),
     );
     await workflowStore.register(def);
-    const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runStore.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await executeChain(runStore as RunStore, def, {
       runId: run.id,
       command: 'review',
@@ -271,7 +275,7 @@ describe('issue #944 — the sweeper waits the seconds it is given', () => {
       dispatcher: async () => ({}),
       registry: createDefaultRegistry(),
     });
-    const open = await runStore.get(run.id);
+    const { record: open } = await runStore.get(run.id);
     const gate = open.pending_gate as PendingGate;
     await runStore.update({
       ...open,

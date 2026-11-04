@@ -25,6 +25,7 @@ import type { Attributed } from './holder.js';
 import type { RunStore, CreateRunOptions } from '../store/store-interface.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { StepDefinition, WorkflowDefinition } from '../types/workflow-definition.js';
+import type { Clock } from '../utils/clock.js';
 
 const echo: StepDispatcher = async (_step, input) => ({ ...input });
 
@@ -52,7 +53,7 @@ function oneAgentStep(extra: Partial<StepDefinition> = {}): WorkflowDefinition {
 }
 
 async function newRun(def: WorkflowDefinition): Promise<string> {
-  return (await store.create({ workflowId: def.id, workflowVersion: 1, params: {} })).run.id;
+  return (await store.create({ workflowId: def.id, workflowVersion: 1, params: {} })).record.id;
 }
 
 /** Runs `work` and hands back the record AS IT STOOD while the step was in progress (claim written,
@@ -62,14 +63,14 @@ async function claimWhileInProgress(
   driver: Attributed | undefined,
   s: RunStore = store,
 ): Promise<{ claim: RunRecord['claims']; reply: Awaited<ReturnType<typeof executeStep>> }> {
-  const runId = (await s.create({ workflowId: def.id, workflowVersion: 1, params: {} })).run.id;
+  const runId = (await s.create({ workflowId: def.id, workflowVersion: 1, params: {} })).record.id;
   let claims: RunRecord['claims'];
   const reply = await executeStep(s, def, {
     runId,
     command: 'work',
     input: {},
     dispatcher: async () => {
-      claims = (await s.get(runId)).claims;
+      claims = (await s.get(runId)).record.claims;
       return {};
     },
     ...(driver !== undefined ? { driver } : {}),
@@ -127,7 +128,7 @@ describe('driven_by — the program whose code did the work, on the entries wher
       dispatcher: echo,
       driver: DRIVER,
     });
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     // (a) red when the entry stops passing drivenBy; (b) prints the entry's driven_by.
     expect(run.evidence.filter((e) => e.step_id === 'work').map((e) => e.driven_by)).toEqual([
       DRIVER,
@@ -138,7 +139,7 @@ describe('driven_by — the program whose code did the work, on the entries wher
     const def = oneAgentStep();
     const runId = await newRun(def);
     await executeStep(store, def, { runId, command: 'work', input: {}, dispatcher: echo });
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     expect('driven_by' in run.evidence[0]!).toBe(false);
   });
 
@@ -166,7 +167,7 @@ describe('driven_by — the program whose code did the work, on the entries wher
       registry,
       driver: DRIVER,
     });
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     // (a) red when the abort entry (execution-loop's abortEvidence) drops drivenBy.
     expect(run.evidence.filter((e) => e.step_id === 'work').map((e) => e.driven_by)).toEqual([
       DRIVER,
@@ -192,7 +193,11 @@ describe('driven_by — the program whose code did the work, on the entries wher
             }
           : {}),
       });
-      const { run } = await sub.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await sub.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await sub.update({
         ...run,
         validation_rejections: { work: DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD - 1 },
@@ -204,7 +209,7 @@ describe('driven_by — the program whose code did the work, on the entries wher
         dispatcher: echo,
         driver: DRIVER,
       });
-      const done = await sub.get(run.id);
+      const { record: done } = await sub.get(run.id);
       // (a) red when defaultSnap / exhaustedSnap drop drivenBy; (b) prints the mode and the values.
       expect([
         mode,
@@ -250,7 +255,7 @@ describe('cleanup steps — the program whose code and credentials run them is n
   }
 
   it.each(['ok', 'abort', 'throw'] as const)(
-    'the seal path (buildFinalizedSeal, %s): the cleanup entry carries the driver of the call that sealed the run',
+    'the seal path (the post-commit drain, %s): the cleanup entry carries the driver of the call that sealed the run',
     async (kind) => {
       const def = finalizerWorkflow();
       const runId = await newRun(def);
@@ -262,9 +267,9 @@ describe('cleanup steps — the program whose code and credentials run them is n
         registry: registryOf(kind),
         driver: DRIVER,
       });
-      const run = await store.get(runId);
-      // (a) red when ANY of buildFinalizedSeal's three entry kinds drops drivenBy, or a call line
-      //     (one of the six) stops passing the driver; (b) prints the kind and the entries' names.
+      const { record: run } = await store.get(runId);
+      // (a) red when ANY of drainFinalizers' three entry kinds drops drivenBy, or a call line
+      //     stops passing the driver (#715 (b): buildFinalizedSeal, the legacy twin, is deleted); (b) prints the kind and the entries' names.
       expect([
         kind,
         run.evidence.filter((e) => e.step_id === 'fin').map((e) => e.driven_by),
@@ -288,10 +293,10 @@ describe('cleanup steps — the program whose code and credentials run them is n
         dispatcher: echo,
         registry: registryOf('none'),
       });
-      const sealed = await store.get(runId);
+      const { record: sealed } = await store.get(runId);
       expect(sealed.finalizer_ledger?.['fin']?.status).toBe('pending');
       await drainFinalizers(store, def, registryOf(kind), runId, OTHER);
-      const run = await store.get(runId);
+      const { record: run } = await store.get(runId);
       // (a) red when the drain drops the driver at ANY of its three entries (success, abort,
       //     throw), or the parameter is not threaded; (b) prints the kind and the values.
       expect([
@@ -312,7 +317,7 @@ describe('cleanup steps — the program whose code and credentials run them is n
       registry: registryOf('none'),
     });
     await drainFinalizers(store, def, registryOf('ok'), runId);
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     expect('driven_by' in run.evidence.find((e) => e.step_id === 'fin')!).toBe(false);
   });
 });
@@ -323,6 +328,10 @@ describe('cleanup steps — the program whose code and credentials run them is n
 
 /** A store whose claimStep forwards THREE arguments only — the claimant is dropped on the floor. */
 class ThreeArgForwarderStore implements RunStore {
+  /** #715 (b): the store's clock is the wrapped store's. */
+  get clock(): Clock {
+    return this.inner.clock;
+  }
   // issue #620 PR-C: a test double declares this realm's release line.
   static {
     declareReleaseLine(this);
@@ -411,6 +420,8 @@ describe('VALIDATION_ACTOR_INVALID — a malformed driver is refused at every ex
       list: trap('list'),
       claimStep: trap('claimStep'),
       settleStep: trap('settleStep'),
+      // #715 (b): every store holds a clock (admission checks its functions exist; a call is a use).
+      clock: { now: trap('clock.now'), at: trap('clock.at') },
     } as unknown as RunStore;
     // issue #620 PR-C: declared, so the host-wiring check passes and the driver is what is refused.
     declareReleaseLine(s);

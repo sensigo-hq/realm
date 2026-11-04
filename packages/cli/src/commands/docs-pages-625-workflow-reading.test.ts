@@ -114,7 +114,11 @@ describe(
 
     async function started(def: WorkflowDefinition, params: Record<string, unknown> = {}) {
       await workflowStore.register(def);
-      const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params });
+      const { record: run } = await runStore.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params,
+      });
       return run.id;
     }
     const inspect = (id: string): string[] => realm(home, ['run', 'inspect', id]).out;
@@ -286,7 +290,7 @@ describe(
       const ready = await started(needsN('n-ready'));
       // A step in flight: 'ask' taken and not finished.
       const flying = await started(needsN('n-flying'));
-      const flyingRecord = await runStore.get(flying);
+      const { record: flyingRecord } = await runStore.get(flying);
       await runStore.update({ ...flyingRecord, in_progress_steps: ['ask'] });
       // Something owed that can run: 'other', an `auto` step with nothing refusing it.
       const owedDef = needsN('n-owed', [
@@ -394,9 +398,9 @@ describe(
         {
           reg: reg.code,
           adv: adv.code,
-          pre: (await runStore.get(pre)).run_phase,
+          pre: (await runStore.get(pre)).record.run_phase,
           ab: ab.code,
-          stuck: (await runStore.get(stuck)).run_phase,
+          stuck: (await runStore.get(stuck)).record.run_phase,
         },
         [...reg.err, ...adv.out, ...adv.err, ...ab.out, ...ab.err].join('\n'),
       ).toEqual({ reg: 0, adv: 0, pre: 'completed', ab: 0, stuck: 'abandoned' });
@@ -430,7 +434,7 @@ describe(
           input: {},
           dispatcher: async () => ({}),
         });
-        const record = await runStore.get(id);
+        const { record: record } = await runStore.get(id);
         if (expired) {
           await runStore.update({
             ...record,
@@ -554,7 +558,7 @@ describe(
       }
     };
     async function readRecord(id: string) {
-      return new JsonFileStore(join(home, '.realm', 'runs')).get(id);
+      return (await new JsonFileStore(join(home, '.realm', 'runs')).get(id)).record;
     }
 
     /** Runs `realm workflow run <file>`; returns the exit code (0 for a natural return). */
@@ -997,7 +1001,7 @@ describe(
         },
         workflow: { id: 'wf', name: 'wf', version: 1, steps: {} } as unknown as WorkflowDefinition,
       });
-      const stalled = renderDetachMap(record, 'x', view(['x']), {
+      const stalled = renderDetachMap(record, new Date(), 'x', view(['x']), {
         headline: 'Workflow stalled',
       }).split('\n');
       const gate = renderDetachMap(
@@ -1005,6 +1009,7 @@ describe(
           ...(record as object),
           pending_gate: { gate_id: 'g', step_name: 'x', choices: ['a', 'b'] },
         } as never,
+        new Date(),
         'x',
         view([]),
       );
@@ -1015,6 +1020,7 @@ describe(
           sealed_by: { arm: 'complete' },
           run_phase: 'completed',
         } as never,
+        new Date(),
         'x',
         view([]),
       );
@@ -1557,7 +1563,7 @@ describe('issue #729 — realm-run-reading.md, `--stuck` names a run that cannot
       ]);
       const runStore = new JsonFileStore(join(home, '.realm', 'runs'));
       await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(W2);
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'w2-crown',
         workflowVersion: 1,
         params: {},
@@ -1576,7 +1582,15 @@ describe('issue #729 — realm-run-reading.md, `--stuck` names a run that cannot
         l.includes('cannot_go_on'),
       );
       const pageId = pageLine?.split(' ')[0] ?? '';
-      const time = (l: string) => l.replace(/\d+\/\d+\/\d+, \d+:\d+:\d+ [AP]M/, '<time>');
+      // #715 (b) (03 §B.2 A7): the stored instant (the 4th column) and the idle age's instant are
+      // this run's; under a minute the age is in seconds.
+      const time = (l: string) =>
+        l
+          .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/, '<time>')
+          .replace(
+            /idle: \d+s ago \(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\)/,
+            'idle: <seconds> ago (<instant>)',
+          );
       const built = realm(home, ['run', 'list', '--stuck']).out.find((l) => l.startsWith(run.id));
       // (a) red when the built line differs from the page's (the label, the pointer, the parse
       //     shape — `idle:` and the counts), or the run is not listed at age 0; (b) prints both.

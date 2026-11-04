@@ -76,12 +76,12 @@ async function ended(how: 'abandoned' | 'failed', key: string) {
   const runId = (await call('start_run', { workflow_id: TWO.id, idempotency_key: key }))[
     'run_id'
   ] as string;
-  await runStore.update({ ...(await runStore.get(runId)), failed_steps: ['a'] });
+  await runStore.update({ ...(await runStore.get(runId)).record, failed_steps: ['a'] });
   if (how === 'abandoned') {
     await call('abandon_run', { run_id: runId, reason: REASON });
   } else {
     await runStore.update({
-      ...(await runStore.get(runId)),
+      ...(await runStore.get(runId)).record,
       terminal_state: true,
       run_phase: 'failed',
       sealed_by: { arm: 'step_failure', step: 'a' },

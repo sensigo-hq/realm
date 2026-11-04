@@ -35,6 +35,8 @@ import type {
   WorkflowRegistrar,
 } from '@sensigo/realm';
 import {
+  readInstant,
+  type Snapshot,
   type ArtifactDeletionReport,
   WorkflowError,
   ReclaimVersionChanged,
@@ -47,6 +49,7 @@ import {
 import { parseDuration } from '../lib/parse-duration.js';
 import { listRunsDiagnosed, unreadableRunLines } from './list.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
+import { openRunStore } from '../lib/run-store.js';
 
 export type PurgeEligibility =
   | { eligible: true; overriddenClaimStep?: string | undefined }
@@ -72,9 +75,11 @@ export type PurgeEligibility =
  * carries `overriddenClaimStep` so the report can surface that the override fired.
  */
 export function isPurgeEligible(
-  run: RunRecord,
-  opts: { explicit: boolean; now?: Date },
+  // #715 (b) (D6-17): one snapshot — the record and the reading it is judged at; no default clock.
+  snapshot: Snapshot,
+  opts: { explicit: boolean },
 ): PurgeEligibility {
+  const { record: run } = snapshot;
   // issue #279 (increment 2, PR-C — D-3 leg iii): derive, never trust the persisted run_phase — a
   // grandfathered terminal-with-stale-gate record (the #282 class) must be recognized as terminal
   // (and therefore purge-eligible, subject to the claim checks below) on its TRUE phase.
@@ -87,8 +92,7 @@ export function isPurgeEligible(
     };
   }
 
-  const now = opts.now ?? new Date();
-  const claims = classifyInProgressClaims(run, now);
+  const claims = classifyInProgressClaims(snapshot);
 
   const healthyClaim = claims.find((c) => c.state === 'healthy');
   if (healthyClaim !== undefined) {
@@ -230,17 +234,17 @@ export async function purgeRuns(
   artifactStores: PerRunArtifactStore[],
 ): Promise<PurgeRunsResult> {
   const dryRun = options.dryRun ?? true;
-  const now = new Date();
   const runsDir = anchorStore.runsDirPath;
 
   const candidates: Array<{ run: RunRecord; overriddenClaimStep?: string | undefined }> = [];
   const skipped: Array<{ runId: string; reason: string }> = [];
 
   if (options.runId !== undefined) {
-    const run = await anchorStore.get(options.runId);
+    const snapshot = await anchorStore.get(options.runId);
+    const run = snapshot.record;
     // explicit: true — the operator named this exact run, so a claim_unknown_age claim is an
     // eligible override, never a healthy one (issue #107 correction).
-    const verdict = isPurgeEligible(run, { explicit: true, now });
+    const verdict = isPurgeEligible(snapshot, { explicit: true });
     if (verdict.eligible) {
       candidates.push({ run, overriddenClaimStep: verdict.overriddenClaimStep });
     } else {
@@ -250,12 +254,14 @@ export async function purgeRuns(
     const thresholdMs = options.olderThan !== undefined ? parseDuration(options.olderThan) : 0;
     // issue #719 (B3): the readable runs are candidates; a damaged run file is reported, never
     // purged.
-    const { records: all, unreadable } = await listRunsDiagnosed(anchorStore, options.workflow);
+    const { snapshots, unreadable } = await listRunsDiagnosed(anchorStore, options.workflow);
     if (unreadable.length > 0) options.onUnreadable?.(unreadable);
-    for (const run of all) {
+    // #715 (b) (D-26): each row judged at its own snapshot's `at`.
+    for (const snapshot of snapshots) {
+      const run = snapshot.record;
       // explicit: false — a batch/cron sweep cannot prove an indeterminate-age claim's runner is
       // dead, so claim_unknown_age is refused here (skipped+warned below), not overridden.
-      const verdict = isPurgeEligible(run, { explicit: false, now });
+      const verdict = isPurgeEligible(snapshot, { explicit: false });
       if (!verdict.eligible) {
         // Only a terminal-but-blocked run (a future or indeterminate-age claim) is a noteworthy
         // skip+warn — a plain non-terminal run isn't a purge candidate in the first place and
@@ -265,8 +271,10 @@ export async function purgeRuns(
         }
         continue;
       }
-      const idleMs = now.getTime() - new Date(run.updated_at).getTime();
-      if (idleMs < thresholdMs) continue;
+      // #715 (b) (D-25, D-26): the idle age through the one stamp reader at the row's own reading —
+      // an unparseable stamp has no age, so a by-age sweep does not select it (its NaN used to pass).
+      const stamp = readInstant(run.updated_at, 'past_event', snapshot.at);
+      if ('absent' in stamp || snapshot.at.getTime() - stamp.ms < thresholdMs) continue;
       candidates.push({ run, overriddenClaimStep: verdict.overriddenClaimStep });
     }
   }
@@ -459,7 +467,7 @@ async function changedSinceSelected(
 > {
   let now: RunRecord;
   try {
-    now = await anchorStore.get(runId);
+    now = (await anchorStore.get(runId)).record;
   } catch (err) {
     if (err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND') {
       return { kind: 'already_purged' };
@@ -610,10 +618,9 @@ export const purgeCommand = new Command('purge')
         process.exit(1);
       }
 
-      const { JsonFileStore, FailedAttemptStore, JsonWorkflowStore } =
-        await import('@sensigo/realm');
+      const { FailedAttemptStore, JsonWorkflowStore } = await import('@sensigo/realm');
       const { JsonTraceBufferStore } = await import('@sensigo/realm-mcp');
-      const runStore = new JsonFileStore();
+      const runStore = openRunStore();
       const runsDir = runStore.runsDirPath;
       const failedAttemptStore = new FailedAttemptStore(runsDir);
       // The run reader is the anchor store: the `run_at_version` fence (issue #715 (a)) is evaluated

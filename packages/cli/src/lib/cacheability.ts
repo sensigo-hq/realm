@@ -294,7 +294,9 @@ export async function buildCacheabilityReport(
     const set = agentDisclosureSet();
     const interned: { raw: string; chars: number; asciiChars: number; group: number }[] = [];
     for (const [name] of agentSteps.filter((_, i) => results[i]!.kind === 'sized')) {
-      const rendered = await renderStepPromptWithBoundary(definition, name);
+      // #715 (b) (3-B rev 4): validate has no run store; the instant only fills a context snapshot
+      // the render discards (an `outside` read, in the clock census).
+      const rendered = await renderStepPromptWithBoundary(definition, name, new Date());
       if (rendered === undefined) continue;
       const size = discloseSplitSize(rendered.text, rendered.stable.chars, set, 'all');
       const raw = rendered.text.slice(0, rendered.stable.chars);

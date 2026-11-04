@@ -1,9 +1,10 @@
 // cleanup command — marks idle non-terminal runs as abandoned.
 import { Command } from 'commander';
 import type { RunStore, RunRecord, UnreadableRunFileEntry } from '@sensigo/realm';
-import { WAITING_PHASES, deriveRunPhase, sealRunLevel } from '@sensigo/realm';
+import { isIdleForCleanup } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
 import { listRunsDiagnosed, unreadableRunLines } from './list.js';
+import { openRunStore } from '../lib/run-store.js';
 
 /**
  * List all non-terminal runs idle for longer than `olderThan` and mark them abandoned.
@@ -21,31 +22,17 @@ export async function cleanupRuns(
   runStore: RunStore,
 ): Promise<{ affected: RunRecord[] }> {
   const threshold = parseDuration(options.olderThan);
-  const now = Date.now();
   // issue #719 (B3): act on the readable runs; a damaged run file is reported, never acted on.
-  const { records: all, unreadable } = await listRunsDiagnosed(runStore);
+  // #715 (b) (D-26, D6-41): each run is judged at its OWN snapshot's reading.
+  const { snapshots: all, unreadable } = await listRunsDiagnosed(runStore);
   if (unreadable.length > 0) options.onUnreadable?.(unreadable);
 
   const affected: RunRecord[] = [];
-  for (const run of all) {
-    if (run.terminal_state) {
-      continue;
-    }
-    // issue #367: DERIVE the phase, and check the gate directly. Keying the waiting-skip on the
-    // PERSISTED `run_phase` is the disposal-rule violation #282 exists to close — and it is not
-    // theoretical here: a record whose persisted phase is stale while a human is genuinely waiting
-    // on a live gate was being sealed `cleanup_sweep` with `pending_gate` still on the record, i.e.
-    // this command was freshly minting the very zombie shape #282 closed, and killing a run
-    // somebody was answering. The stale-phase population is exactly what `gc --heal` exists for,
-    // so cleanup-before-heal is an ordinary ordering. `abandonRun` already checks the gate; this
-    // brings its sweeping sibling in line.
-    if (run.pending_gate !== undefined || WAITING_PHASES.has(deriveRunPhase(run))) {
-      continue;
-    }
-    const idleMs = now - new Date(run.updated_at).getTime();
-    if (idleMs >= threshold) {
-      affected.push(run);
-    }
+  for (const snapshot of all) {
+    // #715 (b) (02 §B.3, D6-9, Amendment 11): selected by core's one cleanup judge, at this row's own
+    // reading — not ended, no question open (issue #367: a gate is never swept, whatever the persisted
+    // phase says), idle for the threshold, and no step held by a live claim.
+    if (isIdleForCleanup(snapshot, threshold)) affected.push(snapshot.record);
   }
 
   if (!(options.dryRun ?? false)) {
@@ -55,10 +42,15 @@ export async function cleanupRuns(
       // run_phase is retired (the store write tail derives it — the #282 class).
       // issue #558 PR-C: the sweep releases every claim in the same write, exactly as
       // `abandonRun` does — a swept run is abandoned, and an abandoned run holds no claim.
-      await runStore.update({
-        ...sealRunLevel(run, 'cleanup_sweep', 'Marked abandoned by realm cleanup'),
-        in_progress_steps: [],
-        claims: {},
+      // #715 (b) (D-21): through the `seal_run` settlement delta — `abandoned_at` is the write's own
+      // reading, and a run that moved since this sweep read it is thrown as STATE_SNAPSHOT_MISMATCH
+      // (the sweep aborts, as it did when update() threw). No definition (Amendment 1).
+      await runStore.settleStep(run.id, {
+        kind: 'seal_run',
+        arm: 'cleanup_sweep',
+        reason: 'Marked abandoned by realm cleanup',
+        expected_version: run.version,
+        release_claims: true,
       });
     }
   }
@@ -74,8 +66,8 @@ export const cleanupCommand = new Command('cleanup')
   )
   .option('--dry-run', 'Preview which runs would be abandoned without modifying them')
   .action(async (opts: { olderThan: string; dryRun?: boolean }) => {
-    const { ABANDON_KILL_ADVISORY, JsonFileStore } = await import('@sensigo/realm');
-    const runStore = new JsonFileStore();
+    const { ABANDON_KILL_ADVISORY } = await import('@sensigo/realm');
+    const runStore = openRunStore();
     try {
       const { affected } = await cleanupRuns(
         {

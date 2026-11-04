@@ -5,6 +5,8 @@
 import { describe, it, expect } from 'vitest';
 import { listRuns } from './list.js';
 import type { RunStore, RunRecord, PendingGate } from '@sensigo/realm';
+import { snap, listing, doubleClock, noSettle } from '../test-support/snapshot-double.js';
+import { zOf } from '../test-support/instant.js';
 
 function makeRun(overrides: Partial<RunRecord> = {}): RunRecord {
   return {
@@ -41,10 +43,12 @@ function makeGate(overrides: Partial<PendingGate> = {}): PendingGate {
 function makeStore(runs: RunRecord[]): RunStore {
   return {
     persistsClaims: true,
-    get: async () => runs[0]!,
-    create: async () => ({ run: runs[0]!, created: true }),
-    update: async () => runs[0]!,
-    list: async () => runs,
+    clock: doubleClock,
+    settleStep: noSettle,
+    get: async () => snap(runs[0]!),
+    create: async () => ({ ...snap(runs[0]!), created: true }),
+    update: async () => snap(runs[0]!),
+    list: async () => listing(runs),
     // listRuns (the sole consumer under test here) never claims a step — this mock never needs
     // a real implementation, only a type-complete stub.
     claimStep: async () => {
@@ -71,30 +75,42 @@ describe('listRuns — gate expiry rendering (issue #291)', () => {
     expect(result).toMatch(/EXPIRED \d+m ago/);
   });
 
-  it('an unexpired gate with a frozen reminder shows "reminder due in"', async () => {
+  // #715 (b) (02 §D.3, Amendment 9): the reminder view says what is SCHEDULED, from the one core
+  // function at the row's reading, with its basis — never "due", "overdue" or "sent" (no send is
+  // recorded on the run).
+  it('an open gate with an authored reminder still to come: the next one and how many are scheduled, with the basis clause', async () => {
+    // (a) red when the row says a reminder is due or overdue, or drops the basis clause; (b) prints
+    //     the row.
     const run = makeRun({
       pending_gate: makeGate({
         opened_at: new Date(Date.now() - 30_000).toISOString(), // opened 30s ago
-        reminder_seconds: 3600, // due in ~59.5 minutes
+        reminder_seconds: 3600, // the first of 3 (the mint default) an hour after it opened
       }),
     });
     const result = await listRuns(undefined, makeStore([run]));
-    expect(result).toContain('reminder due in');
-    expect(result).not.toContain('reminder overdue');
+    // #715 (b) (Amendment 9, commit 3): the next occurrence's instant through the one formatter —
+    // an hour after the opening, at the reading "in 59m" — beside the words.
+    const next = Date.parse(run.pending_gate!.opened_at) + 3_600_000;
+    expect(result).toContain(
+      `  next reminder: 1 of 3 scheduled in 59m (${zOf(next)}) (no send is recorded; reminders are sent only while a process attends this question)`,
+    );
+    expect(result).not.toMatch(/reminder (due|overdue)/);
   });
 
-  it('a gate whose reminder schedule has already passed shows "reminder overdue"', async () => {
+  it('every authored reminder already behind the reading: no further reminder is scheduled, with the basis clause', async () => {
+    // (a) red when a schedule with none left still names one, or reads as overdue; (b) prints the row.
     const run = makeRun({
       pending_gate: makeGate({
         opened_at: new Date(Date.now() - 200_000).toISOString(), // opened 200s ago
-        reminder_seconds: 60, // 3 occurrences have scheduled-passed by now
+        reminder_seconds: 60,
+        reminder_max: 3, // all three scheduled before now
       }),
     });
     const result = await listRuns(undefined, makeStore([run]));
-    // computeGateDueState always projects the NEXT future occurrence, so "overdue" here means
-    // the projected due instant is still in the future relative to a real clock tick between
-    // fixture construction and assertion — tolerate either rendering deterministically:
-    expect(result).toMatch(/reminder (due in|overdue)/);
+    expect(result).toContain(
+      '  no further reminder is scheduled (no send is recorded; reminders are sent only while a process attends this question)',
+    );
+    expect(result).not.toContain('overdue');
   });
 
   it('a terminal run with a stale pending_gate (the #282 class) renders NEITHER the gate line nor EXPIRED — keyed on derived phase', async () => {

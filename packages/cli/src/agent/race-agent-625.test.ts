@@ -85,7 +85,7 @@ interface Hooks {
 /** One `realm agent` drive on a fresh run of `def`, with the hooks' acts of another program. */
 async function drive(def: WorkflowDefinition, h: Hooks = {}) {
   const store = new InMemoryStore();
-  const { run } = await store.create({
+  const { record: run } = await store.create({
     workflowId: def.id,
     workflowVersion: 1,
     params: h.params ?? {},
@@ -96,7 +96,7 @@ async function drive(def: WorkflowDefinition, h: Hooks = {}) {
       calls += 1;
       // Another writer changes the record while the model answers the second step.
       if (h.tamperAfterAnswer !== undefined && calls === 2) {
-        await store.update(h.tamperAfterAnswer(await realGet(run.id)));
+        await store.update(h.tamperAfterAnswer((await realGet(run.id)).record));
       }
       return { go: true };
     }
@@ -118,11 +118,11 @@ async function drive(def: WorkflowDefinition, h: Hooks = {}) {
   };
   if (h.settle !== undefined) {
     const original = store.settleStep!.bind(store);
-    store.settleStep = async (id, delta, d2, o) => {
+    store.settleStep = async (id, delta, d2) => {
       if (delta.kind === 'settle_step' && delta.step === h.settle!.step) {
         await once(() => h.settle!.act(store, id));
       }
-      return original(id, delta, d2, o);
+      return original(id, delta, d2);
     };
   }
   if (h.claim !== undefined) {
@@ -326,7 +326,7 @@ describe(
           },
         },
         atGate: async (store, id) => {
-          const gate = (await store.get(id)).pending_gate!;
+          const gate = (await store.get(id)).record.pending_gate!;
           await submitHumanResponse(store, def, { runId: id, gateId: gate.gate_id, choice: 'ok' });
         },
       });

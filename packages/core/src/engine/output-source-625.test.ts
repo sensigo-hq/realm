@@ -62,7 +62,7 @@ describe('#625 PR-2a, F4 — output_source: one vocabulary, and the source or wh
   });
 
   const entryOf = async (runId: string, step: string, kind?: string) =>
-    (await store.get(runId)).evidence.find(
+    (await store.get(runId)).record.evidence.find(
       (e) =>
         e.step_id === step && (kind === undefined ? e.kind !== 'gate_response' : e.kind === kind),
     );
@@ -80,7 +80,11 @@ describe('#625 PR-2a, F4 — output_source: one vocabulary, and the source or wh
   });
 
   it('each member, as the engine or a caller records it: driven_step, dependency, run_params, none', async () => {
-    const { run } = await store.create({ workflowId: WF.id, workflowVersion: 1, params: { x: 1 } });
+    const { record: run } = await store.create({
+      workflowId: WF.id,
+      workflowVersion: 1,
+      params: { x: 1 },
+    });
     // driven_step: a caller names the bare step and its dispatcher returns the output.
     await executeStep(store, WF, {
       runId: run.id,
@@ -98,7 +102,7 @@ describe('#625 PR-2a, F4 — output_source: one vocabulary, and the source or wh
     }
     // dependency and none: the engine runs the bare steps the agent steps left owed.
     await advanceRun(store, WF, { runId: run.id });
-    const { run: other } = await store.create({
+    const { record: other } = await store.create({
       workflowId: WF.id,
       workflowVersion: 1,
       params: { y: 2 },
@@ -126,7 +130,11 @@ describe('#625 PR-2a, F4 — output_source: one vocabulary, and the source or wh
       id: 'mark',
       execute: async () => ({ data: { marked: true } }),
     });
-    const { run } = await store.create({ workflowId: WF.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: WF.id,
+      workflowVersion: 1,
+      params: {},
+    });
     for (const step of ['first', 'second']) {
       await executeStep(store, WF, {
         runId: run.id,
@@ -136,7 +144,7 @@ describe('#625 PR-2a, F4 — output_source: one vocabulary, and the source or wh
       });
     }
     await advanceRun(store, WF, { runId: run.id });
-    const gate = (await store.get(run.id)).pending_gate!;
+    const gate = (await store.get(run.id)).record.pending_gate!;
     await submitHumanResponse(store, WF, {
       runId: run.id,
       gateId: gate.gate_id,
@@ -144,10 +152,14 @@ describe('#625 PR-2a, F4 — output_source: one vocabulary, and the source or wh
     });
     await advanceRun(store, WF, { runId: run.id, registry });
     // a reclaim audit entry: a claim that is cleared by `reclaimStep` writes one.
-    const { run: held } = await store.create({ workflowId: WF.id, workflowVersion: 1, params: {} });
+    const { record: held } = await store.create({
+      workflowId: WF.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await store.claimStep(held.id, 'first', WF);
     await reclaimStep(store, held.id, 'first');
-    const reclaimEntry = (await store.get(held.id)).evidence.find(
+    const reclaimEntry = (await store.get(held.id)).record.evidence.find(
       (e) => e.step_id === 'first' && e.output_summary?.['reclaimed'] === true,
     );
     // a bare step's entry from before the field existed: the same entry, without it.

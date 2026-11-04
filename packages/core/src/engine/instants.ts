@@ -4,9 +4,10 @@
 // `isPastDeadline`. Pure: the reading `r` is always passed in (the before-load reading a snapshot was
 // taken at), never a clock read here.
 //
-// The other three copies of the deadline comparison belong to later units and are allow-listed by
-// them: `run-health.ts` (#729 PR-4), `reclaim-step.ts` (#729 PR-2), the CLI's `drain.ts` (#729 PR-1).
-// The cleanup lease's read (`pendingCleanupWay`) moves with `JUDGE.drain` in PR-1 (D4 T-4).
+// Not every due test goes through `isPastDeadline` yet (after #715 (b)): `reclaim-step.ts` does, and
+// `run-health.ts` (a cleanup lease's deadline and a question's), `pending.ts`'s `pendingCleanupWay`
+// and the CLI's `drain.ts` (a cleanup lease's) still compare a stored deadline with the reading
+// themselves, through `parseStamp`.
 
 /**
  * ε, in milliseconds (D4 P-8; #715 D5 §1.4, MONOTONE's cap): how far a recorded past event may lie
@@ -34,12 +35,23 @@ export type InstantClass = (typeof INSTANT_CLASSES)[number];
 export type InstantReading = { ms: number; ahead_ms?: number } | { absent: 'unparseable_stamp' };
 
 /**
+ * Parses one stored `RunRecord` stamp (#715 (b), D-25): its epoch milliseconds, or `undefined` when
+ * the stamp does not parse — never `NaN`. The ONE parser of a stored stamp: {@link readInstant} and
+ * every other production read of a stored instant go through it. Each caller states its own outcome
+ * for `undefined` (a comparator sorts it oldest, a floor ignores it, a schedule yields no occurrence).
+ */
+export function parseStamp(stamp: string): number | undefined {
+  const ms = Date.parse(stamp);
+  return Number.isFinite(ms) ? ms : undefined;
+}
+
+/**
  * Reads one stored instant (D4 P-8). `r` is the RAW reading — the clock reading a snapshot was taken
  * at, before its load (`loadSnapshot`) — and is required: the parser never reads a clock.
  */
 export function readInstant(stamp: string, cls: InstantClass, r: Date): InstantReading {
-  const ms = Date.parse(stamp);
-  if (!Number.isFinite(ms)) return { absent: 'unparseable_stamp' };
+  const ms = parseStamp(stamp);
+  if (ms === undefined) return { absent: 'unparseable_stamp' };
   const lead = ms - r.getTime();
   return cls === 'past_event' && lead > CLOCK_SKEW_EPSILON_MS ? { ms, ahead_ms: lead } : { ms };
 }

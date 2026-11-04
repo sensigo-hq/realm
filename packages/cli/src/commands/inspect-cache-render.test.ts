@@ -17,6 +17,7 @@ import type {
   StepDiagnostics,
   UsageRecord,
 } from '@sensigo/realm';
+import { snap, listing, doubleClock, noSettle } from '../test-support/snapshot-double.js';
 
 function makeSnapshot(stepId: string, overrides: Partial<EvidenceSnapshot> = {}): EvidenceSnapshot {
   return {
@@ -56,10 +57,12 @@ function makeRun(evidence: EvidenceSnapshot[] = [], overrides: Partial<RunRecord
 function makeRunStore(run: RunRecord): RunStore {
   return {
     persistsClaims: true,
-    get: async () => run,
-    create: async () => ({ run, created: true }),
-    update: async () => run,
-    list: async () => [run],
+    clock: doubleClock,
+    settleStep: noSettle,
+    get: async () => snap(run),
+    create: async () => ({ ...snap(run), created: true }),
+    update: async () => snap(run),
+    list: async () => listing([run]),
     claimStep: async () => {
       throw new Error('claimStep is not used by inspect');
     },

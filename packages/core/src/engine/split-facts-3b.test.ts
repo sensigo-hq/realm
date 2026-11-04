@@ -100,14 +100,16 @@ describe('caching 3-B A5 — renderStepPromptWithBoundary', () => {
           plain: { description: 'Plain.', execution: 'auto' },
         },
       } as unknown as WorkflowDefinition;
-      const got = await renderStepPromptWithBoundary(def, 'ask');
+      const got = await renderStepPromptWithBoundary(def, 'ask', new Date('2026-01-01T00:00:00Z'));
       // (a) red when the static context is not loaded (the head would stop at `Rules: `) or a run
       //     value is treated as stable; (b) prints the text and the boundary.
       expect(got).toEqual({
         text: 'Rules: Be brief.\nTicket: {{ run.params.ticket }}',
         stable: { chars: 'Rules: Be brief.\nTicket: '.length, unit: 'utf16' },
       });
-      expect(await renderStepPromptWithBoundary(def, 'plain')).toBeUndefined();
+      expect(
+        await renderStepPromptWithBoundary(def, 'plain', new Date('2026-01-01T00:00:00Z')),
+      ).toBeUndefined();
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

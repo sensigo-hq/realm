@@ -49,14 +49,17 @@ import type {
   JsonWorkflowStore,
 } from '@sensigo/realm';
 import { handleGetRunState, type RunStateSummary } from './get-run-state.js';
+import { snap, doubleClock, noSettle } from '../test-support/snapshot-double.js';
 
 type DisclosureRoute =
   { surface: 'rendered'; probe: () => void } | { surface: 'waived'; reason: string };
 
 function makeStore(run: RunRecord): RunStore {
   return declared({
+    clock: doubleClock,
+    settleStep: noSettle,
     persistsClaims: true,
-    get: async () => run,
+    get: async () => snap(run),
     create: async () => {
       throw new Error('not exercised');
     },

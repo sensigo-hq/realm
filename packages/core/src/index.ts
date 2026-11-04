@@ -66,7 +66,7 @@ export type { IdempotencyDecision } from './store/idempotency-policy.js';
 export { executeStep } from './engine/execution-loop.js';
 // Issue #625 PR-2a (F1): the one duration formatter — `<n>s` under a minute, then `<m>m`, `<h>h <m>m`,
 // `<d>d <h>h`.
-export { formatDuration } from './utils/duration.js';
+export { formatDuration, formatInstantWords } from './utils/duration.js';
 // Issue #625 PR-2a (F6): the one POSIX shell quoter for a value a printed command carries.
 export { shellWord, quotedCommand } from './utils/shell-word.js';
 /**
@@ -221,6 +221,7 @@ export {
   agentRenderedList,
   stepBrief,
   basisOf,
+  waysStoreOf,
   classifyStop,
   isRaceStop,
   stopAbout,
@@ -315,7 +316,8 @@ export {
 } from './workflow/author-text.js';
 export type { AnswerToolName } from './workflow/author-text.js';
 // issue #729 PR-0 (D3 A-9; #715 D6-16/17/18/59): one record and the reading it is judged at.
-export { loadSnapshot, writtenSnapshot, stampOf } from './engine/snapshot.js';
+// #715 (b) (Amendment 4): the accessor only — the attach function stays internal to core.
+export { loadSnapshot, writtenSnapshot, stampOf, judgedSnapshotOf } from './engine/snapshot.js';
 export type { Snapshot, Stamp, Basis, EnactorBasis, DefinitionBasis } from './engine/snapshot.js';
 // Issue #625 PR-2a (decisions C133, C151): the words each engine entry's `caller` takes.
 export { ENTRY_CALLERS } from './engine/callers.js';
@@ -431,6 +433,9 @@ export type {
   SettlementResult,
   SettlementRefusalReason,
   SettlementNoopReason,
+  // #715 (b) (D-20, D-21): the opening gate without its instants, and the run-level seal delta.
+  OpeningGate,
+  SealRunDelta,
 } from './types/settlement.js';
 export {
   TERMINAL_PHASES,
@@ -447,6 +452,7 @@ export {
   computeClaimDeadline,
   classifyClaim,
   classifyInProgressClaims,
+  isIdleForCleanup,
   omitClaim,
   DEFAULT_STEP_TIMEOUT_SECONDS,
   DEFAULT_EXECUTION_TIMEOUT_SECONDS,
@@ -459,13 +465,28 @@ export {
 export type { ClaimState, InProgressClaimInfo } from './engine/claim-liveness.js';
 export { reclaimStep } from './engine/reclaim-step.js';
 export type { ReclaimResult, ReclaimOutcome, ReclaimStepOptions } from './engine/reclaim-step.js';
-export { classifyRunHealth, DEFAULT_IDLE_THRESHOLD_MS } from './engine/run-health.js';
+export {
+  classifyRunHealth,
+  DEFAULT_IDLE_THRESHOLD_MS,
+  // #715 (b) (02 §D.1, Amendment 7): every kind, the kinds that never select a run for --stuck, and
+  // the stamped-ahead finding on its own.
+  RUN_HEALTH_KINDS,
+  RUN_HEALTH_STUCK_EXCLUDED,
+  recordStampedAheadOf,
+} from './engine/run-health.js';
 export type { RunHealthFinding } from './engine/run-health.js';
-export { computeGateDueState } from './engine/gate-timing.js';
+export {
+  computeGateDueState,
+  reminderScheduleOf,
+  reminderScheduleWords,
+  REMINDER_BASIS_CLAUSE,
+} from './engine/gate-timing.js';
+export type { ReminderSchedule, ReminderOccurrence } from './engine/gate-timing.js';
 // issue #729 PR-0 (D4 P-8, A-15): the one parser of stored instants and the one due test of a
 // stored deadline; ε, the one clock-skew constant.
 export {
   readInstant,
+  parseStamp,
   isPastDeadline,
   overdueOf,
   recordStampedAheadSentence,
@@ -475,13 +496,24 @@ export {
 export type { InstantClass, InstantReading } from './engine/instants.js';
 // issue #715 (a) (D5 §1.1, §2.1; D6-3, D6-4, D6-6, D6-7, D6-14, D6-35): the clock a run store holds,
 // the one place a store takes its reading for a write, and the per-key floor on that reading.
-export { createSystemClock, systemClock } from './utils/clock.js';
+export {
+  createSystemClock,
+  systemClock,
+  markTestClock,
+  clockBasis,
+  setClockErrorSink,
+  clockErrorSink,
+  CLOCK_READ_CLASSES,
+  type ClockReadClass,
+} from './utils/clock.js';
 export type { Clock } from './utils/clock.js';
-export { takeReading, floorAtHolder } from './store/take-reading.js';
+// #715 (b) (D-17): a read's raw reading (taken BEFORE the load) and the floor by a record's own stamp.
+export { takeReading, takeRawReading, floorAtRecord, floorAtHolder } from './store/take-reading.js';
 // issue #715 (a) (D6-1, D6-54): a test location's clock file. For `@sensigo/realm-testing`, not for
 // hosts: a lint rule (static imports) and a source scan (the names as text, in any import form;
-// `lint-test-location-715.test.ts`) keep `writeTestClockFile`, `fileClock` and `readTestClockFile`
-// out of production code (D6-52).
+// `lint-test-location-715.test.ts`; it reads the `.ts` and `.mjs` files of the four packages' `src`
+// folders and skips `*.test.ts`) keep `writeTestClockFile`, `fileClock` and `readTestClockFile` out
+// of production code (D6-52); the file store's own `resolveStoreClock` is the one reader.
 export {
   TEST_CLOCK_FILE_NAME,
   testClockFilePath,
@@ -489,6 +521,11 @@ export {
   readTestClockFile,
   fileClock,
 } from './store/test-clock-file.js';
+// #715 (b) (02 §C.1, D6-53): whether a store's clock is a test location's — for the hosts, which say
+// so once per process on stderr.
+export { isTestLocationClock } from './store/test-clock-file.js';
+// #715 (b) (02 §C.3, D6-53): a store at a test location says so once per process, on its first read.
+export { withTestClockNotice, testClockNoticeLine } from './store/test-clock-notice.js';
 // issue #600 PR 1b: one cost view per step, derived once and rendered by inspect + get_run_state.
 export {
   composeCostView,
