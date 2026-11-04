@@ -30,6 +30,7 @@ Realm is a workflow engine that an AI agent calls. These pages describe Realm as
 - [Write a step handler](guides/step-handlers.md)
 - [Run a workflow with `realm agent`](guides/realm-agent.md)
 - [Connect an MCP client](guides/connect-an-mcp-client.md)
+- [Cache a step's prompt over MCP](guides/cache-an-mcp-step-prompt.md)
 - [Start runs from webhooks](guides/webhooks.md)
 - [Answer gates from Slack](guides/slack-gates.md)
 - [Handle failure](guides/handle-failure.md)

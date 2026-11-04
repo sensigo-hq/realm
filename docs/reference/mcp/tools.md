@@ -162,15 +162,16 @@ A run whose file the JSON store cannot read as a run (empty, not JSON, not a run
 }
 ```
 
-| Field                   | Holds                                                                                    |
-| ----------------------- | ---------------------------------------------------------------------------------------- |
-| `instruction.tool`      | The tool to call.                                                                        |
-| `instruction.call_with` | The arguments for that call, with a placeholder wherever the caller must supply a value. |
-| `instruction.params`    | The same arguments without the caller's part.                                            |
-| `input_schema`          | The schema the step's answer must fit, if the step has one.                              |
-| `prompt`                | The step's prompt with its values filled in, if the step has one.                        |
-| `human_readable`        | The instruction as a sentence.                                                           |
-| `orientation`           | Where the run stands.                                                                    |
+| Field                   | Holds                                                                                                                                                                                                                                                                                                                                                   |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `instruction.tool`      | The tool to call.                                                                                                                                                                                                                                                                                                                                       |
+| `instruction.call_with` | The arguments for that call, with a placeholder wherever the caller must supply a value.                                                                                                                                                                                                                                                                |
+| `instruction.params`    | The same arguments without the caller's part.                                                                                                                                                                                                                                                                                                           |
+| `input_schema`          | The schema the step's answer must fit, if the step has one.                                                                                                                                                                                                                                                                                             |
+| `prompt`                | The step's prompt with its values filled in, if the step has one.                                                                                                                                                                                                                                                                                       |
+| `stable_prefix`         | Where the `prompt`'s fixed start ends, so a client can cache it: `chars` (UTF-16 code units of the `prompt` you received), `unit` (`utf16`) and `sha256` (the SHA-256 of that start's UTF-8 bytes). Absent when Realm cannot vouch for it. See [Cache a step's prompt over MCP](../../guides/cache-an-mcp-step-prompt.md) (added after version 0.48.0). |
+| `human_readable`        | The instruction as a sentence.                                                                                                                                                                                                                                                                                                                          |
+| `orientation`           | Where the run stands.                                                                                                                                                                                                                                                                                                                                   |
 
 ## `list_workflows`
 

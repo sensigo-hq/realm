@@ -33,6 +33,7 @@ export const DOCS_SIDEBAR = [
       'docs/guides/step-handlers',
       'docs/guides/realm-agent',
       'docs/guides/connect-an-mcp-client',
+      'docs/guides/cache-an-mcp-step-prompt',
       'docs/guides/webhooks',
       'docs/guides/slack-gates',
       'docs/guides/handle-failure',

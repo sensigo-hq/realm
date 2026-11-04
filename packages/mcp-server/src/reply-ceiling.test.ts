@@ -29,6 +29,7 @@ import {
   REPLY_PLAN,
   replyPlanOf,
   toolContentOf,
+  withStablePrefixes,
   type ReplyPlan,
 } from './render-reply.js';
 import { sseJsonStringify } from './sse-json.js';
@@ -507,7 +508,13 @@ describe('#872 (b1) B2 — a cut changes nothing but the cut list', () => {
         ...(await handleStartRun({ workflow_id: id }, { runStore, workflowStore })),
         command: 'start_run',
       };
-      const uncut = discloseReply(reply, set, 'agent', START_RUN_TABLE) as Record<string, unknown>;
+      // caching 3-B (B2): the door walks the reply after its stable-prefix pass.
+      const uncut = discloseReply(
+        withStablePrefixes(reply, disclosureOf(START_RUN_TABLE)) as object,
+        set,
+        'agent',
+        START_RUN_TABLE,
+      ) as Record<string, unknown>;
       const cut = JSON.parse(
         toolContentOf(reply, disclosureOf(START_RUN_TABLE)).content[0]!.text,
       ) as Record<string, unknown>;
