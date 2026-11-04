@@ -162,7 +162,17 @@ export abstract class LlmProvider {
     prompt: string,
     inputSchema?: Record<string, unknown>,
     agentProfileInstructions?: string,
-    opts?: { structuredOutputStrict?: boolean; llmClock?: LlmClock },
+    opts?: {
+      structuredOutputStrict?: boolean;
+      llmClock?: LlmClock;
+      /**
+       * Caching 3-B (C2): where the stable start of `prompt` ends, in its UTF-16 code units — the
+       * part that repeats between runs, which a provider may cache (Anthropic marks it as its own
+       * block; OpenAI derives its cache key from it). `prompt` is always sent whole: a provider that
+       * ignores this option sends what it always sent. Absent when Realm found no split.
+       */
+      cachePrefixChars?: number;
+    },
   ): Promise<CallStepWithMetaResult> {
     // issue #401: the clock is PASSED THROUGH here. This base delegation is the route every
     // provider that does NOT override this method takes for a step declaring `structured_output:
@@ -242,6 +252,11 @@ export abstract class ToolCapableLlmProvider extends LlmProvider {
       agentProfileInstructions?: string;
       /** Issue #401 — the per-create clock for this step's model requests. */
       llmClock?: LlmClock;
+      /**
+       * Caching 3-B (C2): as `callStepWithMeta`'s. On a tool step it is used only to derive
+       * OpenAI's cache key; Anthropic's tool loop keeps #899's marking and does not split.
+       */
+      cachePrefixChars?: number;
     },
   ): Promise<StepWithToolsResult>;
 }

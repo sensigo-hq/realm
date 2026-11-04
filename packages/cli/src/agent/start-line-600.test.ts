@@ -58,7 +58,8 @@ const line = (
   definition: WorkflowDefinition = SINGLE,
   moduleProviderId?: string,
 ): string => promptCacheStartLine({ caps, promptCache, moduleProviderId, definition });
-const FIX = "Caching: Anthropic is asked to cache each step's fixed instructions for";
+const FIX =
+  "Caching: Anthropic is asked to cache each step's fixed instructions and the stable start of its prompt for";
 const LISTEN_DEFAULT = "realm listen's default; change it with realm listen --prompt-cache";
 const AGENT_DEFAULT = "realm agent's default; turn it off with --prompt-cache off";
 const TOOLS_TAIL =
@@ -395,7 +396,9 @@ describe('the start line and the record agree when auto chooses against its prio
       const record = JSON.parse(readFileSync(join(runs, file), 'utf8')) as RunRecord;
       const request = record.evidence[0]!.diagnostics!.cache!.requests[0]!;
       const startLine = stdout.split('\n').find((l) => l.startsWith('Caching:')) ?? '';
-      const words = /fixed instructions for (.+?) \(/.exec(startLine)?.[1];
+      const words = /fixed instructions and the stable start of its prompt for (.+?) \(/.exec(
+        startLine,
+      )?.[1];
       expect({
         recorded: request.cache_lifetime_s,
         auto: request.cache_auto,

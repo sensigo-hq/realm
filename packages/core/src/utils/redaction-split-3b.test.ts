@@ -162,6 +162,7 @@ describe('caching 3-B A4 — who may call discloseSplit, and what the size helpe
     // (a) red when a caller is added (a print path, the writer) or one is removed; (b) prints the
     //     callers found.
     expect(callers.sort()).toEqual([
+      'cli/src/agent/providers/agent-utils.ts: discloseForAgentSplit',
       'core/src/utils/redaction.ts: discloseSplitSize',
       'mcp-server/src/render-reply.ts: stablePrefixOf',
     ]);

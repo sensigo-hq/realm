@@ -1432,6 +1432,8 @@ export interface EnvelopeRow {
  *  digest of text in which every hidden value is already replaced (no `deriveOf` row: MA 1's ruling,
  *  C3). */
 const STABLE_PREFIX_TABLE = {
+  // A count Realm computes (the head's length): its producer is `count`, which the producers entry
+  // cannot name — `FactProducers` takes one only for a row that can hold a string.
   chars: 'fact',
   unit: 'fact',
   sha256: 'fact',

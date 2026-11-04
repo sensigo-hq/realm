@@ -133,14 +133,38 @@ describe('caching 3-B — the cached head on inspect’s step cache line, per pr
     expect(without).not.toContain('cache key');
   });
 
-  it('after a remembered drop: nothing marked, and the refusal with its remedy (E4)', async () => {
+  it('after a remembered drop: no head clause (nothing marked it), and the refusal with its remedy (E4)', async () => {
     const line = await lineOf([
       { ...anthropic, endpoint: 'custom', prefix_chars: 48, cache_controls_rejected: REFUSED },
     ]);
-    // (a) red when the drop is shown as marked, or the refusal line is missing; (b) prints the line.
-    expect(line).toContain(
-      '; cached head: 48 characters (nothing marked); the endpoint refused the cache fields (400); sent without them for the rest of the drive — to stop sending them: --prompt-cache off',
-    );
+    // (a) red when an unmarked head is called cached, or the refusal line is missing; (b) prints
+    //     the line.
+    expect({
+      head: line.includes('cached head'),
+      refusal: line.includes(
+        '; the endpoint refused the cache fields (400); sent without them for the rest of the drive — to stop sending them: --prompt-cache off',
+      ),
+    }).toEqual({ head: false, refusal: true });
+  });
+
+  it('under --prompt-cache off: the split is recorded, and no head clause (nothing marked it)', async () => {
+    const line = await lineOf([
+      {
+        ...anthropic,
+        cache_requested: 'off',
+        cache_lifetime_s: undefined,
+        cache_ttl_sent: undefined,
+        prefix_chars: 48,
+      },
+    ]);
+    // (a) red when an unmarked head is called cached; (b) prints the line.
+    expect({
+      head: line.includes('cached head'),
+      off: line.includes('asked for no caching'),
+    }).toEqual({
+      head: false,
+      off: true,
+    });
   });
 });
 

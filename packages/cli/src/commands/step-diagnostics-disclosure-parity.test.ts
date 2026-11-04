@@ -519,15 +519,17 @@ const USAGE_DISCLOSURE = {
   prefix_chars: {
     surface: 'rendered',
     probe: (out, _partial, _mismatch, split) => {
-      expect(split).toContain('; cached head: 48 characters (marked: key), then 48 characters');
+      expect(split).toContain('; cached head: 48 characters (marked: key);');
       expect(out).not.toContain('cached head');
     },
   },
   cache_marked: {
     surface: 'rendered',
-    // Both arms: what carried the key, and nothing marked after the refusal.
-    probe: (_out, _partial, _mismatch, split) =>
-      expect(split).toContain('(marked: key), then 48 characters (nothing marked)'),
+    // What carried the key; the request after the refusal carried nothing, so it adds nothing.
+    probe: (_out, _partial, _mismatch, split) => {
+      expect(split).toContain('cached head: 48 characters (marked: key);');
+      expect(split).not.toContain('nothing marked');
+    },
   },
   cache_key_sent: {
     surface: 'rendered',

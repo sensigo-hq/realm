@@ -65,6 +65,7 @@ import type { LlmProvider } from './providers/llm-provider.js';
 import {
   sanitizeError,
   discloseForAgent,
+  discloseForAgentSplit,
   setAdditionalRedactionValues,
   deriveLlmClock,
   safeErrorText,
@@ -1163,11 +1164,19 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             // plus any rejection feedback. #729 PR-3 (L-5): the provider edge — core's law for the
             // agent audience, once, before any of the three provider calls below sends it; no span
             // mark leaves with it.
-            const promptForAttempt = discloseForAgent(
+            const rawForAttempt =
               lastRejection !== undefined
                 ? `${prompt}\n\nYour previous output was rejected by the ${lastRejection.kind} schema validator:\n${lastRejection.summary}\nEmit corrected JSON only, matching the schema exactly.`
-                : prompt,
-            );
+                : prompt;
+            const promptForAttempt = discloseForAgent(rawForAttempt);
+            // Caching 3-B (C2): the stable start of the brief's prompt, cut once from the same text.
+            // The feedback is appended after the prompt, so a repair attempt sends the same head.
+            // `promptForAttempt` is sent unchanged (the law makes it head + tail).
+            const split =
+              nextAction?.prompt !== undefined && nextAction.stable_prefix !== undefined
+                ? discloseForAgentSplit(rawForAttempt, nextAction.stable_prefix.chars)
+                : undefined;
+            const cachePrefix = split !== undefined ? { cachePrefixChars: split.head.length } : {};
             // #robust-anthropic-provider Part 1: route the schema the ENGINE validates output against
             // (output_schema, execution-loop.ts validateOutputSchema) ahead of the execute_step-param
             // schema (input_schema / nextAction.input_schema) the provider was fed until now. Both-
@@ -1551,6 +1560,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                       : {}),
                     toolTimeoutMs: (stepDef.tool_timeout ?? 30) * 1000,
                     ...(agentProfileInstructions !== undefined ? { agentProfileInstructions } : {}),
+                    ...cachePrefix,
                   },
                 );
               } catch (err) {
@@ -1665,7 +1675,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                     promptForAttempt,
                     inputSchema,
                     agentProfileInstructions,
-                    { structuredOutputStrict: structuredOutputPlan.send, llmClock },
+                    { structuredOutputStrict: structuredOutputPlan.send, llmClock, ...cachePrefix },
                   );
                   stepInput = output;
                   // issue #600 PR 1a: `?? []` is load-bearing. A model call HAPPENED, so the
@@ -1721,7 +1731,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                     promptForAttempt,
                     inputSchema,
                     agentProfileInstructions,
-                    { llmClock },
+                    { llmClock, ...cachePrefix },
                   );
                   stepInput = output;
                   // issue #600 PR 1a: `?? []` is load-bearing. A model call HAPPENED, so the

@@ -10,6 +10,7 @@ import {
   type CacheAuto,
   type CacheAutoPrices,
   type CacheChoice,
+  type CacheMarkedPart,
   type CacheRequestSource,
   type JsonSchema,
   type PromptCacheSetting,
@@ -47,6 +48,7 @@ import {
   type WireCounters,
   attachBilledUsage,
   passedSnippet,
+  sha256Hex,
 } from './agent-utils.js';
 import { SUBMIT_TOOL_NAME, buildSubmitTool } from './request-layout.js';
 
@@ -129,6 +131,73 @@ function systemWithCache(
 ): string | Array<{ type: 'text'; text: string; cache_control: Record<string, string> }> {
   if (choice === 'off') return systemPrompt;
   return [{ type: 'text', text: systemPrompt, cache_control: cacheControlFor(choice) }];
+}
+
+/**
+ * Caching 3-B (C3; D3 §2.3.1 with B1) — a single-shot request's user content when its prompt has a
+ * stable head of `cut` characters. When caching applies: two text blocks, the head marked with the
+ * request's one lifetime, when the head and the tail both hold a non-space character; ONE marked
+ * block, the whole text, when the tail holds none (the head is then the whole text); the plain string
+ * when the head holds none — Anthropic refuses an empty or whitespace-only marked block, and text is
+ * never trimmed or replaced (LiteLLM's placeholder leaked into answers, #24498). Under `off`, or with
+ * no cut, the plain string. `headSent` is the head as sent, for the record: absent with no cut.
+ */
+function userContentWithHead(
+  text: string,
+  cut: number | undefined,
+  choice: CacheChoice,
+): {
+  content: string | Array<{ type: 'text'; text: string; cache_control?: Record<string, string> }>;
+  headSent?: string;
+} {
+  if (cut === undefined) return { content: text };
+  const head = text.slice(0, cut);
+  const tail = text.slice(cut);
+  if (choice === 'off' || !/\S/.test(head)) return { content: text, headSent: head };
+  const cacheControl = cacheControlFor(choice);
+  if (!/\S/.test(tail)) {
+    return { content: [{ type: 'text', text, cache_control: cacheControl }], headSent: text };
+  }
+  return {
+    content: [
+      { type: 'text', text: head, cache_control: cacheControl },
+      { type: 'text', text: tail },
+    ],
+    headSent: head,
+  };
+}
+
+/**
+ * Caching 3-B (A6, C3) — the split's facts for one single-shot request, read off the body that was
+ * SENT (after any ladder rung): the head's digest and length, a digest per part of the cached start,
+ * what carried a marker, and whether strict went out.
+ */
+function anthropicSplitFacts(
+  body: Record<string, unknown>,
+  headSent: string,
+  systemText: string,
+): Partial<UsageRecord> {
+  const marked: CacheMarkedPart[] = [];
+  const system = body['system'];
+  if (Array.isArray(system) && system.some((b) => (b as Rec)['cache_control'] !== undefined)) {
+    marked.push('system');
+  }
+  const content = (body['messages'] as Array<{ content: unknown }>)[0]?.content;
+  if (Array.isArray(content) && (content[0] as Rec | undefined)?.['cache_control'] !== undefined) {
+    marked.push('prompt');
+  }
+  const tools = body['tools'] as Array<Rec> | undefined;
+  return {
+    prefix_sha256: sha256Hex(headSent),
+    prefix_chars: headSent.length,
+    prefix_parts: {
+      ...(tools !== undefined ? { tools: sha256Hex(JSON.stringify(tools)) } : {}),
+      system: sha256Hex(systemText),
+      prompt: sha256Hex(headSent),
+    },
+    ...(marked.length > 0 ? { cache_marked: marked } : {}),
+    request_strict_sent: tools?.[0]?.['strict'] === true,
+  };
 }
 
 /**
@@ -658,6 +727,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     // issue #600 PR 1a (D9): the accumulator is owned by the ENTRY POINT so one `catch` there sees
     // everything billed, whatever throws below. Defaulted, so any other caller still works.
     billed?: UsageRecord[],
+    // caching 3-B (C2): where the prompt's stable head ends; every request of the step cuts there.
+    cachePrefixChars?: number,
   ): Promise<CallStepWithMetaResult> {
     // issue #401: counters are PER-INVOCATION, minted beside the client they count for. A
     // module-global would attribute one step's wire attempts to another's failure.
@@ -694,6 +765,10 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     const requests: UsageRecord[] = billed ?? [];
     const makeRequest = async (userContent: string): Promise<CallResult> => {
       const requestStart = new Date().toISOString();
+      // caching 3-B (C3): the head block, when the step's prompt was split. The JSON retry and a
+      // repair attempt both START with the prompt, so they send the same head seconds later.
+      const shaped = userContentWithHead(userContent, cachePrefixChars, this.settledChoice());
+      let sent: Record<string, unknown> = {};
       const buildOpts = (strict: boolean): Record<string, unknown> => {
         const submitTool = hasSchema
           ? buildSubmitTool(inputSchema!, strict ? { strict: true } : undefined)
@@ -702,12 +777,13 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
           model: this.model,
           max_tokens: resolveMaxTokens(this.model),
           system: systemWithCache(systemPrompt, this.settledChoice()),
-          messages: [{ role: 'user', content: userContent }],
+          messages: [{ role: 'user', content: shaped.content }],
         };
         if (submitTool !== undefined) {
           opts['tools'] = [submitTool];
           opts['tool_choice'] = { type: 'auto' };
         }
+        sent = opts;
         return opts;
       };
       const response = await createMessageWithLadder(client, buildOpts, state, clock, counters);
@@ -721,7 +797,12 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       const textBlock = blocks.find((b) => b.type === 'text');
       const usage = readAnthropicUsage(response);
       requests.push(
-        toUsageRecord(requests.length, requestStart, usage, this.requestFacts(response, client)),
+        toUsageRecord(requests.length, requestStart, usage, {
+          ...this.requestFacts(response, client),
+          ...(shaped.headSent !== undefined
+            ? anthropicSplitFacts(sent, shaped.headSent, systemPrompt)
+            : {}),
+        }),
       );
       return {
         ...(toolUse !== undefined ? { toolInput: toolUse.input as Record<string, unknown> } : {}),
@@ -822,7 +903,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     prompt: string,
     inputSchema?: Record<string, unknown>,
     agentProfileInstructions?: string,
-    opts?: { structuredOutputStrict?: boolean; llmClock?: LlmClock },
+    opts?: { structuredOutputStrict?: boolean; llmClock?: LlmClock; cachePrefixChars?: number },
   ): Promise<CallStepWithMetaResult> {
     const billed: UsageRecord[] = [];
     try {
@@ -833,6 +914,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         opts?.structuredOutputStrict === true,
         opts?.llmClock,
         billed,
+        opts?.cachePrefixChars,
       );
     } catch (err) {
       attachBilledUsage(err, billed);
@@ -858,6 +940,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       toolTimeoutMs?: number;
       agentProfileInstructions?: string;
       llmClock?: LlmClock;
+      /** Caching 3-B (C2): not read here — Anthropic's tool loop keeps #899's marking. */
+      cachePrefixChars?: number;
     },
   ): Promise<StepWithToolsResult> {
     // issue #610: the accumulator is owned by the ENTRY POINT, as `callStep`'s is. One catch here

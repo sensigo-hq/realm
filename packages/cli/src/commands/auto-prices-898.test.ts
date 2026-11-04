@@ -180,7 +180,8 @@ async function drive(
   };
 }
 
-const FIX = "Caching: Anthropic is asked to cache each step's fixed instructions for";
+const FIX =
+  "Caching: Anthropic is asked to cache each step's fixed instructions and the stable start of its prompt for";
 const LISTEN_DEFAULT = "realm listen's default; change it with realm listen --prompt-cache";
 
 describe('#898 S9 — realm agent end to end: the price file decides what auto asks for', () => {

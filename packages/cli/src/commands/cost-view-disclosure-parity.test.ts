@@ -670,7 +670,7 @@ const SPLIT_REQUESTS = [
 /** The split line's words, on either context. */
 const SPLIT_WORDS = {
   ask: "asked for nothing but a cache key, a hint (the provider's own caching applies), then asked for nothing (the provider's own caching, if any, applies)",
-  head: 'cached head: 48 characters (marked: key), then 48 characters (nothing marked)',
+  head: 'cached head: 48 characters (marked: key);',
   refused:
     'the endpoint refused the cache fields (400); sent without them for the rest of the drive — to stop sending them: --prompt-cache off',
 };

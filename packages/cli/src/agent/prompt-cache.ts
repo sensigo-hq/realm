@@ -284,7 +284,7 @@ export function promptCacheStartLine(input: {
     counts.withTools > 0
       ? ' On a step that calls tools, it is also asked to cache the conversation so far, at each turn.'
       : '';
-  return `Caching: Anthropic is asked to cache each step's fixed instructions for ${lifetimeText(asked.lifetime_s)}${source}.${tools}`;
+  return `Caching: Anthropic is asked to cache each step's fixed instructions and the stable start of its prompt for ${lifetimeText(asked.lifetime_s)}${source}.${tools}`;
 }
 
 /**

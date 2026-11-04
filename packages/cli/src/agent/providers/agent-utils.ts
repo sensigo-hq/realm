@@ -1,7 +1,14 @@
 // agent-utils.ts — Shared utility functions for LLM provider agentic loops.
 import type { AgentSubmissionValidation, UsageRecord } from '@sensigo/realm';
 import { describeValidationProblems, renderProblemsLines } from '@sensigo/realm';
-import { buildDisclosureSet, disclose, discloseValue, type DisclosureSet } from '@sensigo/realm';
+import { createHash } from 'node:crypto';
+import {
+  buildDisclosureSet,
+  disclose,
+  discloseSplit,
+  discloseValue,
+  type DisclosureSet,
+} from '@sensigo/realm';
 import { stripMarks, writerSetFor } from '../../output/writer.js';
 
 const SYSTEM_PROMPT_BASE =
@@ -80,6 +87,40 @@ export function agentDisclosureSet(): DisclosureSet {
  *  the marks removed BEFORE the law reads it (F26), so none can part a name from its value. */
 export function discloseForAgent(text: string): string {
   return disclose(stripMarks(text), agentDisclosureSet(), 'all').text;
+}
+
+/**
+ * Caching 3-B (C1, D4.6-7): {@link discloseForAgent}'s text cut in two at the brief's boundary
+ * `chars` (the RAW prompt's UTF-16 code units), from the same set and the same one marking pass —
+ * the head is the part a provider caches. `stripMarks` runs before the law, so the cut is moved left
+ * by the span-mark characters (U+E000–U+E002) before it. A split is returned only when its two pieces
+ * are exactly `discloseForAgent(prompt)`; otherwise none (the prompt is then sent unsplit). On this
+ * edge that equality is the split law itself, so no real input fails it; the guard is the backstop.
+ */
+export function discloseForAgentSplit(
+  prompt: string,
+  chars: number,
+  // The guard's stand-in seam: the text the pieces must equal, `discloseForAgent(prompt)` unless a
+  // cell passes another (D4.6-7: on this edge no real input makes them differ).
+  disclosed: string = discloseForAgent(prompt),
+): { head: string; tail: string } | undefined {
+  let marks = 0;
+  for (let i = 0; i < Math.min(chars, prompt.length); i++) {
+    const code = prompt.charCodeAt(i);
+    if (code >= 0xe000 && code <= 0xe002) marks++;
+  }
+  const { head, tail } = discloseSplit(
+    stripMarks(prompt),
+    chars - marks,
+    agentDisclosureSet(),
+    'all',
+  );
+  return disclosed === head + tail ? { head, tail } : undefined;
+}
+
+/** Caching 3-B (A6, B2): the SHA-256 of a text's UTF-8 bytes, as 64 lowercase hex characters. */
+export function sha256Hex(text: string): string {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
 }
 
 /**

@@ -240,7 +240,7 @@ describe('realm agent asks Anthropic to cache, and records the ask (issue #600 P
       port: false,
     });
     expect(r.stdout).toContain(
-      "Caching: Anthropic is asked to cache each step's fixed instructions for 5 minutes (auto: a drive realm agent starts on its own has no trigger history; realm agent's default; turn it off with --prompt-cache off).",
+      "Caching: Anthropic is asked to cache each step's fixed instructions and the stable start of its prompt for 5 minutes (auto: a drive realm agent starts on its own has no trigger history; realm agent's default; turn it off with --prompt-cache off).",
     );
   }, 30_000);
 
@@ -260,7 +260,7 @@ describe('realm agent asks Anthropic to cache, and records the ask (issue #600 P
       request.cache_auto,
     ]).toEqual([3600, true, 'stated', undefined]);
     expect(r.stdout).toContain(
-      "Caching: Anthropic is asked to cache each step's fixed instructions for 1 hour (set by --prompt-cache long).",
+      "Caching: Anthropic is asked to cache each step's fixed instructions and the stable start of its prompt for 1 hour (set by --prompt-cache long).",
     );
   }, 30_000);
 });

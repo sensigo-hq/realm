@@ -851,7 +851,7 @@ describe('realm agent --cache-gaps and --prompt-cache auto (issue #600, the life
       }).toEqual({
         code: 0,
         startLine:
-          "Caching: Anthropic is asked to cache each step's fixed instructions for 1 hour (auto: realm listen's measurement could not be read; realm listen's default; change it with realm listen --prompt-cache).",
+          "Caching: Anthropic is asked to cache each step's fixed instructions and the stable start of its prompt for 1 hour (auto: realm listen's measurement could not be read; realm listen's default; change it with realm listen --prompt-cache).",
         recorded: {
           lifetime: 3600,
           by: 'realm listen',

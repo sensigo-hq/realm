@@ -671,17 +671,15 @@ function requestFactsText(cost: CostView): { model?: string; ask?: string } {
       );
     }
   }
-  // caching 3-B (A6): the cached head the requests sent, and what carried a marker or the key.
-  if (cost.cache_head !== undefined) {
+  // caching 3-B (A6; MA 2's ruling, 2026-11-04): the cached head the requests sent, for each head
+  // that carried a cache marker or the key. A head nothing marked (under `off`, after a refusal) is
+  // not called cached: it adds nothing, and with none marked there is no clause.
+  const marked = (cost.cache_head?.entries ?? []).filter((e) => e.marked !== undefined);
+  if (marked.length > 0) {
     clauses.push(
       'cached head: ' +
-        cost.cache_head.entries
-          .map(
-            (e) =>
-              `${e.chars} characters (` +
-              (e.marked !== undefined ? `marked: ${e.marked.join(', ')}` : 'nothing marked') +
-              ')',
-          )
+        marked
+          .map((e) => `${e.chars} characters (marked: ${e.marked!.join(', ')})`)
           .join(', then '),
     );
   }

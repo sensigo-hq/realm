@@ -73,7 +73,7 @@ describe('#899 — the docs sentences', () => {
     );
     claim(
       GUIDE,
-      "On a step without tools, the step's prompt is not cached. A step that calls tools also asks Anthropic, at each turn, to cache the conversation so far, so a turn can read what the turn before wrote once that part reaches the model's minimum. Its last request, made only when it has used up its tool calls, is sent with no cache marker.",
+      "A step that calls tools also asks Anthropic, at each turn, to cache the conversation so far, so a turn can read what the turn before wrote once that part reaches the model's minimum. Its last request, made only when it has used up its tool calls, is sent with no cache marker.",
     );
   });
 

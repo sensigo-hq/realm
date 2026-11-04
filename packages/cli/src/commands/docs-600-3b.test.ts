@@ -68,3 +68,42 @@ describe('caching 3-B Part B — the MCP door’s stable_prefix (B6)', () => {
     claim('website/src/data/docs-sidebar.mjs', "'docs/guides/cache-an-mcp-step-prompt',");
   });
 });
+
+const AGENT_GUIDE = 'docs/guides/realm-agent.md';
+
+describe('caching 3-B Part C — the head on Anthropic (rows 8, 9, A3, B8)', () => {
+  it('row 8: the fixed part names the start of the step prompt', () => {
+    // The head block beside the system block: `anthropic-provider-head-3b.test.ts` (two blocks).
+    claim(
+      AGENT_GUIDE,
+      "The system prompt is the fixed part of the request, with the start of the step's prompt: both are the same for every request of the step.",
+    );
+  });
+
+  it('row 9 (the head), A3’s author guidance and B8', () => {
+    // Its own marked block, the rest after it: `anthropic-provider-head-3b.test.ts` (shapes);
+    // where it ends: core `render-boundary-3b.test.ts` (A2, A3); a request without the split:
+    // `anthropic-provider-head-3b.test.ts` (off; no cachePrefixChars).
+    for (const sentence of [
+      "On a step without tools, the start of the step's prompt is cached too: Realm sends it as a block of its own, marked the same way, and the rest of the prompt after it (added after version 0.48.0).",
+      "The cached start of a step's prompt ends at its first placeholder whose value can differ between runs; put fixed text first.",
+      "A request sent without the split — under `--prompt-cache off`, or when Realm withholds it — never reads a split head's cache. That is expected.",
+    ]) {
+      claim(AGENT_GUIDE, sentence);
+    }
+  });
+
+  it('row 10: the start-line transcripts carry row 2’s words', () => {
+    // Row 2's words: `start-line-600.test.ts` (FIX), `prompt-cache-600.test.ts` :243, :263.
+    for (const page of [
+      AGENT_GUIDE,
+      'docs/reference/cli/realm-agent.md',
+      'docs/reference/cli/realm-listen.md',
+    ]) {
+      claim(
+        page,
+        "Caching: Anthropic is asked to cache each step's fixed instructions and the stable start of its prompt for",
+      );
+    }
+  });
+});

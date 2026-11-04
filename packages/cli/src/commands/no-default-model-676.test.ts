@@ -657,7 +657,7 @@ describe('realm listen --prompt-cache reaches the agent it starts (issue #600 PR
         cacheControl: { type: 'ephemeral' },
       });
       expect(listen.output()).toContain(
-        "Caching: Anthropic is asked to cache each step's fixed instructions for 5 minutes (set by realm listen --prompt-cache short).",
+        "Caching: Anthropic is asked to cache each step's fixed instructions and the stable start of its prompt for 5 minutes (set by realm listen --prompt-cache short).",
       );
     } finally {
       listen?.child.kill('SIGKILL');
