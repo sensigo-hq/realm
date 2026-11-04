@@ -4,6 +4,7 @@ import {
   WorkflowError,
   validateAgentSubmission,
   type JsonSchema,
+  type RequestEndpoint,
   type StructuredOutputMeta,
   type UsageRecord,
 } from '@sensigo/realm';
@@ -11,6 +12,7 @@ import {
   ToolCapableLlmProvider,
   endpointOf,
   responseModel,
+  type PromptCacheRequest,
   type ProviderCapabilities,
 } from './llm-provider.js';
 import type {
@@ -30,6 +32,7 @@ import {
   renderSubmissionProblems,
   extractHttpStatus,
   extractApiErrorFields,
+  sha256Hex,
   driveCreate,
   makeCountingFetch,
   MAX_RETRIES,
@@ -61,10 +64,78 @@ const JSON_SCHEMA_NAME = 'realm_step_output';
 export const OPENAI_DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 
 /**
+ * Caching 3-B (D2; B2, D4.6-10, -11) — one step's OpenAI cache plan. With a split
+ * (`cachePrefixChars`), `head` is the prompt's first n characters, and `key` — the SHA-256 of the
+ * head's UTF-8 bytes, 64 lowercase hex, the record's `prefix_sha256` — is set only when the key is
+ * sent: on OpenAI's own endpoint under every setting but `off` (`off` is honoured); on a custom
+ * endpoint only for a setting the operator STATED, other than `off` (the runner's default sends it
+ * none); never for a head with no non-space character (every such step would share one key). A
+ * provider built without a setting (a host constructing it directly) reads as the runner's default,
+ * `auto`. Every request of one step carries the same key.
+ */
+export interface OpenAiCachePlan {
+  head: string;
+  key?: string;
+}
+
+export function openAiCachePlan(
+  prompt: string,
+  cachePrefixChars: number | undefined,
+  endpoint: RequestEndpoint,
+  promptCache: PromptCacheRequest | undefined,
+): OpenAiCachePlan | undefined {
+  if (cachePrefixChars === undefined) return undefined;
+  const head = prompt.slice(0, cachePrefixChars);
+  const value = promptCache?.value ?? 'auto';
+  const stated = promptCache?.source === 'stated';
+  const send = /\S/.test(head) && value !== 'off' && (endpoint === 'default' || stated);
+  return send ? { head, key: sha256Hex(head) } : { head };
+}
+
+/** Caching 3-B (D2): a Chat Completions body with the plan's key, when it is sent. */
+export function withCacheKey(
+  body: Record<string, unknown>,
+  plan: OpenAiCachePlan | undefined,
+): Record<string, unknown> {
+  return plan?.key !== undefined ? { ...body, prompt_cache_key: plan.key } : body;
+}
+
+/**
+ * Caching 3-B (A6, D2) — the split's facts for one OpenAI request, read off the body SENT: the
+ * head's digest and length, a digest per part (the system text, the head, the tools and the
+ * response format where the body has them), the key when it went out, and whether strict did.
+ * `cache_requested` stays `provider_rules`: the key is a hint, not an ask (D4.6-9).
+ */
+export function openAiSplitFacts(
+  body: Record<string, unknown>,
+  plan: OpenAiCachePlan,
+  systemText: string,
+): Partial<UsageRecord> {
+  const keySent = typeof body['prompt_cache_key'] === 'string';
+  const tools = body['tools'] as Array<{ function?: { strict?: boolean } }> | undefined;
+  const format = body['response_format'] as { json_schema?: { strict?: boolean } } | undefined;
+  return {
+    prefix_sha256: sha256Hex(plan.head),
+    prefix_chars: plan.head.length,
+    prefix_parts: {
+      ...(tools !== undefined ? { tools: sha256Hex(JSON.stringify(tools)) } : {}),
+      system: sha256Hex(systemText),
+      prompt: sha256Hex(plan.head),
+      ...(format !== undefined ? { format: sha256Hex(JSON.stringify(format)) } : {}),
+    },
+    ...(keySent ? { cache_marked: ['key' as const], cache_key_sent: true as const } : {}),
+    request_strict_sent:
+      format?.json_schema?.strict === true ||
+      (tools ?? []).some((t) => t.function?.strict === true),
+  };
+}
+
+/**
  * Issue #600 PR 2 (B3) — what realm asked for on an OpenAI request, and where it sent it: the
- * response's `model`, `provider_rules` (realm sends no cache field; OpenAI's own caching, if any,
- * applies), the endpoint, and that OpenAI reports no lifetime split. Never `provider`: `realm
- * agent` stamps that.
+ * response's `model`, `provider_rules` (realm asks for nothing; OpenAI's own caching, if any,
+ * applies — caching 3-B: the cache key, when sent, is a hint recorded as `cache_key_sent` by
+ * {@link openAiSplitFacts}), the endpoint, and that OpenAI reports no lifetime split. Never
+ * `provider`: `realm agent` stamps that.
  */
 function openAiRequestFacts(response: unknown, client: unknown): Partial<UsageRecord> {
   const model = responseModel(response);
@@ -167,12 +238,23 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
   private readonly model: string;
   private readonly baseUrl: string | undefined;
   private readonly strictBaseUrl: boolean;
+  /** Caching 3-B (D1): resolved once by `resolveProvider`; built directly, the flag decides. */
+  private readonly endpoint: RequestEndpoint;
+  /** Caching 3-B (D3): the runner's setting, which decides whether the cache key is sent. */
+  private readonly promptCache: PromptCacheRequest | undefined;
 
-  constructor(model: string, baseUrl?: string, strictBaseUrl = false) {
+  constructor(
+    model: string,
+    baseUrl?: string,
+    strictBaseUrl = false,
+    opts?: { endpoint?: RequestEndpoint; promptCache?: PromptCacheRequest },
+  ) {
     super();
     this.model = model;
     this.baseUrl = baseUrl;
     this.strictBaseUrl = strictBaseUrl;
+    this.endpoint = opts?.endpoint ?? (baseUrl === undefined ? 'default' : 'custom');
+    this.promptCache = opts?.promptCache;
   }
 
   /**
@@ -198,6 +280,10 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       ...(this.baseUrl !== undefined && !this.strictBaseUrl
         ? { strictGate: 'compat_endpoint' as const }
         : {}),
+      // caching 3-B (D1, D3): OpenAI caches by its own rules under every setting; the endpoint
+      // decides the start line's words and whether the key goes out.
+      promptCache: 'provider',
+      endpoint: this.endpoint,
     };
   }
 
@@ -211,7 +297,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     prompt: string,
     inputSchema?: Record<string, unknown>,
     agentProfileInstructions?: string,
-    callOpts?: { llmClock?: LlmClock },
+    callOpts?: { llmClock?: LlmClock; cachePrefixChars?: number },
     // issue #600 PR 1a (D9): owned by the entry point so one `catch` there sees everything billed.
     billed?: UsageRecord[],
   ): Promise<{ output: Record<string, unknown>; usage?: UsageRecord[] }> {
@@ -253,6 +339,13 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       clock !== undefined ? driveCreate(rawCreate, body, clock, counters) : rawCreate(body, {});
 
     const systemPrompt = buildSystemPrompt(inputSchema, agentProfileInstructions);
+    // caching 3-B (D2, site 1): the cache key, on this request and on its JSON retry.
+    const plan = openAiCachePlan(
+      prompt,
+      callOpts?.cachePrefixChars,
+      this.endpoint,
+      this.promptCache,
+    );
     type Message = { role: 'system' | 'user' | 'assistant'; content: string };
     const messages: Message[] = [
       { role: 'system', content: systemPrompt },
@@ -264,22 +357,21 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     // false number by construction the moment the retry fires.
     const requests: UsageRecord[] = billed ?? [];
     const makeRequest = async (msgs: Message[]): Promise<string> => {
-      const opts: Record<string, unknown> = {
+      const base: Record<string, unknown> = {
         model: this.model,
         messages: msgs,
       };
       if (this.capabilities().jsonMode) {
-        opts['response_format'] = { type: 'json_object' };
+        base['response_format'] = { type: 'json_object' };
       }
+      const opts = withCacheKey(base, plan);
       const requestStart = new Date().toISOString();
       const response = await bounded(opts);
       requests.push(
-        toUsageRecord(
-          requests.length,
-          requestStart,
-          readOpenAiUsage(response),
-          openAiRequestFacts(response, client),
-        ),
+        toUsageRecord(requests.length, requestStart, readOpenAiUsage(response), {
+          ...openAiRequestFacts(response, client),
+          ...(plan !== undefined ? openAiSplitFacts(opts, plan, systemPrompt) : {}),
+        }),
       );
       return (response.choices[0]?.message?.content as string | undefined) ?? '';
     };
@@ -357,7 +449,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     prompt: string,
     inputSchema?: Record<string, unknown>,
     agentProfileInstructions?: string,
-    opts?: { structuredOutputStrict?: boolean; llmClock?: LlmClock },
+    opts?: { structuredOutputStrict?: boolean; llmClock?: LlmClock; cachePrefixChars?: number },
   ): Promise<{
     output: Record<string, unknown>;
     meta?: StructuredOutputMeta;
@@ -375,7 +467,12 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
           prompt,
           inputSchema,
           agentProfileInstructions,
-          { ...(clock !== undefined ? { llmClock: clock } : {}) },
+          {
+            ...(clock !== undefined ? { llmClock: clock } : {}),
+            ...(opts?.cachePrefixChars !== undefined
+              ? { cachePrefixChars: opts.cachePrefixChars }
+              : {}),
+          },
           billed,
         );
       } catch (err) {
@@ -419,21 +516,27 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       { role: 'system', content: systemPrompt },
       { role: 'user', content: prompt },
     ];
+    // caching 3-B (D2, site 2): the cache key, on the strict request and on its drop retry.
+    const plan = openAiCachePlan(prompt, opts.cachePrefixChars, this.endpoint, this.promptCache);
 
-    const buildOpts = (strict: boolean): Record<string, unknown> => ({
-      model: this.model,
-      messages,
-      ...(strict
-        ? {
-            response_format: {
-              type: 'json_schema',
-              json_schema: { name: JSON_SCHEMA_NAME, strict: true, schema: inputSchema },
-            },
-          }
-        : this.capabilities().jsonMode
-          ? { response_format: { type: 'json_object' } }
-          : {}),
-    });
+    const buildOpts = (strict: boolean): Record<string, unknown> =>
+      withCacheKey(
+        {
+          model: this.model,
+          messages,
+          ...(strict
+            ? {
+                response_format: {
+                  type: 'json_schema',
+                  json_schema: { name: JSON_SCHEMA_NAME, strict: true, schema: inputSchema },
+                },
+              }
+            : this.capabilities().jsonMode
+              ? { response_format: { type: 'json_object' } }
+              : {}),
+        },
+        plan,
+      );
 
     const rawCreate = (b: Rec, o: Rec): Promise<unknown> => client.chat.completions.create(b, o);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -449,12 +552,10 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
         const requestStart = new Date().toISOString();
         const response = await create(o);
         requests.push(
-          toUsageRecord(
-            requests.length,
-            requestStart,
-            readOpenAiUsage(response),
-            openAiRequestFacts(response, client),
-          ),
+          toUsageRecord(requests.length, requestStart, readOpenAiUsage(response), {
+            ...openAiRequestFacts(response, client),
+            ...(plan !== undefined ? openAiSplitFacts(o, plan, systemPrompt) : {}),
+          }),
         );
         return response as Record<string, unknown>;
       };
@@ -541,6 +642,8 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       toolTimeoutMs?: number;
       agentProfileInstructions?: string;
       llmClock?: LlmClock;
+      /** Caching 3-B (C2, D2): derives the cache key of every request of the loop. */
+      cachePrefixChars?: number;
     },
   ): Promise<StepWithToolsResult> {
     // issue #610: the accumulator is owned by the ENTRY POINT, as `callStep`'s is. One catch here
@@ -603,6 +706,10 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const send = (body: Rec): Promise<any> =>
       clock !== undefined ? driveCreate(rawCreate, body, clock, counters) : rawCreate(body, {});
+    // caching 3-B (D2, sites 3 and 4): one key for every request of the loop — its main turns
+    // (and #311's retry) and its final request.
+    const systemText = buildSystemPrompt(options.inputSchema, options.agentProfileInstructions);
+    const plan = openAiCachePlan(prompt, options.cachePrefixChars, this.endpoint, this.promptCache);
     // issue #610: the ONE point every request of this loop goes through, and the one place it is
     // recorded. The record is pushed the instant the answer arrives, before any code reads it: a
     // throw while reading must not lose what was billed. A request that fails on the wire has no
@@ -612,12 +719,10 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       const requestStart = new Date().toISOString();
       const response = await send(body);
       requests.push(
-        toUsageRecord(
-          requests.length,
-          requestStart,
-          readOpenAiUsage(response),
-          openAiRequestFacts(response, client),
-        ),
+        toUsageRecord(requests.length, requestStart, readOpenAiUsage(response), {
+          ...openAiRequestFacts(response, client),
+          ...(plan !== undefined ? openAiSplitFacts(body, plan, systemText) : {}),
+        }),
       );
       return response;
     };
@@ -685,7 +790,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     const history: any[] = [
       {
         role: 'system',
-        content: buildSystemPrompt(options.inputSchema, options.agentProfileInstructions),
+        content: systemText,
       },
       { role: 'user', content: prompt },
     ];
@@ -706,7 +811,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
           : openaiTools;
       }
       if (responseFormat !== undefined) opts['response_format'] = responseFormat;
-      return opts;
+      return withCacheKey(opts, plan);
     };
 
     // -------------------------------------------------------------------------------------------
@@ -751,7 +856,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     const buildFinalCallOpts = (): Record<string, unknown> => {
       const opts: Record<string, unknown> = { model: this.model, messages: history };
       if (responseFormat !== undefined) opts['response_format'] = responseFormat;
-      return opts;
+      return withCacheKey(opts, plan);
     };
 
     // Injects the over-budget message and calls the API without tools to produce a final answer.

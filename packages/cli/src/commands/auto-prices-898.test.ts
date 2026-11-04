@@ -328,7 +328,11 @@ describe('#898 S9 — realm agent end to end: the price file decides what auto a
 
   // (a) red when a presence check reads a pending choice (the drive then throws before it starts),
   //     or the C3b refusal stops firing; (b) prints the exit codes and the refusal's first words.
-  it('(g) a stated auto on a listen-shaped drive with gaps passes both presence checks; the C3b refusal still fires for a provider that applies nothing', async () => {
+  // caching 3-B (row 4): the C3b refusal is gone — OpenAI applies the setting (the cache key). The
+  // OpenAI command now goes past the old refusal's place to reading its workflow (`none.yaml` is
+  // not written, so it stops there). (a) red when the refusal is put back; (b) prints the codes and
+  // stderr's first line.
+  it('(g) a stated auto on a listen-shaped drive with gaps passes both presence checks; an OpenAI drive given a setting is no longer refused', async () => {
     const d = await deployment('g', { realmYaml: NAMES_PRICES, prices: PRICES_FULL });
     const stated = await drive('g', d, [
       '--run-id',
@@ -371,9 +375,15 @@ describe('#898 S9 — realm agent end to end: the price file decides what auto a
       child.stderr.on('data', (c: Buffer) => (err += c.toString()));
       child.on('close', (c) => resolve({ code: c, first: err.split('\n')[0]!.slice(0, 60) }));
     });
-    expect({ stated: stated.code, refused }).toEqual({
+    expect({
+      stated: stated.code,
+      openai: {
+        code: refused.code,
+        refusedForCaching: refused.first.includes('sets caching only'),
+      },
+    }).toEqual({
       stated: 0,
-      refused: { code: 1, first: 'Error: --prompt-cache sets caching only for Anthropic; Realm' },
+      openai: { code: 1, refusedForCaching: false },
     });
   }, 60_000);
 });

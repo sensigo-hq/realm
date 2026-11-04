@@ -53,7 +53,7 @@ const pc = (
   auto?: ResolvedPromptCache['auto'],
 ): ResolvedPromptCache => ({ value, source, by, ...(auto !== undefined ? { auto } : {}) });
 const line = (
-  caps: Pick<ProviderCapabilities, 'promptCache' | 'providerId' | 'jsonMode'>,
+  caps: Pick<ProviderCapabilities, 'promptCache' | 'providerId' | 'jsonMode' | 'endpoint'>,
   promptCache: ResolvedPromptCache | undefined,
   definition: WorkflowDefinition = SINGLE,
   moduleProviderId?: string,
@@ -171,36 +171,57 @@ describe('the drive start line (issue #600, D1; the lifetime unit — B8)', () =
   });
 
   // F2, per `<name>`. (a) red when `<name>` is always OpenAI; (b) prints the four lines.
-  it('F2 — no capability: OpenAI (o1, and OpenAI native), this endpoint (OpenAI at --base-url), this provider', () => {
-    const f2 = (caps: Pick<ProviderCapabilities, 'providerId' | 'jsonMode'>) =>
-      line({ ...caps }, pc('auto', 'runner_default', 'realm agent', { basis: 'no_measurement' }));
+  // caching 3-B (row 1): F2 is now only a provider without the capability; the OpenAI providers
+  // declare 'provider' and get D4's words (all branches: `openai-endpoint-3b.test.ts`). (a) red when
+  // an OpenAI provider falls to F2's old words, or F2 loses its own; (b) prints the lines.
+  it('F2 — no capability: this provider; the OpenAI providers, declaring provider, take D4’s words', () => {
+    const runner = pc('auto', 'runner_default', 'realm agent', { basis: 'no_measurement' });
+    const OPENAI_LINE =
+      "Caching: OpenAI caches by its own rules; Realm sends a cache key that helps repeated steps reach the same cache (OpenAI treats it as a hint). Realm cannot set OpenAI's lifetime or turn its caching off.";
     expect([
-      f2({ providerId: 'openai-reasoning', jsonMode: false }),
-      f2({ providerId: 'openai', jsonMode: true }),
-      f2({ providerId: 'openai', jsonMode: false }),
-      f2({ jsonMode: false }),
+      line({ jsonMode: false }, runner),
+      line(
+        {
+          providerId: 'openai-reasoning',
+          jsonMode: false,
+          promptCache: 'provider',
+          endpoint: 'default',
+        },
+        runner,
+      ),
+      line(
+        { providerId: 'openai', jsonMode: true, promptCache: 'provider', endpoint: 'default' },
+        runner,
+      ),
     ]).toEqual([
-      'Caching: Realm asks OpenAI for no caching; any caching it does is its own.',
-      'Caching: Realm asks OpenAI for no caching; any caching it does is its own.',
-      'Caching: Realm asks this endpoint for no caching; any caching it does is its own.',
       'Caching: Realm asks this provider for no caching; any caching it does is its own.',
+      OPENAI_LINE,
+      OPENAI_LINE,
     ]);
   });
 
-  // F2's listen-child notice. (a) red when a listen child given the flag gets F2 without its
-  // notice; (b) prints the line.
-  it("F2 — a realm listen child given --prompt-cache adds that listen's flag applies only to Anthropic", () => {
-    const caps = { providerId: 'openai' as const, jsonMode: true };
+  // caching 3-B (row 1): a realm listen child on OpenAI given --prompt-cache long says D4's words
+  // (F2's listen notice is gone with F2's OpenAI arm). (a) red when the child keeps the old notice;
+  // (b) prints the lines.
+  it('a realm listen child on OpenAI given --prompt-cache long says the key goes out and long sets no lifetime there', () => {
+    const caps = {
+      providerId: 'openai' as const,
+      jsonMode: true,
+      promptCache: 'provider' as const,
+      endpoint: 'default' as const,
+    };
+    const OPENAI_LINE =
+      "Caching: OpenAI caches by its own rules; Realm sends a cache key that helps repeated steps reach the same cache (OpenAI treats it as a hint). Realm cannot set OpenAI's lifetime or turn its caching off.";
     expect(line(caps, pc('long', 'stated', 'realm listen'))).toBe(
-      'Caching: Realm asks OpenAI for no caching; any caching it does is its own. realm listen --prompt-cache long applies only to Anthropic.',
+      `${OPENAI_LINE} --prompt-cache long sets no lifetime on OpenAI.`,
     );
-    // Its default is not a flag anyone gave: no notice.
+    // Its default is not a flag anyone gave: no once-line.
     expect(
       line(
         caps,
         pc('auto', 'runner_default', 'realm listen', { basis: 'listen_trigger_gaps', gaps_s: [] }),
       ),
-    ).toBe('Caching: Realm asks OpenAI for no caching; any caching it does is its own.');
+    ).toBe(OPENAI_LINE);
   });
 
   // F5 for a tools-only workflow (issue #899: F4a is gone) and F4b. (a) red when a tools-only

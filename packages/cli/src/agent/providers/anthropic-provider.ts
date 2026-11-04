@@ -14,6 +14,7 @@ import {
   type CacheRequestSource,
   type JsonSchema,
   type PromptCacheSetting,
+  type RequestEndpoint,
   type StructuredOutputMeta,
   type UsageRecord,
 } from '@sensigo/realm';
@@ -120,8 +121,8 @@ function cacheControlFor(choice: Exclude<CacheChoice, 'off'>): Record<string, st
 /**
  * Issue #600 PR 2 (B1) — a request's `system`: the plain string when nothing is asked
  * to be cached (byte-for-byte the request before caching), else one text block whose
- * `cache_control` marks the whole fixed part — the profile, Realm's instructions and the schema —
- * as the part to cache. `short` sends no `ttl` (the provider's default lifetime, 5 minutes); `long`
+ * `cache_control` marks the system text — the profile, Realm's instructions and the schema — as a
+ * part to cache (caching 3-B: the prompt's stable head is marked as a block of its own). `short` sends no `ttl` (the provider's default lifetime, 5 minutes); `long`
  * sends `ttl: '1h'` — byte-identical to the two bodies sent before the lifetime unit. The tool
  * loop's main turns call it too (issue #899); its final extraction does not.
  */
@@ -486,6 +487,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
    * it. Read only through {@link settledChoice}.
    */
   private cacheChoice: CacheChoice | 'pending';
+  /** Caching 3-B (D1, E1): `default` or `custom`, resolved once (`resolveProvider`). */
+  private readonly endpoint: RequestEndpoint;
   /** Issue #898 — where the settled `auto` choice took its prices; absent when none was needed. */
   private autoPrices: CacheAutoPrices | undefined;
 
@@ -506,9 +509,13 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         by?: string;
         auto?: CacheAuto;
       };
+      /** Caching 3-B (D1): the endpoint `resolveProvider` resolved once; absent reads as `default`
+       *  (a client without a string `baseURL` is only built by a test double). */
+      endpoint?: RequestEndpoint;
     },
   ) {
     super();
+    this.endpoint = opts?.endpoint ?? 'default';
     this.promptCache = opts?.promptCache ?? { value: 'off' };
     const { value } = this.promptCache;
     this.cacheChoice =
@@ -584,6 +591,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       providerId: 'anthropic',
       promptCache:
         choice === 'off' ? 'off' : { lifetime_s: ANTHROPIC_CACHE_TIERS[choice].lifetime_s },
+      endpoint: this.endpoint,
     };
   }
 

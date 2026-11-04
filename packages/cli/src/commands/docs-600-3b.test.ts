@@ -107,3 +107,86 @@ describe('caching 3-B Part C — the head on Anthropic (rows 8, 9, A3, B8)', () 
     }
   });
 });
+
+const AGENT_REF = 'docs/reference/cli/realm-agent.md';
+const LISTEN_REF = 'docs/reference/cli/realm-listen.md';
+const OPENAI_WORDS =
+  "With `--provider openai`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but `off`, and to another endpoint only for a setting you state other than `off`. Other providers' own caching applies.";
+/** (a) red when the page holds the old words again; (b) prints them. */
+function gone(page: string, words: string): void {
+  expect(flat(read(page)).includes(flat(words)), `${page} still says: ${words}`).toBe(false);
+}
+
+describe('caching 3-B Part D — OpenAI’s cache key (rows 3, 4, 5, 9, 11–15, 19, 20)', () => {
+  it('rows 3, 11, 14: the flag rows name the key, and the one refusal left', () => {
+    // The key's rule: `openai-cache-key-3b.test.ts` (D2); G18 stays: `prompt-cache-600.test.ts`.
+    claim(
+      AGENT_REF,
+      `${OPENAI_WORDS} See [What a run costs](../../guides/realm-agent.md#what-a-run-costs). Refused with \`--provider-module\`, and for a workflow with no agent step.`,
+    );
+    claim(LISTEN_REF, `\`off\`. ${OPENAI_WORDS} Added after version 0.47.0.`);
+  });
+
+  it('rows 4, 5, 19, 20: the refusals 3-B deletes are gone from the pages', () => {
+    // Accepted now: `prompt-cache-600.test.ts` G17, G19.
+    gone(AGENT_REF, '`--prompt-cache` with a provider Realm asks for no caching');
+    gone(LISTEN_REF, '`--prompt-cache` with `--provider openai` (added after version 0.47.0)');
+    gone(LISTEN_REF, 'It also refuses `--prompt-cache` with `--provider openai`');
+    claim(
+      AGENT_REF,
+      'The `--prompt-cache` refusal and the `--cache-gaps` one end the same way (added after version 0.47.0);',
+    );
+  });
+
+  it('row 12: the Caching line on OpenAI, per endpoint and setting', () => {
+    // Each line: `openai-endpoint-3b.test.ts` (D4, per branch).
+    claim(
+      AGENT_REF,
+      "With OpenAI it is `Caching: OpenAI caches by its own rules; Realm sends a cache key that helps repeated steps reach the same cache (OpenAI treats it as a hint). Realm cannot set OpenAI's lifetime or turn its caching off.`, and with `--prompt-cache short` or `long` stated it adds `--prompt-cache long sets no lifetime on OpenAI.`; with `off` it is `Caching: off; Realm sends OpenAI no cache key. OpenAI's own caching, if any, applies.`",
+    );
+    claim(
+      AGENT_REF,
+      'On another endpoint (`--base-url` or `OPENAI_BASE_URL`) it says `this endpoint` in place of `OpenAI`, and Realm sends the key only for a setting you state: without one it is `Caching: this endpoint caches by its own rules; Realm sends it no cache key (state --prompt-cache to send one).`, and with `off` it is `Caching: off; Realm sends this endpoint no cache key. Its own caching, if any, applies.` (added after version 0.48.0).',
+    );
+  });
+
+  it('row 13: a provider module may declare provider', () => {
+    // `openai-endpoint-3b.test.ts` (D4, the module branch).
+    claim(
+      AGENT_REF,
+      "and for `'provider'` — the service caches by its own rules — `Caching: this provider caches by its own rules.` (added after version 0.48.0).",
+    );
+  });
+
+  it('row 14: the listen caching line names the key', () => {
+    // `listen.test.ts` (listenCachingFacts).
+    claim(
+      LISTEN_REF,
+      'With `--provider openai`, it is `listen: caching {"openai":"sends a cache key on OpenAI\'s own endpoint","anthropic":"not used"}` (added after version 0.48.0).',
+    );
+  });
+
+  it('row 15: provider_rules with cache_key_sent, on the three pages', () => {
+    // The fact: `openai-cache-key-3b.test.ts`; inspect's words: `inspect-split-3b.test.ts`.
+    claim(
+      'docs/reference/run-record-and-export.md',
+      "`provider_rules` (Realm asked for nothing; the provider's own caching, if any, applies); with `cache_key_sent`, Realm also sent a cache key (added after version 0.48.0).",
+    );
+    claim(
+      'docs/reference/cli/realm-run-reading.md',
+      "with `cache_key_sent`, Realm also sent a cache key, and the words are `asked for nothing but a cache key, a hint (the provider's own caching applies)` (added after version 0.48.0).",
+    );
+    claim(
+      'docs/reference/mcp/run-state-and-health.md',
+      'with `cache_key_sent`, Realm also sent a cache key, and the entry has `key_sent: true` (added after version 0.48.0).',
+    );
+  });
+
+  it('row 9 (OpenAI): the guide says OpenAI caches by its own rules and when the key goes out', () => {
+    // `openai-cache-key-3b.test.ts` (D2).
+    claim(
+      AGENT_GUIDE,
+      "OpenAI caches by its own rules: Realm cannot set its lifetime or turn its caching off. On OpenAI's own endpoint Realm sends a cache key with each request whose prompt has a fixed start, a hint that helps repeated steps reach the same cache, under every setting but `off`; on another endpoint, only for a setting you state (added after version 0.48.0).",
+    );
+  });
+});

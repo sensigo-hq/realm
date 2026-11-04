@@ -381,8 +381,8 @@ export type PromptCacheSetting = (typeof PROMPT_CACHE_SETTINGS)[number];
  * Issue #600 PR 2 — what realm asked a provider to cache on a request, as stored
  * (`UsageRecord.cache_requested`): `off` (asked for nothing; the Anthropic adapter with
  * `--prompt-cache off`, or `auto` choosing off), `lifetime` (asked for a cache lifetime; the Anthropic
- * adapter with `short`, `long`, or `auto` choosing one), `provider_rules` (realm sends no cache field and the provider's own caching rules apply;
- * the OpenAI and o1 adapters).
+ * adapter with `short`, `long`, or `auto` choosing one), `provider_rules` (realm asks for nothing and the provider's own caching rules apply;
+ * the OpenAI and o1 adapters; with `cache_key_sent`, realm also sent a cache key — caching 3-B).
  */
 export const CACHE_REQUESTS = ['off', 'lifetime', 'provider_rules'] as const;
 export type CacheRequest = (typeof CACHE_REQUESTS)[number];

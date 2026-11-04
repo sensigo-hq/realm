@@ -44,7 +44,8 @@ describe('#899 — the docs sentences', () => {
   it('§3.2 realm-agent.md: the --prompt-cache row, the Caching line and the refusal row (M10, M11)', () => {
     claim(
       REF,
-      'Refused for a provider Realm asks for no caching, and for a workflow with no agent step. Added after version 0.47.0.',
+      // caching 3-B (row 11): the one refusal left is with --provider-module (G18).
+      'Refused with `--provider-module`, and for a workflow with no agent step. Added after version 0.47.0.',
     );
     claim(
       REF,

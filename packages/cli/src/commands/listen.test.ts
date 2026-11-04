@@ -1435,10 +1435,10 @@ describe('issue #600 PR 2 — the listen: caching line', () => {
     `listen: caching ${JSON.stringify(listenCachingFacts(...args))}`;
 
   // (a) red when the openai field is dropped.
-  it("no --provider: Anthropic's setting, who set it, and OpenAI asked for no caching", () => {
+  it("no --provider: Anthropic's setting, who set it, and OpenAI sends a cache key on its own endpoint", () => {
     expect([line(undefined, undefined), line(undefined, 'short')]).toEqual([
-      'listen: caching {"anthropic":"auto: off, 5 minutes or 1 hour for each workflow, by the gaps between its recent triggers and the prices in runner.cache.economics","set_by":"realm listen\'s default","openai":"asked for no caching"}',
-      'listen: caching {"anthropic":"5 minutes","set_by":"--prompt-cache short","openai":"asked for no caching"}',
+      'listen: caching {"anthropic":"auto: off, 5 minutes or 1 hour for each workflow, by the gaps between its recent triggers and the prices in runner.cache.economics","set_by":"realm listen\'s default","openai":"sends a cache key on OpenAI\'s own endpoint"}',
+      'listen: caching {"anthropic":"5 minutes","set_by":"--prompt-cache short","openai":"sends a cache key on OpenAI\'s own endpoint"}',
     ]);
   });
 
@@ -1464,9 +1464,9 @@ describe('issue #600 PR 2 — the listen: caching line', () => {
   });
 
   // (a) red when --provider openai claims an Anthropic setting.
-  it('--provider openai: OpenAI asked for no caching, Anthropic not used', () => {
+  it('--provider openai: OpenAI sends a cache key on its own endpoint, Anthropic not used', () => {
     expect(line('openai', undefined)).toBe(
-      'listen: caching {"openai":"asked for no caching","anthropic":"not used"}',
+      'listen: caching {"openai":"sends a cache key on OpenAI\'s own endpoint","anthropic":"not used"}',
     );
   });
 });
@@ -1698,7 +1698,7 @@ describe("issue #600 (the lifetime unit) — listen measures each workflow's tri
   // keeps the old words, with no price file and no fallback; (b) prints it.
   it("the help: listen's --prompt-cache description", () => {
     expect(listenCommand.options.find((o) => o.long === '--prompt-cache')?.description).toBe(
-      'Passed to each realm agent it starts: auto, short, long or off. auto (the default): each agent asks Anthropic for off, 5 minutes or 1 hour, by the gaps between the recent triggers of its workflow, priced from runner.cache.economics (with no usable prices: 1 hour when a recent gap is under 54 minutes, else off). short: 5 minutes. long: 1 hour. off: nothing. Other providers are asked for no caching.',
+      "Passed to each realm agent it starts: auto, short, long or off. auto (the default): each agent asks Anthropic for off, 5 minutes or 1 hour, by the gaps between the recent triggers of its workflow, priced from runner.cache.economics (with no usable prices: 1 hour when a recent gap is under 54 minutes, else off). short: 5 minutes. long: 1 hour. off: nothing. With `--provider openai`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but `off`, and to another endpoint only for a setting you state other than `off`. Other providers' own caching applies.",
     );
   });
 });
