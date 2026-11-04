@@ -1135,12 +1135,16 @@ describe('issue #729 — realm run list --stuck names a run that cannot go on, a
     );
   });
 
-  it('C4. the --stuck help line says what --stuck lists: every health finding, among them a run that cannot go on (correction 1)', () => {
+  it('C4. the --stuck help line says what --stuck lists: every health finding, among them a run that cannot go on, and which findings do not select a run (correction 1; #715 (b) correction 1)', () => {
     // In-process: commander wraps `--help` at 80 columns when stdout is not a TTY, so the option's
-    // own description is read. (a) red when the old 'wedged/idle runs' wording comes back, or the
-    // line names a subset as the whole; (b) prints the description.
+    // own description is read. The findings that do not select a run are core's own set
+    // (`RUN_HEALTH_STUCK_EXCLUDED`, the selection's: stuck-kinds-715b). (a) red when the old
+    // 'wedged/idle runs' wording comes back, the line names a subset as the whole, or it stops naming
+    // the findings that do not select a run (the line before #715 (b) correction 1); (b) prints the
+    // description.
     expect(listCommand.options.find((o) => o.long === '--stuck')?.description).toBe(
-      'Show only runs with a health finding (realm run inspect names it) — among them a run that cannot go on until its workflow is corrected, at any age, and an open run idle past --older-than',
+      'Show only runs with a health finding (realm run inspect names it) — among them a run that cannot go on until its workflow is corrected, at any age, and an open run idle past --older-than; ' +
+        'these findings do not select a run: completed_with_failed_steps, structured_output_downgraded, guard_awaiting_settlement, trust_value_invalid, record_stamped_ahead',
     );
   });
 

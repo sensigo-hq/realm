@@ -74,9 +74,11 @@ All notable changes to this project are documented here.
 - **New exports (issue #715).** `@sensigo/realm` exports `setClockErrorSink`, `clockErrorSink`,
   `takeRawReading`, `floorAtRecord`, `parseStamp`, `formatInstantWords`, `isIdleForCleanup`,
   `judgedSnapshotOf`, `reminderScheduleOf`, `reminderScheduleWords`, `withTestClockNotice`,
-  `testClockNoticeLine`, `markTestClock`, `isTestLocationClock`, `clockBasis` and
-  `CLOCK_READ_CLASSES`, and the types `ClockReadClass`, `Listing`, `StoreSettlement`, `OpeningGate`
-  and `SealRunDelta`. `storeClockContract` gains the laws `READ_AT_CAPPED`, `READS_ONE_READING` (in
+  `testClockNoticeLine`, `markTestClock`, `isTestLocationClock`, `clockBasis`, `waysStoreOf`,
+  `recordStampedAheadOf`, `CLOCK_READ_CLASSES`, `RUN_HEALTH_KINDS`, `RUN_HEALTH_STUCK_EXCLUDED` and
+  `REMINDER_BASIS_CLAUSE`, and the types `ClockReadClass`, `Listing`, `CreateResult`,
+  `StoreSettlement`, `OpeningGate`, `SealRunDelta`, `ReminderSchedule` and `ReminderOccurrence`.
+  `storeClockContract` gains the laws `READ_AT_CAPPED`, `READS_ONE_READING` (in
   place of `READS_SPEND_NO_READING`), `SNAPSHOT_AT_SOUND`, `SETTLE_ONE_READING`,
   `OPEN_GATE_MINTS_AT_AT`, `LATE_ANSWER_ONE_WRITE`, `SEAL_RUN_ONE_WRITE` and
   `KEYED_FIRST_CREATE_ONE_READING`; `runStoreFidelityContract` gains `DRIVE_FAILURE_KEEPS_ITS_FENCE`.
@@ -155,12 +157,20 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
   `at`. A store must have `clock` and `settleStep`: Realm refuses one without either with
   `VALIDATION_OPTION_INVALID`. `settleStep` takes no options, and a `seal_run` change takes no
   workflow. **Upgrading:** a store of your own reads its clock once per call; `InMemoryStore` and the
-  store contracts show how.
-- **BREAKING — Realm's functions take no `now` (issue #715).** The engine reads time only through the
-  store's clock. The functions that judge a run (`describePending`, `classifyRunHealth`,
-  `classifyInProgressClaims` and the others `@sensigo/realm` exports) take what `store.get` returns,
-  `{ record, at }`, in place of a record and a time; `applySettlement` takes `at`. A claim is stale
-  at its deadline.
+  store contracts show how. Its `settlementContract` adapter must supply `route`, which builds a
+  store on a clock the case sets; the contract gains the laws `SEAL_RUN_NEEDS_NO_DEFINITION` and
+  `ROUTE_CLOCK_IS_STORE_CLOCK`, and a store with neither `settleStep` nor `stampSeal` no longer
+  passes with no cases.
+- **BREAKING — Realm's functions that judge a run take the run as read (issue #715).** The engine
+  reads time only through the store's clock. The functions that judge a run (`describePending`,
+  `classifyRunHealth`, `classifyInProgressClaims` and the others `@sensigo/realm` exports) take what
+  `store.get` returns, `{ record, at }`, in place of a record and a time; `applySettlement` takes
+  `at`. These still take the time you give them, as a parameter `now`: `classifyClaim`,
+  `computeClaimDeadline`, `computeGateDueState`, `dueExpiry`, `durationWords`,
+  `endedRunWaysSentence`, `pendingCleanupLine`, `pendingCleanupSentence`, `pendingCleanupWay`,
+  `sealRunLevel`, `terminalAnswerRefusalMessage`, `withEndedRunWays` and `withPendingCleanup`; and
+  `composePersonNotice` (a reminder's event) and `describeAnswerEnding` (the answer) take it as a
+  field `now`. A claim is stale at its deadline.
 - **Every age and deadline people read carries its time (issue #715).** `realm run inspect`,
   `realm run list`, `realm run drain`, `realm run reclaim --all`, run health, the expiry line,
   Slack's reminders and `realm agent`'s question say, for example, `4h 12m ago
@@ -181,8 +191,9 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
   the time from the reply's `basis.as_of` to the next deadline after which the run changes — a
   question's that declares `on_expiry`, or a claim's — at least 1 s and at most 5 minutes; with no
   such deadline, 30 s. The await entry names the question's own deadline: as `until` when it is
-  `until`, and as its own when another deadline sets `until`; a question that changes the run and
-  expires more than 5 minutes away is handed over: tell the user to come back then.
+  `until`, and as its own when another deadline sets `until`; a question that changes the run, and
+  whose deadline sets `until` more than 5 minutes away, is handed over: tell the user to come back
+  then.
 - **`realm run cleanup` no longer abandons a run whose step still has a live claim (issue #715).**
   Each run is judged at the time of the read that found it.
 - **BREAKING — `from_now` reads no clock (issue #715).** In a step's `prompt` and `instructions` it

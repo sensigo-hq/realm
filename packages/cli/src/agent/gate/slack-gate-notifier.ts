@@ -525,6 +525,9 @@ function reminderFiring(
   return renderSlack(notice, { mode: 'bot', listens }).text;
 }
 
+/** The longest delay Node's `setTimeout` keeps (2^31−1 ms, 24.8 days); a longer one runs after 1 ms. */
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
+
 /**
  * Starts reminder and escalation timers for an open gate.
  *
@@ -564,8 +567,20 @@ export function startGateReminderTimers(
       console.warn(`${what} post failed: ${err instanceof Error ? err.message : String(err)}`);
     });
   };
+  // Node runs a `setTimeout` longer than 2^31−1 ms (24.8 days) after 1 ms, so a timer further away
+  // than that is armed in hops: each hop waits at most that long and arms the next for what is left;
+  // only the last calls `fire`. `timers[slot]` always holds the chain's live hop, so the cleanup below
+  // clears the hop that is waiting, and no hop is left to arm another.
   const at = (whenMs: number, fire: () => void): void => {
-    timers.push(setTimeout(fire, Math.max(0, whenMs - startMs)));
+    const slot = timers.length;
+    const hop = (remainingMs: number): void => {
+      const waitMs = Math.min(remainingMs, MAX_TIMER_DELAY_MS);
+      timers[slot] = setTimeout(() => {
+        if (remainingMs > waitMs) hop(remainingMs - waitMs);
+        else fire();
+      }, waitMs);
+    };
+    hop(Math.max(0, whenMs - startMs));
   };
 
   const schedule = reminderScheduleOf(opened);

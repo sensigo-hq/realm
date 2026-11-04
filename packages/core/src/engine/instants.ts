@@ -4,9 +4,10 @@
 // `isPastDeadline`. Pure: the reading `r` is always passed in (the before-load reading a snapshot was
 // taken at), never a clock read here.
 //
-// The other three copies of the deadline comparison belong to later units and are allow-listed by
-// them: `run-health.ts` (#729 PR-4), `reclaim-step.ts` (#729 PR-2), the CLI's `drain.ts` (#729 PR-1).
-// The cleanup lease's read (`pendingCleanupWay`) moves with `JUDGE.drain` in PR-1 (D4 T-4).
+// Not every due test goes through `isPastDeadline` yet (after #715 (b)): `reclaim-step.ts` does, and
+// `run-health.ts` (a cleanup lease's deadline and a question's), `pending.ts`'s `pendingCleanupWay`
+// and the CLI's `drain.ts` (a cleanup lease's) still compare a stored deadline with the reading
+// themselves, through `parseStamp`.
 
 /**
  * ε, in milliseconds (D4 P-8; #715 D5 §1.4, MONOTONE's cap): how far a recorded past event may lie

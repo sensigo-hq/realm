@@ -24,12 +24,12 @@ realm run list --stuck [--older-than <duration>] [--workflow <id>]
 
 Prints one line for each run, newest change first.
 
-| Flag                      | What it does                                                                                                                                                                    |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--workflow <id>`         | Lists only runs of this workflow.                                                                                                                                               |
-| `--status <phase>`        | Lists only runs in this phase: `running`, `gate_waiting`, `completed`, `failed`, `abandoned`, `aborted`.                                                                        |
-| `--stuck`                 | Lists only runs that have a health finding. Cannot be combined with `--status`.                                                                                                 |
-| `--older-than <duration>` | With `--stuck`: how long an open run must have been idle to be listed for the idle finding (`never_claimed_idle`); every other finding lists its run at any age. Default `24h`. |
+| Flag                      | What it does                                                                                                                                                                                                                                                   |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--workflow <id>`         | Lists only runs of this workflow.                                                                                                                                                                                                                              |
+| `--status <phase>`        | Lists only runs in this phase: `running`, `gate_waiting`, `completed`, `failed`, `abandoned`, `aborted`.                                                                                                                                                       |
+| `--stuck`                 | Lists only runs that have a health finding. These findings do not select a run: `completed_with_failed_steps`, `structured_output_downgraded`, `guard_awaiting_settlement`, `trust_value_invalid`, `record_stamped_ahead`. Cannot be combined with `--status`. |
+| `--older-than <duration>` | With `--stuck`: how long an open run must have been idle to be listed for the idle finding (`never_claimed_idle`); every other finding lists its run at any age. Default `24h`.                                                                                |
 
 `--workflow` refuses a value that starts with `-`, except a lone `-`; write `--option=value` for one.
 

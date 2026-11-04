@@ -7,17 +7,31 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, expect, it } from 'vitest';
-import type { ForWay, Narrowed, Unavailable } from '@sensigo/realm';
-import { MCP_POLL_AFTER_MS, POLL_CAP_MS, POLL_FLOOR_MS, paceOf } from './render-reply.js';
+import {
+  narrowForDoor,
+  type ComposedWays,
+  type Narrowed,
+  type Unavailable,
+  type WayOn,
+} from '@sensigo/realm';
+import {
+  MCP_POLL_AFTER_MS,
+  POLL_CAP_MS,
+  POLL_FLOOR_MS,
+  mcpDoorPolicy,
+  paceOf,
+} from './render-reply.js';
 
 const AT = new Date('2030-01-01T00:00:00.000Z');
 const plus = (ms: number) => new Date(AT.getTime() + ms).toISOString();
 
-/** A question handed to the person, with its deadline and (when it changes the run) its on_expiry. */
-const question = (expires_at?: string, on_expiry?: 'abort' | 'settle_default'): ForWay =>
+/**
+ * A question for the person, with its deadline and (when it changes the run) its on_expiry: the way as
+ * the composer gives it, before the door names its parties (`for` is minted only by `narrowForDoor`).
+ */
+const question = (expires_at?: string, on_expiry?: 'abort' | 'settle_default'): WayOn =>
   ({
     verb: 'respond',
-    for: ['asked_person'],
     conditions: [],
     run_id: 'run_1',
     gate_id: 'g1',
@@ -27,7 +41,7 @@ const question = (expires_at?: string, on_expiry?: 'abort' | 'settle_default'): 
     presented: 'alone',
     ...(expires_at !== undefined ? { expires_at } : {}),
     ...(on_expiry !== undefined ? { on_expiry } : {}),
-  }) as unknown as ForWay;
+  }) as unknown as WayOn;
 
 /** A step another program holds, with the claim's deadline. */
 const held = (clears_at?: string): Unavailable =>
@@ -35,11 +49,29 @@ const held = (clears_at?: string): Unavailable =>
     verb: 'run_step',
     code: 'held_elsewhere',
     step: 's',
+    remedy: [],
     ...(clears_at !== undefined ? { clears_at } : {}),
   }) as unknown as Unavailable;
 
-const narrowed = (ways: ForWay[], unavailable: Unavailable[] = []): Narrowed =>
-  ({ ways, unavailable, basis: { as_of: AT.toISOString() }, door: {} }) as unknown as Narrowed;
+/**
+ * The MCP door's narrowing, as a reply is built (#729 PR-0: a `Narrowed` comes only from
+ * `narrowForDoor`; `scripts/check-narrowed.mjs` refuses one built by a cast). The door withholds the
+ * answer from the agent, so the question is the person's alone (`for: ['asked_person']`) and is kept
+ * by `handedOffWays` as a way the agent waits on; `unavailable` gains the door's
+ * `door_withholds_answers` entry, which `paceOf` does not read.
+ */
+const WITHHELD = mcpDoorPolicy({
+  answers: {
+    value: 'withheld',
+    source: { kind: 'default', ref: 'pace-715b' },
+    forms: { shown: false, source: { kind: 'default', ref: 'pace-715b' } },
+  },
+});
+const narrowed = (ways: WayOn[], unavailable: Unavailable[] = []): Narrowed =>
+  narrowForDoor(
+    { ways, unavailable, basis: { as_of: AT.toISOString() } } as unknown as ComposedWays,
+    WITHHELD,
+  );
 
 describe('#715 (b) 03 §C — paceOf: the pace from the deadlines after which the run changes', () => {
   it('an on_expiry question 45 s away: poll_after_ms = until − at, unclamped', () => {

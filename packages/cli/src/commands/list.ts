@@ -586,7 +586,8 @@ export const listCommand = new Command('list')
   .option('--status <phase>', `Filter by run phase (${VALID_PHASES.join(', ')})`)
   .option(
     '--stuck',
-    'Show only runs with a health finding (realm run inspect names it) — among them a run that cannot go on until its workflow is corrected, at any age, and an open run idle past --older-than',
+    'Show only runs with a health finding (realm run inspect names it) — among them a run that cannot go on until its workflow is corrected, at any age, and an open run idle past --older-than; ' +
+      `these findings do not select a run: ${[...RUN_HEALTH_STUCK_EXCLUDED].join(', ')}`,
   )
   .option(
     '--older-than <duration>',

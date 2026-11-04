@@ -1,10 +1,16 @@
 // docs-715b.test.ts — issue #715 (b) 04 §E (guardrail 7(f), 9): every docs sentence this unit's
 // commit 4 adds or changes is quoted here word for word and asserted to be on its page, read from the
-// repository; the behaviour each states is pinned in the cell named in its comment. Three checks are
+// repository; the behaviour each states is pinned in the cell named in its comment. Some checks are
 // GENERATED from the code, so the page cannot drift from it: the five classes' table from core's
 // `CLOCK_READ_CLASSES`, the store contracts' law rows from `STORE_CLOCK_LAWS` and
-// `RUN_STORE_FIDELITY_LAWS`, and the store clock contract's counts from the cases it returns. One
-// claim is executed here (a reply's `as_of` is not a change cursor).
+// `RUN_STORE_FIDELITY_LAWS`, and the store clock contract's counts from the cases it returns; since
+// correction 1 (C-3, C-4), the settlement contract's laws, case counts and adapter fields, the
+// exported functions that still take a `now`, this unit's new public names, and the findings that do
+// not select a run in `--stuck`. The adapter fields, the functions and the names are read from the
+// built declarations (`dist/index.d.ts`, what a program that imports the package compiles against)
+// with the TypeScript compiler, as `clock-census-715b.test.ts` reads the source: an interface and a
+// type are not there at run time. Two claims are executed here (a reply's `as_of` is not a change
+// cursor; the settlement cases that move the clock fail without `route`, saying so).
 //
 // Each assertion names (a) the change that turns it red and (b) what it prints when it fails: the
 // sentence, the class, the law or the counts (never an environment or a path under a real home).
@@ -12,14 +18,18 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import * as realm from '@sensigo/realm';
-import { CLOCK_READ_CLASSES, stampOf } from '@sensigo/realm';
+import ts from 'typescript';
+import { CLOCK_READ_CLASSES, RUN_HEALTH_STUCK_EXCLUDED, stampOf } from '@sensigo/realm';
 import {
   InMemoryStore,
   RUN_STORE_FIDELITY_LAWS,
+  SETTLEMENT_LAWS,
   STORE_CLOCK_LAWS,
+  defaultSettlementFixture,
   settableClock,
+  settlementContract,
   storeClockContract,
+  type SettlementContractAdapter,
 } from '@sensigo/realm-testing';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
@@ -51,6 +61,52 @@ function row(page: string, first: string): string[] | undefined {
     .map((c) => c.trim());
 }
 
+/** The text of a page's section from its heading to the next heading of the same or a higher level. */
+function section(page: string, heading: string): string {
+  const text = read(page);
+  const start = text.indexOf(`${heading}\n`);
+  if (start < 0) return '';
+  const level = /^#+/.exec(heading)![0];
+  const next = text.slice(start + heading.length).search(new RegExp(`\\n#{1,${level.length}} `));
+  return next < 0 ? text.slice(start) : text.slice(start, start + heading.length + next);
+}
+/** A CHANGELOG entry of this unit's section, from its bold opening to the next entry. */
+function changelogEntry(opening: string): string {
+  const text = read('CHANGELOG.md');
+  const start = text.indexOf(`- ${opening}`);
+  if (start < 0) return '';
+  const end = text.indexOf('\n- ', start + 2);
+  return flat(text.slice(start, end < 0 ? undefined : end));
+}
+
+/**
+ * The public surface of `@sensigo/realm` and `@sensigo/realm-testing`, as their built declarations
+ * declare it (one compiler program, made once for this file).
+ */
+let surface: { checker: ts.TypeChecker; core: ts.Symbol[]; testing: ts.Symbol[] } | undefined;
+function publicSurface(): NonNullable<typeof surface> {
+  if (surface !== undefined) return surface;
+  const core = join(ROOT, 'packages', 'core', 'dist', 'index.d.ts');
+  const testing = join(ROOT, 'packages', 'testing', 'dist', 'index.d.ts');
+  const program = ts.createProgram([core, testing], {
+    target: ts.ScriptTarget.ES2022,
+    module: ts.ModuleKind.NodeNext,
+    moduleResolution: ts.ModuleResolutionKind.NodeNext,
+    strict: true,
+    skipLibCheck: true,
+    noEmit: true,
+  });
+  const checker = program.getTypeChecker();
+  const exportsOf = (file: string): ts.Symbol[] =>
+    checker.getExportsOfModule(checker.getSymbolAtLocation(program.getSourceFile(file)!)!);
+  surface = { checker, core: exportsOf(core), testing: exportsOf(testing) };
+  return surface;
+}
+/** The symbol an export names (through `export { … } from` and `export *`). */
+function resolved(checker: ts.TypeChecker, symbol: ts.Symbol): ts.Symbol {
+  return symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
+}
+
 const CORE = 'docs/reference/core-library.md';
 const TESTING = 'docs/reference/testing-package.md';
 const ENV = 'docs/reference/environment-and-files.md';
@@ -58,6 +114,7 @@ const TEMPLATES = 'docs/reference/workflow/input-map-and-templates.md';
 const TOOLS = 'docs/reference/mcp/tools.md';
 const HEALTH = 'docs/reference/mcp/run-state-and-health.md';
 const ACTING = 'docs/reference/cli/realm-run-acting.md';
+const READING = 'docs/reference/cli/realm-run-reading.md';
 
 describe('#715 (b) 04 §E — core-library.md: a store’s clock', () => {
   it('systemClock’s `at` works and reports to the program’s sink; a test location’s clock runs its waiters', () => {
@@ -223,6 +280,131 @@ describe('#715 (b) 04 §E — testing-package.md: the store contracts', () => {
     });
   });
 
+  it('settlementContract (correction 1, C-3): the law count and list, the case counts and the adapter table are the contract’s', () => {
+    // (a) red when the page's count, law list, case counts or adapter fields drift from the contract
+    //     (the 56 / 146 / 55 / 142 and the missing `route` row this correction found), or the row of
+    //     a store with neither `settleStep` nor `stampSeal` comes back; (b) prints the page's and the
+    //     contract's values side by side. Every case passing is pinned by the testing package's own
+    //     settlement-in-memory-store.test.
+    const store = new InMemoryStore();
+    const adapter = (hook: boolean): SettlementContractAdapter => ({
+      store,
+      storeName: 'InMemoryStore',
+      settlementFixture: defaultSettlementFixture,
+      route: { kind: 'clock', makeStore: ({ clock }) => new InMemoryStore({ clock }) },
+      ...(hook
+        ? {
+            // The page's hook: the run put straight into the store's map of runs.
+            seedLegacyTerminal: async (id: string) => {
+              const { record: run } = await store.create({
+                workflowId: `tck-seed-${id}`,
+                workflowVersion: 1,
+                params: {},
+              });
+              const legacy = {
+                ...run,
+                id,
+                completed_steps: ['a'],
+                terminal_state: true,
+                terminal_reason: 'Workflow completed.',
+                run_phase: 'completed' as const,
+              };
+              (store as unknown as { runs: Map<string, typeof legacy> }).runs.set(id, legacy);
+              return legacy;
+            },
+          }
+        : {}),
+    });
+    const all = settlementContract(adapter(true));
+    const withoutHook = settlementContract(adapter(false));
+    const lawsWithCases = new Set(all.map((c) => c.law));
+    const text = section(TESTING, '### `settlementContract(adapter)`');
+    // The adapter table: the section's first table, its first cells.
+    const tableFields = text
+      .split('\n\n')
+      .find((block) => block.startsWith('| Adapter field'))!
+      .split('\n')
+      .slice(2)
+      .map((line) => line.split('|')[1]!.trim().replace(/`/g, ''));
+    const { checker, testing } = publicSurface();
+    const iface = resolved(
+      checker,
+      testing.find((s) => s.getName() === 'SettlementContractAdapter')!,
+    );
+    const interfaceFields = checker
+      .getDeclaredTypeOfSymbol(iface)
+      .getProperties()
+      .map((p) => p.getName());
+    const listed = /The (\d+) laws:\n\n```text\n([\s\S]*?)\n```/.exec(text);
+    expect({
+      row: row(TESTING, '`settlementContract`')?.slice(2),
+      count: listed?.[1],
+      laws: (listed?.[2] ?? '')
+        .split(/[,\s]+/)
+        .filter(Boolean)
+        .sort(),
+      fields: tableFields.sort(),
+      noCaseRow: text.includes('neither `settleStep` nor `stampSeal`'),
+    }).toEqual({
+      row: [String(SETTLEMENT_LAWS.length), `${all.length}, with \`InMemoryStore\` (below)`],
+      count: String(SETTLEMENT_LAWS.length),
+      laws: [...SETTLEMENT_LAWS].sort(),
+      fields: interfaceFields.sort(),
+      noCaseRow: false,
+    });
+    // The case counts, each in the sentence that states it; the law without a case is the wiring
+    // one, and the hook's absence removes `STAMP_CLASSIFIED_ROUNDTRIP`'s. (A copy of the list is
+    // filtered: release-line-witness takes a test file that filters a law list itself for a runner.)
+    expect({
+      withoutCase: [...SETTLEMENT_LAWS].filter((l) => !lawsWithCases.has(l)),
+      stampClassifiedWithoutHook: withoutHook.some((c) => c.law === 'STAMP_CLASSIFIED_ROUNDTRIP'),
+    }).toEqual({ withoutCase: ['ADAPTER_WIRING'], stampClassifiedWithoutHook: false });
+    claim(
+      TESTING,
+      `With \`InMemoryStore\`, \`defaultSettlementFixture\`, a \`route\` that builds an \`InMemoryStore\` on the case's clock and a \`seedLegacyTerminal\` that puts the run straight into the store's map of runs, ${lawsWithCases.size} of the laws have cases, ${all.length} in all, and all of them pass.`,
+    );
+    claim(
+      TESTING,
+      `Without \`seedLegacyTerminal\`, \`STAMP_CLASSIFIED_ROUNDTRIP\` has no case and a \`STAMP_PRESERVES_UPDATED_AT\` case fails, saying that the hook is missing: ${withoutHook.length} cases.`,
+    );
+  });
+
+  it('settlementContract (correction 1, C-3): without `route`, the cases that move the clock fail saying so, and the other cases run', async () => {
+    // Executes the page's `route` row: every case of the contract, each on a fresh adapter (as the
+    // page says to), with no `route`. (a) red when a case without its route passes, fails with a
+    // message that does not name `route`, or no case needs it; (b) prints the failures' laws and
+    // first words.
+    const failures: string[] = [];
+    let passed = 0;
+    const fresh = (): ReturnType<typeof settlementContract> =>
+      settlementContract({
+        store: new InMemoryStore(),
+        storeName: 'InMemoryStore',
+        settlementFixture: defaultSettlementFixture,
+      });
+    const count = fresh().length;
+    for (let i = 0; i < count; i++) {
+      const c = fresh()[i]!;
+      try {
+        await c.run();
+        passed += 1;
+      } catch (e) {
+        failures.push(`${c.law}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    // Without the hook, one STAMP_PRESERVES_UPDATED_AT case fails for the hook (the page's sentence).
+    const routeFailures = failures.filter((f) => !f.includes('seedLegacyTerminal'));
+    expect({
+      someNeedRoute: routeFailures.length > 0,
+      notNamingRoute: routeFailures.filter((f) => !f.includes('the adapter must supply `route`')),
+      othersRan: passed + failures.length === count && passed > 0,
+    }).toEqual({ someNeedRoute: true, notNamingRoute: [], othersRan: true });
+    claim(
+      TESTING,
+      'Without it, each of those cases fails with a message that says the adapter must supply `route`; the other cases run. Added after version 0.48.0.',
+    );
+  });
+
   it('the two new laws’ rows', () => {
     // The store clock contract's READ_AT_CAPPED case (both routes); the fidelity contract's
     // DRIVE_FAILURE_KEEPS_ITS_FENCE case (run-store-fidelity.contract.test).
@@ -281,6 +463,21 @@ describe('#715 (b) 04 §E — the other pages', () => {
     );
   });
 
+  it('realm-run-reading.md: the --stuck row names the findings that do not select a run (correction 1, C-4.4)', () => {
+    // The names are core's own set (`RUN_HEALTH_STUCK_EXCLUDED`, the selection's: stuck-kinds-715b);
+    // run-state-and-health.md's "five findings do not select a run" says the same. (a) red when the row
+    // stops naming them, or the set gains or loses a finding the row does not follow; (b) prints the
+    // sentence.
+    claim(
+      READING,
+      `Lists only runs that have a health finding. These findings do not select a run: ${[
+        ...RUN_HEALTH_STUCK_EXCLUDED,
+      ]
+        .map((k) => `\`${k}\``)
+        .join(', ')}. Cannot be combined with \`--status\`.`,
+    );
+  });
+
   it('realm-run-acting.md: cleanup keeps a run a live claim holds', () => {
     // cleanup-judge-715b "two days idle: a live claim is kept; a stale claim, a claim of unknown age
     // and no claim are swept"; selectors-715b (the command, each run at its own reading).
@@ -292,10 +489,14 @@ describe('#715 (b) 04 §E — the other pages', () => {
 });
 
 describe('#715 (b) 04 §E — the CHANGELOG', () => {
-  it('the new exports are exported, and the laws are the contracts’ (generated from the line)', () => {
-    // (a) red when a name the line lists is not a runtime export of @sensigo/realm, or a law is not
-    //     in its contract's list; (b) prints the names missing.
-    const values = [
+  it('the new exports: each of this unit’s public names is exported and named in the line; the laws are the contracts’', () => {
+    // THIS unit's additions to `@sensigo/realm`'s public surface, as a compiler scan of core's index
+    // found them against main 941bc877 (correction 1, C-4.3: 29 names, none removed; 26 in `index.ts`
+    // and `Listing`, `CreateResult`, `StoreSettlement` through `export *`). It pins these names, not
+    // names a later unit adds. (a) red when one of them is no longer exported (removed or renamed),
+    // or the CHANGELOG line stops naming it, or a law the line lists is not in its contract's list;
+    // (b) prints the names missing.
+    const ADDED_BY_715B = [
       'setClockErrorSink',
       'clockErrorSink',
       'takeRawReading',
@@ -311,7 +512,20 @@ describe('#715 (b) 04 §E — the CHANGELOG', () => {
       'markTestClock',
       'isTestLocationClock',
       'clockBasis',
+      'waysStoreOf',
+      'recordStampedAheadOf',
       'CLOCK_READ_CLASSES',
+      'RUN_HEALTH_KINDS',
+      'RUN_HEALTH_STUCK_EXCLUDED',
+      'REMINDER_BASIS_CLAUSE',
+      'ClockReadClass',
+      'Listing',
+      'CreateResult',
+      'StoreSettlement',
+      'OpeningGate',
+      'SealRunDelta',
+      'ReminderSchedule',
+      'ReminderOccurrence',
     ];
     // The law names the CHANGELOG line lists, checked against the contract's export — not a runner
     // (runners take their laws from the export: release-line-witness).
@@ -325,21 +539,66 @@ describe('#715 (b) 04 §E — the CHANGELOG', () => {
       'SEAL_RUN_ONE_WRITE',
       'KEYED_FIRST_CREATE_ONE_READING',
     ];
+    const exported = new Set(publicSurface().core.map((s) => s.getName()));
+    const line = changelogEntry('**New exports (issue #715).**');
     expect({
-      notExported: values.filter((n) => (realm as Record<string, unknown>)[n] === undefined),
+      names: ADDED_BY_715B.length,
+      notExported: ADDED_BY_715B.filter((n) => !exported.has(n)),
+      notInTheLine: ADDED_BY_715B.filter((n) => !line.includes(`\`${n}\``)),
       notLaws: namedInTheLine.filter((l) => !(STORE_CLOCK_LAWS as readonly string[]).includes(l)),
       fence: (RUN_STORE_FIDELITY_LAWS as readonly string[]).includes(
         'DRIVE_FAILURE_KEEPS_ITS_FENCE',
       ),
-    }).toEqual({ notExported: [], notLaws: [], fence: true });
-    claimChangelog(
-      `\`@sensigo/realm\` exports ${values
-        .slice(0, -1)
-        .map((n) => `\`${n}\``)
-        .join(
-          ', ',
-        )} and \`CLOCK_READ_CLASSES\`, and the types \`ClockReadClass\`, \`Listing\`, \`StoreSettlement\`, \`OpeningGate\` and \`SealRunDelta\`.`,
+    }).toEqual({ names: 29, notExported: [], notInTheLine: [], notLaws: [], fence: true });
+  });
+
+  it('the functions that still take a `now` are each named in the line (a compiler scan of core’s exports)', () => {
+    // Correction 1, C-4.2: the headline said Realm's functions take no `now`. The scan lists every
+    // exported function with a parameter named `now`, and every one with a parameter whose type (any
+    // member of a union) has a field `now` of type `Date`, so a new one cannot slip in unnamed: 13 by
+    // parameter; `composePersonNotice` (a reminder's event) and `describeAnswerEnding` (the answer) by
+    // field. A `Clock`'s `now` is a method that reads the clock, not a time given, and is not counted.
+    // (a) red when a function the scan finds is not named in its place in the line, or the line names
+    // one that no longer takes a `now`; (b) prints both lists.
+    const { checker, core } = publicSurface();
+    const byParameter: string[] = [];
+    const byField: string[] = [];
+    const isDate = (s: ts.Symbol): boolean =>
+      checker.typeToString(checker.getTypeOfSymbolAtLocation(s, s.valueDeclaration!)) === 'Date';
+    for (const symbol of core) {
+      const target = resolved(checker, symbol);
+      if (!(target.flags & ts.SymbolFlags.Value) || target.valueDeclaration === undefined) continue;
+      const type = checker.getTypeOfSymbolAtLocation(target, target.valueDeclaration);
+      for (const signature of type.getCallSignatures()) {
+        for (const parameter of signature.getParameters()) {
+          const parameterType = checker.getTypeOfSymbolAtLocation(
+            parameter,
+            parameter.valueDeclaration!,
+          );
+          const members = parameterType.isUnion() ? parameterType.types : [parameterType];
+          if (parameter.getName() === 'now') byParameter.push(symbol.getName());
+          else if (
+            members.some((m) => {
+              const field = m.getProperty('now');
+              return field !== undefined && isDate(field);
+            })
+          )
+            byField.push(symbol.getName());
+        }
+      }
+    }
+    const line = changelogEntry(
+      "**BREAKING — Realm's functions that judge a run take the run as read (issue #715).**",
     );
+    const parameterNames = /as a parameter `now`: (.*?); and /.exec(line)?.[1] ?? '';
+    const fieldNames = /; and (.*?) take it as a field `now`/.exec(line)?.[1] ?? '';
+    expect({
+      byParameter: [...new Set(byParameter)].sort(),
+      byField: [...new Set(byField)].sort(),
+    }).toEqual({
+      byParameter: [...parameterNames.matchAll(/`(\w+)`/g)].map((m) => m[1]).sort(),
+      byField: [...fieldNames.matchAll(/`(\w+)` \(/g)].map((m) => m[1]).sort(),
+    });
   });
 
   it('each entry, word for word (the behaviour each states is pinned in the cell named beside it)', () => {
@@ -364,9 +623,15 @@ describe('#715 (b) 04 §E — the CHANGELOG', () => {
     claimChangelog(
       '**BREAKING — every run store call returns the time it was judged at (issue #715).** `get`, `update` and `claimStep` return `{ record, at }`; `create` returns `{ record, at, created }`; `list` returns `{ snapshots, read_at, consistent_snapshot }`; `settleStep` returns its result with `at`. A store must have `clock` and `settleStep`: Realm refuses one without either with `VALIDATION_OPTION_INVALID`.',
     );
-    // clock-poison-715b (the engine reads no host clock); cleanup-judge-715b (stale at its deadline).
+    // Correction 1, C-3: this file's settlementContract cells (the `route` failures, the two laws in
+    // the generated list); the empty pass is gone with the store without settleStep (D-19).
     claimChangelog(
-      "**BREAKING — Realm's functions take no `now` (issue #715).** The engine reads time only through the store's clock.",
+      'Its `settlementContract` adapter must supply `route`, which builds a store on a clock the case sets; the contract gains the laws `SEAL_RUN_NEEDS_NO_DEFINITION` and `ROUTE_CLOCK_IS_STORE_CLOCK`, and a store with neither `settleStep` nor `stampSeal` no longer passes with no cases.',
+    );
+    // clock-poison-715b (the engine reads no host clock); cleanup-judge-715b (stale at its deadline);
+    // the functions that still take a `now`: the scan cell above (correction 1, C-4.2).
+    claimChangelog(
+      "**BREAKING — Realm's functions that judge a run take the run as read (issue #715).** The engine reads time only through the store's clock.",
     );
     // format-instant-words-715b; age-words-715b; slack-reminder-late-fire-715b; inspect/list
     // gate-expiry-render ("no send is recorded").
@@ -377,9 +642,13 @@ describe('#715 (b) 04 §E — the CHANGELOG', () => {
     );
     // Type-checked: each new shape is what its callers compile against.
     claimChangelog('**BREAKING — four signatures change (issue #715).**');
-    // pace-715b; door-627 "Amendment 12b" cells.
+    // pace-715b; door-627 "Amendment 12b" cells (2b: the hand-over only when the question's own
+    // deadline sets `until`; 3: beside an earlier held step, its own deadline and no hand-over).
     claimChangelog(
       '**An MCP reply that waits says check back at the next deadline (issue #715).**',
+    );
+    claimChangelog(
+      "The await entry names the question's own deadline: as `until` when it is `until`, and as its own when another deadline sets `until`; a question that changes the run, and whose deadline sets `until` more than 5 minutes away, is handed over: tell the user to come back then.",
     );
     // cleanup-judge-715b; selectors-715b.
     claimChangelog(

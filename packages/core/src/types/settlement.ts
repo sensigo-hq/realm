@@ -298,18 +298,14 @@ export type SettlementRefusalReason =
   // issue #291 (design record [F1]/[F3]): expire_gate refusals. (#715 (b): the settle_gate F3
   // write-free `gate_expired_pending` refusal is gone — a late answer's expiry is enacted in the
   // same write, see `lateAnswer` on the applied result.)
-  /** expire_gate only: `now < fresh.pending_gate.expires_at` — the enactment attempt is
-   *  premature (arm-verified with the injectable `now`, never trusted from the caller). */
+  /** expire_gate only: the store's reading is before `fresh.pending_gate.expires_at` — the
+   *  enactment attempt is premature (verified by the arm at the reading the store took from its own
+   *  clock, `applySettlement`'s `at`; since #715 (b) no caller passes a time). */
   | 'not_expired'
   /** expire_gate only: the gate's `expires_at` is present (so an expire delta was constructed
    *  at all) but `on_expiry` is absent — finding-only mode. Arm-level refusal, before APPLY;
    *  never enacted, only ever disclosed. */
   | 'no_disposition'
-  /** settle_gate only ([F3] shape c): the live gate this delta targets has expired unresolved —
-   *  a WRITE-FREE refusal (checked under the lock, before `choice_not_eligible`) so the caller
-   *  can issue the caller-composed `expire_gate` delta as ITS OWN settleStep and compose the
-   *  honest envelope from the enactment result, rather than resolving with a human choice that
-   *  arrived after the enforce clock already won. */
   // #715 (b) (D-21): seal_run refusals.
   /** seal_run only: the stored version differs from the delta's `expected_version` — the run moved
    *  between the writer's read and its seal. The transform RETURNS it; the store THROWS it as

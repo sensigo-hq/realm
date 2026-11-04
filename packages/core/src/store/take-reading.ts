@@ -42,8 +42,10 @@ export function floorAtRecord(r: Date, record: { updated_at: string }): Date {
  * call, no other time source — floored by `record` when it is given ({@link floorAtRecord}). When
  * `delta` is given (a `settleStep`), the delta's EVENT instants — the `started_at` / `completed_at`
  * of the evidence it carries ({@link eventInstantsOf}) — are folded in: `at = max(floored reading,
- * ...events)`. Event instants are this process's own readings, taken when the work ended, so they
- * are NOT capped by ε; an identity entry's `captured_at` is outside class and never folded (D6-67).
+ * ...events)`. Event instants are NOT capped by ε. Most are this process's own readings, taken when
+ * the work ended; a `settle_gate` answer's `started_at` is the question's stored `opened_at`, the
+ * reading of the program that opened it. An identity entry's `captured_at` is outside class and
+ * never folded (D6-67).
  * Returns a fresh `Date`.
  */
 export function takeReading(

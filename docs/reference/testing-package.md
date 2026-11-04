@@ -410,7 +410,7 @@ Build a new adapter and store for each case, as above. Several cases delete or d
 | Contract                      | For a store that implements                  | Laws | Cases with Realm's own store        |
 | ----------------------------- | -------------------------------------------- | ---- | ----------------------------------- |
 | `runStoreFidelityContract`    | `RunStore`                                   | 11   | 19, with `InMemoryStore`            |
-| `settlementContract`          | `RunStore` with `settleStep`                 | 56   | 146, with `InMemoryStore` (below)   |
+| `settlementContract`          | `RunStore` with `settleStep`                 | 58   | 149, with `InMemoryStore` (below)   |
 | `perRunArtifactStoreContract` | `PerRunArtifactStore`                        | 7    | 7, with `FailedAttemptStore`        |
 | `fencedTraceBufferContract`   | `TraceBufferStore` with the fenced functions | 12   | 74, with `InMemoryTraceBufferStore` |
 | `storeClockContract`          | `RunStore`, on a clock the test moves        | 12   | 12, with `InMemoryStore`            |
@@ -462,16 +462,16 @@ Types: `RunStoreFidelityContractAdapter`, `RunStoreFidelityContractCase`, `RunSt
 
 ### `settlementContract(adapter)`
 
-| Adapter field        | Required                      | Holds                                                                                                          |
-| -------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `store`              | Yes                           | The store.                                                                                                     |
-| `storeName`          | Yes                           | A label used in case names.                                                                                    |
-| `settlementFixture`  | If the store has `settleStep` | Builds the workflows the cases use. `defaultSettlementFixture` suits a store that does not check workflow IDs. |
-| `seedLegacyTerminal` | If the store has `stampSeal`  | Writes an ended run that has no record of how it ended, past the store's own checks, and returns it.           |
+| Adapter field        | Required                      | Holds                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| -------------------- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `store`              | Yes                           | The store.                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `storeName`          | Yes                           | A label used in case names.                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `settlementFixture`  | If the store has `settleStep` | Builds the workflows the cases use. `defaultSettlementFixture` suits a store that does not check workflow IDs.                                                                                                                                                                                                                                                                                                                                                              |
+| `seedLegacyTerminal` | If the store has `stampSeal`  | Writes an ended run that has no record of how it ended, past the store's own checks, and returns it.                                                                                                                                                                                                                                                                                                                                                                        |
+| `route`              | Yes                           | How the cases that move the store's clock build a fresh store on a clock the case sets, as for `storeClockContract`: `{ kind: 'clock', makeStore({ clock }) }` for a store built with a clock it is given, such as `InMemoryStore`; `{ kind: 'location', makeStore({ location }) }` for a store opened on a test location. Without it, each of those cases fails with a message that says the adapter must supply `route`; the other cases run. Added after version 0.48.0. |
 
 | The store                                        | Cases                                        |
 | ------------------------------------------------ | -------------------------------------------- |
-| Has neither `settleStep` nor `stampSeal`         | 0.                                           |
 | Has `settleStep`, and the adapter has no fixture | 1, of the law `ADAPTER_WIRING`, which fails. |
 | Has `settleStep` and a fixture                   | All of them.                                 |
 
@@ -481,7 +481,7 @@ The failing case says what to do:
 [Mine] settlementContract: adapter.store declares settleStep, but adapter.settlementFixture is undefined — this is a WIRING GAP in the calling test file, not a store defect. Pass 'defaultSettlementFixture' from this module …
 ```
 
-The 56 laws:
+The 58 laws:
 
 ```text
 FRESH_APPLICATION, CONDITIONAL_NOOP, CONDITIONAL_NOOP_GRANDFATHERED, OWNERSHIP_REFUSAL,
@@ -498,10 +498,10 @@ STAMP_PRESERVES_UPDATED_AT, STAMP_BUMPS_VERSION_ONCE, STAMP_REFUSES_ON_VERSION_M
 STAMP_RETURNS_NOT_THROWS_PREDICATES, STAMP_IDEMPOTENT, STAMP_CLASSIFIED_ROUNDTRIP,
 SEAL_REWRITE_REFUSED, CWFS_SECOND_EPOCH, CWFS_ARRAY_ONCE, CURRENT_BEHAVIOR_PINNED,
 EXPIRE_ARM_MATRIX, EXPIRE_ABORT_CASCADE, EXPIRE_DEFAULT_RESOLVE, GATE_PROOF_NEVER_GATES_THE_ANSWER,
-ADAPTER_WIRING, STORE_RELEASE_LINE_TRUE
+ADAPTER_WIRING, STORE_RELEASE_LINE_TRUE, SEAL_RUN_NEEDS_NO_DEFINITION, ROUTE_CLOCK_IS_STORE_CLOCK
 ```
 
-Each case's `name` says in a sentence what the law requires. With `InMemoryStore`, `defaultSettlementFixture` and a `seedLegacyTerminal` that puts the run straight into the store's map of runs, 55 of the laws have cases, 146 in all, and all of them pass. `ADAPTER_WIRING` has one only when the adapter is incomplete. Without `seedLegacyTerminal`, `STAMP_CLASSIFIED_ROUNDTRIP` has no case and a `STAMP_PRESERVES_UPDATED_AT` case fails, saying that the hook is missing: 142 cases.
+Each case's `name` says in a sentence what the law requires. With `InMemoryStore`, `defaultSettlementFixture`, a `route` that builds an `InMemoryStore` on the case's clock and a `seedLegacyTerminal` that puts the run straight into the store's map of runs, 57 of the laws have cases, 149 in all, and all of them pass. `ADAPTER_WIRING` has one only when the adapter is incomplete. Without `seedLegacyTerminal`, `STAMP_CLASSIFIED_ROUNDTRIP` has no case and a `STAMP_PRESERVES_UPDATED_AT` case fails, saying that the hook is missing: 145 cases.
 
 `GATE_PROOF_NEVER_GATES_THE_ANSWER` was added in 0.46.0. It answers one question: does a token passed with a gate answer change anything but the `claim_proof` on the answer's entry? For each way a token can relate to the claim (`matched`, `absent`, `mismatch`, and each cause of `unverifiable` and `spent`), the record after the answer must equal the record after the same answer with no token, except for that field. It also checks that the verdict survives a guard settled in the same write, that `gateClaim.claim` carries `holder` and `since` and never the token, and that a store declaring `persistsClaims: false` gets `store_keeps_no_claims`. A store's `settleStep` must return the `gateClaim` that `applySettlement` computed, and must pass `storeKeepsClaims: store.persistsClaims === true` to it.
 
