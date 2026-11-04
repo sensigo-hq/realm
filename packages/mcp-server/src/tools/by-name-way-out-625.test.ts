@@ -64,7 +64,11 @@ describe('#625 PR-2a, C66 — execute_step by name on a step refused before its 
 
   async function callCompute(d: WorkflowDefinition, params?: Record<string, unknown>) {
     await workflowStore.register(d);
-    const { run } = await runStore.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runStore.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     return handleExecuteStep(
       { run_id: run.id, command: 'compute', ...(params !== undefined ? { params } : {}) },
       { runStore, workflowStore },

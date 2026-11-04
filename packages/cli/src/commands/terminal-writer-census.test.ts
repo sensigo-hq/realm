@@ -77,7 +77,7 @@ import { tmpdir } from 'node:os';
 
 // packages/cli/src/commands → the monorepo root.
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
-const SCANNED_PACKAGES = ['core', 'cli', 'mcp-server', 'testing'];
+const SCANNED_PACKAGES = ['core', 'cli', 'mcp-server', 'testing', 'store-sqlite'];
 
 /**
  * Any quoting form, bracketed or not, and an assignment that is not a comparison.
@@ -137,13 +137,12 @@ const EXPECTED: Record<string, CensusEntry> = {
     reason: '`sealRunLevel` — the one chokepoint for the four run-level bypass writers.',
   },
   'packages/core/src/engine/execution-loop.ts': {
-    count: 12,
+    // #715 (b), C.1: 12 → 4, and the buildFinalizedSeal disable went with that function — the
+    // legacy (no-`settleStep`) blocks held the other 8 writes, and every buildFinalizedSeal call.
+    count: 4,
     classes: ['writer-stamped', 'stripper-false'],
     reason:
-      'The legacy seal layer: 8 stamped terminal writes, 4 non-terminal forks that carry no seal.',
-    suppression:
-      'One inline disable at the buildFinalizedSeal drain: the stamp IS in the literal, as a ' +
-      'conditional spread that `exactOptionalPropertyTypes` forces and the selector cannot see.',
+      "`executeGuardStep`'s drafts: 3 stamped terminal writes, 1 non-terminal fork that carries no seal.",
   },
   'packages/core/src/engine/settlement.ts': {
     count: 8,
@@ -397,8 +396,9 @@ describe('#367 — the terminal-writer census', () => {
       .map(([f]) => f);
     for (const file of claimed) expect(scan.suppressions[file]).toBe(true);
     // #729 PR-3: +4 (the drive-path lint's disables). Correction 1 (F26): +1, run-attach.ts's
-    // PLAIN.cmd disable. Correction 3 (H-8''): +1, agent.ts's context disable.
-    expect(claimed).toHaveLength(11);
+    // PLAIN.cmd disable. Correction 3 (H-8''): +1, agent.ts's context disable. #715 (b): -1, the
+    // buildFinalizedSeal disable in execution-loop.ts (the function was deleted with the legacy path).
+    expect(claimed).toHaveLength(10);
   });
 
   it("turbo.json globalDependencies matches the sweep table's join-list", () => {
@@ -420,10 +420,11 @@ describe('#367 — the terminal-writer census', () => {
 
   // #729 PR-3: +3 class-table rows (disclosure-tables.ts, abandon-run.ts, get-run-state.ts).
   // #715 (a): +1 (store-clock-contract.ts, the store-clock TCK's holder run), in a new file.
-  it('the post-strip total is 84 across 16 files — the figure the map is built from', () => {
+  // #715 (b): -8 (execution-loop.ts's legacy blocks and buildFinalizedSeal, deleted).
+  it('the post-strip total is 76 across 16 files — the figure the map is built from', () => {
     const scan = scanTerminalWriters(REPO_ROOT);
     const total = Object.values(scan.hits).reduce((n, l) => n + l.length, 0);
-    expect(total).toBe(84);
+    expect(total).toBe(76);
     expect(Object.keys(scan.hits)).toHaveLength(16);
   });
 });

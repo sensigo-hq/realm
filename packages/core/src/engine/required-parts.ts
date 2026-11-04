@@ -33,7 +33,6 @@ type PartKind =
   | 'boolean'
   | 'array'
   | 'given'
-  | 'date'
   | 'run'
   | 'output_source'
   | 'registry'
@@ -49,7 +48,6 @@ const EXPECTED: Record<PartKind, string> = {
   boolean: 'a boolean',
   array: 'an array',
   given: 'present and not null',
-  date: 'a valid Date',
   run: 'a run record',
   output_source: `one of ${OUTPUT_SOURCES.join(', ')}`,
   registry: 'an extension registry',
@@ -113,8 +111,6 @@ function holds(kind: PartKind, value: unknown): boolean {
       return Array.isArray(value);
     case 'given':
       return value !== undefined && value !== null;
-    case 'date':
-      return Number.isFinite(timeOf(value));
     case 'run':
       return isPlainObject(value) && runRecordFieldProblems(value).length === 0;
     case 'output_source':
@@ -191,7 +187,6 @@ const STEP_PARTS: readonly PartRule[] = [
   need('given', 'options', 'input'),
   needWhen(needsDispatcher, 'function', 'options', 'dispatcher'),
   typed('registry', 'options', 'registry'),
-  typed('date', 'options', 'now'),
   typed('object', 'options', 'stepMeta'),
   typed('array', 'options', 'trace'),
   typed('object', 'options', 'traceBufferStore'),
@@ -219,7 +214,6 @@ export const REQUIRED_PARTS: Readonly<Record<Entry, readonly PartRule[]>> = {
     need('string', 'options', 'step'),
     need('run', 'options', 'run'),
     typed('registry', 'options', 'registry'),
-    typed('date', 'options', 'now'),
     typed('object', 'options', 'traceBufferStore'),
     typed('object', 'options', 'disclosure'),
   ],
@@ -228,7 +222,6 @@ export const REQUIRED_PARTS: Readonly<Record<Entry, readonly PartRule[]>> = {
     need('object', 'options'),
     need('string', 'options', 'runId'),
     typed('registry', 'options', 'registry'),
-    typed('date', 'options', 'now'),
     typed('object', 'options', 'traceBufferStore'),
     typed('string', 'options', 'command'),
     typed('function', 'options', 'onStep'),
@@ -245,7 +238,6 @@ export const REQUIRED_PARTS: Readonly<Record<Entry, readonly PartRule[]>> = {
     need('string', 'options', 'gateId'),
     need('string', 'options', 'choice'),
     typed('registry', 'options', 'registry'),
-    typed('date', 'options', 'now'),
     typed('string', 'options', 'respondedBy'),
     typed('string', 'options', 'claimToken'),
     // #627 W (§5.8): the door's route, the form's evidence, the principal, the fallback's prompt.
@@ -267,7 +259,6 @@ export const REQUIRED_PARTS: Readonly<Record<Entry, readonly PartRule[]>> = {
     need('string', 'runId'),
     need('string', 'stepName'),
     typed('object', 'options'),
-    typed('date', 'options', 'now'),
     typed('object', 'options', 'traceBufferStore'),
   ],
 };
@@ -293,7 +284,6 @@ const EXECUTE_STEP_MEMBERS = [
   'trace',
   'traceBufferStore',
   'writerNonce',
-  'now',
   'driver',
   'outputSource',
   'caller',
@@ -311,7 +301,6 @@ const EXECUTE_CHAIN_MEMBERS = [
   'traceBufferStore',
   'writerNonce',
   'driver',
-  'now',
   'caller',
   'party',
   'disclosure',
@@ -323,7 +312,6 @@ const EXECUTE_ENGINE_STEP_MEMBERS = [
   'registry',
   'traceBufferStore',
   'driver',
-  'now',
   'caller',
   'disclosure',
 ] as const satisfies readonly (keyof ExecuteEngineStepOptions)[];
@@ -332,7 +320,6 @@ const ADVANCE_RUN_MEMBERS = [
   'registry',
   'traceBufferStore',
   'driver',
-  'now',
   'onStep',
   'onTaken',
   'onNotRecorded',
@@ -354,7 +341,6 @@ const SUBMIT_HUMAN_RESPONSE_MEMBERS = [
   'registry',
   'respondedBy',
   'claimToken',
-  'now',
   'driver',
   'caller',
   'route',
@@ -369,7 +355,6 @@ const GET_WORKFLOW_FOR_RUN_MEMBERS = [
 ] as const satisfies readonly (keyof Parameters<typeof getWorkflowForRun>[2])[];
 const RECLAIM_STEP_MEMBERS = [
   'traceBufferStore',
-  'now',
 ] as const satisfies readonly (keyof ReclaimStepOptions)[];
 
 const _membersExhaustive: [

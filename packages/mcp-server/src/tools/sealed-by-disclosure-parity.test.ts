@@ -93,12 +93,12 @@ beforeEach(async () => {
  * seal cannot claim a prior arm, and the boundary said so when this fixture tried it.)
  */
 async function seedRuled(sealedBy: SealedBy): Promise<string> {
-  const { run } = await runStore.create({
+  const { record: run } = await runStore.create({
     workflowId: definition.id,
     workflowVersion: 1,
     params: {},
   });
-  const sealed = await runStore.update({
+  const { record: sealed } = await runStore.update({
     ...run,
     terminal_state: true,
     terminal_reason: 'Workflow completed.',

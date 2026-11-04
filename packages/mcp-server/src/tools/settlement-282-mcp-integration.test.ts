@@ -18,6 +18,7 @@ import { handleAppendTrace } from './append-trace.js';
 import { handleGetRunState } from './get-run-state.js';
 import { handleStartRun } from './start-run.js';
 import { handleStartRunBatch } from './start-run-batch.js';
+import { snap, listing, doubleClock, noSettle } from '../test-support/snapshot-double.js';
 
 const def: WorkflowDefinition = {
   id: 'wf-282-mcp',
@@ -91,21 +92,23 @@ function makeGrandfathered(
 
 function makeStaticStore(run: RunRecord): RunStore {
   return declared({
+    clock: doubleClock,
+    settleStep: noSettle,
     persistsClaims: true,
     async get() {
-      return run;
+      return snap(run);
     },
     async create() {
-      return { run, created: true };
+      return { ...snap(run), created: true };
     },
     async update(r) {
-      return r;
+      return snap(r);
     },
     async list() {
-      return [run];
+      return listing([run]);
     },
     async claimStep() {
-      return run;
+      return snap(run);
     },
   });
 }
@@ -151,6 +154,8 @@ describe('APPEND_TRACE_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
     const grandfathered = makeGrandfathered();
     let getCallCount = 0;
     const runStore: RunStore = declared({
+      clock: doubleClock,
+      settleStep: noSettle,
       persistsClaims: true,
       async get(runId: string) {
         getCallCount += 1;
@@ -164,19 +169,19 @@ describe('APPEND_TRACE_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
         // First call: the pre-CS check (live). Second+ call: the fence's OWN re-check —
         // simulates a concurrent settle terminalizing the run (into a #282-shaped stale record)
         // between the pre-CS read and the physical write.
-        return getCallCount === 1 ? live : grandfathered;
+        return snap(getCallCount === 1 ? live : grandfathered);
       },
       async create() {
-        return { run: live, created: true };
+        return { ...snap(live), created: true };
       },
       async update(r) {
-        return r;
+        return snap(r);
       },
       async list() {
-        return [live];
+        return listing([live]);
       },
       async claimStep() {
-        return live;
+        return snap(live);
       },
     });
     const traceBufferStore = new InMemoryTraceBufferStore(runStore);
@@ -224,12 +229,14 @@ describe('APPEND_TRACE_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
     });
     let getCallCount = 0;
     const runStore: RunStore = declared({
+      clock: doubleClock,
+      settleStep: noSettle,
       persistsClaims: true,
       async get() {
         getCallCount += 1;
         // First call: the pre-CS check sees the live run. Second+ call: the fence's own
         // re-check finds it gone — a concurrent purge landing between the two reads.
-        if (getCallCount === 1) return live;
+        if (getCallCount === 1) return snap(live);
         throw new WorkflowError('not found', {
           code: 'STATE_RUN_NOT_FOUND',
           category: 'STATE',
@@ -238,16 +245,16 @@ describe('APPEND_TRACE_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
         });
       },
       async create() {
-        return { run: live, created: true };
+        return { ...snap(live), created: true };
       },
       async update(r) {
-        return r;
+        return snap(r);
       },
       async list() {
-        return [live];
+        return listing([live]);
       },
       async claimStep() {
-        return live;
+        return snap(live);
       },
     });
     const traceBufferStore = new InMemoryTraceBufferStore(runStore);
@@ -282,21 +289,23 @@ describe('start_run / start_run_batch — reuse-envelope pins (issue #279, incre
     const workflowStore = new JsonWorkflowStore(workflowDir);
     const g = makeGrandfathered();
     const runStore: RunStore = declared({
+      clock: doubleClock,
+      settleStep: noSettle,
       persistsClaims: true,
       async get() {
-        return g;
+        return snap(g);
       },
       async create() {
-        return { run: g, created: false }; // deduped — the idempotent-match path
+        return { ...snap(g), created: false }; // deduped — the idempotent-match path
       },
       async update(r) {
-        return r;
+        return snap(r);
       },
       async list() {
-        return [g];
+        return listing([g]);
       },
       async claimStep() {
-        return g;
+        return snap(g);
       },
     });
 
@@ -315,21 +324,23 @@ describe('start_run / start_run_batch — reuse-envelope pins (issue #279, incre
     const workflowStore = new JsonWorkflowStore(workflowDir);
     const g = makeGrandfathered();
     const runStore: RunStore = declared({
+      clock: doubleClock,
+      settleStep: noSettle,
       persistsClaims: true,
       async get() {
-        return g;
+        return snap(g);
       },
       async create() {
-        return { run: g, created: false };
+        return { ...snap(g), created: false };
       },
       async update(r) {
-        return r;
+        return snap(r);
       },
       async list() {
-        return [g];
+        return listing([g]);
       },
       async claimStep() {
-        return g;
+        return snap(g);
       },
     });
 

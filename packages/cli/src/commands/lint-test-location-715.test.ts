@@ -38,6 +38,12 @@ const SOURCES = {
   fileClock: "import { fileClock } from '@sensigo/realm';\nexport const f = fileClock;\n",
   readTestClockFile:
     "import { readTestClockFile } from '@sensigo/realm';\nexport const f = readTestClockFile;\n",
+  // #715 (b) (04 §B.4): the test-clock marks.
+  markTestClock:
+    "import { markTestClock } from '@sensigo/realm';\nexport const f = markTestClock;\n",
+  isTestLocationClock:
+    "import { isTestLocationClock } from '@sensigo/realm';\nexport const f = isTestLocationClock;\n",
+  clockBasis: "import { clockBasis } from '@sensigo/realm';\nexport const f = clockBasis;\n",
 };
 const ZOD = "import { z } from 'zod/v3';\nexport const s = z.string();\n";
 
@@ -58,6 +64,9 @@ describe('#715 (a) C.4 — the test-clock import rule and its file sets', () => 
       writeTestClockFile: { production: 1, test: 0, testing: 0 },
       fileClock: { production: 1, test: 0, testing: 0 },
       readTestClockFile: { production: 1, test: 0, testing: 0 },
+      markTestClock: { production: 1, test: 0, testing: 0 },
+      isTestLocationClock: { production: 1, test: 0, testing: 0 },
+      clockBasis: { production: 1, test: 0, testing: 0 },
     });
   });
 
@@ -91,7 +100,7 @@ describe('#715 (a) C.4 — the test-clock import rule and its file sets', () => 
 // cells run it on the tree and on a seeded list. Prints file NAMES only, never their text.
 // =================================================================================================
 
-const PACKAGES = ['cli', 'core', 'mcp-server', 'testing'] as const;
+const PACKAGES = ['cli', 'core', 'mcp-server', 'testing', 'store-sqlite'] as const;
 
 /** The names core exports from `test-clock-file.ts`, `createTestLocation`, and the file's name. */
 const NEEDLES = [
@@ -102,6 +111,10 @@ const NEEDLES = [
   'fileClock',
   'createTestLocation',
   '.realm-test-clock',
+  // #715 (b) (04 §B.4): the test-clock marks.
+  'markTestClock',
+  'isTestLocationClock',
+  'clockBasis',
 ] as const;
 
 /** The files allowed to hold a needle, each with its reason. A file not named here may not. */
@@ -112,6 +125,14 @@ const ALLOWED: ReadonlyArray<readonly [string | RegExp, string]> = [
     'reads a clock file through `resolveStoreClock`; a comment names the file',
   ],
   ['packages/core/src/index.ts', 're-exports the helpers for the testing package'],
+  // #715 (b) (04 §B.4): where core itself reads a test clock's marks.
+  ['packages/core/src/utils/clock.ts', 'defines the marks (`markTestClock`, `clockBasis`)'],
+  ['packages/core/src/engine/snapshot.ts', "a reply's stamp states its basis (`as_of_basis`)"],
+  ['packages/core/src/engine/ways.ts', "the ways context carries the store clock's basis"],
+  [
+    'packages/core/src/store/test-clock-notice.ts',
+    "the notice that a test location's clock is read",
+  ],
   [/^packages\/testing\/src\//, 'the testing package: it makes test locations'],
 ];
 

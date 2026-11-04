@@ -43,7 +43,7 @@ describe('start_run / start_run_batch on a terminal aborted run (idempotency no-
 
   /** Seeds a terminal aborted run carrying the permanent idempotency key. */
   async function seedAbortedRun(): Promise<RunRecord> {
-    const { run: run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'cs1',
       workflowVersion: 1,
       params: {},
@@ -58,7 +58,7 @@ describe('start_run / start_run_batch on a terminal aborted run (idempotency no-
       aborted_at: { step_id: 'guard_step' },
       skipped_steps: ['guard_step'], // aborting step skipped, NOT failed
     });
-    return runStore.get(run.id);
+    return (await runStore.get(run.id)).record;
   }
 
   it('start_run re-encountering the key leaves the run byte-unchanged (no re-drive, no un-abort)', async () => {
@@ -69,7 +69,7 @@ describe('start_run / start_run_batch on a terminal aborted run (idempotency no-
       { runStore, workflowStore },
     );
 
-    const after = await runStore.get(before.id);
+    const { record: after } = await runStore.get(before.id);
     // The invariant (not a specific corrupted phase): the record is untouched.
     expect(after).toEqual(before);
     expect(after.run_phase).toBe('aborted');
@@ -88,7 +88,7 @@ describe('start_run / start_run_batch on a terminal aborted run (idempotency no-
 
     // Batch returns the existing run id (deduped) and never drives it.
     expect(result.started[0]?.run_id).toBe(before.id);
-    const after = await runStore.get(before.id);
+    const { record: after } = await runStore.get(before.id);
     expect(after).toEqual(before);
     expect(after.run_phase).toBe('aborted');
     expect(after.terminal_state).toBe(true);

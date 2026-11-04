@@ -24,12 +24,12 @@ realm run list --stuck [--older-than <duration>] [--workflow <id>]
 
 Prints one line for each run, newest change first.
 
-| Flag                      | What it does                                                                                                                                                                    |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--workflow <id>`         | Lists only runs of this workflow.                                                                                                                                               |
-| `--status <phase>`        | Lists only runs in this phase: `running`, `gate_waiting`, `completed`, `failed`, `abandoned`, `aborted`.                                                                        |
-| `--stuck`                 | Lists only runs that have a health finding. Cannot be combined with `--status`.                                                                                                 |
-| `--older-than <duration>` | With `--stuck`: how long an open run must have been idle to be listed for the idle finding (`never_claimed_idle`); every other finding lists its run at any age. Default `24h`. |
+| Flag                      | What it does                                                                                                                                                                                                                                                   |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--workflow <id>`         | Lists only runs of this workflow.                                                                                                                                                                                                                              |
+| `--status <phase>`        | Lists only runs in this phase: `running`, `gate_waiting`, `completed`, `failed`, `abandoned`, `aborted`.                                                                                                                                                       |
+| `--stuck`                 | Lists only runs that have a health finding. These findings do not select a run: `completed_with_failed_steps`, `structured_output_downgraded`, `guard_awaiting_settlement`, `trust_value_invalid`, `record_stamped_ahead`. Cannot be combined with `--status`. |
+| `--older-than <duration>` | With `--stuck`: how long an open run must have been idle to be listed for the idle finding (`never_claimed_idle`); every other finding lists its run at any age. Default `24h`.                                                                                |
 
 `--workflow` refuses a value that starts with `-`, except a lone `-`; write `--option=value` for one.
 
@@ -40,31 +40,31 @@ realm run list
 ```
 
 ```text
-2b2fd502-f418-4b67-838d-6838b8dd4fa1  triage v1  running  10/2/2026, 1:52:37 AM  0 step(s)
-fd894510-2017-4018-8087-1b1f357b6dfd  triage v1  gate_waiting  10/2/2026, 1:52:36 AM  2 step(s)  gate: draft (0m)
-1620765a-51a0-4ceb-8017-657aafcf14e1  triage v1  running  10/2/2026, 1:52:34 AM  1 step(s)
-419c3c51-c4e7-4066-970f-8f877844709a  triage v1  completed  10/2/2026, 1:52:32 AM  3 step(s)
+2b2fd502-f418-4b67-838d-6838b8dd4fa1  triage v1  running  2026-10-01T22:52:37.611Z  0 step(s)
+fd894510-2017-4018-8087-1b1f357b6dfd  triage v1  gate_waiting  2026-10-01T22:52:36.904Z  2 step(s)  gate: draft opened 0s ago (2026-10-01T22:52:36Z)
+1620765a-51a0-4ceb-8017-657aafcf14e1  triage v1  running  2026-10-01T22:52:34.218Z  1 step(s)
+419c3c51-c4e7-4066-970f-8f877844709a  triage v1  completed  2026-10-01T22:52:32.775Z  3 step(s)
 ```
 
 Each line holds, in order:
 
-| Part                 | Holds                                                                                                                           |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Run ID               | The run's ID.                                                                                                                   |
-| Workflow             | The workflow's `id` and `version`.                                                                                              |
-| Phase                | One of the six phases.                                                                                                          |
-| Time                 | When the run last changed, in the local time and format of the machine.                                                         |
-| `N step(s)`          | How many steps have a record in the run.                                                                                        |
-| `gate: <step> (age)` | On a run in `gate_waiting`: the step whose gate is open, and for how long. `EXPIRED` and reminder times follow when they apply. |
+| Part                        | Holds                                                                                                                                                                                                                                                                   |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Run ID                      | The run's ID.                                                                                                                                                                                                                                                           |
+| Workflow                    | The workflow's `id` and `version`.                                                                                                                                                                                                                                      |
+| Phase                       | One of the six phases.                                                                                                                                                                                                                                                  |
+| Time                        | When the run last changed, as the run stores it, in UTC (until version 0.48.0, in the local time and format of the machine).                                                                                                                                            |
+| `N step(s)`                 | How many steps have a record in the run.                                                                                                                                                                                                                                |
+| `gate: <step> opened <age>` | On a run in `gate_waiting`: the step whose gate is open, how long ago it opened and the instant (`opened 4m ago (2026-10-27T14:03:07Z)`). When its time is up, `EXPIRED <how long> ago (<deadline>)` follows; with authored reminders, the next one scheduled and when. |
 
-With `--stuck`, a first line gives the limit, each line has `idle:` and the time since the run last changed, and the end of the line names what was found:
+With `--stuck`, a first line gives the limit, each line has `idle:` and how long ago the run last changed, with the instant, and the end of the line names what was found:
 
 ```text
 Stuck runs (threshold 0m):
-b773eb50-728d-40e1-945c-096244c88a36  w2-crown v1  running  10/16/2026, 1:53:51 PM  1 step(s)  idle: 0m  publish=cannot_go_on(input_schema) (realm run inspect b773eb50-728d-40e1-945c-096244c88a36)
-3b4c2b57-9b87-4bb6-88a1-e0c553f4970f  triage v1  running  10/2/2026, 12:26:36 AM  0 step(s)  idle: 1h 29m  classify=drive_failing(connection_error)
-07125815-e69c-40e2-8af1-afff99a7b7d9  price2 v1  running  10/1/2026, 11:15:33 PM  1 step(s)  idle: 2h 40m  total: needs handler 'order_totl'
-8814edbd-f187-4e95-a83b-5a0529fb55d0  price v1  running  10/1/2026, 11:15:03 PM  1 step(s)  idle: 2h 40m
+b773eb50-728d-40e1-945c-096244c88a36  w2-crown v1  running  2026-10-16T10:53:51.204Z  1 step(s)  idle: 0s ago (2026-10-16T10:53:51Z)  publish=cannot_go_on(input_schema) (realm run inspect b773eb50-728d-40e1-945c-096244c88a36)
+3b4c2b57-9b87-4bb6-88a1-e0c553f4970f  triage v1  running  2026-10-01T21:26:36.418Z  0 step(s)  idle: 1h 29m ago (2026-10-01T21:26:36Z)  classify=drive_failing(connection_error)
+07125815-e69c-40e2-8af1-afff99a7b7d9  price2 v1  running  2026-10-01T20:15:33.090Z  1 step(s)  idle: 2h 40m ago (2026-10-01T20:15:33Z)  total: needs handler 'order_totl'
+8814edbd-f187-4e95-a83b-5a0529fb55d0  price v1  running  2026-10-01T20:15:03.551Z  1 step(s)  idle: 2h 40m ago (2026-10-01T20:15:03Z)
 ```
 
 A line with nothing after `idle:` is an open run with no step in progress that has not changed for the limit or longer: the limit applies to that finding (`never_claimed_idle`) alone, and every other finding lists its run at any age, with its label. A run that cannot go on is listed the moment it cannot, with `<step>=cannot_go_on(<check>)` and `realm run inspect <run-id>`, which prints the refusal and the ways out (added after version 0.47.0). [Run state and health findings](../mcp/run-state-and-health.md) lists every finding.
@@ -165,12 +165,12 @@ Evidence (3 steps):
 
 In the `Owed to the engine` line, when an owed step needs a handler or adapter other than the `filesystem` adapter and the `check_quotes` handler, which every Realm program has, `from a program that has handler '<name>'` (or `adapter '<name>'`; ten at most, then ` and <N> more`) comes before the command: `inspect` loads no project code, so it cannot check. Added after version 0.48.0.
 
-Under `In Progress`, one line for each step in progress says who took it, how long ago, and how Realm knows the name. Added in 0.46.0:
+Under `In Progress`, one line for each step in progress says who took it, how long ago (with the instant, in UTC), and how Realm knows the name. Added in 0.46.0:
 
 ```text
 In Progress: classify, review
-  classify: taken by ops@server-1 (from the OS user, via agent), 0m ago
-  review: question opened through ops@server-1 (from the OS user, via mcp-stdio), 0m ago
+  classify: taken by ops@server-1 (from the OS user, via agent), 0s ago (2026-10-01T22:52:36Z)
+  review: question opened through ops@server-1 (from the OS user, via mcp-stdio), 0s ago (2026-10-01T22:52:36Z)
 ```
 
 The name is the program's, not a person's: `from the OS user` is the OS user and host name, `from REALM_OPERATOR` is that variable, `as stated` is a name an embedding program gave. `via` names the door the program came through: `agent`, `run`, `advance`, `mcp-stdio`, `mcp-http`. A step whose question is open reads `question opened through`, and says nothing about anyone working on it now. When a claim has no name, the line says why instead: `no program name was recorded on this claim`, `claimed before program names were recorded`, `no claim is recorded for this step` or `this run store keeps no claims`. A name that cannot be shown keeps the verb: `taken by a recorded name that cannot be printed (control characters, or not a name with its source)`. A name longer than 200 characters is shown cut at 200 characters, ending in `…[truncated]`.
@@ -215,7 +215,7 @@ For a step refused for its input that builds no input from an `input_map`, like 
 A waiting gate looks like this:
 
 ```text
-Gate: draft (gate f0a1f2af-cdf5-4938-b477-e5de56136688, opened 0m ago)
+Gate: draft (gate f0a1f2af-cdf5-4938-b477-e5de56136688, opened 0s ago (2026-10-01T22:52:36Z))
   Question: "Send this reply?"
   Choices: send, discard
   To answer: realm run respond 41b88dd5-e82e-426a-b39e-00229fb01cef --gate f0a1f2af-cdf5-4938-b477-e5de56136688 --choice <one of: send, discard>

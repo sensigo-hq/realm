@@ -64,9 +64,13 @@ async function countsFor(reply: EngineReply) {
   const dir = await mkdtemp(join(tmpdir(), 'realm-rec-627-'));
   const runStore = new JsonFileStore(join(dir, 'runs'));
   const definition = loadWorkflowFromString(YAML);
-  const { run } = await runStore.create({ workflowId: 'rec627', workflowVersion: 1, params: {} });
+  const { record: run } = await runStore.create({
+    workflowId: 'rec627',
+    workflowVersion: 1,
+    params: {},
+  });
   await advanceRun(runStore, definition, { runId: run.id });
-  const gateId = (await runStore.get(run.id)).pending_gate!.gate_id;
+  const gateId = (await runStore.get(run.id)).record.pending_gate!.gate_id;
   const answers = judgeGateAnswers({});
   const wait = judgeFormWait({});
   if (!answers.ok || !wait.ok) throw new Error('fixture: the defaults judge');

@@ -33,6 +33,7 @@ import { runMigrateCommand } from './commands/run-migrate.js';
 import { agentCommand } from './commands/agent.js';
 import { webhookCommand } from './commands/webhook.js';
 import { listenCommand } from './commands/listen.js';
+import { setClockErrorSink } from '@sensigo/realm';
 import { attachWriterHook } from './output/writer.js';
 import { attachOptionValueGuard } from './lib/option-value-guard.js';
 
@@ -91,3 +92,16 @@ attachOptionValueGuard([workflowCommands, runCommands, topLevelCommands]);
 // writer's `preAction` hook, so the one writer is installed in any program that reuses realm's
 // commands (cli-cloud attaches the exported hook to its own commands too).
 attachWriterHook([workflowCommands, runCommands, topLevelCommands]);
+
+/**
+ * #715 (b) (03 §A.1, D-22): installs the process's waiter-error sink — a waiter on a store's clock (a
+ * gate's expiry timer, `realm listen`'s sweeper) that fails is reported as one line on standard error,
+ * `error: <message>`, through the one writer. Called ONCE at the start of a program that runs realm's
+ * commands: the CLI's `index.ts`, before it parses its arguments; realm-cloud's CLI calls it too.
+ * Without it, core re-throws a waiter's failure from a microtask (an uncaught exception).
+ */
+export function installClockErrorSink(): void {
+  setClockErrorSink((err: unknown): void => {
+    console.error(`error: ${err instanceof Error ? err.message : String(err)}`);
+  });
+}

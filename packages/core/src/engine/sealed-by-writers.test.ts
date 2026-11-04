@@ -6,47 +6,33 @@
 // Each cell asserts the PERSISTED arm (read back through the store, not the in-memory return) AND
 // the finalizer-handler call count, because the guard classifier that reads the arm is what feeds
 // the finalizer drain: a wrong answer there silently runs the wrong cleanup.
-import { declareReleaseLine } from '../release-line.js';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { executeStep, executeChain, submitHumanResponse } from './execution-loop.js';
 import { abandonRun } from './abandon-run.js';
 import { applyResume } from './apply-resume.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
-import type { RunStore, CreateRunOptions } from '../store/store-interface.js';
+import type { RunStore } from '../store/store-interface.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepHandler } from '../extensions/step-handler.js';
+import { writeTestClockFile } from '../store/test-clock-file.js';
 
-/** Forces the LEGACY (non-declaring) seal path — `settleStep` is never implemented. */
-class LegacyOnlyStore implements RunStore {
-  // issue #620 PR-C: a test double declares this realm's release line.
-  static {
-    declareReleaseLine(this);
-  }
-  readonly persistsClaims: boolean;
-  constructor(private readonly inner: JsonFileStore) {
-    this.persistsClaims = inner.persistsClaims;
-  }
-  create(o: CreateRunOptions): Promise<{ run: RunRecord; created: boolean }> {
-    return this.inner.create(o);
-  }
-  get(id: string): Promise<RunRecord> {
-    return this.inner.get(id);
-  }
-  update(r: RunRecord): Promise<RunRecord> {
-    return this.inner.update(r);
-  }
-  list(w?: string): Promise<RunRecord[]> {
-    return this.inner.list(w);
-  }
-  claimStep(r: string, s: string, d: WorkflowDefinition): Promise<RunRecord> {
-    return this.inner.claimStep(r, s, d);
-  }
-  // settleStep intentionally OMITTED.
+/** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
+ *  runs folder sits beside the location's clock file (first set to the host's reading), which
+ *  `setClockOf` rewrites. */
+async function testLocationRuns(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  await writeTestClockFile(root, new Date());
+  return join(root, 'runs');
+}
+async function setClockOf(store: object, t: Date): Promise<void> {
+  const runsDir = (store as { runsDirPath?: string }).runsDirPath;
+  if (runsDir === undefined) throw new Error('setClockOf: this store is not a JSON store');
+  await writeTestClockFile(dirname(runsDir), t);
 }
 
 const succeed = async (): Promise<Record<string, unknown>> => ({});
@@ -61,7 +47,7 @@ describe('#367 — the writer census: every terminal path persists its own arm',
   let registry: ExtensionRegistry;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-seal-writers-'));
+    dir = await testLocationRuns('realm-seal-writers-');
     declaring = new JsonFileStore(dir);
     finalizerCalls = 0;
     const handler: StepHandler = {
@@ -79,8 +65,6 @@ describe('#367 — the writer census: every terminal path persists its own arm',
     registry.register('handler', 'fin-handler', handler);
     registry.register('handler', 'abort-handler', abortHandler);
   });
-
-  const legacy = (): RunStore => new LegacyOnlyStore(new JsonFileStore(dir));
 
   /** `a` alone, plus an always-finalizer so every cell can count the drain. */
   function def(steps: Record<string, unknown>, withFinalizer = true): WorkflowDefinition {
@@ -110,7 +94,7 @@ describe('#367 — the writer census: every terminal path persists its own arm',
     command: string,
     dispatcher: () => Promise<Record<string, unknown>>,
   ): Promise<RunRecord> {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: 1,
       params: {},
@@ -122,14 +106,11 @@ describe('#367 — the writer census: every terminal path persists its own arm',
       dispatcher,
       registry,
     });
-    return store.get(run.id);
+    return (await store.get(run.id)).record;
   }
 
   // --- complete / step_failure, both layers ---
-  it.each([
-    ['settlement layer', () => declaring],
-    ['legacy layer', legacy],
-  ])(
+  it.each([['settlement layer', () => declaring]])(
     '%s: a completing run persists arm `complete` and drains its finalizer once',
     async (_l, make) => {
       const d = def({ a: { description: 'A', execution: 'agent', depends_on: [] } });
@@ -140,75 +121,72 @@ describe('#367 — the writer census: every terminal path persists its own arm',
     },
   );
 
-  it.each([
-    ['settlement layer', () => declaring],
-    ['legacy layer', legacy],
-  ])('%s: a failing run persists arm `step_failure` and drains once', async (_l, make) => {
-    const d = def({ a: { description: 'A', execution: 'agent', depends_on: [] } });
-    const record = await drive(make(), d, 'a', explode('boom'));
-    expect(record.sealed_by).toEqual({ arm: 'step_failure', step: 'a' });
-    expect(record.run_phase).toBe('failed');
-    expect(finalizerCalls).toBe(1);
-  });
+  it.each([['settlement layer', () => declaring]])(
+    '%s: a failing run persists arm `step_failure` and drains once',
+    async (_l, make) => {
+      const d = def({ a: { description: 'A', execution: 'agent', depends_on: [] } });
+      const record = await drive(make(), d, 'a', explode('boom'));
+      expect(record.sealed_by).toEqual({ arm: 'step_failure', step: 'a' });
+      expect(record.run_phase).toBe('failed');
+      expect(finalizerCalls).toBe(1);
+    },
+  );
 
   // --- handler_abort, both layers ---
-  it.each([
-    ['settlement layer', () => declaring],
-    ['legacy layer', legacy],
-  ])('%s: a handler abort persists arm `handler_abort` and drains once', async (_l, make) => {
-    const d = def({
-      a: { description: 'A', execution: 'auto', depends_on: [], handler: 'abort-handler' },
-    });
-    const record = await drive(make(), d, 'a', succeed);
-    expect(record.sealed_by).toEqual({ arm: 'handler_abort', step: 'a' });
-    expect(record.run_phase).toBe('aborted');
-    expect(record.aborted_at).toBeDefined();
-    expect(finalizerCalls).toBe(1);
-  });
+  it.each([['settlement layer', () => declaring]])(
+    '%s: a handler abort persists arm `handler_abort` and drains once',
+    async (_l, make) => {
+      const d = def({
+        a: { description: 'A', execution: 'auto', depends_on: [], handler: 'abort-handler' },
+      });
+      const record = await drive(make(), d, 'a', succeed);
+      expect(record.sealed_by).toEqual({ arm: 'handler_abort', step: 'a' });
+      expect(record.run_phase).toBe('aborted');
+      expect(record.aborted_at).toBeDefined();
+      expect(finalizerCalls).toBe(1);
+    },
+  );
 
   // --- guard arms, both layers ---
-  it.each([
-    ['settlement layer', () => declaring],
-    ['legacy layer', legacy],
-  ])('%s: a guard resolution error persists arm `guard_resolution_error`', async (_l, make) => {
-    const d = def({
-      a: { description: 'A', execution: 'agent', depends_on: [] },
-      g: {
-        description: 'G',
-        execution: 'guard',
-        depends_on: ['a'],
-        abort_unless: ['$.nope.field == true'],
-      },
-    });
-    const record = await drive(make(), d, 'a', succeed);
-    expect(record.sealed_by).toEqual({ arm: 'guard_resolution_error', step: 'g' });
-    expect(record.run_phase).toBe('failed');
-    expect(finalizerCalls).toBe(1);
-  });
+  it.each([['settlement layer', () => declaring]])(
+    '%s: a guard resolution error persists arm `guard_resolution_error`',
+    async (_l, make) => {
+      const d = def({
+        a: { description: 'A', execution: 'agent', depends_on: [] },
+        g: {
+          description: 'G',
+          execution: 'guard',
+          depends_on: ['a'],
+          abort_unless: ['$.nope.field == true'],
+        },
+      });
+      const record = await drive(make(), d, 'a', succeed);
+      expect(record.sealed_by).toEqual({ arm: 'guard_resolution_error', step: 'g' });
+      expect(record.run_phase).toBe('failed');
+      expect(finalizerCalls).toBe(1);
+    },
+  );
 
-  it.each([
-    ['settlement layer', () => declaring],
-    ['legacy layer', legacy],
-  ])('%s: a firing guard persists arm `guard_abort`', async (_l, make) => {
-    const d = def({
-      a: { description: 'A', execution: 'agent', depends_on: [] },
-      g: {
-        description: 'G',
-        execution: 'guard',
-        depends_on: ['a'],
-        abort_unless: ['$settlement.a.failed == true'],
-      },
-    });
-    const record = await drive(make(), d, 'a', succeed);
-    expect(record.sealed_by).toEqual({ arm: 'guard_abort', step: 'g' });
-    expect(record.run_phase).toBe('aborted');
-    expect(finalizerCalls).toBe(1);
-  });
+  it.each([['settlement layer', () => declaring]])(
+    '%s: a firing guard persists arm `guard_abort`',
+    async (_l, make) => {
+      const d = def({
+        a: { description: 'A', execution: 'agent', depends_on: [] },
+        g: {
+          description: 'G',
+          execution: 'guard',
+          depends_on: ['a'],
+          abort_unless: ['$settlement.a.failed == true'],
+        },
+      });
+      const record = await drive(make(), d, 'a', succeed);
+      expect(record.sealed_by).toEqual({ arm: 'guard_abort', step: 'g' });
+      expect(record.run_phase).toBe('aborted');
+      expect(finalizerCalls).toBe(1);
+    },
+  );
 
-  it.each([
-    ['settlement layer', () => declaring],
-    ['legacy layer', legacy],
-  ])(
+  it.each([['settlement layer', () => declaring]])(
     '%s: a guard PASS that completes the run persists arm `guard_pass_complete`',
     async (_l, make) => {
       const d = def({
@@ -230,9 +208,13 @@ describe('#367 — the writer census: every terminal path persists its own arm',
   // --- the run-level bypass writer ---
   it('abandonRun persists arm `abandon_requested`, step-less', async () => {
     const d = def({ a: { description: 'A', execution: 'agent', depends_on: [] } }, false);
-    const { run } = await declaring.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await declaring.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await abandonRun(declaring, run.id);
-    const record = await declaring.get(run.id);
+    const { record: record } = await declaring.get(run.id);
     expect(record.sealed_by).toEqual({ arm: 'abandon_requested' });
     expect(record.sealed_by?.step).toBeUndefined();
     expect(record.run_phase).toBe('abandoned');
@@ -247,7 +229,7 @@ describe('#367 — the writer census: every terminal path persists its own arm',
     expect(resumed.sealed_by).toBeUndefined();
     expect(resumed.terminal_state).toBe(false);
     // And the store accepts it — proving the strip and the flip really are one write.
-    await expect(declaring.update(resumed)).resolves.toBeDefined();
+    await expect(declaring.update(resumed).then((s) => s.record)).resolves.toBeDefined();
   });
 
   // --- the gate arms: three sites, three arms, all previously un-celled ---
@@ -270,21 +252,25 @@ describe('#367 — the writer census: every terminal path persists its own arm',
 
   it('a human gate resolution that COMPLETES the run persists arm `gate_resolution_complete`', async () => {
     const d = gateDef({ choices: ['approve', 'reject'] });
-    const { run } = await declaring.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await declaring.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await executeStep(declaring, d, {
       runId: run.id,
       command: 'approve',
       input: {},
       dispatcher: succeed,
     });
-    const gate = (await declaring.get(run.id)).pending_gate!;
+    const gate = (await declaring.get(run.id)).record.pending_gate!;
     expect(gate).toBeDefined(); // non-vacuity: the gate really opened
     await submitHumanResponse(declaring, d, {
       runId: run.id,
       gateId: gate.gate_id,
       choice: 'approve',
     });
-    const record = await declaring.get(run.id);
+    const { record: record } = await declaring.get(run.id);
     expect(record.sealed_by).toEqual({ arm: 'gate_resolution_complete', step: 'approve' });
     expect(record.run_phase).toBe('completed');
   });
@@ -296,46 +282,54 @@ describe('#367 — the writer census: every terminal path persists its own arm',
       on_expiry: 'settle_default',
       default_choice: 'approve',
     });
-    const { run } = await declaring.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await declaring.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await executeStep(declaring, d, {
       runId: run.id,
       command: 'approve',
       input: {},
       dispatcher: succeed,
     });
-    const gate = (await declaring.get(run.id)).pending_gate!;
+    const gate = (await declaring.get(run.id)).record.pending_gate!;
     const future = new Date(new Date(gate.expires_at!).getTime() + 1000);
+    await setClockOf(declaring, future);
     await executeStep(declaring, d, {
       runId: run.id,
       command: 'approve',
       input: {},
       dispatcher: succeed,
-      now: future,
     });
-    const record = await declaring.get(run.id);
+    const { record: record } = await declaring.get(run.id);
     expect(record.sealed_by).toEqual({ arm: 'gate_expiry_default', step: 'approve' });
     expect(record.run_phase).toBe('completed');
   });
 
   it('a gate expiring into ABORT persists arm `gate_expiry_abort`', async () => {
     const d = gateDef({ choices: ['approve'], timeout_seconds: 1, on_expiry: 'abort' });
-    const { run } = await declaring.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await declaring.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await executeStep(declaring, d, {
       runId: run.id,
       command: 'approve',
       input: {},
       dispatcher: succeed,
     });
-    const gate = (await declaring.get(run.id)).pending_gate!;
+    const gate = (await declaring.get(run.id)).record.pending_gate!;
     const future = new Date(new Date(gate.expires_at!).getTime() + 1000);
+    await setClockOf(declaring, future);
     await executeStep(declaring, d, {
       runId: run.id,
       command: 'approve',
       input: {},
       dispatcher: succeed,
-      now: future,
     });
-    const record = await declaring.get(run.id);
+    const { record: record } = await declaring.get(run.id);
     expect(record.sealed_by).toEqual({ arm: 'gate_expiry_abort', step: 'approve' });
     expect(record.run_phase).toBe('aborted');
     expect(record.aborted_at).toBeDefined();
@@ -358,7 +352,11 @@ describe('#367 — the writer census: every terminal path persists its own arm',
         },
       },
     } as unknown as WorkflowDefinition;
-    const { run } = await declaring.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await declaring.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     for (let attempt = 0; attempt < 8; attempt += 1) {
       await executeStep(declaring, d, {
         runId: run.id,
@@ -366,9 +364,9 @@ describe('#367 — the writer census: every terminal path persists its own arm',
         input: {},
         dispatcher: succeed,
       });
-      if ((await declaring.get(run.id)).terminal_state) break;
+      if ((await declaring.get(run.id)).record.terminal_state) break;
     }
-    const record = await declaring.get(run.id);
+    const { record: record } = await declaring.get(run.id);
     expect(record.terminal_state).toBe(true); // non-vacuity: the budget really did run out
     expect(record.sealed_by?.arm).toBe('step_failure');
     expect(record.run_phase).toBe('failed');
@@ -390,14 +388,18 @@ describe('#367 — the writer census: every terminal path persists its own arm',
         },
       },
     } as unknown as WorkflowDefinition;
-    const { run } = await declaring.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await declaring.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const env = await executeStep(declaring, d, {
       runId: run.id,
       command: 'a',
       input: {},
       dispatcher: succeed,
     });
-    const gated = await declaring.get(run.id);
+    const { record: gated } = await declaring.get(run.id);
     if (gated.pending_gate === undefined) return; // fixture guard: gate never opened
     expect(env.status).toBeDefined();
     const after = await submitHumanResponse(declaring, d, {
@@ -406,7 +408,7 @@ describe('#367 — the writer census: every terminal path persists its own arm',
       choice: 'approve',
     });
     expect(after.status).toBeDefined();
-    const final = await declaring.get(run.id);
+    const { record: final } = await declaring.get(run.id);
     // Whatever the gate resolution decided, the record never ends up live-with-a-seal.
     if (!final.terminal_state) expect(final.sealed_by).toBeUndefined();
   });

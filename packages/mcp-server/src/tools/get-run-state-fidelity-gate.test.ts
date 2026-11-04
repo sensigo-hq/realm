@@ -11,6 +11,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { handleGetRunState } from './get-run-state.js';
+import { snap, doubleClock, noSettle } from '../test-support/snapshot-double.js';
 
 function makeRun(over: Partial<RunRecord> = {}): RunRecord {
   return {
@@ -39,12 +40,14 @@ function makeGetOnlyStore(
   persistedFields: LoadBearingRunRecordField[] | undefined,
 ): RunStore {
   return declared({
+    clock: doubleClock,
+    settleStep: noSettle,
     persistsClaims: true,
     ...(persistedFields !== undefined
       ? { persistedRunRecordFields: new Set(persistedFields) }
       : {}),
     async get() {
-      return run;
+      return snap(run);
     },
     async create() {
       throw new Error('not exercised by get_run_state');
@@ -91,7 +94,11 @@ describe('get_run_state — capability_blocks field-fidelity gate (issue #188)',
   it('a real JsonFileStore (declares the full set) never surfaces the gate — local behavior unaffected', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'get-run-state-fidelity-'));
     const runStore = new JsonFileStore(dir);
-    const { run } = await runStore.create({ workflowId: 'wf', workflowVersion: 1, params: {} });
+    const { record: run } = await runStore.create({
+      workflowId: 'wf',
+      workflowVersion: 1,
+      params: {},
+    });
     const summary = await handleGetRunState({ run_id: run.id }, { runStore });
     expect(summary.warnings).toBeUndefined();
   });

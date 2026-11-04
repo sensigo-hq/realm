@@ -234,13 +234,13 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
       'Another Realm server or CLI that uses the same store can still record answers. The value holds only for the server it is given to.',
     );
     const s = await session('withheld');
-    const { run } = await s.runStore.create({
+    const { record: run } = await s.runStore.create({
       workflowId: s.def.id,
       workflowVersion: 1,
       params: {},
     });
     await advanceRun(s.runStore, s.def, { runId: run.id });
-    const gateId = (await s.runStore.get(run.id)).pending_gate!.gate_id;
+    const gateId = (await s.runStore.get(run.id)).record.pending_gate!.gate_id;
     const reply = await submitHumanResponse(s.runStore, s.def, {
       runId: run.id,
       gateId,

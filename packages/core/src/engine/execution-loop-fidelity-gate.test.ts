@@ -16,6 +16,10 @@ import type {
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { ExtensionIdentityEntry } from '../types/extension-identity.js';
+import type { Snapshot } from './snapshot.js';
+import type { Listing, CreateResult } from '../store/store-interface.js';
+import type { Clock } from '../utils/clock.js';
+import type { SettlementDelta } from '../types/settlement.js';
 
 /**
  * Delegates every RunStore method to a real, functional JsonFileStore, but reports a SMALLER
@@ -24,6 +28,10 @@ import type { ExtensionIdentityEntry } from '../types/extension-identity.js';
  * the latter is the TCK's FIDELITY_HONESTY job (run-store-fidelity-contract.ts), not this test's.
  */
 class DeclaredFieldsOverrideStore implements RunStore {
+  /** #715 (b): the store's clock is the wrapped store's. */
+  get clock(): Clock {
+    return this.inner.clock;
+  }
   // issue #620 PR-C: a test double declares this realm's release line.
   static {
     declareReleaseLine(this);
@@ -39,19 +47,23 @@ class DeclaredFieldsOverrideStore implements RunStore {
     this.persistedRunRecordFields = declaredFields;
   }
 
-  create(options: CreateRunOptions): Promise<{ run: RunRecord; created: boolean }> {
+  create(options: CreateRunOptions): Promise<CreateResult> {
     return this.inner.create(options);
   }
-  get(runId: string): Promise<RunRecord> {
+  get(runId: string): Promise<Snapshot> {
     return this.inner.get(runId);
   }
-  update(record: RunRecord): Promise<RunRecord> {
+  update(record: RunRecord): Promise<Snapshot> {
     return this.inner.update(record);
   }
-  list(workflowId?: string): Promise<RunRecord[]> {
+  list(workflowId?: string): Promise<Listing> {
     return this.inner.list(workflowId);
   }
-  claimStep(runId: string, stepName: string, definition: WorkflowDefinition): Promise<RunRecord> {
+  /** #715 (b): `settleStep` is required — this double delegates it. */
+  settleStep(runId: string, delta: SettlementDelta, definition?: WorkflowDefinition) {
+    return this.inner.settleStep(runId, delta, definition);
+  }
+  claimStep(runId: string, stepName: string, definition: WorkflowDefinition): Promise<Snapshot> {
     return this.inner.claimStep(runId, stepName, definition);
   }
 }
@@ -93,7 +105,11 @@ describe('execution-loop — workflow_context_snapshots field-fidelity gate (iss
       inner,
       new Set(['capability_blocks', 'extension_identity']),
     );
-    const { run } = await inner.create({ workflowId: 'ctx-wf', workflowVersion: 1, params: {} });
+    const { record: run } = await inner.create({
+      workflowId: 'ctx-wf',
+      workflowVersion: 1,
+      params: {},
+    });
 
     const envelope = await executeStep(store, wfWithContext, {
       runId: run.id,
@@ -108,7 +124,11 @@ describe('execution-loop — workflow_context_snapshots field-fidelity gate (iss
 
   it('stays silent when the store DOES declare workflow_context_snapshots (byte-identical local case)', async () => {
     const inner = new JsonFileStore(dir);
-    const { run } = await inner.create({ workflowId: 'ctx-wf', workflowVersion: 1, params: {} });
+    const { record: run } = await inner.create({
+      workflowId: 'ctx-wf',
+      workflowVersion: 1,
+      params: {},
+    });
 
     const envelope = await executeStep(inner, wfWithContext, {
       runId: run.id,
@@ -144,7 +164,11 @@ describe('execution-loop — extension_identity field-fidelity gate (issue #188)
       inner,
       new Set(['capability_blocks', 'workflow_context_snapshots']),
     );
-    const { run } = await inner.create({ workflowId: 'ext-wf', workflowVersion: 1, params: {} });
+    const { record: run } = await inner.create({
+      workflowId: 'ext-wf',
+      workflowVersion: 1,
+      params: {},
+    });
     const registry = new ExtensionRegistry();
     registry.setIdentity(sampleIdentity);
 
@@ -162,7 +186,11 @@ describe('execution-loop — extension_identity field-fidelity gate (issue #188)
 
   it('stays silent when the store DOES declare extension_identity (byte-identical local case)', async () => {
     const inner = new JsonFileStore(dir);
-    const { run } = await inner.create({ workflowId: 'ext-wf', workflowVersion: 1, params: {} });
+    const { record: run } = await inner.create({
+      workflowId: 'ext-wf',
+      workflowVersion: 1,
+      params: {},
+    });
     const registry = new ExtensionRegistry();
     registry.setIdentity(sampleIdentity);
 
@@ -181,7 +209,11 @@ describe('execution-loop — extension_identity field-fidelity gate (issue #188)
   it('no registry identity at all → no gate, byte-identical to pre-#188 (extension-free runs untouched)', async () => {
     const inner = new JsonFileStore(dir);
     const store = new DeclaredFieldsOverrideStore(inner, new Set()); // declares NOTHING
-    const { run } = await inner.create({ workflowId: 'ext-wf', workflowVersion: 1, params: {} });
+    const { record: run } = await inner.create({
+      workflowId: 'ext-wf',
+      workflowVersion: 1,
+      params: {},
+    });
 
     const envelope = await executeStep(store, plainWf, {
       runId: run.id,
@@ -191,14 +223,10 @@ describe('execution-loop — extension_identity field-fidelity gate (issue #188)
       // no registry passed at all
     });
 
-    // issue #279 (increment 1, PR-B): `DeclaredFieldsOverrideStore` declares no settleStep either
-    // (it predates PR-A/PR-B) — the legacy dormancy path now carries its own ONE advisory (I16),
-    // unrelated to the #188 extension-identity gate this test is actually about. No #188-specific
-    // warning fires (no registry identity was ever set) — only the dormancy advisory.
-    expect(envelope.warnings).toEqual([
-      'settled via the legacy compatibility path — this store does not declare atomic settlement ' +
-        '(RunStore.settleStep); upgrade the store to close the fan-out seal race (issue #279)',
-    ]);
+    // No #188-specific warning fires (no registry identity was ever set). #715 (b): the store's
+    // `settleStep` is required (this double delegates it), so the legacy dormancy advisory that used
+    // to be the one warning here is gone with its path.
+    expect(envelope.warnings).toEqual([]);
   });
 });
 
@@ -214,7 +242,7 @@ describe('execution-loop — #119 WARN-never-gate is preserved (issue #188)', ()
         version: 1,
         steps: { work: { description: 'w', execution: 'auto', depends_on: [] } },
       };
-      const { run } = await inner.create({
+      const { record: run } = await inner.create({
         workflowId: 'drift-wf',
         workflowVersion: 1,
         params: {},

@@ -146,7 +146,7 @@ async function walk(shape: Shape, statelessHttp: boolean) {
         )) as { content: Array<{ text: string }> }
       ).content[0]!.text,
     ) as { run_id: string };
-    const entry = (await d.runStore.get(started.run_id)).evidence.find(
+    const entry = (await d.runStore.get(started.run_id)).record.evidence.find(
       (e) => e.kind === 'gate_response',
     );
     return {
@@ -211,7 +211,7 @@ describe('#627 W correction 2 (1.7) — the form rides the tool call’s own str
         call.then(() => true),
         new Promise<false>((r) => setTimeout(() => r(false), 5_000)),
       ]);
-      const runs = await d.runStore.list();
+      const runs = (await d.runStore.list()).snapshots.map((s) => s.record);
       const entry = runs[0]?.evidence.find((e) => e.kind === 'gate_response');
       // (a) red when the elicitation is sent without the tool call's request id (it then needs the
       //     GET stream this host refuses); (b) prints whether the call settled, the forms sent and

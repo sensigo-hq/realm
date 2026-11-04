@@ -17,6 +17,8 @@ import { respondWayOfGate } from './ways.js';
 import { admitEntry } from '../admission.js';
 import { captureEvidence } from '../evidence/snapshot.js';
 import { classifyClaim, omitClaim, type ClaimState } from './claim-liveness.js';
+import { isPastDeadline } from './instants.js';
+import { writtenSnapshot, type Snapshot } from './snapshot.js';
 
 export type ReclaimOutcome =
   /** The claim was moved out of `in_progress_steps` this call → the step is eligible again. */
@@ -66,13 +68,16 @@ export interface ReclaimResult {
  * or no gate at all, produces no advisory). Pure, read-only; never used to decide reclaim's OWN
  * outcome — purely informational.
  */
-function buildGateExpiryAdvisory(record: RunRecord, now: Date): string | undefined {
+function buildGateExpiryAdvisory(snapshot: Snapshot): string | undefined {
+  // #715 (b) (D6-17, D-25): judged at the snapshot's `at`, through the one due test — an unparseable
+  // deadline is never past (Q10), so it draws no advisory (its NaN compare used to draw one).
+  const { record, at } = snapshot;
   const gate = record.pending_gate;
   if (
     gate === undefined ||
     gate.expires_at === undefined ||
     gate.on_expiry === undefined ||
-    now.getTime() < new Date(gate.expires_at).getTime()
+    !isPastDeadline(gate.expires_at, at)
   ) {
     return undefined;
   }
@@ -124,8 +129,6 @@ export interface ReclaimStepOptions {
    * meaningful in-process and for any future file-backed WAL.
    */
   traceBufferStore?: TraceBufferStore;
-  /** Injectable clock for deterministic tests. Defaults to `new Date()`. */
-  now?: Date;
 }
 
 /** Pure mutation: remove the claim from in_progress + claims and append a reclaim audit entry.
@@ -373,8 +376,6 @@ export async function reclaimStep(
     storeKind: 'run store',
     parts: { runId, stepName, options },
   });
-  const now = options?.now ?? new Date();
-
   // Guard — store capability: a store that drops `claims` cannot detect or recover a wedge.
   if (!store.persistsClaims) {
     throw new WorkflowError(
@@ -389,7 +390,8 @@ export async function reclaimStep(
     );
   }
 
-  const run = await store.get(runId);
+  // #715 (b): the run and the store's reading it is judged at (taken before the load).
+  const { record: run, at: now } = await store.get(runId);
 
   // Guard — terminal: a wedge is non-terminal (a terminal+claimed guard-abort record is left alone).
   if (run.terminal_state) {
@@ -434,7 +436,7 @@ export async function reclaimStep(
   // Guard — membership: not in_progress → discriminate settled vs no-active-claim (issue #221, B2).
   if (!run.in_progress_steps.includes(stepName)) {
     const { outcome, detail } = classifyNoActiveClaim(run, stepName);
-    const gateAdvisory = buildGateExpiryAdvisory(run, now);
+    const gateAdvisory = buildGateExpiryAdvisory(writtenSnapshot(run, now));
     return {
       run,
       step: stepName,
@@ -474,11 +476,11 @@ export async function reclaimStep(
       );
       warnFencedClearOutcome(runId, stepName, clearResult);
     }
-    const updated = await store.update(applyReclaim(run, stepName, now));
+    const { record: updated, at: updatedAt } = await store.update(applyReclaim(run, stepName, now));
     if (!fenced) {
       await clearStaleWal(traceBufferStore, runId, stepName);
     }
-    const gateAdvisory = buildGateExpiryAdvisory(updated, now);
+    const gateAdvisory = buildGateExpiryAdvisory(writtenSnapshot(updated, updatedAt));
     return {
       run: updated,
       step: stepName,
@@ -494,7 +496,7 @@ export async function reclaimStep(
     // permanent), reclaim's condition can FLIP BACK: a reclaimed step can be re-claimed FRESH by a
     // live driver. A blind abandon-style re-remove would double-remove that live claim and
     // double-drive live work (reviewer Sig-6). So RE-EVALUATE the predicate on the reloaded record.
-    const reloaded = await store.get(runId);
+    const { record: reloaded, at: reloadedAt } = await store.get(runId);
 
     if (!reloaded.in_progress_steps.includes(stepName)) {
       // A live driver settled it, or another reclaim already removed it → idempotent, no
@@ -503,7 +505,7 @@ export async function reclaimStep(
       // NOW, after the concurrent write that caused this CAS mismatch, not at the stale decision
       // read).
       const { outcome, detail } = classifyNoActiveClaim(reloaded, stepName);
-      const gateAdvisory = buildGateExpiryAdvisory(reloaded, now);
+      const gateAdvisory = buildGateExpiryAdvisory(writtenSnapshot(reloaded, reloadedAt));
       return {
         run: reloaded,
         step: stepName,
@@ -514,9 +516,9 @@ export async function reclaimStep(
         ...(gateAdvisory !== undefined ? { gateAdvisory } : {}),
       };
     }
-    if (classifyClaim(reloaded.claims?.[stepName], now) === 'healthy') {
+    if (classifyClaim(reloaded.claims?.[stepName], reloadedAt) === 'healthy') {
       // Re-claimed FRESH (a future deadline) → a live driver took over. Never stomp live work.
-      const gateAdvisory = buildGateExpiryAdvisory(reloaded, now);
+      const gateAdvisory = buildGateExpiryAdvisory(writtenSnapshot(reloaded, reloadedAt));
       return {
         run: reloaded,
         step: stepName,
@@ -548,11 +550,13 @@ export async function reclaimStep(
       );
       warnFencedClearOutcome(runId, stepName, clearResult);
     }
-    const updated = await store.update(applyReclaim(reloaded, stepName, now));
+    const { record: updated, at: updatedAt } = await store.update(
+      applyReclaim(reloaded, stepName, reloadedAt),
+    );
     if (!fenced) {
       await clearStaleWal(traceBufferStore, runId, stepName);
     }
-    const gateAdvisory = buildGateExpiryAdvisory(updated, now);
+    const gateAdvisory = buildGateExpiryAdvisory(writtenSnapshot(updated, updatedAt));
     return {
       run: updated,
       step: stepName,

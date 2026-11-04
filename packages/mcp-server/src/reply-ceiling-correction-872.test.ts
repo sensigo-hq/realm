@@ -574,7 +574,7 @@ describe('#872 (b1) correction 1 HC6 (H6) — the envelope’s lists and eligibl
         ),
       ),
     );
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'hc6-defaulted',
       workflowVersion: 1,
       params: {},
@@ -591,7 +591,7 @@ describe('#872 (b1) correction 1 HC6 (H6) — the envelope’s lists and eligibl
       evidence_hash: `h-${step_id}`,
       diagnostics: { input_token_estimate: 0, precondition_trace: [], settled_by_default: true },
     });
-    const current = await runStore.get(run.id);
+    const { record: current } = await runStore.get(run.id);
     await runStore.update({
       ...current,
       evidence: settled.map(entry),
@@ -638,7 +638,7 @@ describe('#872 (b1) correction 1 HC6 (H6) — the envelope’s lists and eligibl
     );
     const { json: started } = await call('start_run', { workflow_id: 'hc6-guards' });
     const runId = String(started['run_id']);
-    const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
+    const gateId = (await runStore.get(runId)).record.pending_gate!.gate_id;
     const { size, json } = await call('submit_human_response', {
       run_id: runId,
       gate_id: gateId,

@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { listRuns, listCommand } from './list.js';
 import { STUCK_DEFINITION_PARSE_CAP_BYTES, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import type { RunStore, RunRecord, RunHealthFinding, WorkflowDefinition } from '@sensigo/realm';
+import { snap, listing, doubleClock, noSettle } from '../test-support/snapshot-double.js';
 
 type Kind = RunHealthFinding['kind'];
 
@@ -40,10 +41,12 @@ function makeRun(overrides: Partial<RunRecord> = {}): RunRecord {
 function makeStore(runs: RunRecord[]): RunStore {
   return {
     persistsClaims: true,
-    get: async () => runs[0]!,
-    create: async () => ({ run: runs[0]!, created: true }),
-    update: async () => runs[0]!,
-    list: async () => runs,
+    clock: doubleClock,
+    settleStep: noSettle,
+    get: async () => snap(runs[0]!),
+    create: async () => ({ ...snap(runs[0]!), created: true }),
+    update: async () => snap(runs[0]!),
+    list: async () => listing(runs),
     claimStep: async () => {
       throw new Error('unused');
     },

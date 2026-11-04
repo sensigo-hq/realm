@@ -3,14 +3,14 @@
 // hits occur at runtime. Skipping it is safe: the store self-migrates lazily on first touch.
 import { Command } from 'commander';
 import { shellWord } from '@sensigo/realm';
+import { openRunStore } from '../lib/run-store.js';
 
 export const reconcileCommand = new Command('reconcile')
   .description('Build the idempotency-key pointer index from existing runs')
   .option('--workflow <id>', 'Reconcile only runs of this workflow')
   .option('--dry-run', 'Report what would be written without writing anything')
   .action(async (opts: { workflow?: string; dryRun?: boolean }) => {
-    const { JsonFileStore } = await import('@sensigo/realm');
-    const store = new JsonFileStore();
+    const store = openRunStore();
     try {
       // issue #719 (C2, C6): core names no CLI command — the refusal of a store holding a damaged
       // run file tells the operator to run THIS command again, flags included.

@@ -36,28 +36,30 @@ describe('reclaimStep — gate expiry advisory (issue #291, [F7])', () => {
     const { on_expiry, ...gateOverrides } = overrides;
     // Present-but-undefined must erase; absent must take the default.
     const resolvedOnExpiry = 'on_expiry' in overrides ? on_expiry : 'abort';
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'reclaim-gate-advisory-wf',
       workflowVersion: 1,
       params: {},
     });
     // Mirrors the design's own "mint all claims BEFORE opening any gate" ordering: a sibling
     // step claimed, then a gate opened on a DIFFERENT step — both coexist on the record.
-    return store.update({
-      ...run,
-      in_progress_steps: ['sibling'],
-      claims: { sibling: { deadline: pastIso() } },
-      pending_gate: {
-        gate_id: 'gate-1',
-        step_name: 'approve',
-        preview: {},
-        choices: ['approve', 'reject'],
-        opened_at: '2020-01-01T00:00:00.000Z',
-        expires_at: '2020-01-01T00:05:00.000Z',
-        ...gateOverrides,
-        ...(resolvedOnExpiry === undefined ? {} : { on_expiry: resolvedOnExpiry }),
-      },
-    });
+    return (
+      await store.update({
+        ...run,
+        in_progress_steps: ['sibling'],
+        claims: { sibling: { deadline: pastIso() } },
+        pending_gate: {
+          gate_id: 'gate-1',
+          step_name: 'approve',
+          preview: {},
+          choices: ['approve', 'reject'],
+          opened_at: '2020-01-01T00:00:00.000Z',
+          expires_at: '2020-01-01T00:05:00.000Z',
+          ...gateOverrides,
+          ...(resolvedOnExpiry === undefined ? {} : { on_expiry: resolvedOnExpiry }),
+        },
+      })
+    ).record;
   }
 
   it('reclaiming a stale SIBLING while the run ALSO carries an expired, enactable gate carries the advisory — but does NOT enact it', async () => {
@@ -70,7 +72,7 @@ describe('reclaimStep — gate expiry advisory (issue #291, [F7])', () => {
     expect(result.gateAdvisory).toContain('realm run drain --expired');
 
     // reclaimStep itself never enacted anything — the gate is UNTOUCHED.
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     expect(after.pending_gate).toBeDefined();
     expect(after.pending_gate?.gate_id).toBe('gate-1');
     expect(after.terminal_state).toBe(false);
@@ -90,12 +92,12 @@ describe('reclaimStep — gate expiry advisory (issue #291, [F7])', () => {
   });
 
   it('no advisory when the run carries no gate at all', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'reclaim-gate-advisory-wf2',
       workflowVersion: 1,
       params: {},
     });
-    const seeded = await store.update({
+    const { record: seeded } = await store.update({
       ...run,
       in_progress_steps: ['sibling'],
       claims: { sibling: { deadline: pastIso() } },

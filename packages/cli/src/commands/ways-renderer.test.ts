@@ -36,7 +36,7 @@ import {
 async function withRun<T>(fn: (run: RunRecord) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), 'realm-ways-renderer-'));
   try {
-    const { run } = await new JsonFileStore(dir).create({
+    const { record: run } = await new JsonFileStore(dir).create({
       workflowId: 'c64-wf',
       workflowVersion: 1,
       params: {},

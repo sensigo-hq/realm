@@ -68,7 +68,7 @@ describe('handleAppendTrace', () => {
   });
 
   it('throws STEP_NOT_FOUND when step_id is not in the workflow', async () => {
-    const { run: run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'append-trace-wf',
       workflowVersion: 1,
       params: {},
@@ -85,7 +85,7 @@ describe('handleAppendTrace', () => {
   });
 
   it('throws STATE_STEP_NOT_ELIGIBLE when the step is auto', async () => {
-    const { run: run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'append-trace-wf',
       workflowVersion: 1,
       params: {},
@@ -103,7 +103,7 @@ describe('handleAppendTrace', () => {
   });
 
   it('throws STATE_STEP_NOT_ELIGIBLE (step_state: completed) when step is in completed_steps', async () => {
-    const { run: run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'append-trace-wf',
       workflowVersion: 1,
       params: {},
@@ -127,7 +127,7 @@ describe('handleAppendTrace', () => {
   });
 
   it('throws STATE_STEP_NOT_ELIGIBLE (step_state: failed) when step is in failed_steps', async () => {
-    const { run: run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'append-trace-wf',
       workflowVersion: 1,
       params: {},
@@ -150,7 +150,7 @@ describe('handleAppendTrace', () => {
   });
 
   it('throws STATE_STEP_NOT_ELIGIBLE (step_state: skipped) when step is in skipped_steps (issue #207, the latent omission)', async () => {
-    const { run: run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'append-trace-wf',
       workflowVersion: 1,
       params: {},
@@ -172,7 +172,7 @@ describe('handleAppendTrace', () => {
   });
 
   it('throws STATE_STEP_NOT_ELIGIBLE (step_state: in_progress, agentAction: resolve_precondition) when step is in in_progress_steps', async () => {
-    const { run: run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'append-trace-wf',
       workflowVersion: 1,
       params: {},
@@ -196,7 +196,7 @@ describe('handleAppendTrace', () => {
   });
 
   it('returns status: ok with AppendResult fields when step is eligible and entries are valid', async () => {
-    const { run: run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'append-trace-wf',
       workflowVersion: 1,
       params: {},
@@ -219,7 +219,7 @@ describe('handleAppendTrace', () => {
   });
 
   it('empty entries array returns current buffer state without writing', async () => {
-    const { run: run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'append-trace-wf',
       workflowVersion: 1,
       params: {},
@@ -241,7 +241,7 @@ describe('handleAppendTrace', () => {
   });
 
   it('propagates BUFFER_FULL error from the buffer store', async () => {
-    const { run: run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'append-trace-wf',
       workflowVersion: 1,
       params: {},
@@ -259,7 +259,7 @@ describe('handleAppendTrace', () => {
   });
 
   it('reserved-prefix events are dropped by per-entry normalization; buffer_count reflects only stored entries', async () => {
-    const { run: run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'append-trace-wf',
       workflowVersion: 1,
       params: {},
@@ -287,7 +287,7 @@ describe('handleAppendTrace', () => {
     // NON-terminal — the terminal check (step 1b of `handleAppendTrace`) precedes the workflow
     // fetch (step 2), so a terminal fixture would refuse there first and never reach this cell's
     // target.
-    const { run: run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'dev456',
       workflowVersion: 1,
       params: {},
@@ -331,7 +331,7 @@ describe('append_trace terminal-run guard (issue #187)', () => {
   async function makeTerminalRun(
     phase: 'completed' | 'failed' | 'abandoned' | 'aborted',
   ): Promise<RunRecord> {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'append-trace-wf',
       workflowVersion: 1,
       params: {},
@@ -361,7 +361,7 @@ describe('append_trace terminal-run guard (issue #187)', () => {
                 sealed_by: { arm: 'abandon_requested' as const },
                 abandoned_at: new Date().toISOString(),
               };
-    const updated = await runStore.update({ ...run, ...patch });
+    const { record: updated } = await runStore.update({ ...run, ...patch });
     expect(updated.run_phase).toBe(phase); // sanity: confirms the fixture actually reaches the phase under test
     return updated;
   }
@@ -390,7 +390,7 @@ describe('append_trace terminal-run guard (issue #187)', () => {
   );
 
   it('append_trace to a non-terminal run with an eligible step is unaffected — still succeeds, byte-identical to before', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'append-trace-wf',
       workflowVersion: 1,
       params: {},
@@ -457,7 +457,7 @@ describe('registerAppendTrace — ResponseEnvelope error shape', () => {
   });
 
   it('returns ResponseEnvelope with error_code on step not found', async () => {
-    const { run: run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'append-trace-wf',
       workflowVersion: 1,
       params: {},
@@ -475,7 +475,7 @@ describe('registerAppendTrace — ResponseEnvelope error shape', () => {
   });
 
   it('returns ResponseEnvelope with error_code on step not eligible', async () => {
-    const { run: run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'append-trace-wf',
       workflowVersion: 1,
       params: {},

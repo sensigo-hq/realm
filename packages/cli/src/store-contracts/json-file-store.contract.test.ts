@@ -53,7 +53,7 @@ async function makeAdapter(): Promise<{
   // which is precisely the under-count this issue retires. The law would then pass against the
   // defect it exists to catch.
   const seed = async (): Promise<string> => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'wf-tck',
       workflowVersion: 1,
       params: {},

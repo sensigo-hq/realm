@@ -67,7 +67,11 @@ describe('issue #759 — the wire and the sidecar carry the same ten and the tot
   }
 
   it('13 problems → the wire shows ten rows, `error_count: 13` and the countdown; the sidecar record ten entries and `error_count: 13` (reds: thirteen rows; no count; the sidecar reading `error_details` on the core reply)', async () => {
-    const { run } = await runStore.create({ workflowId: wf.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runStore.create({
+      workflowId: wf.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const wire = await submit(run.id);
     const details = wire['error_details'] as Record<string, unknown> | undefined;
     const errors = details?.['errors'] as Array<{ params?: { missingProperty?: string } }>;
@@ -98,7 +102,11 @@ describe('issue #759 — the wire and the sidecar carry the same ten and the tot
   });
 
   it("the exhausting sixth refusal's sidecar record keeps the last ten and the total (red: the bag's count dropped)", async () => {
-    const { run } = await runStore.create({ workflowId: wf.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runStore.create({
+      workflowId: wf.id,
+      workflowVersion: 1,
+      params: {},
+    });
     let wire: Record<string, unknown> = {};
     for (let i = 0; i < DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD; i += 1)
       wire = await submit(run.id);

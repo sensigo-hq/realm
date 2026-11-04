@@ -4,6 +4,7 @@ import { classifyRunHealth, DEFAULT_IDLE_THRESHOLD_MS } from './run-health.js';
 import { composeWaysAt } from './ways.js';
 import type { RunRecord, EvidenceSnapshot } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
+import { writtenSnapshot } from './snapshot.js';
 
 const NOW = new Date('2026-07-20T12:00:00.000Z');
 
@@ -42,7 +43,7 @@ describe('classifyRunHealth', () => {
       run_phase: 'completed',
       updated_at: new Date(NOW.getTime() - 100 * 86_400_000).toISOString(),
     });
-    expect(classifyRunHealth(run, { now: NOW })).toEqual([]);
+    expect(classifyRunHealth(writtenSnapshot(run, NOW))).toEqual([]);
   });
 
   it('terminal_state with a finalizer_ledger that has ZERO pending entries (all completed/failed/voided) ⇒ []', () => {
@@ -54,7 +55,7 @@ describe('classifyRunHealth', () => {
         gone: { status: 'voided', rank: 1 },
       },
     });
-    expect(classifyRunHealth(run, { now: NOW })).toEqual([]);
+    expect(classifyRunHealth(writtenSnapshot(run, NOW))).toEqual([]);
   });
 
   it('a terminal+claimed guard-abort record (a claim still in in_progress_steps at abort) ⇒ []', () => {
@@ -65,7 +66,7 @@ describe('classifyRunHealth', () => {
       claims: { work: { deadline: new Date(NOW.getTime() - 60_000).toISOString() } },
       aborted_at: { step_id: 'guard_check' },
     });
-    expect(classifyRunHealth(run, { now: NOW })).toEqual([]);
+    expect(classifyRunHealth(writtenSnapshot(run, NOW))).toEqual([]);
   });
 
   // ---------------------------------------------------------------------
@@ -79,7 +80,7 @@ describe('classifyRunHealth', () => {
       run_phase: 'completed',
       finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
     });
-    expect(classifyRunHealth(run, { now: NOW })).toEqual([
+    expect(classifyRunHealth(writtenSnapshot(run, NOW))).toEqual([
       {
         kind: 'terminal_pending_finalizer',
         step: 'fin',
@@ -102,7 +103,7 @@ describe('classifyRunHealth', () => {
         },
       },
     });
-    const findings = classifyRunHealth(run, { now: NOW });
+    const findings = classifyRunHealth(writtenSnapshot(run, NOW));
     expect(findings).toHaveLength(1);
     expect(findings[0]?.reason).toBe('lease_expired');
   });
@@ -120,7 +121,7 @@ describe('classifyRunHealth', () => {
         },
       },
     });
-    const findings = classifyRunHealth(run, { now: NOW });
+    const findings = classifyRunHealth(writtenSnapshot(run, NOW));
     expect(findings).toHaveLength(1);
     expect(findings[0]?.reason).toBe('lease_held');
   });
@@ -133,7 +134,7 @@ describe('classifyRunHealth', () => {
       claims: { work: { deadline: new Date(NOW.getTime() - 60_000).toISOString() } },
       finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
     });
-    const findings = classifyRunHealth(run, { now: NOW });
+    const findings = classifyRunHealth(writtenSnapshot(run, NOW));
     expect(findings).toEqual([
       {
         kind: 'terminal_pending_finalizer',
@@ -154,7 +155,7 @@ describe('classifyRunHealth', () => {
         second: { status: 'pending', rank: 1 },
       },
     });
-    const findings = classifyRunHealth(run, { now: NOW });
+    const findings = classifyRunHealth(writtenSnapshot(run, NOW));
     expect(findings.map((f) => f.step)).toEqual(['first', 'second']);
   });
 
@@ -166,7 +167,7 @@ describe('classifyRunHealth', () => {
       in_progress_steps: ['work'],
       claims: { work: { deadline: new Date(NOW.getTime() - 60_000).toISOString() } },
     });
-    const findings = classifyRunHealth(run, { now: NOW });
+    const findings = classifyRunHealth(writtenSnapshot(run, NOW));
     expect(findings).toHaveLength(1);
     expect(findings[0]).toMatchObject({ kind: 'stale_claim', step: 'work', reason: 'claim_stale' });
   });
@@ -176,7 +177,7 @@ describe('classifyRunHealth', () => {
       in_progress_steps: ['work'],
       claims: { work: { deadline: new Date(NOW.getTime() + 3_600_000).toISOString() } },
     });
-    expect(classifyRunHealth(run, { now: NOW })).toEqual([]);
+    expect(classifyRunHealth(writtenSnapshot(run, NOW))).toEqual([]);
   });
 
   it('healthy gate_waiting ⇒ zero findings (the B1 negative pin — the open-gate claim is {deadline:null} and must never self-flag)', () => {
@@ -192,7 +193,7 @@ describe('classifyRunHealth', () => {
         preview: {},
       },
     });
-    expect(classifyRunHealth(run, { now: NOW })).toEqual([]);
+    expect(classifyRunHealth(writtenSnapshot(run, NOW))).toEqual([]);
   });
 
   it('pending-gate-step exclusion with a wedged NON-gated sibling ⇒ exactly the sibling flagged as wedged_gate_sibling', () => {
@@ -211,7 +212,7 @@ describe('classifyRunHealth', () => {
         preview: {},
       },
     });
-    const findings = classifyRunHealth(run, { now: NOW });
+    const findings = classifyRunHealth(writtenSnapshot(run, NOW));
     expect(findings).toHaveLength(1);
     expect(findings[0]).toMatchObject({
       kind: 'wedged_gate_sibling',
@@ -240,7 +241,7 @@ describe('classifyRunHealth', () => {
         preview: {},
       },
     });
-    const findings = classifyRunHealth(run, { now: NOW });
+    const findings = classifyRunHealth(writtenSnapshot(run, NOW));
     expect(findings).toHaveLength(1);
     expect(findings[0]).toMatchObject({
       kind: 'wedged_gate_sibling',
@@ -254,7 +255,7 @@ describe('classifyRunHealth', () => {
       in_progress_steps: ['work'],
       claims: { work: { deadline: null } },
     });
-    const findings = classifyRunHealth(run, { now: NOW });
+    const findings = classifyRunHealth(writtenSnapshot(run, NOW));
     expect(findings).toHaveLength(1);
     expect(findings[0]).toMatchObject({
       kind: 'stale_claim',
@@ -277,7 +278,7 @@ describe('classifyRunHealth', () => {
         },
       },
     });
-    const findings = classifyRunHealth(run, { now: NOW });
+    const findings = classifyRunHealth(writtenSnapshot(run, NOW));
     expect(findings).toHaveLength(1);
     expect(findings[0]).toMatchObject({
       kind: 'capability_block',
@@ -302,7 +303,7 @@ describe('classifyRunHealth', () => {
         },
       },
     });
-    expect(classifyRunHealth(run, { now: NOW })).toEqual([]);
+    expect(classifyRunHealth(writtenSnapshot(run, NOW))).toEqual([]);
   });
 
   // ---------------------------------------------------------------------
@@ -312,7 +313,7 @@ describe('classifyRunHealth', () => {
     const run = makeRun({
       updated_at: new Date(NOW.getTime() - DEFAULT_IDLE_THRESHOLD_MS).toISOString(),
     });
-    const findings = classifyRunHealth(run, { now: NOW });
+    const findings = classifyRunHealth(writtenSnapshot(run, NOW));
     expect(findings).toHaveLength(1);
     expect(findings[0]?.kind).toBe('never_claimed_idle');
   });
@@ -321,18 +322,18 @@ describe('classifyRunHealth', () => {
     const run = makeRun({
       updated_at: new Date(NOW.getTime() - DEFAULT_IDLE_THRESHOLD_MS + 1).toISOString(),
     });
-    expect(classifyRunHealth(run, { now: NOW })).toEqual([]);
+    expect(classifyRunHealth(writtenSnapshot(run, NOW))).toEqual([]);
   });
 
   it('a young (well under threshold) claimless running run holds', () => {
     const run = makeRun({ updated_at: new Date(NOW.getTime() - 60_000).toISOString() });
-    expect(classifyRunHealth(run, { now: NOW })).toEqual([]);
+    expect(classifyRunHealth(writtenSnapshot(run, NOW))).toEqual([]);
   });
 
   it('never_claimed_idle carries since + idle_ms + evidence.idle_threshold_ms (the required invariant)', () => {
     const updatedAt = new Date(NOW.getTime() - 2 * DEFAULT_IDLE_THRESHOLD_MS).toISOString();
     const run = makeRun({ updated_at: updatedAt });
-    const findings = classifyRunHealth(run, { now: NOW });
+    const findings = classifyRunHealth(writtenSnapshot(run, NOW));
     expect(findings).toHaveLength(1);
     const f = findings[0]!;
     expect(f.kind).toBe('never_claimed_idle');
@@ -343,7 +344,7 @@ describe('classifyRunHealth', () => {
 
   it("an explicit idleThresholdMs override is honored (0 restores today's breadth)", () => {
     const run = makeRun({ updated_at: NOW.toISOString() }); // zero idle time
-    const findings = classifyRunHealth(run, { now: NOW, idleThresholdMs: 0 });
+    const findings = classifyRunHealth(writtenSnapshot(run, NOW), { idleThresholdMs: 0 });
     expect(findings).toHaveLength(1);
     expect(findings[0]?.kind).toBe('never_claimed_idle');
     expect(findings[0]?.evidence?.['idle_threshold_ms']).toBe(0);
@@ -362,10 +363,10 @@ describe('classifyRunHealth', () => {
       updated_at: new Date(NOW.getTime() - 2 * DEFAULT_IDLE_THRESHOLD_MS).toISOString(),
     });
 
-    const withDef = classifyRunHealth(run, { now: NOW, definition: def });
+    const withDef = classifyRunHealth(writtenSnapshot(run, NOW), { definition: def });
     expect(withDef[0]?.evidence?.['eligible_steps']).toEqual(['draft']);
 
-    const withoutDef = classifyRunHealth(run, { now: NOW });
+    const withoutDef = classifyRunHealth(writtenSnapshot(run, NOW));
     expect(withoutDef[0]?.evidence).not.toHaveProperty('eligible_steps');
   });
 
@@ -375,7 +376,7 @@ describe('classifyRunHealth', () => {
       claims: { work: { deadline: new Date(NOW.getTime() + 3_600_000).toISOString() } }, // healthy
       updated_at: new Date(NOW.getTime() - 2 * DEFAULT_IDLE_THRESHOLD_MS).toISOString(),
     });
-    expect(classifyRunHealth(run, { now: NOW })).toEqual([]);
+    expect(classifyRunHealth(writtenSnapshot(run, NOW))).toEqual([]);
   });
 
   it('never_claimed_idle does NOT fire on a genuinely gate-waiting run (a live pending_gate, no expiry)', () => {
@@ -395,7 +396,7 @@ describe('classifyRunHealth', () => {
       },
       updated_at: new Date(NOW.getTime() - 2 * DEFAULT_IDLE_THRESHOLD_MS).toISOString(),
     });
-    expect(classifyRunHealth(run, { now: NOW })).toEqual([]);
+    expect(classifyRunHealth(writtenSnapshot(run, NOW))).toEqual([]);
   });
 
   it('D1 (issue #432): a DIVERGENT record (persisted running, a live un-expired pending_gate) does NOT select as never_claimed_idle — the gate owns its story, not idle', () => {
@@ -416,7 +417,7 @@ describe('classifyRunHealth', () => {
       in_progress_steps: [],
       updated_at: new Date(NOW.getTime() - 2 * DEFAULT_IDLE_THRESHOLD_MS).toISOString(),
     });
-    expect(classifyRunHealth(run, { now: NOW })).toEqual([]);
+    expect(classifyRunHealth(writtenSnapshot(run, NOW))).toEqual([]);
   });
 
   // ---------------------------------------------------------------------
@@ -440,9 +441,9 @@ describe('classifyRunHealth', () => {
       },
     });
     const allFindings = [
-      ...classifyRunHealth(idleRun, { now: NOW }),
-      ...classifyRunHealth(claimRun, { now: NOW }),
-      ...classifyRunHealth(capRun, { now: NOW }),
+      ...classifyRunHealth(writtenSnapshot(idleRun, NOW)),
+      ...classifyRunHealth(writtenSnapshot(claimRun, NOW)),
+      ...classifyRunHealth(writtenSnapshot(capRun, NOW)),
     ];
     expect(allFindings.length).toBeGreaterThan(0);
     for (const f of allFindings) {
@@ -468,7 +469,7 @@ describe('classifyRunHealth', () => {
         opened_at: '2026-01-01T00:00:00.000Z',
       },
     });
-    const findings = classifyRunHealth(run, { now: NOW });
+    const findings = classifyRunHealth(writtenSnapshot(run, NOW));
     expect(findings).toHaveLength(1);
     expect(findings[0]?.kind).toBe('terminal_with_stale_gate');
     expect(findings[0]?.step).toBe('gated_step');
@@ -488,7 +489,7 @@ describe('classifyRunHealth', () => {
       run_phase: 'gate_waiting',
       settled: { gated_step: { token: 'corrupt-gate', outcome: 'gate', choice: 'approve' } },
     });
-    const nonTerminalFindings = classifyRunHealth(nonTerminalRun, { now: NOW });
+    const nonTerminalFindings = classifyRunHealth(writtenSnapshot(nonTerminalRun, NOW));
     expect(nonTerminalFindings.some((f) => f.kind === 'gate_corruption')).toBe(true);
     const corruptionFinding = nonTerminalFindings.find((f) => f.kind === 'gate_corruption');
     expect(corruptionFinding?.step).toBe('gated_step');
@@ -500,7 +501,7 @@ describe('classifyRunHealth', () => {
       pending_gate: corruptGate,
       settled: { gated_step: { token: 'corrupt-gate', outcome: 'gate', choice: 'approve' } },
     });
-    const terminalFindings = classifyRunHealth(terminalRun, { now: NOW });
+    const terminalFindings = classifyRunHealth(writtenSnapshot(terminalRun, NOW));
     expect(terminalFindings.some((f) => f.kind === 'gate_corruption')).toBe(true);
   });
 
@@ -523,7 +524,7 @@ describe('classifyRunHealth', () => {
         },
       },
     };
-    const withDefinition = classifyRunHealth(run, { now: NOW, definition });
+    const withDefinition = classifyRunHealth(writtenSnapshot(run, NOW), { definition });
     expect(withDefinition.some((f) => f.kind === 'guard_awaiting_settlement')).toBe(true);
     const finding = withDefinition.find((f) => f.kind === 'guard_awaiting_settlement');
     expect(finding?.step).toBe('guard_after');
@@ -534,7 +535,7 @@ describe('classifyRunHealth', () => {
     // Definition-free: the finding never surfaces (findEligibleGuardSteps needs a definition).
     // `realm run list --stuck` passes its probe's definition since issue #729, but excludes this
     // kind from its selection.
-    const withoutDefinition = classifyRunHealth(run, { now: NOW });
+    const withoutDefinition = classifyRunHealth(writtenSnapshot(run, NOW));
     expect(withoutDefinition.some((f) => f.kind === 'guard_awaiting_settlement')).toBe(false);
   });
 
@@ -557,7 +558,7 @@ describe('classifyRunHealth', () => {
         },
       });
       const run = makeRun({ run_phase: 'running' });
-      const findings = classifyRunHealth(run, { now: NOW, definition });
+      const findings = classifyRunHealth(writtenSnapshot(run, NOW), { definition });
       const finding = findings.find((f) => f.kind === 'trust_value_invalid');
       expect(finding).toBeDefined();
       expect(finding?.step).toBe('bad');
@@ -579,7 +580,7 @@ describe('classifyRunHealth', () => {
       // 'first' has not completed yet, so 'bad' is not in findEligibleSteps — its invalid trust
       // must NOT be reported while it sits unreachable behind an unsatisfied dependency.
       const run = makeRun({ run_phase: 'running' });
-      const findings = classifyRunHealth(run, { now: NOW, definition });
+      const findings = classifyRunHealth(writtenSnapshot(run, NOW), { definition });
       expect(findings.some((f) => f.kind === 'trust_value_invalid')).toBe(false);
     });
 
@@ -593,9 +594,9 @@ describe('classifyRunHealth', () => {
         },
       });
       const run = makeRun({ run_phase: 'running' });
-      const withDefinition = classifyRunHealth(run, { now: NOW, definition });
+      const withDefinition = classifyRunHealth(writtenSnapshot(run, NOW), { definition });
       expect(withDefinition.some((f) => f.kind === 'trust_value_invalid')).toBe(true);
-      const withoutDefinition = classifyRunHealth(run, { now: NOW });
+      const withoutDefinition = classifyRunHealth(writtenSnapshot(run, NOW));
       expect(withoutDefinition.some((f) => f.kind === 'trust_value_invalid')).toBe(false);
     });
 
@@ -613,7 +614,7 @@ describe('classifyRunHealth', () => {
         run_phase: 'completed',
         terminal_reason: 'Workflow completed.',
       });
-      expect(classifyRunHealth(run, { now: NOW, definition })).toEqual([]);
+      expect(classifyRunHealth(writtenSnapshot(run, NOW), { definition })).toEqual([]);
     });
 
     it('a guard carrying trust: human_confirmed is never named — findEligibleSteps never includes a guard step at all', () => {
@@ -628,7 +629,7 @@ describe('classifyRunHealth', () => {
         },
       });
       const run = makeRun({ completed_steps: ['work'], run_phase: 'running' });
-      const findings = classifyRunHealth(run, { now: NOW, definition });
+      const findings = classifyRunHealth(writtenSnapshot(run, NOW), { definition });
       expect(
         findings.some((f) => f.kind === 'trust_value_invalid' && f.step === 'gate_check'),
       ).toBe(false);
@@ -643,7 +644,7 @@ describe('classifyRunHealth', () => {
         bad: { description: 'bad', execution: 'auto', trust: 'nope' as never, depends_on: [] },
       });
       const run = makeRun({ run_phase: 'running' });
-      const finding = classifyRunHealth(run, { now: NOW, definition }).find(
+      const finding = classifyRunHealth(writtenSnapshot(run, NOW), { definition }).find(
         (f) => f.kind === 'trust_value_invalid',
       );
       expect(finding?.reason).toContain('Accepts auto, human_confirmed, human_reviewed');
@@ -660,7 +661,7 @@ describe('classifyRunHealth', () => {
         },
       });
       const run = makeRun({ run_phase: 'running' });
-      const finding = classifyRunHealth(run, { now: NOW, definition }).find(
+      const finding = classifyRunHealth(writtenSnapshot(run, NOW), { definition }).find(
         (f) => f.kind === 'trust_value_invalid',
       );
       expect(finding?.reason).toContain("did you mean 'human_confirmed'?");
@@ -683,7 +684,7 @@ describe('classifyRunHealth', () => {
         },
       });
       const run = makeRun({ run_phase: 'running' });
-      const finding = classifyRunHealth(run, { now: NOW, definition }).find(
+      const finding = classifyRunHealth(writtenSnapshot(run, NOW), { definition }).find(
         (f) => f.kind === 'trust_value_invalid',
       );
       expect(finding?.reason).toContain("is a SERVICE's trust level");
@@ -700,7 +701,7 @@ describe('classifyRunHealth', () => {
         },
       });
       const run = makeRun({ run_phase: 'running' });
-      const finding = classifyRunHealth(run, { now: NOW, definition }).find(
+      const finding = classifyRunHealth(writtenSnapshot(run, NOW), { definition }).find(
         (f) => f.kind === 'trust_value_invalid',
       );
       expect(finding?.reason).toContain('was removed (issue #508)');
@@ -724,7 +725,7 @@ describe('classifyRunHealth', () => {
       run_phase: 'completed',
       failed_steps: ['retry_step', 'notify_step'],
     });
-    expect(classifyRunHealth(run, { now: NOW })).toEqual([
+    expect(classifyRunHealth(writtenSnapshot(run, NOW))).toEqual([
       {
         kind: 'completed_with_failed_steps',
         reason:
@@ -743,7 +744,7 @@ describe('classifyRunHealth', () => {
       run_phase: 'completed',
       failed_steps: [],
     });
-    expect(classifyRunHealth(run, { now: NOW })).toEqual([]);
+    expect(classifyRunHealth(writtenSnapshot(run, NOW))).toEqual([]);
   });
 
   it('negative: a pure-FAIL terminal seal (terminal_reason absent) with failed_steps ⇒ no completed_with_failed_steps finding (deriveRunPhase is "failed", not "completed")', () => {
@@ -754,7 +755,7 @@ describe('classifyRunHealth', () => {
       run_phase: 'failed',
       failed_steps: ['work'],
     });
-    expect(classifyRunHealth(run, { now: NOW })).toEqual([]);
+    expect(classifyRunHealth(writtenSnapshot(run, NOW))).toEqual([]);
   });
 
   it('negative: a pure-FAIL terminal seal with a DIFFERENT terminal_reason string ⇒ still no finding (exact-match hinge, not a prefix/substring check)', () => {
@@ -764,7 +765,7 @@ describe('classifyRunHealth', () => {
       run_phase: 'failed',
       failed_steps: ['work'],
     });
-    expect(classifyRunHealth(run, { now: NOW })).toEqual([]);
+    expect(classifyRunHealth(writtenSnapshot(run, NOW))).toEqual([]);
   });
 });
 
@@ -808,7 +809,7 @@ describe('classifyRunHealth — structured_output_downgraded (issue #316)', () =
         }),
       ],
     });
-    expect(classifyRunHealth(run, { now: NOW })).toEqual([
+    expect(classifyRunHealth(writtenSnapshot(run, NOW))).toEqual([
       {
         kind: 'structured_output_downgraded',
         reason:
@@ -842,7 +843,7 @@ describe('classifyRunHealth — structured_output_downgraded (issue #316)', () =
         }),
       ],
     });
-    expect(classifyRunHealth(run, { now: NOW })).toEqual([]);
+    expect(classifyRunHealth(writtenSnapshot(run, NOW))).toEqual([]);
   });
 
   // (d) no structured_output diagnostics anywhere ⇒ no finding.
@@ -858,7 +859,7 @@ describe('classifyRunHealth — structured_output_downgraded (issue #316)', () =
         }),
       ],
     });
-    expect(classifyRunHealth(run, { now: NOW })).toEqual([]);
+    expect(classifyRunHealth(writtenSnapshot(run, NOW))).toEqual([]);
   });
 
   // (e) terminal run with a historical downgrade ⇒ fires in the terminal branch.
@@ -882,7 +883,7 @@ describe('classifyRunHealth — structured_output_downgraded (issue #316)', () =
         }),
       ],
     });
-    expect(classifyRunHealth(run, { now: NOW })).toEqual([
+    expect(classifyRunHealth(writtenSnapshot(run, NOW))).toEqual([
       {
         kind: 'structured_output_downgraded',
         reason:
@@ -921,7 +922,7 @@ describe('classifyRunHealth — structured_output_downgraded (issue #316)', () =
         }),
       ],
     });
-    expect(classifyRunHealth(run, { now: NOW })).toEqual([
+    expect(classifyRunHealth(writtenSnapshot(run, NOW))).toEqual([
       {
         kind: 'completed_with_failed_steps',
         reason:
@@ -972,7 +973,7 @@ describe('classifyRunHealth — structured_output_downgraded (issue #316)', () =
         }),
       ],
     });
-    expect(classifyRunHealth(run, { now: NOW })).toEqual([
+    expect(classifyRunHealth(writtenSnapshot(run, NOW))).toEqual([
       {
         kind: 'structured_output_downgraded',
         reason:
@@ -1024,7 +1025,7 @@ describe('classifyRunHealth — structured_output_downgraded (issue #316)', () =
         }),
       ],
     });
-    expect(classifyRunHealth(run, { now: NOW })).toEqual([
+    expect(classifyRunHealth(writtenSnapshot(run, NOW))).toEqual([
       {
         kind: 'structured_output_downgraded',
         reason:
@@ -1070,7 +1071,7 @@ describe('classifyRunHealth — structured_output_downgraded (issue #316)', () =
         }),
       ],
     });
-    expect(classifyRunHealth(run, { now: NOW })).toEqual([
+    expect(classifyRunHealth(writtenSnapshot(run, NOW))).toEqual([
       {
         kind: 'structured_output_downgraded',
         reason:
@@ -1099,7 +1100,7 @@ describe('classifyRunHealth — structured_output_downgraded (issue #316)', () =
         }),
       ],
     });
-    expect(classifyRunHealth(run, { now: NOW })).toEqual([]);
+    expect(classifyRunHealth(writtenSnapshot(run, NOW))).toEqual([]);
   });
 
   // issue #332 item 6, pin (iii): the run-agent.ts tools-fork fix mints `unsupported_context_tools`
@@ -1129,7 +1130,7 @@ describe('classifyRunHealth — structured_output_downgraded (issue #316)', () =
         }),
       ],
     });
-    expect(classifyRunHealth(run, { now: NOW })).toEqual([
+    expect(classifyRunHealth(writtenSnapshot(run, NOW))).toEqual([
       {
         kind: 'structured_output_downgraded',
         reason:
@@ -1175,7 +1176,7 @@ describe('classifyRunHealth — structured_output_downgraded (issue #316)', () =
         }),
       ],
     });
-    const findings = classifyRunHealth(run, { now: NOW });
+    const findings = classifyRunHealth(writtenSnapshot(run, NOW));
     expect(findings).toHaveLength(1);
     expect(findings[0]!.kind).toBe('structured_output_downgraded');
     expect(findings[0]!.evidence).toEqual({
@@ -1229,7 +1230,7 @@ describe('classifyRunHealth — structured_output_downgraded (issue #316)', () =
         }),
       ],
     });
-    const findings = classifyRunHealth(run, { now: NOW });
+    const findings = classifyRunHealth(writtenSnapshot(run, NOW));
     expect(findings).toHaveLength(1);
     expect(findings[0]!.evidence).toEqual({
       steps: [{ step: 'classify', reasons: ['unsupported_context_tools'] }],
@@ -1275,7 +1276,7 @@ describe('classifyRunHealth — structured_output_downgraded (issue #316)', () =
         }),
       ],
     });
-    const findings = classifyRunHealth(run, { now: NOW });
+    const findings = classifyRunHealth(writtenSnapshot(run, NOW));
     expect(findings).toHaveLength(1);
     expect(findings[0]!.evidence).toEqual({
       steps: [
@@ -1333,7 +1334,7 @@ describe('classifyRunHealth — structured_output_downgraded (issue #316)', () =
         }),
       ],
     });
-    const findings = classifyRunHealth(run, { now: NOW });
+    const findings = classifyRunHealth(writtenSnapshot(run, NOW));
     expect(findings).toHaveLength(1);
     expect(findings[0]!.evidence).toEqual({
       steps: [
@@ -1382,7 +1383,7 @@ describe('classifyRunHealth — structured_output_downgraded (issue #316)', () =
         }),
       ],
     });
-    expect(classifyRunHealth(run, { now: NOW })[0]!.evidence).toEqual({
+    expect(classifyRunHealth(writtenSnapshot(run, NOW))[0]!.evidence).toEqual({
       steps: [
         {
           step: 'classify',
@@ -1406,7 +1407,10 @@ describe('definition_unresolvable (issue #558 PR-T)', () => {
   };
 
   it('DU1 a LIVE run gets the finding, with the workflow id, the code and the class in evidence', () => {
-    const findings = classifyRunHealth(makeRun({ run_phase: 'running' }), { definitionError: ERR });
+    const findings = classifyRunHealth(
+      writtenSnapshot(makeRun({ run_phase: 'running' }), new Date()),
+      { definitionError: ERR },
+    );
     const f = findings.find((x) => x.kind === 'definition_unresolvable');
     expect(f).toBeDefined();
     expect(f?.reason).toBe(
@@ -1421,7 +1425,10 @@ describe('definition_unresolvable (issue #558 PR-T)', () => {
 
   it('DU2 a TERMINAL run gets NO finding — its copy matters only to replay/drain, and the one remedy (abandon) refuses a finished run (review fold C6)', () => {
     const findings = classifyRunHealth(
-      makeRun({ terminal_state: true, run_phase: 'failed', failed_steps: ['s1'] }),
+      writtenSnapshot(
+        makeRun({ terminal_state: true, run_phase: 'failed', failed_steps: ['s1'] }),
+        new Date(),
+      ),
       { definitionError: ERR },
     );
     expect(findings.map((f) => f.kind)).not.toContain('definition_unresolvable');
@@ -1429,16 +1436,19 @@ describe('definition_unresolvable (issue #558 PR-T)', () => {
 
   it('DU6 a GATE-WAITING run gets the finding too — its gate cannot be answered until the copy reads, so a sweep must find it (review fold C13; the --stuck label forks to inspect)', () => {
     const findings = classifyRunHealth(
-      makeRun({
-        run_phase: 'gate_waiting',
-        pending_gate: {
-          gate_id: 'g1',
-          step_name: 'gated',
-          choices: ['approve'],
-          opened_at: NOW.toISOString(),
-          preview: {},
-        },
-      }),
+      writtenSnapshot(
+        makeRun({
+          run_phase: 'gate_waiting',
+          pending_gate: {
+            gate_id: 'g1',
+            step_name: 'gated',
+            choices: ['approve'],
+            opened_at: NOW.toISOString(),
+            preview: {},
+          },
+        }),
+        new Date(),
+      ),
       { definitionError: ERR },
     );
     expect(findings.map((f) => f.kind)).toContain('definition_unresolvable');
@@ -1446,26 +1456,26 @@ describe('definition_unresolvable (issue #558 PR-T)', () => {
 
   it('DU3 no definitionError ⇒ no such finding, on either path (the option is additive)', () => {
     expect(
-      classifyRunHealth(makeRun({ run_phase: 'running' })).some(
+      classifyRunHealth(writtenSnapshot(makeRun({ run_phase: 'running' }), new Date())).some(
         (f) => f.kind === 'definition_unresolvable',
       ),
     ).toBe(false);
     expect(
-      classifyRunHealth(makeRun({ terminal_state: true, run_phase: 'completed' })).some(
-        (f) => f.kind === 'definition_unresolvable',
-      ),
+      classifyRunHealth(
+        writtenSnapshot(makeRun({ terminal_state: true, run_phase: 'completed' }), new Date()),
+      ).some((f) => f.kind === 'definition_unresolvable'),
     ).toBe(false);
   });
 
   it('DU4 the finding carries NO `severity` key — no kind in this module has one (round-2 N-B1)', () => {
-    const f = classifyRunHealth(makeRun({ run_phase: 'running' }), { definitionError: ERR }).find(
-      (x) => x.kind === 'definition_unresolvable',
-    );
+    const f = classifyRunHealth(writtenSnapshot(makeRun({ run_phase: 'running' }), new Date()), {
+      definitionError: ERR,
+    }).find((x) => x.kind === 'definition_unresolvable');
     expect(Object.keys(f!)).toEqual(['kind', 'reason', 'evidence']);
   });
 
   it('DU5 a class-less failure (a parse error carries only a path) still mints, with code alone', () => {
-    const f = classifyRunHealth(makeRun({ run_phase: 'running' }), {
+    const f = classifyRunHealth(writtenSnapshot(makeRun({ run_phase: 'running' }), new Date()), {
       definitionError: { code: 'RESOURCE_FORMAT_INVALID', message: 'not parseable JSON: boom' },
     }).find((x) => x.kind === 'definition_unresolvable');
     expect(f?.evidence).toEqual({ workflow_id: 'wf', code: 'RESOURCE_FORMAT_INVALID' });
@@ -1531,7 +1541,7 @@ describe('issue #729 — cannot_go_on (the operator-side stuck marker)', () => {
   const kinds = (fs: ReturnType<typeof classifyRunHealth>) => fs.map((f) => f.kind);
 
   it('1. fires on W2’s stuck run with its definition: the step, the check, since = updated_at, the refused entries whole', () => {
-    const findings = classifyRunHealth(w2Stuck, { now: NOW, definition: W2 });
+    const findings = classifyRunHealth(writtenSnapshot(w2Stuck, NOW), { definition: W2 });
     const f = findings.find((x) => x.kind === 'cannot_go_on');
     const refused = f?.evidence?.['refused'] as Array<Record<string, unknown>> | undefined;
     // The facts the ways carry for the refused step — the finding's evidence must be them, whole.
@@ -1567,7 +1577,7 @@ describe('issue #729 — cannot_go_on (the operator-side stuck marker)', () => {
     const d = def({ x: needsN, b: { description: 'B', execution: 'auto', depends_on: [] } });
     // A regression cell on PR-0's arm (`cannotGoOnFrom`: advance offered → false). (a) red when
     //     that arm is removed — the refused sibling then makes the run "stuck"; (b) prints kinds.
-    expect(kinds(classifyRunHealth(run, { now: NOW, definition: d }))).toEqual([]);
+    expect(kinds(classifyRunHealth(writtenSnapshot(run, NOW), { definition: d }))).toEqual([]);
   });
 
   it('2b. NOT when the run can go on: an agent step ready beside a step refused before its claim', () => {
@@ -1575,7 +1585,7 @@ describe('issue #729 — cannot_go_on (the operator-side stuck marker)', () => {
     const d = def({ x: needsN, a: { description: 'A', execution: 'agent', depends_on: [] } });
     // A regression cell on PR-0's arm (an agent `run_step` offered → false). (a) red when that arm
     //     is removed; (b) prints kinds.
-    expect(kinds(classifyRunHealth(run, { now: NOW, definition: d }))).toEqual([]);
+    expect(kinds(classifyRunHealth(writtenSnapshot(run, NOW), { definition: d }))).toEqual([]);
   });
 
   it('3. NOT on a run waiting on a question', () => {
@@ -1597,7 +1607,9 @@ describe('issue #729 — cannot_go_on (the operator-side stuck marker)', () => {
     // (a) red when a run at an open question is judged stuck (the pre-filter, PR-0's respond arms
     //     and its composer's question rule all broken); (b) prints kinds.
     expect(
-      kinds(classifyRunHealth(run, { now: NOW, definition: d })).includes('cannot_go_on'),
+      kinds(classifyRunHealth(writtenSnapshot(run, NOW), { definition: d })).includes(
+        'cannot_go_on',
+      ),
     ).toBe(false);
   });
 
@@ -1619,7 +1631,9 @@ describe('issue #729 — cannot_go_on (the operator-side stuck marker)', () => {
     // (a) red when a step held elsewhere does not keep the run off the list (the pre-filter's
     //     in-progress conjunct and PR-0's held_elsewhere arm broken); (b) prints kinds.
     expect(
-      kinds(classifyRunHealth(run, { now: NOW, definition: d })).includes('cannot_go_on'),
+      kinds(classifyRunHealth(writtenSnapshot(run, NOW), { definition: d })).includes(
+        'cannot_go_on',
+      ),
     ).toBe(false);
   });
 
@@ -1639,13 +1653,13 @@ describe('issue #729 — cannot_go_on (the operator-side stuck marker)', () => {
     });
     // (a) red when `cannotGoOnUntilCorrected` is swapped for `cannotGoOnFrom` (a capability then
     //     counts as a workflow to correct); (b) prints kinds.
-    expect(kinds(classifyRunHealth(run, { now: NOW, definition: d }))).toEqual([
+    expect(kinds(classifyRunHealth(writtenSnapshot(run, NOW), { definition: d }))).toEqual([
       'capability_block',
     ]);
   });
 
   it('6. NOT without a definition: the classifier stays record-only', () => {
     // (a) red when the definition guard is removed; (b) prints kinds.
-    expect(kinds(classifyRunHealth(w2Stuck, { now: NOW }))).toEqual([]);
+    expect(kinds(classifyRunHealth(writtenSnapshot(w2Stuck, NOW)))).toEqual([]);
   });
 });

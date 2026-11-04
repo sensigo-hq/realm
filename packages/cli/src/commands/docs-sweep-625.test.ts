@@ -82,7 +82,11 @@ describe(
 
     async function started(def: WorkflowDefinition, params: Record<string, unknown> = {}) {
       await workflowStore.register(def);
-      const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params });
+      const { record: run } = await runStore.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params,
+      });
       return run.id;
     }
 
@@ -198,7 +202,7 @@ describe(
         input: {},
         dispatcher: async () => ({}),
       });
-      const record = await runStore.get(id);
+      const { record: record } = await runStore.get(id);
       await runStore.update({
         ...record,
         pending_gate: {
@@ -242,7 +246,11 @@ describe(
         encoding: 'utf8',
       });
       expect(reg.status, reg.stderr).toBe(0);
-      const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runStore.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const id = run.id;
       // The answer to `draft` chains into `review`, whose gate opens.
       const chained = await executeChain(runStore, def, {
@@ -252,7 +260,7 @@ describe(
         dispatcher: async () => ({ subject: 'Closed', body: 'The office is closed.' }),
       });
       expect(chained.status, 'fixture').toBe('confirm_required');
-      const gateId = (await runStore.get(id)).pending_gate!.gate_id;
+      const gateId = (await runStore.get(id)).record.pending_gate!.gate_id;
       const r = spawnSync(
         process.execPath,
         [CLI, 'run', 'respond', id, '--gate', gateId, '--choice', 'send'],
@@ -301,7 +309,7 @@ describe(
       );
       const id = await started(def, { path: '/no/such/file-625' });
       await advanceRun(runStore, def, { runId: id });
-      expect((await runStore.get(id)).failed_steps, 'fixture').toEqual(['fetch']);
+      expect((await runStore.get(id)).record.failed_steps, 'fixture').toEqual(['fetch']);
       const r = realm(['run', 'resume', id, '--from', 'fetch']);
       const shown = block('docs/guides/operate-runs.md', 'Resumed run ').map((l) =>
         l.replaceAll('4a0eafe2-afff-40ca-8b89-ad0e92db1a9c', id),
@@ -322,7 +330,7 @@ describe(
         ].join('\n'),
       );
       const askId = await started(agentDef);
-      const failedAsk = await runStore.get(askId);
+      const { record: failedAsk } = await runStore.get(askId);
       await runStore.update({
         ...failedAsk,
         run_phase: 'failed',
@@ -387,7 +395,7 @@ describe(
         ].join('\n'),
       );
       const ended = await started(endedDef);
-      const rec = await runStore.get(ended);
+      const { record: rec } = await runStore.get(ended);
       // `fetch` failed and the run's cleanup step failed too: both are listed as failed.
       await runStore.update({
         ...rec,
@@ -419,7 +427,7 @@ describe(
         ].join('\n'),
       );
       const two = await started(twoDef);
-      const rec2 = await runStore.get(two);
+      const { record: rec2 } = await runStore.get(two);
       await runStore.update({
         ...rec2,
         run_phase: 'failed',
@@ -486,7 +494,7 @@ describe(
           input: {},
           dispatcher: async () => ({}),
         });
-        const record = await runStore.get(id);
+        const { record: record } = await runStore.get(id);
         await runStore.update({
           ...record,
           pending_gate: {
@@ -654,7 +662,11 @@ describe(
       }
       const racing = new RacingStore(join(home, '.realm', 'runs'));
       await workflowStore.register(def);
-      const { run } = await racing.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await racing.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const registry = new ExtensionRegistry();
       registry.register('handler', 'ok', {
         id: 'ok',
@@ -791,7 +803,7 @@ describe(
         input: {},
         dispatcher: async () => ({}),
       });
-      const record = await runStore.get(id);
+      const { record: record } = await runStore.get(id);
       await runStore.update({
         ...record,
         pending_gate: {
@@ -804,7 +816,7 @@ describe(
       const r = realm(['run', 'advance', id]);
       // F1: the expiry line's lag follows the clock — `<lag>` in its place.
       const lines = lagless([...r.out, ...r.err]);
-      const expiry = `⚠ gate '${gateId}' on 'confirm' had expired <lag> before this call — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`;
+      const expiry = `⚠ gate '${gateId}' on 'confirm' had expired <lag> before this call (deadline <instant>) — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`;
       // (a) red when the guard's line is lost, printed twice, replaced by the reply's MCP words, or
       //     the run does not complete; (b) prints the output and the exit.
       expect({
@@ -812,7 +824,7 @@ describe(
         expiry: lines.filter((l) => l.startsWith('⚠ gate ')),
         passed: lines.filter((l) => l === "Guard step 'only_if_approved' passed."),
         mcpWords: lines.filter((l) => l.includes('get_run_state')),
-        phase: (await runStore.get(id)).run_phase,
+        phase: (await runStore.get(id)).record.run_phase,
         // decision C187 (walk c8, W5-1): the guard decided between `after` and `finish` prints
         // between their lines — (a) red when it prints after the later step's arrow.
         order: r.out.filter(
@@ -882,7 +894,8 @@ describe('issue #729 — operate-runs.md: `--stuck` lists the runs that need som
       const runStore = new JsonFileStore(join(home, '.realm', 'runs'));
       await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(W2);
       const create = async () =>
-        (await runStore.create({ workflowId: 'w2-crown', workflowVersion: 1, params: {} })).run.id;
+        (await runStore.create({ workflowId: 'w2-crown', workflowVersion: 1, params: {} })).record
+          .id;
       const stuck = await create();
       const healthy = await create();
       const registry = createDefaultRegistry();
@@ -907,11 +920,15 @@ describe('issue #729 — operate-runs.md: `--stuck` lists the runs that need som
       //     `idle:` on each run's line.
       expect({
         code: r.status,
-        stuck: lines.find((l) => l.startsWith(stuck))?.replace(/^.* idle: /, ''),
+        // #715 (b) (03 §B.2 A7): the idle age carries its instant; under a minute, in seconds.
+        stuck: lines
+          .find((l) => l.startsWith(stuck))
+          ?.replace(/^.* idle: /, '')
+          .replace(/^\d+s ago \(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\)/, '<age>'),
         healthyListed: lines.some((l) => l.startsWith(healthy)),
       }).toEqual({
         code: 0,
-        stuck: `0m  publish=cannot_go_on(input_schema) (realm run inspect ${stuck})`,
+        stuck: `<age>  publish=cannot_go_on(input_schema) (realm run inspect ${stuck})`,
         healthyListed: false,
       });
     },

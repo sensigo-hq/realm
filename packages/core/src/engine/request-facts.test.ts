@@ -36,7 +36,11 @@ describe('issue #600 PR 2 — request names are bounded on the stored record (A3
 
   /** Writes one request through a step's evidence; returns the stored request's name fields. */
   const stored = async (names: Partial<UsageRecord>) => {
-    const { run } = await store.create({ workflowId: DEF.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: DEF.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const usage: UsageRecord = {
       request_index: 0,
       request_start: '2026-10-14T00:00:00.000Z',
@@ -51,7 +55,7 @@ describe('issue #600 PR 2 — request names are bounded on the stored record (A3
       stepMeta: { usage: [usage] },
     });
     expect(envelope.status).toBe('ok');
-    const record = await store.get(run.id);
+    const { record: record } = await store.get(run.id);
     const request = record.evidence[0]!.diagnostics!.cache!.requests[0]!;
     return {
       model: request.model,
@@ -96,7 +100,11 @@ describe('issue #600 PR 2 — request names are bounded on the stored record (A3
   // provider module writes, bounded by the same rule. Read on the stored record. (a) red when the two
   // fields are not in the bounded list; (b) prints the stored fields (lengths and endings, test values).
   it('a 300-character cache_requested is stored cut to 200, with the house marker', async () => {
-    const { run } = await store.create({ workflowId: DEF.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: DEF.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await executeStep(store, DEF, {
       runId: run.id,
       command: 'work',
@@ -112,7 +120,7 @@ describe('issue #600 PR 2 — request names are bounded on the stored record (A3
         ],
       },
     });
-    const value = (await store.get(run.id)).evidence[0]!.diagnostics!.cache!.requests[0]!
+    const value = (await store.get(run.id)).record.evidence[0]!.diagnostics!.cache!.requests[0]!
       .cache_requested as string;
     expect({ length: value.length, ending: value.slice(NAME_MAX_LENGTH) }).toEqual({
       length: NAME_MAX_LENGTH + NAME_CAP_MARKER.length,
@@ -122,7 +130,11 @@ describe('issue #600 PR 2 — request names are bounded on the stored record (A3
 
   it('a cache_requested_source with an inner newline is not stored; valid words are stored unchanged', async () => {
     const write = async (extra: Partial<UsageRecord>) => {
-      const { run } = await store.create({ workflowId: DEF.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: DEF.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await executeStep(store, DEF, {
         runId: run.id,
         command: 'work',
@@ -132,7 +144,7 @@ describe('issue #600 PR 2 — request names are bounded on the stored record (A3
           usage: [{ request_index: 0, request_start: '2026-10-14T00:00:00.000Z', ...extra }],
         },
       });
-      const r = (await store.get(run.id)).evidence[0]!.diagnostics!.cache!.requests[0]!;
+      const r = (await store.get(run.id)).record.evidence[0]!.diagnostics!.cache!.requests[0]!;
       return {
         cache_requested: r.cache_requested,
         cache_requested_source: r.cache_requested_source,
@@ -170,7 +182,11 @@ describe('issue #600 PR 2 — request names are bounded on the stored record (A3
   // it; (b) prints the stored `cache_auto` and name of each request (test values only).
   it('cache_auto on the stored record: a malformed one is dropped; a valid one comes back normalised, its extra key gone', async () => {
     const storedAuto = async (cache_auto: unknown, model?: string) => {
-      const { run } = await store.create({ workflowId: DEF.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: DEF.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const usage = {
         request_index: 0,
         request_start: '2026-10-16T00:00:00.000Z',
@@ -185,7 +201,8 @@ describe('issue #600 PR 2 — request names are bounded on the stored record (A3
         dispatcher: echo,
         stepMeta: { usage: [usage] },
       });
-      const request = (await store.get(run.id)).evidence[0]!.diagnostics!.cache!.requests[0]!;
+      const request = (await store.get(run.id)).record.evidence[0]!.diagnostics!.cache!
+        .requests[0]!;
       return {
         has: Object.hasOwn(request, 'cache_auto'),
         cache_auto: request.cache_auto,

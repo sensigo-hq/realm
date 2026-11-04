@@ -12,6 +12,7 @@ import { JsonFileStore } from '@sensigo/realm';
 import type { RunRecord, RunStore, WorkflowDefinition } from '@sensigo/realm';
 import { InMemoryStore } from './in-memory-store.js';
 import { runStoreFidelityContract } from './run-store-fidelity-contract.js';
+import type { Snapshot } from '@sensigo/realm';
 
 const agentWf: WorkflowDefinition = {
   id: 'tck-output-source',
@@ -38,7 +39,7 @@ describe('#625 PR-2a, F4 — EVIDENCE_KEEPS_DRIVER_AND_PROOF covers output_sourc
 
   it('REJECTS a store that drops output_source (red against a lossy store)', async () => {
     class DropsOutputSource extends InMemoryStore {
-      override update(record: RunRecord): Promise<RunRecord> {
+      override update(record: RunRecord): Promise<Snapshot> {
         return super.update({
           ...record,
           evidence: record.evidence.map(({ output_source: _gone, ...rest }) => rest),

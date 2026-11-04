@@ -12,9 +12,7 @@ import {
   ExtensionRegistry,
   describePending,
   executeStep,
-  submitHumanResponse,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
-  type RunRecord,
   type WorkflowDefinition,
   type ExtensionIdentityEntry,
   type Unavailable,
@@ -26,6 +24,7 @@ import {
   WorkflowError,
   type Attributed,
   type StepHandlerResult,
+  writeTestClockFile,
 } from '@sensigo/realm';
 import { FIT_WORDS, fitWords, advanceRunFromShell } from './run-advance.js';
 import { stopReasons } from './ways-renderer.js';
@@ -53,6 +52,7 @@ const refused = (step: string, check: 'trust' | 'precondition', refusal: string)
 import { inspectRun } from './inspect.js';
 import { resumeRun } from './resume.js';
 import { sweepExpiredGates } from './listen.js';
+import { writtenSnapshot } from '@sensigo/realm';
 
 const wf = (id: string, steps: WorkflowDefinition['steps']): WorkflowDefinition => ({
   id,
@@ -165,7 +165,11 @@ describe('#625 PR-2a — realm run advance: the words', () => {
         y: { description: 'Y', execution: 'agent', depends_on: [] },
       });
       await workflows.register(d);
-      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const registry = new ExtensionRegistry();
       registry.register('handler', 'boom', {
         id: 'boom',
@@ -205,7 +209,11 @@ describe('#625 PR-2a — realm run advance: the words', () => {
         y: { description: 'Y', execution: 'agent', depends_on: [] },
       });
       await workflows.register(d);
-      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const lines: string[] = [];
       const code = await advanceRunFromShell(
         run.id,
@@ -244,7 +252,11 @@ describe('#625 PR-2a — realm run advance: the words', () => {
         y: { description: 'Y', execution: 'agent', depends_on: [] },
       });
       await workflows.register(d);
-      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const lines: string[] = [];
       const code = await advanceRunFromShell(
         run.id,
@@ -281,7 +293,11 @@ describe('#625 PR-2a — realm run advance: the words', () => {
         y: { description: 'Y', execution: 'agent', depends_on: ['x'] },
       });
       await workflows.register(d);
-      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const realClaim = runs.claimStep.bind(runs);
       let first = true;
       runs.claimStep = async (...args: Parameters<JsonFileStore['claimStep']>) => {
@@ -305,7 +321,7 @@ describe('#625 PR-2a — realm run advance: the words', () => {
         (l) => lines.push(l),
         new ExtensionRegistry(),
       );
-      const since = (await runs.get(run.id)).claims?.['x']?.since;
+      const since = (await runs.get(run.id)).record.claims?.['x']?.since;
       expect(code).toBe(0);
       expect(lines.slice(4)).toEqual([
         '→ x',
@@ -314,71 +330,6 @@ describe('#625 PR-2a — realm run advance: the words', () => {
         // holder and the time are on the taken line above, printed once (decision C43).
         `Stopped: 'x' is in flight in another program — wait for it, or see realm run inspect ${run.id}`,
         `Run ${run.id}: phase 'running'`,
-      ]);
-    } finally {
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
-
-  it('C28: a guard the advance loop settled that ended the run — its sentence, then PR-1’s Reason line', async () => {
-    const { home, runs: json, workflows } = stores();
-    try {
-      const d = wf('guard-end-wf', {
-        confirm: {
-          description: 'Confirm',
-          execution: 'auto',
-          trust: 'human_confirmed',
-          depends_on: [],
-          gate: { choices: ['approve', 'reject'] },
-        },
-        check: {
-          description: 'Check',
-          execution: 'guard',
-          depends_on: ['confirm'],
-          abort_unless: ["confirm.choice == 'approve'"],
-          abort_message: 'Not approved by the reviewer.',
-        },
-        finish: { description: 'Finish', execution: 'agent', depends_on: ['check'] },
-      });
-      await workflows.register(d);
-      // The same store with `settleStep` hidden — the legacy two-write shape, where the answer
-      // leaves the guard pending and the advance loop settles it (its replies carry no `ended_by`).
-      const runs = new Proxy(json, {
-        get(target, prop, receiver) {
-          if (prop === 'settleStep') return undefined;
-          const v = Reflect.get(target, prop, receiver) as unknown;
-          return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
-        },
-      }) as unknown as JsonFileStore;
-      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
-      await executeStep(runs, d, {
-        runId: run.id,
-        command: 'confirm',
-        input: {},
-        dispatcher: async () => ({}),
-      });
-      const gate = (await runs.get(run.id)).pending_gate!;
-      await submitHumanResponse(runs, d, { runId: run.id, gateId: gate.gate_id, choice: 'reject' });
-      const lines: string[] = [];
-      const code = await advanceRunFromShell(
-        run.id,
-        { project: home },
-        runs,
-        workflows,
-        undefined,
-        (l) => lines.push(l),
-        new ExtensionRegistry(),
-      );
-      expect(code).toBe(0);
-      const ending = lines.slice(4);
-      expect(ending.slice(1, 2)).toEqual(['Reason: Not approved by the reviewer.']);
-      expect(ending[0]).toContain("'check'");
-      expect(ending.slice(2)).toEqual([
-        // decision C109: the command renders its reply's warnings — this fixture's store is a
-        // legacy one (no settleStep), whose advisory the reply carries.
-        '⚠ settled via the legacy compatibility path — this store does not declare atomic settlement (RunStore.settleStep); upgrade the store to close the fan-out seal race (issue #279)',
-        'Stopped: the run has ended (aborted)',
-        `Run ${run.id}: phase 'aborted'`,
       ]);
     } finally {
       rmSync(home, { recursive: true, force: true });
@@ -394,7 +345,11 @@ describe('#625 PR-2a — realm run advance: the words', () => {
         c: { description: 'C', execution: 'auto', depends_on: ['b'] },
       });
       await workflows.register(d);
-      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const echo = async (_s: string, i: Record<string, unknown>) => i;
       const one = { by: 'one@host', by_source: 'derived', channel: 'agent' } as const;
       await executeStep(runs, d, {
@@ -404,7 +359,9 @@ describe('#625 PR-2a — realm run advance: the words', () => {
         dispatcher: echo,
         driver: one,
       });
-      const at = (await runs.get(run.id)).evidence.find((e) => e.step_id === 'a')!.completed_at;
+      const at = (await runs.get(run.id)).record.evidence.find(
+        (e) => e.step_id === 'a',
+      )!.completed_at;
       const preview = async (): Promise<string> => {
         const lines: string[] = [];
         await advanceRunFromShell(
@@ -440,7 +397,11 @@ describe('#625 PR-2a — realm run advance: the words', () => {
         c: { description: 'C', execution: 'auto', depends_on: ['b'] },
       });
       await workflows.register(d);
-      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const echo = async (_s: string, i: Record<string, unknown>) => i;
       await executeStep(runs, d, {
         runId: run.id,
@@ -450,7 +411,9 @@ describe('#625 PR-2a — realm run advance: the words', () => {
         driver: { by: 'one@host', by_source: 'derived', channel: 'agent' },
       });
       await executeStep(runs, d, { runId: run.id, command: 'b', input: {}, dispatcher: echo });
-      const at = (await runs.get(run.id)).evidence.find((e) => e.step_id === 'a')!.completed_at;
+      const at = (await runs.get(run.id)).record.evidence.find(
+        (e) => e.step_id === 'a',
+      )!.completed_at;
       const lines: string[] = [];
       await advanceRunFromShell(
         run.id,
@@ -486,7 +449,11 @@ describe('#625 PR-2a — inspect names each engine step that cannot run', () => 
         },
       });
       await workflows.register(d);
-      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const out = await inspectRun(run.id, runs, workflows);
       expect(out).toContain(
         "Cannot run 'x' (precondition): Precondition failed for step 'x'. Precondition failed: 'nothing.ok == true'. Resolved value: undefined.",
@@ -518,7 +485,11 @@ describe("#625 PR-2a — listen's sweeper names the owed steps an expiry leaves"
         after: { description: 'A', execution: 'auto', depends_on: ['confirm'] },
       });
       await workflows.register(d);
-      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await executeStep(runs, d, {
         runId: run.id,
         command: 'confirm',
@@ -531,15 +502,19 @@ describe("#625 PR-2a — listen's sweeper names the owed steps an expiry leaves"
         warn: () => {},
         error: () => {},
       };
-      await sweepExpiredGates(
-        { runStore: runs, workflowStore: workflows, logger } as never,
-        new Date(Date.now() + 3_600_000),
-      );
+      // #715 (b): the store's clock decides — the same folder reopened as a test location an hour on.
+      await writeTestClockFile(dirname(runs.runsDirPath), new Date(Date.now() + 3_600_000));
+      await sweepExpiredGates({
+        runStore: new JsonFileStore(runs.runsDirPath),
+        workflowStore: workflows,
+        logger,
+      } as never);
       const line = logged.find(([m]) => m === 'listen: sweeper enacted an expired gate');
       expect((line?.[1] as Record<string, unknown>)['owed']).toEqual(['after']);
-      expect(describePending(d, await runs.get(run.id), undefined, new Date()).owed).toEqual([
-        { step: 'after' },
-      ]);
+      expect(
+        describePending(d, writtenSnapshot((await runs.get(run.id)).record, new Date()), undefined)
+          .owed,
+      ).toEqual([{ step: 'after' }]);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -554,7 +529,11 @@ describe('#625 PR-2a, C37 — realm run advance and respond: the words after the
         a: { description: 'A', execution: 'auto', depends_on: [] },
       });
       await workflows.register(d);
-      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const lines: string[] = [];
       const code = await advanceRunFromShell(
         run.id,
@@ -582,13 +561,17 @@ describe('#625 PR-2a, C37 — realm run advance and respond: the words after the
     try {
       const d = wf('held-wf', { x: { description: 'X', execution: 'auto', depends_on: [] } });
       await workflows.register(d);
-      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await runs.claimStep(run.id, 'x', d, {
         by: 'other@host',
         by_source: 'derived',
         channel: 'advance',
       });
-      const since = (await runs.get(run.id)).claims?.['x']?.since;
+      const since = (await runs.get(run.id)).record.claims?.['x']?.since;
       expect(since).toBeDefined();
       const lines: string[] = [];
       const code = await advanceRunFromShell(
@@ -623,7 +606,11 @@ describe('#625 PR-2a, C37 — realm run advance and respond: the words after the
         },
       });
       await workflows.register(d);
-      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const lines: string[] = [];
       const code = await advanceRunFromShell(
         run.id,
@@ -668,14 +655,18 @@ describe('#625 PR-2a, C37 — realm run advance and respond: the words after the
         }
         const d = wf(`respond-${owed.length}`, steps);
         await workflows.register(d);
-        const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+        const { record: run } = await runs.create({
+          workflowId: d.id,
+          workflowVersion: 1,
+          params: {},
+        });
         await executeStep(runs, d, {
           runId: run.id,
           command: 'confirm',
           input: {},
           dispatcher: async () => ({}),
         });
-        const gate = (await runs.get(run.id)).pending_gate!;
+        const gate = (await runs.get(run.id)).record.pending_gate!;
         const out = await respondToGate(
           run.id,
           { gate: gate.gate_id, choice: 'approve' },
@@ -718,7 +709,11 @@ describe('#625 PR-2a, C43 and C44 — realm run advance: the opening says whethe
     try {
       const d = wf('c43-ended', { x: { description: 'X', execution: 'auto', depends_on: [] } });
       await workflows.register(d);
-      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       expect((await advance(runs, workflows, home, run.id)).code).toBe(0);
       const again = await advance(runs, workflows, home, run.id);
       expect(again.code).toBe(0);
@@ -765,7 +760,11 @@ describe('#625 PR-2a, C43 and C44 — realm run advance: the opening says whethe
           x: step as unknown as WorkflowDefinition['steps'][string],
         });
         await workflows.register(d);
-        const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+        const { record: run } = await runs.create({
+          workflowId: d.id,
+          workflowVersion: 1,
+          params: {},
+        });
         const { code, lines } = await advance(runs, workflows, home, run.id);
         expect(code).toBe(1);
         expect(lines).toHaveLength(5);
@@ -793,7 +792,11 @@ describe('#625 PR-2a, C43 and C44 — realm run advance: the opening says whethe
         b: { description: 'B', execution: 'auto', depends_on: [] },
       });
       await workflows.register(d);
-      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const { code, lines } = await advance(runs, workflows, home, run.id);
       expect(code).toBe(1);
       expect(lines.slice(3, 5)).toEqual(["Owed to the engine: 'b'.", '→ b']);
@@ -814,7 +817,11 @@ describe('#625 PR-2a, C43 and C44 — realm run advance: the opening says whethe
         y: { description: 'Y', execution: 'agent', depends_on: [] },
       });
       await workflows.register(d);
-      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const { lines } = await advance(runs, workflows, home, run.id);
       expect(lines.join('\n')).not.toContain('correct the workflow');
       // decision C212: several reasons — each on a line of its own, under the opening.
@@ -857,7 +864,11 @@ describe('#625 PR-2a, C46 — inspect reads the record alone', () => {
         x: { description: 'X', execution: 'auto', depends_on: [], handler: 'missing_h' },
       });
       await workflows.register(d);
-      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const { advanceRun } = await import('@sensigo/realm');
       await advanceRun(runs, d, { runId: run.id, registry: new ExtensionRegistry() });
       // eslint-disable-next-line no-control-regex
@@ -928,11 +939,15 @@ describe('#625 PR-2a, round 6 — the count words (C55), the fit words (C56), an
       await workflows.register(d);
       const registry = new ExtensionRegistry();
       registry.setIdentity(identity());
-      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       expect((await preview(runs, workflows, home, run.id, registry))[1]).toBe(
         'This program: no name could be recorded · project code: not comparable — the run has recorded no project code yet.',
       );
-      const stored = await runs.get(run.id);
+      const { record: stored } = await runs.get(run.id);
       await runs.update({ ...stored, extension_identity: [identity('r2')] });
       expect((await preview(runs, workflows, home, run.id, registry))[1]).toBe(
         "This program: no name could be recorded · project code: not comparable with the run's last record.",
@@ -951,8 +966,8 @@ describe('#625 PR-2a, round 6 — the count words (C55), the fit words (C56), an
         b: { description: 'B', execution: 'agent', depends_on: [] },
       });
       for (const d of [one, two]) await workflows.register(d);
-      const r1 = (await runs.create({ workflowId: one.id, workflowVersion: 1, params: {} })).run;
-      const r2 = (await runs.create({ workflowId: two.id, workflowVersion: 1, params: {} })).run;
+      const r1 = (await runs.create({ workflowId: one.id, workflowVersion: 1, params: {} })).record;
+      const r2 = (await runs.create({ workflowId: two.id, workflowVersion: 1, params: {} })).record;
       // decision C181: the waiting-process line follows the preview's ready line.
       expect((await preview(runs, workflows, home, r1.id, new ExtensionRegistry())).at(-2)).toBe(
         `Nothing is owed to the engine: an agent step is ready: 'a' — drive it with realm agent --run-id ${r1.id} --provider <provider> --model <model>`,
@@ -972,7 +987,11 @@ describe('#625 PR-2a, round 6 — the count words (C55), the fit words (C56), an
         x: { description: 'X', execution: 'auto', depends_on: [], trust: 'nope' as never },
       });
       await workflows.register(d);
-      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       // eslint-disable-next-line no-control-regex
       const screen = (await inspectRun(run.id, runs, workflows)).replace(/\x1b\[[0-9;]*m/g, '');
       expect(screen.split('\n')).toContain(
@@ -1011,7 +1030,11 @@ describe('#625 PR-2a, round 24 (the architect, m174a) — the guard line when an
         ].join('\n'),
       );
       await workflows.register(d);
-      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const registry = new ExtensionRegistry();
       registry.register('handler', 'ok', {
         id: 'ok',
@@ -1023,14 +1046,14 @@ describe('#625 PR-2a, round 24 (the architect, m174a) — the guard line when an
       const racing = new Proxy(runs, {
         get(target, prop) {
           if (prop === 'get') {
-            return async (id: string): Promise<RunRecord> => {
-              const rec = await target.get(id);
-              if (!abandoned && rec.completed_steps.includes('g')) {
+            return async (id: string) => {
+              const snapshot = await target.get(id);
+              if (!abandoned && snapshot.record.completed_steps.includes('g')) {
                 abandoned = true;
                 await abandonRun(target, id, 'another program');
                 return target.get(id);
               }
-              return rec;
+              return snapshot;
             };
           }
           const v = Reflect.get(target, prop, target) as unknown;
@@ -1049,7 +1072,7 @@ describe('#625 PR-2a, round 24 (the architect, m174a) — the guard line when an
       );
       // CONTROL: the race happened, and no guard ended the run.
       expect(abandoned).toBe(true);
-      const after = await runs.get(run.id);
+      const { record: after } = await runs.get(run.id);
       expect(after.terminal_state).toBe(true);
       expect(after.abandoned_at).toBeDefined();
       // The guard passed (the record says so), and the command says so; it never prints a guard
@@ -1119,7 +1142,7 @@ describe('#625 PR-2a, round 25 — C194 (walk c10, W1-2): realm run advance when
       ].join('\n'),
     );
     await workflows.register(d);
-    const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
     const other = new ExtensionRegistry();
     other.register('handler', 'slow', {
       id: 'slow',
@@ -1194,7 +1217,7 @@ describe('#625 PR-2a, round 25 — C194 (walk c10, W1-2): realm run advance when
         (l) => lines.push(l),
         here,
       );
-      const after = await runs.get(run.id);
+      const { record: after } = await runs.get(run.id);
       return {
         id: run.id,
         code,
@@ -1358,7 +1381,11 @@ describe('#625 PR-2a, round 25 — C194 (walk c10, W1-2): realm run advance when
         ].join('\n'),
       );
       await workflows.register(d);
-      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const registry = new ExtensionRegistry();
       registry.register('handler', 'ok', { id: 'ok', execute: async () => ({ data: {} }) });
       const seen: string[] = [];
@@ -1366,7 +1393,7 @@ describe('#625 PR-2a, round 25 — C194 (walk c10, W1-2): realm run advance when
         get(target, prop) {
           if (prop === 'settleStep') {
             return async (...args: Parameters<NonNullable<JsonFileStore['settleStep']>>) => {
-              const [id, delta, d2, o] = args;
+              const [id, delta, d2] = args;
               if (
                 delta.kind === 'settle_guard' &&
                 delta.step === 'g' &&
@@ -1376,12 +1403,12 @@ describe('#625 PR-2a, round 25 — C194 (walk c10, W1-2): realm run advance when
                 seen.push('raced');
                 const { abort: _abort, ...rest } = delta;
                 void _abort;
-                await target.settleStep!(id, { ...rest, outcome: 'pass' }, d2, o);
+                await target.settleStep!(id, { ...rest, outcome: 'pass' }, d2);
               }
               const r = await target.settleStep!(...args);
               if (delta.kind === 'settle_step' && delta.step === 'x' && !seen.includes('a')) {
                 seen.push('a');
-                const cur = await target.get(id);
+                const { record: cur } = await target.get(id);
                 const now = new Date().toISOString();
                 await target.update({
                   ...cur,
@@ -1465,7 +1492,11 @@ describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says
     try {
       const d = loadWorkflowFromString(yaml.join('\n'));
       await workflows.register(d);
-      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const ctx: Ctx = { runs, d, runId: run.id };
       const registry = new ExtensionRegistry();
       for (const [name, h] of Object.entries(handlers)) {
@@ -1489,7 +1520,7 @@ describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says
         (l) => lines.push(l),
         registry,
       );
-      const after = await runs.get(run.id);
+      const { record: after } = await runs.get(run.id);
       const first = lines.findIndex((l) => l.startsWith('→ '));
       const from =
         first >= 0 ? first : lines.findIndex((l) => l.startsWith('Owed to the engine:')) + 1;
@@ -1859,11 +1890,9 @@ describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says
     [
       "the advance call's first read (the reply names no step)",
       2,
-      [
-        'Stopped: Failed to load run from store: disk gone',
-        "Stopped: the engine still owes 's' — to run it: realm run advance <run>",
-        "Run <run>: phase 'running'",
-      ],
+      // #715 (b) (Amendment 4 (4)): the reply loaded no run, so it hands back no snapshot — the
+      // command says the engine's words and reads the run no more (no stop reasons, no phase line).
+      ['Stopped: Failed to load run from store: disk gone'],
     ],
   ] as const)(
     'the run cannot be read at %s: the engine\'s words, never "failed"; exit 1',
@@ -1921,7 +1950,7 @@ describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says
           const r = await target.settleStep!(...args);
           if (args[1].kind === 'settle_step' && args[1].step === 'x' && !wroteA) {
             wroteA = true;
-            const cur = await target.get(args[0]);
+            const { record: cur } = await target.get(args[0]);
             const now = new Date().toISOString();
             await target.update({
               ...cur,
@@ -1948,7 +1977,7 @@ describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says
   }
 
   it("the guard race, settled as failed elsewhere: the record lists the guard as failed — `'g' failed: …`, naming the guard, never the step this call ran", async () => {
-    const r = await guardChain('c199-guard-failed', false, async (target, [id, delta, d2, o]) => {
+    const r = await guardChain('c199-guard-failed', false, async (target, [id, delta, d2]) => {
       if (delta.kind === 'settle_guard' && delta.outcome === 'abort') {
         const { abort: _abort, ...rest } = delta;
         void _abort;
@@ -1960,10 +1989,9 @@ describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says
             resolutionError: { condition: 'a.ok == true', unresolvable_path: 'a.ok' },
           },
           d2,
-          o,
         );
       }
-      return target.settleStep!(id, delta, d2, o);
+      return target.settleStep!(id, delta, d2);
     });
     // (a) red when the guard the record lists as failed is not said as failed, or the line names `x`;
     //     (b) prints them.
@@ -2027,7 +2055,7 @@ describe("#625 PR-2a, round 27 — C202 (walk c12, W1-2): realm run advance give
     const { home, runs, workflows } = stores();
     const d = loadWorkflowFromString(yaml.join('\n'));
     await workflows.register(d);
-    const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
     const breaks = { on: true };
     const registry = new ExtensionRegistry();
     registry.register('handler', 'boom', {
@@ -2109,7 +2137,7 @@ describe("#625 PR-2a, round 27 — C202 (walk c12, W1-2): realm run advance give
       const first = await t.advance();
       await reclaimStep(t.runs, t.id, 'b');
       const second = await t.advance();
-      const after = await t.runs.get(t.id);
+      const { record: after } = await t.runs.get(t.id);
       // (a) red when several failed steps are not named as resume's choices; (b) prints them.
       expect({
         first: first.lines.filter((l) => l.startsWith('Stopped:')),
@@ -2149,14 +2177,14 @@ describe("#625 PR-2a, round 27 — C202 (walk c12, W1-2): realm run advance give
     const aborted = await setup([...head('c202-abort'), ...auto('s', 'stop')]);
     try {
       const finLines = (await fin.advance()).lines.filter((l) => l.startsWith('Stopped:'));
-      const finFailed = (await fin.runs.get(fin.id)).failed_steps;
+      const finFailed = (await fin.runs.get(fin.id)).record.failed_steps;
       // `a` fails while another program holds `b`; then the run is abandoned.
       await abandoned.runs.claimStep(abandoned.id, 'b', abandoned.d, OTHER);
       await abandoned.advance();
       await abandonRun(abandoned.runs, abandoned.id, 'another program');
       const abandonedLast = (await abandoned.advance()).lines.at(-1);
       await resumeRun(abandoned.id, 'a', abandoned.runs, abandoned.workflows);
-      const resumedPhase = (await abandoned.runs.get(abandoned.id)).run_phase;
+      const resumedPhase = (await abandoned.runs.get(abandoned.id)).record.run_phase;
       const reg = new ExtensionRegistry();
       reg.register('handler', 'stop', {
         id: 'stop',
@@ -2217,7 +2245,7 @@ describe("#625 PR-2a, round 27 — C202 (walk c12, W1-2): realm run advance give
         first: first.lines.slice(first.lines.indexOf('→ a')),
         code: first.code,
         next: next.lines.filter((l) => l.startsWith('→ ')),
-        done: (await t.runs.get(t.id)).completed_steps,
+        done: (await t.runs.get(t.id)).record.completed_steps,
       }).toEqual({
         first: [
           '→ a',
@@ -2257,7 +2285,11 @@ describe("#625 PR-2a, round 27 — C202 (walk c12, W1-2): realm run advance give
         ].join('\n'),
       );
       await workflows.register(d);
-      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       // Another program: its run of `s` fails.
       const otherRegistry = new ExtensionRegistry();
       otherRegistry.register('handler', 'slow', {
@@ -2301,7 +2333,7 @@ describe("#625 PR-2a, round 27 — C202 (walk c12, W1-2): realm run advance give
       expect({
         code,
         lines: lines.slice(lines.indexOf('→ s')).map((l) => l.split(run.id).join('<run>')),
-        failed: (await runs.get(run.id)).failed_steps,
+        failed: (await runs.get(run.id)).record.failed_steps,
       }).toEqual({
         code: 0,
         lines: [

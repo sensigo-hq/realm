@@ -104,7 +104,7 @@ describe('executeStep blocks when precondition fails', () => {
     };
 
     const store = new JsonFileStore(dir);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'precond-wf',
       workflowVersion: 1,
       params: {},
@@ -160,7 +160,7 @@ describe('executeStep blocks when precondition fails', () => {
     };
 
     const store = new JsonFileStore(dir);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'precond-email-wf',
       workflowVersion: 1,
       params: {},
@@ -430,7 +430,7 @@ describe('guard abort — aborted_at.conditions is bounded end-to-end (issue #15
     };
 
     const store = new JsonFileStore(dir);
-    const { run: run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'guard-bound-wf',
       workflowVersion: 1,
       params: {},
@@ -443,7 +443,7 @@ describe('guard abort — aborted_at.conditions is bounded end-to-end (issue #15
       dispatcher: async () => ({ text: 'contact jane.doe@example.com' }),
     });
 
-    const savedRun = await store.get(run.id);
+    const { record: savedRun } = await store.get(run.id);
     expect(savedRun.run_phase).toBe('aborted');
     const conditions = savedRun.aborted_at?.conditions;
     expect(conditions).toHaveLength(1);
@@ -481,7 +481,7 @@ describe("#729 PR-3 — a guard's conditions live in its diagnostics", () => {
   ] as const) {
     it(`${arm}: output_summary holds {aborted, abort_message?} only; diagnostics.guard_conditions holds the conditions`, async () => {
       const store = new JsonFileStore(dir);
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: 'guard-diag-wf',
         workflowVersion: 1,
         params: {},
@@ -492,7 +492,7 @@ describe("#729 PR-3 — a guard's conditions live in its diagnostics", () => {
         input: {},
         dispatcher: async () => ({ text: 'ok' }),
       });
-      const saved = await store.get(run.id);
+      const { record: saved } = await store.get(run.id);
       const guard = saved.evidence.filter((e) => e.step_id === 'guard-b').at(-1)!;
       // (a) red when `conditions` return to the output, or leave the diagnostics; (b) prints the
       //     output's key list and the conditions' text and verdicts (no value: the LHS is 'ok').

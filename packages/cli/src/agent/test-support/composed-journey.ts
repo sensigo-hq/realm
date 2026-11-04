@@ -143,9 +143,9 @@ export async function runComposedJourney(
     { definition, params: {}, pollIntervalMs: 50 },
   );
 
-  const runs = await store.list();
+  const runs = (await store.list()).snapshots.map((s) => s.record);
   const runId = runs[0]?.id ?? '';
-  const run = await store.get(runId);
+  const { record: run } = await store.get(runId);
 
   return {
     result,

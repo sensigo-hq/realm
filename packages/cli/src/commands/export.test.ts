@@ -526,7 +526,7 @@ describe('buildExportBundle', () => {
   it('does NOT include the idempotency-key pointer anywhere in the bundle', async () => {
     const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
     try {
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'wf-1',
         workflowVersion: 1,
         params: {},

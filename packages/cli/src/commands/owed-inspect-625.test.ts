@@ -33,17 +33,10 @@ const gate: StepDefinition = {
 };
 const echo = async (_s: string, i: Record<string, unknown>) => i;
 
-/** A store with no `settleStep`: an answer settles no guard in its own write. */
-function legacyStore(): RunStore {
-  const store = new InMemoryStore();
-  (store as unknown as { settleStep?: unknown }).settleStep = undefined;
-  return store;
-}
-
 async function answered(store: RunStore, d: WorkflowDefinition): Promise<string> {
-  const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+  const { record: run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
   await executeStep(store, d, { runId: run.id, command: 'confirm', input: {}, dispatcher: echo });
-  const g = (await store.get(run.id)).pending_gate!;
+  const g = (await store.get(run.id)).record.pending_gate!;
   await submitHumanResponse(store, d, { runId: run.id, gateId: g.gate_id, choice: 'approve' });
   return run.id;
 }
@@ -70,30 +63,19 @@ const fixtures: Fixture[] = [
     },
     owed: "'after'",
   },
-  {
-    name: 'gate→guard on a store without settleStep, answered: the guard is owed',
-    build: async () => {
-      const d = wf('l6-guard', {
-        confirm: gate,
-        check: {
-          description: 'G',
-          execution: 'guard',
-          depends_on: ['confirm'],
-          abort_unless: ["confirm.choice == 'approve'"],
-        },
-        finish: { description: 'F', execution: 'agent', depends_on: ['check'] },
-      });
-      const store = legacyStore();
-      return { store, d, runId: await answered(store, d) };
-    },
-    owed: "'check'",
-  },
+  // #715 (b), C.1: the fixture "gate→guard on a store without settleStep, answered: the guard is
+  // owed" is DELETED with the store shape it needed (every store settles the guard in the answer's
+  // write now).
   {
     name: 'a head auto step at creation: owed',
     build: async () => {
       const d = wf('l6-head', { a: { description: 'A', execution: 'auto', depends_on: [] } });
       const store = new InMemoryStore();
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       return { store, d, runId: run.id };
     },
     owed: "'a'",
@@ -110,7 +92,11 @@ const fixtures: Fixture[] = [
         },
       });
       const store = new InMemoryStore();
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       return { store, d, runId: run.id };
     },
     cannot: [
@@ -127,7 +113,11 @@ const fixtures: Fixture[] = [
         x: { description: 'X', execution: 'auto', depends_on: [], handler: 'missing_h' },
       });
       const store = new InMemoryStore();
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await advanceRun(store, d, { runId: run.id, registry: new ExtensionRegistry() });
       return { store, d, runId: run.id };
     },
@@ -142,7 +132,11 @@ const fixtures: Fixture[] = [
     build: async () => {
       const d = wf('l6-agent', { a: { description: 'A', execution: 'agent', depends_on: [] } });
       const store = new InMemoryStore();
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       return { store, d, runId: run.id };
     },
   },
@@ -154,7 +148,11 @@ const fixtures: Fixture[] = [
         after: { description: 'A', execution: 'auto', depends_on: ['confirm'] },
       });
       const store = new InMemoryStore();
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await executeStep(store, d, {
         runId: run.id,
         command: 'confirm',

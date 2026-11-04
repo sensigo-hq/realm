@@ -24,6 +24,26 @@ import { ExtensionRegistry } from '../extensions/registry.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { RunStore } from '../store/store-interface.js';
+import { writeTestClockFile } from '../store/test-clock-file.js';
+import { writtenSnapshot } from './snapshot.js';
+import { zOf } from '../test-support/instant.js';
+
+/** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
+ *  runs folder sits beside the location's clock file (first set to the host's reading), which
+ *  `setClockOf` rewrites. */
+async function testLocationRuns(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  await writeTestClockFile(root, new Date());
+  return join(root, 'runs');
+}
+async function clockedJsonStore(prefix: string): Promise<JsonFileStore> {
+  return new JsonFileStore(await testLocationRuns(prefix));
+}
+async function setClockOf(store: object, t: Date): Promise<void> {
+  const runsDir = (store as { runsDirPath?: string }).runsDirPath;
+  if (runsDir === undefined) throw new Error('setClockOf: this store is not a JSON store');
+  await writeTestClockFile(dirname(runsDir), t);
+}
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const PAGE = 'docs/reference/core-library.md';
@@ -88,8 +108,9 @@ const PLAIN: WorkflowDefinition = {
 const dispatcher = async () => ({});
 const LATER = () => new Date(Date.now() + 120_000);
 const EARLIER = () => new Date(Date.now() - 120_000);
-const line = (gateId: string, fn: string) =>
-  `gate '${gateId}' on 'q' had expired 1m before this call — this ${fn} call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: ${fn}).`;
+// #715 (b) (D6-72 (c)): the lag carries its deadline — the reply's receipt names it (`expired_at`).
+const line = (gateId: string, fn: string, expiredAt: string) =>
+  `gate '${gateId}' on 'q' had expired 1m before this call (deadline ${zOf(expiredAt)}) — this ${fn} call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: ${fn}).`;
 
 /** The store, with a count of every method called on it (reads and writes alike). */
 function counted(store: RunStore): { store: RunStore; calls: string[] } {
@@ -110,11 +131,17 @@ function counted(store: RunStore): { store: RunStore; calls: string[] } {
 describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, through the library', () => {
   let store: JsonFileStore;
   beforeEach(async () => {
-    store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-dp-625-')));
+    store = await clockedJsonStore('realm-dp-625-');
   });
 
   async function atQuestion(d: WorkflowDefinition = GATED) {
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    // #715 (b): each question opens at the host's time (a cell may have moved the store's clock).
+    await setClockOf(store, new Date());
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const opened = await executeStep(store, d, {
       runId: run.id,
       command: 'q',
@@ -122,7 +149,7 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
       dispatcher,
     });
     if (opened.status !== 'confirm_required') throw new Error(`fixture: ${opened.status}`);
-    return { runId: run.id, gateId: (await store.get(run.id)).pending_gate!.gate_id };
+    return { runId: run.id, gateId: (await store.get(run.id)).record.pending_gate!.gate_id };
   }
 
   it('line 102, the advanceRun row: advanceRun(store, definition, options) carries out the expired question first, then the guard and the auto step that are ready', async () => {
@@ -132,9 +159,9 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
     );
     const { runId, gateId } = await atQuestion(GUARDED);
     const order: string[] = [];
+    await setClockOf(store, LATER());
     const r = await advanceRun(store, GUARDED, {
       runId,
-      now: LATER(),
       onExpiry: () => void order.push('expiry'),
       onStep: (step) => void order.push(step),
     });
@@ -149,13 +176,13 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
       r.run_phase,
     ]).toEqual([
       'ok',
-      line(gateId, 'advanceRun'),
+      line(gateId, 'advanceRun', r.expiry!.expired_at),
       ['expiry', 'a', 'b'],
       ['a', 'check', 'b'],
       'completed',
     ]);
     // (a) red when the question is not settled by its expiry; (b) prints the step's record.
-    expect((await store.get(runId)).settled?.['q']).toEqual(
+    expect((await store.get(runId)).record.settled?.['q']).toEqual(
       expect.objectContaining({ choice: 'approve', resolved_by: 'timeout' }),
     );
   });
@@ -167,32 +194,36 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
     );
     for (const caller of [undefined, 'advance_run', 'advance', 'start_run', 'agent'] as const) {
       const { runId, gateId } = await atQuestion();
+      await setClockOf(store, LATER());
       const r = await advanceRun(store, GATED, {
         runId,
-        now: LATER(),
         ...(caller !== undefined ? { caller } : {}),
       });
       const named = caller ?? 'advanceRun';
       // (a) red when a word is refused, or the line or the reply names another call; (b) prints them.
-      expect([r.command, r.warnings[0]], named).toEqual([named, line(gateId, named)]);
+      expect([r.command, r.warnings[0]], named).toEqual([
+        named,
+        line(gateId, named, r.expiry!.expired_at),
+      ]);
     }
     const { runId } = await atQuestion();
-    const before = JSON.stringify(await store.get(runId));
+    const before = JSON.stringify((await store.get(runId)).record);
     // (a) red when a sixth word is taken; (b) prints the throw.
+    await setClockOf(store, LATER());
     await expect(
-      advanceRun(store, GATED, { runId, now: LATER(), caller: 'nightly' as never }),
+      advanceRun(store, GATED, { runId, caller: 'nightly' as never }),
     ).rejects.toMatchObject({ code: 'VALIDATION_CALLER_INVALID' });
-    expect(JSON.stringify(await store.get(runId))).toBe(before);
+    expect(JSON.stringify((await store.get(runId)).record)).toBe(before);
   });
 
-  it('line 103, the describePending row: describePending(definition, run, registry, now) returns an object with every field the row names', async () => {
+  it('line 103, the describePending row: describePending(definition, snapshot, registry) returns an object with every field the row names', async () => {
     claim(
       PAGE,
-      "| `describePending(definition, run, registry, now)` | Says what a run is waiting for, as an object with: `agent_steps` (the agent steps ready for an answer), `agent_refused` (the ready agent steps the run refuses before their claim, and why), `pending_guards` (the guard steps ready to be decided), `engine_runnable` (the `auto` steps it owes, each with `runnable_here`), `cannot_run` (every step that cannot run, and why), `expiry_due` (the open question whose time is up at `now` and whose `on_expiry` the engine carries out — it can no longer be answered), `open_question` (whenever the run waits on a question: its `step`, `gate_id` and `choices`) and `owed` (what the engine owes that can run with the given registry — with no registry, any owed step counts — each `{ step }`, an expired question's `on_expiry` first as `{ expiry }`; added after version 0.47.0, in place of `agent_actions` and `act`).",
+      "| `describePending(definition, snapshot, registry)` | Says what a run is waiting for, as an object with: `agent_steps` (the agent steps ready for an answer), `agent_refused` (the ready agent steps the run refuses before their claim, and why), `pending_guards` (the guard steps ready to be decided), `engine_runnable` (the `auto` steps it owes, each with `runnable_here`), `cannot_run` (every step that cannot run, and why), `expiry_due` (the open question whose time is up at the snapshot's `at` and whose `on_expiry` the engine carries out — it can no longer be answered), `open_question` (whenever the run waits on a question: its `step`, `gate_id` and `choices`) and `owed` (what the engine owes that can run with the given registry — with no registry, any owed step counts — each `{ step }`, an expired question's `on_expiry` first as `{ expiry }`; added after version 0.47.0, in place of `agent_actions` and `act`).",
     );
     const { runId, gateId } = await atQuestion();
-    const run = await store.get(runId);
-    const due = describePending(GATED, run, undefined, LATER());
+    const { record: run } = await store.get(runId);
+    const due = describePending(GATED, writtenSnapshot(run, LATER()), undefined);
     // (a) red when a field the row names is dropped, or the expired question is not named as due
     //     and as owed; (b) prints the object.
     expect(Object.keys(due).sort()).toEqual(
@@ -212,7 +243,7 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
       ['expiry'],
     ]);
     // Not yet due at the current time: nothing owed, no expiry_due.
-    const open = describePending(GATED, run, undefined, new Date());
+    const open = describePending(GATED, writtenSnapshot(run, new Date()), undefined);
     expect([open.expiry_due, open.owed]).toEqual([undefined, []]);
     // An agent step ready, and an auto step owed beside it.
     const both: WorkflowDefinition = {
@@ -224,12 +255,12 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
         y: { description: 'Y.', execution: 'auto', depends_on: [] },
       },
     };
-    const { run: fresh } = await store.create({
+    const { record: fresh } = await store.create({
       workflowId: both.id,
       workflowVersion: 1,
       params: {},
     });
-    const p = describePending(both, fresh, undefined, new Date());
+    const p = describePending(both, writtenSnapshot(fresh, new Date()), undefined);
     // (a) red when the agent step or the owed auto step is not named; (b) prints them.
     expect([
       p.agent_steps,
@@ -248,35 +279,44 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
       PAGE,
       "`options` holds `runId`, `step` and `run` (the run's record), and optionally `caller`: `executeEngineStep` (the default) or `agent`; any other value rejects with a `WorkflowError` with the code `VALIDATION_CALLER_INVALID`, naming `executeEngineStep`, before anything is read or written.",
     );
-    const { run } = await store.create({ workflowId: PLAIN.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: PLAIN.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const done = await executeEngineStep(store, PLAIN, {
       runId: run.id,
       step: 'only',
-      run: await store.get(run.id),
+      run: (await store.get(run.id)).record,
     });
     // (a) red when runId, step and run are not enough to run the step; (b) prints the reply.
-    expect([done.status, (await store.get(run.id)).completed_steps]).toEqual(['ok', ['only']]);
+    expect([done.status, (await store.get(run.id)).record.completed_steps]).toEqual([
+      'ok',
+      ['only'],
+    ]);
     for (const caller of [undefined, 'agent'] as const) {
       const { runId, gateId } = await atQuestion();
+      await setClockOf(store, LATER());
       const r = await executeEngineStep(store, GATED, {
         runId,
         step: 'after',
-        run: await store.get(runId),
-        now: LATER(),
+        run: (await store.get(runId)).record,
         ...(caller !== undefined ? { caller } : {}),
       });
       // (a) red when the default is not executeEngineStep, or agent is refused; (b) prints the line.
-      expect(r.warnings).toContain(line(gateId, caller ?? 'executeEngineStep'));
+      expect(r.warnings).toContain(
+        line(gateId, caller ?? 'executeEngineStep', r.expiry!.expired_at),
+      );
     }
     const { runId } = await atQuestion();
-    const record = await store.get(runId);
+    const { record: record } = await store.get(runId);
     const before = JSON.stringify(record);
     const watched = counted(store);
+    await setClockOf(watched.store, LATER());
     const thrown = await executeEngineStep(watched.store, GATED, {
       runId,
       step: 'after',
       run: record,
-      now: LATER(),
       caller: 'executeChain' as never,
     }).catch((e: unknown) => e);
     // (a) red when another word is taken, the throw names another function, or the store is
@@ -288,17 +328,20 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
       ),
     });
     expect(watched.calls).toEqual([]);
-    expect(JSON.stringify(await store.get(runId))).toBe(before);
+    expect(JSON.stringify((await store.get(runId)).record)).toBe(before);
   });
 
-  it('line 119, the now row: executeStep and executeChain judge the question by now — the current time by default', async () => {
+  it("line 119 (#715 (b)): executeStep and executeChain judge the question by the store's clock", async () => {
     claim(
       PAGE,
-      "| `now` | No | A `Date`, the time the call judges an open question's expiry by (default: the current time): the call carries out an expired question's declared `on_expiry` first only when the question's time is up at `now`. |",
+      "A call judges an open question's expiry by its store's clock: it carries out an expired question's declared `on_expiry` first only when the question's time is up at the store's reading (the `now` option that set this time is removed after version 0.48.0).",
     );
     for (const fn of ['executeStep', 'executeChain'] as const) {
-      const call = (runId: string, now?: Date) => {
-        const o = { runId, command: 'after', input: {}, dispatcher, ...(now ? { now } : {}) };
+      // Each round opens its questions at the host's time: the store's clock file is reset to it.
+      await setClockOf(store, new Date());
+      const call = async (runId: string, now?: Date) => {
+        if (now !== undefined) await setClockOf(store, now);
+        const o = { runId, command: 'after', input: {}, dispatcher };
         return fn === 'executeStep' ? executeStep(store, GATED, o) : executeChain(store, GATED, o);
       };
       const byDefault = await atQuestion();
@@ -307,8 +350,8 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
       const r1 = await call(early.runId, EARLIER());
       const late = await atQuestion();
       const r2 = await call(late.runId, LATER());
-      // (a) red when the call judges by something other than `now` (the clock by default), or
-      //     carries out a question whose time is not up; (b) prints the three replies.
+      // (a) red when the call judges by another clock than the store's, or carries out a question
+      //     whose time is not up; (b) prints the three replies.
       expect(
         [r0, r1, r2].map((r) => [r.status, r.warnings.some((w) => w.includes('had expired'))]),
         fn,
@@ -317,7 +360,9 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
         ['blocked', false],
         ['ok', true],
       ]);
-      expect((await store.get(byDefault.runId)).pending_gate?.gate_id).toBe(byDefault.gateId);
+      expect((await store.get(byDefault.runId)).record.pending_gate?.gate_id).toBe(
+        byDefault.gateId,
+      );
     }
   });
 
@@ -335,25 +380,29 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
       executeChain: [undefined, 'execute_step', 'agent', 'run'],
     } as const;
     for (const fn of ['executeStep', 'executeChain'] as const) {
-      const call = (s: RunStore, runId: string, caller?: string) => {
+      // #715 (b): the store's clock moves past the question's deadline (it used to be `now: LATER()`).
+      const call = async (s: RunStore, runId: string, caller?: string) => {
+        await setClockOf(store, LATER());
         const o = {
           runId,
           command: 'after',
           input: {},
           dispatcher,
-          now: LATER(),
           ...(caller !== undefined ? { caller: caller as never } : {}),
         };
         return fn === 'executeStep' ? executeStep(s, GATED, o) : executeChain(s, GATED, o);
       };
       for (const w of words[fn]) {
+        await setClockOf(store, new Date());
         const { runId, gateId } = await atQuestion();
         const r = await call(store, runId, w);
         // (a) red when a listed word is refused, or the line names another call; (b) prints it.
-        expect(r.warnings, `${fn} ${w ?? '(default)'}`).toContain(line(gateId, w ?? fn));
+        expect(r.warnings, `${fn} ${w ?? '(default)'}`).toContain(
+          line(gateId, w ?? fn, r.expiry!.expired_at),
+        );
       }
       const { runId } = await atQuestion();
-      const before = JSON.stringify(await store.get(runId));
+      const before = JSON.stringify((await store.get(runId)).record);
       const watched = counted(store);
       const other = fn === 'executeStep' ? 'run' : 'advance';
       // (a) red when a word of the other list (or any other) is taken, or the store is touched
@@ -362,7 +411,7 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
         code: 'VALIDATION_CALLER_INVALID',
       });
       expect(watched.calls).toEqual([]);
-      expect(JSON.stringify(await store.get(runId))).toBe(before);
+      expect(JSON.stringify((await store.get(runId)).record)).toBe(before);
     }
   });
 
@@ -373,18 +422,20 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
     );
     for (const w of [undefined, 'submit_human_response', 'respond', 'run', 'agent'] as const) {
       const { runId, gateId } = await atQuestion();
+      await setClockOf(store, LATER());
       const r = await submitHumanResponse(store, GATED, {
         runId,
         gateId,
         choice: 'reject',
-        now: LATER(),
         ...(w !== undefined ? { caller: w } : {}),
       });
       // (a) red when a listed word is refused, or the line names another call; (b) prints it.
-      expect(r.warnings, w ?? '(default)').toContain(line(gateId, w ?? 'submitHumanResponse'));
+      expect(r.warnings, w ?? '(default)').toContain(
+        line(gateId, w ?? 'submitHumanResponse', r.expiry!.expired_at),
+      );
     }
     const { runId, gateId } = await atQuestion();
-    const before = JSON.stringify(await store.get(runId));
+    const before = JSON.stringify((await store.get(runId)).record);
     const watched = counted(store);
     // (a) red when another word is taken, or the store is touched first; (b) prints the throw.
     await expect(
@@ -401,7 +452,7 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
       ),
     });
     expect(watched.calls).toEqual([]);
-    expect(JSON.stringify(await store.get(runId))).toBe(before);
+    expect(JSON.stringify((await store.get(runId)).record)).toBe(before);
   });
 
   it('lines 132–134, the driver rows: by 1–200 characters, not only spaces, no control character; by_source stated, ambient or derived; channel 1–64 of [a-z0-9_-] — taken and written as driven_by, or refused naming the field', async () => {
@@ -423,9 +474,13 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
       { by: 'Ana B', by_source: 'derived', channel: 'z_0-9' },
     ] as const;
     for (const driver of taken) {
-      const { run } = await store.create({ workflowId: PLAIN.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: PLAIN.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const r = await advanceRun(store, PLAIN, { runId: run.id, driver });
-      const ev = (await store.get(run.id)).evidence.find(
+      const ev = (await store.get(run.id)).record.evidence.find(
         (e) => e.step_id === 'only',
       ) as unknown as { driven_by?: unknown };
       // (a) red when a value the rows take is refused, or not written as driven_by; (b) prints it.
@@ -463,7 +518,11 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
         'Invalid driver.channel: not 1–64 characters of [a-z0-9_-].',
       ],
     ];
-    const { run } = await store.create({ workflowId: PLAIN.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: PLAIN.id,
+      workflowVersion: 1,
+      params: {},
+    });
     for (const [driver, message] of refused) {
       // (a) red when a value outside the rows is taken, or the refusal names another field;
       //     (b) prints the throw.
@@ -472,7 +531,7 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
         JSON.stringify(driver),
       ).rejects.toMatchObject({ code: 'VALIDATION_ACTOR_INVALID', message });
     }
-    expect((await store.get(run.id)).completed_steps).toEqual([]);
+    expect((await store.get(run.id)).record.completed_steps).toEqual([]);
   });
 });
 
@@ -488,9 +547,17 @@ describe('#872 (a) — core-library.md: describePending names the handler or ada
       version: 1,
       steps: { x: { description: 'X', execution: 'auto', depends_on: [], handler: 'h' } },
     } as WorkflowDefinition;
-    const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-core-library-872-')));
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
-    const byRegistry = describePending(d, run, new ExtensionRegistry(), new Date());
+    const store = await clockedJsonStore('realm-core-library-872-');
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const byRegistry = describePending(
+      d,
+      writtenSnapshot(run, new Date()),
+      new ExtensionRegistry(),
+    );
     const marked = {
       ...run,
       capability_blocks: {
@@ -501,7 +568,7 @@ describe('#872 (a) — core-library.md: describePending names the handler or ada
         },
       },
     };
-    const byMarker = describePending(d, marked, undefined, new Date());
+    const byMarker = describePending(d, writtenSnapshot(marked, new Date()), undefined);
     // (a) red when the field is missing (on `engine_runnable` or `cannot_run`), or is not the
     //     marker's on a marker-judged refusal; (b) prints the entries' basis and requirement.
     expect([

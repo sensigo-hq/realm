@@ -44,7 +44,7 @@ describe('get_run_state — blocked_on_capability (#134)', () => {
   });
 
   async function blockedRun(over: Partial<RunRecord>): Promise<string> {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'twoflow',
       workflowVersion: 1,
       params: {},

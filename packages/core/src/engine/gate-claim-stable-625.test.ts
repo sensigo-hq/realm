@@ -27,6 +27,15 @@ import { captureEvidence } from '../evidence/snapshot.js';
 import type { Attributed } from './holder.js';
 import type { ClaimRecord, PendingGate, RunRecord } from '../types/run-record.js';
 import type { StepDefinition, WorkflowDefinition } from '../types/workflow-definition.js';
+import { writeTestClockFile } from '../store/test-clock-file.js';
+
+/** #715 (b) (01 §C.4): a JSON store on a test location: its runs folder sits beside the location's
+ *  clock file, set to the host's reading. */
+async function testLocationRuns(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  await writeTestClockFile(root, new Date());
+  return join(root, 'runs');
+}
 
 const echo: StepDispatcher = async (_step, input) => ({ ...input });
 const PROGRAM: Attributed = { by: 'alice@host', by_source: 'derived', channel: 'agent' };
@@ -34,7 +43,7 @@ const PROGRAM: Attributed = { by: 'alice@host', by_source: 'derived', channel: '
 let dir: string;
 let store: JsonFileStore;
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'realm-gate-claim-stable-625-'));
+  dir = await testLocationRuns('realm-gate-claim-stable-625-');
   store = new JsonFileStore(dir);
 });
 afterEach(async () => {
@@ -73,7 +82,11 @@ interface Open {
 
 /** Opens the gate on `confirm`, taken by PROGRAM, and reads the claim and the gate back. */
 async function open(def: WorkflowDefinition): Promise<Open> {
-  const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+  const { record: run } = await store.create({
+    workflowId: def.id,
+    workflowVersion: 1,
+    params: {},
+  });
   const reply = await executeStep(store, def, {
     runId: run.id,
     command: 'confirm',
@@ -83,14 +96,14 @@ async function open(def: WorkflowDefinition): Promise<Open> {
   });
   if (reply.status !== 'confirm_required')
     throw new Error(`fixture: gate not open (${reply.status})`);
-  const after = await store.get(run.id);
+  const { record: after } = await store.get(run.id);
   const claim = after.claims!['confirm']!;
   return { runId: run.id, gate: after.pending_gate!, claim, token: claim.token! };
 }
 
 /** The claim and the open question must be exactly what `open` returned. */
 async function expectStable(o: Open): Promise<RunRecord> {
-  const after = await store.get(o.runId);
+  const { record: after } = await store.get(o.runId);
   // (a) red when the operation replaced, re-minted or removed the claim (token / holder / since /
   //     deadline differ); (b) prints the claim before and after — synthetic values only.
   expect(after.claims?.['confirm']).toEqual(o.claim);
@@ -135,8 +148,12 @@ describe('GATE_CLAIM_STABLE_WHILE_OPEN — operations that must NOT touch the op
     const def = workflow();
     // `confirm2` is claimed BEFORE the first gate opens (afterwards no sibling is eligible to be
     // claimed — the gate parks the run), so its open_gate reaches the transform and is refused there.
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
-    const sibling = await store.claimStep(run.id, 'confirm2', def, PROGRAM);
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const { record: sibling } = await store.claimStep(run.id, 'confirm2', def, PROGRAM);
     const siblingToken = sibling.claims!['confirm2']!.token;
     const reply = await executeStep(store, def, {
       runId: run.id,
@@ -146,7 +163,7 @@ describe('GATE_CLAIM_STABLE_WHILE_OPEN — operations that must NOT touch the op
       driver: PROGRAM,
     });
     expect(reply.status).toBe('confirm_required');
-    const mid = await store.get(run.id);
+    const { record: mid } = await store.get(run.id);
     const o: Open = {
       runId: run.id,
       gate: mid.pending_gate!,
@@ -171,8 +188,12 @@ describe('GATE_CLAIM_STABLE_WHILE_OPEN — operations that must NOT touch the op
 
   it('a sibling’s settle (an agent step claimed earlier completes while the question is open)', async () => {
     const def = workflow();
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
-    const taken = await store.claimStep(run.id, 'side', def, PROGRAM);
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const { record: taken } = await store.claimStep(run.id, 'side', def, PROGRAM);
     const sideToken = taken.claims!['side']!.token;
     // The gate opens while `side` is still in progress.
     const reply = await executeStep(store, def, {
@@ -183,7 +204,7 @@ describe('GATE_CLAIM_STABLE_WHILE_OPEN — operations that must NOT touch the op
       driver: PROGRAM,
     });
     expect(reply.status).toBe('confirm_required');
-    const mid = await store.get(run.id);
+    const { record: mid } = await store.get(run.id);
     const o: Open = {
       runId: run.id,
       gate: mid.pending_gate!,
@@ -216,7 +237,11 @@ describe('GATE_CLAIM_STABLE_WHILE_OPEN — operations that must NOT touch the op
 
   it('a reclaim of a SIBLING (the dead claim of another step) leaves the open question’s claim alone', async () => {
     const def = workflow();
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await store.claimStep(run.id, 'side', def, PROGRAM);
     await executeStep(store, def, {
       runId: run.id,
@@ -225,15 +250,17 @@ describe('GATE_CLAIM_STABLE_WHILE_OPEN — operations that must NOT touch the op
       dispatcher: echo,
       driver: PROGRAM,
     });
-    const mid = await store.get(run.id);
+    const { record: mid } = await store.get(run.id);
     const o: Open = {
       runId: run.id,
       gate: mid.pending_gate!,
       claim: mid.claims!['confirm']!,
       token: mid.claims!['confirm']!.token!,
     };
-    // Far enough in the future that the sibling's claim is past any deadline.
-    await reclaimStep(store, run.id, 'side', { now: new Date(Date.now() + 10 * 24 * 3600_000) });
+    // #715 (b): base passed `now` ten days ahead here; an explicit reclaim of a named step does not
+    // depend on its age, so the instant decided nothing (shown: the cell passes with the clock left
+    // where it was) — dropped, not moved onto the store's clock.
+    await reclaimStep(store, run.id, 'side', {});
     const after = await expectStable(o);
     expect(after.in_progress_steps).not.toContain('side');
   });
@@ -246,7 +273,7 @@ describe('GATE_CLAIM_STABLE_WHILE_OPEN — operations that must NOT touch the op
       gateId: o.gate.gate_id,
       choice: 'approve',
     });
-    const after = await store.get(o.runId);
+    const { record: after } = await store.get(o.runId);
     expect(after.pending_gate).toBeUndefined();
     expect(after.claims?.['confirm']).toBeUndefined();
   });
@@ -262,8 +289,12 @@ describe('GATE_CLAIM_STABLE_WHILE_OPEN — a sibling’s write whose guard casca
         abort_unless: ["side.verdict == 'ok'"],
       },
     });
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
-    const taken = await store.claimStep(run.id, 'side', def, PROGRAM);
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const { record: taken } = await store.claimStep(run.id, 'side', def, PROGRAM);
     const sideToken = taken.claims!['side']!.token;
     await executeStep(store, def, {
       runId: run.id,
@@ -272,7 +303,7 @@ describe('GATE_CLAIM_STABLE_WHILE_OPEN — a sibling’s write whose guard casca
       dispatcher: echo,
       driver: PROGRAM,
     });
-    const mid = await store.get(run.id);
+    const { record: mid } = await store.get(run.id);
     const o: Open = {
       runId: run.id,
       gate: mid.pending_gate!,
@@ -311,8 +342,12 @@ describe('GATE_CLAIM_STABLE_WHILE_OPEN — a sibling’s write whose guard casca
 describe('GATE_CLAIM_STABLE_WHILE_OPEN — the abort edge is the lawful third closer: the claim and the question go TOGETHER', () => {
   it('a sibling step that settles with outcome `abort` retires the question and its claim in the same write', async () => {
     const def = workflow();
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
-    const taken = await store.claimStep(run.id, 'side', def, PROGRAM);
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const { record: taken } = await store.claimStep(run.id, 'side', def, PROGRAM);
     const sideToken = taken.claims!['side']!.token;
     await executeStep(store, def, {
       runId: run.id,
@@ -321,7 +356,7 @@ describe('GATE_CLAIM_STABLE_WHILE_OPEN — the abort edge is the lawful third cl
       dispatcher: echo,
       driver: PROGRAM,
     });
-    const open = await store.get(run.id);
+    const { record: open } = await store.get(run.id);
     expect(open.pending_gate).toBeDefined();
     expect(open.claims?.['confirm']).toBeDefined();
     const result = await store.settleStep!(
@@ -345,7 +380,7 @@ describe('GATE_CLAIM_STABLE_WHILE_OPEN — the abort edge is the lawful third cl
       def,
     );
     expect(result.applied).toBe(true);
-    const after = await store.get(run.id);
+    const { record: after } = await store.get(run.id);
     // (a) red when the abort edge leaves the question open with its claim gone, or the claim behind
     //     with the question gone — the two must close together; (b) prints both.
     const gateGone = after.pending_gate === undefined;

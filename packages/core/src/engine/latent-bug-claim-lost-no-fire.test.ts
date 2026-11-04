@@ -35,7 +35,11 @@ describe('a claim_lost refusal fires ZERO finalizers (issue #279, increment 1, P
     const dir = await mkdtemp(join(tmpdir(), 'realm-claim-lost-no-fire-'));
     try {
       const store = new JsonFileStore(dir);
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
 
       let handlerCallCount = 0;
       const finHandler: StepHandler = {
@@ -56,7 +60,7 @@ describe('a claim_lost refusal fires ZERO finalizers (issue #279, increment 1, P
         // writer stealing the claim (a DIFFERENT token) mid-dispatch, forcing claim_lost the
         // instant this call's own settle attempt reads fresh state.
         dispatcher: async () => {
-          const mid = await store.get(run.id);
+          const { record: mid } = await store.get(run.id);
           await store.update({
             ...mid,
             claims: { ...mid.claims, a: { deadline: null, token: 'a-different-writers-token' } },
@@ -71,7 +75,7 @@ describe('a claim_lost refusal fires ZERO finalizers (issue #279, increment 1, P
       // ZERO finalizer calls — the refusal never reached mintFresh/drainFinalizers.
       expect(handlerCallCount).toBe(0);
 
-      const finalRun = await store.get(run.id);
+      const { record: finalRun } = await store.get(run.id);
       expect(finalRun.completed_steps).not.toContain('fin');
       expect(finalRun.finalizer_ledger).toBeUndefined(); // never minted
       expect(finalRun.terminal_state).toBe(false); // the run never terminalized either

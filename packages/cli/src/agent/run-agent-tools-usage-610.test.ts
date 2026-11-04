@@ -135,7 +135,7 @@ async function drive(def: WorkflowDefinition, turns: Turn[]) {
   } finally {
     vi.restoreAllMocks();
   }
-  const run = (await store.list())[0]! as RunRecord;
+  const run = (await store.list()).snapshots.map((s) => s.record)[0]! as RunRecord;
   const stepEntry = run.evidence.filter((e) => e.step_id === 'classify').at(-1);
   return { store, workflowStore, run, stepEntry };
 }
@@ -326,7 +326,7 @@ describe('#715 (R) — every request the tools path records carries an id realm 
         []
       ).map((q) => q.request_id);
     const first = ids(run);
-    const again = ids(await store.get(run.id));
+    const again = ids((await store.get(run.id)).record);
     // (a) red when S1 does not mint (no id, or the provider's own kept); (b) prints booleans and the
     //     count, never a record's params.
     expect({

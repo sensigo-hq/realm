@@ -1,5 +1,6 @@
 // Execution matrix for `execution: finalizer` — the workflow-level try/catch/finally drain.
-// Source: execution-loop.ts (buildFinalizedSeal + the five terminal sites).
+// Source: execution-loop.ts (`drainFinalizers` + the terminal sites; #715 (b) deleted the legacy
+// `buildFinalizedSeal`, which drained the same way).
 //
 // Terminal outcome mapping: complete = success/try · fail|abort = catch · always = finally.
 // The engine owns only WHICH finalizers run, WHEN (terminal transition), in what ORDER, and
@@ -124,7 +125,11 @@ describe('finalizer drain — outcome matching', () => {
   async function drive(domainHandler: StepHandler): Promise<string> {
     registry.register('handler', domainHandler.id, domainHandler);
     const def = matrixWorkflow(domainHandler.id);
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await executeChain(store, def, {
       runId: run.id,
       command: 'work',
@@ -136,7 +141,7 @@ describe('finalizer drain — outcome matching', () => {
   }
 
   it('complete → runs on_complete + always, NOT catch', async () => {
-    const run = await store.get(await drive(okHandler('domain_ok', order)));
+    const { record: run } = await store.get(await drive(okHandler('domain_ok', order)));
     expect(run.run_phase).toBe('completed');
     expect(order).toContain('h_complete');
     expect(order).toContain('h_always');
@@ -146,7 +151,7 @@ describe('finalizer drain — outcome matching', () => {
   });
 
   it('fail → runs catch + always, NOT on_complete', async () => {
-    const run = await store.get(await drive(throwHandler('domain_fail', order)));
+    const { record: run } = await store.get(await drive(throwHandler('domain_fail', order)));
     expect(run.run_phase).toBe('failed');
     expect(order).toContain('h_catch');
     expect(order).toContain('h_always');
@@ -157,7 +162,7 @@ describe('finalizer drain — outcome matching', () => {
   });
 
   it('abort (handler-abort) → runs catch + always, NOT on_complete', async () => {
-    const run = await store.get(await drive(abortHandler('domain_abort', order)));
+    const { record: run } = await store.get(await drive(abortHandler('domain_abort', order)));
     expect(run.run_phase).toBe('aborted');
     expect(order).toContain('h_catch');
     expect(order).toContain('h_always');
@@ -204,7 +209,11 @@ describe('finalizer drain — ordering', () => {
         },
       },
     };
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await executeChain(store, def, {
       runId: run.id,
       command: 'work',
@@ -234,7 +243,11 @@ describe('finalizer drain — ordering', () => {
         },
       },
     };
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await executeChain(store, def, {
       runId: run.id,
       command: 'work',
@@ -243,7 +256,7 @@ describe('finalizer drain — ordering', () => {
       registry,
     });
     expect(both.execute).toHaveBeenCalledTimes(1);
-    const saved = await store.get(run.id);
+    const { record: saved } = await store.get(run.id);
     expect(saved.completed_steps.filter((s) => s === 'fin_both')).toHaveLength(1);
   });
 });
@@ -267,7 +280,11 @@ describe('finalizer drain — failure handling (non-fatal, drain continues)', ()
   });
 
   async function driveComplete(def: WorkflowDefinition): Promise<string> {
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await executeChain(store, def, {
       runId: run.id,
       command: 'work',
@@ -297,7 +314,7 @@ describe('finalizer drain — failure handling (non-fatal, drain continues)', ()
       },
     };
     const runId = await driveComplete(def);
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     expect(run.run_phase).toBe('completed'); // outcome unchanged
     expect(run.failed_steps).toContain('fin_boom');
     expect(run.completed_steps).toContain('fin_ok'); // drain continued
@@ -325,7 +342,7 @@ describe('finalizer drain — failure handling (non-fatal, drain continues)', ()
       },
     };
     const runId = await driveComplete(def);
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     expect(run.run_phase).toBe('completed');
     expect(run.aborted_at).toBeUndefined(); // finalizer abort never sets aborted_at
     expect(run.terminal_reason).toBe('Workflow completed.');
@@ -334,8 +351,8 @@ describe('finalizer drain — failure handling (non-fatal, drain continues)', ()
   });
 
   // issue #140 drain-outside-cap pin: the DOMAIN step's total-time cap (capMs/capStart/capExhausted)
-  // is local to that single executeStep call — buildFinalizedSeal's OWN finalizer-timeout wrap
-  // (:2610-ish, outside cap scope per the design record) must apply in FULL, never truncated to
+  // is local to that single executeStep call — the drain's OWN finalizer-timeout wrap
+  // (`drainFinalizers`, outside cap scope per the design record) must apply in FULL, never truncated to
   // whatever thin budget the domain step's cap had left. Finalizers themselves cannot even declare
   // `retry:` (loader-prohibited), so this is purely about the DOMAIN step's cap not leaking across
   // the terminal-drain boundary into a SEPARATE step's SEPARATE timeout.
@@ -374,9 +391,9 @@ describe('finalizer drain — failure handling (non-fatal, drain continues)', ()
     };
     // domain_ok succeeds on attempt 1, immediately — the domain step's cap never actually binds;
     // what this test proves is that its mere PRESENCE (capMs/capStart local to that one
-    // executeStep call) cannot leak forward into buildFinalizedSeal's own, separate timeout wrap.
+    // executeStep call) cannot leak forward into the drain's own, separate timeout wrap.
     const runId = await driveComplete(def);
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     expect(run.run_phase).toBe('completed');
     // The finalizer COMPLETED (its own 350ms budget applied in full) — had the domain step's
     // near-zero leftover cap somehow leaked into the finalizer's own timeout resolution, this
@@ -407,7 +424,7 @@ describe('finalizer drain — failure handling (non-fatal, drain continues)', ()
       },
     };
     const runId = await driveComplete(def);
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     expect(run.run_phase).toBe('completed');
     expect(run.failed_steps).toContain('fin_slow');
     expect(run.completed_steps).toContain('fin_ok');
@@ -451,9 +468,13 @@ describe('finalizer drain — idempotent at-most-once', () => {
         },
       },
     };
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     // Pretend a prior drive already ran the finalizer: pre-seed completed_steps with it.
-    const seeded = await store.get(run.id);
+    const { record: seeded } = await store.get(run.id);
     await store.update({ ...seeded, completed_steps: [...seeded.completed_steps, 'cleanup'] });
 
     await executeChain(store, def, {
@@ -465,7 +486,7 @@ describe('finalizer drain — idempotent at-most-once', () => {
     });
 
     expect(cleanup.execute).not.toHaveBeenCalled(); // skipped — already settled
-    const saved = await store.get(run.id);
+    const { record: saved } = await store.get(run.id);
     expect(saved.completed_steps.filter((s) => s === 'cleanup')).toHaveLength(1); // no duplicate
     expect(saved.run_phase).toBe('completed');
   });
@@ -525,7 +546,7 @@ describe('finalizer drain — guard-terminated runs (Blocking fix #1)', () => {
   });
 
   async function driveGuard(status: Record<string, unknown>): Promise<string> {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: guardWorkflow.id,
       workflowVersion: 1,
       params: {},
@@ -544,7 +565,7 @@ describe('finalizer drain — guard-terminated runs (Blocking fix #1)', () => {
     // Blocking fix #1: classify by the sealed record — a passing guard completes the run, so
     // `aborted_at ? abort : fail` would WRONGLY run the catch arm. It must run on_complete.
     const runId = await driveGuard({ status: 'open' });
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     expect(run.run_phase).toBe('completed');
     expect(order).toContain('h_complete');
     expect(order).toContain('h_always');
@@ -553,7 +574,7 @@ describe('finalizer drain — guard-terminated runs (Blocking fix #1)', () => {
 
   it('an ABORTING guard runs the catch + always finalizers, NOT on_complete', async () => {
     const runId = await driveGuard({ status: 'closed' });
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     expect(run.run_phase).toBe('aborted');
     expect(order).toContain('h_catch');
     expect(order).toContain('h_always');
@@ -563,7 +584,7 @@ describe('finalizer drain — guard-terminated runs (Blocking fix #1)', () => {
   it('a guard RESOLUTION ERROR runs the catch + always finalizers, NOT on_complete', async () => {
     // No 'status' field → the abort_unless path is unresolvable → guard fails (not aborts).
     const runId = await driveGuard({ other_field: 'x' });
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     expect(run.run_phase).toBe('failed');
     expect(order).toContain('h_catch');
     expect(order).toContain('h_always');
@@ -610,7 +631,11 @@ describe('finalizer drain — abandon runs no finalizers', () => {
         },
       },
     };
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const abandoned = await abandonRun(store, run.id, 'operator kill');
 
     expect(abandoned.run_phase).toBe('abandoned');
@@ -691,7 +716,11 @@ describe('finalizer handler sees the failed marker (issue #305)', () => {
       },
     };
 
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await executeChain(store, def, {
       runId: run.id,
       command: 'extract',
@@ -707,7 +736,7 @@ describe('finalizer handler sees the failed marker (issue #305)', () => {
       registry,
     });
 
-    const final = await store.get(run.id);
+    const { record: final } = await store.get(run.id);
     // The incident precondition: sealed COMPLETE, yet carrying a failed step.
     expect(final.run_phase).toBe('completed');
     expect(final.failed_steps).toContain('extract');

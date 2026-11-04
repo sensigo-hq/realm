@@ -25,6 +25,7 @@ import {
 import { renderDetachMap } from './run.js';
 import { runAgent } from '../agent/run-agent.js';
 import { LlmProvider } from '../agent/providers/llm-provider.js';
+import { writtenSnapshot } from '@sensigo/realm';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../../../..');
@@ -86,8 +87,12 @@ describe('#625 PR-2a, F2 — the CLI on a run an operator ended', { timeout: 60_
   /** A run whose step `a` failed, then an operator abandoned it with {@link REASON}. */
   async function abandoned(): Promise<RunRecord> {
     await workflowStore.register(TWO);
-    const { run } = await runStore.create({ workflowId: TWO.id, workflowVersion: 1, params: {} });
-    await runStore.update({ ...(await runStore.get(run.id)), failed_steps: ['a'] });
+    const { record: run } = await runStore.create({
+      workflowId: TWO.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    await runStore.update({ ...(await runStore.get(run.id)).record, failed_steps: ['a'] });
     return abandonRun(runStore, run.id, REASON);
   }
 
@@ -171,12 +176,15 @@ describe('#625 PR-2a, F2 — the CLI on a run an operator ended', { timeout: 60_
       sealed_by: { arm: 'step_failure', step: 'a' },
       abandoned_at: undefined,
     } as unknown as RunRecord;
-    const ways = { pending: describePending(TWO, run, undefined, new Date()), workflow: TWO };
+    const ways = {
+      pending: describePending(TWO, writtenSnapshot(run, new Date()), undefined),
+      workflow: TWO,
+    };
     // (a) red when the map offers the undo for the operator's ending, or drops `Resume:` for an engine
     //     failure; (b) prints both maps' lines after the headline.
     expect({
-      abandoned: renderDetachMap(run, 'b', ways).split('\n').slice(1),
-      failed: renderDetachMap(failed, 'b', ways).split('\n').slice(1),
+      abandoned: renderDetachMap(run, new Date(), 'b', ways).split('\n').slice(1),
+      failed: renderDetachMap(failed, new Date(), 'b', ways).split('\n').slice(1),
     }).toEqual({
       abandoned: [`  Ended:     ${SENTENCE}`, `  Inspect:   realm run inspect ${run.id}`],
       failed: [
@@ -192,8 +200,12 @@ describe('#625 PR-2a, F2 — the CLI on a run an operator ended', { timeout: 60_
       'When an operator ended the run, that line is `  Ended:     An operator ended this run, with the reason "<reason>"; to run the work again, start a new run.`, never `realm run resume`, which would erase that ending and its reason.',
     );
     await workflowStore.register(TWO);
-    const { run } = await runStore.create({ workflowId: TWO.id, workflowVersion: 1, params: {} });
-    await runStore.update({ ...(await runStore.get(run.id)), failed_steps: ['a'] });
+    const { record: run } = await runStore.create({
+      workflowId: TWO.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    await runStore.update({ ...(await runStore.get(run.id)).record, failed_steps: ['a'] });
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.spyOn(console, 'log').mockImplementation(() => {});
     // The model is asked for step `b`; while it answers, an operator abandons the run.
@@ -213,8 +225,9 @@ describe('#625 PR-2a, F2 — the CLI on a run an operator ended', { timeout: 60_
       printed.filter((l) => l.includes('Ended:') || l.includes('Resume:')),
       printed.join('\n'),
     ).toEqual([`  Ended:     ${SENTENCE}`]);
-    expect((await runStore.get(run.id)).run_phase, 'fixture: the operator ended the run').toBe(
-      'abandoned',
-    );
+    expect(
+      (await runStore.get(run.id)).record.run_phase,
+      'fixture: the operator ended the run',
+    ).toBe('abandoned');
   });
 });

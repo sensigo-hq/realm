@@ -196,7 +196,11 @@ describe('createGateResponder (testing-package.md)', () => {
     } as WorkflowDefinition;
     const store = new InMemoryStore();
     const answered = async (gateResponses: Record<string, string>) => {
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await executeStep(store, def, {
         runId: run.id,
         command: 'q',
@@ -204,7 +208,7 @@ describe('createGateResponder (testing-package.md)', () => {
         dispatcher: async () => ({}),
       });
       const reply = await createGateResponder(store, def, run.id, gateResponses);
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       const entry = [...after.evidence].reverse().find((e) => e.kind === 'gate_response');
       return {
         reply,

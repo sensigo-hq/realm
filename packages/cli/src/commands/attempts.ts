@@ -14,6 +14,7 @@ import {
   writerCtx,
 } from '../output/writer.js';
 import type { ClassTable } from '@sensigo/realm';
+import { openRunStore } from '../lib/run-store.js';
 
 /** The two core renderers this command needs, loaded lazily with the rest of core (see the test's
  *  header for the idiom). */
@@ -66,7 +67,6 @@ export const attemptsCommand = new Command('attempts')
   )
   .action(async (runId: string, opts: { json?: boolean; acceptPartialDisclosure?: boolean }) => {
     const {
-      JsonFileStore,
       JsonWorkflowStore,
       FailedAttemptStore,
       getWorkflowForRun,
@@ -74,7 +74,7 @@ export const attemptsCommand = new Command('attempts')
       renderProblemsLines,
       WorkflowError,
     } = await import('@sensigo/realm');
-    const runs = new JsonFileStore();
+    const runs = openRunStore();
     const store = new FailedAttemptStore(runs.runsDirPath);
     try {
       // #729 PR-3 correction 3 (H-7''): the run's declared values are read as `inspect` reads them,
@@ -82,7 +82,7 @@ export const attemptsCommand = new Command('attempts')
       // unless the flag is given. A run this store does not hold reads nothing.
       let run: RunRecord | undefined;
       try {
-        run = await runs.get(runId);
+        run = (await runs.get(runId)).record;
       } catch (err) {
         // Correction 4 (I-4): a record this store holds and cannot read is a failed read — its
         // declared values could not be read, so the attempts' values are withheld as for a failed

@@ -43,7 +43,11 @@ describe('#625 PR-2a, F11 — realm run respond on a completed run with a cleanu
       const runs = new JsonFileStore(join(home, 'runs'));
       const workflows = new JsonWorkflowStore(join(home, 'wf'));
       await workflows.register(DEF);
-      const { run } = await runs.create({ workflowId: DEF.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: DEF.id,
+        workflowVersion: 1,
+        params: {},
+      });
       // the run completes; `tidy`'s handler is not registered here, so its ending leaves it pending
       await advanceRun(runs, DEF, { runId: run.id });
       const refused = await respondToGate(

@@ -24,14 +24,7 @@ import {
   DRAIN_LEASE_MAX,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
 } from '@sensigo/realm';
-import type {
-  CreateRunOptions,
-  RunRecord,
-  RunStore,
-  StepDefinition,
-  StepHandler,
-  WorkflowDefinition,
-} from '@sensigo/realm';
+import type { RunRecord, StepDefinition, StepHandler, WorkflowDefinition } from '@sensigo/realm';
 import { respondCommand, respondToGate } from './respond.js';
 import { runDrainAction, type DrainRuntimeDeps } from './drain.js';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
@@ -59,8 +52,12 @@ const respondCarriedOut = (gateId: string, choice?: string): string =>
       choice !== undefined ? { on_expiry: 'settle_default', choice } : { on_expiry: 'abort' },
       'respond',
       { ms: 0 },
+      EXPIRES_AT,
     )}`,
   );
+
+/** #715 (b) (D6-72 (c)): the fixture question's deadline (`expireGate`), named beside the lag. */
+const EXPIRES_AT = '2020-01-01T01:00:00.000Z';
 
 const LATE_SAME_CHOICE =
   'the outcome matches your choice, but it was settled by timeout; your response was not recorded.';
@@ -158,7 +155,11 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
   /** Registers the workflow, creates a run and opens the gate on `confirm`. */
   async function openGate(def: WorkflowDefinition): Promise<{ runId: string; gateId: string }> {
     await workflowStore.register(def);
-    const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runStore.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const opened = await executeStep(runStore, def, {
       runId: run.id,
       command: 'confirm',
@@ -177,15 +178,17 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
    * engine minted.
    */
   async function expireGate(runId: string): Promise<RunRecord> {
-    const run = await runStore.get(runId);
-    return runStore.update({
-      ...run,
-      pending_gate: {
-        ...run.pending_gate!,
-        opened_at: '2020-01-01T00:00:00.000Z',
-        expires_at: '2020-01-01T01:00:00.000Z',
-      },
-    });
+    const { record: run } = await runStore.get(runId);
+    return (
+      await runStore.update({
+        ...run,
+        pending_gate: {
+          ...run.pending_gate!,
+          opened_at: '2020-01-01T00:00:00.000Z',
+          expires_at: EXPIRES_AT,
+        },
+      })
+    ).record;
   }
 
   /** Runs `realm run respond <run> --gate <gate> --choice <choice>`; returns the exit code. */
@@ -524,29 +527,6 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
   // -------------------------------------------------------------------------
 
   describe('realm run drain --expired', () => {
-    /** A store that does NOT declare `settleStep` — the legacy shape. */
-    class NoSettleStepStore implements RunStore {
-      readonly persistsClaims: boolean;
-      constructor(private readonly inner: JsonFileStore) {
-        this.persistsClaims = inner.persistsClaims;
-      }
-      create(options: CreateRunOptions): Promise<{ run: RunRecord; created: boolean }> {
-        return this.inner.create(options);
-      }
-      get(runId: string): Promise<RunRecord> {
-        return this.inner.get(runId);
-      }
-      update(record: RunRecord): Promise<RunRecord> {
-        return this.inner.update(record);
-      }
-      list(workflowId?: string): Promise<RunRecord[]> {
-        return this.inner.list(workflowId);
-      }
-      claimStep(runId: string, stepName: string, def: WorkflowDefinition): Promise<RunRecord> {
-        return this.inner.claimStep(runId, stepName, def);
-      }
-    }
-
     it("--force, the default unlocks a guard that ABORTS: the guard is settled in the expiry's own write, and the ending and its Reason follow `✓ gate enacted`", async () => {
       const def = gateThenGuard('d625-abort', {
         gate: expiring('reject'),
@@ -571,7 +551,7 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
         `Reason: ${NOT_APPROVED}`,
         `Run '${runId}' has no pending finalizers. Nothing to drain.`,
       ]);
-      const record = await runStore.get(runId);
+      const { record: record } = await runStore.get(runId);
       // ONE write: the expiry and the guard's settlement share one version bump.
       // (a) red when the guard is settled by a second write, or left eligible; (b) prints the
       //     version and the record's facts.
@@ -622,13 +602,13 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
       expect(stdout()).toHaveLength(1);
       expect(stdout()[0]).toMatch(
         new RegExp(
-          `^Run '${runId}': gate expired \\d+d \\d+h ago — would enact settle_default 'reject'; ` +
+          `^Run '${runId}': gate EXPIRED \\d+d \\d+h ago \\(2020-01-01T01:00:00Z\\) — would enact settle_default 'reject'; ` +
             `guard 'check' would then abort the run \\(${NOT_APPROVED}\\) on --force\\.$`,
         ),
       );
       // A prediction: the record and its version are untouched.
       // (a) red when the dry run persists what it computed; (b) prints the version and the gate.
-      const record = await runStore.get(runId);
+      const { record: record } = await runStore.get(runId);
       expect(record.version).toBe(expired.version);
       expect(record.pending_gate?.gate_id).toBe(expired.pending_gate?.gate_id);
     });
@@ -694,19 +674,6 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
       // (a) red when the dry run crashes or guesses when it cannot read the definition;
       //     (b) prints the line.
       expect(stdout()[0]).toMatch(/— would enact settle_default 'reject' on --force\.$/);
-
-      logSpy.mockClear();
-      // On a store without `settleStep`, `--force` settles no guard in the expiry's write — so
-      // none is predicted.
-      await runDrainAction(
-        runId,
-        { expired: true },
-        new NoSettleStepStore(runStore),
-        workflowStore,
-        DRAIN_DEPS,
-      );
-      // (a) red when the dry run predicts a guard `--force` would not settle; (b) prints the line.
-      expect(stdout()[0]).toMatch(/— would enact settle_default 'reject' on --force\.$/);
     });
 
     it('--all --expired: the dry-run listing is unchanged; --force prints what the guards did under each run', async () => {
@@ -726,7 +693,9 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
       );
       // (a) red when the batch listing changes shape; (b) prints the listing line.
       expect(stdout()[1]).toMatch(
-        new RegExp(`^  • ${runId}: gate expired \\d+d \\d+h ago — would enact settle_default$`),
+        new RegExp(
+          `^  • ${runId}: gate EXPIRED \\d+d \\d+h ago \\(2020-01-01T01:00:00Z\\) — would enact settle_default$`,
+        ),
       );
 
       logSpy.mockClear();

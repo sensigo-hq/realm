@@ -47,6 +47,7 @@ import {
   withoutMarks,
   writerCtx,
 } from '../output/writer.js';
+import { openRunStore } from '../lib/run-store.js';
 
 /** Fixed redaction marker (issue #197 PR-2, design §6) — replaces every `nonce` value belonging
  *  to a step currently in `in_progress_steps` on a NON-terminal export (the claimant-nonce
@@ -256,7 +257,7 @@ export async function buildExportBundle(
    *  patterns still apply, and the receipt says nothing was known. */
   set: DisclosureSet = emptyDisclosureSet('file', 'unknown', 'embedder_none'),
 ): Promise<ExportRunResult> {
-  const run = await stores.runStore.get(runId);
+  const { record: run } = await stores.runStore.get(runId);
 
   const artifactErrors: ExportArtifactError[] = [];
 
@@ -494,9 +495,9 @@ export const exportCommand = new Command('export')
     "Write the bundle even when the run's declared secrets are not all known (its manifest changed, could not be read, or the run has no project): it is masked with what is known, and its header says so",
   )
   .action(async (runId: string, opts: { out?: string; acceptPartialDisclosure?: boolean }) => {
-    const { JsonFileStore, FailedAttemptStore } = await import('@sensigo/realm');
+    const { FailedAttemptStore } = await import('@sensigo/realm');
     const { JsonTraceBufferStore } = await import('@sensigo/realm-mcp');
-    const runStore = new JsonFileStore();
+    const runStore = openRunStore();
     const runsDir = runStore.runsDirPath;
     const failedAttemptStore = new FailedAttemptStore(runsDir);
     const traceBufferStore = new JsonTraceBufferStore(runsDir, runStore);
@@ -504,7 +505,7 @@ export const exportCommand = new Command('export')
     try {
       // #729 PR-3 (RECORD 01 #17; owner Q4): the run's declared secrets, read without the loader.
       const { JsonWorkflowStore, getWorkflowForRun } = await import('@sensigo/realm');
-      const record = await runStore.get(runId);
+      const { record: record } = await runStore.get(runId);
       const definition = await getWorkflowForRun(new JsonWorkflowStore(), record, {
         retryVerb: 'export again',
         verb: 'export',

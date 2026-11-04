@@ -35,7 +35,7 @@ describe('start_run — pending-drain advisory on idempotent reuse (issue #279, 
   });
 
   it('a terminal run with a pending finalizer gets the "completion recorded; N finalizer(s) not yet delivered" advisory on reuse', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'pending-drain-advisory-wf',
       workflowVersion: 1,
       params: {},
@@ -65,7 +65,7 @@ describe('start_run — pending-drain advisory on idempotent reuse (issue #279, 
   });
 
   it('a terminal run with NO pending finalizers gets no such advisory', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'pending-drain-advisory-wf',
       workflowVersion: 1,
       params: {},
@@ -90,7 +90,7 @@ describe('start_run — pending-drain advisory on idempotent reuse (issue #279, 
   });
 
   it('a NON-terminal run with a pending finalizer (defensive fixture) gets no advisory — pendings imply terminal in-contract', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'pending-drain-advisory-wf',
       workflowVersion: 1,
       params: {},

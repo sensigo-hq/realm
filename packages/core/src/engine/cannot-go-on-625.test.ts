@@ -22,7 +22,7 @@ import type { RunRecord } from '../types/run-record.js';
 async function withRun<T>(fn: (run: RunRecord) => Promise<T>): Promise<T> {
   const dir = await mkdtempP(join(tmpdir(), 'realm-cannot-go-on-625-'));
   try {
-    const { run } = await new JsonFileStore(dir).create({
+    const { record: run } = await new JsonFileStore(dir).create({
       workflowId: 'c64-wf',
       workflowVersion: 1,
       params: {},

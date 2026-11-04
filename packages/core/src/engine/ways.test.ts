@@ -16,7 +16,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
@@ -52,6 +52,24 @@ import { JsonFileStore } from '../store/json-file-store.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { RunRecord } from '../types/run-record.js';
+import { writeTestClockFile } from '../store/test-clock-file.js';
+
+/** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
+ *  runs folder sits beside the location's clock file (first set to the host's reading), which
+ *  `setClockOf` rewrites. */
+async function testLocationRuns(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  await writeTestClockFile(root, new Date());
+  return join(root, 'runs');
+}
+async function clockedJsonStore(prefix: string): Promise<JsonFileStore> {
+  return new JsonFileStore(await testLocationRuns(prefix));
+}
+async function setClockOf(store: object, t: Date): Promise<void> {
+  const runsDir = (store as { runsDirPath?: string }).runsDirPath;
+  if (runsDir === undefined) throw new Error('setClockOf: this store is not a JSON store');
+  await writeTestClockFile(dirname(runsDir), t);
+}
 
 // ─── Fixtures ───────────────────────────────────────────────────────────────────────────────────
 
@@ -369,12 +387,12 @@ const verbsOf = (ways: readonly WayOn[]): string[] => ways.map(keyOf);
 
 /** A fresh store per cell. */
 async function newStore(): Promise<JsonFileStore> {
-  return new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-ways-729-')));
+  return await clockedJsonStore('realm-ways-729-');
 }
 
 /** A run of `d` with its question open (opened by a real call). */
 async function atQuestion(store: JsonFileStore, d: WorkflowDefinition) {
-  const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+  const { record: run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
   const opened = await executeStep(store, d, {
     runId: run.id,
     command: 'q',
@@ -382,7 +400,7 @@ async function atQuestion(store: JsonFileStore, d: WorkflowDefinition) {
     dispatcher: async () => ({}),
   });
   if (opened.status !== 'confirm_required') throw new Error(`fixture: ${opened.status}`);
-  const record = await store.get(run.id);
+  const { record: record } = await store.get(run.id);
   return { record, gateId: record.pending_gate!.gate_id };
 }
 
@@ -442,9 +460,13 @@ describe('#729 PR-0 — S7: one law per UnavailableCode (rule 19), Amendment 15�
   });
 
   it('run_ended (snapshot): an ended run lists advance and abandon, no progress way — operator_command_untyped, the command its ending’s prose names', async () => {
-    const { run } = await store.create({ workflowId: W.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: W.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await abandonRun(store, run.id, 'test');
-    const ended = await store.get(run.id);
+    const { record: ended } = await store.get(run.id);
     const composed = compose(ended, ctxOf(W));
     // (a) red when the terminal branch stops listing them, or names a command the ending's prose does
     //     not; (b) prints the listed verbs:codes and the command.
@@ -523,7 +545,7 @@ describe('#729 PR-0 — S7: one law per UnavailableCode (rule 19), Amendment 15�
     const d = gated();
     const { record, gateId } = await atQuestion(store, d);
     await submitHumanResponse(store, d, { runId: record.id, gateId, choice: 'approve' });
-    const after = await store.get(record.id);
+    const { record: after } = await store.get(record.id);
     const input = { run_id: record.id, gate_id: gateId, choice: 'approve' };
     const entry = refusalOf('respond', after, ctxOf(d), input);
     // (a) red when the settled test is removed (it falls to gate_not_open); (b) prints the code.
@@ -559,11 +581,11 @@ describe('#729 PR-0 — S7: one law per UnavailableCode (rule 19), Amendment 15�
     // settle_default, a step after it: the expiry leaves `after` owed.
     const owed = gated('settle_default');
     const { record, gateId } = await atQuestion(store, owed);
+    await setClockOf(store, pastDeadline(record));
     const reply = await submitHumanResponse(store, owed, {
       runId: record.id,
       gateId,
       choice: 'reject',
-      now: pastDeadline(record),
     });
     // (a) red when the expiry reply stops carrying the refusal; (b) prints the code and remedy verbs.
     expect(reply.refusal?.code).toBe('question_past_deadline');
@@ -575,11 +597,11 @@ describe('#729 PR-0 — S7: one law per UnavailableCode (rule 19), Amendment 15�
     // abort: the expiry ends the run — nothing is owed.
     const ending = gated('abort', { withAfter: false });
     const second = await atQuestion(store, ending);
+    await setClockOf(store, pastDeadline(second.record));
     const endedReply = await submitHumanResponse(store, ending, {
       runId: second.record.id,
       gateId: second.gateId,
       choice: 'approve',
-      now: pastDeadline(second.record),
     });
     expect(`${endedReply.refusal?.code}:${endedReply.refusal?.no_remedy?.cause}`).toBe(
       'question_past_deadline:already_settled',
@@ -795,13 +817,17 @@ describe('#729 PR-0 — S7: one law per UnavailableCode (rule 19), Amendment 15�
       version: 1,
       steps: { a: { description: 'a', execution: 'agent', depends_on: [] } },
     };
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const reply = await executeStep(store, d, {
       runId: run.id,
       command: 'a',
       input: {},
       dispatcher: async () => {
-        const mid = await store.get(run.id);
+        const { record: mid } = await store.get(run.id);
         await store.update({
           ...mid,
           claims: { ...mid.claims, a: { deadline: null, token: 'another-writer' } },
@@ -1009,10 +1035,10 @@ async function curatedStates(): Promise<State[]> {
     gateId: answered.gateId,
     choice: 'approve',
   });
-  const afterAnswer = await store.get(answered.record.id);
-  const { run } = await store.create({ workflowId: W.id, workflowVersion: 1, params: {} });
+  const { record: afterAnswer } = await store.get(answered.record.id);
+  const { record: run } = await store.create({ workflowId: W.id, workflowVersion: 1, params: {} });
   await abandonRun(store, run.id, 'test');
-  const ended = await store.get(run.id);
+  const { record: ended } = await store.get(run.id);
   const loadFailed = ctxOf(W, { enactor: { kind: 'load_failed', error_code: 'uncoded' } });
   // A step that fails, on a real call: the run stays open, its dependents are skipped.
   const boom = new ExtensionRegistry();
@@ -1024,12 +1050,12 @@ async function curatedStates(): Promise<State[]> {
   });
   const failing = await store.create({ workflowId: FAILING.id, workflowVersion: 1, params: {} });
   await executeStep(store, FAILING, {
-    runId: failing.run.id,
+    runId: failing.record.id,
     command: 'f',
     input: {},
     registry: boom,
   });
-  const failed = await store.get(failing.run.id);
+  const { record: failed } = await store.get(failing.record.id);
   return [
     s('fresh', W, BASE, ctxOf(W)),
     s('held, unknown age', W, held, ctxOf(W)),
@@ -1361,9 +1387,9 @@ describe('#729 PR-0 — agent_action: agentActionOf is D-8’s ordered table, ro
         'resolvePreExecutionAgentAction(err)',
         'blockedAction',
         'migratedEffectiveAction',
-        'effectiveAction',
-        // the two guard-persist failures (no error object; their word is the mint's literal)
-        "'stop' as const",
+        // #715 (b), C.1: `effectiveAction` (the dispatch failure's legacy reply) and the legacy guard
+        // settle's persist failure (`'stop'`) were deleted with the legacy blocks that held them.
+        // the guard-persist failure (no error object; its word is the mint's literal)
         "'stop' as const",
         // the three ended-run anchors on ok replies (D-8 row 2, C154)
         "'stop' as const",
@@ -1380,7 +1406,11 @@ describe('#729 PR-0 — agent_action: agentActionOf is D-8’s ordered table, ro
 
   it('G5-7: the engine runs a step whose input schema refuses the engine’s input — report_to_user, minted so (never provide_input); a caller’s own input keeps provide_input', async () => {
     const store = await newStore();
-    const { run } = await store.create({ workflowId: LEVER.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: LEVER.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const engine = await executeEngineStep(store, LEVER, { runId: run.id, step: 'm', run });
     // (a) red when the engine's refusal is minted provide_input; (b) prints the code and words.
     expect({
@@ -1469,8 +1499,12 @@ describe('#729 PR-0 — A.3 shipped strengths PR-0 owns', () => {
 describe('#729 PR-0 — the library door', () => {
   it('Q12: the lever is enacted through the library — executeStep with an operator’s input that fits runs the engine step', async () => {
     const store = await newStore();
-    const { run } = await store.create({ workflowId: LEVER.id, workflowVersion: 1, params: {} });
-    const before = compose(await store.get(run.id), ctxOf(LEVER));
+    const { record: run } = await store.create({
+      workflowId: LEVER.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const before = compose((await store.get(run.id)).record, ctxOf(LEVER));
     const lever = before.ways.find((w) => w.verb === 'run_step' && w.step === 'm');
     const reply = await executeStep(store, LEVER, {
       runId: run.id,
@@ -1485,7 +1519,7 @@ describe('#729 PR-0 — the library door', () => {
       words:
         lever !== undefined ? LIBRARY_WORDS.run_step(lever as never, undefined, {}) : undefined,
       status: reply.status,
-      completed: (await store.get(run.id)).completed_steps,
+      completed: (await store.get(run.id)).record.completed_steps,
     }).toEqual({
       offered: 'run_step:m:auto',
       words:
@@ -1540,7 +1574,11 @@ describe('#729 PR-0 — the library door', () => {
         e: { description: 'e', execution: 'auto', depends_on: ['a'] },
       },
     };
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await executeStep(store, d, {
       runId: run.id,
       command: 'a',
@@ -1553,7 +1591,7 @@ describe('#729 PR-0 — the library door', () => {
       input: {},
       dispatcher: async () => ({}),
     });
-    const evidence = (await store.get(run.id)).evidence;
+    const evidence = (await store.get(run.id)).record.evidence;
     const of = (step: string) => evidence.find((e) => e.step_id === step)!;
     const { supplied_by: _gone, ...older } = of('a');
     // (a) red when the agent's entry loses its role, or an absence is told as a role; (b) prints

@@ -78,7 +78,7 @@ async function registeredRun(params: Record<string, unknown>): Promise<string> {
     steps: { a: { description: 'a', execution: 'agent', depends_on: [] } },
     source_dir: dir,
   } as WorkflowDefinition);
-  const { run } = await new JsonFileStore(join(home, '.realm', 'runs')).create({
+  const { record: run } = await new JsonFileStore(join(home, '.realm', 'runs')).create({
     workflowId: 'pfr',
     workflowVersion: 1,
     params,
@@ -106,7 +106,9 @@ describe('#729 PR-3 — the rerun refers to the run, and runs as printed', () =>
     await runCommand.parseAsync([command![1]!, '--params-from-run', command![2]!], {
       from: 'user',
     });
-    const runs = await new JsonFileStore(join(home, '.realm', 'runs')).list();
+    const runs = (await new JsonFileStore(join(home, '.realm', 'runs')).list()).snapshots.map(
+      (s) => s.record,
+    );
     const fresh = runs.find((r) => r.id !== id)!;
     // (a) red when the flag is ignored or reads a masked copy; (b) prints the new run's params
     //     (fake values).
@@ -131,7 +133,7 @@ describe('#729 PR-3 — the rerun refers to the run, and runs as printed', () =>
     expect({
       both: await refused(['--params', '{"a":1}', '--params-from-run', id]),
       bothDefaultValue: await refused(['--params', '{}', '--params-from-run', id]),
-      otherWorkflow: await refused(['--params-from-run', other.run.id]),
+      otherWorkflow: await refused(['--params-from-run', other.record.id]),
     }).toEqual({ both: true, bothDefaultValue: true, otherWorkflow: true });
   });
 });
@@ -140,7 +142,9 @@ describe('#729 PR-3 — an answer that sends a marker back (D1 D5)', () => {
   it('realm workflow run records it as sent and warns', async () => {
     mocks.question.mockImplementation(async () => '{"answer":"sent back [REDACTED] here"}');
     await runCommand.parseAsync([dir], { from: 'user' });
-    const [run] = await new JsonFileStore(join(home, '.realm', 'runs')).list();
+    const [run] = (await new JsonFileStore(join(home, '.realm', 'runs')).list()).snapshots.map(
+      (s) => s.record,
+    );
     // (a) red when the warning is dropped or the answer is changed before it is recorded; (b)
     //     prints booleans.
     expect({

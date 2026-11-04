@@ -140,7 +140,7 @@ async function cacheLineAfter(provider: LlmProvider): Promise<{ requests: number
   } finally {
     vi.restoreAllMocks();
   }
-  const run = (await store.list())[0]! as RunRecord;
+  const run = (await store.list()).snapshots[0]!.record as RunRecord;
   const entry = run.evidence.filter((e) => e.step_id === 'classify').at(-1);
   const requests = entry?.diagnostics?.cache?.requests?.length ?? 0;
   const out = await inspectRun(run.id, store, workflowStore);

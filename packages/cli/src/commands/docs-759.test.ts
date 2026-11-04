@@ -212,7 +212,7 @@ describe('issue #759 — json-schema-blocks.md', { timeout: 60_000 }, () => {
         .join('\n')}`,
     );
     const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-docs-759-trace-')));
-    const { run } = await store.create({ workflowId: 't', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({ workflowId: 't', workflowVersion: 1, params: {} });
     const reply = await executeStep(store, research, {
       runId: run.id,
       command: 'research',

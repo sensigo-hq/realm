@@ -54,7 +54,7 @@ describe('#282 class closure — idempotency call-site derive (issue #279, incre
     const dir = await mkdtemp(join(tmpdir(), 'realm-282-idempotency-'));
     try {
       const store = new JsonFileStore(dir);
-      const { run: original } = await store.create({
+      const { record: original } = await store.create({
         workflowId: 'wf',
         workflowVersion: 1,
         params: {},
@@ -72,7 +72,7 @@ describe('#282 class closure — idempotency call-site derive (issue #279, incre
         run_phase: 'gate_waiting', // deliberately wrong/stale — proves derivation, not trust
       });
 
-      const { run: matched, created } = await store.create({
+      const { record: matched, created } = await store.create({
         workflowId: 'wf',
         workflowVersion: 1,
         params: {},
@@ -86,7 +86,7 @@ describe('#282 class closure — idempotency call-site derive (issue #279, incre
       expect(created).toBe(false);
       expect(matched.id).toBe(original.id);
 
-      const all = await store.list();
+      const all = (await store.list()).snapshots.map((s) => s.record);
       expect(all).toHaveLength(1); // no duplicate run minted
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -99,8 +99,12 @@ describe('#282 class closure — ABANDON_TERMINAL_FIRST (issue #279, increment 2
     const dir = await mkdtemp(join(tmpdir(), 'realm-282-abandon-terminal-'));
     try {
       const store = new JsonFileStore(dir);
-      const { run } = await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} });
-      const zombie = await store.update({
+      const { record: run } = await store.create({
+        workflowId: 'wf',
+        workflowVersion: 1,
+        params: {},
+      });
+      const { record: zombie } = await store.update({
         ...run,
         completed_steps: ['a', 'b'],
         terminal_state: true,
@@ -127,8 +131,12 @@ describe('#282 class closure — ABANDON_TERMINAL_FIRST (issue #279, increment 2
     const dir = await mkdtemp(join(tmpdir(), 'realm-282-abandon-live-gate-'));
     try {
       const store = new JsonFileStore(dir);
-      const { run } = await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} });
-      const gated = await store.update({
+      const { record: run } = await store.create({
+        workflowId: 'wf',
+        workflowVersion: 1,
+        params: {},
+      });
+      const { record: gated } = await store.update({
         ...run,
         in_progress_steps: ['a'],
         claims: { a: { deadline: null, token: 't' } },
@@ -190,11 +198,15 @@ describe('#282 class closure — PHASE_IS_GENERATED at the store write-tail (eng
     const dir = await mkdtemp(join(tmpdir(), 'realm-282-interleaved-'));
     try {
       const store = new JsonFileStore(dir);
-      const { run } = await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: 'wf',
+        workflowVersion: 1,
+        params: {},
+      });
       // A legacy (non-settleStep) writer seals the run as failed while HAND-CONSTRUCTING the
       // record with a stale run_phase field — proving update()'s own write-tail derive (not this
       // PR's addition, but load-bearing for the closure) still corrects it.
-      const sealed = await store.update({
+      const { record: sealed } = await store.update({
         ...run,
         failed_steps: ['a'],
         terminal_state: true,
@@ -204,7 +216,7 @@ describe('#282 class closure — PHASE_IS_GENERATED at the store write-tail (eng
       expect(sealed.run_phase).toBe('failed');
       expect(sealed.run_phase).toBe(deriveRunPhase(sealed));
 
-      const reread = await store.get(run.id);
+      const { record: reread } = await store.get(run.id);
       expect(reread.run_phase).toBe('failed');
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -242,7 +254,7 @@ describe('L9 negative pin, extended (issue #279, increment 2, PR-C) — no settl
         ...(outcome === 'abort' ? { abort: { stepId: 'a', abortMessage: 'x' } } : {}),
       };
       const result = applySettlement(fresh, delta, def, {
-        now: new Date('2026-01-01T00:00:00.000Z'),
+        at: new Date('2026-01-01T00:00:00.000Z'),
       });
       if (!result.applied) throw new Error(`expected applied:true for outcome '${outcome}'`);
       const entry = result.run.settled?.['a'];
@@ -264,7 +276,7 @@ describe("GUARD_CHAIN_CONSUMPTION shape (issue #279, increment 2, PR-C — forwa
     const dir = await mkdtemp(join(tmpdir(), 'realm-282-guard-chain-'));
     try {
       const store = new JsonFileStore(dir);
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: guardDef.id,
         workflowVersion: 1,
         params: {},
@@ -312,7 +324,7 @@ describe("GUARD_CHAIN_CONSUMPTION shape (issue #279, increment 2, PR-C — forwa
     const dir = await mkdtemp(join(tmpdir(), 'realm-282-guard-chain-2-'));
     try {
       const store = new JsonFileStore(dir);
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: guardDef.id,
         workflowVersion: 1,
         params: {},

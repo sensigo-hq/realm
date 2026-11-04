@@ -80,7 +80,7 @@ function makeRun(overrides: Partial<RunRecord> = {}): RunRecord {
 describe('InMemoryStore', () => {
   it('create() returns a record with version 0', async () => {
     const store = new InMemoryStore();
-    const { run: record } = await store.create({
+    const { record: record } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -92,12 +92,12 @@ describe('InMemoryStore', () => {
 
   it('get() returns the created record', async () => {
     const store = new InMemoryStore();
-    const { run: created } = await store.create({
+    const { record: created } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
     });
-    const fetched = await store.get(created.id);
+    const { record: fetched } = await store.get(created.id);
     expect(fetched.id).toBe(created.id);
   });
 
@@ -110,19 +110,19 @@ describe('InMemoryStore', () => {
 
   it('update() increments version on success', async () => {
     const store = new InMemoryStore();
-    const { run: record } = await store.create({
+    const { record: record } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
     });
-    const updated = await store.update({ ...record, completed_steps: ['step-one'] });
+    const { record: updated } = await store.update({ ...record, completed_steps: ['step-one'] });
     expect(updated.version).toBe(1);
     expect(updated.completed_steps).toContain('step-one');
   });
 
   it('update() throws WorkflowError(STATE_SNAPSHOT_MISMATCH) on version mismatch', async () => {
     const store = new InMemoryStore();
-    const { run: record } = await store.create({
+    const { record: record } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -145,7 +145,7 @@ describe('InMemoryStore', () => {
       workflowVersion: 1,
       params: {},
     });
-    const result = await store.list('wf-a');
+    const result = (await store.list('wf-a')).snapshots.map((s) => s.record);
     expect(result).toHaveLength(1);
     expect(result[0]!.workflow_id).toBe('wf-a');
   });
@@ -162,7 +162,7 @@ describe('InMemoryStore', () => {
       workflowVersion: 1,
       params: {},
     });
-    const all = await store.list();
+    const all = (await store.list()).snapshots.map((s) => s.record);
     expect(all).toHaveLength(2);
   });
 
@@ -182,21 +182,21 @@ describe('InMemoryStore', () => {
       idempotencyKey: 'k1',
     });
     expect(second.created).toBe(false);
-    expect(second.run.id).toBe(first.run.id);
+    expect(second.record.id).toBe(first.record.id);
     // Only one run exists for the key.
-    const all = await store.list('wf-1');
+    const all = (await store.list('wf-1')).snapshots.map((s) => s.record);
     expect(all).toHaveLength(1);
   });
 
   it('create() idempotency is scoped per workflow and stores the key field', async () => {
     const store = new InMemoryStore();
-    const { run: a } = await store.create({
+    const { record: a } = await store.create({
       workflowId: 'wf-a',
       workflowVersion: 1,
       params: {},
       idempotencyKey: 'k1',
     });
-    const { run: b } = await store.create({
+    const { record: b } = await store.create({
       workflowId: 'wf-b',
       workflowVersion: 1,
       params: {},
@@ -215,7 +215,11 @@ describe('abandonRun parity (InMemoryStore)', () => {
   it('running → abandoned (abandoned_at set, phase abandoned), even with failed_steps', async () => {
     const { abandonRun } = await import('@sensigo/realm');
     const store = new InMemoryStore();
-    const { run } = await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'wf',
+      workflowVersion: 1,
+      params: {},
+    });
     await store.update({ ...run, failed_steps: ['step_a'] }); // running, carries a failed step
     const result = await abandonRun(store, run.id);
     expect(result.abandoned_at).toBeDefined();
@@ -226,12 +230,20 @@ describe('abandonRun parity (InMemoryStore)', () => {
   it('already abandoned → idempotent no-op; terminal → STATE_RUN_TERMINAL', async () => {
     const { abandonRun } = await import('@sensigo/realm');
     const store = new InMemoryStore();
-    const { run } = await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'wf',
+      workflowVersion: 1,
+      params: {},
+    });
     const first = await abandonRun(store, run.id);
     const second = await abandonRun(store, run.id);
     expect(second.version).toBe(first.version); // no second write
 
-    const { run: done } = await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} });
+    const { record: done } = await store.create({
+      workflowId: 'wf',
+      workflowVersion: 1,
+      params: {},
+    });
     await store.update({
       ...done,
       completed_steps: ['s'],
@@ -249,7 +261,7 @@ describe('InMemoryStore re-encounter policy', () => {
     key: string,
     phase: 'completed' | 'failed' | 'aborted' | 'abandoned',
   ): Promise<string> {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -289,7 +301,7 @@ describe('InMemoryStore re-encounter policy', () => {
   it('terminal reuse (default) returns the existing run', async () => {
     const store = new InMemoryStore();
     const id = await seedTerminal(store, 'k1', 'failed');
-    const { run, created } = await store.create({
+    const { record: run, created } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -324,9 +336,9 @@ describe('InMemoryStore re-encounter policy', () => {
       onTerminalMatch: 'rerun_if_failed',
     });
     expect(supersede.created).toBe(true);
-    expect(supersede.run.id).not.toBe(failedId);
+    expect(supersede.record.id).not.toBe(failedId);
     // old run still retrievable
-    expect((await store.get(failedId)).id).toBe(failedId);
+    expect((await store.get(failedId)).record.id).toBe(failedId);
 
     const completedId = await seedTerminal(store, 'kc', 'completed');
     const reuse = await store.create({
@@ -337,13 +349,13 @@ describe('InMemoryStore re-encounter policy', () => {
       onTerminalMatch: 'rerun_if_failed',
     });
     expect(reuse.created).toBe(false);
-    expect(reuse.run.id).toBe(completedId);
+    expect(reuse.record.id).toBe(completedId);
   });
 
   it('rerun supersedes a completed match (keyIndex repoints to the new run)', async () => {
     const store = new InMemoryStore();
     const oldId = await seedTerminal(store, 'k1', 'completed');
-    const { run, created } = await store.create({
+    const { record: run, created } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -360,12 +372,12 @@ describe('InMemoryStore re-encounter policy', () => {
       idempotencyKey: 'k1',
     });
     expect(again.created).toBe(false);
-    expect(again.run.id).toBe(run.id);
+    expect(again.record.id).toBe(run.id);
   });
 
   it('live use_existing (default) returns the running run; fail throws', async () => {
     const store = new InMemoryStore();
-    const { run: owner } = await store.create({
+    const { record: owner } = await store.create({
       workflowId: 'wf-1',
       workflowVersion: 1,
       params: {},
@@ -378,7 +390,7 @@ describe('InMemoryStore re-encounter policy', () => {
       idempotencyKey: 'k1',
     });
     expect(reuse.created).toBe(false);
-    expect(reuse.run.id).toBe(owner.id);
+    expect(reuse.record.id).toBe(owner.id);
 
     await expect(
       store.create({

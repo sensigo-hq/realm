@@ -124,7 +124,7 @@ describe(
       expect(reg.code, `fixture: ${reg.err.join('\n')}`).toBe(0);
     }
     async function owedRun(): Promise<string> {
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'price',
         workflowVersion: 1,
         params: { quantity: 4 },
@@ -247,7 +247,7 @@ describe(
       const s = await call(client, 'start_run', { workflow_id: 'records' }).finally(() =>
         client.close(),
       );
-      const record = await runStore.get(s['run_id'] as string);
+      const { record: record } = await runStore.get(s['run_id'] as string);
       // (a) red when realm-mcp refuses, creates no run, or leaves the block out of warnings;
       //     (b) prints the reply.
       expect({
@@ -269,7 +269,7 @@ describe(
       const unnamed = await owedRun();
       const r2 = realm(['run', 'advance', unnamed]);
       const by = async (id: string) => {
-        const entry = (await runStore.get(id)).evidence.find((e) => e.step_id === 'total');
+        const entry = (await runStore.get(id)).record.evidence.find((e) => e.step_id === 'total');
         const d = entry?.driven_by as { by?: string; by_source?: string } | undefined;
         return [d?.by, d?.by_source];
       };
@@ -293,12 +293,12 @@ describe(
       registered();
       const ok = await owedRun();
       const r1 = realm(['run', 'advance', ok]);
-      const loaded = (await runStore.get(ok)).evidence.find((e) => e.step_id === 'total');
+      const loaded = (await runStore.get(ok)).record.evidence.find((e) => e.step_id === 'total');
       // The code breaks after registration: only a load at run time can see it.
       writeFileSync(join(project, 'registry.mjs'), "throw new Error('boom at import');\n");
       const broken = await owedRun();
       const r2 = realm(['run', 'advance', broken]);
-      const after = await runStore.get(broken);
+      const { record: after } = await runStore.get(broken);
       // (a) red when the command does not load the code when it runs (the handler's output is
       //     missing), or exits 0 with code that does not load; (b) prints the exits and stderr.
       expect({
@@ -342,7 +342,7 @@ describe(
       );
       const id = await owedRun();
       const r = realm(['run', 'advance', id, '--extensions-module', repair]);
-      const entry = (await runStore.get(id)).evidence.find((e) => e.step_id === 'total');
+      const entry = (await runStore.get(id)).record.evidence.find((e) => e.step_id === 'total');
       // (a) red when a named command drops the flag, or advance does not load the file in place
       //     of the workflow's; (b) prints the commands without it, the exit and the output.
       expect({ without, code: r.code, output: entry?.output_summary }).toEqual({
@@ -381,7 +381,9 @@ describe(
       const shown = /`realm agent` prints `(⚠ [^`]*) \(…\)`/.exec(page)![1]!;
       // The pre-flight warning (`⚠ Step 'total' needs handler …`) comes first; the block line follows.
       const line = r.err.find((l) => l.startsWith("⚠ Step 'total' is blocked: "));
-      const runs = (await runStore.list()).map((x) => [x.run_phase, x.failed_steps]);
+      const runs = (await runStore.list()).snapshots
+        .map((s) => s.record)
+        .map((x) => [x.run_phase, x.failed_steps]);
       // (a) red when the line is not the guide's (up to its `(…)`), or the run is failed;
       //     (b) prints stderr and the run.
       expect([line?.startsWith(`${shown} (`), runs]).toEqual([true, [['running', []]]]);

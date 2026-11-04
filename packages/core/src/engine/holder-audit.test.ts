@@ -28,7 +28,7 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 /** Every production source file of the three packages that reach operators. */
-const FILES = ['core', 'cli', 'mcp-server', 'testing'].flatMap((p) =>
+const FILES = ['core', 'cli', 'mcp-server', 'testing', 'store-sqlite'].flatMap((p) =>
   walk(join(PACKAGES, p, 'src')),
 );
 const CORE_FILES = FILES.filter((f) => relative(PACKAGES, f).startsWith('core/'));
@@ -193,9 +193,11 @@ describe("every place a program's code runs names the program (captureEvidence s
   const TABLE: Array<[string, number, number, string]> = [
     [
       'core/src/engine/execution-loop.ts',
-      10,
-      3,
-      'compensating un-claim line + the two answer entries (their person is `responded_by`)',
+      7,
+      2,
+      // #715 (b), C.1: the legacy block's answer entry and buildFinalizedSeal's three finalizer
+      // entries (its callers were all legacy blocks) were deleted with the legacy path.
+      'compensating un-claim line + the answer entry (its person is `responded_by`)',
     ],
     [
       'core/src/engine/settlement.ts',
@@ -240,7 +242,9 @@ describe("every place a program's code runs names the program (captureEvidence s
   });
 });
 
-describe('every call of drainFinalizers and buildFinalizedSeal passes a driver expression', () => {
+// #715 (b), C.1: buildFinalizedSeal's six calls all sat in legacy blocks; it was deleted with them,
+// and so was its cell ("all six calls pass the driver as the fifth argument").
+describe('every call of drainFinalizers passes a driver expression', () => {
   it('drainFinalizers: core passes options.driver / driver; the CLI passes deps.driver', () => {
     const offenders: string[] = [];
     let total = 0;
@@ -257,18 +261,6 @@ describe('every call of drainFinalizers and buildFinalizedSeal passes a driver e
     // 10 in core + 3 in the CLI's drain (+ the expiry timer's one): the set is counted so a new
     // call site cannot slip in unexamined.
     expect(total).toBe(14);
-  });
-
-  it('buildFinalizedSeal: all six calls pass the driver as the fifth argument', () => {
-    const calls = callsOf(
-      stripped.get(join(PACKAGES, 'core/src/engine/execution-loop.ts'))!,
-      /buildFinalizedSeal/,
-    );
-    expect(calls).toHaveLength(6);
-    for (const args of calls) {
-      expect(args).toHaveLength(5);
-      expect(args[4]).toMatch(/\bdriver\b/);
-    }
   });
 });
 
