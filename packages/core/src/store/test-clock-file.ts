@@ -5,9 +5,10 @@
 // on an ordinary directory has no such file and uses the host's system clock. Nothing in production
 // writes this file, and a lint rule (static imports) and a source scan (the names as text, in any
 // import form; `lint-test-location-715.test.ts`) keep the helpers that create a test location, or read
-// its clock file outside the store, out of production code (D6-52): `resolveStoreClock` below is the
-// one reader, the file store's. The scan reads the `.ts` and `.mjs` files of the four packages' `src`
-// folders (no `.sh` or `.json`) and skips `*.test.ts`, whose tests create test locations.
+// its clock file outside the store, out of production code (D6-52): `resolveRootClock` below is the
+// one reader (the file store's `resolveStoreClock` calls it). The scan reads the `.ts` and `.mjs`
+// files of the four packages' `src` folders (no `.sh` or `.json`) and skips `*.test.ts`, whose tests
+// create test locations.
 import { accessSync, constants, readFileSync, realpathSync, watch } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { WorkflowError } from '../types/workflow-error.js';
@@ -292,16 +293,20 @@ export function fileClockWatchedBy(path: string, watchFolder: FolderWatch): Cloc
 }
 
 /**
- * The clock a `JsonFileStore` on `runsDir` holds (D6-1, D6-53): no clock file beside `runsDir` ⇒ the
- * shared system clock; a clock file created for this location (its `location` equals the realpath of
- * the parent of `runsDir`, so a symlink to the location opens it) ⇒ that file's clock; a clock file
- * created for another location (a copied location) ⇒ `STATE_TEST_CLOCK_FOREIGN`. Private to core.
+ * The clock a store whose ROOT folder is `root` holds (D6-1, D6-53; #616 PR-1a unit 2): the root is the
+ * folder that holds the clock file (a JSON store's is the parent of its `runs/`; a SQLite home's is the
+ * folder of its database). No clock file in `root` ⇒ the shared system clock; a clock file created for
+ * this location (its `location` equals the realpath of `root`, so a symlink to the location opens it)
+ * ⇒ that file's clock; a clock file created for another location (a copied location) ⇒
+ * `STATE_TEST_CLOCK_FOREIGN`; a file that cannot be read or is not a clock file ⇒
+ * {@link readTestClockFile}'s refusal. A store's own reader: the lint rule and the source scan keep
+ * it out of production code, as they keep the other readers.
  */
-export function resolveStoreClock(runsDir: string): Clock {
-  const path = testClockFilePath(runsDir);
+export function resolveRootClock(root: string): Clock {
+  const path = join(root, TEST_CLOCK_FILE_NAME);
   const file = readTestClockFile(path);
   if (file === undefined) return systemClock;
-  const here = realpathSync(dirname(runsDir));
+  const here = realpathSync(root);
   if (file.location !== here) {
     throw new WorkflowError(
       // #715 (a) correction 1 (C-6): the way out that works in place comes first; the old first remedy
@@ -316,4 +321,12 @@ export function resolveStoreClock(runsDir: string): Clock {
     );
   }
   return fileClock(path);
+}
+
+/**
+ * The clock a `JsonFileStore` on `runsDir` holds: {@link resolveRootClock} of the parent of `runsDir`,
+ * where the clock file sits beside `runs/`. Private to core.
+ */
+export function resolveStoreClock(runsDir: string): Clock {
+  return resolveRootClock(dirname(runsDir));
 }

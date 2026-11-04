@@ -177,7 +177,8 @@ const TEST_CLOCK_RESTRICTIONS = [
   },
   {
     name: '@sensigo/realm',
-    importNames: ['writeTestClockFile', 'fileClock', 'readTestClockFile'],
+    // #616 PR-1a unit 2: `resolveRootClock`, the store's reader of a root's clock file.
+    importNames: ['writeTestClockFile', 'fileClock', 'readTestClockFile', 'resolveRootClock'],
     message:
       "A production module never creates or reads a test clock: the clock file's helpers are for @sensigo/realm-testing and tests (#715, D6-52).",
   },
