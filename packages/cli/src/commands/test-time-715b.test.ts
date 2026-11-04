@@ -98,7 +98,7 @@ function testFiles(): string[] {
       }
     }
   };
-  for (const pkg of ['core', 'cli', 'mcp-server', 'testing'])
+  for (const pkg of ['core', 'cli', 'mcp-server', 'testing', 'store-sqlite'])
     walk(join(ROOT, 'packages', pkg, 'src'));
   return out.sort();
 }

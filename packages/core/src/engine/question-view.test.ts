@@ -592,7 +592,7 @@ describe('#729 PR-4 — the digest', () => {
     // The source: `viewDigest(` is called in the mint's return only (and in tests) — no surface
     // digests the view it composed for its own audience.
     const packages = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
-    const callers = ['core', 'cli', 'mcp-server', 'testing'].flatMap((pkg) =>
+    const callers = ['core', 'cli', 'mcp-server', 'testing', 'store-sqlite'].flatMap((pkg) =>
       (readdirSync(join(packages, pkg, 'src'), { recursive: true }) as string[])
         .filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts'))
         .filter((f) =>

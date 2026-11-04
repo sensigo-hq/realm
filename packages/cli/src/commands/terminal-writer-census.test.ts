@@ -77,7 +77,7 @@ import { tmpdir } from 'node:os';
 
 // packages/cli/src/commands → the monorepo root.
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
-const SCANNED_PACKAGES = ['core', 'cli', 'mcp-server', 'testing'];
+const SCANNED_PACKAGES = ['core', 'cli', 'mcp-server', 'testing', 'store-sqlite'];
 
 /**
  * Any quoting form, bracketed or not, and an assignment that is not a comparison.

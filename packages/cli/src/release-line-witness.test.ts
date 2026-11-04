@@ -35,7 +35,7 @@ function testFiles(dir: string): string[] {
 /** Call sites of `name(` outside comments, per file; the definition itself is not a call. */
 function callSites(name: string): Record<string, number> {
   const counts: Record<string, number> = {};
-  for (const pkg of ['core', 'cli', 'mcp-server', 'testing']) {
+  for (const pkg of ['core', 'cli', 'mcp-server', 'testing', 'store-sqlite']) {
     for (const file of sourceFiles(join(REPO_ROOT, 'packages', pkg, 'src'))) {
       const code = readFileSync(file, 'utf8')
         .replace(/\/\*[\s\S]*?\*\//g, '')
@@ -84,7 +84,7 @@ describe('release-line witnesses', () => {
     //     keyed on `const LAWS` looked elsewhere.
     const runners: string[] = [];
     const handLists: string[] = [];
-    for (const pkg of ['core', 'cli', 'mcp-server', 'testing']) {
+    for (const pkg of ['core', 'cli', 'mcp-server', 'testing', 'store-sqlite']) {
       for (const file of testFiles(join(REPO_ROOT, 'packages', pkg, 'src'))) {
         const text = readFileSync(file, 'utf8');
         const rel = relative(REPO_ROOT, file);

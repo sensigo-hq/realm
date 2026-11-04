@@ -396,7 +396,7 @@ describe('spawn-budget guard: what the scan flags and what it accepts', () => {
 
 describe('spawn-budget guard: the repository', () => {
   const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
-  const PACKAGES = ['core', 'mcp-server', 'testing', 'cli'];
+  const PACKAGES = ['core', 'mcp-server', 'testing', 'cli', 'store-sqlite'];
   const walk = (dir: string): string[] =>
     readdirSync(dir).flatMap((name) => {
       if (name === 'node_modules' || name === 'dist') return [];

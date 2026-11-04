@@ -100,7 +100,7 @@ describe('#715 (a) C.4 — the test-clock import rule and its file sets', () => 
 // cells run it on the tree and on a seeded list. Prints file NAMES only, never their text.
 // =================================================================================================
 
-const PACKAGES = ['cli', 'core', 'mcp-server', 'testing'] as const;
+const PACKAGES = ['cli', 'core', 'mcp-server', 'testing', 'store-sqlite'] as const;
 
 /** The names core exports from `test-clock-file.ts`, `createTestLocation`, and the file's name. */
 const NEEDLES = [
