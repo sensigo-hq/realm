@@ -226,8 +226,10 @@ describe('caching 3-B A4 (F-B1) — discloseLeaf IS the walk’s leaf', () => {
         }
       }
     });
-    // (a) red when discloseLeaf drops the escaped-spelling check (or the walk's leaf changes);
-    //     (b) prints the differing inputs' index, shape name, audience and the two lengths.
+    // (a) red when discloseLeaf transforms a leaf another way than the walk does (another tier than
+    //     the audience's, say), or the walk's leaf changes; no input here reaches the escaped-spelling
+    //     check, so the D2-6 cell below pins that one; (b) prints the differing inputs' index, shape
+    //     name, audience and the two lengths.
     expect(differ.slice(0, 10)).toEqual([]);
   });
 
