@@ -30,8 +30,10 @@ describe('caching 3-B F2 (d) — a size gives the interval its text gives', () =
         if (a.low !== b.low || a.high !== b.high) differ.push(`${name} ${JSON.stringify(opts)}`);
       }
     }
-    // (a) red when the size path uses another formula (or drops the ASCII count); (b) prints the
-    //     heads and options that differ.
+    // (a) red when the text path stops going through the size formula, or counts its ASCII another
+    //     way (the size path IS the text path's formula, so a change to the formula itself moves
+    //     both; PR 5's interval cells in cacheability.test.ts pin its numbers); (b) prints the heads
+    //     and options that differ.
     expect(differ).toEqual([]);
     // The astral head has code units outside ASCII that are not single characters: the count is
     // of UTF-16 code units, as the text path counts them.
