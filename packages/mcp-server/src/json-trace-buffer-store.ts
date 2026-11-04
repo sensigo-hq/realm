@@ -873,7 +873,7 @@ export class JsonTraceBufferStore
    * base64url stepId encoding to recover the original step name.
    *
    * Parses each file torn-line-safe: blank and unparseable lines are skipped INDIVIDUALLY (the
-   * same per-line discipline `FailedAttemptStore.read()` uses), rather than discarding an entire
+   * same per-line discipline `JsonFileFailedAttemptStore.read()` uses), rather than discarding an entire
    * file on one bad line the way `readWal`'s all-or-nothing catch does — a crash/abandon run's WAL
    * is exactly the case export exists for, and it's also the case most likely to have a torn last
    * line, so losing every earlier line to one partial write would defeat the purpose.
