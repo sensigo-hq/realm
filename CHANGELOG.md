@@ -181,6 +181,10 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
   `realm run advance` runs without saying what it needs: when an owed step needs a handler or
   adapter other than the `filesystem` adapter and the `check_quotes` handler, which every Realm
   program has, the line names it before the command (issue #923).
+- Two text scans that could take seconds on a hostile input (CodeQL #27, #28 — the sentence rule
+  behind every realm sentence, and the e-mail scrub in stored error bodies) now run in one pass.
+  What they match is unchanged; the tests compare the old patterns and the new scans on a
+  generated corpus.
 
 ## [0.48.0] — 2026-10-26
 
