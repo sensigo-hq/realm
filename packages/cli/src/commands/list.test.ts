@@ -723,7 +723,7 @@ describe('list.ts source-text negative pin (issue #221 [S5])', () => {
 
 // packages/cli/src/commands → packages/
 const PACKAGES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
-const SCANNED_PACKAGES = ['core', 'cli', 'mcp-server', 'testing'];
+const SCANNED_PACKAGES = ['core', 'cli', 'mcp-server', 'testing', 'store-sqlite'];
 
 /** Every non-test, non-declaration .ts source file under a package's src/ (the purge-guard.test.ts
  *  precedent — deliberately excludes .test.ts: a test file freely discussing the relationship

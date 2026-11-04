@@ -148,7 +148,8 @@ describe('#715 (b) A.2 — parseStamp, the one stamp parser', () => {
     const files = sourceFiles(join(root, 'core', 'src'))
       .concat(sourceFiles(join(root, 'cli', 'src')))
       .concat(sourceFiles(join(root, 'mcp-server', 'src')))
-      .concat(sourceFiles(join(root, 'testing', 'src')));
+      .concat(sourceFiles(join(root, 'testing', 'src')))
+      .concat(sourceFiles(join(root, 'store-sqlite', 'src')));
     const dateParse: string[] = [];
     const handRolled: string[] = [];
     for (const f of files) {

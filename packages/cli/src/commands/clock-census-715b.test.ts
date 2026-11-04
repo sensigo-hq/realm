@@ -5,7 +5,7 @@
 // how a census rots). Then the class law: no `outside` read sits in a function that reads a run
 // record's instants — two clock DOMAINS never meet in one decision.
 //
-// WHAT IT SEES: the TypeScript AST of `packages/{core,cli,mcp-server,testing}/src/**/*.ts` (not
+// WHAT IT SEES: the TypeScript AST of `packages/{core,cli,mcp-server,testing,store-sqlite}/src/**/*.ts` (not
 // `*.test.ts`, not `*.d.ts`): `new Date()` with no argument, `Date()`, `Date.now()`,
 // `performance.now()`, `process.hrtime()`, a by-name capture (`const now = Date.now`,
 // `const { now } = Date`, `performance.now` passed as a value), and every `<…>.clock.now()` /
@@ -15,8 +15,8 @@
 // SQL store exists yet: #616 adds its rows here), and timer-driven expiry inside the runtime (a
 // `setTimeout` is a duration wait: `Clock.at` serves the stored instants, 03 §A).
 //
-// HOME: the cli package (as `terminal-writer-census.test.ts`): cli's test task depends on all four
-// packages' builds, so an edit in any package's src re-hashes it.
+// HOME: the cli package (as `terminal-writer-census.test.ts`): cli's test task depends on every
+// package's build, so an edit in any package's src re-hashes it.
 //
 // Each cell carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, expect, it } from 'vitest';
@@ -28,7 +28,7 @@ import { CLOCK_READ_CLASSES } from '@sensigo/realm';
 import { CENSUS } from '../test-support/clock-census.js';
 
 const PACKAGES = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
-const SCANNED = ['core', 'cli', 'mcp-server', 'testing'];
+const SCANNED = ['core', 'cli', 'mcp-server', 'testing', 'store-sqlite'];
 
 /** The instant fields of a run record a decision may read (D6-15's property-access check). */
 const INSTANT_FIELDS = new Set([

@@ -1,0 +1,42 @@
+{
+  "name": "@sensigo/realm-store-sqlite",
+  "version": "0.48.1-dev.0",
+  "description": "SQLite-backed stores for Realm. Not yet released: a later change wires them in.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sensigo-hq/realm.git"
+  },
+  "homepage": "https://realmengine.dev",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "engines": {
+    "node": "^22.22.3 || >=24.15.0"
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "lint": "eslint src"
+  },
+  "dependencies": {
+    "@sensigo/realm": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "typescript": "*",
+    "vitest": "^4.1.0"
+  },
+  "files": [
+    "dist",
+    "!dist/tsconfig.tsbuildinfo",
+    "!dist/**/test-support/**",
+    "README.md"
+  ]
+}
