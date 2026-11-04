@@ -113,9 +113,9 @@ describe('#729 PR-0 / #715 (b) — the Snapshot is built in one module', () => {
     'no constructing `{ record, at }` literal outside snapshot.ts; snapshot.ts holds exactly one constructor',
     { timeout: 25_000 },
     () => {
-      // A heavy cell (#371's class rule): it parses every source file of the four packages with the
+      // A heavy cell (#371's class rule): it parses every source file of every package with the
       // TypeScript parser — about 6 s on the dev machine under load — so it carries its own budget.
-      const files = ['core', 'cli', 'mcp-server', 'testing'].flatMap((pkg) =>
+      const files = ['core', 'cli', 'mcp-server', 'testing', 'store-sqlite'].flatMap((pkg) =>
         sources(join(PACKAGES, pkg, 'src')),
       );
       const outside = files

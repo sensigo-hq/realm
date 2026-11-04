@@ -126,7 +126,8 @@ describe('#872 (a) — cannotRunSummary, the grouped hand-back hint', () => {
         }
       }
     };
-    for (const pkg of ['core/src', 'mcp-server/src', 'cli/src', 'testing/src']) walk(pkg);
+    for (const pkg of ['core/src', 'mcp-server/src', 'cli/src', 'testing/src', 'store-sqlite/src'])
+      walk(pkg);
     // (a) red when a door (render-reply.ts, ways-renderer.ts), the wire refusal (pending.ts) or
     //     core's own words file spells words that have one home; (b) prints the files that do.
     expect(hits).toEqual(Object.fromEntries(words.map((w) => [w, [home[w]]])));

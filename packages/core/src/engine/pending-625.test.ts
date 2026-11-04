@@ -1167,7 +1167,8 @@ describe('#625 PR-2a — L8 witnesses (source text)', () => {
         }
       }
     };
-    for (const pkg of ['core/src', 'mcp-server/src', 'cli/src', 'testing/src']) walk(pkg);
+    for (const pkg of ['core/src', 'mcp-server/src', 'cli/src', 'testing/src', 'store-sqlite/src'])
+      walk(pkg);
     expect(hits).toEqual(['core/src/engine/pending.ts']);
   });
   it('executeStep calls checkPreClaim for its three checks (no inline copy of their predicates)', () => {
