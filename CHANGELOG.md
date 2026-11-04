@@ -271,6 +271,9 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
   behind every realm sentence, and the e-mail scrub in stored error bodies) now run in one pass.
   What they match is unchanged; the tests compare the old patterns and the new scans on a
   generated corpus.
+- The check that a sentence ends with a realm command no longer uses a regular expression that could
+  take seconds on a hostile text (CodeQL #22); it tokenizes in one pass and produces the same tokens,
+  proven against the old pattern on a generated corpus.
 
 ## [0.48.0] — 2026-10-26
 
