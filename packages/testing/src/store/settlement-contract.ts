@@ -22,16 +22,28 @@ import { storeReleaseLineLaw } from './store-release-line-law.js';
 import {
   applySettlement,
   deriveRunPhase,
+  systemClock,
+  takeReading,
+  takeRawReading,
+  floorAtRecord,
+  writtenSnapshot,
+  type Clock,
+  type CreateResult,
+  type Listing,
+  type OpeningGate,
   type RunStore,
   type RunRecord,
+  type SealRunDelta,
+  type Snapshot,
+  type StoreSettlement,
   type WorkflowDefinition,
   type StepDefinition,
   type SettlementDelta,
   type SettlementResult,
   type EvidenceSnapshot,
-  type PendingGate,
   type Attributed,
 } from '@sensigo/realm';
+import { controllable, type Controllable, type StoreRoute } from './store-clock-contract.js';
 
 /** The settlement laws (design record §8, narrowed to the PR-A subset named in the hand-off
  *  prompt's D4 section — see this module's own header, plus every law added since). EXPORTED as a
@@ -174,6 +186,13 @@ export const SETTLEMENT_LAWS = [
   'ADAPTER_WIRING',
   /** issue #620 PR-C — the store's declared release line is the line of its own refusal. */
   'STORE_RELEASE_LINE_TRUE',
+  // #715 (b), Amendment 1: a `seal_run` change takes no workflow definition (a run is sealed even
+  // when its workflow is gone) and applies without one; every other kind needs one, and a call
+  // without it is a programming-contract violation the store throws.
+  'SEAL_RUN_NEEDS_NO_DEFINITION',
+  // #715 (b) (D5 §5.5): a route-built store's clock is the clock the route sets — a case that moves
+  // the route clock moves what the store reads.
+  'ROUTE_CLOCK_IS_STORE_CLOCK',
 ] as const;
 
 export type SettlementLaw = (typeof SETTLEMENT_LAWS)[number];
@@ -223,9 +242,7 @@ export interface SettlementFixture {
 
 /** Adapter a calling test file supplies to parameterize the contract against one concrete store. */
 export interface SettlementContractAdapter {
-  /** The store under test. A store that does not declare `settleStep` gets zero cases (vacuous
-   *  pass — mirrors the established optional-capability idiom, e.g.
-   *  `runStoreFidelityContract`'s zero-cases-on-no-declaration). */
+  /** The store under test (`settleStep` is required on every store, #715 (b)). */
   store: RunStore;
   /** Descriptive label for case names (e.g. `'JsonFileStore'`, `'InMemoryStore'`). */
   storeName: string;
@@ -247,7 +264,77 @@ export interface SettlementContractAdapter {
    * unobservable without it — and a store that never writes at all would otherwise conform.
    */
   seedLegacyTerminal?: (id: string) => Promise<RunRecord>;
+  /**
+   * #715 (b) (D-9's route shape): how the families that MOVE TIME build a fresh store whose clock
+   * the case sets — the `storeClockContract` route (`clock`: a store built on an injected clock;
+   * `location`: a store opened on a test location). Since #715 (b) no caller passes a time to
+   * `settleStep`: a gate is due when the STORE's clock says so, so a case that needs a due gate
+   * opens it on such a store and moves the clock past its deadline. The ADAPTER_WIRING idiom
+   * applies: those families fail with a wiring message when it is omitted, never skip.
+   */
+  route?: StoreRoute;
 }
+
+/**
+ * #715 (b): a fresh store on a clock the case sets, started at `start` — through the adapter's route.
+ * Throws the ADAPTER_WIRING message when the adapter has none.
+ */
+async function timed(adapter: SettlementContractAdapter, start: string): Promise<Controllable> {
+  if (adapter.route === undefined) {
+    throw new Error(
+      `[${adapter.storeName}] ADAPTER_WIRING: this law moves the store's clock — the adapter must supply \`route\` (a store built on a clock the case sets)`,
+    );
+  }
+  return controllable(adapter.route, Date.parse(start));
+}
+
+/** #715 (b): the store's own `settleStep`, bound — every non-seal kind takes the definition. */
+function bindSettle(
+  store: RunStore,
+): (
+  runId: string,
+  delta: Exclude<SettlementDelta, SealRunDelta>,
+  definition: WorkflowDefinition,
+) => Promise<StoreSettlement> {
+  return (runId, delta, definition) => store.settleStep(runId, delta, definition);
+}
+
+/**
+ * #715 (b): runs `body` on a fresh store whose clock the case sets, started at `start`, and disposes
+ * it after. `settleAt(at, …)` moves the store's clock to `at` and settles — the time a due gate needs
+ * comes from the store's clock, never from the caller.
+ */
+async function onTimed(
+  adapter: SettlementContractAdapter,
+  start: string,
+  body: (t: {
+    store: RunStore;
+    clock: Controllable['clock'];
+    settleAt: (
+      at: Date,
+      runId: string,
+      delta: Exclude<SettlementDelta, SealRunDelta>,
+      definition: WorkflowDefinition,
+    ) => Promise<StoreSettlement>;
+  }) => Promise<void>,
+): Promise<void> {
+  const ctl = await timed(adapter, start);
+  try {
+    await body({
+      store: ctl.store,
+      clock: ctl.clock,
+      settleAt: async (at, runId, delta, definition) => {
+        await ctl.clock.set(at);
+        return ctl.store.settleStep(runId, delta, definition);
+      },
+    });
+  } finally {
+    await ctl.dispose();
+  }
+}
+
+/** #715 (b): the instant the time-moving families start their store's clock at. */
+const TIMED_START = '2026-01-01T00:00:00.000Z';
 
 // ---------------------------------------------------------------------------
 // Fixture builders
@@ -332,20 +419,17 @@ function makePendingGate(
     gateId?: string;
     choices?: string[];
     /** issue #291 (gate-timeout-291-correction, Leg 2): the mint-frozen enforce/notify fields —
-     *  additive-optional, existing callers (GATE_OPEN_IDEMPOTENT/GATE_RESOLUTION_CONFLICT/
-     *  GATE_MISMATCH/guard cases) are unaffected. */
-    expiresAt?: string;
+     *  additive-optional. #715 (b) (D-20): no instant — the deadline is the `open_gate` delta's
+     *  `timeoutSeconds`, minted from the write's own reading. */
     onExpiry?: 'settle_default' | 'abort';
     defaultChoice?: string;
   },
-): PendingGate {
+): OpeningGate {
   return {
     gate_id: opts?.gateId ?? uid('tck-gate'),
     step_name: stepName,
     preview: {},
     choices: opts?.choices ?? ['approve', 'reject'],
-    opened_at: '2026-01-01T00:00:00.000Z',
-    ...(opts?.expiresAt !== undefined ? { expires_at: opts.expiresAt } : {}),
     ...(opts?.onExpiry !== undefined ? { on_expiry: opts.onExpiry } : {}),
     ...(opts?.defaultChoice !== undefined ? { default_choice: opts.defaultChoice } : {}),
   };
@@ -426,24 +510,17 @@ async function createClaimed(
   def: WorkflowDefinition,
   stepName: string,
 ): Promise<{ run: RunRecord; token: string }> {
-  const { run } = await store.create({
+  const { record: run } = await store.create({
     workflowId: def.id,
     workflowVersion: def.version,
     params: {},
   });
-  const claimed = await store.claimStep(run.id, stepName, def);
+  const { record: claimed } = await store.claimStep(run.id, stepName, def);
   const token = claimed.claims?.[stepName]?.token;
   if (token === undefined) {
     throw new Error(`fixture setup failed: claimStep did not mint a token for step '${stepName}'`);
   }
   return { run: claimed, token };
-}
-
-function requireSettleStep(store: RunStore): NonNullable<RunStore['settleStep']> {
-  if (store.settleStep === undefined) {
-    throw new Error('settlementContract requires an adapter.store that declares settleStep');
-  }
-  return store.settleStep.bind(store);
 }
 
 function assertApplied(
@@ -478,21 +555,21 @@ function assertRefused(
 
 function freshApplicationCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
   const { minimalDefinition } = adapter.settlementFixture!;
-  const settleStep = requireSettleStep(adapter.store);
+  const settleStep = bindSettle(adapter.store);
   return [
     {
       law: 'FRESH_APPLICATION',
       name: `[${adapter.storeName}] routine same-run fan-out (2 disjoint steps settling concurrently) produces ZERO refusals — disjoint deltas compose in-CS`,
       run: async () => {
         const def = minimalDefinition(['a', 'b']);
-        const { run } = await adapter.store.create({
+        const { record: run } = await adapter.store.create({
           workflowId: def.id,
           workflowVersion: 1,
           params: {},
         });
-        const claimedA = await adapter.store.claimStep(run.id, 'a', def);
+        const { record: claimedA } = await adapter.store.claimStep(run.id, 'a', def);
         const tokenA = claimedA.claims!['a']!.token!;
-        const claimedB = await adapter.store.claimStep(run.id, 'b', def);
+        const { record: claimedB } = await adapter.store.claimStep(run.id, 'b', def);
         const tokenB = claimedB.claims!['b']!.token!;
 
         const [resultA, resultB] = await Promise.all([
@@ -522,7 +599,7 @@ function freshApplicationCases(adapter: SettlementContractAdapter): SettlementCo
         assertApplied(resultA, 'fan-out settle of step a');
         assertApplied(resultB, 'fan-out settle of step b');
 
-        const final = await adapter.store.get(run.id);
+        const { record: final } = await adapter.store.get(run.id);
         if (!final.completed_steps.includes('a') || !final.completed_steps.includes('b')) {
           throw new Error(
             `expected both 'a' and 'b' in completed_steps after concurrent settle, got: ${JSON.stringify(final.completed_steps)}`,
@@ -542,7 +619,7 @@ function freshApplicationCases(adapter: SettlementContractAdapter): SettlementCo
 
 function conditionalNoopCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
   const { minimalDefinition } = adapter.settlementFixture!;
-  const settleStep = requireSettleStep(adapter.store);
+  const settleStep = bindSettle(adapter.store);
   return [
     {
       law: 'CONDITIONAL_NOOP',
@@ -601,7 +678,7 @@ function conditionalNoopCases(adapter: SettlementContractAdapter): SettlementCon
       name: `[${adapter.storeName}] a grandfathered (token-less) claim settles with no claimToken presented, and absent≡absent NOOPs on retry`,
       run: async () => {
         const def = minimalDefinition(['a']);
-        const { run } = await adapter.store.create({
+        const { record: run } = await adapter.store.create({
           workflowId: def.id,
           workflowVersion: 1,
           params: {},
@@ -610,7 +687,7 @@ function conditionalNoopCases(adapter: SettlementContractAdapter): SettlementCon
         // This is the ONE deliberate exception to "tokens MUST come from store-returned claim
         // records" (law-3's mint-forcing sentence) — the whole point of this fixture is to prove
         // the ABSENCE of a token is handled correctly, so it must be genuinely absent here.
-        const seeded = await adapter.store.update({
+        const { record: seeded } = await adapter.store.update({
           ...run,
           in_progress_steps: ['a'],
           claims: { a: { deadline: null } },
@@ -637,7 +714,7 @@ function conditionalNoopCases(adapter: SettlementContractAdapter): SettlementCon
 
 function ownershipRefusalCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
   const { minimalDefinition } = adapter.settlementFixture!;
-  const settleStep = requireSettleStep(adapter.store);
+  const settleStep = bindSettle(adapter.store);
   return [
     {
       law: 'OWNERSHIP_REFUSAL',
@@ -671,7 +748,7 @@ function ownershipRefusalCases(adapter: SettlementContractAdapter): SettlementCo
 
 function ledgerMintAtomicityCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
   const { minimalDefinition, withFinalizer } = adapter.settlementFixture!;
-  const settleStep = requireSettleStep(adapter.store);
+  const settleStep = bindSettle(adapter.store);
   return [
     {
       law: 'LEDGER_MINT_ATOMICITY',
@@ -719,7 +796,7 @@ function ledgerMintAtomicityCases(adapter: SettlementContractAdapter): Settlemen
 
 function drainMarkDedupCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
   const { minimalDefinition, withFinalizer } = adapter.settlementFixture!;
-  const settleStep = requireSettleStep(adapter.store);
+  const settleStep = bindSettle(adapter.store);
   return [
     {
       law: 'DRAIN_MARK_DEDUP',
@@ -774,14 +851,14 @@ function drainMarkDedupCases(adapter: SettlementContractAdapter): SettlementCont
 
 function terminalRefusalCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
   const { minimalDefinition } = adapter.settlementFixture!;
-  const settleStep = requireSettleStep(adapter.store);
+  const settleStep = bindSettle(adapter.store);
   return [
     {
       law: 'TERMINAL_REFUSAL',
       name: `[${adapter.storeName}] settle_step on an ALREADY-terminal run (a different, never-settled step) refuses run_terminal`,
       run: async () => {
         const def = minimalDefinition(['a', 'b']);
-        const { run } = await adapter.store.create({
+        const { record: run } = await adapter.store.create({
           workflowId: def.id,
           workflowVersion: 1,
           params: {},
@@ -847,7 +924,7 @@ function terminalRefusalCases(adapter: SettlementContractAdapter): SettlementCon
 
 function terminalStateOnlyCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
   const { minimalDefinition } = adapter.settlementFixture!;
-  const settleStep = requireSettleStep(adapter.store);
+  const settleStep = bindSettle(adapter.store);
   return [
     {
       law: 'TERMINAL_STATE_ONLY',
@@ -857,7 +934,7 @@ function terminalStateOnlyCases(adapter: SettlementContractAdapter): SettlementC
         const { run, token } = await createClaimed(adapter.store, def, 'a');
         // Hand-authored fixture via update() (mirrors MINT_FRESH's own pattern) — a LIVE,
         // in-contract shape today, not a hypothetical: resume never strips abandoned_at.
-        const seeded = await adapter.store.update({
+        const { record: seeded } = await adapter.store.update({
           ...run,
           abandoned_at: '2026-01-01T00:00:00.000Z',
         });
@@ -899,7 +976,7 @@ function terminalStateOnlyCases(adapter: SettlementContractAdapter): SettlementC
         // Fixture-legal via update() regardless of whether the real engine can currently reach
         // this exact combination — the law pins the PREDICATE itself, so it must make ANY trio
         // disjunct reintroduction red, not just the abandoned one.
-        const seeded = await adapter.store.update({
+        const { record: seeded } = await adapter.store.update({
           ...run,
           aborted_at: { step_id: 'a', abort_message: 'tck-aborted-marker' },
         });
@@ -949,7 +1026,7 @@ function terminalStateOnlyCases(adapter: SettlementContractAdapter): SettlementC
 
 function sealIntegrityCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
   const { minimalDefinition } = adapter.settlementFixture!;
-  requireSettleStep(adapter.store); // assertion-capable stores only
+  bindSettle(adapter.store); // assertion-capable stores only
 
   /** Runs `write`, expecting it to reject with `code`. */
   async function expectRefusedWith(
@@ -974,7 +1051,7 @@ function sealIntegrityCases(adapter: SettlementContractAdapter): SettlementContr
 
   async function freshRun(name: string): Promise<RunRecord> {
     const def = minimalDefinition(['a']);
-    const { run } = await adapter.store.create({
+    const { record: run } = await adapter.store.create({
       workflowId: `${def.id}-${name}`,
       workflowVersion: 1,
       params: {},
@@ -1004,7 +1081,7 @@ function sealIntegrityCases(adapter: SettlementContractAdapter): SettlementContr
       name: `[${adapter.storeName}] NEGATIVE CONTROL: re-writing an ALREADY-terminal unstamped record passes (the legacy population stays usable)`,
       run: async () => {
         const run = await freshRun('legacy-repersist');
-        const sealed = await adapter.store.update({
+        const { record: sealed } = await adapter.store.update({
           ...run,
           terminal_state: true,
           sealed_by: { arm: 'complete' },
@@ -1019,7 +1096,7 @@ function sealIntegrityCases(adapter: SettlementContractAdapter): SettlementContr
       name: `[${adapter.storeName}] a terminal → live write that RETAINS sealed_by is refused`,
       run: async () => {
         const run = await freshRun('orphan');
-        const sealed = await adapter.store.update({
+        const { record: sealed } = await adapter.store.update({
           ...run,
           terminal_state: true,
           sealed_by: { arm: 'complete' },
@@ -1035,7 +1112,7 @@ function sealIntegrityCases(adapter: SettlementContractAdapter): SettlementContr
       name: `[${adapter.storeName}] NEGATIVE CONTROL: the same transition WITH the seal stripped passes`,
       run: async () => {
         const run = await freshRun('orphan-control');
-        const sealed = await adapter.store.update({
+        const { record: sealed } = await adapter.store.update({
           ...run,
           terminal_state: true,
           sealed_by: { arm: 'complete' },
@@ -1050,7 +1127,7 @@ function sealIntegrityCases(adapter: SettlementContractAdapter): SettlementContr
       name: `[${adapter.storeName}] a terminal rewrite that DROPS a stored sealed_by is refused`,
       run: async () => {
         const run = await freshRun('erase');
-        const sealed = await adapter.store.update({
+        const { record: sealed } = await adapter.store.update({
           ...run,
           terminal_state: true,
           sealed_by: { arm: 'complete' },
@@ -1067,7 +1144,7 @@ function sealIntegrityCases(adapter: SettlementContractAdapter): SettlementContr
       name: `[${adapter.storeName}] NEGATIVE CONTROL: the same rewrite KEEPING the seal passes`,
       run: async () => {
         const run = await freshRun('erase-control');
-        const sealed = await adapter.store.update({
+        const { record: sealed } = await adapter.store.update({
           ...run,
           terminal_state: true,
           sealed_by: { arm: 'complete' },
@@ -1081,7 +1158,7 @@ function sealIntegrityCases(adapter: SettlementContractAdapter): SettlementContr
       name: `[${adapter.storeName}] a stored arm may NOT be changed while the run stays terminal`,
       run: async () => {
         const run = await freshRun('rewrite');
-        const sealed = await adapter.store.update({
+        const { record: sealed } = await adapter.store.update({
           ...run,
           terminal_state: true,
           sealed_by: { arm: 'complete' },
@@ -1100,13 +1177,13 @@ function sealIntegrityCases(adapter: SettlementContractAdapter): SettlementContr
         // pair is deliberately SAME-PHASE: a cross-phase ruling on a record whose prose still says
         // otherwise is refused by SEAL_COHERENT instead, which is a different law's job.
         const run = await freshRun('adjudicated');
-        const sealed = await adapter.store.update({
+        const { record: sealed } = await adapter.store.update({
           ...run,
           terminal_state: true,
           sealed_by: { arm: 'complete' },
           terminal_reason: 'Workflow completed.',
         });
-        const ruled = await adapter.store.update({
+        const { record: ruled } = await adapter.store.update({
           ...sealed,
           sealed_by: {
             arm: 'guard_pass_complete',
@@ -1121,7 +1198,7 @@ function sealIntegrityCases(adapter: SettlementContractAdapter): SettlementContr
         if (ruled.sealed_by?.arm !== 'guard_pass_complete') {
           throw new Error(`the adjudicated arm did not land: ${JSON.stringify(ruled.sealed_by)}`);
         }
-        const reread = await adapter.store.get(run.id);
+        const { record: reread } = await adapter.store.get(run.id);
         // The FULL object, field by field: a store that drops `by` or `reason` keeps the ruling's
         // arm and loses who made it and why, which is most of what a ruling IS.
         const expected = {
@@ -1143,7 +1220,7 @@ function sealIntegrityCases(adapter: SettlementContractAdapter): SettlementContr
       name: `[${adapter.storeName}] a rewrite whose adjudication LIES about previous_arm is refused`,
       run: async () => {
         const run = await freshRun('adjudicated-lying');
-        const sealed = await adapter.store.update({
+        const { record: sealed } = await adapter.store.update({
           ...run,
           terminal_state: true,
           sealed_by: { arm: 'complete' },
@@ -1165,7 +1242,7 @@ function sealIntegrityCases(adapter: SettlementContractAdapter): SettlementContr
       name: `[${adapter.storeName}] a SAME-arm write minting lying provenance is refused; a truthful acknowledgment is accepted`,
       run: async () => {
         const run = await freshRun('adjudicated-same');
-        const sealed = await adapter.store.update({
+        const { record: sealed } = await adapter.store.update({
           ...run,
           terminal_state: true,
           sealed_by: { arm: 'complete' },
@@ -1195,13 +1272,13 @@ function sealIntegrityCases(adapter: SettlementContractAdapter): SettlementContr
       name: `[${adapter.storeName}] a terminal rewrite dropping stored adjudication provenance is refused`,
       run: async () => {
         const run = await freshRun('adjudicated-erase');
-        const sealed = await adapter.store.update({
+        const { record: sealed } = await adapter.store.update({
           ...run,
           terminal_state: true,
           sealed_by: { arm: 'complete' },
           terminal_reason: 'Workflow completed.',
         });
-        const ruled = await adapter.store.update({
+        const { record: ruled } = await adapter.store.update({
           ...sealed,
           sealed_by: {
             arm: 'complete',
@@ -1224,7 +1301,7 @@ function sealIntegrityCases(adapter: SettlementContractAdapter): SettlementContr
               // The parked-unclassifiable population's only attributed landing channel. `null` is
               // the truthful statement "no arm existed before this ruling".
               const seeded = await adapter.seedLegacyTerminal!('tck-adjudicate-first');
-              const ruled = await adapter.store.update({
+              const { record: ruled } = await adapter.store.update({
                 ...seeded,
                 sealed_by: {
                   arm: 'complete',
@@ -1241,7 +1318,7 @@ function sealIntegrityCases(adapter: SettlementContractAdapter): SettlementContr
                   `the null first-stamp provenance did not land: ${JSON.stringify(ruled.sealed_by)}`,
                 );
               }
-              const reread = await adapter.store.get(seeded.id);
+              const { record: reread } = await adapter.store.get(seeded.id);
               if (reread.sealed_by?.adjudicated?.by !== 'tck-operator') {
                 throw new Error(
                   `the ruling did not survive the round trip: ${JSON.stringify(reread.sealed_by)}`,
@@ -1296,13 +1373,13 @@ function sealIntegrityCases(adapter: SettlementContractAdapter): SettlementContr
         // parked-scar creation through public channels — that population is minted by old binaries
         // this suite cannot reproduce. The stored-scar half is pinned in the engine's own cells.
         const run = await freshRun('adjudicate-supersedes');
-        const sealed = await adapter.store.update({
+        const { record: sealed } = await adapter.store.update({
           ...run,
           terminal_state: true,
           sealed_by: { arm: 'complete' },
           terminal_reason: 'Workflow completed.',
         });
-        const ruled = await adapter.store.update({
+        const { record: ruled } = await adapter.store.update({
           ...sealed,
           failed_steps: ['x'],
           terminal_reason: 'a scar this classifier cannot place',
@@ -1325,13 +1402,13 @@ function sealIntegrityCases(adapter: SettlementContractAdapter): SettlementContr
       run: async () => {
         // Direction 8.
         const run = await freshRun('adjudicate-riding');
-        const sealed = await adapter.store.update({
+        const { record: sealed } = await adapter.store.update({
           ...run,
           terminal_state: true,
           sealed_by: { arm: 'complete' },
           terminal_reason: 'Workflow completed.',
         });
-        const ruled = await adapter.store.update({
+        const { record: ruled } = await adapter.store.update({
           ...sealed,
           sealed_by: {
             arm: 'complete',
@@ -1355,7 +1432,7 @@ function sealIntegrityCases(adapter: SettlementContractAdapter): SettlementContr
       name: `[${adapter.storeName}] NEGATIVE CONTROL: a rewrite keeping the SAME arm passes`,
       run: async () => {
         const run = await freshRun('rewrite-control');
-        const sealed = await adapter.store.update({
+        const { record: sealed } = await adapter.store.update({
           ...run,
           terminal_state: true,
           sealed_by: { arm: 'complete' },
@@ -1406,18 +1483,19 @@ function stampSealCases(adapter: SettlementContractAdapter): SettlementContractC
    * the boundary's ERASED clause would refuse one. Corrected rather than reworded.)
    */
   async function stampedTerminal(name: string): Promise<RunRecord> {
-    const { run } = await adapter.store.create({
+    const { record: run } = await adapter.store.create({
       workflowId: `tck-stamp-${name}`,
       workflowVersion: 1,
       params: {},
     });
-    return adapter.store.update({
+    const { record: stamped } = await adapter.store.update({
       ...run,
       completed_steps: ['a'],
       terminal_state: true,
       sealed_by: { arm: 'complete' },
       terminal_reason: 'Workflow completed.',
     });
+    return stamped;
   }
 
   return [
@@ -1428,9 +1506,9 @@ function stampSealCases(adapter: SettlementContractAdapter): SettlementContractC
         const sealed = await stampedTerminal('clock');
         // Already stamped, so this exercises the refusal path's clock too — the record must not be
         // touched at all.
-        const before = await adapter.store.get(sealed.id);
+        const { record: before } = await adapter.store.get(sealed.id);
         await stamp(sealed.id, { arm: 'complete' }, before.version);
-        const after = await adapter.store.get(sealed.id);
+        const { record: after } = await adapter.store.get(sealed.id);
         if (after.updated_at !== before.updated_at) {
           throw new Error(
             `stampSeal moved updated_at (${before.updated_at} -> ${after.updated_at}) — stamping ` +
@@ -1472,7 +1550,7 @@ function stampSealCases(adapter: SettlementContractAdapter): SettlementContractC
                     `'${result.reason}' — a store that never writes is not conformant`,
                 );
               }
-              const after = await adapter.store.get(seeded.id);
+              const { record: after } = await adapter.store.get(seeded.id);
               if (after.sealed_by?.arm !== 'complete') {
                 throw new Error(`the arm did not land: ${JSON.stringify(after.sealed_by)}`);
               }
@@ -1490,7 +1568,7 @@ function stampSealCases(adapter: SettlementContractAdapter): SettlementContractC
             run: async (): Promise<void> => {
               const seeded = await adapter.seedLegacyTerminal!('tck-stamp-success-version');
               await stamp(seeded.id, { arm: 'complete', classified: true }, seeded.version);
-              const after = await adapter.store.get(seeded.id);
+              const { record: after } = await adapter.store.get(seeded.id);
               if (after.version !== seeded.version + 1) {
                 throw new Error(
                   `expected version ${seeded.version + 1}, got ${after.version} — the CAS ` +
@@ -1508,7 +1586,7 @@ function stampSealCases(adapter: SettlementContractAdapter): SettlementContractC
               // other law while quietly destroying that distinction.
               const seeded = await adapter.seedLegacyTerminal!('tck-stamp-classified');
               await stamp(seeded.id, { arm: 'complete', classified: true }, seeded.version);
-              const after = await adapter.store.get(seeded.id);
+              const { record: after } = await adapter.store.get(seeded.id);
               if (after.sealed_by?.classified !== true) {
                 throw new Error(
                   `the \`classified\` provenance marker did not survive the round trip: ` +
@@ -1524,7 +1602,7 @@ function stampSealCases(adapter: SettlementContractAdapter): SettlementContractC
       name: `[${adapter.storeName}] a NON-TERMINAL record RETURNS 'not_terminal', never throws`,
       run: async () => {
         // No seed hook needed: `create()` makes a live record, which is exactly the shape.
-        const { run } = await adapter.store.create({
+        const { record: run } = await adapter.store.create({
           workflowId: 'tck-stamp-live',
           workflowVersion: 1,
           params: {},
@@ -1543,7 +1621,7 @@ function stampSealCases(adapter: SettlementContractAdapter): SettlementContractC
       name: `[${adapter.storeName}] an already-stamped record RETURNS, never throws`,
       run: async () => {
         const sealed = await stampedTerminal('already');
-        const fresh = await adapter.store.get(sealed.id);
+        const { record: fresh } = await adapter.store.get(sealed.id);
         const result = await stamp(fresh.id, { arm: 'complete' }, fresh.version);
         if (result.stamped !== false || result.reason !== 'already_stamped') {
           throw new Error(
@@ -1558,9 +1636,9 @@ function stampSealCases(adapter: SettlementContractAdapter): SettlementContractC
       name: `[${adapter.storeName}] a refused stamp does not bump version`,
       run: async () => {
         const sealed = await stampedTerminal('version');
-        const before = await adapter.store.get(sealed.id);
+        const { record: before } = await adapter.store.get(sealed.id);
         await stamp(before.id, { arm: 'complete' }, before.version);
-        const after = await adapter.store.get(before.id);
+        const { record: after } = await adapter.store.get(before.id);
         if (after.version !== before.version) {
           throw new Error(
             `a refused stamp moved version (${before.version} -> ${after.version}) — only a real ` +
@@ -1593,10 +1671,10 @@ function stampSealCases(adapter: SettlementContractAdapter): SettlementContractC
       name: `[${adapter.storeName}] re-stamping leaves the record byte-identical`,
       run: async () => {
         const sealed = await stampedTerminal('idem');
-        const before = JSON.stringify(await adapter.store.get(sealed.id));
+        const before = JSON.stringify((await adapter.store.get(sealed.id)).record);
         await stamp(sealed.id, { arm: 'complete' }, sealed.version);
         await stamp(sealed.id, { arm: 'complete' }, sealed.version);
-        const after = JSON.stringify(await adapter.store.get(sealed.id));
+        const after = JSON.stringify((await adapter.store.get(sealed.id)).record);
         if (after !== before) {
           throw new Error(`re-stamping changed the record:\n  before ${before}\n  after  ${after}`);
         }
@@ -1646,7 +1724,7 @@ function csPurityCases(_adapter: SettlementContractAdapter): SettlementContractC
             evidence: [],
           },
           def,
-          { now: new Date('2026-01-01T00:00:00.000Z') },
+          { at: new Date('2026-01-01T00:00:00.000Z') },
         );
         if (!result.applied) {
           throw new Error(
@@ -1702,7 +1780,7 @@ function neverDowngradeCases(_adapter: SettlementContractAdapter): SettlementCon
             evidence: [makeEvidence('a')],
           },
           def,
-          { now: new Date('2026-01-01T00:00:00.000Z') },
+          { at: new Date('2026-01-01T00:00:00.000Z') },
         );
         if (!result.applied)
           throw new Error(`expected applied:true, got refusal: ${result.reason}`);
@@ -1722,7 +1800,7 @@ function neverDowngradeCases(_adapter: SettlementContractAdapter): SettlementCon
 
 function settleOutcomeIntegrityCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
   const { minimalDefinition } = adapter.settlementFixture!;
-  const settleStep = requireSettleStep(adapter.store);
+  const settleStep = bindSettle(adapter.store);
   return [
     {
       law: 'SETTLE_OUTCOME_INTEGRITY',
@@ -1766,7 +1844,7 @@ function settleOutcomeIntegrityCases(adapter: SettlementContractAdapter): Settle
 
 function settledOrphanOverwriteCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
   const { minimalDefinition } = adapter.settlementFixture!;
-  const settleStep = requireSettleStep(adapter.store);
+  const settleStep = bindSettle(adapter.store);
   return [
     {
       law: 'SETTLED_ORPHAN_OVERWRITE',
@@ -1778,7 +1856,7 @@ function settledOrphanOverwriteCases(adapter: SettlementContractAdapter): Settle
         // claims 'fail' — a genuinely inconsistent state that only a hand-authored fixture (or an
         // external store's own divergent history) could produce; settleStep itself always writes
         // both atomically and could never reach this state on its own.
-        const seeded = await adapter.store.update({
+        const { record: seeded } = await adapter.store.update({
           ...run,
           completed_steps: ['a'],
           in_progress_steps: [],
@@ -1816,7 +1894,7 @@ function settledOrphanOverwriteCases(adapter: SettlementContractAdapter): Settle
 
 function transformFidelityCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
   const { minimalDefinition } = adapter.settlementFixture!;
-  const settleStep = requireSettleStep(adapter.store);
+  const settleStep = bindSettle(adapter.store);
 
   async function fidelityRun(outcome: 'complete' | 'fail' | 'abort'): Promise<void> {
     // issue #625: the fixture carries a guard that becomes eligible once 'a' settles either way
@@ -1828,7 +1906,6 @@ function transformFidelityCases(adapter: SettlementContractAdapter): SettlementC
       trigger_rule: 'all_done',
     });
     const { run, token } = await createClaimed(adapter.store, def, 'a');
-    const now = new Date('2026-06-15T12:00:00.000Z');
     const delta: SettlementDelta =
       outcome === 'abort'
         ? {
@@ -1850,17 +1927,20 @@ function transformFidelityCases(adapter: SettlementContractAdapter): SettlementC
 
     // Harness-controlled fresh read — the SAME state settleStep's own internal fresh read will see
     // (nothing else mutates this run between the two reads in a single-threaded test).
-    const freshRead = await adapter.store.get(run.id);
+    const { record: freshRead } = await adapter.store.get(run.id);
     // issue #625: the harness applies the transform exactly as a conforming store's `settleStep`
     // must — WITH `cascadeGuards` — so the comparison below covers the guards too.
+    // #715 (b) (D-19): the store takes its ONE reading after the lock and the transform mints every
+    // instant from it — `updated_at` included — so the harness applies the transform at the store's
+    // own `at`, computed AFTER the store's call, and the comparison is exact.
+    const actual = await settleStep(run.id, delta, def);
     const expected = applySettlement(freshRead, delta, def, {
-      now,
+      at: actual.at,
       cascadeGuards: true,
       // issue #625: a conforming `settleStep` passes this too — it is the transform's only way to
       // know the store keeps no claims, and it decides the proof verdict's `store_keeps_no_claims`.
       storeKeepsClaims: adapter.store.persistsClaims === true,
     });
-    const actual = await settleStep(run.id, delta, def, { now });
     if (outcome !== 'abort') {
       // Non-vacuity: on the complete and fail legs the harness's own output settled the guard.
       if (!expected.applied || expected.guards?.[0]?.step !== 'fidelity_guard') {
@@ -1876,13 +1956,20 @@ function transformFidelityCases(adapter: SettlementContractAdapter): SettlementC
       );
     }
     if (expected.applied && actual.applied) {
-      const { version: _ev, updated_at: _eu, ...expectedRest } = expected.run;
-      const { version: _av, updated_at: _au, ...actualRest } = actual.run;
+      // The store sets `version` (its write tail); every other field — `updated_at` included — is
+      // the transform's (#715 (b)).
+      const { version: _ev, ...expectedRest } = expected.run;
+      const { version: _av, ...actualRest } = actual.run;
       const expectedJson = JSON.stringify(expectedRest);
       const actualJson = JSON.stringify(actualRest);
       if (expectedJson !== actualJson) {
         throw new Error(
-          `transform fidelity mismatch (modulo version/updated_at):\nharness: ${expectedJson}\nstore:   ${actualJson}`,
+          `transform fidelity mismatch (modulo version):\nharness: ${expectedJson}\nstore:   ${actualJson}`,
+        );
+      }
+      if (actual.run.updated_at !== actual.at.toISOString()) {
+        throw new Error(
+          `the settle's updated_at (${actual.run.updated_at}) is not its returned reading (${actual.at.toISOString()})`,
         );
       }
       // TERMINAL_GATE_EXCLUSION, asserted across this fixture: no settleStep APPLY output ever
@@ -1896,17 +1983,17 @@ function transformFidelityCases(adapter: SettlementContractAdapter): SettlementC
   return [
     {
       law: 'TRANSFORM_FIDELITY',
-      name: `[${adapter.storeName}] settleStep's persisted output matches applySettlement's own output exactly (modulo version/updated_at) — complete outcome, {now} injected`,
+      name: `[${adapter.storeName}] settleStep's persisted output matches applySettlement's own output exactly (modulo version; updated_at is the settle's own reading) — complete outcome`,
       run: () => fidelityRun('complete'),
     },
     {
       law: 'TRANSFORM_FIDELITY',
-      name: `[${adapter.storeName}] settleStep's persisted output matches applySettlement's own output exactly (modulo version/updated_at) — fail outcome, {now} injected`,
+      name: `[${adapter.storeName}] settleStep's persisted output matches applySettlement's own output exactly (modulo version; updated_at is the settle's own reading) — fail outcome`,
       run: () => fidelityRun('fail'),
     },
     {
       law: 'TRANSFORM_FIDELITY',
-      name: `[${adapter.storeName}] settleStep's persisted output matches applySettlement's own output exactly (modulo version/updated_at) — abort outcome, {now} injected`,
+      name: `[${adapter.storeName}] settleStep's persisted output matches applySettlement's own output exactly (modulo version; updated_at is the settle's own reading) — abort outcome`,
       run: () => fidelityRun('abort'),
     },
     {
@@ -1930,13 +2017,16 @@ class LossyFixtureStore implements RunStore {
   readonly persistsClaims = true;
   // Deliberately dishonest — never declares anything (`persistedRunRecordFields` omitted, not set
   // to `undefined`: exactOptionalPropertyTypes forbids assigning `undefined` to an optional field).
+  /** #715 (b) (D-18): every store holds its clock and reads the time only through it. */
+  readonly clock: Clock = systemClock;
 
   async create(options: {
     workflowId: string;
     workflowVersion: number;
     params: Record<string, unknown>;
-  }): Promise<{ run: RunRecord; created: boolean }> {
-    const now = new Date().toISOString();
+  }): Promise<CreateResult> {
+    const at = takeReading(this.clock);
+    const now = at.toISOString();
     const run: RunRecord = {
       id: uid('lossy-run'),
       workflow_id: options.workflowId,
@@ -1954,67 +2044,72 @@ class LossyFixtureStore implements RunStore {
       terminal_state: false,
     };
     this.runs.set(run.id, run);
-    return { run, created: true };
+    return { ...writtenSnapshot(run, at), created: true };
   }
 
-  async get(runId: string): Promise<RunRecord> {
+  async get(runId: string): Promise<Snapshot> {
+    const r = takeRawReading(this.clock);
     const run = this.runs.get(runId);
     if (run === undefined) throw new Error(`lossy fixture store: run '${runId}' not found`);
     // LOSSY: strips defaulted_steps on every read — the whole point of this fixture.
     const { defaulted_steps: _dropped, ...rest } = run;
-    return rest as RunRecord;
+    return writtenSnapshot(rest as RunRecord, floorAtRecord(r, run));
   }
 
-  async update(record: RunRecord): Promise<RunRecord> {
+  async update(record: RunRecord): Promise<Snapshot> {
+    const stored = this.runs.get(record.id);
+    const at = takeReading(this.clock, stored);
     const updated: RunRecord = {
       ...record,
       version: record.version + 1,
-      updated_at: new Date().toISOString(),
+      updated_at: at.toISOString(),
     };
     this.runs.set(updated.id, updated);
-    return updated;
+    return writtenSnapshot(updated, at);
   }
 
-  async list(): Promise<RunRecord[]> {
-    return [...this.runs.values()];
+  async list(): Promise<Listing> {
+    const r = takeRawReading(this.clock);
+    return {
+      snapshots: [...this.runs.values()].map((rec) => writtenSnapshot(rec, floorAtRecord(r, rec))),
+      read_at: r,
+      consistent_snapshot: true,
+    };
   }
 
   async claimStep(
     runId: string,
     stepName: string,
     _definition: WorkflowDefinition,
-  ): Promise<RunRecord> {
+  ): Promise<Snapshot> {
     const run = this.runs.get(runId);
     if (run === undefined) throw new Error(`lossy fixture store: run '${runId}' not found`);
+    const at = takeReading(this.clock, run);
     const claimed: RunRecord = {
       ...run,
       in_progress_steps: [...run.in_progress_steps, stepName],
       claims: { ...run.claims, [stepName]: { deadline: null, token: uid('lossy-token') } },
       version: run.version + 1,
-      updated_at: new Date().toISOString(),
+      updated_at: at.toISOString(),
     };
     this.runs.set(claimed.id, claimed);
-    return claimed;
+    return writtenSnapshot(claimed, at);
   }
 
   async settleStep(
     runId: string,
     delta: SettlementDelta,
-    definition: WorkflowDefinition,
-    options?: { now?: Date },
-  ): Promise<SettlementResult> {
+    definition?: WorkflowDefinition,
+  ): Promise<StoreSettlement> {
     // Reads its OWN internal map directly (never through the lossy `get()` above).
     const fresh = this.runs.get(runId);
     if (fresh === undefined) throw new Error(`lossy fixture store: run '${runId}' not found`);
-    const outcome = applySettlement(fresh, delta, definition, options);
-    if (!outcome.applied) return outcome;
-    const updated: RunRecord = {
-      ...outcome.run,
-      version: fresh.version + 1,
-      updated_at: new Date().toISOString(),
-    };
+    const at = takeReading(this.clock, fresh, delta);
+    const outcome = applySettlement(fresh, delta, definition, { at });
+    if (!outcome.applied) return { ...outcome, at };
+    const updated: RunRecord = { ...outcome.run, version: fresh.version + 1 };
     this.runs.set(runId, updated);
-    return { ...outcome, run: updated }; // the AS-APPLIED output — never routed through get()
+    return { ...outcome, run: updated, at }; // the AS-APPLIED output — never routed through get()
   }
 }
 
@@ -2026,8 +2121,12 @@ function resultAsAppliedCases(): SettlementContractCase[] {
       run: async () => {
         const store = new LossyFixtureStore();
         const def = minimalDefinition(['a']);
-        const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
-        const claimed = await store.claimStep(run.id, 'a', def);
+        const { record: run } = await store.create({
+          workflowId: def.id,
+          workflowVersion: 1,
+          params: {},
+        });
+        const { record: claimed } = await store.claimStep(run.id, 'a', def);
         const token = claimed.claims!['a']!.token!;
         const result = await store.settleStep(
           run.id,
@@ -2055,7 +2154,7 @@ function resultAsAppliedCases(): SettlementContractCase[] {
           );
         }
         // Prove the store really IS lossy on round-trip (the premise the whole test depends on).
-        const reread = await store.get(run.id);
+        const { record: reread } = await store.get(run.id);
         if (reread.defaulted_steps !== undefined) {
           throw new Error(
             'fixture premise violated: the lossy store did not actually drop defaulted_steps on get()',
@@ -2072,7 +2171,7 @@ function resultAsAppliedCases(): SettlementContractCase[] {
 
 function markMembershipCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
   const { minimalDefinition, withFinalizer } = adapter.settlementFixture!;
-  const settleStep = requireSettleStep(adapter.store);
+  const settleStep = bindSettle(adapter.store);
 
   async function markRun(
     result: 'completed' | 'failed',
@@ -2140,11 +2239,11 @@ function markMembershipCases(adapter: SettlementContractAdapter): SettlementCont
 
 function refusalSweepCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
   const { minimalDefinition, withFinalizer } = adapter.settlementFixture!;
-  const settleStep = requireSettleStep(adapter.store);
+  const settleStep = bindSettle(adapter.store);
 
   async function expectRefusalUnchanged(
     runId: string,
-    delta: SettlementDelta,
+    delta: Exclude<SettlementDelta, SealRunDelta>,
     def: WorkflowDefinition,
     expectedReason: string,
     versionBefore: number,
@@ -2266,12 +2365,12 @@ function refusalSweepCases(adapter: SettlementContractAdapter): SettlementContra
     name: `[${adapter.storeName}] settle_step: run_terminal (a different, never-settled step on an already-terminal run)`,
     run: async () => {
       const def = minimalDefinition(['a', 'b']);
-      const { run } = await adapter.store.create({
+      const { record: run } = await adapter.store.create({
         workflowId: def.id,
         workflowVersion: 1,
         params: {},
       });
-      const terminal = await adapter.store.update({
+      const { record: terminal } = await adapter.store.update({
         ...run,
         terminal_state: true,
         // issue #367: a terminal record names its arm. These fixtures mean "this run is over";
@@ -2295,7 +2394,7 @@ function refusalSweepCases(adapter: SettlementContractAdapter): SettlementContra
     name: `[${adapter.storeName}] settle_step: claim_lost (no claim record at all for the step)`,
     run: async () => {
       const def = minimalDefinition(['a']);
-      const { run } = await adapter.store.create({
+      const { record: run } = await adapter.store.create({
         workflowId: def.id,
         workflowVersion: 1,
         params: {},
@@ -2316,7 +2415,7 @@ function refusalSweepCases(adapter: SettlementContractAdapter): SettlementContra
     run: async () => {
       const def = minimalDefinition(['a']);
       const { run, token } = await createClaimed(adapter.store, def, 'a');
-      const gated = await adapter.store.update({
+      const { record: gated } = await adapter.store.update({
         ...run,
         pending_gate: {
           gate_id: 'tck-gate',
@@ -2343,12 +2442,12 @@ function refusalSweepCases(adapter: SettlementContractAdapter): SettlementContra
     name: `[${adapter.storeName}] lease_finalizer: run_not_terminal (defensive; a non-terminal run somehow carrying a ledger entry)`,
     run: async () => {
       const def = withFinalizer(minimalDefinition(['a']), 'fin', 'always');
-      const { run } = await adapter.store.create({
+      const { record: run } = await adapter.store.create({
         workflowId: def.id,
         workflowVersion: 1,
         params: {},
       });
-      const seeded = await adapter.store.update({
+      const { record: seeded } = await adapter.store.update({
         ...run,
         finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
       });
@@ -2367,12 +2466,12 @@ function refusalSweepCases(adapter: SettlementContractAdapter): SettlementContra
     name: `[${adapter.storeName}] lease_finalizer: not_eligible (unknown finalizer id)`,
     run: async () => {
       const def = minimalDefinition(['a']);
-      const { run } = await adapter.store.create({
+      const { record: run } = await adapter.store.create({
         workflowId: def.id,
         workflowVersion: 1,
         params: {},
       });
-      const terminal = await adapter.store.update({
+      const { record: terminal } = await adapter.store.update({
         ...run,
         terminal_state: true,
         // issue #367: a terminal record names its arm. These fixtures mean "this run is over";
@@ -2401,12 +2500,12 @@ function refusalSweepCases(adapter: SettlementContractAdapter): SettlementContra
     name: `[${adapter.storeName}] lease_finalizer: ledger_not_pending (entry already completed)`,
     run: async () => {
       const def = withFinalizer(minimalDefinition(['a']), 'fin', 'always');
-      const { run } = await adapter.store.create({
+      const { record: run } = await adapter.store.create({
         workflowId: def.id,
         workflowVersion: 1,
         params: {},
       });
-      const seeded = await adapter.store.update({
+      const { record: seeded } = await adapter.store.update({
         ...run,
         terminal_state: true,
         // issue #367: a terminal record names its arm. These fixtures mean "this run is over";
@@ -2431,7 +2530,7 @@ function refusalSweepCases(adapter: SettlementContractAdapter): SettlementContra
     name: `[${adapter.storeName}] lease_finalizer: already_leased (NOOP — same token, unexpired)`,
     run: async () => {
       const def = withFinalizer(minimalDefinition(['a']), 'fin', 'always');
-      const { run } = await adapter.store.create({
+      const { record: run } = await adapter.store.create({
         workflowId: def.id,
         workflowVersion: 1,
         params: {},
@@ -2472,12 +2571,12 @@ function refusalSweepCases(adapter: SettlementContractAdapter): SettlementContra
         'second',
         'always',
       );
-      const { run } = await adapter.store.create({
+      const { record: run } = await adapter.store.create({
         workflowId: def.id,
         workflowVersion: 1,
         params: {},
       });
-      const seeded = await adapter.store.update({
+      const { record: seeded } = await adapter.store.update({
         ...run,
         terminal_state: true,
         // issue #367: a terminal record names its arm. These fixtures mean "this run is over";
@@ -2510,7 +2609,7 @@ function refusalSweepCases(adapter: SettlementContractAdapter): SettlementContra
     name: `[${adapter.storeName}] lease_finalizer: lease_held (a DIFFERENT token's unexpired lease)`,
     run: async () => {
       const def = withFinalizer(minimalDefinition(['a']), 'fin', 'always');
-      const { run } = await adapter.store.create({
+      const { record: run } = await adapter.store.create({
         workflowId: def.id,
         workflowVersion: 1,
         params: {},
@@ -2548,12 +2647,12 @@ function refusalSweepCases(adapter: SettlementContractAdapter): SettlementContra
     name: `[${adapter.storeName}] mark_finalizer: not_eligible (unknown finalizer id)`,
     run: async () => {
       const def = minimalDefinition(['a']);
-      const { run } = await adapter.store.create({
+      const { record: run } = await adapter.store.create({
         workflowId: def.id,
         workflowVersion: 1,
         params: {},
       });
-      const terminal = await adapter.store.update({
+      const { record: terminal } = await adapter.store.update({
         ...run,
         terminal_state: true,
         // issue #367: a terminal record names its arm. These fixtures mean "this run is over";
@@ -2583,7 +2682,7 @@ function refusalSweepCases(adapter: SettlementContractAdapter): SettlementContra
     name: `[${adapter.storeName}] mark_finalizer: already_marked (NOOP — same token, same result)`,
     run: async () => {
       const def = withFinalizer(minimalDefinition(['a']), 'fin', 'always');
-      const { run } = await adapter.store.create({
+      const { record: run } = await adapter.store.create({
         workflowId: def.id,
         workflowVersion: 1,
         params: {},
@@ -2629,12 +2728,12 @@ function refusalSweepCases(adapter: SettlementContractAdapter): SettlementContra
     name: `[${adapter.storeName}] mark_finalizer: ledger_not_pending (entry already voided)`,
     run: async () => {
       const def = withFinalizer(minimalDefinition(['a']), 'fin', 'always');
-      const { run } = await adapter.store.create({
+      const { record: run } = await adapter.store.create({
         workflowId: def.id,
         workflowVersion: 1,
         params: {},
       });
-      const seeded = await adapter.store.update({
+      const { record: seeded } = await adapter.store.update({
         ...run,
         terminal_state: true,
         // issue #367: a terminal record names its arm. These fixtures mean "this run is over";
@@ -2665,7 +2764,7 @@ function refusalSweepCases(adapter: SettlementContractAdapter): SettlementContra
     name: `[${adapter.storeName}] mark_finalizer: lease_lost (a WRONG token on a genuinely-leased entry)`,
     run: async () => {
       const def = withFinalizer(minimalDefinition(['a']), 'fin', 'always');
-      const { run } = await adapter.store.create({
+      const { record: run } = await adapter.store.create({
         workflowId: def.id,
         workflowVersion: 1,
         params: {},
@@ -2708,13 +2807,13 @@ function refusalSweepCases(adapter: SettlementContractAdapter): SettlementContra
     name: `[${adapter.storeName}] mark_finalizer: run_not_terminal (defensive; a leased-but-non-terminal run)`,
     run: async () => {
       const def = withFinalizer(minimalDefinition(['a']), 'fin', 'always');
-      const { run } = await adapter.store.create({
+      const { record: run } = await adapter.store.create({
         workflowId: def.id,
         workflowVersion: 1,
         params: {},
       });
       const leaseToken = uid('lease');
-      const seeded = await adapter.store.update({
+      const { record: seeded } = await adapter.store.update({
         ...run,
         finalizer_ledger: {
           fin: {
@@ -2752,7 +2851,7 @@ function refusalSweepCases(adapter: SettlementContractAdapter): SettlementContra
 
 function mintFreshCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
   const { minimalDefinition, withFinalizer } = adapter.settlementFixture!;
-  const settleStep = requireSettleStep(adapter.store);
+  const settleStep = bindSettle(adapter.store);
   return [
     {
       law: 'MINT_FRESH',
@@ -2781,7 +2880,7 @@ function mintFreshCases(adapter: SettlementContractAdapter): SettlementContractC
           def,
         );
         assertApplied(failA, 'fail step a');
-        const claimedB = await adapter.store.claimStep(run.id, 'b', def);
+        const { record: claimedB } = await adapter.store.claimStep(run.id, 'b', def);
         const tokenB = claimedB.claims!['b']!.token!;
         const failB = await settleStep(
           run.id,
@@ -2834,7 +2933,7 @@ function mintFreshCases(adapter: SettlementContractAdapter): SettlementContractC
         // hand-authored fixture mirrors that, or it would stop mirroring the function it stands in
         // for.
         const { sealed_by: _voidSeal, ...markedBase } = marked.run;
-        const postResumeVoid = await adapter.store.update({
+        const { record: postResumeVoid } = await adapter.store.update({
           ...markedBase,
           terminal_state: false,
           in_progress_steps: [],
@@ -2848,7 +2947,7 @@ function mintFreshCases(adapter: SettlementContractAdapter): SettlementContractC
         }
 
         // Re-fail edge: re-claim + re-fail 'a' and 'b' — a SECOND terminal fail edge.
-        const reclaimedA = await adapter.store.claimStep(run.id, 'a', def);
+        const { record: reclaimedA } = await adapter.store.claimStep(run.id, 'a', def);
         const reTokenA = reclaimedA.claims!['a']!.token!;
         const reFailA = await settleStep(
           run.id,
@@ -2863,7 +2962,7 @@ function mintFreshCases(adapter: SettlementContractAdapter): SettlementContractC
           def,
         );
         assertApplied(reFailA, 're-fail step a');
-        const reclaimedB = await adapter.store.claimStep(run.id, 'b', def);
+        const { record: reclaimedB } = await adapter.store.claimStep(run.id, 'b', def);
         const reTokenB = reclaimedB.claims!['b']!.token!;
         const reFailB = await settleStep(
           run.id,
@@ -2901,7 +3000,7 @@ function mintFreshCases(adapter: SettlementContractAdapter): SettlementContractC
 
 function selfImageIdempotenceCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
   const { minimalDefinition, withFinalizer } = adapter.settlementFixture!;
-  const settleStep = requireSettleStep(adapter.store);
+  const settleStep = bindSettle(adapter.store);
   return [
     {
       law: 'SELF_IMAGE_IDEMPOTENCE',
@@ -3035,7 +3134,7 @@ function completeSealPhaseCases(_adapter: SettlementContractAdapter): Settlement
             evidence: [makeEvidence('a')],
           },
           def,
-          { now: new Date('2026-01-01T00:00:00.000Z') },
+          { at: new Date('2026-01-01T00:00:00.000Z') },
         );
         if (!result.applied) throw new Error(`expected applied:true, got: ${result.reason}`);
         if (
@@ -3105,7 +3204,7 @@ function whenRoutedTerminalizationCases(
             evidence: [makeEvidence('a', { output_summary: { category: 'something-else' } })],
           },
           def,
-          { now: new Date('2026-01-01T00:00:00.000Z') },
+          { at: new Date('2026-01-01T00:00:00.000Z') },
         );
         if (!result.applied) throw new Error(`expected applied:true, got: ${result.reason}`);
         if (!result.run.skipped_steps.includes('b')) {
@@ -3174,7 +3273,7 @@ function g1GateCoexistenceCases(_adapter: SettlementContractAdapter): Settlement
             evidence: [makeEvidence('sibling')],
           },
           def,
-          { now: new Date('2026-01-01T00:00:00.000Z') },
+          { at: new Date('2026-01-01T00:00:00.000Z') },
         );
         if (!result.applied) throw new Error(`expected applied:true, got: ${result.reason}`);
         if (result.transitioned !== false || result.run.terminal_state !== false) {
@@ -3197,7 +3296,7 @@ function g1GateCoexistenceCases(_adapter: SettlementContractAdapter): Settlement
 function gateOpenIdempotentCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
   const fixture = adapter.settlementFixture!;
   const { minimalDefinition } = fixture;
-  const settleStep = requireSettleStep(adapter.store);
+  const settleStep = bindSettle(adapter.store);
   return [
     {
       law: 'GATE_OPEN_IDEMPOTENT',
@@ -3343,7 +3442,7 @@ function gateOpenIdempotentCases(adapter: SettlementContractAdapter): Settlement
         // so this hand-constructs the claim to isolate the ARM being tested (open_gate's OWN
         // serialization refusal), matching the fixture-mechanics precedent set by
         // g1GateCoexistenceCases above.
-        const seeded = await adapter.store.update({
+        const { record: seeded } = await adapter.store.update({
           ...opened.run,
           in_progress_steps: [...opened.run.in_progress_steps, 'successor'],
           claims: { ...opened.run.claims, successor: { deadline: null, token: 'successor-token' } },
@@ -3374,12 +3473,12 @@ function gateOpenIdempotentCases(adapter: SettlementContractAdapter): Settlement
 
 function gateResolutionConflictCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
   const { minimalDefinition } = adapter.settlementFixture!;
-  const settleStep = requireSettleStep(adapter.store);
+  const settleStep = bindSettle(adapter.store);
 
   async function openGate(
     def: WorkflowDefinition,
     stepName: string,
-  ): Promise<{ runId: string; gate: PendingGate }> {
+  ): Promise<{ runId: string; gate: OpeningGate }> {
     const { run, token } = await createClaimed(adapter.store, def, stepName);
     const gate = makePendingGate(stepName);
     const opened = await settleStep(
@@ -3472,7 +3571,7 @@ function gateResolutionConflictCases(adapter: SettlementContractAdapter): Settle
 
         // A second, unrelated gate opens on a different step.
         const { token: gate2Token } = { token: 'gate2-token' } as { token: string };
-        const seeded = await adapter.store.update({
+        const { record: seeded } = await adapter.store.update({
           ...first.run,
           in_progress_steps: [...first.run.in_progress_steps, 'gate2'],
           claims: { ...first.run.claims, gate2: { deadline: null, token: gate2Token } },
@@ -3502,7 +3601,7 @@ function gateResolutionConflictCases(adapter: SettlementContractAdapter): Settle
       name: `[${adapter.storeName}] G2 corruption fixture: a hand-shaped record where BOTH a settled 'gate' entry and a live pending_gate share the same gate_id ⇒ the lookup-first NOOP wins, never a RESOLVE (fail-safe, lens-2 m3)`,
       run: async () => {
         const def = minimalDefinition(['gated']);
-        const { run } = await adapter.store.create({
+        const { record: run } = await adapter.store.create({
           workflowId: def.id,
           workflowVersion: def.version,
           params: {},
@@ -3512,7 +3611,7 @@ function gateResolutionConflictCases(adapter: SettlementContractAdapter): Settle
         // pending_gate is STILL live with the SAME gate_id — never producible by settleStep
         // itself (APPLY always clears pending_gate in the SAME write it settles); only a
         // hand-authored fixture or an external store's divergent history can produce this.
-        const corrupted = await adapter.store.update({
+        const { record: corrupted } = await adapter.store.update({
           ...run,
           completed_steps: ['gated'],
           settled: { gated: { token: gateId, outcome: 'gate', choice: 'approve' } },
@@ -3544,14 +3643,14 @@ function gateResolutionConflictCases(adapter: SettlementContractAdapter): Settle
 
 function gateMismatchCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
   const { minimalDefinition } = adapter.settlementFixture!;
-  const settleStep = requireSettleStep(adapter.store);
+  const settleStep = bindSettle(adapter.store);
   return [
     {
       law: 'GATE_MISMATCH',
       name: `[${adapter.storeName}] settle_gate with an UNKNOWN gateId on a live, gate-free run refuses gate_mismatch`,
       run: async () => {
         const def = minimalDefinition(['a']);
-        const { run } = await adapter.store.create({
+        const { record: run } = await adapter.store.create({
           workflowId: def.id,
           workflowVersion: def.version,
           params: {},
@@ -3590,7 +3689,7 @@ function gateMismatchCases(adapter: SettlementContractAdapter): SettlementContra
       name: `[${adapter.storeName}] zombie submit: a hand-shaped terminal ∧ pending_gate record refuses run_terminal on a matching gateId submit, record/version UNCHANGED`,
       run: async () => {
         const def = minimalDefinition(['a']);
-        const { run } = await adapter.store.create({
+        const { record: run } = await adapter.store.create({
           workflowId: def.id,
           workflowVersion: def.version,
           params: {},
@@ -3599,7 +3698,7 @@ function gateMismatchCases(adapter: SettlementContractAdapter): SettlementContra
         // Hand-shaped grandfathered/#282-class record: terminal AND still carrying a pending_gate
         // — the exact class D-3 exists to close on the RENDER side; this pins the TRANSFORM's own
         // zombie-submit refusal independent of that closure.
-        const zombie = await adapter.store.update({
+        const { record: zombie } = await adapter.store.update({
           ...run,
           completed_steps: ['a'],
           terminal_state: true,
@@ -3654,7 +3753,7 @@ function guardCases(adapter: SettlementContractAdapter): SettlementContractCase[
   }
   const { minimalDefinition } = fixture;
   const withGuard = fixture.withGuard;
-  const settleStep = requireSettleStep(adapter.store);
+  const settleStep = bindSettle(adapter.store);
 
   return [
     // --- GUARD_OUTCOME_DIVERGENCE ---
@@ -3663,7 +3762,7 @@ function guardCases(adapter: SettlementContractAdapter): SettlementContractCase[
       name: `[${adapter.storeName}] a same-outcome (pass) settle_guard retry NOOPs as already_settled`,
       run: async () => {
         const def = withGuard(minimalDefinition([]), 'g', []);
-        const { run } = await adapter.store.create({
+        const { record: run } = await adapter.store.create({
           workflowId: def.id,
           workflowVersion: def.version,
           params: {},
@@ -3685,7 +3784,7 @@ function guardCases(adapter: SettlementContractAdapter): SettlementContractCase[
       name: `[${adapter.storeName}] a CROSS-outcome settle_guard retry (pass, then resolution_error) refuses settled_outcome_divergence`,
       run: async () => {
         const def = withGuard(minimalDefinition([]), 'g', []);
-        const { run } = await adapter.store.create({
+        const { record: run } = await adapter.store.create({
           workflowId: def.id,
           workflowVersion: def.version,
           params: {},
@@ -3731,16 +3830,16 @@ function guardCases(adapter: SettlementContractAdapter): SettlementContractCase[
             },
           },
         };
-        const { run } = await adapter.store.create({
+        const { record: run } = await adapter.store.create({
           workflowId: def.id,
           workflowVersion: def.version,
           params: {},
         });
-        const seeded = await adapter.store.update({ ...run, skipped_steps: ['never'] });
+        const { record: seeded } = await adapter.store.update({ ...run, skipped_steps: ['never'] });
         // propagateSkips (run via any settle_step on 'never'-adjacent... simpler: hand-seed 'g'
         // as skipped via trigger_rule_unsatisfiable directly, matching what propagateSkips itself
         // would produce.
-        const skipped = await adapter.store.update({
+        const { record: skipped } = await adapter.store.update({
           ...seeded,
           skipped_steps: ['never', 'g'],
           skip_details: {
@@ -3773,7 +3872,7 @@ function guardCases(adapter: SettlementContractAdapter): SettlementContractCase[
       name: `[${adapter.storeName}] a terminalizing guard's own retry (same outcome, already terminal) still converges as already_settled`,
       run: async () => {
         const def = withGuard(minimalDefinition([]), 'g', ['1 == 2']); // always fails ⇒ abort
-        const { run } = await adapter.store.create({
+        const { record: run } = await adapter.store.create({
           workflowId: def.id,
           workflowVersion: def.version,
           params: {},
@@ -3926,7 +4025,7 @@ function guardCases(adapter: SettlementContractAdapter): SettlementContractCase[
       name: `[${adapter.storeName}] a guard pass that completes the run sets terminal_reason 'Workflow completed.' and phase 'completed'`,
       run: async () => {
         const def = withGuard(minimalDefinition([]), 'g', []);
-        const { run } = await adapter.store.create({
+        const { record: run } = await adapter.store.create({
           workflowId: def.id,
           workflowVersion: def.version,
           params: {},
@@ -3957,7 +4056,7 @@ function guardCases(adapter: SettlementContractAdapter): SettlementContractCase[
       run: async () => {
         let def = minimalDefinition([]);
         def = withGuard(def, 'g', ['1 == 2'], { dependents: ['downstream'] });
-        const { run } = await adapter.store.create({
+        const { record: run } = await adapter.store.create({
           workflowId: def.id,
           workflowVersion: def.version,
           params: {},
@@ -4011,7 +4110,7 @@ function guardCases(adapter: SettlementContractAdapter): SettlementContractCase[
       name: `[${adapter.storeName}] settle_guard NEVER writes a settled-map entry, regardless of outcome (SE-4)`,
       run: async () => {
         const def = withGuard(minimalDefinition([]), 'g', []);
-        const { run } = await adapter.store.create({
+        const { record: run } = await adapter.store.create({
           workflowId: def.id,
           workflowVersion: def.version,
           params: {},
@@ -4037,7 +4136,7 @@ function guardCases(adapter: SettlementContractAdapter): SettlementContractCase[
 
 function guardCascadeCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
   const { minimalDefinition } = adapter.settlementFixture!;
-  const settleStep = requireSettleStep(adapter.store);
+  const settleStep = bindSettle(adapter.store);
 
   /** Every case asserts the PERSISTED record too: the guards are in the store's own write, not
    *  only on the object `settleStep` returned. */
@@ -4045,8 +4144,9 @@ function guardCascadeCases(adapter: SettlementContractAdapter): SettlementContra
     runId: string,
     result: Extract<SettlementResult, { applied: true }>,
     context: string,
+    store: RunStore = adapter.store,
   ): Promise<void> {
-    const stored = await adapter.store.get(runId);
+    const { record: stored } = await store.get(runId);
     if (stored.version !== result.run.version) {
       throw new Error(
         `${context}: the stored record's version (${stored.version}) differs from the returned one (${result.run.version})`,
@@ -4205,38 +4305,46 @@ function guardCascadeCases(adapter: SettlementContractAdapter): SettlementContra
     {
       law: 'GUARD_CASCADE_ONE_WRITE',
       name: `[${adapter.storeName}] an applied expire_gate (settle_default) settles the guard its default makes eligible in the SAME write`,
-      run: async () => {
-        const def = withGuardStep(minimalDefinition(['gated', 'later']), 'g', {
-          abort_unless: ["gated.choice == 'approve'"],
-          depends_on: ['gated'],
-        });
-        const { run, token } = await createClaimed(adapter.store, def, 'gated');
-        const gate = makePendingGate('gated', {
-          expiresAt: '2026-01-01T00:10:00.000Z',
-          onExpiry: 'settle_default',
-          defaultChoice: 'approve',
-        });
-        const opened = await settleStep(
-          run.id,
-          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
-          def,
-        );
-        assertApplied(opened, 'open_gate');
-        const result = await settleStep(
-          run.id,
-          { kind: 'expire_gate', gateId: gate.gate_id },
-          def,
-          { now: new Date('2026-01-01T00:20:00.000Z') },
-        );
-        assertApplied(result, 'expire_gate settle_default');
-        assertGuards(result, [{ step: 'g', outcome: 'pass' }], 'expire_gate settle_default');
-        if (result.run.version !== opened.run.version + 1) {
-          throw new Error(
-            `the expiry and its guard must land in ONE write: version ${opened.run.version} → ${result.run.version}`,
+      run: () =>
+        onTimed(adapter, TIMED_START, async (t) => {
+          const settleStep = bindSettle(t.store);
+          const def = withGuardStep(minimalDefinition(['gated', 'later']), 'g', {
+            abort_unless: ["gated.choice == 'approve'"],
+            depends_on: ['gated'],
+          });
+          const { run, token } = await createClaimed(t.store, def, 'gated');
+          const gate = makePendingGate('gated', {
+            onExpiry: 'settle_default',
+            defaultChoice: 'approve',
+          });
+          const opened = await settleStep(
+            run.id,
+            {
+              kind: 'open_gate',
+              step: 'gated',
+              claimToken: token,
+              pendingGate: gate,
+              timeoutSeconds: 600,
+              evidence: [],
+            },
+            def,
           );
-        }
-        await assertPersisted(run.id, result, 'expire_gate settle_default');
-      },
+          assertApplied(opened, 'open_gate');
+          const result = await t.settleAt(
+            new Date('2026-01-01T00:20:00.000Z'),
+            run.id,
+            { kind: 'expire_gate', gateId: gate.gate_id },
+            def,
+          );
+          assertApplied(result, 'expire_gate settle_default');
+          assertGuards(result, [{ step: 'g', outcome: 'pass' }], 'expire_gate settle_default');
+          if (result.run.version !== opened.run.version + 1) {
+            throw new Error(
+              `the expiry and its guard must land in ONE write: version ${opened.run.version} → ${result.run.version}`,
+            );
+          }
+          await assertPersisted(run.id, result, 'expire_gate settle_default', t.store);
+        }),
     },
     {
       law: 'GUARD_CASCADE_ONE_WRITE',
@@ -4244,7 +4352,7 @@ function guardCascadeCases(adapter: SettlementContractAdapter): SettlementContra
       run: async () => {
         let def = withGuardStep(minimalDefinition(['later']), 'g1', { abort_unless: [] });
         def = withGuardStep(def, 'g2', { abort_unless: [], depends_on: ['g1'] });
-        const { run } = await adapter.store.create({
+        const { record: run } = await adapter.store.create({
           workflowId: def.id,
           workflowVersion: def.version,
           params: {},
@@ -4271,7 +4379,7 @@ function guardCascadeCases(adapter: SettlementContractAdapter): SettlementContra
           abort_unless: [],
         });
         const { run, token: aToken } = await createClaimed(adapter.store, def, 'a');
-        const claimedGated = await adapter.store.claimStep(run.id, 'gated', def);
+        const { record: claimedGated } = await adapter.store.claimStep(run.id, 'gated', def);
         const gatedToken = claimedGated.claims!['gated']!.token!;
         const gate = makePendingGate('gated');
         const opened = await settleStep(
@@ -4332,7 +4440,7 @@ function guardCascadeCases(adapter: SettlementContractAdapter): SettlementContra
             `release_step must settle no guard, got guards:${JSON.stringify(released.guards)} free:${membershipOf(released.run, 'free')}`,
           );
         }
-        const claimedGated = await adapter.store.claimStep(run.id, 'gated', def);
+        const { record: claimedGated } = await adapter.store.claimStep(run.id, 'gated', def);
         const opened = await settleStep(
           run.id,
           {
@@ -4363,7 +4471,7 @@ function guardCascadeCases(adapter: SettlementContractAdapter): SettlementContra
         // The record the transform is given is one the store itself wrote: created, then claimed.
         // Nothing below writes to the store — both calls are the pure transform.
         const { run: claimed, token } = await createClaimed(adapter.store, def, 'a');
-        const fresh = await adapter.store.get(claimed.id);
+        const { record: fresh } = await adapter.store.get(claimed.id);
         const delta: SettlementDelta = {
           kind: 'settle_step',
           step: 'a',
@@ -4372,14 +4480,14 @@ function guardCascadeCases(adapter: SettlementContractAdapter): SettlementContra
           evidence: [makeEvidence('a', { output_summary: { ok: true } })],
         };
         const now = new Date('2026-01-01T00:00:00.000Z');
-        const without = applySettlement(fresh, delta, def, { now });
+        const without = applySettlement(fresh, delta, def, { at: now });
         assertApplied(without, 'applySettlement without the option');
         if (without.guards !== undefined || membershipOf(without.run, 'g') !== 'none') {
           throw new Error(
             `without cascadeGuards the transform must settle no guard, got guards:${JSON.stringify(without.guards)} g:${membershipOf(without.run, 'g')}`,
           );
         }
-        const withOption = applySettlement(fresh, delta, def, { now, cascadeGuards: true });
+        const withOption = applySettlement(fresh, delta, def, { at: now, cascadeGuards: true });
         assertApplied(withOption, 'applySettlement with the option');
         assertGuards(
           withOption,
@@ -4495,14 +4603,14 @@ function guardCascadeCases(adapter: SettlementContractAdapter): SettlementContra
 
 function releaseIdempotentCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
   const { minimalDefinition } = adapter.settlementFixture!;
-  const settleStep = requireSettleStep(adapter.store);
+  const settleStep = bindSettle(adapter.store);
   return [
     {
       law: 'RELEASE_IDEMPOTENT',
       name: `[${adapter.storeName}] release_step on a claim-absent step NOOPs as already_released (TD F10)`,
       run: async () => {
         const def = minimalDefinition(['a']);
-        const { run } = await adapter.store.create({
+        const { record: run } = await adapter.store.create({
           workflowId: def.id,
           workflowVersion: def.version,
           params: {},
@@ -4583,7 +4691,7 @@ function releaseIdempotentCases(adapter: SettlementContractAdapter): SettlementC
 
 function phaseIsGeneratedCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
   const { minimalDefinition } = adapter.settlementFixture!;
-  const settleStep = requireSettleStep(adapter.store);
+  const settleStep = bindSettle(adapter.store);
 
   function assertGenerated(record: RunRecord, context: string): void {
     const expected = deriveRunPhase(record);
@@ -4601,14 +4709,14 @@ function phaseIsGeneratedCases(adapter: SettlementContractAdapter): SettlementCo
       name: `[${adapter.storeName}] persisted run_phase ≡ deriveRunPhase(record) after settleStep (all four kinds exercised) / update / claimStep`,
       run: async () => {
         const def = minimalDefinition(['a', 'b']);
-        const { run } = await adapter.store.create({
+        const { record: run } = await adapter.store.create({
           workflowId: def.id,
           workflowVersion: def.version,
           params: {},
         });
         assertGenerated(run, 'create()');
 
-        const claimed = await adapter.store.claimStep(run.id, 'a', def);
+        const { record: claimed } = await adapter.store.claimStep(run.id, 'a', def);
         assertGenerated(claimed, 'claimStep()');
 
         const token = claimed.claims!['a']!.token!;
@@ -4626,7 +4734,7 @@ function phaseIsGeneratedCases(adapter: SettlementContractAdapter): SettlementCo
         assertApplied(settled, 'settle_step complete');
         assertGenerated(settled.run, 'settleStep(settle_step)');
 
-        const updated = await adapter.store.update({ ...settled.run });
+        const { record: updated } = await adapter.store.update({ ...settled.run });
         assertGenerated(updated, 'update()');
       },
     },
@@ -4635,7 +4743,7 @@ function phaseIsGeneratedCases(adapter: SettlementContractAdapter): SettlementCo
       name: `[${adapter.storeName}] the claimStep leg's discriminating fixture: abandoned_at ∧ terminal_state:false ⇒ claimStep persists the DERIVED 'abandoned' phase, not a hardcoded 'running'`,
       run: async () => {
         const def = minimalDefinition(['a']);
-        const { run } = await adapter.store.create({
+        const { record: run } = await adapter.store.create({
           workflowId: def.id,
           workflowVersion: def.version,
           params: {},
@@ -4644,11 +4752,11 @@ function phaseIsGeneratedCases(adapter: SettlementContractAdapter): SettlementCo
         // pending_gate) — so this hand-shaped record is still claimable, while deriveRunPhase
         // (which DOES check abandoned_at first) derives 'abandoned' for it. A store that still
         // hardcodes 'running' on claim (rather than deriving) would persist the wrong phase here.
-        const seeded = await adapter.store.update({
+        const { record: seeded } = await adapter.store.update({
           ...run,
           abandoned_at: '2026-01-01T00:00:00.000Z',
         });
-        const claimed = await adapter.store.claimStep(seeded.id, 'a', def);
+        const { record: claimed } = await adapter.store.claimStep(seeded.id, 'a', def);
         if (claimed.run_phase !== 'abandoned') {
           throw new Error(
             `PHASE_IS_GENERATED (claimStep leg) violated: expected persisted 'abandoned', got '${claimed.run_phase}'`,
@@ -4671,7 +4779,7 @@ function phaseIsGeneratedCases(adapter: SettlementContractAdapter): SettlementCo
 function cwfsFiresPerArmCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
   const fixture = adapter.settlementFixture!;
   const { minimalDefinition, withFinalizer } = fixture;
-  const settleStep = requireSettleStep(adapter.store);
+  const settleStep = bindSettle(adapter.store);
   const cases: SettlementContractCase[] = [
     {
       law: 'CWFS_FIRES_PER_ARM',
@@ -4683,7 +4791,11 @@ function cwfsFiresPerArmCases(adapter: SettlementContractAdapter): SettlementCon
           'completed_with_failed_steps',
         );
         const { run, token: failToken } = await createClaimed(adapter.store, def, 'fail_step');
-        const claimedComplete = await adapter.store.claimStep(run.id, 'complete_step', def);
+        const { record: claimedComplete } = await adapter.store.claimStep(
+          run.id,
+          'complete_step',
+          def,
+        );
         const completeToken = claimedComplete.claims!['complete_step']!.token!;
 
         const failed = await settleStep(
@@ -4737,7 +4849,7 @@ function cwfsFiresPerArmCases(adapter: SettlementContractAdapter): SettlementCon
         // findEligibleSteps returns [] globally, so a fresh claim for 'gated_step' after opening a
         // gate on it would be the wrong sequencing (this claims first, opens second).
         const { run, token: failToken } = await createClaimed(adapter.store, def, 'fail_step');
-        const claimedGated = await adapter.store.claimStep(run.id, 'gated_step', def);
+        const { record: claimedGated } = await adapter.store.claimStep(run.id, 'gated_step', def);
         const gatedToken = claimedGated.claims!['gated_step']!.token!;
 
         const failed = await settleStep(
@@ -4867,7 +4979,7 @@ function cwfsFiresPerArmCases(adapter: SettlementContractAdapter): SettlementCon
  *  select it; a pure fail seal (never reaches complete) does not select it either. */
 function cwfsNegativesCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
   const { minimalDefinition, withFinalizer } = adapter.settlementFixture!;
-  const settleStep = requireSettleStep(adapter.store);
+  const settleStep = bindSettle(adapter.store);
   return [
     {
       law: 'CWFS_NEGATIVES',
@@ -4931,7 +5043,7 @@ function cwfsNegativesCases(adapter: SettlementContractAdapter): SettlementContr
  *  (finalizer-matrix-302.test.ts), per the hand-off prompt's "Core tests" bullet. */
 function cwfsSecondEpochCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
   const { minimalDefinition, withFinalizer } = adapter.settlementFixture!;
-  const settleStep = requireSettleStep(adapter.store);
+  const settleStep = bindSettle(adapter.store);
   return [
     {
       law: 'CWFS_SECOND_EPOCH',
@@ -4999,7 +5111,7 @@ function cwfsSecondEpochCases(adapter: SettlementContractAdapter): SettlementCon
         // issue #367: same as the mintFreshCases precedent — the seal fact leaves in the write
         // that flips the run live again.
         const { sealed_by: _voidSeal2, ...markedFailedBase } = markedFailed.run;
-        const postResumeVoid = await adapter.store.update({
+        const { record: postResumeVoid } = await adapter.store.update({
           ...markedFailedBase,
           terminal_state: false,
           in_progress_steps: [],
@@ -5014,7 +5126,7 @@ function cwfsSecondEpochCases(adapter: SettlementContractAdapter): SettlementCon
 
         // Second epoch: re-claim + complete 'a'. Its own failed_steps has NOTHING from this
         // epoch — only onFail's own prior-epoch scar.
-        const reclaimed = await adapter.store.claimStep(run.id, 'a', def);
+        const { record: reclaimed } = await adapter.store.claimStep(run.id, 'a', def);
         const reToken = reclaimed.claims!['a']!.token!;
         const reCompleted = await settleStep(
           run.id,
@@ -5051,13 +5163,13 @@ function cwfsSecondEpochCases(adapter: SettlementContractAdapter): SettlementCon
  *  fires exactly once on mixed-complete too (Group B). */
 function cwfsArrayOnceCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
   const { minimalDefinition, withFinalizer } = adapter.settlementFixture!;
-  const settleStep = requireSettleStep(adapter.store);
+  const settleStep = bindSettle(adapter.store);
 
   /** Builds a mixed-complete seal (fail 'fail_step' first, then complete 'complete_step' last)
    *  over whatever finalizer(s) `withFin` has already added to the definition. */
   async function driveMixedComplete(def: WorkflowDefinition): Promise<SettlementResult> {
     const { run, token: failToken } = await createClaimed(adapter.store, def, 'fail_step');
-    const claimedComplete = await adapter.store.claimStep(run.id, 'complete_step', def);
+    const { record: claimedComplete } = await adapter.store.claimStep(run.id, 'complete_step', def);
     const completeToken = claimedComplete.claims!['complete_step']!.token!;
     const failed = await settleStep(
       run.id,
@@ -5133,7 +5245,7 @@ function cwfsArrayOnceCases(adapter: SettlementContractAdapter): SettlementContr
  *  mixed-complete) never happens, pinned both ways. */
 function currentBehaviorPinnedCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
   const { minimalDefinition, withFinalizer } = adapter.settlementFixture!;
-  const settleStep = requireSettleStep(adapter.store);
+  const settleStep = bindSettle(adapter.store);
   return [
     {
       law: 'CURRENT_BEHAVIOR_PINNED',
@@ -5168,7 +5280,11 @@ function currentBehaviorPinnedCases(adapter: SettlementContractAdapter): Settlem
           'fail',
         );
         const { run, token: failToken } = await createClaimed(adapter.store, def, 'fail_step');
-        const claimedComplete = await adapter.store.claimStep(run.id, 'complete_step', def);
+        const { record: claimedComplete } = await adapter.store.claimStep(
+          run.id,
+          'complete_step',
+          def,
+        );
         const completeToken = claimedComplete.claims!['complete_step']!.token!;
         const failed = await settleStep(
           run.id,
@@ -5221,466 +5337,602 @@ function currentBehaviorPinnedCases(adapter: SettlementContractAdapter): Settlem
 
 function expireArmMatrixCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
   const { minimalDefinition } = adapter.settlementFixture!;
-  const settleStep = requireSettleStep(adapter.store);
   return [
     {
       law: 'EXPIRE_ARM_MATRIX',
       name: `[${adapter.storeName}] expire_gate refuses not_expired with the injectable now, never the caller-implied clock`,
-      run: async () => {
-        const def = minimalDefinition(['gated']);
-        const { run, token } = await createClaimed(adapter.store, def, 'gated');
-        const gate = makePendingGate('gated', {
-          gateId: 'gate-1',
-          expiresAt: '2026-01-01T00:05:00.000Z',
-          onExpiry: 'abort',
-        });
-        const opened = await settleStep(
-          run.id,
-          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
-          def,
-        );
-        assertApplied(opened, 'open_gate');
-        const result = await settleStep(run.id, { kind: 'expire_gate', gateId: 'gate-1' }, def, {
-          now: new Date('2026-01-01T00:00:30.000Z'),
-        });
-        assertRefused(result, 'not_expired', 'expire_gate before expires_at');
-      },
+      run: () =>
+        onTimed(adapter, TIMED_START, async (t) => {
+          const settleStep = bindSettle(t.store);
+          const def = minimalDefinition(['gated']);
+          const { run, token } = await createClaimed(t.store, def, 'gated');
+          const gate = makePendingGate('gated', {
+            gateId: 'gate-1',
+            onExpiry: 'abort',
+          });
+          const opened = await settleStep(
+            run.id,
+            {
+              kind: 'open_gate',
+              step: 'gated',
+              claimToken: token,
+              pendingGate: gate,
+              timeoutSeconds: 300,
+              evidence: [],
+            },
+            def,
+          );
+          assertApplied(opened, 'open_gate');
+          const result = await t.settleAt(
+            new Date('2026-01-01T00:00:30.000Z'),
+            run.id,
+            { kind: 'expire_gate', gateId: 'gate-1' },
+            def,
+          );
+          assertRefused(result, 'not_expired', 'expire_gate before expires_at');
+        }),
     },
     {
       law: 'EXPIRE_ARM_MATRIX',
       name: `[${adapter.storeName}] expire_gate replay ×2 (settle_default): the SECOND attempt NOOPs already_settled — version-safe idempotence`,
-      run: async () => {
-        const def = minimalDefinition(['gated']);
-        const { run, token } = await createClaimed(adapter.store, def, 'gated');
-        const gate = makePendingGate('gated', {
-          gateId: 'gate-1',
-          expiresAt: '2026-01-01T00:05:00.000Z',
-          onExpiry: 'settle_default',
-          defaultChoice: 'approve',
-        });
-        const opened = await settleStep(
-          run.id,
-          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
-          def,
-        );
-        assertApplied(opened, 'open_gate');
-        const now = new Date('2026-01-01T00:10:00.000Z');
-        const first = await settleStep(run.id, { kind: 'expire_gate', gateId: 'gate-1' }, def, {
-          now,
-        });
-        assertApplied(first, 'first expire_gate (settle_default)');
-        const second = await settleStep(run.id, { kind: 'expire_gate', gateId: 'gate-1' }, def, {
-          now,
-        });
-        assertRefused(
-          second,
-          'already_settled',
-          'replay expire_gate for an already-settled settle_default gate',
-        );
-      },
+      run: () =>
+        onTimed(adapter, TIMED_START, async (t) => {
+          const settleStep = bindSettle(t.store);
+          const def = minimalDefinition(['gated']);
+          const { run, token } = await createClaimed(t.store, def, 'gated');
+          const gate = makePendingGate('gated', {
+            gateId: 'gate-1',
+            onExpiry: 'settle_default',
+            defaultChoice: 'approve',
+          });
+          const opened = await settleStep(
+            run.id,
+            {
+              kind: 'open_gate',
+              step: 'gated',
+              claimToken: token,
+              pendingGate: gate,
+              timeoutSeconds: 300,
+              evidence: [],
+            },
+            def,
+          );
+          assertApplied(opened, 'open_gate');
+          const now = new Date('2026-01-01T00:10:00.000Z');
+          const first = await t.settleAt(
+            now,
+            run.id,
+            { kind: 'expire_gate', gateId: 'gate-1' },
+            def,
+          );
+          assertApplied(first, 'first expire_gate (settle_default)');
+          const second = await t.settleAt(
+            now,
+            run.id,
+            { kind: 'expire_gate', gateId: 'gate-1' },
+            def,
+          );
+          assertRefused(
+            second,
+            'already_settled',
+            'replay expire_gate for an already-settled settle_default gate',
+          );
+        }),
     },
     {
       law: 'EXPIRE_ARM_MATRIX',
       name: `[${adapter.storeName}] expire_gate replay ×2 (abort): the SECOND attempt NOOPs already_settled (terminal split)`,
-      run: async () => {
-        const def = minimalDefinition(['gated']);
-        const { run, token } = await createClaimed(adapter.store, def, 'gated');
-        const gate = makePendingGate('gated', {
-          gateId: 'gate-1',
-          expiresAt: '2026-01-01T00:05:00.000Z',
-          onExpiry: 'abort',
-        });
-        const opened = await settleStep(
-          run.id,
-          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
-          def,
-        );
-        assertApplied(opened, 'open_gate');
-        const now = new Date('2026-01-01T00:10:00.000Z');
-        const first = await settleStep(run.id, { kind: 'expire_gate', gateId: 'gate-1' }, def, {
-          now,
-        });
-        assertApplied(first, 'first expire_gate (abort)');
-        const second = await settleStep(run.id, { kind: 'expire_gate', gateId: 'gate-1' }, def, {
-          now,
-        });
-        assertRefused(
-          second,
-          'already_settled',
-          'replay expire_gate for an already-aborted gate (terminal-split arm)',
-        );
-      },
+      run: () =>
+        onTimed(adapter, TIMED_START, async (t) => {
+          const settleStep = bindSettle(t.store);
+          const def = minimalDefinition(['gated']);
+          const { run, token } = await createClaimed(t.store, def, 'gated');
+          const gate = makePendingGate('gated', {
+            gateId: 'gate-1',
+            onExpiry: 'abort',
+          });
+          const opened = await settleStep(
+            run.id,
+            {
+              kind: 'open_gate',
+              step: 'gated',
+              claimToken: token,
+              pendingGate: gate,
+              timeoutSeconds: 300,
+              evidence: [],
+            },
+            def,
+          );
+          assertApplied(opened, 'open_gate');
+          const now = new Date('2026-01-01T00:10:00.000Z');
+          const first = await t.settleAt(
+            now,
+            run.id,
+            { kind: 'expire_gate', gateId: 'gate-1' },
+            def,
+          );
+          assertApplied(first, 'first expire_gate (abort)');
+          const second = await t.settleAt(
+            now,
+            run.id,
+            { kind: 'expire_gate', gateId: 'gate-1' },
+            def,
+          );
+          assertRefused(
+            second,
+            'already_settled',
+            'replay expire_gate for an already-aborted gate (terminal-split arm)',
+          );
+        }),
     },
     {
       law: 'EXPIRE_ARM_MATRIX',
       name: `[${adapter.storeName}] expire_gate against a run terminalized by a DIFFERENT cause refuses run_terminal — never resurrecting or re-terminalizing`,
-      run: async () => {
-        const def = minimalDefinition(['gated']);
-        const { run, token } = await createClaimed(adapter.store, def, 'gated');
-        const completed = await settleStep(
-          run.id,
-          {
-            kind: 'settle_step',
-            step: 'gated',
-            outcome: 'complete',
-            claimToken: token,
-            evidence: [makeEvidence('gated')],
-          },
-          def,
-        );
-        assertApplied(
-          completed,
-          'complete gated (terminalizes — sole step, unrelated to any gate)',
-        );
-        const result = await settleStep(run.id, { kind: 'expire_gate', gateId: 'gate-1' }, def, {
-          now: new Date('2026-01-01T00:10:00.000Z'),
-        });
-        assertRefused(
-          result,
-          'run_terminal',
-          'expire_gate against a run terminalized by an unrelated cause',
-        );
-      },
+      run: () =>
+        onTimed(adapter, TIMED_START, async (t) => {
+          const settleStep = bindSettle(t.store);
+          const def = minimalDefinition(['gated']);
+          const { run, token } = await createClaimed(t.store, def, 'gated');
+          const completed = await settleStep(
+            run.id,
+            {
+              kind: 'settle_step',
+              step: 'gated',
+              outcome: 'complete',
+              claimToken: token,
+              evidence: [makeEvidence('gated')],
+            },
+            def,
+          );
+          assertApplied(
+            completed,
+            'complete gated (terminalizes — sole step, unrelated to any gate)',
+          );
+          const result = await t.settleAt(
+            new Date('2026-01-01T00:10:00.000Z'),
+            run.id,
+            { kind: 'expire_gate', gateId: 'gate-1' },
+            def,
+          );
+          assertRefused(
+            result,
+            'run_terminal',
+            'expire_gate against a run terminalized by an unrelated cause',
+          );
+        }),
     },
     {
       law: 'EXPIRE_ARM_MATRIX',
       name: `[${adapter.storeName}] expire_gate with an unknown/superseded gateId refuses gate_mismatch`,
-      run: async () => {
-        const def = minimalDefinition(['gated']);
-        const { run, token } = await createClaimed(adapter.store, def, 'gated');
-        const gate = makePendingGate('gated', {
-          gateId: 'live-gate',
-          expiresAt: '2026-01-01T00:05:00.000Z',
-          onExpiry: 'abort',
-        });
-        const opened = await settleStep(
-          run.id,
-          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
-          def,
-        );
-        assertApplied(opened, 'open_gate');
-        const result = await settleStep(
-          run.id,
-          { kind: 'expire_gate', gateId: 'stale-unknown-gate' },
-          def,
-          { now: new Date('2026-01-01T00:10:00.000Z') },
-        );
-        assertRefused(result, 'gate_mismatch', 'expire_gate with an unknown gateId');
-      },
+      run: () =>
+        onTimed(adapter, TIMED_START, async (t) => {
+          const settleStep = bindSettle(t.store);
+          const def = minimalDefinition(['gated']);
+          const { run, token } = await createClaimed(t.store, def, 'gated');
+          const gate = makePendingGate('gated', {
+            gateId: 'live-gate',
+            onExpiry: 'abort',
+          });
+          const opened = await settleStep(
+            run.id,
+            {
+              kind: 'open_gate',
+              step: 'gated',
+              claimToken: token,
+              pendingGate: gate,
+              timeoutSeconds: 300,
+              evidence: [],
+            },
+            def,
+          );
+          assertApplied(opened, 'open_gate');
+          const result = await t.settleAt(
+            new Date('2026-01-01T00:10:00.000Z'),
+            run.id,
+            { kind: 'expire_gate', gateId: 'stale-unknown-gate' },
+            def,
+          );
+          assertRefused(result, 'gate_mismatch', 'expire_gate with an unknown gateId');
+        }),
     },
     {
       law: 'EXPIRE_ARM_MATRIX',
       name: `[${adapter.storeName}] expire_gate on a finding-only gate (expires_at present, on_expiry absent) refuses no_disposition, arm-level, before APPLY — never cleared`,
-      run: async () => {
-        const def = minimalDefinition(['gated']);
-        const { run, token } = await createClaimed(adapter.store, def, 'gated');
-        const gate = makePendingGate('gated', {
-          gateId: 'gate-1',
-          expiresAt: '2026-01-01T00:05:00.000Z',
-          // no onExpiry — finding-only.
-        });
-        const opened = await settleStep(
-          run.id,
-          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
-          def,
-        );
-        assertApplied(opened, 'open_gate');
-        const result = await settleStep(run.id, { kind: 'expire_gate', gateId: 'gate-1' }, def, {
-          now: new Date('2026-01-01T00:10:00.000Z'),
-        });
-        assertRefused(result, 'no_disposition', 'expire_gate on a finding-only gate');
-        if (result.run.pending_gate === undefined) {
-          throw new Error('a finding-only refusal must NEVER clear pending_gate');
-        }
-      },
+      run: () =>
+        onTimed(adapter, TIMED_START, async (t) => {
+          const settleStep = bindSettle(t.store);
+          const def = minimalDefinition(['gated']);
+          const { run, token } = await createClaimed(t.store, def, 'gated');
+          const gate = makePendingGate('gated', {
+            gateId: 'gate-1',
+            // no onExpiry — finding-only.
+          });
+          const opened = await settleStep(
+            run.id,
+            {
+              kind: 'open_gate',
+              step: 'gated',
+              claimToken: token,
+              pendingGate: gate,
+              timeoutSeconds: 300,
+              evidence: [],
+            },
+            def,
+          );
+          assertApplied(opened, 'open_gate');
+          const result = await t.settleAt(
+            new Date('2026-01-01T00:10:00.000Z'),
+            run.id,
+            { kind: 'expire_gate', gateId: 'gate-1' },
+            def,
+          );
+          assertRefused(result, 'no_disposition', 'expire_gate on a finding-only gate');
+          if (result.run.pending_gate === undefined) {
+            throw new Error('a finding-only refusal must NEVER clear pending_gate');
+          }
+        }),
     },
   ];
 }
 
 function expireAbortCascadeCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
   const { minimalDefinition, withFinalizer } = adapter.settlementFixture!;
-  const settleStep = requireSettleStep(adapter.store);
   return [
     {
       law: 'EXPIRE_ABORT_CASCADE',
       name: `[${adapter.storeName}] expire_gate (abort) clears pending_gate + claim, writes aborted_at + skip_details {gate_expired, gate_id} (day-one), mints finalizers — all in ONE write`,
-      run: async () => {
-        const def = withFinalizer(minimalDefinition(['gated']), 'fin', 'abort');
-        const { run, token } = await createClaimed(adapter.store, def, 'gated');
-        const gate = makePendingGate('gated', {
-          gateId: 'gate-1',
-          expiresAt: '2026-01-01T00:05:00.000Z',
-          onExpiry: 'abort',
-        });
-        const opened = await settleStep(
-          run.id,
-          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
-          def,
-        );
-        assertApplied(opened, 'open_gate');
-        const result = await settleStep(run.id, { kind: 'expire_gate', gateId: 'gate-1' }, def, {
-          now: new Date('2026-01-01T00:10:00.000Z'),
-        });
-        assertApplied(result, 'expire_gate (abort)');
-        if (result.run.pending_gate !== undefined) {
-          throw new Error('expected pending_gate cleared');
-        }
-        if (result.run.claims?.['gated'] !== undefined) {
-          throw new Error('expected the claim cleared');
-        }
-        if (result.run.in_progress_steps.includes('gated')) {
-          throw new Error("expected 'gated' removed from in_progress_steps");
-        }
-        if (result.run.terminal_state !== true) {
-          throw new Error('expected the run to terminalize');
-        }
-        if (result.run.aborted_at?.step_id !== 'gated') {
-          throw new Error(
-            `expected aborted_at.step_id === 'gated', got ${JSON.stringify(result.run.aborted_at)}`,
+      run: () =>
+        onTimed(adapter, TIMED_START, async (t) => {
+          const settleStep = bindSettle(t.store);
+          const def = withFinalizer(minimalDefinition(['gated']), 'fin', 'abort');
+          const { run, token } = await createClaimed(t.store, def, 'gated');
+          const gate = makePendingGate('gated', {
+            gateId: 'gate-1',
+            onExpiry: 'abort',
+          });
+          const opened = await settleStep(
+            run.id,
+            {
+              kind: 'open_gate',
+              step: 'gated',
+              claimToken: token,
+              pendingGate: gate,
+              timeoutSeconds: 300,
+              evidence: [],
+            },
+            def,
           );
-        }
-        const detail = result.run.skip_details?.['gated'];
-        if (detail === undefined || detail.kind !== 'gate_expired' || detail.gate_id !== 'gate-1') {
-          throw new Error(
-            `expected skip_details.gated = {kind:'gate_expired', gate_id:'gate-1'}, got ${JSON.stringify(detail)}`,
+          assertApplied(opened, 'open_gate');
+          const result = await t.settleAt(
+            new Date('2026-01-01T00:10:00.000Z'),
+            run.id,
+            { kind: 'expire_gate', gateId: 'gate-1' },
+            def,
           );
-        }
-        if (result.run.settled?.['gated'] !== undefined) {
-          throw new Error(
-            'TERMINAL_GATE_EXCLUSION: the abort disposition must never ALSO write a settled gate entry',
-          );
-        }
-        if (result.run.finalizer_ledger?.['fin'] === undefined) {
-          throw new Error("expected the 'abort'-triggered finalizer minted on the abort edge");
-        }
-      },
+          assertApplied(result, 'expire_gate (abort)');
+          if (result.run.pending_gate !== undefined) {
+            throw new Error('expected pending_gate cleared');
+          }
+          if (result.run.claims?.['gated'] !== undefined) {
+            throw new Error('expected the claim cleared');
+          }
+          if (result.run.in_progress_steps.includes('gated')) {
+            throw new Error("expected 'gated' removed from in_progress_steps");
+          }
+          if (result.run.terminal_state !== true) {
+            throw new Error('expected the run to terminalize');
+          }
+          if (result.run.aborted_at?.step_id !== 'gated') {
+            throw new Error(
+              `expected aborted_at.step_id === 'gated', got ${JSON.stringify(result.run.aborted_at)}`,
+            );
+          }
+          const detail = result.run.skip_details?.['gated'];
+          if (
+            detail === undefined ||
+            detail.kind !== 'gate_expired' ||
+            detail.gate_id !== 'gate-1'
+          ) {
+            throw new Error(
+              `expected skip_details.gated = {kind:'gate_expired', gate_id:'gate-1'}, got ${JSON.stringify(detail)}`,
+            );
+          }
+          if (result.run.settled?.['gated'] !== undefined) {
+            throw new Error(
+              'TERMINAL_GATE_EXCLUSION: the abort disposition must never ALSO write a settled gate entry',
+            );
+          }
+          if (result.run.finalizer_ledger?.['fin'] === undefined) {
+            throw new Error("expected the 'abort'-triggered finalizer minted on the abort edge");
+          }
+        }),
     },
     {
       law: 'EXPIRE_ABORT_CASCADE',
       name: `[${adapter.storeName}] the D-4 discriminator: a gate_expired skip_detail is NEVER mistaken for gate_cancelled_by_abort`,
-      run: async () => {
-        const def = minimalDefinition(['gated']);
-        const { run, token } = await createClaimed(adapter.store, def, 'gated');
-        const gate = makePendingGate('gated', {
-          gateId: 'gate-1',
-          expiresAt: '2026-01-01T00:05:00.000Z',
-          onExpiry: 'abort',
-        });
-        const opened = await settleStep(
-          run.id,
-          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
-          def,
-        );
-        assertApplied(opened, 'open_gate');
-        const result = await settleStep(run.id, { kind: 'expire_gate', gateId: 'gate-1' }, def, {
-          now: new Date('2026-01-01T00:10:00.000Z'),
-        });
-        assertApplied(result, 'expire_gate (abort)');
-        const kind = result.run.skip_details?.['gated']?.kind;
-        if (kind !== 'gate_expired') {
-          throw new Error(`expected skip_details.gated.kind === 'gate_expired', got '${kind}'`);
-        }
-        // TypeScript narrows `kind` to the literal above; the discriminator being tested is that
-        // it is NEVER 'gate_cancelled_by_abort' — asserted by construction (the union excludes it
-        // once narrowed) and restated here as an explicit, readable pin.
-      },
+      run: () =>
+        onTimed(adapter, TIMED_START, async (t) => {
+          const settleStep = bindSettle(t.store);
+          const def = minimalDefinition(['gated']);
+          const { run, token } = await createClaimed(t.store, def, 'gated');
+          const gate = makePendingGate('gated', {
+            gateId: 'gate-1',
+            onExpiry: 'abort',
+          });
+          const opened = await settleStep(
+            run.id,
+            {
+              kind: 'open_gate',
+              step: 'gated',
+              claimToken: token,
+              pendingGate: gate,
+              timeoutSeconds: 300,
+              evidence: [],
+            },
+            def,
+          );
+          assertApplied(opened, 'open_gate');
+          const result = await t.settleAt(
+            new Date('2026-01-01T00:10:00.000Z'),
+            run.id,
+            { kind: 'expire_gate', gateId: 'gate-1' },
+            def,
+          );
+          assertApplied(result, 'expire_gate (abort)');
+          const kind = result.run.skip_details?.['gated']?.kind;
+          if (kind !== 'gate_expired') {
+            throw new Error(`expected skip_details.gated.kind === 'gate_expired', got '${kind}'`);
+          }
+          // TypeScript narrows `kind` to the literal above; the discriminator being tested is that
+          // it is NEVER 'gate_cancelled_by_abort' — asserted by construction (the union excludes it
+          // once narrowed) and restated here as an explicit, readable pin.
+        }),
     },
     {
       law: 'EXPIRE_ABORT_CASCADE',
       name: `[${adapter.storeName}] expire_gate (abort) never stamps defaulted_steps, even though it terminalizes (the FM-5/#232 guard)`,
-      run: async () => {
-        const def = minimalDefinition(['gated']);
-        const { run, token } = await createClaimed(adapter.store, def, 'gated');
-        const gate = makePendingGate('gated', {
-          gateId: 'gate-1',
-          expiresAt: '2026-01-01T00:05:00.000Z',
-          onExpiry: 'abort',
-        });
-        const opened = await settleStep(
-          run.id,
-          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
-          def,
-        );
-        assertApplied(opened, 'open_gate');
-        const result = await settleStep(run.id, { kind: 'expire_gate', gateId: 'gate-1' }, def, {
-          now: new Date('2026-01-01T00:10:00.000Z'),
-        });
-        assertApplied(result, 'expire_gate (abort)');
-        if (result.run.defaulted_steps !== undefined) {
-          throw new Error('expire_gate (abort) must never stamp defaulted_steps');
-        }
-      },
+      run: () =>
+        onTimed(adapter, TIMED_START, async (t) => {
+          const settleStep = bindSettle(t.store);
+          const def = minimalDefinition(['gated']);
+          const { run, token } = await createClaimed(t.store, def, 'gated');
+          const gate = makePendingGate('gated', {
+            gateId: 'gate-1',
+            onExpiry: 'abort',
+          });
+          const opened = await settleStep(
+            run.id,
+            {
+              kind: 'open_gate',
+              step: 'gated',
+              claimToken: token,
+              pendingGate: gate,
+              timeoutSeconds: 300,
+              evidence: [],
+            },
+            def,
+          );
+          assertApplied(opened, 'open_gate');
+          const result = await t.settleAt(
+            new Date('2026-01-01T00:10:00.000Z'),
+            run.id,
+            { kind: 'expire_gate', gateId: 'gate-1' },
+            def,
+          );
+          assertApplied(result, 'expire_gate (abort)');
+          if (result.run.defaulted_steps !== undefined) {
+            throw new Error('expire_gate (abort) must never stamp defaulted_steps');
+          }
+        }),
     },
   ];
 }
 
 function expireDefaultResolveCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
   const { minimalDefinition } = adapter.settlementFixture!;
-  const settleStep = requireSettleStep(adapter.store);
   return [
     {
       law: 'EXPIRE_DEFAULT_RESOLVE',
       name: `[${adapter.storeName}] expire_gate (settle_default) resolves with resolved_by:'timeout' attribution + terminalizes (sole step)`,
-      run: async () => {
-        const def = minimalDefinition(['gated']);
-        const { run, token } = await createClaimed(adapter.store, def, 'gated');
-        const gate = makePendingGate('gated', {
-          gateId: 'gate-1',
-          expiresAt: '2026-01-01T00:05:00.000Z',
-          onExpiry: 'settle_default',
-          defaultChoice: 'approve',
-        });
-        const opened = await settleStep(
-          run.id,
-          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
-          def,
-        );
-        assertApplied(opened, 'open_gate');
-        const result = await settleStep(run.id, { kind: 'expire_gate', gateId: 'gate-1' }, def, {
-          now: new Date('2026-01-01T00:10:00.000Z'),
-        });
-        assertApplied(result, 'expire_gate (settle_default)');
-        const entry = result.run.settled?.['gated'];
-        if (
-          entry?.token !== 'gate-1' ||
-          entry.outcome !== 'gate' ||
-          entry.choice !== 'approve' ||
-          entry.resolved_by !== 'timeout'
-        ) {
-          throw new Error(
-            `expected settled.gated = {token:'gate-1', outcome:'gate', choice:'approve', ` +
-              `resolved_by:'timeout'}, got ${JSON.stringify(entry)}`,
+      run: () =>
+        onTimed(adapter, TIMED_START, async (t) => {
+          const settleStep = bindSettle(t.store);
+          const def = minimalDefinition(['gated']);
+          const { run, token } = await createClaimed(t.store, def, 'gated');
+          const gate = makePendingGate('gated', {
+            gateId: 'gate-1',
+            onExpiry: 'settle_default',
+            defaultChoice: 'approve',
+          });
+          const opened = await settleStep(
+            run.id,
+            {
+              kind: 'open_gate',
+              step: 'gated',
+              claimToken: token,
+              pendingGate: gate,
+              timeoutSeconds: 300,
+              evidence: [],
+            },
+            def,
           );
-        }
-        if (result.run.terminal_state !== true) {
-          throw new Error('sole step ⇒ isComplete ⇒ the run must terminalize');
-        }
-      },
+          assertApplied(opened, 'open_gate');
+          const result = await t.settleAt(
+            new Date('2026-01-01T00:10:00.000Z'),
+            run.id,
+            { kind: 'expire_gate', gateId: 'gate-1' },
+            def,
+          );
+          assertApplied(result, 'expire_gate (settle_default)');
+          const entry = result.run.settled?.['gated'];
+          if (
+            entry?.token !== 'gate-1' ||
+            entry.outcome !== 'gate' ||
+            entry.choice !== 'approve' ||
+            entry.resolved_by !== 'timeout'
+          ) {
+            throw new Error(
+              `expected settled.gated = {token:'gate-1', outcome:'gate', choice:'approve', ` +
+                `resolved_by:'timeout'}, got ${JSON.stringify(entry)}`,
+            );
+          }
+          if (result.run.terminal_state !== true) {
+            throw new Error('sole step ⇒ isComplete ⇒ the run must terminalize');
+          }
+        }),
     },
     {
       law: 'EXPIRE_DEFAULT_RESOLVE',
       name: `[${adapter.storeName}] expire_gate (settle_default): a sibling step still in progress keeps the run non-terminal`,
-      run: async () => {
-        const def = minimalDefinition(['gated', 'sibling']);
-        const { run, token } = await createClaimed(adapter.store, def, 'gated');
-        await adapter.store.claimStep(run.id, 'sibling', def);
-        const gate = makePendingGate('gated', {
-          gateId: 'gate-1',
-          expiresAt: '2026-01-01T00:05:00.000Z',
-          onExpiry: 'settle_default',
-          defaultChoice: 'approve',
-        });
-        const opened = await settleStep(
-          run.id,
-          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
-          def,
-        );
-        assertApplied(opened, 'open_gate');
-        const result = await settleStep(run.id, { kind: 'expire_gate', gateId: 'gate-1' }, def, {
-          now: new Date('2026-01-01T00:10:00.000Z'),
-        });
-        assertApplied(result, 'expire_gate (settle_default)');
-        if (result.run.terminal_state !== false) {
-          throw new Error("'sibling' still in_progress ⇒ the run must stay non-terminal");
-        }
-        if (!result.run.completed_steps.includes('gated')) {
-          throw new Error("expected 'gated' in completed_steps");
-        }
-      },
+      run: () =>
+        onTimed(adapter, TIMED_START, async (t) => {
+          const settleStep = bindSettle(t.store);
+          const def = minimalDefinition(['gated', 'sibling']);
+          const { run, token } = await createClaimed(t.store, def, 'gated');
+          await t.store.claimStep(run.id, 'sibling', def);
+          const gate = makePendingGate('gated', {
+            gateId: 'gate-1',
+            onExpiry: 'settle_default',
+            defaultChoice: 'approve',
+          });
+          const opened = await settleStep(
+            run.id,
+            {
+              kind: 'open_gate',
+              step: 'gated',
+              claimToken: token,
+              pendingGate: gate,
+              timeoutSeconds: 300,
+              evidence: [],
+            },
+            def,
+          );
+          assertApplied(opened, 'open_gate');
+          const result = await t.settleAt(
+            new Date('2026-01-01T00:10:00.000Z'),
+            run.id,
+            { kind: 'expire_gate', gateId: 'gate-1' },
+            def,
+          );
+          assertApplied(result, 'expire_gate (settle_default)');
+          if (result.run.terminal_state !== false) {
+            throw new Error("'sibling' still in_progress ⇒ the run must stay non-terminal");
+          }
+          if (!result.run.completed_steps.includes('gated')) {
+            throw new Error("expected 'gated' in completed_steps");
+          }
+        }),
     },
     {
       law: 'EXPIRE_DEFAULT_RESOLVE',
       name: `[${adapter.storeName}] FROZEN-BEATS-DEFINITION: expire_gate reads the RECORD-frozen default_choice, NEVER a re-registered definition's drifted value`,
-      run: async () => {
-        const def = minimalDefinition(['gated']);
-        const { run, token } = await createClaimed(adapter.store, def, 'gated');
-        // The gate was minted under a definition whose gate.default_choice was 'approve' — frozen
-        // into the record's own pending_gate.default_choice at mint (simulated directly here, as
-        // the source test targets applyExpireGate's own read behavior, not the mint site).
-        const gate = makePendingGate('gated', {
-          gateId: 'gate-1',
-          expiresAt: '2026-01-01T00:05:00.000Z',
-          onExpiry: 'settle_default',
-          defaultChoice: 'approve',
-        });
-        const opened = await settleStep(
-          run.id,
-          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
-          def,
-        );
-        assertApplied(opened, 'open_gate');
-        // A DIFFERENT definition — simulating a workflow re-registered with a changed
-        // default_choice ('reject') and a different choice set entirely — passed only at
-        // enactment time. applyExpireGate never reads step-def gate config (gate state lives
-        // entirely on the RECORD's frozen pending_gate), so this must have zero effect.
-        const driftedDef: WorkflowDefinition = {
-          id: uid('settlement-wf-drifted'),
-          name: 'Drifted default_choice',
-          version: 1,
-          steps: {
-            gated: {
-              description: 'gated',
-              execution: 'agent',
-              depends_on: [],
-              trust: 'human_confirmed',
-              gate: {
-                choices: ['ship', 'hold'],
-                on_expiry: 'settle_default',
-                default_choice: 'reject',
+      run: () =>
+        onTimed(adapter, TIMED_START, async (t) => {
+          const settleStep = bindSettle(t.store);
+          const def = minimalDefinition(['gated']);
+          const { run, token } = await createClaimed(t.store, def, 'gated');
+          // The gate was minted under a definition whose gate.default_choice was 'approve' — frozen
+          // into the record's own pending_gate.default_choice at mint (simulated directly here, as
+          // the source test targets applyExpireGate's own read behavior, not the mint site).
+          const gate = makePendingGate('gated', {
+            gateId: 'gate-1',
+            onExpiry: 'settle_default',
+            defaultChoice: 'approve',
+          });
+          const opened = await settleStep(
+            run.id,
+            {
+              kind: 'open_gate',
+              step: 'gated',
+              claimToken: token,
+              pendingGate: gate,
+              timeoutSeconds: 300,
+              evidence: [],
+            },
+            def,
+          );
+          assertApplied(opened, 'open_gate');
+          // A DIFFERENT definition — simulating a workflow re-registered with a changed
+          // default_choice ('reject') and a different choice set entirely — passed only at
+          // enactment time. applyExpireGate never reads step-def gate config (gate state lives
+          // entirely on the RECORD's frozen pending_gate), so this must have zero effect.
+          const driftedDef: WorkflowDefinition = {
+            id: uid('settlement-wf-drifted'),
+            name: 'Drifted default_choice',
+            version: 1,
+            steps: {
+              gated: {
+                description: 'gated',
+                execution: 'agent',
+                depends_on: [],
+                trust: 'human_confirmed',
+                gate: {
+                  choices: ['ship', 'hold'],
+                  on_expiry: 'settle_default',
+                  default_choice: 'reject',
+                },
               },
             },
-          },
-        };
-        const result = await settleStep(
-          run.id,
-          { kind: 'expire_gate', gateId: 'gate-1' },
-          driftedDef,
-          {
-            now: new Date('2026-01-01T00:10:00.000Z'),
-          },
-        );
-        assertApplied(result, 'expire_gate against a drifted definition');
-        if (result.run.settled?.['gated']?.choice !== 'approve') {
-          throw new Error(
-            `expected the FROZEN choice 'approve' to win, got '${result.run.settled?.['gated']?.choice}'`,
+          };
+          const result = await t.settleAt(
+            new Date('2026-01-01T00:10:00.000Z'),
+            run.id,
+            { kind: 'expire_gate', gateId: 'gate-1' },
+            driftedDef,
           );
-        }
-      },
+          assertApplied(result, 'expire_gate against a drifted definition');
+          if (result.run.settled?.['gated']?.choice !== 'approve') {
+            throw new Error(
+              `expected the FROZEN choice 'approve' to win, got '${result.run.settled?.['gated']?.choice}'`,
+            );
+          }
+        }),
     },
     {
       law: 'EXPIRE_DEFAULT_RESOLVE',
       name: `[${adapter.storeName}] expire_gate (settle_default): the evidence gate_response snapshot carries responded_by:'timeout' + resolution:'expired_default'`,
-      run: async () => {
-        const def = minimalDefinition(['gated']);
-        const { run, token } = await createClaimed(adapter.store, def, 'gated');
-        const gate = makePendingGate('gated', {
-          gateId: 'gate-1',
-          expiresAt: '2026-01-01T00:05:00.000Z',
-          onExpiry: 'settle_default',
-          defaultChoice: 'approve',
-        });
-        const opened = await settleStep(
-          run.id,
-          { kind: 'open_gate', step: 'gated', claimToken: token, pendingGate: gate, evidence: [] },
-          def,
-        );
-        assertApplied(opened, 'open_gate');
-        const result = await settleStep(run.id, { kind: 'expire_gate', gateId: 'gate-1' }, def, {
-          now: new Date('2026-01-01T00:10:00.000Z'),
-        });
-        assertApplied(result, 'expire_gate (settle_default)');
-        const snapshot = result.run.evidence.at(-1);
-        if (
-          snapshot?.kind !== 'gate_response' ||
-          snapshot.responded_by !== 'timeout' ||
-          snapshot.resolution !== 'expired_default'
-        ) {
-          throw new Error(
-            `expected the last evidence entry to be a gate_response with responded_by:'timeout'/` +
-              `resolution:'expired_default', got ${JSON.stringify(snapshot)}`,
+      run: () =>
+        onTimed(adapter, TIMED_START, async (t) => {
+          const settleStep = bindSettle(t.store);
+          const def = minimalDefinition(['gated']);
+          const { run, token } = await createClaimed(t.store, def, 'gated');
+          const gate = makePendingGate('gated', {
+            gateId: 'gate-1',
+            onExpiry: 'settle_default',
+            defaultChoice: 'approve',
+          });
+          const opened = await settleStep(
+            run.id,
+            {
+              kind: 'open_gate',
+              step: 'gated',
+              claimToken: token,
+              pendingGate: gate,
+              timeoutSeconds: 300,
+              evidence: [],
+            },
+            def,
           );
-        }
-      },
+          assertApplied(opened, 'open_gate');
+          const result = await t.settleAt(
+            new Date('2026-01-01T00:10:00.000Z'),
+            run.id,
+            { kind: 'expire_gate', gateId: 'gate-1' },
+            def,
+          );
+          assertApplied(result, 'expire_gate (settle_default)');
+          const snapshot = result.run.evidence.at(-1);
+          if (
+            snapshot?.kind !== 'gate_response' ||
+            snapshot.responded_by !== 'timeout' ||
+            snapshot.resolution !== 'expired_default'
+          ) {
+            throw new Error(
+              `expected the last evidence entry to be a gate_response with responded_by:'timeout'/` +
+                `resolution:'expired_default', got ${JSON.stringify(snapshot)}`,
+            );
+          }
+        }),
     },
   ];
 }
@@ -5709,33 +5961,40 @@ const PROOF_CLAIMANT: Attributed = { by: 'tck-program', by_source: 'stated', cha
 
 function gateProofCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
   const { minimalDefinition } = adapter.settlementFixture!;
-  const settleStep = requireSettleStep(adapter.store);
+  const settleStep = bindSettle(adapter.store);
   const GATE_ID = 'tck-proof-gate';
   const NOW = new Date('2026-06-01T00:00:00.000Z');
-  const EXPIRED_AT = '2026-01-01T00:00:01.000Z';
+  /** #715 (b): where the expired-question cells start their store's clock (the question then has a
+   *  1 s deadline, so it is due long before `NOW`). */
+  const EXPIRED_START = '2026-01-01T00:00:00.000Z';
 
-  /** A run with step 'gated' claimed BY a named program and its gate open. */
+  /** A run with step 'gated' claimed BY a named program and its gate open — on `store` (the
+   *  adapter's unless a case passes a timed one), with the deadline `timeoutSeconds` after the
+   *  write's own reading when given (#715 (b), D-20). */
   async function openGate(
     def: WorkflowDefinition,
     gateOpts?: Parameters<typeof makePendingGate>[1],
+    store: RunStore = adapter.store,
+    timeoutSeconds?: number,
   ): Promise<{ runId: string; token: string }> {
-    const { run } = await adapter.store.create({
+    const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: def.version,
       params: {},
     });
-    const claimed = await adapter.store.claimStep(run.id, 'gated', def, PROOF_CLAIMANT);
+    const { record: claimed } = await store.claimStep(run.id, 'gated', def, PROOF_CLAIMANT);
     const token = claimed.claims?.['gated']?.token;
     if (token === undefined) {
       throw new Error("fixture setup failed: claimStep did not mint a token for step 'gated'");
     }
-    const opened = await settleStep(
+    const opened = await store.settleStep(
       run.id,
       {
         kind: 'open_gate',
         step: 'gated',
         claimToken: token,
         pendingGate: makePendingGate('gated', { gateId: GATE_ID, ...gateOpts }),
+        ...(timeoutSeconds !== undefined ? { timeoutSeconds } : {}),
         evidence: [],
       },
       def,
@@ -5751,7 +6010,7 @@ function gateProofCases(adapter: SettlementContractAdapter): SettlementContractC
       output_summary: { choice: 'approve' },
     }),
   ];
-  const answerDelta = (claimToken: string | undefined): SettlementDelta => ({
+  const answerDelta = (claimToken: string | undefined): Exclude<SettlementDelta, SealRunDelta> => ({
     kind: 'settle_gate',
     gateId: GATE_ID,
     choice: 'approve',
@@ -5767,7 +6026,7 @@ function gateProofCases(adapter: SettlementContractAdapter): SettlementContractC
       updated_at: _u,
       version: _v,
       ...rest
-    } = await adapter.store.get(runId);
+    } = (await adapter.store.get(runId)).record;
     return JSON.stringify({
       ...rest,
       evidence: rest.evidence.map((e) => {
@@ -5782,8 +6041,13 @@ function gateProofCases(adapter: SettlementContractAdapter): SettlementContractC
   }
 
   function assertNoToken(result: SettlementResult, token: string, label: string): void {
-    if (JSON.stringify(result.gateClaim).includes(token)) {
-      throw new Error(`${label}: the settlement result's gateClaim carries the claim's TOKEN`);
+    // #715 (b): a late answer's verdict rides `lateAnswer` (its applied result has no `gateClaim`).
+    const carried = {
+      gateClaim: result.gateClaim,
+      lateAnswer: result.applied ? result.lateAnswer : undefined,
+    };
+    if (JSON.stringify(carried).includes(token)) {
+      throw new Error(`${label}: the settlement result's verdict carries the claim's TOKEN`);
     }
   }
 
@@ -5799,13 +6063,13 @@ function gateProofCases(adapter: SettlementContractAdapter): SettlementContractC
   }
 
   async function dropGatedClaim(runId: string): Promise<void> {
-    const fresh = await adapter.store.get(runId);
+    const { record: fresh } = await adapter.store.get(runId);
     const { gated: _g, ...rest } = fresh.claims ?? {};
     await adapter.store.update({ ...fresh, claims: rest });
   }
 
   async function dropGatedToken(runId: string): Promise<void> {
-    const fresh = await adapter.store.get(runId);
+    const { record: fresh } = await adapter.store.get(runId);
     const { token: _t, ...noToken } = fresh.claims!['gated']!;
     await adapter.store.update({ ...fresh, claims: { ...fresh.claims, gated: noToken } });
   }
@@ -5879,11 +6143,9 @@ function gateProofCases(adapter: SettlementContractAdapter): SettlementContractC
           await scenario.prepare(a.runId, a.token);
           await scenario.prepare(b.runId, b.token);
         }
-        const baseline = await settleStep(a.runId, answerDelta(undefined), def, { now: NOW });
+        const baseline = await settleStep(a.runId, answerDelta(undefined), def);
         assertApplied(baseline, 'the token-less answer');
-        const result = await settleStep(b.runId, answerDelta(scenario.present(b.token)), def, {
-          now: NOW,
-        });
+        const result = await settleStep(b.runId, answerDelta(scenario.present(b.token)), def);
         // The answer applies whatever the proof says — the answer is decided by the gate id alone.
         assertApplied(result, `the answer carrying ${scenario.name}`);
         if (result.gateClaim?.proof !== scenario.expect.proof) {
@@ -5900,7 +6162,7 @@ function gateProofCases(adapter: SettlementContractAdapter): SettlementContractC
             `${scenario.name}: expected cause ${scenario.expect.cause}, got ${cause}`,
           );
         }
-        const recorded = proofOf(await adapter.store.get(b.runId));
+        const recorded = proofOf((await adapter.store.get(b.runId)).record);
         const wanted = [
           scenario.expect.cause !== undefined
             ? { proof: scenario.expect.proof, cause: scenario.expect.cause }
@@ -5958,10 +6220,10 @@ function gateProofCases(adapter: SettlementContractAdapter): SettlementContractC
       run: async () => {
         const def = minimalDefinition(['gated']);
         const { runId, token } = await openGate(def);
-        const first = await settleStep(runId, answerDelta(token), def, { now: NOW });
+        const first = await settleStep(runId, answerDelta(token), def);
         assertApplied(first, 'the first answer');
-        const before = await adapter.store.get(runId);
-        const replay = await settleStep(runId, answerDelta(token), def, { now: NOW });
+        const { record: before } = await adapter.store.get(runId);
+        const replay = await settleStep(runId, answerDelta(token), def);
         assertRefused(replay, 'already_settled', 'the replayed answer');
         if (
           JSON.stringify(replay.gateClaim) !== JSON.stringify({ proof: 'spent', cause: 'answered' })
@@ -5971,7 +6233,7 @@ function gateProofCases(adapter: SettlementContractAdapter): SettlementContractC
           );
         }
         assertNoToken(replay, token, 'spent / answered');
-        const after = await adapter.store.get(runId);
+        const { record: after } = await adapter.store.get(runId);
         if (after.version !== before.version) {
           throw new Error('a replayed answer must write nothing (the version moved)');
         }
@@ -5980,49 +6242,63 @@ function gateProofCases(adapter: SettlementContractAdapter): SettlementContractC
     {
       law: 'GATE_PROOF_NEVER_GATES_THE_ANSWER',
       name: `[${adapter.storeName}] spent / expired: an answer to a question the clock already settled NOOPs as already_settled carrying spent/expired`,
-      run: async () => {
-        const def = minimalDefinition(['gated']);
-        const { runId, token } = await openGate(def, {
-          expiresAt: EXPIRED_AT,
-          onExpiry: 'settle_default',
-          defaultChoice: 'approve',
-        });
-        const enacted = await settleStep(runId, { kind: 'expire_gate', gateId: GATE_ID }, def, {
-          now: NOW,
-        });
-        assertApplied(enacted, 'the expiry');
-        const late = await settleStep(runId, answerDelta(token), def, { now: NOW });
-        assertRefused(late, 'already_settled', 'the answer after the expiry');
-        if (
-          JSON.stringify(late.gateClaim) !== JSON.stringify({ proof: 'spent', cause: 'expired' })
-        ) {
-          throw new Error(`expected spent/expired, got ${JSON.stringify(late.gateClaim)}`);
-        }
-      },
+      run: () =>
+        onTimed(adapter, EXPIRED_START, async (t) => {
+          const def = minimalDefinition(['gated']);
+          // #715 (b) (D-20): the deadline is the write's reading + 1 s; the store's clock passes it.
+          const { runId, token } = await openGate(
+            def,
+            { onExpiry: 'settle_default', defaultChoice: 'approve' },
+            t.store,
+            1,
+          );
+          const enacted = await t.settleAt(
+            NOW,
+            runId,
+            { kind: 'expire_gate', gateId: GATE_ID },
+            def,
+          );
+          assertApplied(enacted, 'the expiry');
+          const late = await t.settleAt(NOW, runId, answerDelta(token), def);
+          assertRefused(late, 'already_settled', 'the answer after the expiry');
+          if (
+            JSON.stringify(late.gateClaim) !== JSON.stringify({ proof: 'spent', cause: 'expired' })
+          ) {
+            throw new Error(`expected spent/expired, got ${JSON.stringify(late.gateClaim)}`);
+          }
+        }),
     },
     {
       law: 'GATE_PROOF_NEVER_GATES_THE_ANSWER',
-      name: `[${adapter.storeName}] the write-free gate_expired_pending refusal carries the verdict too, and writes nothing`,
-      run: async () => {
-        const def = minimalDefinition(['gated']);
-        const { runId, token } = await openGate(def, {
-          expiresAt: EXPIRED_AT,
-          onExpiry: 'settle_default',
-          defaultChoice: 'approve',
-        });
-        const before = await adapter.store.get(runId);
-        const refused = await settleStep(runId, answerDelta(token), def, { now: NOW });
-        assertRefused(refused, 'gate_expired_pending', 'the answer to an expired, unenacted gate');
-        if (refused.gateClaim?.proof !== 'matched') {
-          throw new Error(
-            `expected the verdict matched on the refusal, got ${JSON.stringify(refused.gateClaim)}`,
+      name: `[${adapter.storeName}] a late answer to a due question enacts its expiry in the SAME write, and the verdict rides lateAnswer without the token`,
+      run: () =>
+        onTimed(adapter, EXPIRED_START, async (t) => {
+          const def = minimalDefinition(['gated']);
+          const { runId, token } = await openGate(
+            def,
+            { onExpiry: 'settle_default', defaultChoice: 'approve' },
+            t.store,
+            1,
           );
-        }
-        assertNoToken(refused, token, 'gate_expired_pending');
-        if ((await adapter.store.get(runId)).version !== before.version) {
-          throw new Error('a gate_expired_pending refusal must write nothing');
-        }
-      },
+          const { record: before } = await t.store.get(runId);
+          const late = await t.settleAt(NOW, runId, answerDelta(token), def);
+          // #715 (b) (D6-9, D6-61): one write — the expiry is enacted inside the answer's own write.
+          assertApplied(late, 'the late answer to a due, unenacted gate');
+          if (late.lateAnswer?.gateClaim.proof !== 'matched') {
+            throw new Error(
+              `expected the verdict matched on lateAnswer, got ${JSON.stringify(late.lateAnswer)}`,
+            );
+          }
+          if (late.lateAnswer.expiresAt !== before.pending_gate?.expires_at) {
+            throw new Error(
+              `lateAnswer.expiresAt (${late.lateAnswer.expiresAt}) is not the question's deadline before the write (${before.pending_gate?.expires_at})`,
+            );
+          }
+          assertNoToken(late, token, 'lateAnswer');
+          if ((await t.store.get(runId)).record.version !== before.version + 1) {
+            throw new Error('a late answer and its expiry must land in ONE write (version + 1)');
+          }
+        }),
     },
     {
       law: 'GATE_PROOF_NEVER_GATES_THE_ANSWER',
@@ -6034,7 +6310,7 @@ function gateProofCases(adapter: SettlementContractAdapter): SettlementContractC
           abort_unless: ["gated.choice == 'approve'"],
         });
         const { runId, token } = await openGate(def);
-        const result = await settleStep(runId, answerDelta(token), def, { now: NOW });
+        const result = await settleStep(runId, answerDelta(token), def);
         assertApplied(result, 'the answer with a guard behind it');
         if (result.guards?.[0]?.step !== 'check') {
           throw new Error(
@@ -6054,32 +6330,99 @@ function gateProofCases(adapter: SettlementContractAdapter): SettlementContractC
   return cases;
 }
 
-export function settlementContract(adapter: SettlementContractAdapter): SettlementContractCase[] {
-  if (adapter.store.settleStep === undefined) {
-    // A store that declares NEITHER verb genuinely has nothing here to conform to — the
-    // established optional-capability idiom, and a real vacuous pass.
-    //
-    // But a store declaring `stampSeal` WITHOUT `settleStep` would also have received zero cases,
-    // so its stamp and seal-integrity conformance — every law in this file that binds it — would
-    // report green while never running. That is a wiring gap wearing a vacuous pass's clothes.
-    if (adapter.store.stampSeal !== undefined) {
-      return [
-        {
-          law: 'ADAPTER_WIRING',
-          name: `[${adapter.storeName}] declares RunStore.stampSeal but NOT settleStep — every law in this suite would pass without running`,
-          run: async () => {
+/**
+ * #715 (b), Amendment 1 (D-21): a `seal_run` change applies with no definition; a non-seal change
+ * without one throws a plain contract-violation `Error` — `applySettlement` takes the seal branch
+ * before it touches the definition.
+ */
+function sealRunNeedsNoDefinitionCases(
+  adapter: SettlementContractAdapter,
+): SettlementContractCase[] {
+  return [
+    {
+      law: 'SEAL_RUN_NEEDS_NO_DEFINITION',
+      name: `[${adapter.storeName}] a seal_run change applies without a workflow definition`,
+      run: async () => {
+        const { record: run } = await adapter.store.create({
+          workflowId: uid('tck-seal'),
+          workflowVersion: 1,
+          params: {},
+        });
+        const sealed = await adapter.store.settleStep(run.id, {
+          kind: 'seal_run',
+          arm: 'abandon_requested',
+          reason: 'tck: sealed without a definition',
+          expected_version: run.version,
+          release_claims: true,
+        });
+        assertApplied(sealed, 'seal_run without a definition');
+        if (
+          sealed.run.terminal_state !== true ||
+          sealed.run.sealed_by?.arm !== 'abandon_requested'
+        ) {
+          throw new Error(
+            `seal_run without a definition did not seal the run (terminal ${String(sealed.run.terminal_state)}, arm ${String(sealed.run.sealed_by?.arm)})`,
+          );
+        }
+      },
+    },
+    {
+      law: 'SEAL_RUN_NEEDS_NO_DEFINITION',
+      name: `[${adapter.storeName}] any other change without a workflow definition is refused loud — a thrown contract violation, nothing written`,
+      run: async () => {
+        const { record: run } = await adapter.store.create({
+          workflowId: uid('tck-seal'),
+          workflowVersion: 1,
+          params: {},
+        });
+        // Not reachable from typed code (the overloads forbid it): a cast caller.
+        const untyped = adapter.store.settleStep.bind(adapter.store) as (
+          runId: string,
+          delta: SettlementDelta,
+        ) => Promise<StoreSettlement>;
+        const outcome = await untyped(run.id, { kind: 'expire_gate', gateId: 'tck-none' }).then(
+          () => 'resolved',
+          (err: unknown) => (err instanceof Error ? err.message : String(err)),
+        );
+        if (outcome !== "settleStep: delta kind 'expire_gate' needs a workflow definition") {
+          throw new Error(`an expire_gate without a definition ended: ${outcome}`);
+        }
+        const { record: after } = await adapter.store.get(run.id);
+        if (after.version !== run.version) {
+          throw new Error('a refused call without a definition wrote the run');
+        }
+      },
+    },
+  ];
+}
+
+/**
+ * #715 (b) (D5 §5.5): a store the adapter's route builds reads the clock the route sets. Without a
+ * route the families that move time fail with the ADAPTER_WIRING message; this case says so too.
+ */
+function routeClockCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
+  return [
+    {
+      law: 'ROUTE_CLOCK_IS_STORE_CLOCK',
+      name: `[${adapter.storeName}] a route-built store's clock reads the instant the route clock is set to`,
+      run: () =>
+        onTimed(adapter, TIMED_START, async (t) => {
+          const later = new Date(Date.parse(TIMED_START) + 90_000);
+          await t.clock.set(later);
+          const read = t.store.clock.now().toISOString();
+          if (read !== later.toISOString()) {
             throw new Error(
-              `[${adapter.storeName}] settlementContract: the store declares stampSeal but not ` +
-                'settleStep, and this suite is gated on settleStep — so it would return zero ' +
-                'cases and report green having tested nothing. Declare settleStep, or run the ' +
-                'stamp laws through a suite that binds them on their own.',
+              `the route clock was set to ${later.toISOString()} but the store's clock read ${read}`,
             );
-          },
-        },
-      ];
-    }
-    return [];
-  }
+          }
+        }),
+    },
+  ];
+}
+
+export function settlementContract(adapter: SettlementContractAdapter): SettlementContractCase[] {
+  // #715 (b) (D-19): `settleStep` is required — every store runs every law (the empty pass for a store
+  // without it, and the stampSeal-without-settleStep wiring case, are gone with that store).
   if (adapter.settlementFixture === undefined) {
     return [
       {
@@ -6106,6 +6449,8 @@ export function settlementContract(adapter: SettlementContractAdapter): Settleme
           adapter.store.get('store-release-line-true-missing-run'),
         ),
     },
+    ...sealRunNeedsNoDefinitionCases(adapter),
+    ...routeClockCases(adapter),
     ...freshApplicationCases(adapter),
     ...conditionalNoopCases(adapter),
     ...ownershipRefusalCases(adapter),

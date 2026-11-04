@@ -36,7 +36,11 @@ const timed: WorkflowDefinition = {
  * call only (the engine calls the global `setTimeout`, no `node:timers` import), and restored.
  */
 async function callWith(dispatcher: StepDispatcher) {
-  const { run } = await store.create({ workflowId: timed.id, workflowVersion: 1, params: {} });
+  const { record: run } = await store.create({
+    workflowId: timed.id,
+    workflowVersion: 1,
+    params: {},
+  });
   const set = vi.spyOn(globalThis, 'setTimeout');
   const clear = vi.spyOn(globalThis, 'clearTimeout');
   try {
@@ -85,7 +89,7 @@ describe('issue #719 A1 — a dispatcher call cannot escape its step timer', () 
   it('(b) a dispatcher that returns a plain object: no timer outlives the reply; the object is the step output', async () => {
     const plain = (() => ({ answer: 42 })) as unknown as StepDispatcher;
     const { runId, oneStepTimer, cleared, reply } = await callWith(plain);
-    const entry = (await store.get(runId)).evidence.find((e) => e.step_id === 'work');
+    const entry = (await store.get(runId)).record.evidence.find((e) => e.step_id === 'work');
     // (a) red when the step's timer is left running, or the call fails `.then is not a function`;
     //     (b) prints two booleans, the reply's status, code and first error, and the recorded
     //     output.
@@ -150,7 +154,11 @@ describe('issue #719 A1.2 — the dispatcher branch and callsHostDispatcher agre
       version: 1,
       steps: { s: step },
     } as unknown as WorkflowDefinition;
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     let called = false;
     await executeStep(store, def, {
       runId: run.id,
@@ -193,7 +201,11 @@ describe('issue #719 C5 — callsHostDispatcher outside a definition, and a guar
         version: 1,
         steps: { s: step },
       } as unknown as WorkflowDefinition;
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const reply = await executeStep(store, def, { runId: run.id, command: 's', input: {} });
       // (a) red when the predicate's guard/finalizer clause is lost (then such a call rejects
       //     VALIDATION_OPTION_INVALID instead of today's `blocked` reply); (b) prints the status and

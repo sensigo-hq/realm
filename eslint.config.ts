@@ -165,7 +165,8 @@ const ZOD_V3_RESTRICTIONS = {
  * (for `realm workflow test`), and core exports the clock file's helpers for that package, so both
  * are named here; tests and the testing package are allowed by the override block below. The rule
  * catches static import and export-from declarations; the source scan in
- * `lint-test-location-715.test.ts` finds the names as text in any other form.
+ * `lint-test-location-715.test.ts` finds the names as text in any other form (it reads the `.ts` and
+ * `.mjs` files of the four packages' `src` folders, no `.sh` or `.json`, and skips `*.test.ts`).
  */
 const TEST_CLOCK_RESTRICTIONS = [
   {
@@ -180,7 +181,164 @@ const TEST_CLOCK_RESTRICTIONS = [
     message:
       "A production module never creates or reads a test clock: the clock file's helpers are for @sensigo/realm-testing and tests (#715, D6-52).",
   },
+  // #715 (b) (04 §B.4): the marks of a test clock. Core uses them by relative import (its stores, the
+  // stamp, the notice) and exports them for @sensigo/realm-testing; nothing else in production does.
+  {
+    name: '@sensigo/realm',
+    importNames: ['markTestClock', 'isTestLocationClock', 'clockBasis'],
+    message:
+      'A production module never creates or reads a test clock: the test-clock marks are for @sensigo/realm-testing and tests (#715, D6-52).',
+  },
 ];
+
+/**
+ * #715 (b) (04 §B, D5 §5.3): the clock rule. A run store's time comes from its clock; the host's
+ * clock is read only where the clock census names the site `outside`, with its reason
+ * (`packages/cli/src/commands/clock-census-715b.test.ts`). Its own rule id, so the later
+ * `no-restricted-syntax` blocks (which REPLACE each other's lists) cannot drop it. It flags, outside
+ * the allowed sites: `new Date()` with no argument, `Date()`, `Date.now()` (called or taken by name),
+ * and — even where a raw read would otherwise be allowed nowhere — a clock-reading parameter default
+ * (`now = new Date()`, `now ?? new Date()`). A site is `<package path>#<enclosing function>`, named as
+ * the census names it.
+ */
+const CLOCK_OUTSIDE_SITES = [
+  'cli/src/agent/auto-prices.ts#settleAutoFromPriceFile',
+  'cli/src/agent/gate/slack-gate-server.ts#startSlackGateServer',
+  'cli/src/agent/providers/agent-utils.ts#parseRetryAfterMs',
+  'cli/src/agent/providers/anthropic-provider.ts#bounded',
+  'cli/src/agent/providers/anthropic-provider.ts#makeRequest',
+  'cli/src/agent/providers/openai-provider.ts#bounded',
+  'cli/src/agent/providers/openai-provider.ts#makeRequest',
+  'cli/src/agent/providers/openai-provider.ts#timedCreate',
+  'cli/src/agent/providers/openai-reasoning-provider.ts#makeRequest',
+  'cli/src/agent/run-agent.ts#sidecarStamp',
+  'cli/src/commands/export.ts#<module>',
+  'cli/src/commands/export.ts#buildExportBundle',
+  'cli/src/commands/gc.ts#<module>',
+  'cli/src/commands/gc.ts#sweepOrphanArtifacts',
+  'cli/src/commands/gc.ts#sweepOrphans',
+  'cli/src/commands/watch.ts#registerFile',
+  'cli/src/commands/watch.ts#renderProfilesGone',
+  'cli/src/extensions/extension-identity.ts#computeExtensionIdentity',
+  'cli/src/extensions/extension-identity.ts#errorExtensionIdentityEntry',
+  'cli/src/lib/dedup-store.ts#FileDedupStore.check',
+  'cli/src/lib/dedup-store.ts#FileDedupStore.cleanup',
+  'cli/src/lib/dedup-store.ts#FileDedupStore.record',
+  'cli/src/lib/dedup-store.ts#InMemoryDedupStore.check',
+  'cli/src/lib/dedup-store.ts#InMemoryDedupStore.evictExpired',
+  'cli/src/lib/dedup-store.ts#InMemoryDedupStore.record',
+  'cli/src/lib/webhook-verifiers.ts#verifyHmac',
+  'cli/src/lib/webhook-verifiers.ts#verifyStripe',
+  'cli/src/store/replay-store.ts#JsonFileReplayStore.save',
+  'core/src/adapters/adapter-utils.ts#parseRetryAfterHeader',
+  'core/src/store/trace-buffer-store.ts#InMemoryTraceBufferStore.appendUnlocked',
+  'core/src/utils/clock.ts#arm',
+  'core/src/utils/clock.ts#now',
+  'core/src/utils/clock.ts#tick',
+  'mcp-server/src/json-trace-buffer-store.ts#JsonTraceBufferStore.appendWithinCS',
+  'mcp-server/src/tools/execute-step.ts#emitFailedAttemptTelemetry',
+  'testing/src/store/run-store-fidelity-contract.ts#run',
+];
+
+type EsNode = { type: string; parent?: EsNode | null; [k: string]: unknown };
+const nameOf = (n: unknown): string | undefined => {
+  const x = n as { type?: string; name?: string; value?: unknown } | undefined;
+  if (x?.type === 'Identifier') return x.name;
+  if (x?.type === 'Literal' && typeof x.value === 'string') return x.value;
+  return undefined;
+};
+
+/** The enclosing function's name, as the census names it (a class method as `Class.method`). */
+function enclosingName(node: EsNode): string {
+  // ESLint gives the root node a `null` parent (never `undefined`).
+  for (let n = node.parent; n !== undefined && n !== null; n = n.parent) {
+    if (
+      n.type === 'FunctionDeclaration' ||
+      n.type === 'FunctionExpression' ||
+      n.type === 'ArrowFunctionExpression'
+    ) {
+      const p = n.parent;
+      let name = nameOf(n['id']);
+      if (name === undefined && p?.type === 'MethodDefinition') {
+        const key = p['kind'] === 'constructor' ? 'constructor' : nameOf(p['key']);
+        const cls = p.parent?.parent;
+        const clsName = cls !== undefined && cls !== null ? nameOf(cls['id']) : undefined;
+        if (key !== undefined) name = clsName !== undefined ? `${clsName}.${key}` : key;
+      }
+      if (name === undefined && p?.type === 'VariableDeclarator') name = nameOf(p['id']);
+      if (name === undefined && p?.type === 'Property') name = nameOf(p['key']);
+      if (name === undefined && p?.type === 'PropertyDefinition') name = nameOf(p['key']);
+      if (name !== undefined) return name;
+    }
+  }
+  return '<module>';
+}
+
+const clockPlugin = {
+  rules: {
+    'no-clock-read': {
+      meta: {
+        type: 'problem' as const,
+        schema: [
+          {
+            type: 'object',
+            properties: { allow: { type: 'array', items: { type: 'string' } } },
+            additionalProperties: false,
+          },
+        ],
+        messages: {
+          read: "A clock read outside a run store's clock: read the store's clock (`store.clock.now()`), or — for an instant compared with nothing on a run — name the site in the clock census as `outside` with its reason (#715 (b), 04 §B).",
+          dflt: 'A clock-reading parameter default: the caller passes the instant (#715 (b), 04 §B).',
+        },
+      },
+      create(context: {
+        filename: string;
+        options: [{ allow?: string[] }?];
+        report(d: { node: unknown; messageId: 'read' | 'dflt' }): void;
+      }) {
+        const rel = context.filename.replace(/\\/g, '/').replace(/^.*\/packages\//, '');
+        const allow = new Set(context.options[0]?.allow ?? []);
+        const allowed = (node: EsNode): boolean => allow.has(`${rel}#${enclosingName(node)}`);
+        const isRawRead = (n: EsNode | undefined): boolean =>
+          n !== undefined &&
+          (((n.type === 'NewExpression' || n.type === 'CallExpression') &&
+            nameOf(n['callee']) === 'Date' &&
+            (n['arguments'] as unknown[]).length === 0) ||
+            (n.type === 'CallExpression' &&
+              (n['callee'] as EsNode).type === 'MemberExpression' &&
+              nameOf((n['callee'] as EsNode)['object']) === 'Date' &&
+              nameOf((n['callee'] as EsNode)['property']) === 'now'));
+        const check = (node: EsNode): void => {
+          if (allowed(node)) return;
+          const p = node.parent;
+          const isDefault =
+            p?.type === 'AssignmentPattern' ||
+            (p?.type === 'LogicalExpression' && p['operator'] === '??' && p['right'] === node);
+          context.report({ node, messageId: isDefault ? 'dflt' : 'read' });
+        };
+        return {
+          NewExpression(node: EsNode) {
+            if (isRawRead(node)) check(node);
+          },
+          CallExpression(node: EsNode) {
+            if (isRawRead(node)) check(node);
+          },
+          MemberExpression(node: EsNode) {
+            // `Date.now` taken by name (`const now = Date.now`, a callback).
+            if (
+              nameOf(node['object']) === 'Date' &&
+              nameOf(node['property']) === 'now' &&
+              !(node.parent?.type === 'CallExpression' && node.parent['callee'] === node) &&
+              !allowed(node)
+            ) {
+              context.report({ node, messageId: 'read' });
+            }
+          },
+        };
+      },
+    },
+  },
+};
 
 export default tseslint.config(
   { ignores: ['**/dist/**', '**/node_modules/**', '**/coverage/**'] },
@@ -221,6 +379,16 @@ export default tseslint.config(
     files: ['packages/testing/**/*.ts', '**/*.test.ts'],
     rules: {
       'no-restricted-imports': ['error', ZOD_V3_RESTRICTIONS],
+    },
+  },
+  // #715 (b) (04 §B): the clock rule, its own rule id — production sources only (tests set time as
+  // they need; the test-time rule is `test-time-715b.test.ts`).
+  {
+    files: ['packages/*/src/**/*.ts'],
+    ignores: ['**/*.test.ts'],
+    plugins: { realm: clockPlugin },
+    rules: {
+      'realm/no-clock-read': ['error', { allow: CLOCK_OUTSIDE_SITES }],
     },
   },
   // ---------------------------------------------------------------------------

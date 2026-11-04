@@ -22,7 +22,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const definition = loadWorkflowFromFile(path.join(__dirname, 'my-workflow/workflow.yaml'));
 
 const store = new JsonFileStore(); // defaults to ~/.realm/runs/
-const { run } = await store.create({
+const { record: run } = await store.create({
   workflowId: definition.id,
   workflowVersion: definition.version,
   params: { input: 'hello' },

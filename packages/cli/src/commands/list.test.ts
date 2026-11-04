@@ -5,7 +5,7 @@ import { mkdtemp, rm, writeFile, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { listRuns, formatGateAge, renderCauseSegment, listCommand } from './list.js';
+import { listRuns, renderCauseSegment, listCommand } from './list.js';
 import {
   FailedAttemptStore,
   FAILED_ATTEMPT_SIDECAR_MAX_BYTES,
@@ -13,6 +13,7 @@ import {
   serializeFailedAttemptLine,
 } from '@sensigo/realm';
 import type { RunStore, RunRecord, FailedAttemptRecord, WorkflowDefinition } from '@sensigo/realm';
+import { snap, listing, doubleClock, noSettle } from '../test-support/snapshot-double.js';
 
 function makeRun(overrides: Partial<RunRecord> = {}): RunRecord {
   return {
@@ -41,11 +42,13 @@ function makeRun(overrides: Partial<RunRecord> = {}): RunRecord {
 function makeStore(runs: RunRecord[]): RunStore {
   return {
     persistsClaims: true,
-    get: async () => runs[0]!,
-    create: async () => ({ run: runs[0]!, created: true }),
-    update: async () => runs[0]!,
+    clock: doubleClock,
+    settleStep: noSettle,
+    get: async () => snap(runs[0]!),
+    create: async () => ({ ...snap(runs[0]!), created: true }),
+    update: async () => snap(runs[0]!),
     list: async (workflowId?: string) =>
-      workflowId !== undefined ? runs.filter((r) => r.workflow_id === workflowId) : runs,
+      listing(workflowId !== undefined ? runs.filter((r) => r.workflow_id === workflowId) : runs),
     // listRuns (the sole consumer under test here) never claims a step — this mock never needs
     // a real implementation, only a type-complete stub.
     claimStep: async () => {
@@ -471,26 +474,6 @@ describe('listRuns statusFilter', () => {
     const result = await listRuns(undefined, makeStore([waiting]), 'gate_waiting');
     expect(result).toContain('human_review');
     expect(result).toContain('25m');
-  });
-});
-
-describe('formatGateAge', () => {
-  it('formats elapsed time under 60 minutes as Xm', () => {
-    const openedAt = new Date(0).toISOString();
-    const now = new Date(42 * 60 * 1000); // 42 minutes later
-    expect(formatGateAge(openedAt, now)).toBe('42m');
-  });
-
-  it('formats elapsed time under 24 hours as Xh Ym', () => {
-    const openedAt = new Date(0).toISOString();
-    const now = new Date((2 * 60 + 15) * 60 * 1000); // 2h 15m later
-    expect(formatGateAge(openedAt, now)).toBe('2h 15m');
-  });
-
-  it('formats elapsed time 24 hours or more as Xd Yh', () => {
-    const openedAt = new Date(0).toISOString();
-    const now = new Date((3 * 24 * 60 + 5 * 60) * 60 * 1000); // 3d 5h later
-    expect(formatGateAge(openedAt, now)).toBe('3d 5h');
   });
 });
 
@@ -1099,7 +1082,8 @@ describe('issue #729 — realm run list --stuck names a run that cannot go on, a
     //     the label or its pointer differ; (b) prints the lines.
     expect(out.split('\n').filter((l) => l.includes('run-'))).toEqual([
       expect.stringMatching(
-        /^run-stuck {2}w2 v1 {2}running {2}.+ {2}1 step\(s\) {2}idle: 0m {2}publish=cannot_go_on\(input_schema\) \(realm run inspect run-stuck\)$/,
+        // #715 (b) (03 §B.2 A7): the idle age through the one formatter, its instant beside it.
+        /^run-stuck {2}w2 v1 {2}running {2}.+ {2}1 step\(s\) {2}idle: \d+s ago \(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\) {2}publish=cannot_go_on\(input_schema\) \(realm run inspect run-stuck\)$/,
       ),
     ]);
   });
@@ -1151,12 +1135,16 @@ describe('issue #729 — realm run list --stuck names a run that cannot go on, a
     );
   });
 
-  it('C4. the --stuck help line says what --stuck lists: every health finding, among them a run that cannot go on (correction 1)', () => {
+  it('C4. the --stuck help line says what --stuck lists: every health finding, among them a run that cannot go on, and which findings do not select a run (correction 1; #715 (b) correction 1)', () => {
     // In-process: commander wraps `--help` at 80 columns when stdout is not a TTY, so the option's
-    // own description is read. (a) red when the old 'wedged/idle runs' wording comes back, or the
-    // line names a subset as the whole; (b) prints the description.
+    // own description is read. The findings that do not select a run are core's own set
+    // (`RUN_HEALTH_STUCK_EXCLUDED`, the selection's: stuck-kinds-715b). (a) red when the old
+    // 'wedged/idle runs' wording comes back, the line names a subset as the whole, or it stops naming
+    // the findings that do not select a run (the line before #715 (b) correction 1); (b) prints the
+    // description.
     expect(listCommand.options.find((o) => o.long === '--stuck')?.description).toBe(
-      'Show only runs with a health finding (realm run inspect names it) — among them a run that cannot go on until its workflow is corrected, at any age, and an open run idle past --older-than',
+      'Show only runs with a health finding (realm run inspect names it) — among them a run that cannot go on until its workflow is corrected, at any age, and an open run idle past --older-than; ' +
+        'these findings do not select a run: completed_with_failed_steps, structured_output_downgraded, guard_awaiting_settlement, trust_value_invalid, record_stamped_ahead',
     );
   });
 
@@ -1167,9 +1155,9 @@ describe('issue #729 — realm run list --stuck names a run that cannot go on, a
       .find((l) => l.startsWith('run-trust'));
     // (a) red when the trust finding gets a label of its own beside cannot_go_on's, or the run is
     //     not listed; (b) prints what follows `idle:`.
-    expect(line?.replace(/^.* idle: 0m {2}/, '')).toBe(
-      'bad=cannot_go_on(trust) (realm run inspect run-trust)',
-    );
+    expect(
+      line?.replace(/^.* idle: \d+s ago \(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\) {2}/, ''),
+    ).toBe('bad=cannot_go_on(trust) (realm run inspect run-trust)');
   });
 });
 

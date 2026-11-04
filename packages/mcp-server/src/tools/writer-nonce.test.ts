@@ -62,7 +62,7 @@ describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
       ['trailing whitespace', 'abc '],
       ['too long (129 chars)', 'a'.repeat(129)],
     ])('append_trace refuses a malformed writer_nonce (%s)', async (_label, nonce) => {
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'writer-nonce-wf',
         workflowVersion: 1,
         params: {},
@@ -80,7 +80,7 @@ describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
       ['whitespace-only', '   '],
       ['too long (129 chars)', 'a'.repeat(129)],
     ])('execute_step refuses a malformed writer_nonce (%s)', async (_label, nonce) => {
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'writer-nonce-wf',
         workflowVersion: 1,
         params: {},
@@ -94,7 +94,7 @@ describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
     });
 
     it('a valid nonce (fresh UUIDv4-shaped) is accepted by both tools', async () => {
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'writer-nonce-wf',
         workflowVersion: 1,
         params: {},
@@ -114,7 +114,7 @@ describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
 
   describe('non-agent refusals', () => {
     it('append_trace: the EXISTING non-agent refusal fires BEFORE any nonce validation (a malformed nonce on a non-agent step still surfaces the non-agent error, not the shape error)', async () => {
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'writer-nonce-wf',
         workflowVersion: 1,
         params: {},
@@ -136,7 +136,7 @@ describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
     });
 
     it('execute_step: a writer_nonce PRESENT on a non-agent step is refused (STATE_STEP_NOT_ELIGIBLE + step_type detail)', async () => {
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'writer-nonce-wf',
         workflowVersion: 1,
         params: {},
@@ -159,7 +159,7 @@ describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
 
     // pre-Q3 title: execute_step: a BARE call on a non-agent step stays byte-identical (auto steps still execute normally)
     it('execute_step: a BARE call on a non-agent step meets no nonce refusal — core’s admission refuses it as the engine’s step (#729, the Q3 unit)', async () => {
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'writer-nonce-wf',
         workflowVersion: 1,
         params: {},
@@ -182,7 +182,7 @@ describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
 
   describe('carriage gating (FLAG_GATING, issue #197 PR-2)', () => {
     it('a non-declaring store NEVER receives the nonce argument, even when writer_nonce was supplied — plus the not-persisted warning fires', async () => {
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'writer-nonce-wf',
         workflowVersion: 1,
         params: {},
@@ -219,7 +219,7 @@ describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
     });
 
     it('a declaring store DOES receive the nonce argument, and the not-persisted warning is absent', async () => {
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'writer-nonce-wf',
         workflowVersion: 1,
         params: {},
@@ -253,7 +253,7 @@ describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
 
   describe('applied-nonce marker (issue #197 PR-2, design §6)', () => {
     it('writer_nonce_applied: true when a nonce was BOTH supplied AND carried', async () => {
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'writer-nonce-wf',
         workflowVersion: 1,
         params: {},
@@ -271,7 +271,7 @@ describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
     });
 
     it('writer_nonce_applied is ABSENT (never false) when no nonce was supplied at all', async () => {
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'writer-nonce-wf',
         workflowVersion: 1,
         params: {},
@@ -286,7 +286,7 @@ describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
 
   describe('dormant strict posture — REALM_REQUIRE_WRITER_NONCE (issue #197 PR-2, design §6)', () => {
     it('default (unset): zero behavior change — a bare agent-step call still succeeds on both tools', async () => {
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'writer-nonce-wf',
         workflowVersion: 1,
         params: {},
@@ -297,7 +297,7 @@ describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
       );
       expect(appendResult.status).toBe('ok');
 
-      const { run: run2 } = await runStore.create({
+      const { record: run2 } = await runStore.create({
         workflowId: 'writer-nonce-wf',
         workflowVersion: 1,
         params: {},
@@ -311,7 +311,7 @@ describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
 
     it('set (any non-empty value other than 0/false): refuses a bare agent-step call on both tools', async () => {
       process.env['REALM_REQUIRE_WRITER_NONCE'] = '1';
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'writer-nonce-wf',
         workflowVersion: 1,
         params: {},
@@ -323,7 +323,7 @@ describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
         ),
       ).rejects.toMatchObject({ code: 'VALIDATION_EMPTY_VALUE' });
 
-      const { run: run2 } = await runStore.create({
+      const { record: run2 } = await runStore.create({
         workflowId: 'writer-nonce-wf',
         workflowVersion: 1,
         params: {},
@@ -337,7 +337,7 @@ describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
     });
 
     it('"0" and "false" are treated as OFF, not on', async () => {
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'writer-nonce-wf',
         workflowVersion: 1,
         params: {},
@@ -349,7 +349,7 @@ describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
       );
       expect(r1.status).toBe('ok');
 
-      const { run: run2 } = await runStore.create({
+      const { record: run2 } = await runStore.create({
         workflowId: 'writer-nonce-wf',
         workflowVersion: 1,
         params: {},
@@ -363,7 +363,7 @@ describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
     });
 
     it('read PER CALL, never cached — flipping the env mid-process takes effect on the very next call', async () => {
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'writer-nonce-wf',
         workflowVersion: 1,
         params: {},
@@ -375,7 +375,7 @@ describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
       expect(before.status).toBe('ok');
 
       process.env['REALM_REQUIRE_WRITER_NONCE'] = '1';
-      const { run: run2 } = await runStore.create({
+      const { record: run2 } = await runStore.create({
         workflowId: 'writer-nonce-wf',
         workflowVersion: 1,
         params: {},
@@ -391,7 +391,7 @@ describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
     // pre-Q3 title: execute_step: a non-agent step is unaffected by the strict posture (never requires a nonce it cannot use)
     it('execute_step: a non-agent step is unaffected by the strict posture (never requires a nonce it cannot use) — core’s admission refuses it as the engine’s step (#729, the Q3 unit)', async () => {
       process.env['REALM_REQUIRE_WRITER_NONCE'] = '1';
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'writer-nonce-wf',
         workflowVersion: 1,
         params: {},
@@ -414,7 +414,7 @@ describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
 
   describe('non-disclosure pins (issue #197 PR-2, design §6 — status quo before adoption lands)', () => {
     it('append_trace envelopes never contain buffered-line content or a foreign nonce value', async () => {
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'writer-nonce-wf',
         workflowVersion: 1,
         params: {},
@@ -446,7 +446,7 @@ describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
     });
 
     it('get_run_state envelopes never contain buffered-line content or any nonce value, even after a mixed-adoption settle', async () => {
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'writer-nonce-wf',
         workflowVersion: 1,
         params: {},
@@ -477,7 +477,7 @@ describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
 
   describe('#208 capacityWarning re-home (issue #197 PR-2, deliverable 2d)', () => {
     it('the whole-file (backstop) scope can warn even when the appending writer is NOT individually near its own ceiling', async () => {
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: 'writer-nonce-wf',
         workflowVersion: 1,
         params: {},

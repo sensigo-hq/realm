@@ -114,7 +114,11 @@ async function answered(
   params: Record<string, unknown> = { x: 'from-params' },
 ): Promise<{ store: JsonFileStore; record: RunRecord }> {
   const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-q3-729-')));
-  const { run } = await store.create({ workflowId: definition.id, workflowVersion: 1, params });
+  const { record: run } = await store.create({
+    workflowId: definition.id,
+    workflowVersion: 1,
+    params,
+  });
   if (definition.steps['first'] !== undefined) {
     await executeStep(store, definition, {
       runId: run.id,
@@ -123,7 +127,7 @@ async function answered(
       dispatcher: async () => ({ answered: true }),
     });
   }
-  return { store, record: await store.get(run.id) };
+  return { store, record: (await store.get(run.id)).record };
 }
 
 const admit = (
@@ -210,11 +214,15 @@ describe('#729 Q3 — the agent party: an eligible engine step called by name is
 
   it('cell 4: the agent step called by name with party agent → admitted (the agent’s own step)', async () => {
     const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-q3-729-')));
-    const { run } = await store.create({ workflowId: W3.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: W3.id,
+      workflowVersion: 1,
+      params: {},
+    });
     // (a) red when the arm refuses an agent step; (b) prints the verdict.
-    expect(shapeOf(admit(await store.get(run.id), ctx(W3, { party: 'agent' }), 'first'))).toBe(
-      'ok',
-    );
+    expect(
+      shapeOf(admit((await store.get(run.id)).record, ctx(W3, { party: 'agent' }), 'first')),
+    ).toBe('ok');
   });
 
   it('cell 5: a guard and a cleanup step with party agent → today’s step_engine_decided (A-7)', async () => {
@@ -278,7 +286,7 @@ describe('#729 Q3 — the agent party: an eligible engine step called by name is
       true,
     ]);
     await advanceRun(store, W3, { runId: record.id, registry: registry() });
-    const after = await store.get(record.id);
+    const { record: after } = await store.get(record.id);
     const entry = (step: string) => after.evidence.find((e) => e.step_id === step);
     // (a) red when the engine's chain is refused (a party reached it), a step runs on the agent's
     //     params, or a supplier is recorded; (b) prints the steps run, the gate's step, the sources

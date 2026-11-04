@@ -2,8 +2,15 @@
 // This file builds no store, so fake timers are allowed in it (D6-24's file rule). Each cell names
 // (a) the change that turns it red and (b) what it prints when it fails: instants, a message, never an
 // environment.
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createSystemClock, MAX_HOP_MS, systemClock } from './clock.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  clockErrorSink,
+  createSystemClock,
+  MAX_HOP_MS,
+  resetClockErrorSinkForTest,
+  setClockErrorSink,
+  systemClock,
+} from './clock.js';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -145,15 +152,124 @@ describe('#715 (a) A.1 — the system clock', () => {
     expect(unref).toHaveBeenCalledTimes(1);
   });
 
-  it('A6 systemClock.at throws a message naming createSystemClock and onWaiterError', () => {
-    // (a) red when it silently registers or returns a no-op cancel; (b) prints the message.
-    let message = '';
+  it('A6 #715 (b) 03 §A.1: systemClock.at runs a waiter (it no longer throws), once, at its instant', () => {
+    // (a) red when systemClock.at throws or runs the waiter before its instant or twice; (b) prints
+    // the fake-time instants it ran at.
+    vi.useFakeTimers();
+    const start = new Date('2030-01-01T00:00:00.000Z').getTime();
+    vi.setSystemTime(start);
+    const ranAt: string[] = [];
+    systemClock.at(new Date(start + 90_000), () => {
+      ranAt.push(new Date().toISOString());
+    });
+    vi.advanceTimersByTime(60_000);
+    expect(ranAt, 'not yet at +60 s').toEqual([]);
+    vi.advanceTimersByTime(60_000);
+    expect(ranAt, `ran at ${JSON.stringify(ranAt)}`).toEqual([
+      new Date(start + 90_000).toISOString(),
+    ]);
+  });
+});
+
+describe('#715 (b) 03 §A.1 (D-22) — the process’s waiter-error sink', () => {
+  let previous: ((err: unknown) => void) | undefined;
+  beforeEach(() => {
+    previous = clockErrorSink();
+  });
+  afterEach(() => {
+    if (previous !== undefined) setClockErrorSink(previous);
+    else resetClockErrorSinkForTest();
+  });
+
+  it('S1 a waiter that throws, one that rejects, one that returns a rejected promise — each reaches the sink set at FIRE time, once, never unhandled', async () => {
+    // (a) red when the sink is read at registration (the waiters were registered before it was
+    //     set), when an error is lost, or when one reaches the sink twice or as an unhandled
+    //     rejection; (b) prints the messages the sink got and the unhandled ones.
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
     try {
-      systemClock.at(new Date(), () => {});
-    } catch (err) {
-      message = (err as Error).message;
+      resetClockErrorSinkForTest();
+      systemClock.at(new Date(Date.now() - 1), () => {
+        throw new Error('threw');
+      });
+      systemClock.at(new Date(Date.now() - 1), async () => {
+        throw new Error('rejected');
+      });
+      systemClock.at(new Date(Date.now() - 1), () =>
+        Promise.reject(new Error('returned a rejection')),
+      );
+      const sunk: string[] = [];
+      setClockErrorSink((err) => sunk.push((err as Error).message));
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect({
+        sunk: [...sunk].sort(),
+        unhandled: unhandled.map((e) => (e as Error).message),
+      }).toEqual({
+        sunk: ['rejected', 'returned a rejection', 'threw'],
+        unhandled: [],
+      });
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
     }
-    expect(message, `the message: ${message}`).toMatch(/createSystemClock/);
-    expect(message, `the message: ${message}`).toMatch(/onWaiterError/);
+  });
+
+  it('S2 with no sink set, a waiter’s failure is re-thrown from a microtask — loud, never swallowed', async () => {
+    // (a) red when the no-sink path swallows the error (`catch {}`) or writes it to the console; (b)
+    //     prints what the microtask threw (or that nothing was thrown).
+    resetClockErrorSinkForTest();
+    const thrown: unknown[] = [];
+    const real = globalThis.queueMicrotask;
+    const spy = vi.spyOn(globalThis, 'queueMicrotask').mockImplementation((cb: () => void) => {
+      real(() => {
+        try {
+          cb();
+        } catch (err) {
+          thrown.push(err);
+        }
+      });
+    });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    systemClock.at(new Date(Date.now() - 1), () => {
+      throw new Error('no sink: loud');
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect({
+      thrown: thrown.map((e) => (e as Error).message),
+      microtasks: spy.mock.calls.length > 0,
+      console: consoleError.mock.calls.length,
+    }).toEqual({ thrown: ['no sink: loud'], microtasks: true, console: 0 });
+  });
+
+  it('S3 a sink that throws is swallowed: the next waiter’s failure still reaches it', async () => {
+    // (a) red when a throwing sink escapes (an uncaught exception) or stops later reports; (b) prints
+    //     the reports the sink saw and the uncaught errors.
+    const uncaught: string[] = [];
+    const onUncaught = (err: unknown): void => {
+      uncaught.push((err as Error).message);
+    };
+    process.on('uncaughtException', onUncaught);
+    try {
+      const seen: string[] = [];
+      setClockErrorSink((err) => {
+        seen.push((err as Error).message);
+        throw new Error('sink threw');
+      });
+      systemClock.at(new Date(Date.now() - 1), () => {
+        throw new Error('first');
+      });
+      systemClock.at(new Date(Date.now() - 1), () => {
+        throw new Error('second');
+      });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect({ seen: [...seen].sort(), uncaught }).toEqual({
+        seen: ['first', 'second'],
+        uncaught: [],
+      });
+    } finally {
+      process.off('uncaughtException', onUncaught);
+    }
   });
 });

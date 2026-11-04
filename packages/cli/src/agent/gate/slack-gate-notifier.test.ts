@@ -40,7 +40,14 @@ import {
   VIEW_BUDGET,
   type PersonNotice,
   type RunRecord,
+  type Snapshot,
+  writtenSnapshot,
 } from '@sensigo/realm';
+
+/** #715 (b) (D-29): the run as the notifier reads it when it starts — its gate, at this instant. */
+function heldAt(gate: PendingGate): Snapshot {
+  return writtenSnapshot({ pending_gate: gate } as unknown as RunRecord, new Date());
+}
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
@@ -54,6 +61,8 @@ import { startSlackGateServer } from './slack-gate-server.js';
 import type { SlackGateEvent } from './slack-gate-server.js';
 import { connectSocketMode } from './slack-socket-client.js';
 import { slackResponse } from '../test-support/slack-response.js';
+import { snap, doubleClock, noSettle } from '../../test-support/snapshot-double.js';
+import { zOf } from '../../test-support/instant.js';
 
 // Module-level mocks are hoisted by vitest — slack-gate-notifier.ts will receive these stubs for
 // its internal imports of slack-gate-server and slack-socket-client.
@@ -347,7 +356,7 @@ describe('startGateReminderTimers', () => {
       'xoxb-test',
       'C123',
       '1234567890.000',
-      gate,
+      heldAt(gate),
       500, // reminderIntervalMs
       5000, // escalationThresholdMs
     );
@@ -356,8 +365,11 @@ describe('startGateReminderTimers', () => {
     clearTimers();
 
     // #729 PR-4 (re-pinned: the `reminder` notice's words). (a) red when the plain firing loses its
-    // words; (b) prints the posted texts.
-    expect(calls).toEqual(['⏰ gate `review_step` has been open for 0s. Please respond.']);
+    // words; (b) prints the posted texts. #715 (b) (D-29, D6-72): composed at its scheduled instant,
+    // with the opening's instant beside the words.
+    expect(calls).toEqual([
+      `⏰ gate \`review_step\` has been open for 0s (since ${zOf(gate.opened_at)}). Please respond.`,
+    ]);
   });
 
   it('includes owner mention in escalation message when gate.owner is set', async () => {
@@ -377,7 +389,7 @@ describe('startGateReminderTimers', () => {
       'xoxb-test',
       'C123',
       '1234567890.000',
-      gate,
+      heldAt(gate),
       10, // reminderIntervalMs — fires fast
       20, // escalationThresholdMs — fires even faster for escalation
     );
@@ -409,7 +421,7 @@ describe('startGateReminderTimers', () => {
       'xoxb-test',
       'C123',
       '1234567890.000',
-      gate,
+      heldAt(gate),
       10,
       20,
     );
@@ -435,7 +447,7 @@ describe('startGateReminderTimers', () => {
       'xoxb-test',
       'C123',
       '1234567890.000',
-      gate,
+      heldAt(gate),
       200,
       400,
     );
@@ -477,13 +489,18 @@ describe('postSlackReply', () => {
 
 function makeMinimalStore(): RunStore {
   return declared({
-    get: vi.fn(async () => ({ terminal_state: 'completed', pending_gate: undefined })),
+    clock: doubleClock,
+    settleStep: noSettle,
+    get: vi.fn(async () =>
+      snap({ terminal_state: 'completed', pending_gate: undefined } as unknown as RunRecord),
+    ),
   } as unknown as RunStore);
 }
 
 /**
  * Store that mimics a gate-waiting run for the first get() call, then returns
- * completed. Includes a patch() stub so submitHumanResponse can write evidence.
+ * completed. #715 (b), C.1: the answer is written by `settleStep` (the `update` it used to stub was
+ * the deleted legacy path's write); its delta carries the answer's evidence entry.
  */
 function makeGateStore(gate: PendingGate): RunStore {
   const completedRun = {
@@ -515,19 +532,34 @@ function makeGateStore(gate: PendingGate): RunStore {
   // F9: every read before the answer is written sees the open run (the notifier now reads it before
   // the answer too, for its finalizer lines), and every read after it the completed one.
   let answered = false;
-  const get = vi.fn().mockImplementation(async () => (answered ? completedRun : openRun));
-  const update = vi.fn().mockImplementation(async () => {
+  const get = vi
+    .fn()
+    .mockImplementation(async () =>
+      snap((answered ? completedRun : openRun) as unknown as RunRecord),
+    );
+  const settleStep = vi.fn().mockImplementation(async () => {
     answered = true;
-    return completedRun;
+    return {
+      applied: true,
+      run: completedRun,
+      transitioned: true,
+      pendingFinalizers: [],
+      at: new Date(),
+    };
   });
-  return declared({ get, update } as unknown as RunStore);
+  return declared({
+    clock: doubleClock,
+    get,
+    settleStep,
+  } as unknown as RunStore);
 }
 
 /** #819 (item 28): the answer's entry in the store's last write — the record the answer wrote. */
 function slackAnswerOf(store: RunStore): EvidenceSnapshot | undefined {
-  const written = vi.mocked(store.update).mock.calls.at(-1)?.[0] as
+  // #715 (b): the answer's write is the settle_gate delta — its evidence is the entry it records.
+  const delta = vi.mocked(store.settleStep).mock.calls.at(-1)?.[1] as
     { evidence?: EvidenceSnapshot[] } | undefined;
-  return (written?.evidence ?? []).filter((e) => e.kind === 'gate_response').at(-1);
+  return (delta?.evidence ?? []).filter((e) => e.kind === 'gate_response').at(-1);
 }
 
 function makeMinimalDefinition(): WorkflowDefinition {
@@ -983,9 +1015,13 @@ describe('handleBidirectionalGate', () => {
       pending_gate: undefined,
       run_phase: 'failed',
     };
+    // #715 (b), C.1: the answer's write is `settleStep` (the legacy path wrote it through `update`).
     const store = declared({
-      get: vi.fn(async () => (updateAttempted ? terminalRun : openRun)),
-      update: vi.fn(async () => {
+      clock: doubleClock,
+      get: vi.fn(async () =>
+        snap((updateAttempted ? terminalRun : openRun) as unknown as RunRecord),
+      ),
+      settleStep: vi.fn(async () => {
         updateAttempted = true;
         throw new Error('persist failed');
       }),
@@ -1076,7 +1112,7 @@ describe('handleBidirectionalGate — threads the registry so gate-completed run
     const dir = await mkdtemp(join(tmpdir(), 'realm-slack-fin-'));
     const store = new JsonFileStore(dir);
     const def = gateFinalizerDef();
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
       params: {},
@@ -1088,7 +1124,7 @@ describe('handleBidirectionalGate — threads the registry so gate-completed run
       input: {},
       dispatcher: async () => ({}),
     });
-    const opened = await store.get(run.id);
+    const { record: opened } = await store.get(run.id);
     const gate = opened.pending_gate!;
 
     // Project handler registered ONLY in this custom registry (not the default).
@@ -1125,7 +1161,7 @@ describe('handleBidirectionalGate — threads the registry so gate-completed run
 
     await promise;
 
-    const updated = await store.get(run.id);
+    const { record: updated } = await store.get(run.id);
     expect(updated.run_phase).toBe('completed');
     expect(updated.completed_steps).toContain('record_outcome');
     expect(ran).toHaveBeenCalledTimes(1);
@@ -1330,7 +1366,11 @@ const CLOSED_CASES = [
   },
 ] as const;
 const storeReading = (record: RunRecord): RunStore =>
-  declared({ get: vi.fn(async () => record) } as unknown as RunStore);
+  declared({
+    clock: doubleClock,
+    settleStep: noSettle,
+    get: vi.fn(async () => snap(record)),
+  } as unknown as RunStore);
 
 describe('#729 PR-4 — the asked person in Slack: the opening post', () => {
   beforeEach(() => {
@@ -1561,7 +1601,11 @@ describe('#729 PR-4 — the asked person in Slack: the opening post', () => {
     } as unknown as WorkflowDefinition;
     const minted = async (x: string) => {
       const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-h4-')));
-      const { run } = await store.create({ workflowId: 'h4', workflowVersion: 1, params: { x } });
+      const { record: run } = await store.create({
+        workflowId: 'h4',
+        workflowVersion: 1,
+        params: { x },
+      });
       await executeStep(store, definition, {
         runId: run.id,
         command: 'review',
@@ -1569,7 +1613,7 @@ describe('#729 PR-4 — the asked person in Slack: the opening post', () => {
         dispatcher: async () => ({}),
         disclosure: set,
       });
-      return (await store.get(run.id)).pending_gate!;
+      return (await store.get(run.id)).record.pending_gate!;
     };
     const blockOf = (gate: PendingGate) =>
       texts(renderSlack(openedNotice(gate), { mode: 'bot', listens: true }).blocks);

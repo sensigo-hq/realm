@@ -105,7 +105,7 @@ describe('append_trace fenced-trio adoption — behavioral spy (issue #207 PR-2)
   });
 
   it('capability present + non-empty entries: appendFenced exactly once, raw append never, no advisory', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'append-trace-spy-wf',
       workflowVersion: 1,
       params: {},
@@ -126,7 +126,7 @@ describe('append_trace fenced-trio adoption — behavioral spy (issue #207 PR-2)
   });
 
   it('empty entries: raw append exactly once regardless of capability (capability present)', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'append-trace-spy-wf',
       workflowVersion: 1,
       params: {},
@@ -147,7 +147,7 @@ describe('append_trace fenced-trio adoption — behavioral spy (issue #207 PR-2)
   });
 
   it('empty entries: raw append exactly once regardless of capability (capability absent)', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'append-trace-spy-wf',
       workflowVersion: 1,
       params: {},
@@ -170,7 +170,7 @@ describe('append_trace fenced-trio adoption — behavioral spy (issue #207 PR-2)
   });
 
   it('capability absent + non-empty entries: raw append exactly once, envelope advisory present', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'append-trace-spy-wf',
       workflowVersion: 1,
       params: {},
@@ -195,7 +195,7 @@ describe('append_trace fenced-trio adoption — behavioral spy (issue #207 PR-2)
   });
 
   it('capability-absent console.warn is deduped per store constructor name across calls', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'append-trace-spy-wf',
       workflowVersion: 1,
       params: {},

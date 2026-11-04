@@ -224,12 +224,15 @@ describe('#729 PR-0 — the MCP door’s laws', () => {
     const a = render(stated);
     const b = render(unknown);
     // (a) red when the pace is dropped, or until is invented for an unknown age; (b) prints them.
+    // #715 (b) (03 §C, D6-71): a claim's stated deadline paces the wait — `until − as_of`, five
+    // minutes here, unclamped (the cap is five minutes) — and says so; an unknown age keeps the
+    // fixed 30 s with no until.
     expect([
-      [a.agent_action, a.poll_after_ms, a.until],
-      [b.agent_action, b.poll_after_ms, 'until' in b],
+      [a.agent_action, a.poll_after_ms, a.until, a.poll_reason],
+      [b.agent_action, b.poll_after_ms, 'until' in b, b.poll_reason],
     ]).toEqual([
-      ['await', 30_000, deadline],
-      ['await', 30_000, false],
+      ['await', Date.parse(deadline) - AT.getTime(), deadline, 'claim_deadline'],
+      ['await', 30_000, false, 'fixed'],
     ]);
   });
 
@@ -247,7 +250,11 @@ describe('#729 PR-0 — the MCP door’s laws', () => {
 
   it('Amendment 9: the published field set — the ways, the engine’s routing fields and error.remedy never leave the door', async () => {
     const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-door-729-')));
-    const { run } = await store.create({ workflowId: LEVER.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: LEVER.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const replies = [
       await executeStep(store, LEVER, {
         runId: run.id,
@@ -302,7 +309,11 @@ describe('#729 PR-0 — the MCP door’s laws', () => {
     const damaged = buildPreExecutionErrorEnvelope('x', 'r', 0, unreadableRunFileError(facts));
     const envelope = renderReply(damaged, {}).envelope;
     const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-door-729-')));
-    const { run } = await store.create({ workflowId: LEVER.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: LEVER.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const refused = await executeStep(store, LEVER, {
       runId: run.id,
       command: 'm',
@@ -351,7 +362,11 @@ describe('#729 PR-0 — the MCP door’s laws', () => {
         side: { description: 'side', execution: 'agent', depends_on: [] },
       },
     } as WorkflowDefinition;
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const opening = await executeStep(store, d, {
       runId: run.id,
       command: 'q',
@@ -468,7 +483,11 @@ describe('#729 PR-0 — the MCP door’s laws', () => {
         },
       },
     } as WorkflowDefinition;
-    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const opened = await executeStep(store, d, {
       runId: run.id,
       command: 'q',
@@ -482,7 +501,7 @@ describe('#729 PR-0 — the MCP door’s laws', () => {
     // (a) red when the way or its instruction carries other choices than the gate's; (b) prints
     //     the three lists.
     expect({
-      gate: (await store.get(run.id)).pending_gate?.choices,
+      gate: (await store.get(run.id)).record.pending_gate?.choices,
       way: respond?.verb === 'respond' ? respond.choice.one_of : undefined,
       instruction: answer?.instruction?.call_with['choice'],
     }).toEqual({

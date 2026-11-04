@@ -69,10 +69,29 @@ export interface HostWiring {
   parts?: Record<string, unknown>;
 }
 
+/**
+ * The host-wiring rows' ids, in the table's order (D6-26 / framework rule 9: the vocabulary is an
+ * `as const` in core, never a free string). #715 (b) adds `store_clock` and `store_settle_step`.
+ */
+export const HOST_WIRING_CHECK_IDS = [
+  'store_release_line',
+  'store_clock',
+  'store_settle_step',
+  'registry_release_line',
+  'driver_shape',
+  'caller',
+  'required_parts',
+] as const;
+
+export type HostWiringCheckId = (typeof HOST_WIRING_CHECK_IDS)[number];
+
 interface HostWiringCheck {
-  readonly id: string;
+  readonly id: HostWiringCheckId;
   readonly check: (entry: EngineEntry, wiring: HostWiring) => void;
 }
+
+/** The store as the two #715 (b) rows read it: duck-typed, since a host may hand in anything. */
+type MaybeStore = { clock?: { now?: unknown; at?: unknown }; settleStep?: unknown } | undefined;
 
 /** Tier 1, in order. Every check passes on an absent value, so an entry that takes none skips it. */
 export const HOST_WIRING_CHECKS: readonly HostWiringCheck[] = [
@@ -87,6 +106,44 @@ export const HOST_WIRING_CHECKS: readonly HostWiringCheck[] = [
         ]);
       }
       assertReleaseLine(w.store, `the ${w.storeKind} handed to ${entry}`);
+    },
+  },
+  {
+    // #715 (b) (D-18, D6-5): a run store reads the time only through its clock — every read and write
+    // returns its reading — so a store without a callable `clock.now` and `clock.at` is refused here,
+    // in the front door's four clauses, not as a late `TypeError` mid-write (a host that casts its
+    // store compiles without it). Run-store entries only: `getWorkflowForRun` admits a workflow store.
+    id: 'store_clock',
+    check: (entry, w) => {
+      if (w.storeKind !== 'run store') return;
+      const clock = (w.store as MaybeStore)?.clock;
+      if (typeof clock?.now !== 'function' || typeof clock?.at !== 'function') {
+        throw optionInvalidError(entry, [
+          {
+            option: 'store.clock',
+            expected: 'a Clock ({ now(), at() })',
+            given_type: givenTypeOf(clock),
+          },
+        ]);
+      }
+    },
+  },
+  {
+    // #715 (b) (D-18, D-19): `settleStep` is required — the engine writes every settlement through it.
+    // A cast store without it would reach `TypeError: settleStep is not a function` mid-write.
+    id: 'store_settle_step',
+    check: (entry, w) => {
+      if (w.storeKind !== 'run store') return;
+      const settleStep = (w.store as MaybeStore)?.settleStep;
+      if (typeof settleStep !== 'function') {
+        throw optionInvalidError(entry, [
+          {
+            option: 'store.settleStep',
+            expected: 'a function (required from #715 (b))',
+            given_type: givenTypeOf(settleStep),
+          },
+        ]);
+      }
     },
   },
   {

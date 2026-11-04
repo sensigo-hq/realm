@@ -7,6 +7,7 @@
 import type { WorkflowDefinition, StepDefinition } from '../types/workflow-definition.js';
 import { classifyStepTrust, buildTrustRefusal } from '../types/workflow-definition.js';
 import type { RunRecord, PendingGate } from '../types/run-record.js';
+import type { Snapshot } from './snapshot.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
 import type { ExtensionIdentityEntry } from '../types/extension-identity.js';
 import { extensionIdentityDiffers, lastExecutionIdentity } from '../types/extension-identity.js';
@@ -30,7 +31,7 @@ import {
 } from '../validation/validation-problems.js';
 import { consumesInputMap, resolveInputMap } from './input-map.js';
 import { capabilityRefusalWords, requirementForStep } from './capability.js';
-import { isPastDeadline } from './instants.js';
+import { parseStamp, isPastDeadline } from './instants.js';
 import { readDrivenBy, type Attributed, type ActorAbsent } from './holder.js';
 
 /** The checks that refuse a step before it is claimed, in the order `executeStep` runs them. */
@@ -699,7 +700,7 @@ export function pendingCleanupWay(
       (entry) =>
         entry.lease_token !== undefined &&
         entry.lease_deadline !== undefined &&
-        new Date(entry.lease_deadline).getTime() > now.getTime(),
+        (parseStamp(entry.lease_deadline) ?? NaN) > now.getTime(),
     )
     .map((entry) => entry.lease_deadline!)
     .sort();
@@ -806,23 +807,22 @@ export function owedWords(pending: PendingView): { steps: string; them: string; 
 }
 
 /**
- * What the run owes, from the record, the definition and (when present) the registry, at `now`.
- * Pure. A terminal run owes nothing; so does a run with an open gate — except a question whose time
- * is up at `now` and that declares `on_expiry` (decision C95): carrying it out is owed engine work
- * (`expiry_due`, the `advance_run` act), and the question can no longer be answered. The clock is
- * required (decision C117): a view built without one assumed no question had expired, and offered
- * an answer that could not be recorded. Each caller passes its own clock — its `now` option, or
- * `new Date()` at an entry point that has none.
+ * What the run owes, from the record, the definition and (when present) the registry, at the
+ * snapshot's `at`. Pure. A terminal run owes nothing; so does a run with an open gate — except a
+ * question whose time is up at `at` and that declares `on_expiry` (decision C95): carrying it out is
+ * owed engine work (`expiry_due`, the `advance_run` act), and the question can no longer be answered.
+ * #715 (b) (D6-17): it judges ONE snapshot — the record with the reading it was read or written at —
+ * so the view and the record can never be judged at two instants; no caller reads a clock for it.
  * An eligible agent step is judged by the checks that read no input
  * ({@link AGENT_PRE_CLAIM_REFUSALS}, decision C82): one the run refuses is listed in
  * `agent_refused`, never in `agent_steps` or `agent_actions`.
  */
 export function describePending(
   definition: WorkflowDefinition,
-  run: RunRecord,
+  snapshot: Snapshot,
   registry: ExtensionRegistry | undefined,
-  now: Date,
 ): PendingView {
+  const { record: run, at: now } = snapshot;
   if (run.terminal_state || run.pending_gate !== undefined) {
     const question = openQuestionOf(run);
     const empty: PendingView = {

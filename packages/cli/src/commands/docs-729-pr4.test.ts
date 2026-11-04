@@ -111,7 +111,7 @@ async function opened(
     },
   } as unknown as WorkflowDefinition;
   const store = new JsonFileStore(mkdtempSync(join(tmpdir(), 'realm-docs-729-')));
-  const { run } = await store.create({
+  const { record: run } = await store.create({
     workflowId: 'docs729',
     workflowVersion: 1,
     params: { x, ...more },
@@ -123,7 +123,7 @@ async function opened(
     dispatcher: async () => ({ summary: 'the output' }),
     ...(set !== undefined ? { disclosure: set } : {}),
   });
-  return (await store.get(run.id)).pending_gate!;
+  return (await store.get(run.id)).record.pending_gate!;
 }
 
 afterEach(() => {
@@ -227,7 +227,7 @@ describe(`${SLACK} — the post, the thread, the transport`, () => {
   it('the reminders, the escalation, the expiry reminder and the closed lines, in their words; durations in `formatDuration`’s forms', () => {
     claim(
       SLACK,
-      "A reminder reads ``⏰ gate `review` has been open for 12m. Please respond.``; the escalation is the same line with the gate's `owner` first. When the gate has a time limit, the last reminder says the question expired and what happens next, such as ``⏰ gate `review` expired 42s ago — its default choice will be recorded.`` Durations read like `1h 5m`, `12m` or `42s`. When the question closes without an answer in the thread, Realm says so there: `This question is closed: its time ran out.`, `This question is closed: the run stopped.` or ``This question is closed: it was answered elsewhere as `send`.``",
+      "A reminder reads ``⏰ gate `review` has been open for 12m (since 2026-10-27T10:00:00Z). Please respond.``; the escalation is the same line with the gate's `owner` first. When the gate has a time limit, the last reminder says the question expired and what happens next, such as ``⏰ gate `review` expired 42s ago (2026-10-27T10:11:18Z) — its default choice will be recorded.`` Durations read like `1h 5m`, `12m` or `42s`, with the instant beside them in UTC; each is counted to the moment the reminder was scheduled for. When the question closes without an answer in the thread, Realm says so there: `This question is closed: its time ran out.`, `This question is closed: the run stopped.` or ``This question is closed: it was answered elsewhere as `send`.``",
     );
     const now = new Date('2026-10-27T10:12:00.000Z');
     const g = gate({ owner: '@ana' });
@@ -275,9 +275,10 @@ describe(`${SLACK} — the post, the thread, the transport`, () => {
       ],
     }).toEqual({
       lines: [
-        '⏰ gate `review` has been open for 12m. Please respond.',
-        '@ana — ⏰ gate `review` has been open for 12m. Please respond.',
-        '⏰ gate `review` expired 42s ago — its default choice will be recorded.',
+        // #715 (b) (D-29, D6-72): the instant beside the words, as plain text.
+        '⏰ gate `review` has been open for 12m (since 2026-10-27T10:00:00Z). Please respond.',
+        '@ana — ⏰ gate `review` has been open for 12m (since 2026-10-27T10:00:00Z). Please respond.',
+        '⏰ gate `review` expired 42s ago (2026-10-27T10:11:18Z) — its default choice will be recorded.',
         'This question is closed: its time ran out.',
         'This question is closed: the run stopped.',
         'This question is closed: it was answered elsewhere as `send`.',

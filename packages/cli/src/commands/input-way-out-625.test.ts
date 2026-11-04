@@ -50,7 +50,7 @@ async function advance(def: WorkflowDefinition, params: Record<string, unknown>)
     const runs = new JsonFileStore(join(home, 'runs'));
     const workflows = new JsonWorkflowStore(join(home, 'wf'));
     await workflows.register(def);
-    const { run } = await runs.create({ workflowId: def.id, workflowVersion: 1, params });
+    const { record: run } = await runs.create({ workflowId: def.id, workflowVersion: 1, params });
     const lines: string[] = [];
     const code = await advanceRunFromShell(
       run.id,

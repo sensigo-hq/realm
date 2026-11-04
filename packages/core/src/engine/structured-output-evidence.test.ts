@@ -55,7 +55,7 @@ describe('structured_output evidence disclosure (issue #236, Deliverable 6)', ()
   });
 
   it('a real meta from stepMeta.structuredOutput flows verbatim into diagnostics.structured_output', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: declaredDef.id,
       workflowVersion: 1,
       params: {},
@@ -79,7 +79,7 @@ describe('structured_output evidence disclosure (issue #236, Deliverable 6)', ()
   });
 
   it('a declared step with NO stepMeta.structuredOutput at all gets the external_agent stamp', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: declaredDef.id,
       workflowVersion: 1,
       params: {},
@@ -100,7 +100,7 @@ describe('structured_output evidence disclosure (issue #236, Deliverable 6)', ()
   });
 
   it('a step that never declared structured_output carries NO structured_output diagnostics key at all, even if stepMeta.structuredOutput is (erroneously) supplied', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: plainDef.id,
       workflowVersion: 1,
       params: {},
@@ -117,7 +117,7 @@ describe('structured_output evidence disclosure (issue #236, Deliverable 6)', ()
   });
 
   it('evidence round-trip: the structured_output field survives a real persist + read through JsonFileStore', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: declaredDef.id,
       workflowVersion: 1,
       params: {},
@@ -138,7 +138,7 @@ describe('structured_output evidence disclosure (issue #236, Deliverable 6)', ()
     });
     // Fresh read — proves this isn't just an in-memory reference surviving, but a real
     // serialize/deserialize round-trip (JsonFileStore writes/reads real JSON on disk).
-    const reread = await store.get(run.id);
+    const { record: reread } = await store.get(run.id);
     expect(reread.evidence[0]?.diagnostics?.structured_output).toEqual(meta);
     // TCK note (cloud punch-list, the #188 silent-drop class): a Postgres-backed RunStore's own
     // JSON/JSONB evidence column must round-trip this field identically — flagged in the report

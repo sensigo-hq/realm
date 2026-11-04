@@ -20,8 +20,8 @@ import { advanceRun, executeChain, executeStep } from './execution-loop.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type { StepDefinition, WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepDispatcher } from './execution-loop.js';
-import type { RunRecord } from '../types/run-record.js';
 import { nextCalls } from '../test-support/ways-view.js';
+import type { Snapshot } from './snapshot.js';
 
 /** The agent step's submission, accepted as given. */
 const echo: StepDispatcher = async (_name, input) => ({ ...input });
@@ -69,7 +69,7 @@ afterEach(async () => {
 });
 
 async function newRun(workflowId: string): Promise<string> {
-  const { run } = await store.create({ workflowId, workflowVersion: 1, params: {} });
+  const { record: run } = await store.create({ workflowId, workflowVersion: 1, params: {} });
   return run.id;
 }
 
@@ -99,7 +99,7 @@ describe('stopped_step names the step a non-ok reply belongs to', () => {
     });
     // The called step settled: stopped_step's promise that `command`'s own call returned ok.
     // (a) red when the chain stamps a reply whose called step did not complete; (b) prints both lists.
-    const record = await store.get(runId);
+    const { record: record } = await store.get(runId);
     expect({ completed: record.completed_steps, failed: record.failed_steps }).toEqual({
       completed: ['draft'],
       failed: ['publish'],
@@ -185,7 +185,7 @@ describe('stopped_step names the step a non-ok reply belongs to', () => {
     };
     let armed = false;
     class OtherProcessOpensAGate extends JsonFileStore {
-      override async get(id: string): Promise<RunRecord> {
+      override async get(id: string): Promise<Snapshot> {
         if (armed) {
           armed = false;
           await executeStep(store, def, { runId: id, command: 'x', input: {}, dispatcher: echo });
@@ -205,7 +205,7 @@ describe('stopped_step names the step a non-ok reply belongs to', () => {
     // (a) red when the race's `blocked` refusal is returned as the reply (before F7 it was, stamped
     //     `stopped_step: 'b'`), or when the race is reported as "taken"; (b) prints status, command,
     //     stopped_step, the reply's phase and act, and the gate's step on the record.
-    const record = await store.get(runId);
+    const { record: record } = await store.get(runId);
     expect({
       status: reply.status,
       command: reply.command,
@@ -340,54 +340,5 @@ describe('stopped_step: the called step, and where it is absent', () => {
       command: reply.command,
       stopped_step: reply.stopped_step,
     }).toEqual({ status: 'error', command: 'publish', stopped_step: 'publish' });
-  });
-
-  // #625 PR-2a re-pin (round 9): the chain has no depth limit any more (PR-2a's loop runs each
-  // step at most once per call), so this control rides the other error of the chain itself the
-  // field's doc names — a guard's settlement that could not be written.
-  it("CONTROL — an error of the chain itself: a guard's settlement that could not be written names no step's own reply", async () => {
-    // A store without `settleStep` (the legacy path settles a guard through `update`) whose write
-    // of the guard's outcome fails.
-    class GuardWriteFails extends JsonFileStore {
-      override async update(record: RunRecord): Promise<RunRecord> {
-        if (record.completed_steps.includes('check') || record.failed_steps.includes('check')) {
-          throw new Error('disk full');
-        }
-        return super.update(record);
-      }
-    }
-    const legacy = new GuardWriteFails(dir);
-    Object.defineProperty(legacy, 'settleStep', { value: undefined });
-    const def: WorkflowDefinition = {
-      id: 'stopped-none-guard',
-      name: 'stopped-none-guard',
-      version: 1,
-      steps: {
-        draft: { description: 'Write the draft', execution: 'agent' },
-        check: {
-          description: 'Check it',
-          execution: 'guard',
-          depends_on: ['draft'],
-          abort_unless: ['draft.text == "hello"'],
-        } as StepDefinition,
-      },
-    };
-    const { run } = await legacy.create({ workflowId: def.id, workflowVersion: 1, params: {} });
-    const reply = await executeChain(legacy, def, {
-      runId: run.id,
-      command: 'draft',
-      input: { text: 'hello' },
-      dispatcher: echo,
-    });
-    // (a) red when the chain's own errors gain the field; (b) prints status, errors and presence.
-    expect({
-      status: reply.status,
-      errors: reply.errors,
-      has_stopped_step: 'stopped_step' in reply,
-    }).toEqual({
-      status: 'error',
-      errors: [expect.stringContaining("Failed to persist guard step 'check'")],
-      has_stopped_step: false,
-    });
   });
 });

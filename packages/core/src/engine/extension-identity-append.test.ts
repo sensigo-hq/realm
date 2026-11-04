@@ -76,7 +76,11 @@ describe('execution loop — extension identity lazy append-on-change', () => {
   });
 
   async function createRun(): Promise<string> {
-    const { run } = await store.create({ workflowId: 'ident-wf', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'ident-wf',
+      workflowVersion: 1,
+      params: {},
+    });
     return run.id;
   }
 
@@ -92,7 +96,7 @@ describe('execution loop — extension identity lazy append-on-change', () => {
     });
     expect(envelope.status).toBe('ok');
     expect(envelope.warnings).toEqual([]); // first record is not a CHANGE — no advisory
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     expect(run.extension_identity).toEqual([identity]);
   });
 
@@ -113,7 +117,7 @@ describe('execution loop — extension identity lazy append-on-change', () => {
       dispatcher: echoDispatcher,
       registry,
     });
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     expect(run.extension_identity).toHaveLength(1);
   });
 
@@ -137,7 +141,7 @@ describe('execution loop — extension identity lazy append-on-change', () => {
     expect(envelope.warnings).toContain(
       "extension code identity changed since this run's last recorded identity",
     );
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     expect(run.extension_identity).toHaveLength(2);
     expect(run.extension_identity![1]!.tree.tree_hash).toBe('hash-b');
   });
@@ -158,7 +162,7 @@ describe('execution loop — extension identity lazy append-on-change', () => {
       dispatcher: echoDispatcher,
       registry: registryWithIdentity(makeIdentity('hash-a', { override_active: true })),
     });
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     expect(run.extension_identity).toHaveLength(2);
   });
 
@@ -176,24 +180,24 @@ describe('execution loop — extension identity lazy append-on-change', () => {
       idempotencyKey: 'ident-key',
     });
     expect(second.created).toBe(false);
-    expect(second.run.id).toBe(first.run.id);
+    expect(second.record.id).toBe(first.record.id);
 
     const registry = registryWithIdentity(makeIdentity('hash-a'));
     await executeStep(store, definition, {
-      runId: first.run.id,
+      runId: first.record.id,
       command: 'step-one',
       input: {},
       dispatcher: echoDispatcher,
       registry,
     });
     await executeStep(store, definition, {
-      runId: second.run.id,
+      runId: second.record.id,
       command: 'step-two',
       input: {},
       dispatcher: echoDispatcher,
       registry,
     });
-    const run = await store.get(first.run.id);
+    const { record: run } = await store.get(first.record.id);
     expect(run.extension_identity).toHaveLength(1);
   });
 
@@ -206,7 +210,7 @@ describe('execution loop — extension identity lazy append-on-change', () => {
       dispatcher: echoDispatcher,
       registry: new ExtensionRegistry(), // no identity attached
     });
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     expect(run.extension_identity).toBeUndefined();
     expect('extension_identity' in run).toBe(false);
   });
@@ -245,7 +249,7 @@ describe('execution loop — extension identity lazy append-on-change', () => {
     });
     expect(envelope.status).toBe('ok');
     expect(failedOnce).toBe(true);
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     expect(run.extension_identity).toHaveLength(1);
   });
 
@@ -279,7 +283,7 @@ describe('execution loop — extension identity lazy append-on-change', () => {
       registry: registryWithIdentity(makeIdentity('hash-a')),
     });
     expect(envelope.status).toBe('ok'); // never fails the step
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     expect(run.extension_identity).toBeUndefined(); // dropped...
     const logged = errSpy.mock.calls.flat().map(String).join(' ');
     expect(logged).toContain('extension identity append dropped'); // ...but never silently
@@ -297,7 +301,7 @@ describe('#729 PR-3 correction 5 (J-5) — the start entry is never a drift base
   });
 
   async function bornWith(entry: ExtensionIdentityEntry): Promise<string> {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'ident-wf',
       workflowVersion: 1,
       params: {},
@@ -316,7 +320,7 @@ describe('#729 PR-3 correction 5 (J-5) — the start entry is never a drift base
       dispatcher: echoDispatcher,
       registry: registryWithIdentity(identity),
     });
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     // (a) red when the compare reads the start entry as the baseline (no execution entry is
     //     appended: one entry); (b) prints the entries' origins and the warnings.
     expect({
@@ -334,7 +338,7 @@ describe('#729 PR-3 correction 5 (J-5) — the start entry is never a drift base
       dispatcher: echoDispatcher,
       registry: registryWithIdentity(makeIdentity('bbb')),
     });
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     // (a) red when the compare reads `at(-1)` (the start entry: a drift note); (b) prints the
     //     entries' tree hashes and the warnings.
     expect({
@@ -345,7 +349,7 @@ describe('#729 PR-3 correction 5 (J-5) — the start entry is never a drift base
 
   it('the program fit is judged from execution entries: a run with only its start entry is `not_comparable`, as a run with none', async () => {
     const runId = await bornWith(makeIdentity('aaa'));
-    const bare = await store.get(runId);
+    const { record: bare } = await store.get(runId);
     const executed = {
       ...bare,
       extension_identity: [...bare.extension_identity!, makeIdentity('bbb')],

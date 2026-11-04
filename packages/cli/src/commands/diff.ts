@@ -15,6 +15,7 @@ import {
   withholdUnlessAccepted,
 } from '../output/writer.js';
 import { recordedAnswer } from '../lib/holder-render.js';
+import { openRunStore } from '../lib/run-store.js';
 
 /** Returns true when the given ID is a replay ID (starts with "rpl_"). */
 export function isReplayId(id: string): boolean {
@@ -269,19 +270,18 @@ export const diffCommand = new Command('diff')
       return;
     }
 
-    const { JsonFileStore } = await import('@sensigo/realm');
-    const store = new JsonFileStore();
+    const store = openRunStore();
 
     let runA: RunRecord;
     let runB: RunRecord;
     try {
-      runA = await store.get(runIdA);
+      runA = (await store.get(runIdA)).record;
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
       process.exit(1);
     }
     try {
-      runB = await store.get(runIdB);
+      runB = (await store.get(runIdB)).record;
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
       process.exit(1);

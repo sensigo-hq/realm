@@ -11,7 +11,6 @@ import { join } from 'node:path';
 import { JsonFileStore } from './json-file-store.js';
 import {
   TEST_CLOCK_FILE_NAME,
-  fileClock,
   resolveStoreClock,
   testClockFilePath,
   writeTestClockFile,
@@ -50,7 +49,11 @@ describe('#715 (a) C.1 — the clock file', () => {
     expect(store.clock.now().toISOString(), 'first now()').toBe(iso(T));
     await writeTestClockFile(root, new Date(T + 3_600_000));
     expect(store.clock.now().toISOString(), 'after the rewrite').toBe(iso(T + 3_600_000));
-    const { run } = await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'wf',
+      workflowVersion: 1,
+      params: {},
+    });
     expect(run.created_at, 'the next create').toBe(iso(T + 3_600_000));
   });
 
@@ -99,22 +102,18 @@ describe('#715 (a) C.1 — the clock file', () => {
     expect(testClockFilePath(runsDir), 'its path').toBe(join(root, TEST_CLOCK_FILE_NAME));
     expect(existsSync(join(root, TEST_CLOCK_FILE_NAME)), 'beside runs/').toBe(true);
     const store = new JsonFileStore(runsDir);
-    const a = (await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} })).run;
-    const b = (await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} })).run;
+    const a = (await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} })).record;
+    const b = (await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} })).record;
     expect(readdirSync(runsDir).includes(TEST_CLOCK_FILE_NAME), 'not inside runs/').toBe(false);
-    const listed = (await store.list()).map((r) => r.id).sort();
+    const listed = (await store.list()).snapshots
+      .map((s) => s.record)
+      .map((r) => r.id)
+      .sort();
     expect(listed, `listing: ${listed.join(', ')}`).toEqual([a.id, b.id].sort());
   });
 
-  it('C5 a file clock’s at() throws the stated sentence', async () => {
-    // (a) red when at() silently registers; (b) prints the message.
-    const { root, runsDir } = await freshRoot();
-    await writeTestClockFile(root, new Date(T));
-    const clock = fileClock(testClockFilePath(runsDir));
-    expect(() => clock.at(new Date(T + 1_000), () => {})).toThrow(
-      "a test location's clock cannot run waiters until the unit that registers them (#715 (b)) is built",
-    );
-  });
+  // C5 (a file clock's at() threw until #715 (b)) is gone: a test location's clock runs waiters now
+  // (03 §A.2); its cells are test-clock-file-watch-715b.test.ts.
 
   it('C6 a clock file that cannot be read after construction makes create fail loud and write nothing', async () => {
     // (a) red when the write falls back to the wall clock; (b) prints the thrown message.

@@ -94,7 +94,11 @@ describe('issue #625 — the Slack notifier after an answer whose write settled 
 
   /** Opens the gate through the engine and returns the frozen gate the notifier is handed. */
   async function openGate(def: WorkflowDefinition): Promise<{ runId: string; gate: PendingGate }> {
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const opened = await executeStep(store, def, {
       runId: run.id,
       command: 'confirm',
@@ -104,7 +108,7 @@ describe('issue #625 — the Slack notifier after an answer whose write settled 
     if (opened.status !== 'confirm_required') {
       throw new Error(`fixture: the gate did not open (status ${opened.status})`);
     }
-    return { runId: run.id, gate: (await store.get(run.id)).pending_gate! };
+    return { runId: run.id, gate: (await store.get(run.id)).record.pending_gate! };
   }
 
   /** #729 PR-4: the lines printed on the console (the operator's). */
@@ -168,7 +172,7 @@ describe('issue #625 — the Slack notifier after an answer whose write settled 
       expect.arrayContaining(["Guard step 'check' aborted the run.", `Reason: ${NOT_APPROVED}`]),
     );
     // (a) red when the answer's write did not settle the guard; (b) prints the derived phase.
-    expect(deriveRunPhase(await store.get(runId))).toBe('aborted');
+    expect(deriveRunPhase((await store.get(runId)).record)).toBe('aborted');
   });
 
   it('the answer ENDED the run (the guard passed and completed it): the post says the run completed', async () => {
@@ -183,7 +187,7 @@ describe('issue #625 — the Slack notifier after an answer whose write settled 
     expect(consoleLines()).toEqual(
       expect.arrayContaining(["Guard step 'check' passed and completed the run."]),
     );
-    expect(deriveRunPhase(await store.get(runId))).toBe('completed');
+    expect(deriveRunPhase((await store.get(runId)).record)).toBe('completed');
   });
 
   it('the guard PASSED and the run goes on: the authored resolution message, unchanged', async () => {
@@ -199,6 +203,6 @@ describe('issue #625 — the Slack notifier after an answer whose write settled 
     expect(posts).toEqual([`✅ Gate resolved: \`approve\`\n${AUTHORED.approve}`]);
     // (a) red when the guard was not settled by the answer's write; (b) prints the completed
     //     steps.
-    expect((await store.get(runId)).completed_steps).toEqual(['confirm', 'check']);
+    expect((await store.get(runId)).record.completed_steps).toEqual(['confirm', 'check']);
   });
 });

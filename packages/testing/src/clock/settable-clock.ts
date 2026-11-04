@@ -1,10 +1,16 @@
 // settable-clock.ts — issue #715 (a) (D5 §6, D6-20): a test clock that only moves when the test moves
 // it, and runs the waiters registered on it as it moves.
-import type { Clock } from '@sensigo/realm';
+import { clearTimeout as nodeClearTimeout, setTimeout as nodeSetTimeout } from 'node:timers';
+import { clockBasis, markTestClock, type Clock } from '@sensigo/realm';
 
-// Captured at MODULE LOAD, so a test's fake timers cannot freeze the watchdog (D6-20).
-const realSetTimeout = globalThis.setTimeout;
-const realClearTimeout = globalThis.clearTimeout;
+// The watchdog's timers are Node's own (`node:timers`), never the global ones: a test's fake timers
+// cannot freeze it (D6-20), even fake timers a setup file installs before this module loads
+// (#715 (b), 04 §C — a capture of `globalThis.setTimeout` at load would capture the fake).
+const realSetTimeout = nodeSetTimeout;
+const realClearTimeout = nodeClearTimeout;
+
+/** #715 (b) (04 §C): the watchdog's timer functions, for the cell that shows they are Node's own. */
+export const WATCHDOG_TIMERS = { setTimeout: realSetTimeout, clearTimeout: realClearTimeout };
 
 /** A test clock moved by `set` and `advance`, which run its due waiters (D5 §6, D6-20). */
 export interface SettableClock extends Clock {
@@ -159,7 +165,8 @@ export function settableClockOver(
       await store.write(to);
     },
   };
-  return clock;
+  // #715 (b) (02 §C.1): a test clock — a reply judged on it says `as_of_basis: 'test_clock'`.
+  return markTestClock(clock);
 }
 
 /**
@@ -195,7 +202,8 @@ export function steppingClock(
 ): Clock & { readonly reads: number } {
   const base = toMs(start);
   let reads = 0;
-  return {
+  // #715 (b) (02 §C.1): a test clock.
+  return markTestClock({
     now(): Date {
       const value = new Date(base + reads * stepMs);
       reads += 1;
@@ -207,13 +215,13 @@ export function steppingClock(
     get reads(): number {
       return reads;
     },
-  };
+  });
 }
 
 /** Delegates to `inner` and counts its `now()` calls (D6-4: the TCK counts readings this way). */
 export function countingClock(inner: Clock): Clock & { readonly reads: number } {
   let reads = 0;
-  return {
+  const counting: Clock & { readonly reads: number } = {
     now(): Date {
       reads += 1;
       return inner.now();
@@ -223,4 +231,6 @@ export function countingClock(inner: Clock): Clock & { readonly reads: number } 
       return reads;
     },
   };
+  // #715 (b) (02 §C.1): a test clock iff the clock it counts is one.
+  return clockBasis(inner) === 'test_clock' ? markTestClock(counting) : counting;
 }

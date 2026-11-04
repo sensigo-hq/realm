@@ -26,7 +26,7 @@ export async function createGateResponder(
   gateResponses: Record<string, string>,
   registry?: ExtensionRegistry,
 ): Promise<EngineReply> {
-  const run = await store.get(runId);
+  const { record: run } = await store.get(runId);
   if (run.pending_gate === undefined) {
     throw new Error('createGateResponder: run has no pending gate');
   }

@@ -1,7 +1,7 @@
 // gate-expiry-timer.test.ts — issue #291, Deliverable 4e: the attending-process enactment timer.
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { InMemoryStore } from '@sensigo/realm-testing';
-import { JsonFileStore, unreadableRunFileError } from '@sensigo/realm';
+import { describe, it, expect, vi } from 'vitest';
+import { InMemoryStore, settableClock } from '@sensigo/realm-testing';
+import { JsonFileStore, systemClock, unreadableRunFileError } from '@sensigo/realm';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -29,128 +29,156 @@ function makeGate(overrides: Partial<PendingGate> = {}): PendingGate {
 }
 
 async function seedGatedRun(store: InMemoryStore, gate: PendingGate) {
-  const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
-  return store.update({
-    ...run,
-    in_progress_steps: ['approve'],
-    claims: { approve: { deadline: null } },
-    pending_gate: gate,
+  const { record: run } = await store.create({
+    workflowId: def.id,
+    workflowVersion: 1,
+    params: {},
   });
+  return (
+    await store.update({
+      ...run,
+      in_progress_steps: ['approve'],
+      claims: { approve: { deadline: null } },
+      pending_gate: gate,
+    })
+  ).record;
+}
+
+// #715 (b) (03 §A.3, D6-24: a change from "unchanged"): the timer waits on the STORE's clock
+// (`store.clock.at`), so every cell runs on a settable store clock — `advance` reaches the deadline and
+// awaits the enactment (D6-20); no fake timers in a file that builds a store.
+const T = Date.parse('2030-01-01T00:00:00.000Z');
+const at = (ms: number) => new Date(T + ms).toISOString();
+
+/** A store on a settable clock at T, and a gate opened at T. */
+function onClock() {
+  const clock = settableClock(new Date(T));
+  return { clock, store: new InMemoryStore({ clock }) };
 }
 
 describe('scheduleGateExpiryTimer (issue #291)', () => {
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it('fires at expires_at and enacts the frozen disposition (settle_default)', async () => {
-    vi.useFakeTimers();
-    const store = new InMemoryStore();
-    const expiresAt = new Date(Date.now() + 1000).toISOString();
+  it('fires when the store’s clock reaches expires_at and enacts the frozen disposition (settle_default); advance awaits it', async () => {
+    // (a) red when the timer waits on a host timer (the store's clock reaching the deadline does not
+    //     run it) or `advance` does not await the enactment; (b) prints the run after the advance.
+    const { clock, store } = onClock();
     const gate = makeGate({
-      expires_at: expiresAt,
+      opened_at: at(0),
+      expires_at: at(1000),
       on_expiry: 'settle_default',
       default_choice: 'approve',
     });
     const run = await seedGatedRun(store, gate);
 
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     const cancel = scheduleGateExpiryTimer(run.id, gate, { store, definition: def });
-    await vi.advanceTimersByTimeAsync(1500);
+    await clock.advance(1500);
     cancel();
+    log.mockRestore();
 
-    const final = await store.get(run.id);
-    expect(final.pending_gate).toBeUndefined();
-    expect(final.completed_steps).toContain('approve');
-    expect(final.settled?.['approve']).toMatchObject({ resolved_by: 'timeout' });
+    const { record: final } = await store.get(run.id);
+    expect({
+      gate: final.pending_gate,
+      completed: final.completed_steps.includes('approve'),
+      by: final.settled?.['approve']?.resolved_by,
+    }).toEqual({ gate: undefined, completed: true, by: 'timeout' });
   });
 
   it('never fires before expires_at', async () => {
-    vi.useFakeTimers();
-    const store = new InMemoryStore();
-    const expiresAt = new Date(Date.now() + 10_000).toISOString();
-    const gate = makeGate({ expires_at: expiresAt, on_expiry: 'abort' });
+    // (a) red when the timer runs before the store's clock reaches the deadline; (b) prints the gate.
+    const { clock, store } = onClock();
+    const gate = makeGate({ opened_at: at(0), expires_at: at(10_000), on_expiry: 'abort' });
     const run = await seedGatedRun(store, gate);
 
     const cancel = scheduleGateExpiryTimer(run.id, gate, { store, definition: def });
-    await vi.advanceTimersByTimeAsync(1000);
+    await clock.advance(1000);
     cancel();
 
-    const stillOpen = await store.get(run.id);
-    expect(stillOpen.pending_gate).toBeDefined();
+    const { record: stillOpen } = await store.get(run.id);
+    expect(stillOpen.pending_gate?.gate_id).toBe('gate-1');
+  });
+
+  it('a deadline already past when the timer is scheduled runs at the next advance', async () => {
+    // (a) red when a past deadline is never run (or run at scheduling, before any advance); (b)
+    //     prints the gate before and after the advance.
+    const { clock, store } = onClock();
+    const gate = makeGate({ opened_at: at(-5000), expires_at: at(-1000), on_expiry: 'abort' });
+    const run = await seedGatedRun(store, gate);
+
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const cancel = scheduleGateExpiryTimer(run.id, gate, { store, definition: def });
+    const before = (await store.get(run.id)).record.pending_gate?.gate_id;
+    await clock.advance(0);
+    cancel();
+    log.mockRestore();
+    const after = (await store.get(run.id)).record;
+    expect({ before, after: after.pending_gate?.gate_id, phase: after.run_phase }).toEqual({
+      before: 'gate-1',
+      after: undefined,
+      phase: 'aborted',
+    });
   });
 
   it('cancel() prevents a later fire from enacting anything', async () => {
-    vi.useFakeTimers();
-    const store = new InMemoryStore();
-    const expiresAt = new Date(Date.now() + 1000).toISOString();
-    const gate = makeGate({ expires_at: expiresAt, on_expiry: 'abort' });
+    // (a) red when the cancel does not reach the store clock's waiter; (b) prints the gate.
+    const { clock, store } = onClock();
+    const gate = makeGate({ opened_at: at(0), expires_at: at(1000), on_expiry: 'abort' });
     const run = await seedGatedRun(store, gate);
 
     const cancel = scheduleGateExpiryTimer(run.id, gate, { store, definition: def });
     cancel();
-    await vi.advanceTimersByTimeAsync(5000);
+    await clock.advance(5000);
 
-    const stillOpen = await store.get(run.id);
-    expect(stillOpen.pending_gate).toBeDefined();
+    const { record: stillOpen } = await store.get(run.id);
+    expect(stillOpen.pending_gate?.gate_id).toBe('gate-1');
   });
 
-  it('a finding-only gate (no on_expiry) is a no-op — schedules nothing', async () => {
-    vi.useFakeTimers();
-    const store = new InMemoryStore();
-    const expiresAt = new Date(Date.now() + 1000).toISOString();
-    const gate = makeGate({ expires_at: expiresAt }); // no on_expiry
-    const run = await seedGatedRun(store, gate);
-    const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
-
-    const cancel = scheduleGateExpiryTimer(run.id, gate, { store, definition: def });
-    expect(setTimeoutSpy).not.toHaveBeenCalled();
-    cancel();
-    await vi.advanceTimersByTimeAsync(5000);
-    const stillOpen = await store.get(run.id);
-    expect(stillOpen.pending_gate).toBeDefined();
+  it('a finding-only gate (no on_expiry), a gate with no expires_at, and one whose expires_at does not parse register nothing on the clock', async () => {
+    // (a) red when any of them registers a waiter; (b) prints how many waiters were registered.
+    const { store } = onClock();
+    const atSpy = vi.spyOn(store.clock, 'at');
+    for (const gate of [
+      makeGate({ opened_at: at(0), expires_at: at(1000) }),
+      makeGate({ opened_at: at(0) }),
+      makeGate({ opened_at: at(0), expires_at: 'soon', on_expiry: 'abort' }),
+    ]) {
+      scheduleGateExpiryTimer('r', gate, { store, definition: def })();
+    }
+    expect(atSpy.mock.calls.length).toBe(0);
   });
 
-  it('a gate with no expires_at at all is a no-op', async () => {
-    vi.useFakeTimers();
-    const store = new InMemoryStore();
-    const gate = makeGate();
-    const run = await seedGatedRun(store, gate);
-    const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
-
-    scheduleGateExpiryTimer(run.id, gate, { store, definition: def });
-    expect(setTimeoutSpy).not.toHaveBeenCalled();
-  });
-
-  it('a race with another enactment point (already enacted before the timer fires) NOOPs harmlessly', async () => {
-    vi.useFakeTimers();
-    const store = new InMemoryStore();
-    const expiresAt = new Date(Date.now() + 1000).toISOString();
+  it('a race with another enactment point (it carries the expiry out first, at the same instant) NOOPs harmlessly; onApplied is not called', async () => {
+    // (a) red when the timer double-applies, throws, or reports a write it did not make; (b) prints
+    //     the run and the onApplied calls.
+    const { clock, store } = onClock();
     const gate = makeGate({
-      expires_at: expiresAt,
+      opened_at: at(0),
+      expires_at: at(1000),
       on_expiry: 'settle_default',
       default_choice: 'approve',
     });
     const run = await seedGatedRun(store, gate);
-
-    const cancel = scheduleGateExpiryTimer(run.id, gate, { store, definition: def });
-
-    // A DIFFERENT enactment point (e.g. drain --expired) wins the race first.
-    await store.settleStep!(run.id, { kind: 'expire_gate', gateId: gate.gate_id }, def, {
-      now: new Date(Date.now() + 1500),
+    // Another enactment point (e.g. drain --expired), registered first, wins at the same instant.
+    clock.at(new Date(T + 1000), async () => {
+      await store.settleStep(run.id, { kind: 'expire_gate', gateId: gate.gate_id }, def);
     });
-    const afterRace = await store.get(run.id);
-    expect(afterRace.completed_steps).toContain('approve');
-
-    // The timer firing afterward must not throw and must not double-apply.
-    await expect(vi.advanceTimersByTimeAsync(2000)).resolves.not.toThrow();
+    const onApplied = vi.fn();
+    const cancel = scheduleGateExpiryTimer(run.id, gate, { store, definition: def, onApplied });
+    await clock.advance(2000);
     cancel();
+    const { record: afterRace } = await store.get(run.id);
+    expect({
+      completed: afterRace.completed_steps.filter((s) => s === 'approve').length,
+      applied: onApplied.mock.calls.length,
+    }).toEqual({ completed: 1, applied: 0 });
   });
 
   it("#625 PR-2a, C158: onApplied is called once, after the timer's own write carried the expiry out and its line printed", async () => {
-    vi.useFakeTimers();
-    const store = new InMemoryStore();
+    // (a) red when the timer no longer tells its host it carried the expiry out (the prompt would
+    //     wait for its watch), or tells it before its line; (b) prints the order.
+    const { clock, store } = onClock();
     const gate = makeGate({
-      expires_at: new Date(Date.now() + 1000).toISOString(),
+      opened_at: at(0),
+      expires_at: at(1000),
       on_expiry: 'settle_default',
       default_choice: 'approve',
     });
@@ -161,33 +189,10 @@ describe('scheduleGateExpiryTimer (issue #291)', () => {
     });
     const onApplied = vi.fn(() => order.push('applied'));
     const cancel = scheduleGateExpiryTimer(run.id, gate, { store, definition: def, onApplied });
-    await vi.advanceTimersByTimeAsync(1500);
+    await clock.advance(1500);
     cancel();
     log.mockRestore();
-    // (a) red when the timer no longer tells its host it carried the expiry out (the prompt would
-    //     wait for its watch), or tells it before its line; (b) prints the order.
-    expect(onApplied).toHaveBeenCalledTimes(1);
     expect(order).toEqual(['the timer line', 'applied']);
-  });
-
-  it('#625 PR-2a, C158: onApplied is not called when another enactment point carried the expiry out first', async () => {
-    vi.useFakeTimers();
-    const store = new InMemoryStore();
-    const gate = makeGate({
-      expires_at: new Date(Date.now() + 1000).toISOString(),
-      on_expiry: 'settle_default',
-      default_choice: 'approve',
-    });
-    const run = await seedGatedRun(store, gate);
-    const onApplied = vi.fn();
-    const cancel = scheduleGateExpiryTimer(run.id, gate, { store, definition: def, onApplied });
-    await store.settleStep!(run.id, { kind: 'expire_gate', gateId: gate.gate_id }, def, {
-      now: new Date(Date.now() + 1500),
-    });
-    await vi.advanceTimersByTimeAsync(2000);
-    cancel();
-    // (a) red when the timer reports a write it did not make; (b) prints the calls.
-    expect(onApplied).not.toHaveBeenCalled();
   });
 });
 
@@ -275,8 +280,16 @@ describe('issue #719 F6.4 — the expiry timer’s tail says what the error allo
         expires_at: new Date(Date.now() - 1000).toISOString(),
         on_expiry: 'abort',
       });
+      // #715 (b), C.1: the timer reaches the run only through settleStep (the legacy fallback's own
+      // `get` is gone) — the store's settle reads the file and throws the read error.
+      // #715 (b) (03 §A.3): the timer waits on the store's clock — the host's, here (the deadline has
+      // passed, so it runs on the next tick).
       const store = {
+        clock: systemClock,
         get: async () => {
+          throw error;
+        },
+        settleStep: async () => {
           throw error;
         },
       } as unknown as Parameters<typeof scheduleGateExpiryTimer>[2]['store'];

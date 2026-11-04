@@ -171,9 +171,13 @@ async function drive(member: Member, otherBranch: boolean): Promise<Drive> {
   const registry = createDefaultRegistry();
   let attachId: string | undefined;
   if (member === 'capability_later') {
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await advanceRun(store, def, { runId: run.id, registry });
-    expect((await store.get(run.id)).capability_blocks?.['x']).toBeDefined();
+    expect((await store.get(run.id)).record.capability_blocks?.['x']).toBeDefined();
     attachId = run.id;
   }
   const provider = new (class extends LlmProvider {
@@ -211,7 +215,7 @@ async function drive(member: Member, otherBranch: boolean): Promise<Drive> {
     },
   );
   vi.restoreAllMocks();
-  const runId = attachId ?? (await store.list())[0]!.id;
+  const runId = attachId ?? (await store.list()).snapshots.map((s) => s.record)[0]!.id;
   return {
     result,
     lines: lines.map((l) => l.split(runId).join('<run>')),
@@ -220,6 +224,10 @@ async function drive(member: Member, otherBranch: boolean): Promise<Drive> {
     store,
   };
 }
+
+/** #715 (b) (02 §D.2): the entry's fence — the run's evidence count when it was appended (no question open). */
+const fenced = (entries: unknown[], evidenceCount: number) =>
+  entries.map((e) => ({ ...(e as Record<string, unknown>), evidence_count: evidenceCount }));
 
 const withoutTimes = (entries: Array<Record<string, unknown>> | undefined) =>
   (entries ?? []).map(({ at: _at, elapsed_ms: _ms, ...rest }) => rest);
@@ -233,7 +241,7 @@ describe('#625 PR-2a, decision C23 — an engine step that cannot run here', () 
         expect(d.lines.filter((l) => l === CANNOT_LINE[member])).toHaveLength(1);
         // The agent step on the other branch ran — one model call — and settled.
         expect(d.calls).toBe(1);
-        const run = await d.store.get(d.runId);
+        const { record: run } = await d.store.get(d.runId);
         expect(run.completed_steps).toEqual(['review']);
         const tail = d.lines.slice(d.lines.indexOf('log: \n→ [agent] review') + 1);
         if (PRE_CLAIM.includes(member)) {
@@ -250,8 +258,9 @@ describe('#625 PR-2a, decision C23 — an engine step that cannot run here', () 
         }
         // #401's chokepoint-4 record and the drive_failing finding: as before, for the input-schema
         // member only.
+        // #715 (b): the agent step beside it ran first — one evidence entry when the wedge was written.
         expect(withoutTimes(run.drive_failures?.entries as never)).toEqual(
-          BASE_DRIVE_FAILURES[member],
+          fenced(BASE_DRIVE_FAILURES[member], 1),
         );
         // A held capability reply is the exit — the drive attempts the step once, never twice.
         if (member === 'capability_first') {
@@ -272,7 +281,7 @@ describe('#625 PR-2a, decision C23 — an engine step that cannot run here', () 
           // decision C31: after the named line, ONE closing line and nothing else.
           expect(d.lines).toEqual([...HEADER, CANNOT_LINE[member], stopLine(member)]);
           // The one write-free call claimed nothing and wrote nothing but the drive failure.
-          const run = await d.store.get(d.runId);
+          const { record: run } = await d.store.get(d.runId);
           expect(run.in_progress_steps).toEqual([]);
           expect(run.completed_steps).toEqual([]);
           expect(run.evidence).toEqual([]);
@@ -280,9 +289,10 @@ describe('#625 PR-2a, decision C23 — an engine step that cannot run here', () 
           const rest = d.lines.filter((l) => l !== CANNOT_LINE[member]);
           expect(rest).toEqual(BASE_CAPABILITY_LINES[member as 'capability_first']);
         }
-        const run = await d.store.get(d.runId);
+        const { record: run } = await d.store.get(d.runId);
+        // #715 (b): nothing had run when the wedge was written — no evidence.
         expect(withoutTimes(run.drive_failures?.entries as never)).toEqual(
-          BASE_DRIVE_FAILURES[member],
+          fenced(BASE_DRIVE_FAILURES[member], 0),
         );
       });
     }
@@ -347,7 +357,7 @@ describe('#625 PR-2a, decision C23 — an engine step that cannot run here', () 
       { definition: def, params: {}, inFlightPollMs: 5, inFlightWatchMs: 20 },
     );
     vi.restoreAllMocks();
-    const runId = (await store.list())[0]!.id;
+    const runId = (await store.list()).snapshots.map((s) => s.record)[0]!.id;
     expect(result).toBe('failed');
     // F15: `alpha` beside it is refused for its input — each step's own way out, in the workflow's
     // order, then the run's once.
@@ -361,6 +371,6 @@ describe('#625 PR-2a, decision C23 — an engine step that cannot run here', () 
       "'alpha'",
     ]);
     // The stop is zeta's: a precondition records no drive failure (alpha's input refusal would).
-    expect((await store.get(runId)).drive_failures?.entries ?? []).toEqual([]);
+    expect((await store.get(runId)).record.drive_failures?.entries ?? []).toEqual([]);
   });
 });

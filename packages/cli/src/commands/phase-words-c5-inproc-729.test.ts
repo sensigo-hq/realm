@@ -15,7 +15,7 @@ import {
 import { EventEmitter } from 'node:events';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 const mocks = vi.hoisted(() => ({ question: vi.fn(), close: vi.fn() }));
 vi.mock('node:readline/promises', () => ({
@@ -34,6 +34,7 @@ import {
   type RunRecord,
   type StepDefinition,
   type WorkflowDefinition,
+  writeTestClockFile,
 } from '@sensigo/realm';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import { runAgent } from '../agent/run-agent.js';
@@ -181,6 +182,7 @@ describe('#729 PR-3 correction 5 (J-2) — the race and prompt lines print the p
               opened_at: AT,
             },
           } as Partial<RunRecord>),
+          new Date(),
           'a',
           ways(),
         ).split('\n')[0]!,
@@ -736,7 +738,6 @@ describe("#729 PR-3 correction 5 (J-2) — `realm listen`'s log lines carry the 
       runStore,
       dedupStoreFor: () => ({ check: () => false, record: () => {}, cleanup: () => {} }),
       spawnAgent,
-      clock: () => 1_700_000_000_000,
       logger,
     } as never);
   }
@@ -806,17 +807,24 @@ describe("#729 PR-3 correction 5 (J-2) — `realm listen`'s log lines carry the 
         },
       } as unknown as WorkflowDefinition;
       await workflows.register(stuck);
-      const { run } = await runs.create({ workflowId: stuck.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runs.create({
+        workflowId: stuck.id,
+        workflowVersion: 1,
+        params: {},
+      });
       await executeStep(runs, stuck, {
         runId: run.id,
         command: 'decide',
         input: {},
         dispatcher: async () => ({}),
       });
-      await sweepExpiredGates(
-        { runStore: runs, workflowStore: workflows, logger } as never,
-        new Date(Date.now() + 3_600_000),
-      );
+      // #715 (b): the store's clock decides — the same folder reopened as a test location an hour on.
+      await writeTestClockFile(dirname(runs.runsDirPath), new Date(Date.now() + 3_600_000));
+      await sweepExpiredGates({
+        runStore: new JsonFileStore(runs.runsDirPath),
+        workflowStore: workflows,
+        logger,
+      } as never);
       const lines = fieldsOf('listen: sweeper enacted an expired gate')?.['cannot_go_on'] as
         string[] | undefined;
       const way = lines?.at(-1) ?? '';

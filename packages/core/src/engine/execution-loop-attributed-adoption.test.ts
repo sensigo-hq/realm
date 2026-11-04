@@ -3,7 +3,6 @@
 // style: each test targets exactly one deliverable — the activation-gate floor law, the
 // enforce-gate/adoption congruence, the three-way honest split, and the settle-time seal decision
 // table (ordering, each outcome branch, detection-counts-only attestation).
-import { declareReleaseLine } from '../release-line.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -17,8 +16,6 @@ import {
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { TraceBufferStore } from '../store/trace-buffer-store.js';
 import type { FenceRunReader } from '../store/fence-predicate.js';
-import type { RunStore, CreateRunOptions } from '../store/store-interface.js';
-import type { RunRecord } from '../types/run-record.js';
 
 const agentDef: WorkflowDefinition = {
   id: 'attributed-adoption-agent-wf',
@@ -80,39 +77,6 @@ function trioOnlyStore(runReader: FenceRunReader): {
   return { store, inner };
 }
 
-/**
- * A run store that does not declare `settleStep` — every call delegates to a real `JsonFileStore`,
- * and `settleStep` is simply absent — so both settle sites take their legacy branch (the
- * dormancy-suite-279 precedent, narrowed to what these cells need).
- */
-class LegacySettleStore implements RunStore {
-  // issue #620 PR-C: a test double declares this realm's release line.
-  static {
-    declareReleaseLine(this);
-  }
-  readonly persistsClaims: boolean;
-
-  constructor(private readonly inner: JsonFileStore) {
-    this.persistsClaims = inner.persistsClaims;
-  }
-
-  create(options: CreateRunOptions): Promise<{ run: RunRecord; created: boolean }> {
-    return this.inner.create(options);
-  }
-  get(runId: string): Promise<RunRecord> {
-    return this.inner.get(runId);
-  }
-  update(record: RunRecord): Promise<RunRecord> {
-    return this.inner.update(record);
-  }
-  list(workflowId?: string): Promise<RunRecord[]> {
-    return this.inner.list(workflowId);
-  }
-  claimStep(runId: string, stepName: string, definition: WorkflowDefinition): Promise<RunRecord> {
-    return this.inner.claimStep(runId, stepName, definition);
-  }
-}
-
 describe('execution-loop.ts — activation-gate floor law (issue #197 PR-2, design §3)', () => {
   let store: JsonFileStore;
   let dir: string;
@@ -126,7 +90,7 @@ describe('execution-loop.ts — activation-gate floor law (issue #197 PR-2, desi
   });
 
   it('a trio-only store (no seal, no carriage) + a nonced claimant ⇒ adopt-all floor + the missing-leg warning fires', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'attributed-adoption-agent-wf',
       workflowVersion: 1,
       params: {},
@@ -162,7 +126,7 @@ describe('execution-loop.ts — activation-gate floor law (issue #197 PR-2, desi
   });
 
   it('the full store (seal + carriage) + a nonced claimant ⇒ selective adoption (no missing-leg warning, envelope counts present)', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'attributed-adoption-agent-wf',
       workflowVersion: 1,
       params: {},
@@ -205,7 +169,7 @@ describe('execution-loop.ts — ADOPTION_CONGRUENCE (issue #197 PR-2, design §2
   });
 
   it('a foreign-nonce-only WAL under trace_schema enforce mode does NOT gate a nonced claimant', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'attributed-adoption-congruence-wf',
       workflowVersion: 1,
       params: {},
@@ -249,7 +213,7 @@ describe('execution-loop.ts — the three-way honest split (issue #197 PR-2, des
   });
 
   it('⊥ claimant + bare lines ⇒ buffered_lines_adopted, existing caveat, numerically identical to today', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'attributed-adoption-agent-wf',
       workflowVersion: 1,
       params: {},
@@ -276,7 +240,7 @@ describe('execution-loop.ts — the three-way honest split (issue #197 PR-2, des
   });
 
   it('nonced claimant + own lines ⇒ attributed_lines_adopted, NO caveat', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'attributed-adoption-agent-wf',
       workflowVersion: 1,
       params: {},
@@ -305,7 +269,7 @@ describe('execution-loop.ts — the three-way honest split (issue #197 PR-2, des
   });
 
   it('mixed: own + bare + foreign ⇒ all three counts populated, pointer warning fires, foreign nonce VALUE never appears anywhere', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'attributed-adoption-agent-wf',
       workflowVersion: 1,
       params: {},
@@ -357,7 +321,7 @@ describe('execution-loop.ts — settle-time seal decision (issue #197 PR-2, deli
   });
 
   it('sealed:true ⇒ the live WAL is retired to a sealed artifact (not deleted), warns "preserved (sealed)", and the seal happens AFTER the settling commit (ordering)', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'attributed-adoption-agent-wf',
       workflowVersion: 1,
       params: {},
@@ -408,7 +372,7 @@ describe('execution-loop.ts — settle-time seal decision (issue #197 PR-2, deli
     // Detection-counts-only attestation (post-R3 B1): the PERSISTED run record's trace_summary
     // carries counts only — never the seal OUTCOME. The seal outcome exists only in this
     // envelope's warnings (already asserted above), never written back to the run record.
-    const persisted = await store.get(run.id);
+    const { record: persisted } = await store.get(run.id);
     const summaryJson = JSON.stringify(persisted.evidence[0]?.trace_summary ?? {});
     expect(summaryJson).not.toMatch(/sealed/i);
     expect(persisted.evidence[0]?.trace_summary?.foreign_lines_preserved).toBe(1);
@@ -419,7 +383,7 @@ describe('execution-loop.ts — settle-time seal decision (issue #197 PR-2, deli
   // three cover the others. At each, a refusing seal fence would leave the foreign lines behind as
   // residue under a "Failed to seal" warning — so each cell asserts the seal happened.
   it('the migrated FAILURE site seals foreign lines too (a failed step, settleStep-declaring store)', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'attributed-adoption-agent-wf',
       workflowVersion: 1,
       params: {},
@@ -439,76 +403,16 @@ describe('execution-loop.ts — settle-time seal decision (issue #197 PR-2, deli
       traceBufferStore,
     });
 
-    expect((await store.get(run.id)).failed_steps).toContain('step-agent');
+    expect((await store.get(run.id)).record.failed_steps).toContain('step-agent');
     expect(
       envelope.warnings.some((w) => w.includes('Failed to seal trace buffer after step failure')),
     ).toBe(false);
-    expect(await traceBufferStore.read(run.id, 'step-agent')).toHaveLength(0);
-    expect(await traceBufferStore.listSealedForRun(run.id)).toHaveLength(1);
-  });
-
-  it('the legacy FAILURE site seals foreign lines too (a failed step, no settleStep)', async () => {
-    const legacy = new LegacySettleStore(store);
-    const { run } = await legacy.create({
-      workflowId: 'attributed-adoption-agent-wf',
-      workflowVersion: 1,
-      params: {},
-    });
-    const traceBufferStore = new InMemoryTraceBufferStore(legacy);
-    await traceBufferStore.append(run.id, 'step-agent', [{ event: 'foreign' }], {
-      writerNonce: 'other-writer',
-    });
-
-    const envelope = await executeStep(legacy, agentDef, {
-      runId: run.id,
-      command: 'step-agent',
-      input: {},
-      dispatcher: async () => {
-        throw new Error('handler boom');
-      },
-      traceBufferStore,
-    });
-
-    expect((await legacy.get(run.id)).failed_steps).toContain('step-agent');
-    expect(
-      envelope.warnings.some((w) => w.includes('Failed to seal trace buffer after step failure')),
-    ).toBe(false);
-    expect(await traceBufferStore.read(run.id, 'step-agent')).toHaveLength(0);
-    expect(await traceBufferStore.listSealedForRun(run.id)).toHaveLength(1);
-  });
-
-  it('the legacy SUCCESS site seals foreign lines too (a completed step, no settleStep)', async () => {
-    const legacy = new LegacySettleStore(store);
-    const { run } = await legacy.create({
-      workflowId: 'attributed-adoption-agent-wf',
-      workflowVersion: 1,
-      params: {},
-    });
-    const traceBufferStore = new InMemoryTraceBufferStore(legacy);
-    await traceBufferStore.append(run.id, 'step-agent', [{ event: 'foreign' }], {
-      writerNonce: 'other-writer',
-    });
-
-    const envelope = await executeStep(legacy, agentDef, {
-      runId: run.id,
-      command: 'step-agent',
-      input: {},
-      dispatcher: async () => ({}),
-      traceBufferStore,
-    });
-
-    expect(envelope.status).toBe('ok');
-    expect(
-      envelope.warnings.some(
-        (w) => w.includes('foreign line(s) preserved (sealed)') && w.includes('realm run export'),
-      ),
-    ).toBe(true);
     expect(await traceBufferStore.read(run.id, 'step-agent')).toHaveLength(0);
     expect(await traceBufferStore.listSealedForRun(run.id)).toHaveLength(1);
   });
 
   it('capped ⇒ falls back to the existing delete() + a loud "cap reached" warning (no silent eviction of an already-sealed artifact)', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'attributed-adoption-agent-wf',
       workflowVersion: 1,
       params: {},
@@ -550,7 +454,7 @@ describe('execution-loop.ts — settle-time seal decision (issue #197 PR-2, deli
   });
 
   it('a THROW from sealFenced ⇒ warn + SKIP the delete (residue-not-loss) — the live WAL survives intact', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'attributed-adoption-agent-wf',
       workflowVersion: 1,
       params: {},
@@ -583,7 +487,7 @@ describe('execution-loop.ts — settle-time seal decision (issue #197 PR-2, deli
   });
 
   it('absent ⇒ nothing happens (no delete, no warning) — the live WAL vanished before the seal attempt', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'attributed-adoption-agent-wf',
       workflowVersion: 1,
       params: {},
@@ -611,7 +515,7 @@ describe('execution-loop.ts — settle-time seal decision (issue #197 PR-2, deli
   });
 
   it('preserved_foreign === 0 ⇒ plain delete() exactly as today (zero behavior change) — sealFenced is never even called', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'attributed-adoption-agent-wf',
       workflowVersion: 1,
       params: {},
@@ -648,7 +552,7 @@ describe('execution-loop.ts — half-minted advisory heuristics (issue #197 PR-2
   });
 
   it('heuristic (i) fires: nonced claimant + a WAL containing ONLY bare lines ⇒ the "minted inconsistently" advisory, count matches, no nonce value leaked', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'attributed-adoption-agent-wf',
       workflowVersion: 1,
       params: {},
@@ -684,7 +588,7 @@ describe('execution-loop.ts — half-minted advisory heuristics (issue #197 PR-2
   });
 
   it('heuristic (ii) fires: bare claimant + a WAL whose foreign lines all carry EXACTLY ONE distinct nonce ⇒ the "minted inconsistently" advisory, foreign nonce VALUE never leaked', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'attributed-adoption-agent-wf',
       workflowVersion: 1,
       params: {},
@@ -717,7 +621,7 @@ describe('execution-loop.ts — half-minted advisory heuristics (issue #197 PR-2
   });
 
   it('heuristic (ii) precision (negative): bare claimant + foreign lines under TWO distinct nonces ⇒ NO "minted inconsistently" warning (the pointer warning from foreign_lines_preserved still fires, asserted independently so the two are not conflated)', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'attributed-adoption-agent-wf',
       workflowVersion: 1,
       params: {},
@@ -752,7 +656,7 @@ describe('execution-loop.ts — half-minted advisory heuristics (issue #197 PR-2
   });
 
   it('heuristic (i) precision (negative): nonced claimant + a WAL with at least one own-nonce line (mixed own+bare) ⇒ NO "minted inconsistently" warning (the every-line-bare condition is load-bearing)', async () => {
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'attributed-adoption-agent-wf',
       workflowVersion: 1,
       params: {},

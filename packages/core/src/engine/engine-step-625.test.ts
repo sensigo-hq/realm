@@ -59,7 +59,7 @@ async function refusalOf(
   runId: string,
   step: string,
 ): Promise<{ thrown: unknown; reply: unknown }> {
-  const run = await store.get(runId);
+  const { record: run } = await store.get(runId);
   try {
     const reply = await executeEngineStep(store, d, { runId, step, run });
     return { thrown: undefined, reply };
@@ -76,7 +76,7 @@ describe('#625 PR-2a, C83 — executeEngineStep runs only auto steps', () => {
 
   it('an agent step (eligible, after its dependency ran) is refused with a throw; the record is unchanged', async () => {
     await withStore(async (store) => {
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: agentDef.id,
         workflowVersion: 1,
         params: { topic: 'x' },
@@ -84,11 +84,11 @@ describe('#625 PR-2a, C83 — executeEngineStep runs only auto steps', () => {
       const prep = await executeEngineStep(store, agentDef, {
         runId: run.id,
         step: 'prep',
-        run: await store.get(run.id),
+        run: (await store.get(run.id)).record,
       });
       // (a) prep's own run breaks: a regression of the control below. (b) prints the reply status.
       expect(prep.status).toBe('ok');
-      const before = await store.get(run.id);
+      const { record: before } = await store.get(run.id);
       const { thrown, reply } = await refusalOf(store, agentDef, run.id, 'ask');
       // (a) C83's refusal removed → the agent step runs as a bare auto step: no throw, `ok`.
       // (b) prints the reply that came back instead of a throw.
@@ -101,7 +101,7 @@ describe('#625 PR-2a, C83 — executeEngineStep runs only auto steps', () => {
       expect(err.retryable).toBe(false);
       expect(err.stepId).toBe('ask');
       expect(err.details).toEqual({ step: 'ask', execution: 'agent' });
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       // (a) the refusal placed after a write (or removed) → the record moves. (b) prints the diff.
       expect(after.version).toBe(before.version);
       expect(after.completed_steps).toEqual(['prep']);
@@ -121,15 +121,19 @@ describe('#625 PR-2a, C83 — executeEngineStep runs only auto steps', () => {
           abort_unless: ["step_a.status == 'open'"],
         } as StepDefinition,
       });
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
-      const before = await store.get(run.id);
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
+      const { record: before } = await store.get(run.id);
       const { thrown, reply } = await refusalOf(store, d, run.id, 'guard_b');
       // (a) the refusal removed → executeStep's own reply comes back. (b) prints that reply.
       expect(reply).toBeUndefined();
       expect(thrown).toBeInstanceOf(WorkflowError);
       expect((thrown as WorkflowError).message).toBe(REFUSAL('guard_b', 'guard'));
       expect((thrown as WorkflowError).code).toBe('ENGINE_INTERNAL');
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       expect(after.version).toBe(before.version);
       expect(after.completed_steps).toEqual([]);
       expect(after.evidence).toEqual([]);
@@ -143,15 +147,19 @@ describe('#625 PR-2a, C83 — executeEngineStep runs only auto steps', () => {
         work: { description: 'w', execution: 'auto', depends_on: [] } as StepDefinition,
         fin: { description: 'f', execution: 'finalizer', on_outcome: 'always' } as StepDefinition,
       });
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
-      const before = await store.get(run.id);
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
+      const { record: before } = await store.get(run.id);
       const { thrown, reply } = await refusalOf(store, d, run.id, 'fin');
       // (a) the refusal removed → executeStep's own reply comes back. (b) prints that reply.
       expect(reply).toBeUndefined();
       expect(thrown).toBeInstanceOf(WorkflowError);
       expect((thrown as WorkflowError).message).toBe(REFUSAL('fin', 'finalizer'));
       expect((thrown as WorkflowError).code).toBe('ENGINE_INTERNAL');
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       expect(after.version).toBe(before.version);
       expect(after.completed_steps).toEqual([]);
       expect(after.evidence).toEqual([]);
@@ -164,15 +172,19 @@ describe('#625 PR-2a, C83 — executeEngineStep runs only auto steps', () => {
       const d = def({
         odd: { description: 'No execution key.', depends_on: [] } as unknown as StepDefinition,
       });
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
-      const before = await store.get(run.id);
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
+      const { record: before } = await store.get(run.id);
       const { thrown } = await refusalOf(store, d, run.id, 'odd');
       // (a) the "no execution" arm dropped → the message says "execution 'undefined'". (b) prints it.
       expect((thrown as WorkflowError).message).toBe(
         "executeEngineStep runs only 'auto' steps: step 'odd' has no execution, and the engine does not run it this way. Nothing was read or written.",
       );
       expect((thrown as WorkflowError).details).toEqual({ step: 'odd', execution: null });
-      expect(await store.get(run.id)).toEqual(before);
+      expect((await store.get(run.id)).record).toEqual(before);
     });
   });
 
@@ -182,7 +194,7 @@ describe('#625 PR-2a, C83 — executeEngineStep runs only auto steps', () => {
       "| `output_source` | text | No | On a bare `auto` step's entry only, where its output came from: `driven_step` (the output the caller that named the step gave), `dependency` (its one `depends_on` step's output), `run_params` (the run's params; it has no `depends_on`) or `none` (nothing to copy, so `{}`: the engine ran a step that depends on several steps, or whose one dependency has no successful entry).",
     );
     await withStore(async (store) => {
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: agentDef.id,
         workflowVersion: 1,
         params: { topic: 'x' },
@@ -191,7 +203,7 @@ describe('#625 PR-2a, C83 — executeEngineStep runs only auto steps', () => {
       // (a) the refusal widened to auto steps → it throws. (b) prints the thrown error.
       expect(thrown).toBeUndefined();
       expect((reply as { status: string }).status).toBe('ok');
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       expect(after.completed_steps).toEqual(['prep']);
       const entry = after.evidence.find((e) => e.step_id === 'prep');
       expect(entry?.output_summary).toEqual({ topic: 'x' });
@@ -209,19 +221,23 @@ describe('#625 PR-2a, C83 — executeEngineStep runs only auto steps', () => {
           depends_on: [],
         } as StepDefinition,
       });
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const { thrown, reply } = await refusalOf(store, d, run.id, 'confirm');
       // (a) the refusal keyed on "has a gate" or on trust → it throws. (b) prints the error.
       expect(thrown).toBeUndefined();
       expect((reply as { status: string }).status).toBe('confirm_required');
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       expect(after.pending_gate?.step_name).toBe('confirm');
     });
   });
 
   it("CONTROL — a step the definition does not have keeps executeStep's own refusal", async () => {
     await withStore(async (store) => {
-      const { run } = await store.create({
+      const { record: run } = await store.create({
         workflowId: agentDef.id,
         workflowVersion: 1,
         params: { topic: 'x' },
@@ -273,7 +289,11 @@ describe('#625 PR-2a, C84 — a bare dependent of a step settled by its declared
 
   it('two refused answers through executeChain, then the bare dependent: the default, from the dependency', async () => {
     await withStore(async (store) => {
-      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: d.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const refused = { category: 'refunds' };
       const first = await executeChain(store, d, {
         runId: run.id,
@@ -291,7 +311,7 @@ describe('#625 PR-2a, C84 — a bare dependent of a step settled by its declared
         dispatcher: echo,
       });
       expect(second.status).toBe('ok');
-      const after = await store.get(run.id);
+      const { record: after } = await store.get(run.id);
       expect(after.completed_steps).toEqual(['classify', 'route']);
       expect(after.defaulted_steps).toEqual(['classify']);
       const route = after.evidence.find((e) => e.step_id === 'route');

@@ -24,6 +24,7 @@ vi.mock('node:readline/promises', () => ({
 }));
 
 import { runCommand, setQuestionWatchIntervalForTests, setInFlightWatchForTests } from './run.js';
+import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
 import { quotedForTerminal } from '../lib/holder-render.js';
 import { lagless } from '../test-support/lag.js';
@@ -150,6 +151,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
   });
 
   afterEach(() => {
+    location = undefined;
     if (savedTTY === undefined) delete (process.stdin as { isTTY?: boolean }).isTTY;
     else process.stdin.isTTY = savedTTY;
     if (savedHome === undefined) delete process.env['HOME'];
@@ -182,7 +184,23 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
   /** The stored record, read with a store constructed while the scratch HOME is live. */
   async function readRecord() {
     const { JsonFileStore } = await import('@sensigo/realm');
-    return new JsonFileStore().get(runId());
+    return (await new JsonFileStore().get(runId())).record;
+  }
+
+  /**
+   * #715 (b) 04 §D (B4): no cell waits on the real clock for a question to expire. A cell whose
+   * question must expire under `realm workflow run` makes the scratch `~/.realm` a test location
+   * BEFORE the command builds its store (`locate()`), and moves that clock past the deadline
+   * (`pastDue()`); this process's own expiry timer waits on the store's clock, so it fires then.
+   * (C146's race cells below keep the real clock, with their reason.)
+   */
+  let location: TestLocation | undefined;
+  async function locate(): Promise<void> {
+    location = await createTestLocation({ start: new Date(), root: join(home, '.realm') });
+  }
+  async function pastDue(): Promise<void> {
+    const expiresAt = Date.parse((await readRecord()).pending_gate!.expires_at!);
+    await location!.clock.set(new Date(expiresAt + 50));
   }
 
   /**
@@ -201,12 +219,18 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
           // passes and the typed line is read first. The loop is held (synchronously) past the
           // deadline; the answer's promise then settles, its `finally` cancels the timer, and the
           // answer carries out the expiry itself. The timer is the real one, not stubbed.
+          // #715 (b) 04 §D (B4), its named reason: this hold is the race's subject, not a wait for an
+          // expiry to be carried out. The order it pins (the answer handled past the deadline BEFORE
+          // the timer runs) needs the event loop held synchronously past the deadline; a test
+          // location's clock moves by an asynchronous file write, during which the timer's watch can
+          // fire first. So these three cells stay on the real clock (about 1 s each).
           const expiresAt = new Date((await readRecord()).pending_gate!.expires_at!).getTime();
           while (Date.now() <= expiresAt + 20) {
             // hold the event loop past the deadline
           }
         }
         if (opts?.afterExpiry === true) {
+          await pastDue();
           const deadline = Date.now() + 15_000;
           for (;;) {
             if ((await readRecord()).settled?.['confirm'] !== undefined) break;
@@ -285,6 +309,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
 
   describe("a late answer — this process's own timer enacted the expiry while the prompt was open", () => {
     it('SAME choice: the expiry sentence, then `✗ not recorded — … → running`; never `✓ →` for the answer', async () => {
+      await locate();
       answerPrompts('approve', { afterExpiry: true });
 
       const code = await run(
@@ -296,7 +321,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       //     sentence is missing; (b) prints what the prompt printed after the gate.
       // #729 PR-0 (T-2; Table rows 35, 50): the timer's line is the receipt's.
       expect(lagless(afterTheGate().slice(0, 4))).toEqual([
-        `⏰ gate '${gateId()}' on 'confirm' had expired <lag> before this call — this timer call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: timer). Guard step 'check' passed.`,
+        `⏰ gate '${gateId()}' on 'confirm' had expired <lag> before this call (deadline <instant>) — this timer call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: timer). Guard step 'check' passed.`,
         `  ${LATE_SAME_CHOICE}`,
         "  ✗ not recorded — gate settled by timeout with choice 'approve' → running\n",
         '→ [agent] finish: Finish',
@@ -306,6 +331,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
     }, 30_000);
 
     it('DIFFERENT choice: the refusal and `✗ not recorded — … → running` on stderr; the run goes on', async () => {
+      await locate();
       answerPrompts('reject', { afterExpiry: true });
 
       const code = await run(
@@ -324,7 +350,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       // (a) red when a state line claiming success is printed for the refused answer;
       //     (b) prints what the prompt printed after the gate.
       expect(lagless(afterTheGate().slice(0, 2))).toEqual([
-        `⏰ gate '${gateId()}' on 'confirm' had expired <lag> before this call — this timer call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: timer). Guard step 'check' passed.`,
+        `⏰ gate '${gateId()}' on 'confirm' had expired <lag> before this call (deadline <instant>) — this timer call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: timer). Guard step 'check' passed.`,
         '→ [agent] finish: Finish',
       ]);
       expect(code).toBe(0);
@@ -334,7 +360,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
     /** The line this prompt's answer prints first: `run` names `realm workflow run`. F1: its lag
      *  follows the clock — `<lag>` in its place, here and in what was printed. */
     const runCarriedOut = (did: string): string =>
-      `  ⚠ gate '${gateId()}' on 'confirm' had expired <lag> before this call — this run call first carried out its declared ${did} (enacted_via: run).`;
+      `  ⚠ gate '${gateId()}' on 'confirm' had expired <lag> before this call (deadline <instant>) — this run call first carried out its declared ${did} (enacted_via: run).`;
 
     it('DIFFERENT choice: `⚠ … this run call first carried out …` once, then the refusal and `✗ not recorded`, on stderr', async () => {
       claimGates215();
@@ -435,7 +461,8 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
     it('the attending timer settles the default while the prompt waits: the prompt closes, prints the answer the expiry recorded, and the run goes on — no `was not recorded`', async () => {
       claimWorkflowPage(PROMPT_CLOSES);
       claimWorkflowPage(PROMPT_CLOSE_ORDER);
-      const prompts = waitAtPrompt();
+      await locate();
+      const prompts = waitAtPrompt(pastDue);
 
       const code = await run(
         workflowYaml({ id: 'prompt-625-c158-timer', finish: true, expiresTo: 'approve' }),
@@ -503,6 +530,9 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       claimWorkflowPage(PROMPT_CLOSES);
       // The watch reads the record once an hour here: only the timer's `onApplied` can close the prompt.
       const restoreWatch = setQuestionWatchIntervalForTests(3_600_000);
+      // #715 (b) B4: the question expires by the location's clock (moved below); the close is timed
+      // on that same clock. The 8 s fallback stays a real timer (a duration): it is the proof.
+      await locate();
       let closedAt: number | undefined;
       let expiresAt: number | undefined;
       let fellBack = false;
@@ -510,6 +540,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
         if (prompt.startsWith('  Choice ')) {
           void readRecord().then((r) => {
             expiresAt = new Date(r.pending_gate!.expires_at!).getTime();
+            return pastDue();
           });
           return new Promise<string>((resolve, reject) => {
             // Without a close, an answer comes 8 s later — the late-answer path, not a close. With the
@@ -524,7 +555,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
               'abort',
               () => {
                 clearTimeout(fallback);
-                closedAt = Date.now();
+                closedAt = location!.clock.now().getTime();
                 reject(
                   Object.assign(new Error('The operation was aborted'), {
                     name: 'AbortError',
@@ -566,7 +597,8 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       claimWorkflowPage(
         "When no answer was recorded (an `on_expiry: abort`), the line ends `— no answer was recorded; the run is 'aborted'.`",
       );
-      const prompts = waitAtPrompt();
+      await locate();
+      const prompts = waitAtPrompt(pastDue);
 
       const code = await run(workflowYaml({ id: 'prompt-625-c158-abort', aborts: true }));
 
@@ -1026,9 +1058,11 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
           const show = (args: string[]) =>
             spawnSync(process.execPath, [cli, ...args], { env, encoding: 'utf8' }).stdout;
           views = {
-            inspect: /^\s*finish: taken by .+, via run\), \d+m ago$/m.test(
-              show(['run', 'inspect', runId()]),
-            ),
+            // #715 (b) (03 §B.2 A1): the claim's age through the one formatter, its instant beside it.
+            inspect:
+              /^\s*finish: taken by .+, via run\), \d+s ago \(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\)$/m.test(
+                show(['run', 'inspect', runId()]),
+              ),
             stuck: show(['run', 'list', '--stuck']).includes('finish=claim_unknown_age'),
           };
           return '{"by": "person"}';
@@ -1216,7 +1250,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
         workflowYaml({ id: 'prompt-625-c179-killed', finish: true }),
       );
       const store = new JsonFileStore();
-      const { run: created } = await store.create({
+      const { record: created } = await store.create({
         workflowId: def.id,
         workflowVersion: 1,
         params: {},
@@ -1235,7 +1269,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
         [cli, 'run', 'reclaim', created.id, '--step', 'finish', '--force'],
         { env, encoding: 'utf8' },
       );
-      const after = await store.get(created.id);
+      const { record: after } = await store.get(created.id);
       // (a) red when the left claim cannot be released this way; (b) prints the command's output.
       expect(
         {
@@ -1263,7 +1297,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
               // `realm run reclaim --force`'s effect: the claim and the in-flight mark removed.
               const { JsonFileStore } = await import('@sensigo/realm');
               const store = new JsonFileStore();
-              const record = await store.get(runId());
+              const { record: record } = await store.get(runId());
               const { finish: _gone, ...claims } = record.claims ?? {};
               await store.update({ ...record, in_progress_steps: [], claims });
             })();
@@ -1321,7 +1355,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
           const store = new JsonFileStore();
           if (kind === 'agent') {
             // The prompt's claim is removed first (as `realm run reclaim --force` would) …
-            const record = await store.get(runId());
+            const { record: record } = await store.get(runId());
             const { finish: _gone, ...claims } = record.claims ?? {};
             await store.update({ ...record, in_progress_steps: [], claims });
           }

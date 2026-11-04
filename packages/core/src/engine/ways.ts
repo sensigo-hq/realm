@@ -25,8 +25,15 @@ import type { AgentAction, ErrorCode } from '../types/workflow-error.js';
 import type { WorkflowDefinition, ContextWrapperFormat } from '../types/workflow-definition.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
 import { isBuiltInRequirement } from '../extensions/built-in-requirements.js';
-import { stampOf, writtenSnapshot, type Basis, type Snapshot } from './snapshot.js';
+import {
+  noteBasisSnapshot,
+  stampOf,
+  writtenSnapshot,
+  type Basis,
+  type Snapshot,
+} from './snapshot.js';
 import { renderTemplate } from './render-template.js';
+import { clockBasis, type Clock } from '../utils/clock.js';
 import { buildEvidenceByStep, deriveRunPhase, findEligibleSteps } from './eligibility.js';
 import {
   checkPreClaim,
@@ -1095,7 +1102,8 @@ export interface WaysContext {
     | { kind: 'this_program'; registry: ExtensionRegistry }
     | { kind: 'observer' }
     | { kind: 'load_failed'; error_code: LoadErrorCode };
-  store: { persistsClaims?: boolean };
+  /** `clockBasis`: the store clock's (`clockBasis(store.clock)`, #715 (b) 02 §C.1) — the stamp's `as_of_basis`. */
+  store: { persistsClaims?: boolean; clockBasis?: 'test_clock' };
   opening_token?: string;
   presented?: 'with_gate' | 'alone';
   /**
@@ -1114,23 +1122,34 @@ export interface ComposedWays {
 }
 
 /** The run's brief of one step (D1 spine 4): what a `run_step` way carries — no registry read. */
-export function stepBrief(definition: WorkflowDefinition, run: RunRecord, step: string): StepBrief {
+export function stepBrief(
+  definition: WorkflowDefinition,
+  // #715 (b) (02 §D.4, D6-22): the record and the reading its prompt is rendered at — a step's
+  // prompt is rendered per reply, so a `from_now` in it is judged at the snapshot's `at`.
+  snapshot: Snapshot,
+  step: string,
+): StepBrief {
+  const run = snapshot.record;
   const def = definition.steps[step];
   const execution = def?.execution === 'agent' ? 'agent' : 'auto';
   const prompt =
     def?.prompt !== undefined
-      ? renderTemplate(def.prompt, {
-          evidenceByStep: buildEvidenceByStep(run),
-          runParams: run.params,
-          ...(run.workflow_context_snapshots !== undefined
-            ? {
-                workflowContext: {
-                  snapshots: run.workflow_context_snapshots,
-                  wrapper: (definition.context_wrapper ?? 'xml') as ContextWrapperFormat,
-                },
-              }
-            : {}),
-        })
+      ? renderTemplate(
+          def.prompt,
+          {
+            evidenceByStep: buildEvidenceByStep(run),
+            runParams: run.params,
+            ...(run.workflow_context_snapshots !== undefined
+              ? {
+                  workflowContext: {
+                    snapshots: run.workflow_context_snapshots,
+                    wrapper: (definition.context_wrapper ?? 'xml') as ContextWrapperFormat,
+                  },
+                }
+              : {}),
+          },
+          { time: { at: snapshot.at } },
+        )
       : undefined;
   return {
     execution,
@@ -1145,8 +1164,8 @@ export function stepBrief(definition: WorkflowDefinition, run: RunRecord, step: 
 
 /** The basis of a composition (D2 D-9): the snapshot's stamp, the enactor's kind, store and definition. */
 export function basisOf(snap: Snapshot, ctx: WaysContext): Basis {
-  return {
-    ...stampOf(snap),
+  const basis: Basis = {
+    ...stampOf(snap, ctx.store.clockBasis),
     enactor:
       ctx.enactor.kind === 'load_failed'
         ? { kind: 'load_failed', error_code: ctx.enactor.error_code }
@@ -1156,6 +1175,27 @@ export function basisOf(snap: Snapshot, ctx: WaysContext): Basis {
       'ok' in ctx.definition
         ? { workflow_id: ctx.definition.ok.id }
         : { absent: ctx.definition.absent },
+  };
+  // #715 (b) (Amendment 4): remembered privately, so an engine reply carrying this basis can be
+  // handed the snapshot it was judged on (`judgedSnapshotOf`).
+  noteBasisSnapshot(basis, snap);
+  return basis;
+}
+
+/**
+ * #715 (b) (02 §C.1): a ways context's `store` part, read off the store — whether it persists claims,
+ * and what the instant its replies state stands on (`clockBasis` of its clock; only a marked test
+ * clock says `'test_clock'`). The one place every composer of a `Basis` takes it from.
+ */
+export function waysStoreOf(store: {
+  persistsClaims?: boolean | undefined;
+  clock?: Clock | undefined;
+}): WaysContext['store'] {
+  return {
+    persistsClaims: store.persistsClaims === true,
+    ...(store.clock !== undefined && clockBasis(store.clock) === 'test_clock'
+      ? { clockBasis: 'test_clock' as const }
+      : {}),
   };
 }
 
@@ -1328,6 +1368,8 @@ function refusedEntry(
   entry: EngineRunnable,
   run: RunRecord,
   definition: WorkflowDefinition,
+  // #715 (b) (02 §D.4): the reading the record is judged at — a remedy's step brief renders there.
+  at: Date,
 ): Unavailable {
   const def = definition.steps[entry.step];
   if (entry.refused_by === 'capability') {
@@ -1359,7 +1401,7 @@ function refusedEntry(
       conditions: [],
       run_id: run.id,
       step: entry.step,
-      brief: stepBrief(definition, run, entry.step),
+      brief: stepBrief(definition, writtenSnapshot(run, at), entry.step),
     });
   }
   const param =
@@ -1489,7 +1531,7 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
     return { ways, unavailable, basis };
   }
 
-  const pending = describePending(definition, run, registryOf(ctx), snap.at);
+  const pending = describePending(definition, snap, registryOf(ctx));
   const respond = respondWayOf(run, pending, ctx);
 
   // respond — the open question, unless its time is up and it declares on_expiry (C95, Q6).
@@ -1533,10 +1575,12 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
       conditions: [],
       run_id: run.id,
       step,
-      brief: stepBrief(definition, run, step),
+      brief: stepBrief(definition, snap, step),
     });
   }
-  for (const entry of pending.cannot_run) unavailable.push(refusedEntry(entry, run, definition));
+  for (const entry of pending.cannot_run) {
+    unavailable.push(refusedEntry(entry, run, definition, snap.at));
+  }
   if (respond !== undefined && pending.expiry_due === undefined) {
     for (const step of pending.waiting_on_answer ?? []) {
       unavailable.push({
@@ -1583,7 +1627,7 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
   } else if (advance !== undefined) {
     ways.push(advance);
   } else {
-    unavailable.push(advanceUnavailable(run, definition, pending, respond, held, ways));
+    unavailable.push(advanceUnavailable(run, definition, pending, respond, held, ways, snap.at));
   }
 
   // abandon — refused while a question is open (`abandon-run.ts`), remedy [respond]; at a question
@@ -1644,6 +1688,8 @@ function advanceUnavailable(
   respond: RespondWay | undefined,
   held: readonly string[],
   ways: readonly WayOn[],
+  // #715 (b) (02 §D.4): the snapshot's reading (a refused step's remedy brief renders there).
+  at: Date,
 ): Unavailable {
   if (respond !== undefined) {
     return {
@@ -1676,11 +1722,11 @@ function advanceUnavailable(
   // remedies (correct the workflow; the operator's lever; a new run only where one can help).
   const refused = pending.cannot_run.find((e) => e.refused_by !== 'capability');
   if (offeredSteps.length === 0 && refused !== undefined) {
-    return { ...refusedEntry(refused, run, definition), verb: 'advance' };
+    return { ...refusedEntry(refused, run, definition, at), verb: 'advance' };
   }
   const missing = pending.cannot_run.find((e) => e.refused_by === 'capability');
   if (offeredSteps.length === 0 && missing !== undefined) {
-    const entry = refusedEntry(missing, run, definition);
+    const entry = refusedEntry(missing, run, definition, at);
     return { ...entry, verb: 'advance' };
   }
   // Amendment 15: the agent's steps are the way on; else nothing is left to do.
@@ -2237,7 +2283,7 @@ function judgeAdmission(
     )!;
   }
   const definition = ctx.definition.ok;
-  const pending = describePending(definition, snap.record, registryOf(ctx), snap.at);
+  const pending = describePending(definition, snap, registryOf(ctx));
   const byName = judgeStepByName(snap, definition, pending, composed, step);
   if (byName !== undefined) return byName;
   const refused = composed.unavailable.find(

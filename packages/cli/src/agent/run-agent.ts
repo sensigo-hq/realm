@@ -26,6 +26,8 @@ import {
   pendingCleanupLine,
   classifyStop,
   isRaceStop,
+  writtenSnapshot,
+  judgedSnapshotOf,
   type NotRecordedKind,
   type RunStore,
   type WorkflowDefinition,
@@ -60,6 +62,7 @@ import type {
   DriveFailureRecord,
   ErrorCategory,
   EngineReply,
+  Snapshot,
 } from '@sensigo/realm';
 import type { LlmProvider } from './providers/llm-provider.js';
 import {
@@ -94,7 +97,12 @@ import {
   writerMode,
   writerSetFor,
 } from '../output/writer.js';
-import { cutWayLine, terminalRespondLines, viewSetFor } from '../lib/holder-render.js';
+import {
+  cutWayLine,
+  questionDeadlineLine,
+  terminalRespondLines,
+  viewSetFor,
+} from '../lib/holder-render.js';
 import {
   recordDriveFailure,
   buildEntry,
@@ -131,15 +139,26 @@ function validationWedgeEntry(
   provider: string,
   errors: readonly string[],
   attemptStartedAt: number,
+  // #715 (b) (02 §D.2; census class `event`): the run store's clock, read by the caller.
+  at: Date,
 ): DriveFailureRecord {
   return {
-    at: new Date().toISOString(),
+    at: at.toISOString(),
     step,
     provider,
     error_class: 'validation_rejected',
     message: sanitizeError(errors.join(', ')).slice(0, MESSAGE_CAP),
     elapsed_ms: Math.max(0, Math.round(performance.now() - attemptStartedAt)),
   };
+}
+
+/**
+ * #715 (b) (04 §A, census class `outside`): the failed-attempt sidecar's own stamp — a log line's
+ * time, read from the host's clock and compared with nothing on the run record. Its own function, so
+ * the class law (no `outside` read in a function that reads a run's instants) holds by construction.
+ */
+function sidecarStamp(): string {
+  return new Date().toISOString();
 }
 
 export interface AgentDeps {
@@ -422,7 +441,7 @@ async function pollUntilGateResolved(
       }
     });
     if (signal?.aborted) break;
-    const run = await store.get(runId);
+    const { record: run } = await store.get(runId);
     if (run.terminal_state) break;
     if (run.pending_gate === undefined || run.pending_gate.gate_id !== gateId) break;
   }
@@ -525,6 +544,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   // path always assigns it, and keying the moved re-read on the value rather than on the option
   // is what keeps control-flow analysis satisfied.
   let currentRun: RunRecord | undefined;
+  // #715 (b) (D6-17, D6-19): the reading `currentRun` was read at — every judgement of it is made at
+  // that instant, never at a fresh clock read.
+  let currentAt: Date | undefined;
   // decision C179: the agent steps this drive answered — the `Result` line names the program that
   // gave any other answer. Decision C189: filled from each engine call's reply (`answerRecordedByCall`).
   const answeredHere = new Set<string>();
@@ -533,7 +555,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
 
   if (options.existingRunId !== undefined) {
     // --run-id path: attach to existing run
-    currentRun = await deps.store.get(options.existingRunId);
+    ({ record: currentRun, at: currentAt } = await deps.store.get(options.existingRunId));
     if (currentRun.terminal_state) {
       // issue #279 (increment 1, PR-B), design record §6: point at the recovery verb when the
       // terminal run this attach targeted still carries an undelivered finalizer — the one mint
@@ -544,7 +566,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
     // in_progress_steps on attach: handled by engine's existing eligibility logic — no restart needed
   } else {
     // Normal path: create new run
-    const { run: initialRecord } = await deps.store.create({
+    const { record: initialRecord } = await deps.store.create({
       workflowId: definition.id,
       workflowVersion: definition.version,
       params: options.params,
@@ -596,7 +618,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
     const first = calls[0];
     if (first === undefined) return false;
     return deps.store.get(runId).then(
-      (r) =>
+      ({ record: r }) =>
         r.evidence.some(
           (e) =>
             e.step_id === step &&
@@ -609,21 +631,39 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   // takes gives the way back in — the line `realm workflow run` gives (`  Resume:    …`).
   // decision C211 (walk c14 W3-4's class): and cleanup steps the ending left pending — the command
   // that runs them.
-  const printResumeLine = async (): Promise<void> => {
-    const ended = await deps.store.get(runId).catch(() => undefined);
+  // #715 (b) (D6-17, Amendment 4): judged on the snapshot the drive holds when it stops — the one the
+  // engine judged its last reply on, or the drive's own last read — never a second load. None (a
+  // reply that loaded no run): no line about the record.
+  const printResumeLine = (endedSnap: Snapshot | undefined): void => {
+    const ended = endedSnap?.record;
     // #729 PR-3 (L-2): the writer's context only inside the print call.
     if (ended !== undefined && resumeLine(ended, definition) !== undefined) {
       console.error(resumeLine(ended, definition, writerCtx()));
     }
-    const cleanup = ended === undefined ? undefined : pendingCleanupLine(ended, new Date());
+    const cleanup =
+      endedSnap === undefined ? undefined : pendingCleanupLine(endedSnap.record, endedSnap.at);
     if (cleanup !== undefined) console.error(cleanup);
+  };
+  // #715 (b) (D6-17, Amendment 4): the lines this drive prints after an engine call are judged on the
+  // snapshot the engine judged its reply on — it REPLACES the held snapshot; the run is never read
+  // again for them. A reply that carries none loaded no run or could not write it (always an error
+  // reply): `false`, and the caller says the engine's own words and stops.
+  const holdJudged = (reply: EngineReply): boolean => {
+    const judged = judgedSnapshotOf(reply);
+    if (judged === undefined) return false;
+    ({ record: currentRun, at: currentAt } = judged);
+    return true;
+  };
+  const stopOnEngineWords = (reply: EngineReply): 'failed' => {
+    console.error(`\n✗ ${reply.errors.join(', ') || reply.context_hint}`);
+    return 'failed';
   };
   // issue #715 (a) (D6-23): a start mark on the monotonic clock — only ever subtracted from another,
   // so a wall-clock step cannot shorten or lengthen a recorded `elapsed_ms`.
   let attemptStartedAt = performance.now();
   try {
     if (currentRun === undefined) {
-      currentRun = await deps.store.get(runId);
+      ({ record: currentRun, at: currentAt } = await deps.store.get(runId));
 
       // #134 pre-flight (WARN-only, never refuse): warn at CREATE only. The attach path (--run-id)
       // above is N-A — it re-drives an EXISTING run, where recoverable-settle + the A5 surfaces
@@ -695,13 +735,16 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         const dueExpiry =
           currentRun.pending_gate !== undefined &&
           !expiryAttempted.has(currentRun.pending_gate.gate_id) &&
-          describePending(definition, currentRun, deps.registry, new Date()).expiry_due !==
-            undefined;
+          describePending(definition, writtenSnapshot(currentRun, currentAt!), deps.registry)
+            .expiry_due !== undefined;
         if (dueExpiry) expiryAttempted.add(currentRun.pending_gate!.gate_id);
         if (currentRun.pending_gate !== undefined && !dueExpiry) {
           const gate = currentRun.pending_gate;
 
           console.log(`\n⏸  Gate: ${gate.step_name} | ID: ${gate.gate_id}`);
+          // #715 (b) (03 §B.2 E, D6-72 (b)): the question's deadline, at the held snapshot's reading.
+          const deadlineLine = questionDeadlineLine(gate, currentAt!);
+          if (deadlineLine !== undefined) console.log(deadlineLine);
           const gateStepDef = definition.steps[gate.step_name];
           // #729 PR-4 (03 #6): the view core's composer returns — the question at the declared tier
           // in a question span, a blank line, the preview (`display` honoured); with no message the
@@ -752,7 +795,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             }
           }
 
-          currentRun = await deps.store.get(runId);
+          ({ record: currentRun, at: currentAt } = await deps.store.get(runId));
           continue;
         }
 
@@ -805,7 +848,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           },
         });
         if (advanced.status === 'confirm_required') {
-          currentRun = await deps.store.get(runId);
+          if (!holdJudged(advanced)) return stopOnEngineWords(advanced);
           continue;
         }
         // A non-`ok` reply from an engine step goes into the dispositions below (decision C15):
@@ -815,11 +858,17 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           if (engineStep === undefined) {
             // A refusal before any step ran (a guard refusal, a store failure): today's failed exit.
             console.error(`\n✗ ${advanced.errors.join(', ') || advanced.context_hint}`);
-            await printResumeLine();
+            printResumeLine(judgedSnapshotOf(advanced));
             return 'failed';
           }
-          // F7: core's classifier names the stop (a race never reaches here — core's loop goes on).
-          const advancedStop = classifyStop(advanced, engineStep, await deps.store.get(runId));
+          // F7: core's classifier names the stop (a race never reaches here — core's loop goes on),
+          // on the record the engine judged its reply on (#715 (b), Amendment 4); a reply with none
+          // goes to the dispositions as it is.
+          const advancedJudged = judgedSnapshotOf(advanced);
+          const advancedStop =
+            advancedJudged === undefined
+              ? undefined
+              : classifyStop(advanced, engineStep, advancedJudged.record);
           if (advancedStop?.kind === 'capability_missing') {
             // decision C23: a capability block is an engine step that cannot run HERE, the same class
             // as a refusal before the claim. Held, not sent to the dispositions at once: the attempt
@@ -831,7 +880,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           }
         }
         if (engineReply === undefined) {
-          currentRun = await deps.store.get(runId);
+          if (!holdJudged(advanced)) return stopOnEngineWords(advanced);
           if (advanced.status === 'ok' && startedNotDone !== undefined) {
             console.log(`  ✓ → ${writerCtx().word(currentRun.run_phase, RUN_PHASE_WORDS)}`);
           }
@@ -842,7 +891,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           // drive, and the loop goes on with the ready agent steps. The words are core's
           // (decision C36).
           for (const e of cannotRunEntries(
-            composeWaysAt(currentRun, new Date(), {
+            composeWaysAt(currentRun, currentAt!, {
               definition,
               registry: deps.registry,
               persistsClaims: keepsClaims,
@@ -862,13 +911,18 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         const eligible =
           engineReply !== undefined
             ? []
-            : describePending(definition, currentRun, deps.registry, new Date()).agent_steps;
+            : describePending(definition, writtenSnapshot(currentRun, currentAt!), deps.registry)
+                .agent_steps;
         if (engineReply === undefined && eligible.length === 0) {
           // decisions C23, C31, C64, C82: the run cannot go on from here (`cannotGoOnHere`: no agent
           // step is ready, no engine step can run, nothing is in flight elsewhere — a step another
           // program holds may still change what can run — and a step cannot run): the drive stops
           // on the FIRST such step (definition order). With a step in flight it watches below.
-          const view = describePending(definition, currentRun, deps.registry, new Date());
+          const view = describePending(
+            definition,
+            writtenSnapshot(currentRun, currentAt!),
+            deps.registry,
+          );
           const cannotRun = stepsThatCannotRun(view);
           if (cannotGoOnHere(currentRun, view)) {
             const stop = cannotRun[0]!;
@@ -882,7 +936,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               console.error(
                 `\n✗ The drive stops: nothing else can run, and '${first}' cannot run (${stop.refused_by}). ` +
                   cannotRunWayOut(
-                    composeWaysAt(currentRun, new Date(), {
+                    composeWaysAt(currentRun, currentAt!, {
                       definition,
                       registry: deps.registry,
                       persistsClaims: keepsClaims,
@@ -925,7 +979,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             // (another program took the step, ran it, ended the run, or opened a question, in the
             // moment between the view and this call) is not this drive's stop: it goes on, and its
             // own end and question checks speak.
-            currentRun = await deps.store.get(runId);
+            ({ record: currentRun, at: currentAt } = await deps.store.get(runId));
             const exitStop = classifyStop(exitReply, first, currentRun);
             if (isRaceStop(exitStop)) {
               if (exitStop.kind === 'held_elsewhere' && !exitStop.ran_here) {
@@ -968,10 +1022,11 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                     providerForEvidence ?? 'unknown',
                     exitReply.errors,
                     attemptStartedAt,
+                    deps.store.clock.now(),
                   ),
                 );
               }
-              currentRun = await deps.store.get(runId);
+              ({ record: currentRun, at: currentAt } = await deps.store.get(runId));
               // F7 (e): the way out is said only of a run that is still open — a run another program
               // ended meanwhile goes to the drive's own end check.
               if (currentRun.terminal_state) continue;
@@ -980,7 +1035,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               console.error(
                 `\n✗ The drive stops: nothing else can run, and '${first}' cannot run (${stop.refused_by}). ` +
                   cannotRunWayOut(
-                    composeWaysAt(currentRun, new Date(), {
+                    composeWaysAt(currentRun, currentAt!, {
                       definition,
                       registry: deps.registry,
                       persistsClaims: keepsClaims,
@@ -1026,16 +1081,20 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             let changed = false;
             while (performance.now() - watchStarted < watchMs) {
               await new Promise((resolve) => setTimeout(resolve, pollMs));
-              const fresh = await deps.store.get(runId);
-              if (fresh.version !== startVersion) {
-                currentRun = fresh;
+              // #715 (b) (D6-19): every poll REPLACES the held snapshot, changed or not — the same
+              // record at a newer reading, so a claim's staleness is judged at the latest one.
+              ({ record: currentRun, at: currentAt } = await deps.store.get(runId));
+              if (currentRun.version !== startVersion) {
                 changed = true;
                 break;
               }
             }
             if (changed) continue;
             const states = new Map(
-              classifyInProgressClaims(currentRun).map((c) => [c.step, c.state]),
+              classifyInProgressClaims(writtenSnapshot(currentRun, currentAt!)).map((c) => [
+                c.step,
+                c.state,
+              ]),
             );
             for (const step of inFlight) {
               const described = describeClaimHolder(currentRun.claims?.[step], keepsClaims);
@@ -1134,7 +1193,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           // parallel-step settle) landing during that call would silently forfeit a legitimate
           // repair. See the repair-gate comment below for the full discriminator rationale. Cost:
           // one extra store read per attempt — accepted.
-          const versionBeforeAttempt = (await deps.store.get(runId)).version;
+          const versionBeforeAttempt = (await deps.store.get(runId)).record.version;
 
           if (stepDef.execution === 'agent') {
             // Resolve template-expanded prompt via buildNextActions so {{ context.resources.* }}
@@ -1148,7 +1207,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             // consults `validation_rejections`).
             // #729 PR-0: the step's brief (its template-filled prompt) from the run's ways — core's one
             // composer, no registry read (an observer), as before.
-            const stepWays = composeWaysAt(currentRun, new Date(), { definition }).ways.filter(
+            const stepWays = composeWaysAt(currentRun, currentAt!, { definition }).ways.filter(
               (w) => w.verb === 'run_step',
             );
             const nextAction = (
@@ -1569,6 +1628,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   stepName,
                   providerForEvidence ?? 'unknown',
                   attemptStartedAt,
+                  deps.store.clock.now(),
                 );
                 if (usageForStep !== undefined && usageForStep.length > 0) {
                   entry.usage = appendRequests(usageForStep, entry.usage);
@@ -1750,6 +1810,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   stepName,
                   providerForEvidence ?? 'unknown',
                   attemptStartedAt,
+                  deps.store.clock.now(),
                 );
                 if (usageForStep !== undefined && usageForStep.length > 0) {
                   entry.usage = appendRequests(usageForStep, entry.usage);
@@ -1899,7 +1960,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               run_id: runId,
               workflow_id: definition.id,
               step_id: stepName,
-              ts: new Date().toISOString(),
+              ts: sidecarStamp(),
               error_code: result.error_code,
               ajv_errors: list !== undefined ? [...list.errors] : [],
               ...(list?.error_count !== undefined ? { error_count: list.error_count } : {}),
@@ -1932,8 +1993,10 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           answeredHere.add(stepName);
         }
 
-        // F7: an error reply read by core's classifier against the record as it is now.
-        const errorRecord = result.status === 'error' ? await deps.store.get(runId) : undefined;
+        // F7: an error reply read by core's classifier against the record the engine judged it on
+        // (#715 (b), Amendment 4: never a second load; none when the reply loaded no run).
+        const errorSnapshot = result.status === 'error' ? judgedSnapshotOf(result) : undefined;
+        const errorRecord = errorSnapshot?.record;
         const resultStop =
           errorRecord === undefined ? undefined : classifyStop(result, stepName, errorRecord);
         // #134: a NOT-REGISTERED handler or adapter, detected structurally (core's classifier, never
@@ -1955,7 +2018,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           result.stopped_step !== stepName
         ) {
           heldCapabilityReplies.set(result.stopped_step, result);
-          currentRun = await deps.store.get(runId);
+          ({ record: currentRun, at: currentAt } = errorSnapshot!);
           console.log(`  ✓ → ${writerCtx().word(currentRun.run_phase, RUN_PHASE_WORDS)}`);
           continue;
         }
@@ -1973,6 +2036,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         // keeps the stop below — this drive's answer was recorded there.
         if (engineReply === undefined && errorRecord !== undefined && isRaceStop(resultStop)) {
           currentRun = errorRecord;
+          currentAt = errorSnapshot!.at;
           if (resultStop.ran_here || resultStop.kind === 'run_ended') {
             console.log(
               answerNotRecordedLine(
@@ -2012,7 +2076,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               ? ` after ${repairsUsed} schema-repair attempts`
               : '';
           if (isCapabilityBlock) {
-            currentRun = await deps.store.get(runId);
+            ({ record: currentRun, at: currentAt } = errorSnapshot!);
             const block = findCapabilityBlockedSteps(currentRun).find(
               (b) => b.step === stoppedStep,
             );
@@ -2056,6 +2120,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   providerForEvidence ?? 'unknown',
                   result.errors,
                   attemptStartedAt,
+                  deps.store.clock.now(),
                 ),
                 // issue #600: a wedge carries every call of the exhausted repair budget. Nothing is
                 // attached when no call reported usage — the same rule as `attachBilledUsage`. Nor
@@ -2069,17 +2134,17 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               });
             }
           }
-          await printResumeLine();
+          printResumeLine(errorSnapshot);
           return 'failed';
         }
 
         if (result.status === 'confirm_required') {
           // Gate will be handled at the top of the next iteration.
-          currentRun = await deps.store.get(runId);
+          if (!holdJudged(result)) return stopOnEngineWords(result);
           continue;
         }
 
-        currentRun = await deps.store.get(runId);
+        if (!holdJudged(result)) return stopOnEngineWords(result);
         // decision C179: the run ended before this drive's answer reached the engine — the call ran
         // nothing (`executeChain`'s reply for a run that has ended), so the answer was not recorded:
         // said, with who ran the step when another process did, never `✓`.
@@ -2100,7 +2165,8 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           // A `blocked` reply is never `✓` (decision C82 (5)). Which step it belongs to is the reply's
           // own `stopped_step` (decision C74): this step's, or a step the engine ran after it.
           const blockedStep = result.stopped_step ?? stepName;
-          // F7: core's classifier reads the reply against the record re-read above.
+          // F7: core's classifier reads the reply against the record the engine judged it on (held
+          // above, #715 (b)).
           const blockedStop = classifyStop(result, blockedStep, currentRun);
           if (blockedStop?.kind === 'held_elsewhere') {
             // issue #625 PR-2a (D6.1, D3.2): another process took the step — on the claim, or between
@@ -2155,7 +2221,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           // purpose (C85): going back to the loop top on a reply the run's view does not explain
           // could bring back the unbounded, billed loop C82 removed.
           console.error(`\n✗ ${result.context_hint}`);
-          await printResumeLine();
+          printResumeLine(writtenSnapshot(currentRun, currentAt!));
           return 'failed';
         }
         console.log(`  ✓ → ${writerCtx().word(currentRun.run_phase, RUN_PHASE_WORDS)}`);
@@ -2181,6 +2247,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
       currentStepName ?? '',
       providerForEvidence ?? 'unknown',
       attemptStartedAt,
+      deps.store.clock.now(),
     );
     // issue #600: a throw that escaped before the current step's evidence was saved takes the
     // step's billed calls with it. Once the repair loop has ended (`stepUsageSaved`), `executeChain`
@@ -2207,7 +2274,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   if (currentRun.run_phase === 'completed') {
     console.log(`\nRun complete: ${runId}`);
     // decision C211: cleanup steps the ending left pending — the command that runs them.
-    const cleanup = pendingCleanupLine(currentRun, new Date());
+    const cleanup = pendingCleanupLine(currentRun, currentAt!);
     if (cleanup !== undefined) console.log(cleanup);
 
     // Print the last agent step's output so the result is visible without
@@ -2255,7 +2322,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   if (!currentRun.terminal_state) {
     // #729 PR-0 (A-10, T-14): the stop reasons are the CLI renderer's, from the run's ways; E1 (a):
     // a reason that ends with a command is never followed by punctuation — each reason a line.
-    const stopWays = composeWaysAt(currentRun, new Date(), {
+    const stopWays = composeWaysAt(currentRun, currentAt!, {
       definition,
       registry: deps.registry,
       persistsClaims: deps.store.persistsClaims === true,
@@ -2278,6 +2345,6 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
     return 'failed';
   }
   console.error(`\nRun ended in phase: ${writerCtx().word(currentRun.run_phase, RUN_PHASE_WORDS)}`);
-  await printResumeLine();
+  printResumeLine(writtenSnapshot(currentRun, currentAt!));
   return 'failed';
 }

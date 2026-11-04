@@ -195,7 +195,11 @@ describe(
     }
 
     async function started(def: WorkflowDefinition): Promise<string> {
-      const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await runStore.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       return run.id;
     }
 
@@ -213,7 +217,7 @@ describe(
       });
       if (opened.status !== 'confirm_required') throw new Error(`fixture: ${opened.status}`);
       if (expired) {
-        const record = await runStore.get(id);
+        const { record: record } = await runStore.get(id);
         await runStore.update({
           ...record,
           pending_gate: {
@@ -436,7 +440,7 @@ describe(
       expect({ code: r1.code, out: lagless(r1.out) }).toEqual({
         code: 0,
         out: [
-          `⚠ gate '${same.gateId}' on 'confirm' had expired <lag> before this call — this respond call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: respond).`,
+          `⚠ gate '${same.gateId}' on 'confirm' had expired <lag> before this call (deadline <instant>) — this respond call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: respond).`,
           'the outcome matches your choice, but it was settled by timeout; your response was not recorded.',
           `Not recorded: ${same.id} | gate settled by timeout with choice 'approve' | state 'running'`,
           owed(same.id),
@@ -452,7 +456,7 @@ describe(
         code: 1,
         out: [],
         err: [
-          `⚠ gate '${other.gateId}' on 'confirm' had expired <lag> before this call — this respond call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: respond).`,
+          `⚠ gate '${other.gateId}' on 'confirm' had expired <lag> before this call (deadline <instant>) — this respond call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: respond).`,
           `Gate '${other.gateId}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.`,
           `Not recorded: ${other.id} | gate settled by timeout with choice 'approve' | state 'running'`,
           owed(other.id),
@@ -482,7 +486,7 @@ describe(
         code: 1,
         out: [],
         err: [
-          `⚠ gate '${g.gateId}' on 'confirm' had expired <lag> before this call — this respond call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: respond).`,
+          `⚠ gate '${g.gateId}' on 'confirm' had expired <lag> before this call (deadline <instant>) — this respond call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: respond).`,
           `Gate '${g.gateId}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.`,
           "Guard step 'only_if_rejected' aborted the run.",
           'Reason: The default was taken.',
@@ -494,7 +498,7 @@ describe(
       const r3 = respond(ab, 'approve');
       // (a) red when the abort's line changes or is not first; (b) prints stdout and stderr.
       expect(lagless([...r3.out, ...r3.err])[0]).toBe(
-        `⚠ gate '${ab.gateId}' on 'confirm' had expired <lag> before this call — this respond call first carried out its declared abort: the run ended (enacted_via: respond).`,
+        `⚠ gate '${ab.gateId}' on 'confirm' had expired <lag> before this call (deadline <instant>) — this respond call first carried out its declared abort: the run ended (enacted_via: respond).`,
       );
     });
 
@@ -538,7 +542,7 @@ describe(
         }),
       });
       // (a) red when the step did not run; (b) prints the completed steps.
-      expect((await runStore.get(id)).completed_steps).toEqual(['after']);
+      expect((await runStore.get(id)).record.completed_steps).toEqual(['after']);
       // The OS user names the program when REALM_OPERATOR is not set.
       const os = realm(['run', 'advance', await started(def)], { env: { REALM_OPERATOR: '' } });
       // (a) red when an unset REALM_OPERATOR is not replaced by the OS user; (b) prints the line.
@@ -550,7 +554,7 @@ describe(
       expect({
         code: bad.code,
         lines: [...bad.out, ...bad.err].length,
-        completed: (await runStore.get(fresh)).completed_steps,
+        completed: (await runStore.get(fresh)).record.completed_steps,
       }).toEqual({ code: 1, lines: 1, completed: [] });
     });
 
@@ -581,7 +585,7 @@ describe(
         code: 0,
         tail: [
           "Owed to the engine: the expired question on 'confirm' (its declared settle_default); then it runs what that leaves owed until a step opens a question, fails or ends the run.",
-          `⚠ gate '${q.gateId}' on 'confirm' had expired <lag> before this call — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`,
+          `⚠ gate '${q.gateId}' on 'confirm' had expired <lag> before this call (deadline <instant>) — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`,
           '→ after',
           "Guard step 'only_if_approved' passed.",
           `Stopped: an agent step is ready: 'finish' — drive it with realm agent --run-id ${q.id} --provider <provider> --model <model>`,
@@ -595,7 +599,7 @@ describe(
       // (a) red when abort is not carried out or its line changes; (b) prints stdout.
       expect(lagless(ra.out.slice(3))).toEqual([
         "Owed to the engine: the expired question on 'confirm' (its declared abort).",
-        `⚠ gate '${qa.gateId}' on 'confirm' had expired <lag> before this call — this advance call first carried out its declared abort: the run ended (enacted_via: advance).`,
+        `⚠ gate '${qa.gateId}' on 'confirm' had expired <lag> before this call (deadline <instant>) — this advance call first carried out its declared abort: the run ended (enacted_via: advance).`,
         'Stopped: the run has ended (aborted)',
         `Run ${qa.id}: phase 'aborted'`,
       ]);
@@ -637,7 +641,7 @@ describe(
         ],
       });
       const output = async (runId: string) =>
-        (await runStore.get(runId)).evidence.find((e) => e.step_id === 'a')?.output_summary;
+        (await runStore.get(runId)).record.evidence.find((e) => e.step_id === 'a')?.output_summary;
       // (a) red when other code ran the step; (b) prints the recorded output.
       expect(await output(id)).toEqual({ from: 'own project' });
       // The workflow's own folder holds no code: said, on both lines.
@@ -777,7 +781,7 @@ describe(
 
     /** Answers the run's open question through the built `realm`. */
     async function answer(id: string): Promise<void> {
-      const gateId = (await runStore.get(id)).pending_gate!.gate_id;
+      const gateId = (await runStore.get(id)).record.pending_gate!.gate_id;
       const r = realm(['run', 'respond', id, '--gate', gateId, '--choice', 'approve']);
       if (r.code !== 0) throw new Error(`fixture: respond failed: ${r.err.join('\n')}`);
     }
@@ -807,7 +811,7 @@ describe(
       expect({ tail: lagless(r.out.slice(3)), err: r.err }).toEqual({
         tail: [
           "Owed to the engine: the expired question on 'confirm' (its declared settle_default); then it runs what that leaves owed until a step opens a question, fails or ends the run.",
-          `⚠ gate '${q.gateId}' on 'confirm' had expired <lag> before this call — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`,
+          `⚠ gate '${q.gateId}' on 'confirm' had expired <lag> before this call (deadline <instant>) — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`,
           '→ a',
           "⚠ finalizer 'tidy' left pending — handler not available on this surface",
           // decision C208: the run ended during the call — its cleanup step's outcome.
@@ -851,7 +855,7 @@ describe(
       expect({
         code: first.code,
         words: words(first.out),
-        ran: (await runStore.get(id)).completed_steps,
+        ran: (await runStore.get(id)).record.completed_steps,
       }).toEqual({
         code: 0,
         words: 'not comparable — the run has recorded no project code yet.',
@@ -917,7 +921,7 @@ describe(
       expect({
         code: r.code,
         tail: r.out.slice(3),
-        ran: (await runStore.get(id)).evidence.length,
+        ran: (await runStore.get(id)).record.evidence.length,
       }).toEqual({
         code: 1,
         tail: put(block(PAGE, "The engine can run nothing now: 'compute' cannot run"), {
@@ -946,7 +950,7 @@ describe(
         by_source: 'ambient',
         channel: 'advance',
       });
-      const since = (await runStore.get(idh)).claims!['process']!.since;
+      const since = (await runStore.get(idh)).record.claims!['process']!.since;
       const h = realm(['run', 'advance', idh]);
       // (a) red when the lines differ from the page's screen, or In flight is said twice; (b)
       //     prints both.
@@ -965,7 +969,7 @@ describe(
       const ida = await started(agentOnly.def);
       const asked = await project('acting-nothing-question', CONFIRM(), false);
       const q = await atQuestion(asked.def);
-      const before = await runStore.get(q.id);
+      const { record: before } = await runStore.get(q.id);
       // decision C181: the preview's reason line (a waiting-process line may follow it).
       const last = (runId: string) =>
         realm(['run', 'advance', runId])
@@ -979,7 +983,7 @@ describe(
         `Nothing is owed to the engine: a question is open — realm run respond ${q.id} --gate ${q.gateId} --choice <one of: approve, reject>`,
       ]);
       // (a) red when advance at an open question changes the run; (b) prints both records' steps.
-      const afterQ = await runStore.get(q.id);
+      const { record: afterQ } = await runStore.get(q.id);
       expect([afterQ.completed_steps, afterQ.pending_gate?.gate_id]).toEqual([
         before.completed_steps,
         q.gateId,
@@ -1030,17 +1034,17 @@ describe(
       // `opener` runs `confirm`, whose question opens; `answerer` answers it (`--by alice`), and the
       // answer's write decides the guard `g`.
       const opened = realm(['run', 'advance', id], as('opener'));
-      const gateId = (await runStore.get(id)).pending_gate!.gate_id;
+      const gateId = (await runStore.get(id)).record.pending_gate!.gate_id;
       const answered = realm(
         ['run', 'respond', id, '--gate', gateId, '--choice', 'approve', '--by', 'alice'],
         as('answerer'),
       );
-      const confirmAt = (await runStore.get(id)).evidence.find(
+      const confirmAt = (await runStore.get(id)).record.evidence.find(
         (e) => e.step_id === 'confirm' && e.kind !== 'gate_response',
       )!.completed_at;
       const afterAnswer = driverLine('third');
       const inspect = realm(['run', 'inspect', id]).out;
-      const afterAt = (await runStore.get(id)).evidence.find(
+      const afterAt = (await runStore.get(id)).record.evidence.find(
         (e) => e.step_id === 'after',
       )!.completed_at;
       const afterStep = driverLine('fourth');
@@ -1113,7 +1117,7 @@ describe(
         channel: 'agent',
       });
       const reclaimed = realm(['run', 'reclaim', id, '--step', 'b', '--force']);
-      const record = await runStore.get(id);
+      const { record: record } = await runStore.get(id);
       const aAt = record.evidence.find((e) => e.step_id === 'a')!.completed_at;
       const newest = record.evidence.at(-1)!;
       // The question's expiry: `opener` runs `confirm`, whose question opens; its time is up, and
@@ -1122,7 +1126,7 @@ describe(
       const { def: q } = await project('cli-c197-expiry', CONFIRM('settle_default'), false);
       const qid = await started(q);
       expect(realm(['run', 'advance', qid], as('opener')).code).toBe(0);
-      const open = await runStore.get(qid);
+      const { record: open } = await runStore.get(qid);
       await runStore.update({
         ...open,
         pending_gate: {
@@ -1132,7 +1136,7 @@ describe(
         },
       });
       expect(realm(['run', 'advance', qid], as('expirer')).code).toBe(0);
-      const expired = await runStore.get(qid);
+      const { record: expired } = await runStore.get(qid);
       const confirmAt = expired.evidence.find(
         (e) => e.step_id === 'confirm' && e.kind !== 'gate_response',
       )!.completed_at;
@@ -1167,10 +1171,13 @@ describe(
       const { def } = await project('acting-open-q', A_THEN_QUESTION, true);
       const id = await started(def);
       realm(['run', 'advance', id]);
-      const gateId = (await runStore.get(id)).pending_gate!.gate_id;
+      const gateId = (await runStore.get(id)).record.pending_gate!.gate_id;
       const again = realm(['run', 'advance', id]);
       // (a) red when the line names another gate or choices, or a step runs; (b) prints stdout.
-      expect({ last: again.out.at(-1), done: (await runStore.get(id)).completed_steps }).toEqual({
+      expect({
+        last: again.out.at(-1),
+        done: (await runStore.get(id)).record.completed_steps,
+      }).toEqual({
         last: `Nothing is owed to the engine: a question is open — realm run respond ${id} --gate ${gateId} --choice <one of: approve, reject>`,
         done: ['a'],
       });
@@ -1204,7 +1211,7 @@ describe(
           '\n',
         ),
       );
-      const gateId = (await runStore.get(question.id)).pending_gate!.gate_id;
+      const gateId = (await runStore.get(question.id)).record.pending_gate!.gate_id;
       const both = await go(
         'acting-stop-both',
         [autoStep('a', []), needsN('compute', ['a']), agentStep('finish', ['a'])].join('\n'),
@@ -1303,7 +1310,7 @@ describe(
         'utf8',
       );
       const r = realm(['run', 'advance', id, '--extensions-module', racer]);
-      const since = (await runStore.get(id)).claims!['process']!.since!;
+      const since = (await runStore.get(id)).record.claims!['process']!.since!;
       const at = r.out.indexOf('→ process');
       // (a) red when the lines differ from the page's screen (or are not adjacent), the command
       //     stops instead of going on, or the run's `process` was run here; (b) prints stdout.
@@ -1311,7 +1318,7 @@ describe(
         code: r.code,
         pair: r.out.slice(at, at + 2),
         rest: r.out.slice(at + 2),
-        ran: (await runStore.get(id)).completed_steps,
+        ran: (await runStore.get(id)).record.completed_steps,
       }).toEqual({
         code: 0,
         pair: put(block(PAGE, "• Step 'process' was taken by racer-a"), {
@@ -1349,7 +1356,7 @@ describe(
       folders.push(other);
       writeFileSync(join(other, '.env'), 'SECRET_625=from the dotenv\n', 'utf8');
       const second = realm(['run', 'advance', id], { cwd: other });
-      const outputs = (await runStore.get(id)).evidence
+      const outputs = (await runStore.get(id)).record.evidence
         .filter((e) => e.step_id === 'a' || e.step_id === 'b')
         .map((e) => [e.step_id, e.output_summary]);
       // (a) red when a step does not see its shell's environment or .env, or the preview tells the
@@ -1379,7 +1386,7 @@ describe(
       const failedOnce = async (runId: string) => {
         realm(['run', 'advance', runId]);
         // (a) red when advance does not fail `a` (fixture); (b) prints the failed steps.
-        expect((await runStore.get(runId)).failed_steps, 'fixture').toEqual(['a']);
+        expect((await runStore.get(runId)).record.failed_steps, 'fixture').toEqual(['a']);
       };
       await failedOnce(id);
       const r = realm(['run', 'resume', id, '--from', 'a']);
@@ -1519,7 +1526,7 @@ describe(
           '    on_outcome: always',
         ].join('\n');
       const gateOf = async (id: string): Promise<string> =>
-        (await runStore.get(id)).pending_gate!.gate_id;
+        (await runStore.get(id)).record.pending_gate!.gate_id;
       /** The lines from the first that starts with `from`. */
       const from = (lines: string[], start: string): string[] =>
         lines.slice(lines.findIndex((l) => l.startsWith(start)));
@@ -1540,7 +1547,7 @@ describe(
         );
         const qid = await started(q.def);
         const qa = realm(['run', 'advance', qid]);
-        const qRecord = await runStore.get(qid);
+        const { record: qRecord } = await runStore.get(qid);
         const failing = await project(
           'c207-fails',
           [autoStep('a', [], ['handler: boom']), autoStep('b', [], ['handler: mark'])].join('\n'),
@@ -1679,7 +1686,7 @@ describe(
         const q = await atQuestion(r.def);
         const answered = respond(q, 'approve');
         const advanced = realm(['run', 'advance', q.id]);
-        const afterAnswer = await runStore.get(q.id);
+        const { record: afterAnswer } = await runStore.get(q.id);
         // resume: `a` fails beside `b`, the run is abandoned, then resumed.
         const res = await project(
           'c207-resume',
@@ -1886,7 +1893,7 @@ describe(
           `    on_outcome: ${on}`,
         ].join('\n');
       const gateOf = async (id: string): Promise<string> =>
-        (await runStore.get(id)).pending_gate!.gate_id;
+        (await runStore.get(id)).record.pending_gate!.gate_id;
 
       it('advance and inspect (C211, walk c14 W2-2): a step the open question holds is named — on the Stopped line, the next preview and inspect', async () => {
         claim(
@@ -1959,7 +1966,7 @@ describe(
         expect({ settle: lagless(r.out.slice(3)), abort: ra.out[3] }).toEqual({
           settle: [
             "Owed to the engine: the expired question on 'confirm' (its declared settle_default); then it runs what that leaves owed until a step opens a question, fails or ends the run.",
-            `⚠ gate '${q.gateId}' on 'confirm' had expired <lag> before this call — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`,
+            `⚠ gate '${q.gateId}' on 'confirm' had expired <lag> before this call (deadline <instant>) — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`,
             '→ p',
             '→ n',
             `Run ${q.id}: phase 'completed'`,
@@ -1999,7 +2006,7 @@ describe(
           'utf8',
         );
         const drained = realm(['run', 'drain', id, '--force', '--extensions-module', mod]);
-        const ledger = (await runStore.get(id)).finalizer_ledger;
+        const ledger = (await runStore.get(id)).record.finalizer_ledger;
         // (a) red when no line names the way on, a line names it twice, or the command does not run
         //     them; (b) prints the lines and the ledger.
         expect({
@@ -2166,7 +2173,7 @@ describe(
         expect({
           preview,
           pasted: [pasted.status, pasted.stdout.split('\n')[0]],
-          phase: (await runStore.get(id)).run_phase,
+          phase: (await runStore.get(id)).record.run_phase,
           several: several.slice(at, at + 3),
         }).toEqual({
           preview: `Nothing is owed to the engine: a question is open — realm run respond ${id} --gate ${g} --choice ok`,
@@ -2216,7 +2223,7 @@ describe(
           const first = realm(['run', 'advance', id]);
           const resumed = realm(['run', 'resume', id, '--from', 'b']);
           const second = realm(['run', 'advance', id]);
-          const record = await runStore.get(id);
+          const { record: record } = await runStore.get(id);
           runs[name] = {
             first: { code: first.code, tail: from(first.out, 'finalizer ') },
             resumed: resumed.code,
@@ -2284,7 +2291,7 @@ describe(
       realm(['run', 'advance', id]);
       const resumed = realm(['run', 'resume', id, '--from', 's']);
       const abandoned = realm(['run', 'abandon', id]);
-      const after = await runStore.get(id);
+      const { record: after } = await runStore.get(id);
       const refused = realm(['run', 'resume', id, '--from', 'clean']);
       const cleanOnly = realm(['run', 'purge', id]);
       const failed = await started(p.def);
@@ -2353,7 +2360,7 @@ describe(
         });
         if (opened.status !== 'confirm_required') throw new Error(`fixture: ${opened.status}`);
         if (expired) {
-          const record = await runStore.get(id);
+          const { record: record } = await runStore.get(id);
           await runStore.update({
             ...record,
             pending_gate: {
@@ -2460,7 +2467,7 @@ describe(
           input: {},
           dispatcher: async () => ({}),
         });
-        const record = await runStore.get(id);
+        const { record: record } = await runStore.get(id);
         await runStore.update({
           ...record,
           pending_gate: {

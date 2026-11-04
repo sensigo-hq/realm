@@ -91,7 +91,7 @@ describe('C-4: one realm agent drive sends two ready steps in turn; runs started
   // calls while the first is held), or never sends it; (b) prints the call count at each point.
   it('one drive: while the first reply is held the provider has been called once; the second call follows its release', async () => {
     const store = new InMemoryStore();
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: twoReady.id,
       workflowVersion: 1,
       params: {},
@@ -114,7 +114,7 @@ describe('C-4: one realm agent drive sends two ready steps in turn; runs started
       const afterFirstReleased = provider.calls;
       provider.releaseAll();
       const result = await drive;
-      const completed = [...(await store.get(run.id)).completed_steps].sort();
+      const completed = [...(await store.get(run.id)).record.completed_steps].sort();
       expect(
         {
           whileFirstHeld,
@@ -146,8 +146,8 @@ describe('C-4: one realm agent drive sends two ready steps in turn; runs started
   it('two runs started together: their first steps are in flight together; each run sends its second step only after its own first reply', async () => {
     const store = new InMemoryStore();
     const runs = [
-      (await store.create({ workflowId: twoReady.id, workflowVersion: 1, params: {} })).run,
-      (await store.create({ workflowId: twoReady.id, workflowVersion: 1, params: {} })).run,
+      (await store.create({ workflowId: twoReady.id, workflowVersion: 1, params: {} })).record,
+      (await store.create({ workflowId: twoReady.id, workflowVersion: 1, params: {} })).record,
     ];
     const providers = [new HeldProvider(), new HeldProvider()];
     const point = () => providers.map((p) => ({ calls: p.calls, labels: [...p.labels] }));
@@ -174,7 +174,7 @@ describe('C-4: one realm agent drive sends two ready steps in turn; runs started
       for (const p of providers) p.releaseAll();
       const results = await Promise.all(drives);
       const completed = await Promise.all(
-        runs.map(async (run) => [...(await store.get(run.id)).completed_steps].sort()),
+        runs.map(async (run) => [...(await store.get(run.id)).record.completed_steps].sort()),
       );
       expect({ bothFirstHeld, firstReleased, results, completed }).toEqual({
         bothFirstHeld: [

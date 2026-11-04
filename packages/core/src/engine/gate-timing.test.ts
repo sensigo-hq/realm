@@ -57,3 +57,25 @@ describe('computeGateDueState (issue #291)', () => {
     expect(state.next_reminder_due_at).toBeDefined();
   });
 });
+
+// #715 (b) A.2 (D-25): the reminder schedule reads `opened_at` through the one stamp parser. An
+// unparseable `opened_at` yields NO occurrence — before, `new Date(NaN).toISOString()` threw RangeError
+// whenever `reminder_seconds` was set (and returned nothing when it was not).
+describe('computeGateDueState — an unparseable opened_at (#715 (b), D-25)', () => {
+  it('with reminder_seconds set: no next_reminder_due_at, the due facts still computed, never a RangeError', () => {
+    // (a) red when the schedule parses opened_at itself again (RangeError) or schedules from NaN;
+    //     (b) prints the state, or the thrown error's name and message.
+    const gate = makeGate({
+      opened_at: 'garbage',
+      reminder_seconds: 60,
+      expires_at: '2026-01-01T00:10:00.000Z',
+    });
+    let outcome: unknown;
+    try {
+      outcome = computeGateDueState(gate, new Date('2026-01-01T00:20:00.000Z'));
+    } catch (e) {
+      outcome = `${(e as Error).name}: ${(e as Error).message}`;
+    }
+    expect(outcome).toEqual({ expired: true, overdue_ms: 600_000 });
+  });
+});

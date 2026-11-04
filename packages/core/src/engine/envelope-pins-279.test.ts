@@ -20,6 +20,9 @@ import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { RunStore, CreateRunOptions } from '../store/store-interface.js';
 import type { SettlementDelta, SettlementResult } from '../types/settlement.js';
 import { agentActionFor } from '../test-support/ways-view.js';
+import type { Snapshot } from './snapshot.js';
+import type { Listing, CreateResult, StoreSettlement } from '../store/store-interface.js';
+import type { Clock } from '../utils/clock.js';
 
 describe('run_terminal envelope — the composed cancelled-predicate (issue #279, increment 2, PR-D, design record D-4)', () => {
   it('CANCELLED variant: a gate cancelled by a sibling abort discloses "your choice was NOT recorded" + the aborting step', async () => {
@@ -46,13 +49,17 @@ describe('run_terminal envelope — the composed cancelled-predicate (issue #279
     const dir = await mkdtemp(join(tmpdir(), 'realm-envelope-cancelled-'));
     try {
       const store = new JsonFileStore(dir);
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
 
       // Pre-claim `aborter` FIRST (before the gate opens) — eligibility.ts's "gate blocks ALL
       // eligibility" invariant means aborter could never be independently claimed WHILE a gate is
       // already open; mirroring gate-death-279.test.ts's own fix, both steps' claims must exist
       // before either commits, matching a realistic fan-out where both were dispatched together.
-      const claimedAborter = await store.claimStep(run.id, 'aborter', def);
+      const { record: claimedAborter } = await store.claimStep(run.id, 'aborter', def);
       const aborterToken = claimedAborter.claims?.['aborter']?.token;
 
       const opened = await executeStep(store, def, {
@@ -81,7 +88,7 @@ describe('run_terminal envelope — the composed cancelled-predicate (issue #279
       );
       expect(abortSettle.applied).toBe(true);
 
-      const finalRunAfterAbort = await store.get(run.id);
+      const { record: finalRunAfterAbort } = await store.get(run.id);
       expect(finalRunAfterAbort.terminal_state).toBe(true);
       expect(finalRunAfterAbort.skip_details?.['gate_step']?.kind).toBe('gate_cancelled_by_abort');
 
@@ -121,10 +128,14 @@ describe('run_terminal envelope — the composed cancelled-predicate (issue #279
     const dir = await mkdtemp(join(tmpdir(), 'realm-envelope-zombie-'));
     try {
       const store = new JsonFileStore(dir);
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       // Hand-shape a #282-class grandfathered record: terminal AND still carrying a pending_gate,
       // with NO gate_cancelled_by_abort skip detail (the class this closure legislates over).
-      const zombie = await store.update({
+      const { record: zombie } = await store.update({
         ...run,
         completed_steps: ['gate_step'],
         terminal_state: true,
@@ -180,7 +191,11 @@ describe('gate_choice_conflict envelope (issue #279, increment 2, PR-D)', () => 
     const dir = await mkdtemp(join(tmpdir(), 'realm-envelope-conflict-'));
     try {
       const store = new JsonFileStore(dir);
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const opened = await executeStep(store, def, {
         runId: run.id,
         command: 'gate_step',
@@ -220,6 +235,10 @@ describe('gate_choice_conflict envelope (issue #279, increment 2, PR-D)', () => 
  *  cannot honestly reach the scenario, but the ENVELOPE TEXT LOGIC built around it is still real,
  *  shipped code this repo must pin. */
 class ForcesResultStore implements RunStore {
+  /** #715 (b): the store's clock is the wrapped store's. */
+  get clock(): Clock {
+    return this.inner.clock;
+  }
   // issue #620 PR-C: a test double declares this realm's release line.
   static {
     declareReleaseLine(this);
@@ -233,33 +252,32 @@ class ForcesResultStore implements RunStore {
   ) {
     this.persistsClaims = inner.persistsClaims;
   }
-  create(options: CreateRunOptions): Promise<{ run: RunRecord; created: boolean }> {
+  create(options: CreateRunOptions): Promise<CreateResult> {
     return this.inner.create(options);
   }
-  get(runId: string): Promise<RunRecord> {
+  get(runId: string): Promise<Snapshot> {
     return this.inner.get(runId);
   }
-  update(record: RunRecord): Promise<RunRecord> {
+  update(record: RunRecord): Promise<Snapshot> {
     return this.inner.update(record);
   }
-  list(workflowId?: string): Promise<RunRecord[]> {
+  list(workflowId?: string): Promise<Listing> {
     return this.inner.list(workflowId);
   }
-  claimStep(runId: string, stepName: string, definition: WorkflowDefinition): Promise<RunRecord> {
+  claimStep(runId: string, stepName: string, definition: WorkflowDefinition): Promise<Snapshot> {
     return this.inner.claimStep(runId, stepName, definition);
   }
   async settleStep(
     runId: string,
     delta: SettlementDelta,
-    definition: WorkflowDefinition,
-    options?: { now?: Date },
-  ): Promise<SettlementResult> {
+    definition?: WorkflowDefinition,
+  ): Promise<StoreSettlement> {
     if (!this.forced && this.matches(delta)) {
       this.forced = true;
-      const fresh = await this.inner.get(runId);
-      return this.forcedResult(fresh);
+      const { record: fresh, at } = await this.inner.get(runId);
+      return { ...this.forcedResult(fresh), at };
     }
-    return this.inner.settleStep(runId, delta, definition, options);
+    return this.inner.settleStep(runId, delta, definition);
   }
 }
 
@@ -282,7 +300,11 @@ describe('already_open envelope — the LIVE gate wins, rendered verbatim (issue
     const dir = await mkdtemp(join(tmpdir(), 'realm-envelope-already-open-'));
     try {
       const inner = new JsonFileStore(dir);
-      const { run } = await inner.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await inner.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const liveGate = {
         gate_id: 'live-gate-id',
         step_name: 'gate_step',
@@ -338,7 +360,11 @@ describe('N1 neutral wording — never amplify a "by_other" white lie (issue #27
     const dir = await mkdtemp(join(tmpdir(), 'realm-envelope-n1-'));
     try {
       const inner = new JsonFileStore(dir);
-      const { run } = await inner.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await inner.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const store = new ForcesResultStore(
         inner,
         (d) => d.kind === 'open_gate',
@@ -384,7 +410,11 @@ describe('capability-block refusal degradation (issue #279, increment 2, PR-D, D
     const dir = await mkdtemp(join(tmpdir(), 'realm-envelope-cap-refusal-'));
     try {
       const inner = new JsonFileStore(dir);
-      const { run } = await inner.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await inner.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const store = new ForcesResultStore(
         inner,
         (d) => d.kind === 'release_step',
@@ -438,7 +468,11 @@ describe('an answer settles the guard it makes eligible — the #279 convergence
     const dir = await mkdtemp(join(tmpdir(), 'realm-envelope-hint-present-'));
     try {
       const store = new JsonFileStore(dir);
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const opened = await executeStep(store, def, {
         runId: run.id,
         command: 'gate_step',
@@ -459,7 +493,7 @@ describe('an answer settles the guard it makes eligible — the #279 convergence
       expect(result.warnings.filter((w) => w.includes('converges'))).toEqual([]);
       // The guard is settled on the record the answer's write produced — nothing is left eligible.
       // (a) red when the guard is still unsettled after the answer; (b) prints the step lists.
-      const afterAnswer = await store.get(run.id);
+      const { record: afterAnswer } = await store.get(run.id);
       expect(afterAnswer.completed_steps).toEqual(['gate_step', 'guard_after']);
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -484,7 +518,11 @@ describe('an answer settles the guard it makes eligible — the #279 convergence
     const dir = await mkdtemp(join(tmpdir(), 'realm-envelope-hint-absent-'));
     try {
       const store = new JsonFileStore(dir);
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const opened = await executeStep(store, def, {
         runId: run.id,
         command: 'gate_step',
@@ -523,7 +561,11 @@ describe('respondedBy — recorded, not enforced (issue #279, increment 2, PR-D,
     const dir = await mkdtemp(join(tmpdir(), 'realm-responded-by-'));
     try {
       const inner = new JsonFileStore(dir);
-      const { run } = await inner.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await inner.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       let capturedDelta: SettlementDelta | undefined;
       const store = new ForcesResultStore(
         inner,
@@ -548,7 +590,7 @@ describe('respondedBy — recorded, not enforced (issue #279, increment 2, PR-D,
       expect(result.status).toBe('ok');
       expect(capturedDelta?.kind).toBe('settle_gate');
       expect((capturedDelta as { respondedBy?: string }).respondedBy).toBe('operator-42');
-      const finalRun = await inner.get(run.id);
+      const { record: finalRun } = await inner.get(run.id);
       const gateEvidence = finalRun.evidence.find((e) => e.kind === 'gate_response');
       expect(gateEvidence?.responded_by).toBe('operator-42');
     } finally {
@@ -574,7 +616,11 @@ describe('respondedBy — recorded, not enforced (issue #279, increment 2, PR-D,
     const dir = await mkdtemp(join(tmpdir(), 'realm-responded-by-absent-'));
     try {
       const store = new JsonFileStore(dir);
-      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       const opened = await executeStep(store, def, {
         runId: run.id,
         command: 'gate_step',
@@ -586,7 +632,7 @@ describe('respondedBy — recorded, not enforced (issue #279, increment 2, PR-D,
         gateId: opened.gate!.gate_id,
         choice: 'approve',
       });
-      const finalRun = await store.get(run.id);
+      const { record: finalRun } = await store.get(run.id);
       const gateEvidence = finalRun.evidence.find((e) => e.kind === 'gate_response');
       expect(gateEvidence?.responded_by).toBeUndefined();
     } finally {
@@ -614,7 +660,11 @@ describe("evaluatedAtVersion — the chain's own evaluation snapshot (issue #279
     const dir = await mkdtemp(join(tmpdir(), 'realm-evaluated-at-version-'));
     try {
       const inner = new JsonFileStore(dir);
-      const { run } = await inner.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const { record: run } = await inner.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
       let capturedDelta: SettlementDelta | undefined;
       const store = new ForcesResultStore(
         inner,
@@ -630,7 +680,7 @@ describe("evaluatedAtVersion — the chain's own evaluation snapshot (issue #279
       // its own and this stamp can no longer be observed through it. The chain's guard loop —
       // moved into `advanceRun` — still issues one on a record that some OTHER write left with an
       // eligible guard. `store.update` is such a write: one completed step and its evidence entry.
-      const leftover = await inner.update({
+      const { record: leftover } = await inner.update({
         ...run,
         completed_steps: ['step_a'],
         evidence: [

@@ -255,7 +255,7 @@ describe('realm agent refuses without --model, before any run (issue #676)', () 
 
   it('E2 --run-id of an existing run, no --model → "If run <id> exists, it was not changed.", the run file unchanged', async () => {
     const store = new JsonFileStore(join(home, '.realm', 'runs'));
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: 'no-default-model-676',
       workflowVersion: 1,
       params: {},

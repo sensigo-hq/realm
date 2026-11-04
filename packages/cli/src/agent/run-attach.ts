@@ -11,7 +11,6 @@
 //    begun executing, propagate the error with NO run mutation — a failed bystander attach
 //    can never kill a healthy in-flight run.
 import {
-  sealRunLevel,
   getWorkflowForRun,
   deriveRunPhase,
   escapedBoundedValue,
@@ -132,7 +131,7 @@ export async function resolveRunAttach(
     onReleaseLineWarning?: (warning: LoaderWarning) => void;
   },
 ): Promise<ResolveRunAttachResult> {
-  let run = await deps.store.get(runId);
+  let { record: run } = await deps.store.get(runId);
 
   if (run.terminal_state) {
     // issue #367 (part 3): the recorded arm, or the legacy literal ({@link reattachable}).
@@ -142,7 +141,7 @@ export async function resolveRunAttach(
       // so the seal fact leaves in the SAME write that flips terminal_state:false.
       const { terminal_reason: _cleared, sealed_by: _sb, ...rest } = run;
       await deps.store.update({ ...rest, terminal_state: false });
-      run = await deps.store.get(runId);
+      run = (await deps.store.get(runId)).record;
     } else {
       // Same refusal (and message) the agent loop raises — thrown BEFORE any extension code loads.
       throw terminalRunRefusal(runId, run, deps.ctx);
@@ -208,32 +207,30 @@ export async function resolveRunAttach(
     // pair lands via the post-claim append on a successful re-attach); this asymmetry is
     // deliberate.
     try {
-      const fresh = await deps.store.get(runId);
+      const { record: fresh } = await deps.store.get(runId);
       if (
         !fresh.terminal_state &&
         fresh.evidence.length === 0 &&
         fresh.pending_gate === undefined
       ) {
-        // issue #367: run-level seal through the ONE bypass-writer chokepoint — it stamps
-        // sealed_by {arm: 'extensions_load_failure'}; the fossil hand-written run_phase is
-        // retired (the store write tail derives it) and the field-assignment writer shape is
-        // gone. The identity entry rides the same single write.
-        await deps.store.update(
-          sealRunLevel(
-            {
-              ...fresh,
-              extension_identity: [
-                ...(fresh.extension_identity ?? []),
-                errorExtensionIdentityEntry(
-                  `extension load failed: ${err instanceof Error ? err.message : String(err)}`,
-                  opts?.overrideModule !== undefined ? { overrideActive: true } : {},
-                ),
-              ],
-            },
-            'extensions_load_failure',
-            EXTENSIONS_LOAD_FAILED,
+        // issue #367: run-level seal through the ONE bypass-writer chokepoint (`sealRunLevel`) — it
+        // stamps sealed_by {arm: 'extensions_load_failure'}. The identity entry rides the same
+        // single write. #715 (b) (D-21): through the `seal_run` settlement delta — the seal's
+        // instant is the write's own reading, the identity entry's `captured_at` is carried
+        // verbatim (D6-67), and a run that moved since this read is thrown as
+        // STATE_SNAPSHOT_MISMATCH and reported below, as update() threw. No definition: the load
+        // that failed may be the definition's own (Amendment 1).
+        await deps.store.settleStep(runId, {
+          kind: 'seal_run',
+          arm: 'extensions_load_failure',
+          reason: EXTENSIONS_LOAD_FAILED,
+          expected_version: fresh.version,
+          release_claims: false,
+          identity_entry: errorExtensionIdentityEntry(
+            `extension load failed: ${err instanceof Error ? err.message : String(err)}`,
+            opts?.overrideModule !== undefined ? { overrideActive: true } : {},
           ),
-        );
+        });
       }
     } catch (writeErr) {
       console.error(

@@ -29,8 +29,12 @@ describe.each([
       const store: RunStore = await makeStore();
       if (store instanceof JsonFileStore) dir = store.runsDirPath;
 
-      const { run } = await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} });
-      const written = await store.update({
+      const { record: run } = await store.create({
+        workflowId: 'wf',
+        workflowVersion: 1,
+        params: {},
+      });
+      const { record: written } = await store.update({
         ...run,
         failed_steps: ['a'],
         terminal_state: true,
@@ -51,7 +55,7 @@ describe.each([
 
       expect(written.run_phase).toBe('failed');
 
-      const reread = await store.get(run.id);
+      const { record: reread } = await store.get(run.id);
       expect(reread.run_phase).toBe('failed');
     });
   },

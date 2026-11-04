@@ -69,7 +69,7 @@ describe('execute_step failed-attempt telemetry', () => {
   }
 
   it('emits exactly one agent_step_attempt_failed line with the right metadata and no raw output', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'classify-wf',
       workflowVersion: 1,
       params: {},
@@ -101,7 +101,7 @@ describe('execute_step failed-attempt telemetry', () => {
   });
 
   it('emits nothing on a successful step', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'classify-wf',
       workflowVersion: 1,
       params: {},
@@ -115,7 +115,7 @@ describe('execute_step failed-attempt telemetry', () => {
   });
 
   it('emits nothing on a blocked result (wrong step for current state)', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'classify-wf',
       workflowVersion: 1,
       params: {},
@@ -130,7 +130,7 @@ describe('execute_step failed-attempt telemetry', () => {
   });
 
   it('emits via the MCP tool wrapper too, reading the pre-strip envelope', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'classify-wf',
       workflowVersion: 1,
       params: {},
@@ -168,7 +168,7 @@ describe('execute_step failed-attempt sidecar (P3 durable sink)', () => {
   });
 
   it('appends a metadata-only record to the sidecar (no event tag) and is a pure side-channel', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'classify-wf',
       workflowVersion: 1,
       params: {},
@@ -196,7 +196,7 @@ describe('execute_step failed-attempt sidecar (P3 durable sink)', () => {
     // rejection's own ENVELOPE still reports the pre-write version (bump-and-report, pin (a)).
     // The side-channel INTENT this test guards survives unchanged: the run's DAG state
     // (failed_steps) is still untouched — only the new counter moved.
-    const after = await runStore.get(run.id);
+    const { record: after } = await runStore.get(run.id);
     expect(after.version).toBe(versionBefore + 1);
     expect(after.failed_steps).not.toContain('classify');
     // stderr sink still fired too (both sinks independent).
@@ -204,7 +204,7 @@ describe('execute_step failed-attempt sidecar (P3 durable sink)', () => {
   });
 
   it('writes nothing to the sidecar on a successful step', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'classify-wf',
       workflowVersion: 1,
       params: {},
@@ -218,7 +218,7 @@ describe('execute_step failed-attempt sidecar (P3 durable sink)', () => {
   });
 
   it('best-effort independence: a broken sidecar store does not throw and stderr still fires', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'classify-wf',
       workflowVersion: 1,
       params: {},
@@ -260,7 +260,7 @@ describe('execute_step failed-attempt telemetry — VALIDATION_EXHAUSTED (issue 
   });
 
   it('the terminalizing call reaches the failed-attempt sidecar with ajv_errors sourced from last_ajv_errors', async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: 'classify-wf',
       workflowVersion: 1,
       params: {},
@@ -346,7 +346,7 @@ describe('execute_step failed-attempt records: a chained step refused after the 
       .filter((s: string) => s.includes('agent_step_attempt_failed'));
 
   it("the chained step's refusal writes no record and no line; the reply names the step that was refused", async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: chained.id,
       workflowVersion: 1,
       params: {},
@@ -380,7 +380,7 @@ describe('execute_step failed-attempt records: a chained step refused after the 
   });
 
   it("CONTROL — the called step's own refusal still writes its record", async () => {
-    const { run } = await runStore.create({
+    const { record: run } = await runStore.create({
       workflowId: chained.id,
       workflowVersion: 1,
       params: {},

@@ -8,7 +8,13 @@
 const isReminder = (c: string): boolean => c.includes('Please respond.') && !c.includes('expired');
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { startGateReminderTimers, checkDeadNotificationAdvisory } from './slack-gate-notifier.js';
-import type { PendingGate } from '@sensigo/realm';
+import { writtenSnapshot, type PendingGate, type RunRecord, type Snapshot } from '@sensigo/realm';
+import { zOf } from '../../test-support/instant.js';
+
+/** #715 (b) (D-29): the run as the notifier reads it when it starts — its gate, at this instant. */
+function heldAt(gate: PendingGate): Snapshot {
+  return writtenSnapshot({ pending_gate: gate } as unknown as RunRecord, new Date());
+}
 
 function makeGate(overrides: Partial<PendingGate> = {}): PendingGate {
   return {
@@ -48,7 +54,7 @@ describe('startGateReminderTimers — the authored notify clock (issue #291)', (
       'xoxb-test',
       'C123',
       '111.000',
-      gate,
+      heldAt(gate),
       999_999_000, // operator config — must be IGNORED (record-keyed precedence)
       999_999_000,
     );
@@ -77,7 +83,7 @@ describe('startGateReminderTimers — the authored notify clock (issue #291)', (
       'xoxb-test',
       'C123',
       '111.000',
-      gate,
+      heldAt(gate),
       999_999_000,
       999_999_000,
     );
@@ -95,7 +101,11 @@ describe('startGateReminderTimers — the authored notify clock (issue #291)', (
     expect(calls.filter(isReminder).length).toBe(1);
     const finalCalls = calls.filter((c) => c.includes('its default choice will be recorded'));
     expect(finalCalls.length).toBe(1);
-    expect(finalCalls[0]).toMatch(/^⏰ gate `review_step` expired \d+s ago — /);
+    // #715 (b) (D-29, D6-72): composed at its scheduled instant (2 s after the opening, 0.5 s past the
+    // deadline: "0s"), with the deadline beside the words.
+    expect(finalCalls[0]).toMatch(
+      new RegExp(`^⏰ gate \`review_step\` expired 0s ago \\(${zOf(gate.expires_at!)}\\) — `),
+    );
     expect(calls.some((c) => c.includes('realm run drain'))).toBe(false);
     expect(
       log.mock.calls.some((args) => String(args[0]).includes('realm run drain --expired')),
@@ -116,7 +126,7 @@ describe('startGateReminderTimers — the authored notify clock (issue #291)', (
       'xoxb-test',
       'C123',
       '111.000',
-      gate,
+      heldAt(gate),
       999_999_000,
       999_999_000,
     );
@@ -140,7 +150,7 @@ describe('startGateReminderTimers — the authored notify clock (issue #291)', (
       'xoxb-test',
       'C123',
       '111.000',
-      gate,
+      heldAt(gate),
       999_999_000,
       999_999_000,
     );
@@ -160,7 +170,7 @@ describe('startGateReminderTimers — the authored notify clock (issue #291)', (
       'xoxb-test',
       'C123',
       '111.000',
-      gate,
+      heldAt(gate),
       999_999_000,
       999_999_000,
     );
@@ -176,7 +186,14 @@ describe('startGateReminderTimers — the authored notify clock (issue #291)', (
     vi.useFakeTimers();
     const calls = stubFetch();
     const gate = makeGate(); // no reminder_seconds at all
-    const clear = startGateReminderTimers('xoxb-test', 'C123', '111.000', gate, 500, 999_999_000);
+    const clear = startGateReminderTimers(
+      'xoxb-test',
+      'C123',
+      '111.000',
+      heldAt(gate),
+      500,
+      999_999_000,
+    );
     await vi.advanceTimersByTimeAsync(600);
     await vi.advanceTimersByTimeAsync(600); // would be a 2nd occurrence under the old bug — must not fire
     clear();
@@ -191,7 +208,7 @@ describe('startGateReminderTimers — the authored notify clock (issue #291)', (
       'xoxb-test',
       'C123',
       '111.000',
-      gate,
+      heldAt(gate),
       999_999_000,
       999_999_000,
     );
@@ -239,5 +256,51 @@ describe('checkDeadNotificationAdvisory (issue #291)', () => {
   it('no advisory when the gate has no frozen expires_at at all (nothing to be dead against)', () => {
     const gate = makeGate();
     expect(checkDeadNotificationAdvisory(gate, 999_999_000, 999_999_000)).toBeUndefined();
+  });
+});
+
+describe('#715 (b) (02 §D.3, D-29) — the reminders follow the run’s schedule, from the snapshot’s reading', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('a notifier started late (its question opened 2m 30s before) skips the missed reminders and sends only the next one, at opened_at + 3·R, in words counted to that instant', async () => {
+    // (a) red when the schedule restarts from the notifier's own start (a reminder 60 s later, and
+    //     then two more), or the missed ones are sent in a burst; (b) prints the posts.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2030-01-01T00:02:30.000Z'));
+    const calls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+        calls.push((JSON.parse(init.body as string) as { text: string }).text);
+        return Promise.resolve({ json: async () => ({ ok: true }) });
+      }),
+    );
+    const gate = makeGate({
+      opened_at: '2030-01-01T00:00:00.000Z',
+      reminder_seconds: 60,
+      reminder_max: 3,
+    });
+    const clear = startGateReminderTimers(
+      'xoxb-test',
+      'C123',
+      '111.000',
+      heldAt(gate),
+      1,
+      999_999_000,
+    );
+    await vi.advanceTimersByTimeAsync(29_000);
+    const before = calls.length;
+    await vi.advanceTimersByTimeAsync(2_000);
+    await vi.advanceTimersByTimeAsync(600_000);
+    clear();
+    expect({ before, posts: calls }).toEqual({
+      before: 0,
+      posts: [
+        '⏰ gate `review_step` has been open for 3m (since 2030-01-01T00:00:00Z). Please respond.',
+      ],
+    });
   });
 });

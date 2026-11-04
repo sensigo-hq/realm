@@ -43,6 +43,7 @@ import {
   runDrainAction,
   type DrainRuntimeDeps,
 } from './drain.js';
+import { zOf } from '../test-support/instant.js';
 
 const NOW = new Date('2026-07-08T12:00:00.000Z');
 const past = new Date(NOW.getTime() - 60_000).toISOString();
@@ -207,7 +208,11 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
 
   it('dry-run (default, no --force) renders the rank-pass classes and mutates nothing', async () => {
     await workflowStore.register(wf);
-    const { run } = await store.create({ workflowId: 'drain-wf', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'drain-wf',
+      workflowVersion: 1,
+      params: {},
+    });
     await store.update({
       ...run,
       run_phase: 'completed',
@@ -227,13 +232,17 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
         String(c[0]).includes('NOT declared by the workflow definition'),
       ),
     ).toBe(true);
-    const reloaded = await store.get(run.id);
+    const { record: reloaded } = await store.get(run.id);
     expect(reloaded.finalizer_ledger?.['fin']?.status).toBe('pending'); // untouched
   });
 
   it('a non-terminal run reports "nothing to drain" and mutates nothing', async () => {
     await workflowStore.register(wf);
-    const { run } = await store.create({ workflowId: 'drain-wf', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'drain-wf',
+      workflowVersion: 1,
+      params: {},
+    });
 
     await runDrainAction(run.id, {}, store, workflowStore, DEPS);
 
@@ -245,7 +254,11 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
 
   it('--void voids a pending finalizer with operator-provenance evidence and the never-leased disclosure', async () => {
     await workflowStore.register(wf);
-    const { run } = await store.create({ workflowId: 'drain-wf', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'drain-wf',
+      workflowVersion: 1,
+      params: {},
+    });
     await store.update({
       ...run,
       run_phase: 'completed',
@@ -261,7 +274,7 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
     expect(logSpy.mock.calls.some((c: unknown[]) => String(c[0]).includes('never executed'))).toBe(
       true,
     );
-    const reloaded = await store.get(run.id);
+    const { record: reloaded } = await store.get(run.id);
     expect(reloaded.finalizer_ledger?.['fin']?.status).toBe('voided');
     const voidEvidence = reloaded.evidence.find((e) => e.step_id === 'fin');
     expect(voidEvidence).toBeDefined();
@@ -270,7 +283,11 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
 
   it('--void refuses on an unexpired lease — not force-bypassable', async () => {
     await workflowStore.register(wf);
-    const { run } = await store.create({ workflowId: 'drain-wf', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'drain-wf',
+      workflowVersion: 1,
+      params: {},
+    });
     await store.update({
       ...run,
       run_phase: 'completed',
@@ -288,7 +305,7 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
     expect(
       errSpy.mock.calls.some((c: unknown[]) => String(c[0]).includes('active drain lease')),
     ).toBe(true);
-    const reloaded = await store.get(run.id);
+    const { record: reloaded } = await store.get(run.id);
     expect(reloaded.finalizer_ledger?.['fin']?.status).toBe('pending');
   });
 
@@ -308,7 +325,11 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
         },
       },
     });
-    const { run } = await store.create({ workflowId: 'drain-wf', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'drain-wf',
+      workflowVersion: 1,
+      params: {},
+    });
     await store.update({
       ...run,
       run_phase: 'completed',
@@ -332,7 +353,7 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
     expect(logSpy.mock.calls.some((c: unknown[]) => String(c[0]).includes('Drained run'))).toBe(
       true,
     );
-    const reloaded = await store.get(run.id);
+    const { record: reloaded } = await store.get(run.id);
     expect(reloaded.finalizer_ledger?.['fin']?.status).toBe('completed');
   });
 
@@ -352,7 +373,7 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
         },
       },
     });
-    const { run: run1 } = await store.create({
+    const { record: run1 } = await store.create({
       workflowId: 'drain-wf',
       workflowVersion: 1,
       params: {},
@@ -365,7 +386,7 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
       terminal_reason: 'Workflow completed.',
       finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
     });
-    const { run: run2 } = await store.create({
+    const { record: run2 } = await store.create({
       workflowId: 'drain-wf',
       workflowVersion: 1,
       params: {},
@@ -393,8 +414,8 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
     expect(logSpy.mock.calls.some((c: unknown[]) => String(c[0]).includes('Drained 2/2'))).toBe(
       true,
     );
-    const reloaded1 = await store.get(run1.id);
-    const reloaded2 = await store.get(run2.id);
+    const { record: reloaded1 } = await store.get(run1.id);
+    const { record: reloaded2 } = await store.get(run2.id);
     expect(reloaded1.finalizer_ledger?.['fin']?.status).toBe('completed');
     expect(reloaded2.finalizer_ledger?.['fin']?.status).toBe('completed');
   });
@@ -403,7 +424,11 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
     // NOT registered — the workflow_id resolves to nothing. the definition fetch's OWN throw (outside the extensions try — review fold C5) is what
     // must now carry the remedy — DEPS (below) carries no resolveRegistry override, so the real
     // one (drain.ts's default) runs.
-    const { run } = await store.create({ workflowId: 'dev456', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'dev456',
+      workflowVersion: 1,
+      params: {},
+    });
     await store.update({
       ...run,
       run_phase: 'completed',
@@ -437,7 +462,7 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
   });
 
   it('C7 (issue #456) batch --all --force, TWO workflow-absent runs: both ✗ lines carry the remedy', async () => {
-    const { run: run1 } = await store.create({
+    const { record: run1 } = await store.create({
       workflowId: 'dev456-a',
       workflowVersion: 1,
       params: {},
@@ -450,7 +475,7 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
       terminal_reason: 'Workflow completed.',
       finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
     });
-    const { run: run2 } = await store.create({
+    const { record: run2 } = await store.create({
       workflowId: 'dev456-b',
       workflowVersion: 1,
       params: {},
@@ -505,7 +530,11 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
         },
       },
     });
-    const { run } = await store.create({ workflowId: 'drain-wf', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'drain-wf',
+      workflowVersion: 1,
+      params: {},
+    });
     await store.update({
       ...run,
       run_phase: 'completed',
@@ -531,7 +560,7 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
     // mock into the outer catch, which re-prints and exits again — production-neutral. Assert the
     // call, never the count.
     expect(exitSpy).toHaveBeenCalledWith(1);
-    const reloaded = await store.get(run.id);
+    const { record: reloaded } = await store.get(run.id);
     expect(reloaded.finalizer_ledger?.['fin']?.status).toBe('pending');
   });
 
@@ -551,7 +580,11 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
         },
       },
     });
-    const { run } = await store.create({ workflowId: 'drain-wf', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'drain-wf',
+      workflowVersion: 1,
+      params: {},
+    });
     await store.update({
       ...run,
       run_phase: 'completed',
@@ -581,7 +614,7 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
     ).toBe(true);
     // No exit for a batch failure — the #478 line: only a per-run continue.
     expect(exitSpy).not.toHaveBeenCalled();
-    const reloaded = await store.get(run.id);
+    const { record: reloaded } = await store.get(run.id);
     expect(reloaded.finalizer_ledger?.['fin']?.status).toBe('pending');
   });
 
@@ -615,7 +648,7 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
       },
     };
     await workflowStore.register(gatedFinWf);
-    const { run } = await store.create({
+    const { record: run } = await store.create({
       workflowId: gatedFinWf.id,
       workflowVersion: 1,
       params: {},
@@ -660,7 +693,7 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
       ),
     ).toBe(true);
     expect(exitSpy).not.toHaveBeenCalled();
-    const reloaded = await store.get(run.id);
+    const { record: reloaded } = await store.get(run.id);
     expect(reloaded.terminal_state).toBe(true);
     expect(reloaded.pending_gate).toBeUndefined();
     // The drain itself failed — the ledger entry never advanced past pending.
@@ -725,10 +758,14 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
    * `${run.run_phase}` mutant left the whole file green until this fixture was planted directly.
    */
   async function plantDivergentRun(): Promise<RunRecord> {
-    const { run } = await store.create({ workflowId: 'drain-wf', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'drain-wf',
+      workflowVersion: 1,
+      params: {},
+    });
     const planted: RunRecord = { ...run, run_phase: 'completed', terminal_state: false };
     await writeFile(join(dir, `${run.id}.json`), JSON.stringify(planted, null, 2), 'utf8');
-    const readBack = await store.get(run.id);
+    const { record: readBack } = await store.get(run.id);
     // The premise the cells below rest on, asserted rather than assumed.
     expect(readBack.run_phase).toBe('completed');
     expect(readBack.terminal_state).toBe(false);
@@ -781,18 +818,24 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
 
   async function seedUndeclaredFinalizers(names: string[]): Promise<RunRecord> {
     await workflowStore.register(wf); // `wf` declares NO finalizer — every ledger entry is unrunnable
-    const { run } = await store.create({ workflowId: 'drain-wf', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'drain-wf',
+      workflowVersion: 1,
+      params: {},
+    });
     const ledger = Object.fromEntries(
       names.map((n, i) => [n, { status: 'pending' as const, rank: i }]),
     );
-    return await store.update({
-      ...run,
-      run_phase: 'failed',
-      terminal_state: true,
-      sealed_by: { arm: 'step_failure' },
-      terminal_reason: 'boom',
-      finalizer_ledger: ledger,
-    });
+    return (
+      await store.update({
+        ...run,
+        run_phase: 'failed',
+        terminal_state: true,
+        sealed_by: { arm: 'step_failure' },
+        terminal_reason: 'boom',
+        finalizer_ledger: ledger,
+      })
+    ).record;
   }
 
   it('C-5 arm (a): one left-pending finalizer ⇒ the named escape + exit 1, ledger untouched', async () => {
@@ -812,7 +855,7 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
     );
     expect(logs()).toContain(`  realm run drain ${run.id} --void fin --force`);
     expect(logs().some((l) => l === `Drained run '${run.id}'.`)).toBe(false);
-    const reloaded = await store.get(run.id);
+    const { record: reloaded } = await store.get(run.id);
     expect(reloaded.finalizer_ledger?.['fin']?.status).toBe('pending');
   });
 
@@ -848,7 +891,11 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
     // leases nothing and leaves nothing pending. Saying `Drained run` here contradicted the
     // abandon output one line earlier ("declared finalizers did NOT run and will not").
     await workflowStore.register(wf);
-    const { run } = await store.create({ workflowId: 'drain-wf', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'drain-wf',
+      workflowVersion: 1,
+      params: {},
+    });
     const abandoned = await abandonRun(store, run.id, 'Abandoned via realm run abandon');
     expect(abandoned.finalizer_ledger).toBeUndefined();
 
@@ -861,7 +908,11 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
 
   it('C-5 arm (b): the dry-run twin renders the IDENTICAL sentence (one mint, two sites)', async () => {
     await workflowStore.register(wf);
-    const { run } = await store.create({ workflowId: 'drain-wf', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'drain-wf',
+      workflowVersion: 1,
+      params: {},
+    });
     await abandonRun(store, run.id, 'Abandoned via realm run abandon');
 
     await runDrainAction(run.id, {}, store, workflowStore, DEPS);
@@ -886,7 +937,11 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
         },
       },
     });
-    const { run } = await store.create({ workflowId: 'drain-wf', workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: 'drain-wf',
+      workflowVersion: 1,
+      params: {},
+    });
     await store.update({
       ...run,
       run_phase: 'completed',
@@ -929,17 +984,23 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
       },
     });
   async function seedLedger(ledger: Record<string, number>): Promise<RunRecord> {
-    const { run } = await store.create({ workflowId: 'drain-wf', workflowVersion: 1, params: {} });
-    return await store.update({
-      ...run,
-      run_phase: 'completed',
-      terminal_state: true,
-      sealed_by: { arm: 'complete' },
-      terminal_reason: 'Workflow completed.',
-      finalizer_ledger: Object.fromEntries(
-        Object.entries(ledger).map(([n, rank]) => [n, { status: 'pending' as const, rank }]),
-      ),
+    const { record: run } = await store.create({
+      workflowId: 'drain-wf',
+      workflowVersion: 1,
+      params: {},
     });
+    return (
+      await store.update({
+        ...run,
+        run_phase: 'completed',
+        terminal_state: true,
+        sealed_by: { arm: 'complete' },
+        terminal_reason: 'Workflow completed.',
+        finalizer_ledger: Object.fromEntries(
+          Object.entries(ledger).map(([n, rank]) => [n, { status: 'pending' as const, rank }]),
+        ),
+      })
+    ).record;
   }
   const finHandlerRegistry = () => {
     const registry = new ExtensionRegistry();
@@ -1007,12 +1068,12 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
   it('dry run: when the workflow copy cannot be read, say so and still list the ledger — never predict blind', async () => {
     // No registration at all → getWorkflowForRun refuses (PR-T's composed refusal) → the dry run
     // discloses the unknown and points at inspect, then lists the ledger without a prediction.
-    const { run: fresh } = await store.create({
+    const { record: fresh } = await store.create({
       workflowId: 'drain-wf',
       workflowVersion: 1,
       params: {},
     });
-    const run = await store.update({
+    const { record: run } = await store.update({
       ...fresh,
       run_phase: 'failed',
       terminal_state: true,
@@ -1043,18 +1104,24 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
     gateExtra: Partial<NonNullable<RunRecord['pending_gate']>> = {},
   ): Promise<RunRecord> {
     await workflowStore.register(wf);
-    const { run } = await store.create({ workflowId: 'drain-wf', workflowVersion: 1, params: {} });
-    return await store.update({
-      ...run,
-      pending_gate: {
-        gate_id: 'g-approve-1',
-        step_name: 'review',
-        preview: {},
-        choices: ['approve', 'reject'],
-        opened_at: new Date().toISOString(),
-        ...gateExtra,
-      },
+    const { record: run } = await store.create({
+      workflowId: 'drain-wf',
+      workflowVersion: 1,
+      params: {},
     });
+    return (
+      await store.update({
+        ...run,
+        pending_gate: {
+          gate_id: 'g-approve-1',
+          step_name: 'review',
+          preview: {},
+          choices: ['approve', 'reject'],
+          opened_at: new Date().toISOString(),
+          ...gateExtra,
+        },
+      })
+    ).record;
   }
 
   /** 90 minutes and 5 seconds ago: renders as `1h 30m` for the next 55 seconds. */
@@ -1100,15 +1167,17 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
   it('a gate whose time limit has passed, drained without --expired: the way out names drain --expired, never the answer command — on the dry run and on --force', async () => {
     // Issue #625 (review walk J4): the answer sentence was printed for an expired gate too, and
     // never named `--expired`, the flag that acts on it.
+    const expiresAt = expiredNinetyMinutesAgo();
     const run = await seedGateWaiting({
-      expires_at: expiredNinetyMinutesAgo(),
+      expires_at: expiresAt,
       on_expiry: 'settle_default',
       default_choice: 'reject',
     });
     // decision C212: each command ends its line — the dry run, then the command that carries it out.
+    // #715 (b) (03 §B.2 B2): the expiry through the one formatter, its deadline beside it.
     const expected = [
       `Run '${run.id}' is not terminal (phase: 'gate_waiting') — nothing to drain. ` +
-        `Its gate expired 1h 30m ago. To see what the expiry will do: realm run drain ${run.id} --expired`,
+        `Its gate EXPIRED 1h 30m ago (${zOf(expiresAt)}). To see what the expiry will do: realm run drain ${run.id} --expired`,
       `To carry it out: realm run drain ${run.id} --expired --force`,
     ];
     await runDrainAction(run.id, {}, store, workflowStore, DEPS);
@@ -1151,7 +1220,7 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
 
   it('the #432-class divergent record (persisted gate_waiting, no pending_gate): the way out is abandon — there is no gate to answer', async () => {
     await workflowStore.register(wf);
-    const { run: fresh } = await store.create({
+    const { record: fresh } = await store.create({
       workflowId: 'drain-wf',
       workflowVersion: 1,
       params: {},

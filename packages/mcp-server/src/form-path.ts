@@ -12,9 +12,11 @@
 // nothing, and says how the form ended (1.4).
 import {
   composeWaysOn,
+  waysStoreOf,
   deriveRunPhase,
   dueExpiry,
   loadSnapshot,
+  judgedSnapshotOf,
   outcomeOf,
   readInstant,
   shownViewEvidence,
@@ -176,6 +178,7 @@ export async function sendQuestionForm(
   const deadline =
     gate.on_expiry !== undefined && gate.expires_at !== undefined ? gate.expires_at : undefined;
   let leftMs: number | undefined;
+  let deadlineMs: number | undefined;
   if (deadline !== undefined) {
     if (dueExpiry(gate, snap.at) !== undefined) return { kind: 'not_sent', why: 'due' };
     const read = readInstant(deadline, 'deadline', snap.at);
@@ -185,6 +188,7 @@ export async function sendQuestionForm(
       );
     } else {
       leftMs = read.ms - snap.at.getTime();
+      deadlineMs = read.ms;
     }
   }
   const budgetMs = capMs - (deps.door.monotonicNow() - call.started);
@@ -193,6 +197,11 @@ export async function sendQuestionForm(
   if (call.signal?.aborted === true) return { kind: 'not_sent', why: 'cancelled' };
   if (!deps.door.claimSend(gateId, firstOnly)) return { kind: 'not_sent', why: 'taken' };
   // ── the form is now marked open: from here every path closes it ──────────────────────────────
+  // #715 (b) (03 §A.5, D6-8; PF rows 19, 21): the cap is a duration (a real timer); the question's
+  // deadline, when it is the nearer bound, is an instant STORED on the record — waited for on the
+  // store's clock below. The SDK's own timeout sits above the cap, the bound real time keeps.
+  const deadlineNearer = leftMs !== undefined && leftMs < budgetMs;
+  const capMsLeft = Math.max(1, Math.floor(budgetMs));
   const timeout = Math.max(1, Math.floor(Math.min(budgetMs, leftMs ?? budgetMs)));
   const until = deadline !== undefined ? { until: deadline } : {};
   const request = {
@@ -207,8 +216,7 @@ export async function sendQuestionForm(
   // Correction 2 (1.2): the timer's reason is chosen when it is armed — "the question's time ran out"
   // only when the deadline of a gate that declares `on_expiry` is the nearer bound; else Realm stopped
   // waiting and the question is still open.
-  const timerReason =
-    leftMs !== undefined && leftMs < budgetMs ? WITHDRAWN.timeout : WITHDRAWN.stopped;
+  const timerReason = deadlineNearer ? WITHDRAWN.timeout : WITHDRAWN.stopped;
   const withdraw = new AbortController();
   // Correction 2 (1.3): once the form came back, nothing withdraws it — a poll read already in flight,
   // the timer and the call's listener each check `settled` first (the SDK keeps its own listener on
@@ -219,14 +227,20 @@ export async function sendQuestionForm(
   };
   const onCancel = (): void => withdrawWith(WITHDRAWN.cancelled);
   call.signal?.addEventListener('abort', onCancel, { once: true });
-  const timer = setTimeout(() => withdrawWith(timerReason), timeout);
+  // The cap: a real timer (a duration). The deadline, when nearer: on the store's clock, at the
+  // stored instant (a test clock reaches it at its `advance`; the system clock re-checks the wall).
+  const timer = setTimeout(() => withdrawWith(WITHDRAWN.stopped), capMsLeft);
+  const cancelDeadline =
+    deadlineNearer && deadlineMs !== undefined
+      ? deps.runStore.clock.at(new Date(deadlineMs), () => withdrawWith(timerReason))
+      : (): void => {};
   // The settle poll (a host timer; no stored instant compared): the form is withdrawn once the
   // question is gone — a settle deletes `pending_gate`, and so does an abort's gate cancel — worded by
   // the record it read (correction 2, 1.3).
   const poll = setInterval(() => {
     deps.runStore
       .get(runId)
-      .then((record: RunRecord) => {
+      .then(({ record }) => {
         if (record.terminal_state) withdrawWith(WITHDRAWN.ended);
         else if (record.pending_gate?.gate_id !== gateId) withdrawWith(WITHDRAWN.settled);
       })
@@ -235,6 +249,7 @@ export async function sendQuestionForm(
   const stopWatching = (): void => {
     settled = true;
     clearTimeout(timer);
+    cancelDeadline();
     clearInterval(poll);
     call.signal?.removeEventListener('abort', onCancel);
   };
@@ -256,7 +271,7 @@ export async function sendQuestionForm(
         },
         {
           signal: withdraw.signal,
-          timeout: timeout + SDK_TIMEOUT_MARGIN_MS,
+          timeout: capMsLeft + SDK_TIMEOUT_MARGIN_MS,
           ...(call.requestId !== undefined ? { relatedRequestId: call.requestId } : {}),
         },
         snap.record,
@@ -275,7 +290,11 @@ export async function sendQuestionForm(
         cause: timedOut ? 'stopped' : isContentRefusal(err) ? 'not_a_choice' : 'ended',
         ...(gate.expires_at !== undefined ? { expires_at: gate.expires_at } : {}),
         ...until,
-        ...(timedOut ? { waited_s: Math.round(timeout / 1000) } : {}),
+        ...(timedOut
+          ? {
+              waited_s: Math.round((reason === WITHDRAWN.timeout ? timeout : capMsLeft) / 1000),
+            }
+          : {}),
       };
     }
     stopWatching();
@@ -478,7 +497,12 @@ export async function replyAfterForm(
   if (result.kind === 'answered' && formAnswerRecorded(result.reply)) {
     return { ...result.reply, command: before.command, warnings };
   }
-  const snap = await loadSnapshot(deps.runStore, before.run_id);
+  // #715 (b) (D6-17, Amendment 4): an answer the engine refused carries the snapshot it judged the
+  // refusal on — this reply is composed on it, never on a second load; a form that came back with no
+  // answer (or an answer whose reply loaded no run) ended a WAIT, and the run is read for this reply.
+  const snap =
+    (result.kind === 'answered' ? judgedSnapshotOf(result.reply) : undefined) ??
+    (await loadSnapshot(deps.runStore, before.run_id));
   const record = snap.record;
   const ways = composeWaysOn(snap, {
     definition: { ok: deps.definition },
@@ -486,7 +510,8 @@ export async function replyAfterForm(
       deps.registry !== undefined
         ? { kind: 'this_program', registry: deps.registry }
         : { kind: 'observer' },
-    store: { persistsClaims: deps.runStore.persistsClaims === true },
+    // #715 (b) (02 §C.1): with what the reply's instant stands on (`as_of_basis`).
+    store: waysStoreOf(deps.runStore),
   });
   const base: EngineReply = {
     command: before.command,

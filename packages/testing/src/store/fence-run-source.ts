@@ -18,9 +18,14 @@
 import {
   WorkflowError,
   declareReleaseLine,
+  floorAtRecord,
   runNotFoundError,
+  systemClock,
+  takeRawReading,
+  writtenSnapshot,
   type FenceRunReader,
   type RunRecord,
+  type Snapshot,
 } from '@sensigo/realm';
 
 /** The TCK's handle on one parked read: `entered` resolves when the store has called `get()` for
@@ -82,7 +87,10 @@ export function createFenceRunSource(): FenceRunSource {
   const counts = new Map<string, number>();
 
   const reader: FenceRunReader = {
-    get: async (runId: string): Promise<RunRecord> => {
+    get: async (runId: string): Promise<Snapshot> => {
+      // #715 (b): a run read returns its reading, taken BEFORE the load (D6-16) — this reader's is
+      // the system clock's.
+      const r = takeRawReading(systemClock);
       counts.set(runId, (counts.get(runId) ?? 0) + 1);
       const failure = failures.get(runId);
       if (failures.has(runId)) {
@@ -100,7 +108,7 @@ export function createFenceRunSource(): FenceRunSource {
         await park.latch;
       }
       if (snapshot === undefined) throw runNotFoundError(runId);
-      return snapshot;
+      return writtenSnapshot(snapshot, floorAtRecord(r, snapshot));
     },
   };
 

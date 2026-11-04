@@ -91,7 +91,7 @@ async function drive(opts: {
   } finally {
     vi.restoreAllMocks();
   }
-  return store.get((await store.list())[0]!.id);
+  return (await store.get((await store.list()).snapshots.map((s) => s.record)[0]!.id)).record;
 }
 
 const stepRequests = (run: RunRecord) =>

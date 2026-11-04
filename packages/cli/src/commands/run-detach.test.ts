@@ -34,6 +34,7 @@ vi.mock('node:readline/promises', () => ({
 import { createInterface } from 'node:readline/promises';
 import { runCommand, renderDetachMap } from './run.js';
 import { writerTestSeams } from '../output/writer.js';
+import { writtenSnapshot } from '@sensigo/realm';
 
 // #729 PR-3: `runCommand.parseAsync` installs the CLI writer in this process (the hook every command
 // carries), so a spied console call holds the composed text, span marks included; a reader sees what
@@ -91,7 +92,12 @@ function ways(
 describe('renderDetachMap — the fork is on the record (issue #447)', () => {
   it('a1 the ELSE fork offers all three remedies', () => {
     // decision C202: the drive is offered where an agent step is ready — here, the step asked for.
-    const map = renderDetachMap(record(), 'summarise', ways({ agent_steps: ['summarise'] }));
+    const map = renderDetachMap(
+      record(),
+      new Date(),
+      'summarise',
+      ways({ agent_steps: ['summarise'] }),
+    );
 
     expect(map).toContain("detached from run 'run_abc' at step 'summarise'");
     expect(map).toContain('(phase: running)');
@@ -115,6 +121,7 @@ describe('renderDetachMap — the fork is on the record (issue #447)', () => {
           opened_at: '2026-09-01T00:00:00.000Z',
         },
       } as Partial<RunRecord>),
+      new Date(),
       'approve_it',
       ways(),
     );
@@ -143,6 +150,7 @@ describe('renderDetachMap — the fork is on the record (issue #447)', () => {
           opened_at: '2026-09-01T00:00:00.000Z',
         },
       } as Partial<RunRecord>),
+      new Date(),
       'approve_it',
       ways(),
     ).split('\n');
@@ -165,6 +173,7 @@ describe('renderDetachMap — the fork is on the record (issue #447)', () => {
         completed_steps: ['a'],
         sealed_by: { arm: 'complete' },
       } as Partial<RunRecord>),
+      new Date(),
       'a',
       ways(),
     );
@@ -188,6 +197,7 @@ describe('renderDetachMap — the fork is on the record (issue #447)', () => {
         run_phase: 'completed',
         sealed_by: { arm: 'step_failure' },
       } as Partial<RunRecord>),
+      new Date(),
       'a',
       ways(),
     );
@@ -207,12 +217,15 @@ describe('renderDetachMap — the fork is on the record (issue #447)', () => {
           opened_at: '2026-09-01T00:00:00.000Z',
         },
       } as Partial<RunRecord>),
+      new Date(),
       undefined,
       ways(),
     );
     expect(withGate).toContain("at step 'from_the_gate'");
 
-    expect(renderDetachMap(record(), undefined, ways())).toContain("at step '(step unknown)'");
+    expect(renderDetachMap(record(), new Date(), undefined, ways())).toContain(
+      "at step '(step unknown)'",
+    );
   });
 });
 
@@ -232,6 +245,7 @@ describe('renderDetachMap, round 27 — C202: the ways on that fit the run (unit
           failed_steps: failedSteps,
           ...over,
         } as Partial<RunRecord>),
+        new Date(),
         'a',
         ways({}, steps),
       ).split('\n');
@@ -263,6 +277,7 @@ describe('renderDetachMap, round 27 — C202: the ways on that fit the run (unit
         sealed_by: { arm: 'complete' },
         finalizer_ledger: { clean: { status: 'pending', rank: 0 } },
       } as Partial<RunRecord>),
+      new Date(),
       'a',
       ways({}, { a: { execution: 'auto' }, clean: { execution: 'finalizer' } }),
     ).split('\n');
@@ -288,11 +303,10 @@ describe('renderDetachMap, round 27 — C202: the ways on that fit the run (unit
     } as Partial<RunRecord>);
     const pending = describePending(
       { id: 'wf', name: 'wf', version: 1, steps: {} } as unknown as WorkflowDefinition,
-      rec,
+      writtenSnapshot(rec, new Date()),
       undefined,
-      new Date(),
     );
-    const map = renderDetachMap(rec, 'confirm', {
+    const map = renderDetachMap(rec, new Date(), 'confirm', {
       pending,
       workflow: { id: 'wf', name: 'wf', version: 1, steps: {} } as unknown as WorkflowDefinition,
     }).split('\n');
@@ -316,13 +330,16 @@ describe('renderDetachMap, round 27 — C202: the ways on that fit the run (unit
         approve: { ...auto, trust: 'human_confirmed', gate: { choices: ['ship', 'hold'] } },
         fetch: auto,
       }),
-      record(),
+      writtenSnapshot(record(), new Date()),
       undefined,
-      new Date(),
     );
-    const one = describePending(wfOf({ fetch: auto }), record(), undefined, new Date());
+    const one = describePending(
+      wfOf({ fetch: auto }),
+      writtenSnapshot(record(), new Date()),
+      undefined,
+    );
     const advanceOf = (pending: PendingView) =>
-      renderDetachMap(record(), 'approve', {
+      renderDetachMap(record(), new Date(), 'approve', {
         pending,
         workflow: { id: 'wf', name: 'wf', version: 1, steps: {} } as unknown as WorkflowDefinition,
       }).split('\n')[1];
@@ -402,7 +419,7 @@ steps:
       const store = new JsonFileStore();
       const files = readdirSync(runsDir()).filter((f) => f.endsWith('.json'));
       const id = files[0]!.replace('.json', '');
-      const rec = await store.get(id);
+      const { record: rec } = await store.get(id);
       await store.update({
         ...rec,
         pending_gate: {
@@ -527,7 +544,7 @@ steps:
       const { JsonFileStore } = await import('@sensigo/realm');
       const store = new JsonFileStore();
       const files = readdirSync(runsDir()).filter((f) => f.endsWith('.json'));
-      return store.get(files[0]!.replace('.json', ''));
+      return (await store.get(files[0]!.replace('.json', ''))).record;
     };
 
     it("B1 a typo'd gate choice re-prompts the live gate instead of dying silently", async () => {
@@ -804,7 +821,7 @@ steps:
           const store = new JsonFileStore();
           const files = readdirSync(runsDir()).filter((f) => f.endsWith('.json'));
           const id = files[0]!.replace('.json', '');
-          const fresh = await store.get(id);
+          const { record: fresh } = await store.get(id);
           // Strip the gate by destructuring — never `pending_gate: undefined`, a TS2412 under this
           // repo's exactOptionalPropertyTypes.
           const { pending_gate: _gone, ...rest } = fresh;
@@ -848,7 +865,7 @@ steps:
       const { JsonFileStore } = await import('@sensigo/realm');
       const store = new JsonFileStore();
       const files = readdirSync(runsDir()).filter((f) => f.endsWith('.json'));
-      return store.get(files[0]!.replace('.json', ''));
+      return (await store.get(files[0]!.replace('.json', ''))).record;
     };
 
     it('R1 the agent site: bad JSON and every non-object re-ask, then the object settles', async () => {

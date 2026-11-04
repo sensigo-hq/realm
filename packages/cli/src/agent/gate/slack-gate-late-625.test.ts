@@ -19,7 +19,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { JsonFileStore, executeStep, expiryCarriedOutLine } from '@sensigo/realm';
-import type { PendingGate, RunRecord, WorkflowDefinition } from '@sensigo/realm';
+import type { PendingGate, WorkflowDefinition } from '@sensigo/realm';
 import { handleBidirectionalGate } from './slack-gate-notifier.js';
 import { startSlackGateServer } from './slack-gate-server.js';
 import type { SlackGateEvent } from './slack-gate-server.js';
@@ -109,7 +109,11 @@ describe('#625 PR-2a, C146 — a late Slack answer that carried out the expiry s
   async function expiredQuestion(
     def: WorkflowDefinition,
   ): Promise<{ runId: string; gate: PendingGate }> {
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const opened = await executeStep(store, def, {
       runId: run.id,
       command: 'confirm',
@@ -117,8 +121,8 @@ describe('#625 PR-2a, C146 — a late Slack answer that carried out the expiry s
       dispatcher: async () => ({}),
     });
     if (opened.status !== 'confirm_required') throw new Error(`fixture: ${opened.status}`);
-    const record: RunRecord = await store.get(run.id);
-    const moved = await store.update({
+    const { record: record } = await store.get(run.id);
+    const { record: moved } = await store.update({
       ...record,
       pending_gate: {
         ...record.pending_gate!,
@@ -187,7 +191,9 @@ describe('#625 PR-2a, C146 — a late Slack answer that carried out the expiry s
   const line = (
     gateId: string,
     did: { on_expiry: 'settle_default'; choice: string } | { on_expiry: 'abort' },
-  ): string => `⚠ ${lagless(expiryCarriedOutLine(gateId, 'confirm', did, 'agent', { ms: 0 }))}`;
+  ): string =>
+    // #715 (b) (D6-72 (c)): the line names the fixture question's deadline beside the lag.
+    `⚠ ${lagless(expiryCarriedOutLine(gateId, 'confirm', did, 'agent', { ms: 0 }, '2020-01-01T01:00:00.000Z'))}`;
 
   it('C146: another choice — `⚠ … this agent call first carried out …`, the refusal, the guard; posted once and printed once, no "try again"', async () => {
     claimGates215();

@@ -91,17 +91,21 @@ describe('#625 PR-2a, F9 — realm run respond names only the cleanup steps its 
         return { data: {} };
       },
     });
-    const { run } = await runs.create({ workflowId: DEF.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runs.create({
+      workflowId: DEF.id,
+      workflowVersion: 1,
+      params: {},
+    });
     await advanceRun(runs, DEF, { runId: run.id, registry });
     if (failFirst) {
       // the first ending ran `tidy`; resume, and the run reaches the question
-      expect((await runs.get(run.id)).finalizer_ledger?.['tidy']?.status, 'fixture').toBe(
+      expect((await runs.get(run.id)).record.finalizer_ledger?.['tidy']?.status, 'fixture').toBe(
         'completed',
       );
       await resumeRun(run.id, 's', runs, workflows, {});
       await advanceRun(runs, DEF, { runId: run.id, registry });
     }
-    const gate = (await runs.get(run.id)).pending_gate!.gate_id;
+    const gate = (await runs.get(run.id)).record.pending_gate!.gate_id;
     return { home, runs, workflows, registry, runId: run.id, gate, tidyRuns: () => tidy };
   }
 

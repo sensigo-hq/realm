@@ -57,14 +57,10 @@ describe('#715 (a) — the docs sentences', () => {
     // C2 (create), B2 (update, claimStep at a location), C15 (another process).
     claim(
       ENV,
-      'A store opened there takes the time from that file when it creates a run, starts a step or writes a run with `update`, so every process that opens the folder reads the same time (added after version 0.48.0).',
+      "A store opened there takes the time from that file when it creates a run, starts a step, writes a run with `update`, records a step's result or reads a run, so every process that opens the folder reads the same time (added after version 0.48.0).",
     );
-    // Correction 1 (C-9): json-file-store-clock-715.test.ts, the C-9 cell (settleStep's wall year,
-    // updated before created).
-    claim(
-      ENV,
-      "When a step's result is recorded, the run's `updated_at` still comes from this computer's clock, so on a test location a run can read updated before it was created.",
-    );
+    // #715 (b): the C-9 sentence (a settle stamped from this computer's clock) is gone — the settle
+    // takes the store's reading (json-file-store-clock-715.test.ts, the settle cells).
     // C3.
     claim(
       ENV,
@@ -123,8 +119,16 @@ describe('#715 (a) — the docs sentences', () => {
     );
     // The reach cell below (only the stores take a reading); D7–D12 (durations are monotonic).
     claim(CORE, 'The clock does not stamp times taken outside the store, or durations.');
-    // B1 J10, J11–J15; B10 M7.
-    claim(CORE, 'In this version `settleStep`, `stampSeal` and the reads do not use it.');
+    // #715 (b): B1 J15 (reads one each), the SETTLE_ONE_READING and OPEN_GATE_MINTS_AT_AT laws, M7/M8.
+    claim(
+      CORE,
+      "`settleStep` reads it once too, inside its write, and every time it records comes from that reading: `updated_at`, a gate's `opened_at` and `expires_at`, an ended run's `abandoned_at`.",
+    );
+    claim(
+      CORE,
+      'A read takes one reading before it loads: `get` returns `{ record, at }`, and `list` returns `{ snapshots, read_at, consistent_snapshot }`, each record with the reading it is judged at.',
+    );
+    claim(CORE, '`stampSeal` does not read the clock.');
     // A1, A3.
     claim(
       CORE,
@@ -138,12 +142,14 @@ describe('#715 (a) — the docs sentences', () => {
     // C1, B11, A6.
     claim(
       CORE,
-      '`systemClock` is the clock a store uses when it is given none; its `at` throws, because it has nowhere to report a failure.',
+      // #715 (b) commit 4: the rest of this paragraph (its `at` works since commit 3) is pinned in
+      // docs-715b.test.ts with its cells.
+      '`systemClock` is the clock a store uses when it is given none.',
     );
     // A8, A7.
     claim(
       CORE,
-      "`takeReading(clock, record?)` reads the clock once for a write. When the record's `updated_at` is ahead of the clock, the reading moves up to it, but by 5 seconds at most.",
+      "`takeReading(clock, record?, delta?)` reads the clock once for a write. When the record's `updated_at` is ahead of the clock, the reading moves up to it, but by 5 seconds at most.",
     );
     // A10, B4.
     claim(
@@ -193,10 +199,13 @@ describe('#715 (a) — the docs sentences', () => {
       TESTING,
       '`createTestLocation` refuses an empty root, and a root that is the working directory or a folder above it, judged by the path as written: a symlink or junction to one is not followed, and the parent of a working directory whose own name starts with `..` is not recognised as a folder above it. It also refuses a root that already holds a clock file; to use that folder as an ordinary store again, delete its `.realm-test-clock` file.',
     );
-    // Correction 1 (C-9): B2 (create, update, claimStep stamp the location) and the C-9 cell.
+    // Correction 1 (C-9), REVERSED by #715 (b) commit 1 (the page caught up in commit 5): B2 (create,
+    // update, claimStep stamp the location) and json-file-store-clock-715's "(C-9 reversed) — on a test
+    // location, claimStep and settleStep both stamp the location"; the store clock contract's
+    // SETTLE_ONE_READING on the location route.
     claim(
       TESTING,
-      "The location's time stamps a run's `created_at`, a claim's `since` and deadline, and the `updated_at` that `create`, `update` and `claimStep` write; `settleStep` still stamps `updated_at` with this computer's clock, so a run whose step settled can read updated before it was created.",
+      "The location's time stamps everything a store opened there records: a run's `created_at` and `updated_at`, a claim's `since` and deadline, and every time `settleStep` records.",
     );
     // C9; C7, C7b; C8.
     claim(
@@ -204,11 +213,12 @@ describe('#715 (a) — the docs sentences', () => {
       '`set` to an earlier time runs nothing and moves the clock back. A function given to `at` sees the clock at its own time, never earlier. An `advance` runs every due function even when some throw, then rejects with their errors.',
     );
     // Correction 1 (C-2) and 2 (R-3c): the source scan (lint-test-location-715.test.ts: its
-    // PACKAGES, NEEDLES and ALLOWED are the sentence's four packages, names and exceptions); C1, C2
-    // (the store reads the file beside runs/, and none elsewhere).
+    // PACKAGES, NEEDLES and ALLOWED are the sentence's four packages, names and exceptions; its file
+    // set cell: `.ts` and `.mjs`, no test file — #715 (b), #913's R2-4); C1, C2 (the store reads the
+    // file beside runs/, and none elsewhere).
     claim(
       TESTING,
-      "A test of Realm's own source keeps `createTestLocation`, and the clock file's helpers `@sensigo/realm` exports for this package, out of the `src` folders of Realm's four packages, except the files that define or re-export them, the file store's own file (it reads the clock file, and a comment there names it) and this package: no command, server or library there creates a test location or writes a clock file.",
+      "A test of Realm's own source keeps `createTestLocation`, and the clock file's helpers `@sensigo/realm` exports for this package, out of the `.ts` and `.mjs` files in the `src` folders of Realm's four packages, except test files (`*.test.ts`, which create test locations), the files that define or re-export them, the file store's own file (it reads the clock file, and a comment there names it) and this package: no command, server or library there creates a test location or writes a clock file.",
     );
     claim(TESTING, 'The file store reads a clock file, only when it sits beside `runs/`.');
     // The type count cell below.
@@ -220,7 +230,7 @@ describe('#715 (a) — the docs sentences', () => {
     );
     claim(
       TESTING,
-      '| `storeClockContract` | `RunStore`, on a clock the test moves | 5 | 5, with `InMemoryStore` |',
+      '| `storeClockContract` | `RunStore`, on a clock the test moves | 12 | 12, with `InMemoryStore` |',
     );
     // STORE_CLOCK_LAWS has no STORE_RELEASE_LINE_TRUE (C16 runs its five laws).
     claim(TESTING, 'Each of the first four contracts has the law `STORE_RELEASE_LINE_TRUE`:');
@@ -258,16 +268,19 @@ describe('#715 (a) — the docs sentences', () => {
       'At a step back of exactly 5 seconds the 5-second cap wins: that run is stamped equal to the run it replaces, not after it',
     );
     claim(TESTING, "that run's time is lifted more than 5 seconds");
-    claim(TESTING, '`get`, `list` or `stampSeal` reads the clock (on the `clock` route only)');
+    claim(
+      TESTING,
+      '`get`, `list` or `listWithDiagnostics` reads the clock other than once, or `stampSeal`, `listRunIds`, `statAllForRun` or `deleteAllForRun` reads it (on the `clock` route only)',
+    );
     // Correction 1 (C-4): store-clock-in-memory.test.ts (C16 with the hook; the wiring cell without it).
     claim(
       TESTING,
-      "| `seedLegacyTerminal` | If the store has `stampSeal`: writes an ended run that has no record of how it ended into the store the route built for the case, past the store's own checks, and returns it; without it, the `READS_SPEND_NO_READING` case fails, saying that the hook is missing. |",
+      "| `seedLegacyTerminal` | If the store has `stampSeal`: writes an ended run that has no record of how it ended into the store the route built for the case, past the store's own checks, and returns it; without it, the `READS_ONE_READING` case fails, saying that the hook is missing. |",
     );
     // C17; the location adapter's NOT_RUN (store-clock.contract.test.ts).
     claim(
       TESTING,
-      "A failing case's message starts with its law's name. On the `location` route the reads cannot be counted, so a file running that route names `READS_SPEND_NO_READING` in its `NOT_RUN`.",
+      "A failing case's message starts with its law's name. On the `location` route the reads cannot be counted, so a file running that route names `READS_ONE_READING`, `KEYED_FIRST_CREATE_ONE_READING` and `SNAPSHOT_AT_SOUND` in its `NOT_RUN`.",
     );
   });
 
@@ -346,6 +359,8 @@ describe('#715 (a) — the facts two docs sentences rest on', () => {
     expect(callers.sort(), callers.join(', ')).toEqual([
       'packages/core/src/store/json-file-store.ts',
       'packages/testing/src/store/in-memory-store.ts',
+      // #715 (b) B.3: the TCK's own fixture store (`LossyFixtureStore`) reads its clock as a store.
+      'packages/testing/src/store/settlement-contract.ts',
     ]);
   });
 

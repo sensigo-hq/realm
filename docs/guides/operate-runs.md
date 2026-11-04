@@ -37,7 +37,7 @@ By default a run counts as stuck after 24 hours without a change. Set another li
 
 ```text
 Stuck runs (threshold 0m):
-f4dee18d-e5a4-4989-885d-bea2a7b60483  sync v1  running  10/2/2026, 12:35:37 AM  1 step(s)  idle: 0m
+f4dee18d-e5a4-4989-885d-bea2a7b60483  sync v1  running  2026-10-01T21:35:37.208Z  1 step(s)  idle: 0s ago (2026-10-01T21:35:37Z)
 ```
 
 ## Look at one run

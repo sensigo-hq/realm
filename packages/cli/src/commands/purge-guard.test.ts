@@ -159,8 +159,10 @@ describe('#107/#184 PerRunArtifactStore.deleteAllForRun — declarer enumeration
     const callMatch = /purgeRuns\(\s*\{[\s\S]*?\},\s*(\w+),\s*(\w+),?\s*\)/.exec(purgeSrc);
     expect(callMatch, 'purgeRuns(...) call site was not found').not.toBeNull();
     const anchorVarName = callMatch![1]!;
+    // #715 (b) (02 §C.3): `openRunStore()` is the file store a command opens (it says once on stderr
+    // when it is a test location's) — the same JsonFileStore instance kind.
     const anchorDeclMatch = new RegExp(
-      `\\bconst\\s+${anchorVarName}\\s*=\\s*new\\s+JsonFileStore\\(`,
+      `\\bconst\\s+${anchorVarName}\\s*=\\s*(?:new\\s+JsonFileStore|openRunStore)\\(`,
     ).exec(purgeSrc);
     expect(
       anchorDeclMatch,

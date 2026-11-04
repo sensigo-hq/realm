@@ -88,7 +88,7 @@ describe(
 
     /** A run where a caller drives `first`, `second` and `fromParams`, and the engine the rest. */
     async function ranAll(): Promise<string> {
-      const { run } = await runStore.create({
+      const { record: run } = await runStore.create({
         workflowId: WF.id,
         workflowVersion: 1,
         params: { x: 1 },
@@ -138,7 +138,7 @@ describe(
         fromDep: "Output source: dependency — 'first''s recorded output",
         fromTwo: 'Output source: none — nothing to copy, so {} was recorded',
       });
-      const { run: other } = await runStore.create({
+      const { record: other } = await runStore.create({
         workflowId: WF.id,
         workflowVersion: 1,
         params: {},
@@ -153,7 +153,7 @@ describe(
 
     it('an entry written before the field: `not recorded`, never a source (predates_output_source)', async () => {
       const id = await ranAll();
-      const record = await runStore.get(id);
+      const { record: record } = await runStore.get(id);
       await runStore.update({
         ...record,
         evidence: record.evidence.map(({ output_source: _old, ...rest }) => rest),

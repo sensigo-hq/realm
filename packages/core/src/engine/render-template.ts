@@ -75,7 +75,21 @@ const DATE_PRESETS: Record<string, (d: Date) => string> = {
  * Applies a single named filter to a value and returns a FilterResult.
  * Exported for direct testing of individual filter behaviour.
  */
-export function applyFilter(value: unknown, filterName: string, args: string[]): FilterResult {
+/**
+ * #715 (b) (02 §D.4, D6-22): the instant a template is rendered at, from its caller — the filter
+ * reads no clock. `{ at }`: a text rendered for one reply (a step's prompt), judged at that reply's
+ * snapshot. `'stored'`: a text stored in a record (a question's message), where time is written as
+ * an absolute instant (a relative phrase would be false by the time anyone reads it).
+ */
+export type RenderTime = { at: Date } | 'stored';
+
+export function applyFilter(
+  value: unknown,
+  filterName: string,
+  args: string[],
+  // #715 (b) (02 §D.4): the render instant; with none, `from_now` leaves its placeholder (no clock).
+  time?: RenderTime,
+): FilterResult {
   switch (filterName) {
     case 'bullets': {
       if (!Array.isArray(value)) return { ok: false, reason: 'type_mismatch' };
@@ -351,8 +365,12 @@ export function applyFilter(value: unknown, filterName: string, args: string[]):
       if (typeof value !== 'string') return { ok: false, reason: 'type_mismatch' };
       const d = new Date(value);
       if (isNaN(d.getTime())) return { ok: false, reason: 'type_mismatch' };
+      // #715 (b) (02 §D.4, D6-22): no clock read — the caller's instant, or the absolute instant
+      // in a stored text; with neither, the placeholder stays.
+      if (time === undefined) return { ok: false, reason: 'type_mismatch' };
+      if (time === 'stored') return { ok: true, value: d.toISOString() };
       const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
-      const diffMs = d.getTime() - Date.now();
+      const diffMs = d.getTime() - time.at.getTime();
       const diffSec = Math.round(diffMs / 1000);
       const absSec = Math.abs(diffSec);
       if (absSec < 60) return { ok: true, value: rtf.format(diffSec, 'second') };
@@ -446,6 +464,12 @@ export interface RenderTemplateOptions {
    * scan for unresolved placeholders reads the same text it read before the hook.
    */
   onSubstitution?: (rendered: string, path: string) => string;
+  /**
+   * #715 (b) (02 §D.4, D6-22): the instant the template is rendered at — `{ at }` for a text rendered
+   * for one reply, `'stored'` for a text stored in a record (time written as an absolute instant).
+   * With none, a `from_now` placeholder is left as written: the filter never reads a clock.
+   */
+  time?: RenderTime;
 }
 
 /**
@@ -513,7 +537,7 @@ export function renderTemplate(
     let current: unknown = rawValue;
 
     for (const { name, args } of filters) {
-      const result = applyFilter(current, name, args);
+      const result = applyFilter(current, name, args, options?.time);
       if (!result.ok) {
         if (result.reason === 'unknown_filter') {
           if (options?.strict === true) {

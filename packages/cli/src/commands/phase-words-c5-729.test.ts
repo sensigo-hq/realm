@@ -18,7 +18,6 @@ import {
   JsonWorkflowStore,
   advanceRun,
   executeStep,
-  type RunRecord,
   type WorkflowDefinition,
 } from '@sensigo/realm';
 
@@ -464,7 +463,11 @@ describe('#729 PR-3 correction 5 (J-2) — `realm run respond` prints the phase 
         : {}),
     });
     const runs = new JsonFileStore(join(home, '.realm', 'runs'));
-    const { run } = await runs.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const { record: run } = await runs.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
     const opened = await executeStep(runs, def, {
       runId: run.id,
       command: 'confirm',
@@ -473,7 +476,7 @@ describe('#729 PR-3 correction 5 (J-2) — `realm run respond` prints the phase 
     });
     if (opened.status !== 'confirm_required') throw new Error(`fixture: ${opened.status}`);
     if (expired) {
-      const record: RunRecord = await runs.get(run.id);
+      const { record: record } = await runs.get(run.id);
       await runs.update({
         ...record,
         pending_gate: {
