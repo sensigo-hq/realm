@@ -130,10 +130,14 @@ export type {
   ValidationErrorSummaryEntry,
 } from './observability/failed-attempt-record.js';
 export {
-  FailedAttemptStore,
+  JsonFileFailedAttemptStore,
   FAILED_ATTEMPT_SIDECAR_MAX_BYTES,
 } from './store/failed-attempt-store.js';
-export type { FailedAttemptReadResult } from './store/failed-attempt-store.js';
+export type { FailedAttemptStore, FailedAttemptReadResult } from './store/failed-attempt-store.js';
+// #616 B1: the store interfaces the CLI kept, owned by the core so another package can implement
+// them (the CLI's file and in-memory stores implement them).
+export type { DedupStore } from './store/dedup-store.js';
+export type { ReplayStore, ReplayRecord, ReplayStepResult } from './store/replay-store.js';
 export type { StepDispatcher, ExecuteStepOptions } from './engine/execution-loop.js';
 export {
   submitHumanResponse,

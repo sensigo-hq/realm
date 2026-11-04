@@ -16,7 +16,8 @@ import { describe, it, expect } from 'vitest';
 import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { JsonFileReplayStore, type ReplayRecord } from '../store/replay-store.js';
+import type { ReplayRecord } from '@sensigo/realm';
+import { JsonFileReplayStore } from '../store/replay-store.js';
 
 describe('JsonFileReplayStore — construction-time home resolution (issue #285)', () => {
   it('resolves the default replaysDir under $HOME AT CONSTRUCTION TIME — red-first: this pin FAILS on the module-scope-capture code this PR removes', async () => {
