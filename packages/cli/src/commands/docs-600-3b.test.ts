@@ -103,8 +103,10 @@ describe('caching 3-B Part C — the head on Anthropic (rows 8, 9, A3, B8)', () 
     }
   });
 
-  it('row 10: the start-line transcripts carry row 2’s words', () => {
-    // Row 2's words: `start-line-600.test.ts` (FIX), `prompt-cache-600.test.ts` :243, :263.
+  it('row 10: the start-line transcripts carry row 2’s words, and none keeps the old ones', () => {
+    // Row 2's words: `start-line-600.test.ts` (FIX), `prompt-cache-600.test.ts` :243, :263. The
+    // guide shows the line twice (:51, :154), so a transcript put back to the old words leaves the
+    // new words on the page: the absence of the old words is what turns that one red.
     for (const page of [
       AGENT_GUIDE,
       'docs/reference/cli/realm-agent.md',
@@ -114,7 +116,22 @@ describe('caching 3-B Part C — the head on Anthropic (rows 8, 9, A3, B8)', () 
         page,
         "Caching: Anthropic is asked to cache each step's fixed instructions and the stable start of its prompt for",
       );
+      // (a) red when any transcript on the page holds the old words; (b) prints the page and words.
+      expect(
+        flat(read(page)).includes(
+          "Caching: Anthropic is asked to cache each step's fixed instructions for",
+        ),
+        `${page} still has a start-line transcript in the old words`,
+      ).toBe(false);
     }
+  });
+
+  it('the guide’s Caching-line sentence names the OpenAI key (a Q5 member, :67)', () => {
+    // The start line's OpenAI words: `openai-endpoint-3b.test.ts` (D4).
+    claim(
+      AGENT_GUIDE,
+      'The `Caching:` line says what `realm agent` asks Anthropic to cache, or whether it sends OpenAI a cache key, and where the setting came from;',
+    );
   });
 });
 
