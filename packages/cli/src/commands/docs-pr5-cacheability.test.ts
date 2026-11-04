@@ -148,7 +148,9 @@ describe(
       const v = (args: string[]) => cacheLines(realm(['workflow', 'validate', ...args]).stdout);
       const at01 = project({
         example: '01-code-reviewer',
-        economics: economics('claude-sonnet-4-6', 1024),
+        // Caching 3-B (F2; MA2-3B-IA1-11, 5): the head grew the size, so the minimum moves from 1,024
+        // to 2,048 to keep the page's below example.
+        economics: economics('claude-sonnet-4-6', 2048),
       });
       const fromEconomics01 = v([at01, '--provider', 'anthropic', '--model', 'claude-sonnet-4-6']);
       const at04 = project({
@@ -158,7 +160,8 @@ describe(
       const fromEconomics04 = v([at04, '--provider', 'anthropic', '--model', 'claude-sonnet-5-5']);
       const lines = [
         ...v([ex('01-code-reviewer')]),
-        ...v([ex('01-code-reviewer'), '--floor', '512']),
+        // Caching 3-B: --floor 512 → 1000 keeps the page's near (Anthropic) and below (OpenAI) example.
+        ...v([ex('01-code-reviewer'), '--floor', '1000']),
         fromEconomics01[0]!,
         fromEconomics04[1]!,
         v([ex('03-incident-response'), '--provider', 'anthropic', '--floor', '512'])[0]!,
@@ -343,8 +346,9 @@ describe(
           .split(value)
           .join('<env>');
         return [
-          / — (\S+) 1,010 chars/.exec(line)?.[1] ?? '?',
-          / · (\S+) 515 chars/.exec(line)?.[1] ?? '?',
+          // Caching 3-B (F2): examples/01's sizes with its prompt head (1,010 and 515 before).
+          / — (\S+) 1,655 chars/.exec(line)?.[1] ?? '?',
+          / · (\S+) 1,160 chars/.exec(line)?.[1] ?? '?',
         ];
       };
       const json = (value: string): string[] =>
@@ -441,7 +445,7 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
       2.5,
       5,
       { low: 220, high: 530 },
-      'cache: zh — 1,257 chars ≈ 252–1,163 tokens (estimate) (no schema: realm sends no tool) — near the floor (512, your --floor): not judged from an estimate; --ratio <chars-per-token> narrows it',
+      'cache: zh — 1,263 chars ≈ 253–1,165 tokens (estimate) (no schema: realm sends no tool) — near the floor (512, your --floor): not judged from an estimate; --ratio <chars-per-token> narrows it',
     ]);
   });
 
@@ -451,7 +455,7 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
   it('a minimum: --floor or the economics file, both named when they differ; never below at 512 with a schema; OpenAI strict ends with its tail', () => {
     claim(
       WORKFLOW_PAGE,
-      "**A minimum.** `--floor <tokens>` tests a minimum of your own. With `--provider` and `--model`, the minimum is the one your [economics file](../cache-economics.md#the-cache-minimum) states for the model. When both give one, `--floor` decides. The line names both only when the numbers differ, as in `(1,000, your --floor; your economics file says 512)`; when they are the same, it names only `--floor`. `cannot cache on it` and `long enough to cache` speak for the model only when the minimum is the economics file's; a minimum given by `--floor` reads `at that minimum`. Each provider's size is then followed by its verdict, here with `--floor 512`:",
+      "**A minimum.** `--floor <tokens>` tests a minimum of your own. With `--provider` and `--model`, the minimum is the one your [economics file](../cache-economics.md#the-cache-minimum) states for the model. When both give one, `--floor` decides. The line names both only when the numbers differ, as in `(1,000, your --floor; your economics file says 512)`; when they are the same, it names only `--floor`. `cannot cache on it` and `long enough to cache` speak for the model only when the minimum is the economics file's; a minimum given by `--floor` reads `at that minimum`. Each provider's size is then followed by its verdict, here with `--floor 1000`:",
     );
     claim(
       WORKFLOW_PAGE,
@@ -527,7 +531,8 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
     )[0]!;
     expect([
       line.includes(
-        `1,010 chars ≈ ${Math.ceil(1010 / (4 * 1.15))}–${Math.floor(1010 / (4 * 0.85))} tokens`,
+        // Caching 3-B (F2): examples/01 with its prompt head is 1,655 characters (1,010 before).
+        `1,655 chars ≈ ${Math.ceil(1655 / (4 * 1.15))}–${Math.floor(1655 / (4 * 0.85))} tokens`,
       ),
       line.includes("Anthropic's tool text"),
     ]).toEqual([true, false]);
@@ -598,12 +603,12 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
     const noText = lines([]);
     expect({ flagless, withModel, noText: noText[0] }).toEqual({
       flagless: [
-        'cache: with_profile — anthropic 173 chars ≈ 35–69 tokens (no schema: realm sends no tool) · openai 173 chars ≈ 35–69 tokens (estimates: 2.5–5 chars/token, with margin)',
-        'cache: without_profile — anthropic 155 chars ≈ 31–62 tokens (no schema: realm sends no tool) · openai 155 chars ≈ 31–62 tokens (estimates: 2.5–5 chars/token, with margin)',
+        'cache: with_profile — anthropic 179 chars ≈ 36–72 tokens (no schema: realm sends no tool) · openai 179 chars ≈ 36–72 tokens (estimates: 2.5–5 chars/token, with margin)',
+        'cache: without_profile — anthropic 161 chars ≈ 33–65 tokens (no schema: realm sends no tool) · openai 161 chars ≈ 33–65 tokens (estimates: 2.5–5 chars/token, with margin)',
       ],
       withModel: [
-        'cache: with_profile — 173 chars ≈ 35–69 tokens (estimate) (no schema: realm sends no tool) — economics not checked (no project folder to read it from)',
-        'cache: without_profile — 155 chars ≈ 31–62 tokens (estimate) (no schema: realm sends no tool) — economics not checked (no project folder to read it from)',
+        'cache: with_profile — 179 chars ≈ 36–72 tokens (estimate) (no schema: realm sends no tool) — economics not checked (no project folder to read it from)',
+        'cache: without_profile — 161 chars ≈ 33–65 tokens (estimate) (no schema: realm sends no tool) — economics not checked (no project folder to read it from)',
       ],
       noText:
         'cache: with_profile — profile text not stored in the registered copy: sizes not computed — register the workflow again to store it',
@@ -748,7 +753,7 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
     for (const sentence of [
       "A step below the minimum names no sharing, because it cannot cache whatever it shares; on OpenAI with `structured_output: strict` and a model that is not an `o1` model, where the provider's own schema text is not counted, the clause stays.",
       'Two identical strict steps still name each other, on both providers, unless a floor puts them below the minimum on Anthropic or with an `o1` model; two strict steps with different schemas name nothing.',
-      'When the two providers would not name the same steps, each provider that names any starts its part with its own name, once, as in `— anthropic: shares its whole fixed part with handle_bug, …` or `— openai: shares its whole fixed part with strict_b`; a provider that names none is left out, and with `--provider` there is one layout and no label.',
+      'When the two providers would not name the same steps, each provider that names any starts its part with its own name, once, as in `— openai: shares its whole fixed part with strict_b`; a provider that names none is left out, and with `--provider` there is one layout and no label.',
     ])
       claim(WORKFLOW_PAGE, sentence);
     const strict = (id: string): string =>
@@ -840,7 +845,8 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
     expect({
       ex06: tail(ex('06-ticket-router'), ['--floor', '512'], 'handle_billing'),
       twins2000: [
-        both2000.includes(' · openai 503 chars '),
+        // Caching 3-B (F2): the twins' prompt `Do it.` is their stable head (+6 chars: 503 → 509).
+        both2000.includes(' · openai 509 chars '),
         tail(twins, ['--floor', '2000'], 'strict_a'),
       ],
       ex06openai: tail(
@@ -850,7 +856,10 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
       ),
       twinsNoFloor: tail(twins, [], 'strict_a'),
     }).toEqual({
-      ex06: 'anthropic: shares its whole fixed part with handle_bug, handle_feature, handle_account, handle_other',
+      // Caching 3-B (F2; MA2-3B-IA1-11, 3): handle_billing's prompt head differs from its siblings',
+      // so ex06 names no share now; its tail is OpenAI's below verdict. The labelled form stays
+      // pinned by `twins2000` (`openai: …`).
+      ex06: 'below the floor (512, your --floor): this step cannot cache at that minimum',
       twins2000: [true, `openai: ${SHARES_B}`],
       ex06openai: `below the floor (512, your --floor): ${BELOW}`,
       twinsNoFloor: SHARES_B,
@@ -870,7 +879,7 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_00
     );
     claim(
       WORKFLOW_PAGE,
-      "**Steps that share a fixed part.** The line names the other steps whose fixed part is the same as this step's: `shares its whole fixed part with …`. On Anthropic nothing else is named: Anthropic writes its cache entry at the block Realm marks, and a read needs every character up to it, so two steps that part earlier share no entry. On OpenAI nothing else is named either: Realm sends the profile, Realm's instructions and the schema in one system message, and on gpt-5.6-luna a start two steps shared inside that message was not read (Realm's own check, 2026-10-28). A step below the minimum names no sharing, because it cannot cache whatever it shares; on OpenAI with `structured_output: strict` and a model that is not an `o1` model, where the provider's own schema text is not counted, the clause stays. The clause comes back with a lower floor or a longer fixed part. Two steps that differ only in `structured_output: strict`, one strict and one not, are not named to each other: a strict step sends a different fixed part. With an `o1` model on OpenAI they are named, unless a floor puts them below the minimum: an `o1` model is sent the same fixed part for a strict step and a plain one. Two identical strict steps still name each other, on both providers, unless a floor puts them below the minimum on Anthropic or with an `o1` model; two strict steps with different schemas name nothing. A list of more than six steps names five and ends `and N more`. When the two providers would not name the same steps, each provider that names any starts its part with its own name, once, as in `— anthropic: shares its whole fixed part with handle_bug, …` or `— openai: shares its whole fixed part with strict_b`; a provider that names none is left out, and with `--provider` there is one layout and no label. From example 05, with `--provider anthropic`:",
+      "**Steps that share a fixed part.** The line names the other steps whose fixed part is the same as this step's: `shares its whole fixed part with …`. On Anthropic nothing else is named: Anthropic writes its cache entry at the block Realm marks, and a read needs every character up to it, so two steps that part earlier share no entry. On OpenAI nothing else is named either: Realm sends the profile, Realm's instructions and the schema in one system message, and on gpt-5.6-luna a start two steps shared inside that message was not read (Realm's own check, 2026-10-28). A step below the minimum names no sharing, because it cannot cache whatever it shares; on OpenAI with `structured_output: strict` and a model that is not an `o1` model, where the provider's own schema text is not counted, the clause stays. The clause comes back with a lower floor or a longer fixed part. Two steps that differ only in `structured_output: strict`, one strict and one not, are not named to each other: a strict step sends a different fixed part. With an `o1` model on OpenAI they are named, unless a floor puts them below the minimum: an `o1` model is sent the same fixed part for a strict step and a plain one. Two identical strict steps still name each other, on both providers, unless a floor puts them below the minimum on Anthropic or with an `o1` model; two strict steps with different schemas name nothing. A list of more than six steps names five and ends `and N more`. When the two providers would not name the same steps, each provider that names any starts its part with its own name, once, as in `— openai: shares its whole fixed part with strict_b`; a provider that names none is left out, and with `--provider` there is one layout and no label. The start of each step's prompt is part of the fixed part, so two steps whose prompts start differently share no whole fixed part (added after version 0.48.0). Example 05's two review steps send the same profile and schema but start their prompts differently, so, with `--provider anthropic`, neither names the other:",
     );
     const step = (id: string, required: string, profile?: string): string =>
       `  ${id}:\n    description: s\n    execution: agent\n    prompt: Do it.\n${profile !== undefined ? `    agent_profile: ${profile}\n` : ''}    output_schema:\n      type: object\n      additionalProperties: false\n      required: [${required}]\n      properties:\n        ${required}: { type: string }\n`;
@@ -1375,7 +1384,7 @@ describe(
       ).toEqual({
         held: 16,
         // D1 (G-1): the copy holds the text, so the step is sized and no profile row prints.
-        row: 'cache: with_profile — anthropic 173 chars ≈ 35–69 tokens (no schema: realm sends no tool) · openai 173 chars ≈ 35–69 tokens (estimates: 2.5–5 chars/token, with margin)',
+        row: 'cache: with_profile — anthropic 179 chars ≈ 36–72 tokens (no schema: realm sends no tool) · openai 179 chars ≈ 36–72 tokens (estimates: 2.5–5 chars/token, with margin)',
         notRun: true,
       });
       // Correction 3 (I-4): one check left out reads `1 check not run:`. A workflow in a subfolder of
@@ -1406,7 +1415,7 @@ describe(
       ).toEqual({
         notRun: `1 check not run: agent-profile file resolution (${oneReason})`,
         // D1 (G-1): sized from the stored text, as above.
-        row: 'cache: with_profile — anthropic 173 chars ≈ 35–69 tokens (no schema: realm sends no tool) · openai 173 chars ≈ 35–69 tokens (estimates: 2.5–5 chars/token, with margin)',
+        row: 'cache: with_profile — anthropic 179 chars ≈ 36–72 tokens (no schema: realm sends no tool) · openai 179 chars ≈ 36–72 tokens (estimates: 2.5–5 chars/token, with margin)',
       });
     });
   },
@@ -1516,7 +1525,7 @@ describe("correction 3, I-10 and I-11: what each provider's page says, dated", (
   // dropped); (b) prints the page and the paragraph.
   it("I-11: on Anthropic, two steps that share a fixed part read each other's entry only after the first response starts", () => {
     const paragraph =
-      'Anthropic\'s page says (2026-10-28) that "a cache entry only becomes available after the first response starts", and advises waiting for the first response before sending parallel requests that need hits. On Anthropic, two steps that share a fixed part, like these two, read each other\'s entry only if the second request is sent after the first response has started.';
+      'Anthropic\'s page says (2026-10-28) that "a cache entry only becomes available after the first response starts", and advises waiting for the first response before sending parallel requests that need hits. On Anthropic, two steps that share a fixed part read each other\'s entry only if the second request is sent after the first response has started.';
     const drives =
       'One `realm agent` drive takes the ready steps one after the other, so it sends these two in turn, the second after the first response. Runs started together (for example by `realm listen`) each have their own drive, and each sends its own steps in turn. But the runs overlap: the first step of two such runs goes out at the same moment, and neither request reads the entry the other is still writing. A host that sends the two steps itself can send them together.';
     claim(WORKFLOW_PAGE, paragraph);
@@ -1524,7 +1533,8 @@ describe("correction 3, I-10 and I-11: what each provider's page says, dated", (
     expect(
       flat(read(WORKFLOW_PAGE)).includes(
         flat(
-          `— shares its whole fixed part with review_performance\n\`\`\`\n\n${paragraph} ${drives}\n\nAfter the step lines come`,
+          // Caching 3-B (F2): the example-05 transcript now ends without a share (their heads differ).
+          `— the floor was not judged: no --model named\n\`\`\`\n\n${paragraph} ${drives}\n\nAfter the step lines come`,
         ),
       ),
       'the paragraph does not follow the example-05 transcript',
@@ -1614,7 +1624,7 @@ describe('the --json row, the CHANGELOG, and review-note on its page', { timeout
     );
     claim(
       WORKFLOW_PAGE,
-      "An agent step sends the same text ahead of its input on every call: its profile, Realm's instructions and its schema. A provider can cache that fixed part, but not when it is shorter than the model's minimum, and then it says nothing. `validate`, `register` and `watch` print one `cache:` line for each agent step: the size of its fixed part, the other steps that share it (none for a step below the minimum, except a `structured_output: strict` step on OpenAI with a model that is not an `o1` model), and, when a minimum is known, whether the step can be cached at all. No model is called, and no key is read. An `o1` model, on this page, is a model whose name is `o1` or starts with `o1-`, in any case (`o1`, `o1-mini`); `o1mini` and `openai/o1` are not. Realm looks only at the name you give `--model`. These lines were added after version 0.48.0.",
+      "An agent step sends the same text ahead of its input on every call: its profile, Realm's instructions, its schema and the start of its prompt, up to the prompt's first placeholder whose value can differ between runs (the prompt's start added after version 0.48.0). A provider can cache that fixed part, but not when it is shorter than the model's minimum, and then it says nothing. `validate`, `register` and `watch` print one `cache:` line for each agent step: the size of its fixed part, the other steps that share it (none for a step below the minimum, except a `structured_output: strict` step on OpenAI with a model that is not an `o1` model), and, when a minimum is known, whether the step can be cached at all. No model is called, and no key is read. An `o1` model, on this page, is a model whose name is `o1` or starts with `o1-`, in any case (`o1`, `o1-mini`); `o1mini` and `openai/o1` are not. Realm looks only at the name you give `--model`. These lines were added after version 0.48.0.",
     );
     const dir = project({
       example: '01-code-reviewer',

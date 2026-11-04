@@ -539,11 +539,14 @@ export type {
 export {
   cacheVerdict,
   describeCacheability,
+  isSizeBlock,
   DEFAULT_CHARS_PER_TOKEN_HIGH,
   DEFAULT_CHARS_PER_TOKEN_LOW,
 } from './economics/cacheability.js';
 export type {
   CacheBlock,
+  CacheSizeBlock,
+  CacheLayoutBlock,
   CacheBlockSegment,
   CacheVerdict,
   CacheNotJudgedCause,

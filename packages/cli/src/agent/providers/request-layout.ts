@@ -2,6 +2,8 @@
 // sends ahead of an agent step's input, as blocks in wire order. A block is stable when it is the same
 // on every call of its step (the fixed part a provider can cache); each stable block names its
 // segments, the pieces realm builds it from, so a reader can tell where two steps' fixed parts part.
+// Caching 3-B (F2): after the system text comes the stable start of the step's prompt, a block known
+// by its disclosed SIZE only (`prompt-head`, MA1-3B-01): the describer never holds its text.
 //
 // The single-shot request builders (`anthropic-provider.ts`, `openai-provider.ts` — the plain and the
 // strict path — and `openai-reasoning-provider.ts`) are NOT built from this: the describer is a mirror,
@@ -9,7 +11,7 @@
 // tool is the exception: both sides build it with the one function below, so no cell can catch a
 // drift in it; the move is what prevents one. The tools-loop path and `performFinalExtraction` are out
 // of its scope: a step with tools is not described (realm marks its turns as it sends them).
-import type { CacheBlock } from '@sensigo/realm';
+import type { CacheBlock, CacheSizeBlock } from '@sensigo/realm';
 import { buildSystemPrompt } from './agent-utils.js';
 
 /** The tool offered at `tool_choice:'auto'` so the model can return structured output directly —
@@ -68,11 +70,26 @@ export interface Block extends CacheBlock {
   value?: unknown;
 }
 
+/** A block of a described layout: a text block, or (caching 3-B) the prompt's head by its size. */
+export type LayoutBlock = Block | CacheSizeBlock;
+
 /** What a step's request is built from. */
 export interface RequestParts {
   profile?: string;
   schema?: Record<string, unknown>;
   strict: boolean;
+  /**
+   * Caching 3-B (F2): the stable start of the step's prompt, by its disclosed SIZE only (the
+   * describer never holds its text: MA1-3B-01), with the comparison number its host interned.
+   */
+  head?: { chars: number; asciiChars: number; group: number };
+}
+
+/** Caching 3-B (F2): the size-only block of the prompt's stable head, when the step has one. */
+function headBlock(parts: RequestParts): CacheSizeBlock[] {
+  return parts.head === undefined || parts.head.chars === 0
+    ? []
+    : [{ name: 'prompt-head', stable: true, ...parts.head }];
 }
 
 /** The system prompt, with its segments: the profile (and its `\n\n`), realm's base, the schema line. */
@@ -122,7 +139,8 @@ function toolsBlock(schema: Record<string, unknown>, strict: boolean): Block {
   };
 }
 
-/** The part after the fixed one: the step's input, unknown at admission. */
+/** The part after the fixed one: the step's input — after its prompt's stable head (caching 3-B), the
+ *  rest of the prompt, unknown at admission. */
 const INPUT: Block = { name: 'messages', text: '', stable: false, segments: [] };
 
 /**
@@ -135,17 +153,18 @@ const INPUT: Block = { name: 'messages', text: '', stable: false, segments: [] }
  * - openai-reasoning: `messages-head` (the system prompt and the `\n\n` before the input, folded into
  *   the user message) stable, then the input.
  */
-export function describeRequestLayout(adapter: RequestAdapter, parts: RequestParts): Block[] {
+export function describeRequestLayout(adapter: RequestAdapter, parts: RequestParts): LayoutBlock[] {
   const hasSchema = parts.schema !== undefined;
   switch (adapter) {
     case 'anthropic':
       return [
         ...(hasSchema ? [toolsBlock(parts.schema!, parts.strict)] : []),
         systemBlock('system', parts, hasSchema),
+        ...headBlock(parts),
         INPUT,
       ];
     case 'openai': {
-      const blocks: Block[] = [];
+      const blocks: LayoutBlock[] = [];
       if (parts.strict && hasSchema) {
         const value = {
           type: 'json_schema',
@@ -160,12 +179,13 @@ export function describeRequestLayout(adapter: RequestAdapter, parts: RequestPar
           segments: [{ name: 'response_format', start: 0, end: text.length }],
         });
       }
-      blocks.push(systemBlock('system', parts, false), INPUT);
+      blocks.push(systemBlock('system', parts, false), ...headBlock(parts), INPUT);
       return blocks;
     }
     case 'openai-reasoning':
       return [
         systemBlock('messages-head', parts, false, '\n\n'),
+        ...headBlock(parts),
         { ...INPUT, name: 'messages-tail' },
       ];
   }

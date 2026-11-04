@@ -14,6 +14,16 @@ const read = (page: string): string => readFileSync(join(ROOT, page), 'utf8');
 function claim(page: string, sentence: string): void {
   expect(flat(read(page)), `${page} no longer says: ${sentence}`).toContain(flat(sentence));
 }
+/** #871's form: the section that holds this unit's entry — `[Unreleased]` until a release renames
+ *  it, then the first release section above `[0.48.0]`. */
+function claimChangelog(sentence: string): void {
+  const text = read('CHANGELOG.md');
+  const start = text.includes('## [Unreleased]')
+    ? text.indexOf('## [Unreleased]')
+    : text.indexOf('\n## [') + 1;
+  const section = text.slice(start, text.indexOf('\n## [0.48.0]'));
+  expect(flat(section), `the CHANGELOG no longer says: ${sentence}`).toContain(flat(sentence));
+}
 
 const MCP_GUIDE = 'docs/guides/cache-an-mcp-step-prompt.md';
 
@@ -210,5 +220,63 @@ describe('caching 3-B Part E — the gateway rule (rows 21, 23)', () => {
       'docs/reference/run-record-and-export.md',
       "When the endpoint's refusal of the cache fields was recorded (`cache_controls_rejected`), that clause is not printed, and `realm run inspect` says the endpoint refused the cache fields instead (added after version 0.48.0).",
     );
+  });
+});
+
+describe('caching 3-B Part F — the reference text, the describer and the CHANGELOG', () => {
+  it('row 16 and F2: the fixed part counts the prompt’s stable start; different starts share nothing', () => {
+    // `validate-head-3b.test.ts` (a)–(c); core `cacheability-size-3b.test.ts`.
+    claim(
+      'docs/reference/cli/realm-workflow.md',
+      "An agent step sends the same text ahead of its input on every call: its profile, Realm's instructions, its schema and the start of its prompt, up to the prompt's first placeholder whose value can differ between runs (the prompt's start added after version 0.48.0).",
+    );
+    claim(
+      'docs/reference/cli/realm-workflow.md',
+      "The start of each step's prompt is part of the fixed part, so two steps whose prompts start differently share no whole fixed part (added after version 0.48.0).",
+    );
+  });
+
+  it('the record page lists the split’s facts, and the store contract holds them', () => {
+    // The facts: `anthropic-provider-head-3b.test.ts`, `openai-cache-key-3b.test.ts`,
+    // `gateway-rule-3b.test.ts`; the contract: testing `usage-record-law-600.test.ts`.
+    claim(
+      'docs/reference/run-record-and-export.md',
+      'A request whose step prompt Realm split at its stable start (its head) also carries the split’s facts (added after version 0.48.0):'.replace(
+        '’',
+        "'",
+      ),
+    );
+    claim(
+      'docs/reference/testing-package.md',
+      "It also comes back with the split's facts: `prefix_sha256`, `prefix_chars`, `prefix_parts`, `cache_marked`, `request_strict_sent`, `cache_controls_rejected` and `cache_key_sent` (added after version 0.48.0).",
+    );
+  });
+
+  it('core-library.md names the four new exports', () => {
+    // core `redaction-split-3b.test.ts`, `split-facts-3b.test.ts` (A5).
+    for (const name of [
+      '`renderStepPromptWithBoundary(definition, step)`',
+      '`discloseSplit(text, cut, set, tier)`',
+      '`discloseSplitSize(text, cut, set, tier)`',
+      '`discloseLeaf(text, set, tier)`',
+    ])
+      claim('docs/reference/core-library.md', `| ${name} |`);
+  });
+
+  it('CHANGELOG: one bullet per behaviour and per widened shape', () => {
+    for (const lead of [
+      "**`realm agent` caches the stable start of each agent step's prompt on Anthropic.**",
+      '**OpenAI gets a cache key.**',
+      "**An MCP `run_step` entry carries `stable_prefix`: `{ chars, unit: 'utf16', sha256 }`.**",
+      "**On a custom endpoint, a 400 that names Realm's cache fields drops them.**",
+      '**Each request whose prompt was split records the split:**',
+      "**`ProviderCapabilities.promptCache` may be `'provider'`**",
+      '**`callStepWithMeta` and `callStepWithTools` take `cachePrefixChars`,**',
+      '**`McpNextAction` gains `stable_prefix`.**',
+      '**The composed cost view gains `CostView.cache_head` and `CostView.cache_fields_refused`, and `CacheRequestedEntry.key_sent`.**',
+      '**BREAKING: `--prompt-cache` with `--provider openai` is accepted**',
+      "**`realm workflow validate`, `register` and `watch` count the stable start of each step's prompt in its fixed part**",
+    ])
+      claimChangelog(lead);
   });
 });

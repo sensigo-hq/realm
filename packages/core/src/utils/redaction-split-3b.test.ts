@@ -168,16 +168,19 @@ describe('caching 3-B A4 — who may call discloseSplit, and what the size helpe
     ]);
   });
 
-  it("(ii) the describer's files never import discloseSplit", () => {
+  it("(ii) the describer's files size the head with discloseSplitSize, and never hold its text", () => {
     const describer = ['cli/src/agent/providers/request-layout.ts', 'cli/src/lib/cacheability.ts'];
-    // (a) red when the describer imports or calls `discloseSplit` (it may hold only sizes);
-    //     (b) prints each file's verdict.
-    expect(
-      describer.map((f) => [
-        f,
-        /\bdiscloseSplit\b(?!Size)/.test(readFileSync(join(PACKAGES, f), 'utf8')),
-      ]),
-    ).toEqual(describer.map((f) => [f, false]));
+    // The text-returning helpers (MA1-3B-01; MA 2, 2026-11-04): `discloseSplit`, and the CLI's
+    // `discloseForAgentSplit` and `discloseForAgent`.
+    const refused = /\b(discloseSplit|discloseForAgentSplit|discloseForAgent)\b(?!Size)/;
+    // (a) red when the describer imports or calls a text-returning helper (it may hold only
+    //     sizes), or stops sizing the head with discloseSplitSize; (b) prints each file's verdict.
+    expect({
+      refused: describer.map((f) => [f, refused.test(readFileSync(join(PACKAGES, f), 'utf8'))]),
+      sizes: /\bdiscloseSplitSize\(/.test(
+        readFileSync(join(PACKAGES, 'cli/src/lib/cacheability.ts'), 'utf8'),
+      ),
+    }).toEqual({ refused: describer.map((f) => [f, false]), sizes: true });
   });
 
   it("(iii) discloseSplitSize's return type, DisclosedSplitSize, holds numbers only", () => {
