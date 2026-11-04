@@ -183,7 +183,7 @@ const THIS_GUARD_FILE_ISSUE_183 = fileURLToPath(import.meta.url);
  *  anti-recurrence convention). */
 function tckCoveredStores(): Set<string> {
   const covered = new Set<string>();
-  const packages = ['core', 'cli', 'mcp-server', 'testing'];
+  const packages = ['core', 'cli', 'mcp-server', 'testing', 'store-sqlite'];
   for (const pkg of packages) {
     const root = join(PACKAGES_DIR, pkg, 'src');
     for (const file of walkTestFiles(root)) {
@@ -241,7 +241,7 @@ const THIS_GUARD_FILE = fileURLToPath(import.meta.url);
  *  `tckCoveredStores` uses above, for the fenced TCK. */
 function fencedTckCoveredStores(): Set<string> {
   const covered = new Set<string>();
-  const packages = ['core', 'cli', 'mcp-server', 'testing'];
+  const packages = ['core', 'cli', 'mcp-server', 'testing', 'store-sqlite'];
   for (const pkg of packages) {
     const root = join(PACKAGES_DIR, pkg, 'src');
     for (const file of walkTestFiles(root)) {

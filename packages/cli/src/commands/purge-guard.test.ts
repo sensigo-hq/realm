@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 // packages/cli/src/commands → packages/
 const PACKAGES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
-const SCANNED_PACKAGES = ['core', 'cli', 'mcp-server', 'testing'];
+const SCANNED_PACKAGES = ['core', 'cli', 'mcp-server', 'testing', 'store-sqlite'];
 
 /** Every non-test, non-declaration .ts source file under a package's src/. */
 function sourceFiles(pkg: string): string[] {
