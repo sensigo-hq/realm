@@ -561,7 +561,7 @@ describe('composeCostView — the request facts (issue #600 PR 2)', () => {
     const cost = composeStepViews(run)['s']?.attempts[0]?.cost;
     expect({ models: cost?.models, asked: cost?.cache_requested }).toEqual({
       models: { absent_cause: 'none_readable' },
-      asked: { entries: [{ value: 'off' }], reported: 1, of: 1 },
+      asked: { entries: [{ value: 'off', provider: 'anthropic' }], reported: 1, of: 1 },
     });
   });
 

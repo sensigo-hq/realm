@@ -73,7 +73,8 @@ export interface ProviderCapabilities {
    * means Realm asks this provider for nothing. The Anthropic provider declares `'off'` or a
    * lifetime; the OpenAI providers declare `'provider'`, except (#896) the `openai` provider on a
    * GPT-5.6-or-later model at OpenAI's own address ({@link openAiExplicitCacheModel}), which declares
-   * `{ lifetime_s: 1800 }`, or `'off'` under `off`; a provider module may declare any of the three
+   * `{ lifetime_s: 1800 }`, or `'off'` under `off` or when `auto` chose it (unit B: a pending choice
+   * throws, as Anthropic's does); a provider module may declare any of the three
    * (the start line says what it reads, and that `--prompt-cache` does not reach a module).
    */
   promptCache?: 'off' | 'provider' | { lifetime_s: number };
@@ -556,7 +557,8 @@ export async function resolveOpenAiEndpoint(): Promise<RequestEndpoint> {
  *
  * Issue #898: returns the provider and, exactly when it built an Anthropic provider whose `auto`
  * choice is pending (measured gaps), `settleAuto` — that provider's `settleAutoChoice`, bound. The
- * caller settles it from the runner's price file before the provider serves a request.
+ * caller settles it from the runner's price file before the provider serves a request. #896 unit B:
+ * so too an `openai` provider in the explicit set (GPT-5.6 and later at OpenAI's own address).
  */
 export async function resolveProvider(options: {
   provider: ProviderName | undefined;
@@ -614,12 +616,14 @@ export async function resolveProvider(options: {
     }
     const { OpenAIProvider, OPENAI_DEFAULT_BASE_URL } = await import('./openai-provider.js');
     const endpoint = await resolvedEndpoint('openai', baseUrlFlag, OPENAI_DEFAULT_BASE_URL);
-    return {
-      provider: new OpenAIProvider(model, baseUrlFlag, strictBaseUrlFlag === true, {
-        endpoint,
-        promptCache: options.promptCache,
-      }),
-    };
+    const openai = new OpenAIProvider(model, baseUrlFlag, strictBaseUrlFlag === true, {
+      endpoint,
+      promptCache: options.promptCache,
+    });
+    // #896 unit B: in the explicit set, `auto` with measured gaps waits for the price file too.
+    return openai.isAutoChoicePending()
+      ? { provider: openai, settleAuto: openai.settleAutoChoice.bind(openai) }
+      : { provider: openai };
   } else {
     const { AnthropicProvider, ANTHROPIC_DEFAULT_BASE_URL } =
       await import('./anthropic-provider.js');

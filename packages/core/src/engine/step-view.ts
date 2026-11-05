@@ -207,6 +207,11 @@ export interface CacheRequestedEntry {
   auto?: Omit<CacheAuto, 'prices'> & { prices?: CacheAutoPricesView };
   /** Caching 3-B (D2): with `provider_rules`, the requests of this ask carried OpenAI's cache key. */
   key_sent?: true;
+  /**
+   * #896 unit B — the provider that answered this ask's requests (`UsageRecord.provider`), when they
+   * record a readable name; read as `by` is. A reader names an `auto` fallback's window by it.
+   */
+  provider?: string;
 }
 
 /**
@@ -368,6 +373,7 @@ function composeCacheRequested(requests: readonly unknown[]): CostCacheRequested
     const ttlSent = fieldOf(r, 'cache_ttl_sent');
     const source = fieldOf(r, 'cache_requested_source');
     const by = readStoredName(fieldOf(r, 'cache_requested_by'));
+    const provider = readStoredName(fieldOf(r, 'provider'));
     const auto = withPricesAbsence(normalizeCacheAuto(fieldOf(r, 'cache_auto')));
     const entry: CacheRequestedEntry = {
       value,
@@ -377,6 +383,7 @@ function composeCacheRequested(requests: readonly unknown[]): CostCacheRequested
       ...(by !== undefined ? { by } : {}),
       ...(auto !== undefined ? { auto } : {}),
       ...(fieldOf(r, 'cache_key_sent') === true ? { key_sent: true as const } : {}),
+      ...(provider !== undefined ? { provider } : {}),
     };
     // `auto` is normalised (its keys in one order) and its typed absence derived deterministically
     // (#898), so two requests with the same basis, gaps and prices make one entry whatever key
@@ -389,6 +396,7 @@ function composeCacheRequested(requests: readonly unknown[]): CostCacheRequested
       entry.by,
       entry.auto,
       entry.key_sent,
+      entry.provider,
     ]);
     if (seen.has(key)) continue;
     seen.add(key);
