@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 // packages/cli/src/commands → packages/
 const PACKAGES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
-const SCANNED_PACKAGES = ['core', 'cli', 'mcp-server', 'testing'];
+const SCANNED_PACKAGES = ['core', 'cli', 'mcp-server', 'testing', 'store-sqlite'];
 
 /** Every non-test, non-declaration .ts source file under a package's src/. */
 function sourceFiles(pkg: string): string[] {
@@ -91,7 +91,7 @@ function findDeclarers(): Declarer[] {
 // classified (it has a real deleteAllForRun declaration and its own TCK contract test — see
 // store-fs-guard.test.ts's WIRED⇒TCK check, which is UNCHANGED and still expects JsonFileStore
 // covered) — it just never appears in WIRED_ORDER or the array-literal check below.
-const WIRED_ORDER = ['JsonTraceBufferStore', 'FailedAttemptStore'];
+const WIRED_ORDER = ['JsonTraceBufferStore', 'JsonFileFailedAttemptStore'];
 const ANCHOR = 'JsonFileStore';
 const EXCLUDED: Record<string, string> = {
   InMemoryTraceBufferStore: 'test-only in-memory store — never purged (no on-disk artifacts)',

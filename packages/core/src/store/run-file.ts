@@ -173,11 +173,7 @@ export function describeStoredFileFault(facts: UnreadableFileFacts): string {
     case 'empty':
       return workflow ? 'is empty — not a workflow' : 'is empty';
     case 'parse':
-      if (facts.fault !== undefined)
-        return `is JSON but not a workflow object (${COPY_FAULT_WORDS[facts.fault]})`;
-      return facts.shape === undefined
-        ? 'is not JSON'
-        : `is JSON but not ${workflow ? 'a workflow object' : 'an object'} (it is ${facts.shape})`;
+      return parseClause(workflow, facts);
     case 'not_a_run': {
       const fields = facts.fields ?? [];
       const named = fields.slice(0, NAMED_FIELDS).map(runRecordProblemClause);
@@ -197,6 +193,32 @@ export function describeStoredFileFault(facts: UnreadableFileFacts): string {
     case 'unreadable':
       return `cannot be read (${facts.errno ?? 'unknown'})`;
   }
+}
+
+/** The clause of bytes that are not JSON, JSON that is not an object (`shape`), or (a registered copy)
+ *  an object that is not a workflow (`fault`): the `parse` class's words, one owner. */
+function parseClause(
+  workflow: boolean,
+  facts: Pick<UnreadableFileFacts, 'shape' | 'fault'>,
+): string {
+  if (facts.fault !== undefined)
+    return `is JSON but not a workflow object (${COPY_FAULT_WORDS[facts.fault]})`;
+  return facts.shape === undefined
+    ? 'is not JSON'
+    : `is JSON but not ${workflow ? 'a workflow object' : 'an object'} (it is ${facts.shape})`;
+}
+
+/**
+ * #616 B2: the ONE builder of a damaged registered copy's words (`parse`), by the copy's id — one
+ * owner of these words for both forms of the refusal: the file form ({@link renderUnreadableStoredFile},
+ * the JSON registry's `parseFailureError`) passes the id its file's name holds; the path-free form
+ * (the registrar's `storedCopyFaultError`, for a copy with no file) passes the workflow's id.
+ */
+export function registeredCopyFaultSentence(
+  workflowId: string,
+  fault: Pick<UnreadableFileFacts, 'shape' | 'fault'>,
+): string {
+  return `the registered copy of '${workflowId}' ${parseClause(true, fault)}`;
 }
 
 /** Whether a damaged file's error is worth retrying: only a read error, by the store's errno rule. */
@@ -323,7 +345,10 @@ function keyedCreateSentence(
  */
 export function renderUnreadableStoredFile(facts: UnreadableFileFacts): string {
   if (facts.resource === 'workflow_copy') {
-    return `the registered copy of '${fileId(facts.path)}' ${describeStoredFileFault(facts)}`;
+    // #616 B2: a damaged copy's words come from their one builder, with the id its file names.
+    return facts.class === 'parse'
+      ? registeredCopyFaultSentence(fileId(facts.path), facts)
+      : `the registered copy of '${fileId(facts.path)}' ${describeStoredFileFault(facts)}`;
   }
   return [
     runFileFaultSentence(facts),

@@ -92,6 +92,25 @@ export type ErrorCode =
   // for ANOTHER location (a copied test location) — refused at construction, so a copy never runs on
   // another location's test clock.
   | 'STATE_TEST_CLOCK_FOREIGN'
+  // issue #616 (unit 3): the codes the SQLite store raises. Nothing raises them yet: the unit that
+  // first raises a code writes its message and its facts, and moves its row on the error-codes page
+  // from "the codes nothing raises" into the table.
+  | 'STATE_STORE_DRIVER_UNAVAILABLE'
+  | 'STATE_STORE_FILESYSTEM_REFUSED'
+  | 'STATE_STORE_SETTINGS_REFUSED'
+  | 'STATE_STORE_VERSION_OLDER'
+  | 'STATE_STORE_VERSION_NEWER'
+  | 'STATE_STORE_SCHEMA_TAMPERED'
+  | 'STATE_STORE_FULL'
+  | 'STATE_STORE_READONLY'
+  | 'STATE_STORE_WRITES_FENCED'
+  | 'STATE_STORE_LIMIT_EXCEEDED'
+  | 'STATE_HOME_HOLDS_LEGACY_STORE'
+  | 'STATE_RUN_PURGED'
+  | 'STATE_RUN_TIMESTAMP_INVALID'
+  | 'STATE_WRITE_ONCE_REWRITTEN'
+  | 'STATE_EVIDENCE_REWRITTEN'
+  | 'STATE_RUN_IDENTITY'
   | 'RUN_ABORTING'
   // VALIDATION
   | 'VALIDATION_INPUT_SCHEMA'
@@ -276,7 +295,9 @@ export interface ErrorFactsByCode {
  */
 export interface NewerDefinitionFacts {
   scope: 'newer_definition';
-  path: string;
+  /** The file of a JSON-registry copy; absent for a copy that has no file (#616 B2: a database's
+   *  row). */
+  path?: string;
   schema_version: number;
   reads_up_to: number;
 }

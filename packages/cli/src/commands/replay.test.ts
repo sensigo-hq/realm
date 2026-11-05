@@ -4,8 +4,13 @@ import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { replayRun, parseOverride, saveReplay, replayCommand } from './replay.js';
-import type { ReplayStore, ReplayRecord } from '../store/replay-store.js';
-import type { RunRecord, WorkflowDefinition, EvidenceSnapshot } from '@sensigo/realm';
+import type {
+  ReplayStore,
+  ReplayRecord,
+  RunRecord,
+  WorkflowDefinition,
+  EvidenceSnapshot,
+} from '@sensigo/realm';
 
 function makeSnapshot(stepId: string, output: Record<string, unknown> = {}): EvidenceSnapshot {
   return {
