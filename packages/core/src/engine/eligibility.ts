@@ -387,10 +387,12 @@ export type RunPhaseCorpusAxes = {
  * that every pattern has its witness; the corpus takes its reasons from it.
  */
 export const LEGACY_PROSE_WITNESSES: ReadonlyArray<readonly [string | RegExp, string]> = [
-  [COMPLETED_PROSE, COMPLETED_PROSE],
-  [SPAWN_FAILED_PROSE, SPAWN_FAILED_PROSE],
-  [EXTENSIONS_LOAD_FAILED_PROSE, EXTENSIONS_LOAD_FAILED_PROSE],
-  [CLEANUP_SWEEP_PROSE, CLEANUP_SWEEP_PROSE],
+  // The four string reasons' witnesses are their text written out, never the constant: a constant
+  // reworded then fails its witness and moves the fingerprint, instead of moving the corpus with it.
+  [COMPLETED_PROSE, 'Workflow completed.'],
+  [SPAWN_FAILED_PROSE, 'spawn_failed'],
+  [EXTENSIONS_LOAD_FAILED_PROSE, 'extensions_load_failed'],
+  [CLEANUP_SWEEP_PROSE, 'Marked abandoned by realm cleanup'],
   [HANDLER_ABORT_PROSE, "Handler 'h' aborted the run: stop"],
   [GATE_EXPIRY_ABORT_PROSE, "Gate 'g' expired and the run aborted"],
   [GUARD_RESOLUTION_PROSE, "Guard step 'g' failed: unresolvable path a.b"],
