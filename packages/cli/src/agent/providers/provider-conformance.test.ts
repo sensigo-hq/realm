@@ -167,8 +167,10 @@ describe('provider conformance — toolArgsStrict is a promise about the wire (i
 
 // =========================================================================
 // issue #600 PR 2 — `ProviderCapabilities.promptCache` is a promise about the wire too: a provider
-// declaring a lifetime places `cache_control` on each request it marks: a single-shot request, and
-// every main turn of a tool step; one declaring `off` or nothing places none. On a failing CI host each cell prints the setting and whether the
+// declaring a lifetime places its cache marker on each request it marks — Anthropic's `cache_control`
+// on a single-shot request and every main turn of a tool step; OpenAI's `prompt_cache_breakpoint`
+// (#896, GPT-5.6 and later at OpenAI's own address) on a single-shot request only, a tool step being
+// left to OpenAI's own caching — and one declaring `off` or nothing places none. On a failing CI host each cell prints the setting and whether the
 // request carried the marker: no environment, header or key.
 // =========================================================================
 describe('provider conformance — promptCache is a promise about the wire (issue #600 PR 2)', () => {

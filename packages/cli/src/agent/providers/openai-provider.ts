@@ -11,6 +11,7 @@ import {
 import {
   ToolCapableLlmProvider,
   endpointOf,
+  openAiExplicitCacheModel,
   responseModel,
   type PromptCacheRequest,
   type ProviderCapabilities,
@@ -94,6 +95,54 @@ export function openAiCachePlan(
   return send ? { head, key: sha256Hex(head) } : { head };
 }
 
+/** #896 (A1): the one lifetime Realm can ask OpenAI for on Chat Completions, in seconds. */
+const OPENAI_EXPLICIT_LIFETIME_S = 1800;
+
+/** #896: an explicit cache mark on one text part. It never carries a `ttl` (refused on Chat). */
+function markedPart(text: string): Rec {
+  return { type: 'text', text, prompt_cache_breakpoint: { mode: 'explicit' } };
+}
+
+/**
+ * #896 unit A (A1, A2) — a single-shot body with OpenAI's explicit cache controls, for a request in
+ * the set (the `openai` provider, OpenAI's own address, {@link openAiExplicitCacheModel}). Under
+ * `off`: explicit mode with no mark, which writes and reads nothing (measured). Otherwise: explicit
+ * mode with the 30-minute lifetime, so only up to the marks is written; the system text as one
+ * marked part (it is never blank); and the prompt in 3-B's shapes — head and tail both with text:
+ * two parts, the head marked; a blank tail: one marked part, the whole text; a blank head, or no
+ * split: the plain string. Only the system text and the prompt are shaped; the JSON retry's turns
+ * after them go as they are, so every re-send carries the same options and marks.
+ */
+export function withExplicitCache(body: Rec, plan: OpenAiCachePlan | undefined, off: boolean): Rec {
+  if (off) return { ...body, prompt_cache_options: { mode: 'explicit' } };
+  const [system, user, ...rest] = body['messages'] as Array<{ role: string; content: string }>;
+  let prompt: unknown = user!.content;
+  if (plan !== undefined && /\S/.test(plan.head)) {
+    const tail = user!.content.slice(plan.head.length);
+    prompt = /\S/.test(tail)
+      ? [markedPart(plan.head), { type: 'text', text: tail }]
+      : [markedPart(user!.content)];
+  }
+  return {
+    ...body,
+    prompt_cache_options: { mode: 'explicit', ttl: '30m' },
+    messages: [
+      { ...system!, content: [markedPart(system!.content)] },
+      { ...user!, content: prompt },
+      ...rest,
+    ],
+  };
+}
+
+/** #896: whether a message's content (as sent) carries an explicit cache mark. */
+function carriesMark(message: unknown): boolean {
+  const content = (message as { content?: unknown } | undefined)?.content;
+  return (
+    Array.isArray(content) &&
+    content.some((part) => (part as { prompt_cache_breakpoint?: unknown }).prompt_cache_breakpoint)
+  );
+}
+
 /** Caching 3-B (D2): a Chat Completions body with the plan's key, when it is sent. */
 export function withCacheKey(
   body: Record<string, unknown>,
@@ -106,7 +155,8 @@ export function withCacheKey(
  * Caching 3-B (A6, D2) — the split's facts for one OpenAI request, read off the body SENT: the
  * head's digest and length, a digest per part (the system text, the head, the tools and the
  * response format where the body has them), the key when it went out, and whether strict did.
- * `cache_requested` stays `provider_rules`: the key is a hint, not an ask (D4.6-9).
+ * `cache_requested` stays `provider_rules`: the key is a hint, not an ask (D4.6-9). #896: on a body
+ * with explicit marks, `cache_marked` also names the marked system text and prompt head.
  */
 export function openAiSplitFacts(
   body: Record<string, unknown>,
@@ -114,6 +164,13 @@ export function openAiSplitFacts(
   systemText: string,
 ): Partial<UsageRecord> {
   const keySent = typeof body['prompt_cache_key'] === 'string';
+  // #896: what carried a mark or the key, from the body sent: the system text, the prompt's head.
+  const messages = (body['messages'] ?? []) as unknown[];
+  const marked = [
+    ...(carriesMark(messages[0]) ? (['system'] as const) : []),
+    ...(carriesMark(messages[1]) ? (['prompt'] as const) : []),
+    ...(keySent ? (['key'] as const) : []),
+  ];
   const tools = body['tools'] as Array<{ function?: { strict?: boolean } }> | undefined;
   const format = body['response_format'] as { json_schema?: { strict?: boolean } } | undefined;
   return {
@@ -125,7 +182,8 @@ export function openAiSplitFacts(
       prompt: sha256Hex(plan.head),
       ...(format !== undefined ? { format: sha256Hex(JSON.stringify(format)) } : {}),
     },
-    ...(keySent ? { cache_marked: ['key' as const], cache_key_sent: true as const } : {}),
+    ...(marked.length > 0 ? { cache_marked: marked } : {}),
+    ...(keySent ? { cache_key_sent: true as const } : {}),
     request_strict_sent:
       format?.json_schema?.strict === true ||
       (tools ?? []).some((t) => t.function?.strict === true),
@@ -137,7 +195,8 @@ export function openAiSplitFacts(
  * response's `model`, `provider_rules` (realm asks for nothing; OpenAI's own caching, if any,
  * applies — caching 3-B: the cache key, when sent, is a hint recorded as `cache_key_sent` by
  * {@link openAiSplitFacts}), the endpoint, and that OpenAI reports no lifetime split. Never
- * `provider`: `realm agent` stamps that.
+ * `provider`: `realm agent` stamps that. #896: a request in the explicit set records its ask
+ * instead (`OpenAIProvider`'s `explicitAskFacts`).
  */
 function openAiRequestFacts(response: unknown, client: unknown): Partial<UsageRecord> {
   const model = responseModel(response);
@@ -284,10 +343,42 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       ...(this.baseUrl !== undefined && !this.strictBaseUrl
         ? { strictGate: 'compat_endpoint' as const }
         : {}),
-      // caching 3-B (D1, D3): OpenAI caches by its own rules under every setting; the endpoint
-      // decides the start line's words and whether the key goes out.
-      promptCache: 'provider',
+      // caching 3-B (D1, D3): OpenAI caches by its own rules; the endpoint decides the start line's
+      // words and whether the key goes out. #896: in the explicit set, Realm asks for 30 minutes,
+      // or for nothing under `off`.
+      promptCache: this.explicitCache()
+        ? this.promptCache?.value === 'off'
+          ? 'off'
+          : { lifetime_s: OPENAI_EXPLICIT_LIFETIME_S }
+        : 'provider',
       endpoint: this.endpoint,
+    };
+  }
+
+  /**
+   * #896 unit A — whether OpenAI's explicit cache controls apply: this model is GPT-5.6 or later,
+   * at OpenAI's own address. The o-series route is another provider; custom addresses keep 3-B's.
+   */
+  private explicitCache(): boolean {
+    return this.endpoint === 'default' && openAiExplicitCacheModel(this.model);
+  }
+
+  /**
+   * #896 unit A — the ask a request in the explicit set records, as Anthropic's does: 30 minutes,
+   * sent (OpenAI has no default to leave out), or `off`; the setting's source facts when given; no
+   * `cache_auto` (unit A chooses nothing by gaps or prices).
+   */
+  private explicitAskFacts(): Partial<UsageRecord> {
+    const p = this.promptCache;
+    return {
+      ...(p?.value === 'off'
+        ? { cache_requested: 'off' as const }
+        : {
+            cache_requested: 'lifetime' as const,
+            cache_lifetime_s: OPENAI_EXPLICIT_LIFETIME_S,
+            cache_ttl_sent: true,
+          }),
+      ...(p !== undefined ? { cache_requested_source: p.source, cache_requested_by: p.by } : {}),
     };
   }
 
@@ -357,6 +448,9 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       this.endpoint,
       this.promptCache,
     );
+    // #896: OpenAI's explicit cache controls, in the set (GPT-5.6+, OpenAI's own address).
+    const explicit = this.explicitCache();
+    const off = this.promptCache?.value === 'off';
     type Message = { role: 'system' | 'user' | 'assistant'; content: string };
     const messages: Message[] = [
       { role: 'system', content: systemPrompt },
@@ -381,11 +475,14 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       let opts = base;
       const response = await sendUnderGatewayRule(this.cacheFields, this.endpoint, (withCache) => {
         opts = withCache ? withCacheKey(base, plan) : base;
+        // #896 (A1, A2): in the explicit set, the marks and the mode (the retry carries the same).
+        if (explicit) opts = withExplicitCache(opts, plan, off);
         return bounded(opts);
       });
       requests.push(
         toUsageRecord(requests.length, requestStart, readOpenAiUsage(response), {
           ...openAiRequestFacts(response, client),
+          ...(explicit ? this.explicitAskFacts() : {}),
           ...(plan !== undefined ? openAiSplitFacts(opts, plan, systemPrompt) : {}),
           ...this.rejectedFact(),
         }),
@@ -537,8 +634,14 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     ];
     // caching 3-B (D2, site 2): the cache key, on the strict request and on its drop retry.
     const plan = openAiCachePlan(prompt, opts.cachePrefixChars, this.endpoint, this.promptCache);
-
-    const buildOpts = (strict: boolean, withCache: boolean): Record<string, unknown> =>
+    // #896 (A1, A2): in the explicit set, the strict body and its drop retry carry the same marks.
+    const explicit = this.explicitCache();
+    const off = this.promptCache?.value === 'off';
+    const buildOpts = (strict: boolean, withCache: boolean): Record<string, unknown> => {
+      const body = buildKeyedOpts(strict, withCache);
+      return explicit ? withExplicitCache(body, plan, off) : body;
+    };
+    const buildKeyedOpts = (strict: boolean, withCache: boolean): Record<string, unknown> =>
       (withCache ? withCacheKey : (body: Record<string, unknown>) => body)(
         {
           model: this.model,
@@ -573,6 +676,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
         requests.push(
           toUsageRecord(requests.length, requestStart, readOpenAiUsage(response), {
             ...openAiRequestFacts(response, client),
+            ...(explicit ? this.explicitAskFacts() : {}),
             ...(plan !== undefined ? openAiSplitFacts(o, plan, systemPrompt) : {}),
             ...this.rejectedFact(),
           }),
@@ -733,6 +837,9 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     // (and #311's retry) and its final request.
     const systemText = buildSystemPrompt(options.inputSchema, options.agentProfileInstructions);
     const plan = openAiCachePlan(prompt, options.cachePrefixChars, this.endpoint, this.promptCache);
+    // #896 (A2): in the explicit set under `off`, every request of the loop asks OpenAI to cache
+    // nothing (explicit mode, no mark); under any other setting the loop is as on the base.
+    const explicitOff = this.explicitCache() && this.promptCache?.value === 'off';
     // issue #610: the ONE point every request of this loop goes through, and the one place it is
     // recorded. The record is pushed the instant the answer arrives, before any code reads it: a
     // throw while reading must not lose what was billed. A request that fails on the wire has no
@@ -744,6 +851,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       requests.push(
         toUsageRecord(requests.length, requestStart, readOpenAiUsage(response), {
           ...openAiRequestFacts(response, client),
+          ...(explicitOff ? this.explicitAskFacts() : {}),
           ...(plan !== undefined ? openAiSplitFacts(body, plan, systemText) : {}),
           ...this.rejectedFact(),
         }),
@@ -835,6 +943,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
           : openaiTools;
       }
       if (responseFormat !== undefined) opts['response_format'] = responseFormat;
+      if (explicitOff) opts['prompt_cache_options'] = { mode: 'explicit' };
       return withCache ? withCacheKey(opts, plan) : opts;
     };
 
@@ -888,6 +997,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     const buildFinalCallOpts = (withCache = true): Record<string, unknown> => {
       const opts: Record<string, unknown> = { model: this.model, messages: history };
       if (responseFormat !== undefined) opts['response_format'] = responseFormat;
+      if (explicitOff) opts['prompt_cache_options'] = { mode: 'explicit' };
       return withCache ? withCacheKey(opts, plan) : opts;
     };
 

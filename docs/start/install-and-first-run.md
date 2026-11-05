@@ -91,7 +91,7 @@ It prints:
 Registered: my-first v1 (2 steps)
 cache: step_one — anthropic 588 chars ≈ 338–765 tokens, with Anthropic's tool text · openai 304 chars ≈ 61–122 tokens (estimates: 2.5–5 chars/token, with margin)
 anthropic: when realm agent or realm listen drives a step, realm marks its fixed part for caching, and on steps with tools the conversation at each turn, unless --prompt-cache turns it off; below the model's minimum nothing is cached, silently
-openai: realm sends no cache marker; the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)
+openai: on OpenAI's own address realm sends a cache key and, for GPT-5.6 and later, marks the fixed instructions and the stable start of the prompt of each step without tools for 30 minutes, unless --prompt-cache turns it off; otherwise the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)
 anthropic: the cache is kept per workspace (per organization on Bedrock and Google Cloud), as Anthropic's page said on 2026-10-09: drives from different workspaces each pay the write
 ```
 
