@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
-  FailedAttemptStore,
+  JsonFileFailedAttemptStore,
   InMemoryTraceBufferStore,
   JsonFileStore,
   JsonWorkflowStore,
@@ -65,7 +65,7 @@ async function twoCalls(runStore: RunStore) {
     runStore,
     workflowStore,
     traceBufferStore: new InMemoryTraceBufferStore(runStore),
-    failedAttemptStore: new FailedAttemptStore(join(dir, 'attempts')),
+    failedAttemptStore: new JsonFileFailedAttemptStore(join(dir, 'attempts')),
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'basis-715b', version: '0' });

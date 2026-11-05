@@ -28,7 +28,7 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 /** Every production source file of the three packages that reach operators. */
-const FILES = ['core', 'cli', 'mcp-server', 'testing'].flatMap((p) =>
+const FILES = ['core', 'cli', 'mcp-server', 'testing', 'store-sqlite'].flatMap((p) =>
   walk(join(PACKAGES, p, 'src')),
 );
 const CORE_FILES = FILES.filter((f) => relative(PACKAGES, f).startsWith('core/'));

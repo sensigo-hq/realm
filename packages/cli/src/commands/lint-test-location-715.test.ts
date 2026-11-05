@@ -100,7 +100,7 @@ describe('#715 (a) C.4 — the test-clock import rule and its file sets', () => 
 // cells run it on the tree and on a seeded list. Prints file NAMES only, never their text.
 // =================================================================================================
 
-const PACKAGES = ['cli', 'core', 'mcp-server', 'testing'] as const;
+const PACKAGES = ['cli', 'core', 'mcp-server', 'testing', 'store-sqlite'] as const;
 
 /** The names core exports from `test-clock-file.ts`, `createTestLocation`, and the file's name. */
 const NEEDLES = [
@@ -109,6 +109,8 @@ const NEEDLES = [
   'writeTestClockFile',
   'readTestClockFile',
   'fileClock',
+  // #616 PR-1a unit 2: the store's reader of a root's clock file.
+  'resolveRootClock',
   'createTestLocation',
   '.realm-test-clock',
   // #715 (b) (04 §B.4): the test-clock marks.
@@ -229,5 +231,44 @@ describe('#715 (a) correction 1 (C-2) — no production file names a test-clock 
       },
       JSON.stringify({ perPackage, mjs }),
     ).toEqual({ everyPackage: true, tests: 0, mjs: true });
+  });
+});
+
+// =================================================================================================
+// #616 PR-1a unit 2: `resolveRootClock`, the store's reader of a root's clock file, is kept out of
+// production code like the other readers — by the import rule and by the scan. The first unit that
+// calls it (the SQLite home's open) adds its one call site to the allowed set.
+// =================================================================================================
+
+describe('#616 PR-1a unit 2 — the root clock-file reader is kept out of production code', () => {
+  it('a production module importing resolveRootClock draws the rule; a test or the testing package does not', async () => {
+    const code =
+      "import { resolveRootClock } from '@sensigo/realm';\nexport const f = resolveRootClock;\n";
+    const at = {
+      production: (await hits(PROD, code)).filter((m) => m.includes('#715, D6-52')).length,
+      test: (await hits(TEST, code)).length,
+      testing: (await hits(TESTING, code)).length,
+    };
+    // (1) Can it fail: red when the rule stops naming it (the named break: `resolveRootClock` removed
+    //     from the rule's `importNames` in eslint.config.ts), or the override's file sets change.
+    // (2) Prints: the hit counts per path (the rule's message only, never the file).
+    expect(at).toEqual({ production: 1, test: 0, testing: 0 });
+  });
+
+  it('the scan finds resolveRootClock named in a production file outside the allowed set', () => {
+    const seeded = [
+      {
+        path: 'packages/store-sqlite/src/zz-seed-root-clock.ts',
+        text: "const { resolveRootClock } = await import('@sensigo/realm');\n",
+      },
+      {
+        path: 'packages/core/src/store/test-clock-file.ts',
+        text: 'export function resolveRootClock(root: string): void {}\n',
+      },
+    ];
+    // (1) Can it fail: red when the scan stops seeing the name (the named break: `resolveRootClock`
+    //     removed from NEEDLES), or when the allowed set loses the file that defines it.
+    // (2) Prints: the names of the files it found (never their text).
+    expect(violations(seeded)).toEqual(['packages/store-sqlite/src/zz-seed-root-clock.ts']);
   });
 });

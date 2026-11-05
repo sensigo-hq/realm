@@ -2,7 +2,7 @@
 
 <!-- description: Every error code Realm defines: when each one is raised and what it tells the caller to do, and the codes that nothing raises. -->
 
-Every error Realm raises on purpose has a code. This page lists all 91 codes that Realm defines: the 76 it raises, with when each is raised and what it tells the caller to do, and the 15 that nothing raises. The lists were made by a script that read the `ErrorCode` type and every place in Realm's code that raises one. The replies shown came from calls to a running server.
+Every error Realm raises on purpose has a code. This page lists all 107 codes that Realm defines: the 76 it raises, with when each is raised and what it tells the caller to do, and the 31 that nothing raises. The lists were made by a script that read the `ErrorCode` type and every place in Realm's code that raises one. The replies shown came from calls to a running server.
 
 ## Where a code appears
 
@@ -172,13 +172,18 @@ The last two columns are what the error carries where it is raised. Where a code
 
 ## The codes nothing raises
 
-These 15 are in the `ErrorCode` type, and no code in Realm raises them:
+These 31 are in the `ErrorCode` type, and no code in Realm raises them:
 
 ```text
 NETWORK_TIMEOUT, NETWORK_DNS_FAILED, NETWORK_CONNECTION_RESET, STATE_PRECONDITION_FAILED,
 STATE_RUN_LOCKED, RUN_ABORTING, VALIDATION_HASH_MISMATCH, VALIDATION_QUOTE_NOT_FOUND,
 VALIDATION_FIELD_UNKNOWN, VALIDATION_FIELD_EXCLUDED, STEP_HANDLER_ERROR, ENGINE_GATE_OPEN_FAILED,
-GUARD_RESOLUTION_ERROR, RESOURCE_TOO_LARGE, RESOURCE_NOT_ACCESSIBLE
+GUARD_RESOLUTION_ERROR, RESOURCE_TOO_LARGE, RESOURCE_NOT_ACCESSIBLE, STATE_STORE_DRIVER_UNAVAILABLE,
+STATE_STORE_FILESYSTEM_REFUSED, STATE_STORE_SETTINGS_REFUSED, STATE_STORE_VERSION_OLDER,
+STATE_STORE_VERSION_NEWER, STATE_STORE_SCHEMA_TAMPERED, STATE_STORE_FULL, STATE_STORE_READONLY,
+STATE_STORE_WRITES_FENCED, STATE_STORE_LIMIT_EXCEEDED, STATE_HOME_HOLDS_LEGACY_STORE,
+STATE_RUN_PURGED, STATE_RUN_TIMESTAMP_INVALID, STATE_WRITE_ONCE_REWRITTEN, STATE_EVIDENCE_REWRITTEN,
+STATE_RUN_IDENTITY
 ```
 
 A handler or an adapter of your own may raise any code in the type, these included.

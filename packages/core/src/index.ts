@@ -130,10 +130,14 @@ export type {
   ValidationErrorSummaryEntry,
 } from './observability/failed-attempt-record.js';
 export {
-  FailedAttemptStore,
+  JsonFileFailedAttemptStore,
   FAILED_ATTEMPT_SIDECAR_MAX_BYTES,
 } from './store/failed-attempt-store.js';
-export type { FailedAttemptReadResult } from './store/failed-attempt-store.js';
+export type { FailedAttemptStore, FailedAttemptReadResult } from './store/failed-attempt-store.js';
+// #616 B1: the store interfaces the CLI kept, owned by the core so another package can implement
+// them (the CLI's file and in-memory stores implement them).
+export type { DedupStore } from './store/dedup-store.js';
+export type { ReplayStore, ReplayRecord, ReplayStepResult } from './store/replay-store.js';
 export type { StepDispatcher, ExecuteStepOptions } from './engine/execution-loop.js';
 export {
   submitHumanResponse,
@@ -508,18 +512,30 @@ export {
 } from './utils/clock.js';
 export type { Clock } from './utils/clock.js';
 // #715 (b) (D-17): a read's raw reading (taken BEFORE the load) and the floor by a record's own stamp.
-export { takeReading, takeRawReading, floorAtRecord, floorAtHolder } from './store/take-reading.js';
+// #616 PR-1a unit 2: `foldReading`, the pure second half of `takeReading`.
+export {
+  takeReading,
+  takeRawReading,
+  floorAtRecord,
+  floorAtHolder,
+  foldReading,
+} from './store/take-reading.js';
+// #616 PR-1a unit 2: the key-holder ordering and the version conflict every run store shares.
+export { compareCanonical, pickCanonical, versionConflictError } from './store/key-holder.js';
+export type { KeyHolderFields } from './store/key-holder.js';
 // issue #715 (a) (D6-1, D6-54): a test location's clock file. For `@sensigo/realm-testing`, not for
 // hosts: a lint rule (static imports) and a source scan (the names as text, in any import form;
 // `lint-test-location-715.test.ts`; it reads the `.ts` and `.mjs` files of the four packages' `src`
 // folders and skips `*.test.ts`) keep `writeTestClockFile`, `fileClock` and `readTestClockFile` out
-// of production code (D6-52); the file store's own `resolveStoreClock` is the one reader.
+// of production code (D6-52); the file store's own `resolveStoreClock` is the one reader. #616 PR-1a
+// unit 2: `resolveRootClock`, the same read for a store's root folder, kept out the same way.
 export {
   TEST_CLOCK_FILE_NAME,
   testClockFilePath,
   writeTestClockFile,
   readTestClockFile,
   fileClock,
+  resolveRootClock,
 } from './store/test-clock-file.js';
 // #715 (b) (02 §C.1, D6-53): whether a store's clock is a test location's — for the hosts, which say
 // so once per process on stderr.
@@ -801,6 +817,16 @@ export {
 export { JsonWorkflowStore } from './workflow/registrar.js';
 export type { WorkflowRegistrar } from './workflow/registrar.js';
 export { getWorkflowForRun, definitionAbsenceOf } from './workflow/registrar.js';
+// #616 B2: the one judge of a registered copy, and the refusals of a copy that has no file, with the
+// words a copy with a file gets.
+export {
+  classifyRegisteredCopy,
+  workflowNotFoundError,
+  legacyCopyError,
+  newerCopyError,
+  storedCopyFaultError,
+} from './workflow/registrar.js';
+export type { RegisteredCopyVerdict, DamagedCopyFault } from './workflow/registrar.js';
 // issue #729 PR-0: the skeleton of an input schema — the MCP renderer's `call_with` for a step's way.
 export { generateSchemaSkeleton } from './utils/schema-skeleton.js';
 // issue #729 PR-0 (E1 (b), (d)): the ONE escaped, bounded value renderer — a value read from a run or

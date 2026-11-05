@@ -210,7 +210,7 @@ describe('the brand modules import only what a leaf may', () => {
     expect(imports(source)).toEqual(['./version.js']);
   });
 
-  it.each(['cli', 'mcp-server', 'testing'])(
+  it.each(['cli', 'mcp-server', 'testing', 'store-sqlite'])(
     '%s’s src/brand.ts imports only from @sensigo/realm and ./version.js',
     async (dir) => {
       const source = await readFile(new URL(`../../${dir}/src/brand.ts`, import.meta.url), 'utf8');

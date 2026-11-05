@@ -93,6 +93,24 @@ describe('#715 (b) 04 §B — the clock rule', () => {
     expect(missed).toEqual([]);
   });
 
+  it('GROUNDING (#616 unit 1): a clock read in the SQLite store package, in its source and in its test support, draws the rule', async () => {
+    // GROUNDING, not acceptance: the rule's file set is the glob `packages/*/src/**/*.ts`
+    // (eslint.config.ts), so the new package needed no list widened and this unit cannot turn the
+    // cell red; it records that the package's clock reads are flagged, test support included.
+    const paths = [
+      'packages/store-sqlite/src/zz-clock-probe.ts',
+      'packages/store-sqlite/src/test-support/zz-clock-probe.ts',
+    ];
+    const missed: string[] = [];
+    for (const p of paths) {
+      if ((await hits(p, 'export const zzProbe = Date.now();\n')).length !== 1) missed.push(p);
+    }
+    // (1) Can it fail: red when the clock rule's file set stops covering the package (the named
+    //     break: the glob narrowed to `packages/{core,cli,mcp-server,testing}/src/**/*.ts`).
+    // (2) Prints: the probe paths that did not draw the rule exactly once.
+    expect(missed).toEqual([]);
+  });
+
   it('the rule’s allowed sites are exactly the census’s `outside` rows (the two lists mirror)', async () => {
     // (a) red when a site is added to one list and not the other; (b) prints the differences.
     const config = (await eslint().calculateConfigForFile(join(ROOT, PROD))) as {

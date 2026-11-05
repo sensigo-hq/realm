@@ -29,8 +29,9 @@ export function diagnostics() {
   };
 }
 
-// A failed-attempt store that writes nothing, with every method of the engine's FailedAttemptStore:
-// the engine still counts refusals in the run; there is just no .attempts.jsonl sidecar.
+// A failed-attempt store that writes nothing, with every method of the engine's file store for
+// failed attempts (`FailedAttemptStore` in the 0.46.0 this demo runs; `JsonFileFailedAttemptStore`
+// after #616): the engine still counts refusals in the run; there is just no .attempts.jsonl sidecar.
 const noFailedAttempts = () => ({
   append: async () => {},
   read: async () => ({ records: [], capped: false }),

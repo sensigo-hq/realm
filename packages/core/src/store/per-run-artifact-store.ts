@@ -8,7 +8,7 @@
 /**
  * A store that owns one class of on-disk (or otherwise persisted) per-run artifact and can
  * delete every artifact it owns for a given run. Implemented by `JsonFileStore` (run + idempotency
- * pointer files), `FailedAttemptStore` (the `.attempts.jsonl` sidecar), and `JsonTraceBufferStore`
+ * pointer files), `JsonFileFailedAttemptStore` (the `.attempts.jsonl` sidecar), and `JsonTraceBufferStore`
  * (orphaned WAL files) — each store deletes ONLY its own artifacts; no store or caller hard-codes
  * another store's filename layout.
  */

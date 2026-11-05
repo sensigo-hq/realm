@@ -623,9 +623,9 @@ describe('makeListenHandler — request pipeline', () => {
   });
 
   it('thrown spawnAgent → handled as spawn_failed (500 + run_id, marked, no dedup record, counter freed)', async () => {
-    const recordSpy = vi.fn();
-    const checkSpy = vi.fn(() => false);
-    const dedupStore = { check: checkSpy, record: recordSpy, cleanup: () => {} };
+    const recordSpy = vi.fn(async () => {});
+    const checkSpy = vi.fn(async () => false);
+    const dedupStore = { check: checkSpy, record: recordSpy, cleanup: async () => {} };
     const warns: Array<[string, unknown]> = [];
     const deps = makeDeps({
       spawnAgent: vi.fn(() => {
@@ -3661,5 +3661,128 @@ describe('issue #719 — listen’s keyed create on a store with a run file that
     } finally {
       rmSync(runsDir, { recursive: true, force: true });
     }
+  });
+});
+
+// ── #616 B1: the dedup store is asynchronous; a `record` that rejects ─────────────────────────────
+// The real case (TESTING-RULES rule 2): the store is full or busy when listen records the delivery
+// id — the file store's `openSync(…, 'wx')` fails with ENOSPC, and a database store answers later
+// and can fail. listen records the id at two places: after a delivery the run store matched to an
+// existing run, and after it spawns an agent. At each, a rejected `record` is logged and the reply
+// is the one a store that recorded the id would have given; nothing is left unhandled.
+describe('#616 B1 — realm listen awaits the dedup store, and a record that rejects changes no reply', () => {
+  /** A full disk's error, as `openSync` throws it (the file store's real failure). */
+  const enospc = (): Error =>
+    Object.assign(new Error("ENOSPC: no space left on device, open '/home/u/.realm/dedup/x'"), {
+      code: 'ENOSPC',
+    });
+
+  /**
+   * Sends `deliveries` copies of one webhook (one delivery id) through a store whose `check` always
+   * resolves false (as after the window) and whose `record` resolves or rejects. Returns each reply
+   * with its run id blanked (a new run each time), the `record` errors listen logged, and every
+   * rejection left unhandled while the deliveries ran.
+   */
+  async function deliver(record: 'resolves' | 'rejects', deliveries: number) {
+    const errors: Array<[string, unknown]> = [];
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const deps = makeDeps({
+        dedupStoreFor: () => ({
+          check: async () => false,
+          record: async () => {
+            if (record === 'rejects') throw enospc();
+          },
+          cleanup: async () => {},
+        }),
+        logger: { ...silentLogger, error: (m: string, d?: unknown) => errors.push([m, d]) },
+      });
+      const handler = makeListenHandler(
+        routesFor(wf({ ...SHARED_SECRET_TRIGGER, dedup: { id_from: 'body.id' } })),
+        deps,
+      );
+      const replies: Array<{ status: number; body: Record<string, unknown> }> = [];
+      for (let i = 0; i < deliveries; i++) {
+        const reply = await invoke(handler, {
+          url: '/wf',
+          headers: { ...JSON_CT, authorization: SECRET },
+          body: JSON.stringify({ id: 'evt-616-b1' }),
+        });
+        replies.push({ ...reply, body: { ...reply.body, run_id: '<run>' } });
+      }
+      // An unawaited rejection is reported after the microtasks drain: let two turns pass.
+      await new Promise((r) => setImmediate(r));
+      await new Promise((r) => setImmediate(r));
+      const recordErrors = errors
+        .filter(([m]) => m === 'webhook: failed to record dedup id')
+        .map(([m, d]) => [m, { ...(d as Record<string, unknown>), run_id: '<run>' }]);
+      return { replies, recordErrors, unhandled };
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  }
+
+  it('after a spawn: the rejection is logged with the run and the error, the reply is the 202 a recorded id gets, nothing unhandled', async () => {
+    const ok = await deliver('resolves', 1);
+    const failed = await deliver('rejects', 1);
+    // (1) red when listen does not await `record` after the spawn (the break: the `await` removed
+    //     at that site — the rejection then escapes the try, is never logged, and is left
+    //     unhandled), or when a rejected record changes the reply; (2) prints both replies (run id
+    //     blanked), the logged `record` errors and the unhandled rejections.
+    expect({
+      reply: failed.replies[0],
+      logged: failed.recordErrors,
+      unhandled: failed.unhandled,
+    }).toEqual({
+      reply: ok.replies[0],
+      logged: [
+        [
+          'webhook: failed to record dedup id',
+          {
+            run_id: '<run>',
+            error: "Error: ENOSPC: no space left on device, open '/home/u/.realm/dedup/x'",
+          },
+        ],
+      ],
+      unhandled: [],
+    });
+  });
+
+  it('after a matched run: the rejection is logged with the run and the error, the reply is the 200 deduplicated a recorded id gets, nothing unhandled', async () => {
+    // The second delivery reaches the run store (check resolves false), which matches the run the
+    // first created: listen records the id there and answers `200 deduplicated` with the run.
+    const ok = await deliver('resolves', 2);
+    const failed = await deliver('rejects', 2);
+    // (1) red when listen does not await `record` after a matched run (the break: the `await`
+    //     removed at that site), or when a rejected record changes that reply; (2) prints both
+    //     second replies (run id blanked), the `record` errors logged for the second delivery
+    //     (the first's, after its spawn, is the cell above's) and the unhandled rejections.
+    expect({
+      reply: failed.replies[1],
+      logged: failed.recordErrors.slice(1),
+      unhandled: failed.unhandled,
+    }).toEqual({
+      reply: ok.replies[1],
+      logged: [
+        [
+          'webhook: failed to record dedup id',
+          {
+            run_id: '<run>',
+            error: "Error: ENOSPC: no space left on device, open '/home/u/.realm/dedup/x'",
+          },
+        ],
+      ],
+      unhandled: [],
+    });
+    // (1) red when the matched delivery is not answered `200 deduplicated` (the matched branch is
+    //     not reached, so the cell would test nothing); (2) prints the reply.
+    expect(ok.replies[1]).toEqual({
+      status: 200,
+      body: { status: 'deduplicated', run_id: '<run>', run_phase: 'running' },
+    });
   });
 });
