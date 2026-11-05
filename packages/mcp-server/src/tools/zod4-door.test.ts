@@ -32,6 +32,7 @@ import { submitHumanResponseArgsSchema } from './submit-human-response.js';
 import { traceEntrySchema } from './execute-step.js';
 import { presentQuestionArgsShape } from './present-question.js';
 import { MAX_BATCH_ITEMS } from './start-run-batch.js';
+import { withArtifactStores } from '../test-support/temp-home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const flat = (t: string) => t.replace(/\s+/g, ' ');
@@ -51,12 +52,12 @@ async function connect() {
   const dir = await mkdtemp(join(tmpdir(), 'realm-zod4-'));
   const runStore = new JsonFileStore(join(dir, 'runs'));
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
-  const server = createRealmMcpServer({ runStore, workflowStore });
+  const server = createRealmMcpServer({ ...withArtifactStores(runStore), workflowStore });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'zod4', version: '0' });
   await Promise.all([server.connect(st), client.connect(ct)]);
   const forms = createRealmMcpServer({
-    runStore: new JsonFileStore(join(dir, 'runs2')),
+    ...withArtifactStores(new JsonFileStore(join(dir, 'runs2'))),
     workflowStore: new JsonWorkflowStore(join(dir, 'wf2')),
     gateAnswers: 'asked',
   });

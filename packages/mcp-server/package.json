@@ -37,7 +37,7 @@
     "node": ">=22.0.0"
   },
   "bin": {
-    "realm-mcp": "./dist/server.js"
+    "realm-mcp": "./dist/bin.js"
   },
   "scripts": {
     "build": "tsc --build",

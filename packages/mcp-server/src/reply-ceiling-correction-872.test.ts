@@ -37,6 +37,7 @@ import {
 } from './render-reply.js';
 import { sseJsonStringify } from './sse-json.js';
 import { RUN_STATE_PLAN, RUN_STATE_SUMMARY_TABLE } from './tools/get-run-state.js';
+import { withArtifactStores } from './test-support/temp-home.js';
 
 const set = compileDisclosure([], {
   declared: 'resolved',
@@ -288,7 +289,7 @@ describe('#872 (b1) correction 1 AC3 (C3) — the overflow line: one arm per rep
       steps: { s: { description: 'S.', execution: 'agent', depends_on: [] } },
     } as WorkflowDefinition);
     const server = createRealmMcpServer({
-      runStore: new JsonFileStore(join(dir, 'runs')),
+      ...withArtifactStores(new JsonFileStore(join(dir, 'runs'))),
       workflowStore,
     });
     const [ct, st] = InMemoryTransport.createLinkedPair();
@@ -505,7 +506,7 @@ async function door(registry?: ExtensionRegistry) {
   const runStore = new JsonFileStore(join(dir, 'runs'));
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
   const server = createRealmMcpServer({
-    runStore,
+    ...withArtifactStores(runStore),
     workflowStore,
     ...(registry !== undefined ? { registry } : {}),
   });

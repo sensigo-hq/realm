@@ -29,6 +29,7 @@ import {
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
+import { makeTempHome, withArtifactStores } from '../test-support/temp-home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const flat = (t: string) => t.replace(/\s+/g, ' ');
@@ -60,7 +61,7 @@ async function connect(registry?: ExtensionRegistry) {
   const runStore = new JsonFileStore(join(dir, 'runs'));
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
   const server = createRealmMcpServer({
-    runStore,
+    ...withArtifactStores(runStore),
     workflowStore,
     ...(registry !== undefined ? { registry } : {}),
   });
@@ -213,10 +214,15 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       [...listed].sort(),
     ]);
     // Correction 2 (4.4): the REGISTERED set per value — the SDK's own table of the server's tools.
+    // #616 PR-2a (ii-a): each server is built on a temp home's four stores.
+    const home = await makeTempHome();
     const registered = (gateAnswers: 'asked' | 'offered' | 'withheld') =>
       Object.keys(
-        (createRealmMcpServer({ gateAnswers }) as unknown as { _registeredTools: object })
-          ._registeredTools,
+        (
+          createRealmMcpServer({ ...home.stores, gateAnswers }) as unknown as {
+            _registeredTools: object;
+          }
+        )._registeredTools,
       );
     const answerTools = (names: string[]) =>
       names.filter((n) => n === 'submit_human_response' || n === 'present_question').sort();
@@ -231,6 +237,7 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       offered: [11, ['submit_human_response']],
       withheld: [10, []],
     });
+    home.cleanup();
   });
 
   it('connect-an-mcp-client.md: execute_step submits the answer to an agent step; an automatic step is the engine’s — advance_run runs it (#729, the Q3 unit)', async () => {

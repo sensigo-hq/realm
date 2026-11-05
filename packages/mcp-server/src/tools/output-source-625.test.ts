@@ -18,6 +18,7 @@ import {
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
+import { withArtifactStores } from '../test-support/temp-home.js';
 
 const PAGE = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -45,7 +46,7 @@ describe('#625 PR-2a, F4 — get_run_state shows no output_source, and its page 
     const runStore = new JsonFileStore(join(dir, 'runs'));
     const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
     await workflowStore.register(WF);
-    const server = createRealmMcpServer({ runStore, workflowStore });
+    const server = createRealmMcpServer({ ...withArtifactStores(runStore), workflowStore });
     const [ct, st] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: 'os-mcp-625', version: '0' });
     await Promise.all([server.connect(st), client.connect(ct)]);

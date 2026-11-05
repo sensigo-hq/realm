@@ -24,6 +24,7 @@ import {
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
+import { withArtifactStores } from '../test-support/temp-home.js';
 
 type Reply = Record<string, unknown>;
 const AGENT_PARAMS = { p: 'AGENT-PARAMS' };
@@ -153,7 +154,11 @@ async function connect() {
   const runStore = new JsonFileStore(join(dir, 'runs'));
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
   for (const d of [W3, WK, WK2, W3H, W2, WA, ...F1_WORKFLOWS]) await workflowStore.register(d);
-  const server = createRealmMcpServer({ runStore, workflowStore, registry: registry() });
+  const server = createRealmMcpServer({
+    ...withArtifactStores(runStore),
+    workflowStore,
+    registry: registry(),
+  });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'q3-729', version: '0' });
   await Promise.all([server.connect(st), client.connect(ct)]);

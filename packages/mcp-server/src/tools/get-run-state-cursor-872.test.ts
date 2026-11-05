@@ -23,6 +23,7 @@ import { handleGetRunState } from './get-run-state.js';
 import { doubleClock, noSettle, snap } from '../test-support/snapshot-double.js';
 import { declared } from '../test-support/declared.js';
 import type { RunRecord, RunStore } from '@sensigo/realm';
+import { withArtifactStores } from '../test-support/temp-home.js';
 
 type Reply = Record<string, unknown>;
 
@@ -77,7 +78,7 @@ async function setup(n: number) {
       { run_id: run.id, ...args },
       { runStore, workflowStore },
     )) as unknown as Reply;
-  const server = createRealmMcpServer({ runStore, workflowStore });
+  const server = createRealmMcpServer({ ...withArtifactStores(runStore), workflowStore });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'cursor-872', version: '0' });
   await Promise.all([server.connect(st), client.connect(ct)]);

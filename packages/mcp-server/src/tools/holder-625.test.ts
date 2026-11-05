@@ -38,6 +38,7 @@ import { handleGetRunState } from './get-run-state.js';
 import { handleAbandonRun } from './abandon-run.js';
 import { generateProtocol } from '../protocol/generator.js';
 import { createRealmMcpServer } from '../server.js';
+import { withArtifactStores } from '../test-support/temp-home.js';
 
 /** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
  *  runs folder beside the location's clock file (first set to the host's reading), which
@@ -491,7 +492,11 @@ describe('get_run_state — who took each step; the token has one door and this 
 
 describe('createRealmMcpServer({ driver }) threads the program’s name to the tools', () => {
   it('a run started through the SERVER’S start_run carries the server’s identity on its claim', async () => {
-    const server = createRealmMcpServer({ runStore, workflowStore, driver: DRIVER });
+    const server = createRealmMcpServer({
+      ...withArtifactStores(runStore),
+      workflowStore,
+      driver: DRIVER,
+    });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
     const client = new Client({ name: 'test-client', version: '0' });

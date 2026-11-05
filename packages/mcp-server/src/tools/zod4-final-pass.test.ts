@@ -28,6 +28,7 @@ import {
   checkArgsNumbersJoined,
   walkNumbers,
 } from './args-numbers.js';
+import { withArtifactStores } from '../test-support/temp-home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const flat = (t: string) => t.replace(/\s+/g, ' ');
@@ -46,7 +47,7 @@ async function connect() {
   const dir = await mkdtemp(join(tmpdir(), 'realm-zod4-final-'));
   const runStore = new JsonFileStore(join(dir, 'runs'));
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
-  const server = createRealmMcpServer({ runStore, workflowStore });
+  const server = createRealmMcpServer({ ...withArtifactStores(runStore), workflowStore });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'zod4-final', version: '0' });
   await Promise.all([server.connect(st), client.connect(ct)]);

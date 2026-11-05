@@ -19,6 +19,7 @@ import {
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from './server.js';
+import { withArtifactStores } from './test-support/temp-home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const TOOLS_PAGE = 'docs/reference/mcp/tools.md';
@@ -47,7 +48,7 @@ async function connect(extra: Parameters<typeof createRealmMcpServer>[0] = {}) {
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
   await workflowStore.register(FLOW);
   const server = createRealmMcpServer({
-    runStore: new JsonFileStore(join(dir, 'runs')),
+    ...withArtifactStores(new JsonFileStore(join(dir, 'runs'))),
     workflowStore,
     ...extra,
   });
@@ -262,7 +263,7 @@ describe('#729 PR-3 correction 1 — whose standing a reply reports (F11, D-11),
     await workflowStore.register(FLOW);
     await workflowStore.register(GATED);
     const server = createRealmMcpServer({
-      runStore: new JsonFileStore(join(dir, 'runs')),
+      ...withArtifactStores(new JsonFileStore(join(dir, 'runs'))),
       workflowStore,
       // FLOW's project failed to load; GATED's resolved.
       disclosureProvider: async (definition, run) => {
@@ -332,13 +333,15 @@ describe('#729 PR-3 correction 2 (G1) — the pages hold on the first call of a 
       'CHANGELOG.md',
       '`disclosureProvider(definition, run?)` returns the set a reply about that workflow, and that run when the call names one, is masked with',
     );
-    // The default run store, under a HOME of this cell's own.
+    // The run store on the default folder of a HOME of this cell's own — explicit since #616 PR-2a
+    // (ii-a): the one the run below is created through, and the server's.
     const home = await mkdtemp(join(tmpdir(), 'realm-docs-mcp-c2-'));
     vi.stubEnv('HOME', home);
     const workflowStore = new JsonWorkflowStore(join(home, 'wf'));
     await workflowStore.register(FLOW);
+    const runStore = new JsonFileStore(join(home, '.realm', 'runs'));
     const runId = (
-      await new JsonFileStore(join(home, '.realm', 'runs')).create({
+      await runStore.create({
         workflowId: FLOW.id,
         workflowVersion: 1,
         params: {},
@@ -346,6 +349,7 @@ describe('#729 PR-3 correction 2 (G1) — the pages hold on the first call of a 
     ).record.id;
     const asked: Array<string | null> = [];
     const server = createRealmMcpServer({
+      ...withArtifactStores(runStore),
       workflowStore,
       // FLOW's project failed to load.
       disclosureProvider: async (definition, run) => {
@@ -418,7 +422,7 @@ describe("#729 PR-3 correction 3 (H-11') — a reply under a failed or changed m
       const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
       await workflowStore.register(ASKED);
       const server = createRealmMcpServer({
-        runStore: new JsonFileStore(join(dir, 'runs')),
+        ...withArtifactStores(new JsonFileStore(join(dir, 'runs'))),
         workflowStore,
         disclosureProvider: async () =>
           buildDisclosureSet({
