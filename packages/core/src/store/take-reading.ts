@@ -45,7 +45,7 @@ export function floorAtRecord(r: Date, record: { updated_at: string }): Date {
  * ...events)`. Event instants are NOT capped by ε. Most are this process's own readings, taken when
  * the work ended; a `settle_gate` answer's `started_at` is the question's stored `opened_at`, the
  * reading of the program that opened it. An identity entry's `captured_at` is outside class and
- * never folded (D6-67).
+ * never folded (D6-67). It is {@link foldReading} of the one raw reading.
  * Returns a fresh `Date`.
  */
 export function takeReading(
@@ -53,8 +53,22 @@ export function takeReading(
   record?: { updated_at: string },
   delta?: SettlementDelta,
 ): Date {
-  const r = takeRawReading(clock);
-  let atMs = (record !== undefined ? floorAtRecord(r, record) : r).getTime();
+  return foldReading(takeRawReading(clock), record, delta);
+}
+
+/**
+ * The second half of {@link takeReading}, for a reading already taken (#616 PR-1a unit 2): `reading`
+ * floored by `record` when it is given ({@link floorAtRecord}: lifted by at most ε, an unparseable
+ * `updated_at` ignored), then the EVENT instants of `delta` folded in, uncapped. PURE: it reads no
+ * clock, so a store whose transaction takes the call's one raw reading floors it here and a
+ * `settleStep` spends exactly one reading. Returns a fresh `Date`.
+ */
+export function foldReading(
+  reading: Date,
+  record?: { updated_at: string },
+  delta?: SettlementDelta,
+): Date {
+  let atMs = (record !== undefined ? floorAtRecord(reading, record) : reading).getTime();
   if (delta !== undefined) {
     for (const event of eventInstantsOf(delta)) atMs = Math.max(atMs, event.getTime());
   }
