@@ -36,6 +36,7 @@ import { parseLlmTimeout, parseProvider } from './agent.js';
 import {
   hasText,
   listenModelRefusal,
+  openAiExplicitCacheModel,
   resolveOpenAiEndpoint,
   type ProviderName,
 } from '../agent/providers/llm-provider.js';
@@ -1604,9 +1605,14 @@ export function listenCachingFacts(
   // Caching 3-B (MA 1's wording list): the endpoint each OpenAI agent will resolve (realm listen
   // passes no --base-url, so only OPENAI_BASE_URL can make it custom).
   openaiEndpoint: RequestEndpoint,
+  // #896: listen's --model, which every agent it starts is given.
+  model: string,
 ): Record<string, string> {
   if (provider === 'openai') {
-    return { openai: openaiCachingWords(promptCache, openaiEndpoint), anthropic: 'not used' };
+    return {
+      openai: openaiCachingWords(promptCache, openaiEndpoint, model),
+      anthropic: 'not used',
+    };
   }
   const words: Record<PromptCacheSetting, string> = {
     auto: 'auto: off, 5 minutes or 1 hour for each workflow, by the gaps between its recent triggers and the prices in runner.cache.economics',
@@ -1620,19 +1626,26 @@ export function listenCachingFacts(
   };
   return provider === 'anthropic'
     ? anthropic
-    : { ...anthropic, openai: openaiCachingWords(promptCache, openaiEndpoint) };
+    : { ...anthropic, openai: openaiCachingWords(promptCache, openaiEndpoint, model) };
 }
 
 /**
  * Caching 3-B (D2; MA 1's wording list, 2026-11-05) — what an OpenAI agent `realm listen` starts sends,
  * by the setting it is given (none: the runner's default) and the endpoint it will resolve: on
  * OpenAI's own endpoint the key goes out under every setting but `off`; on a custom endpoint only
- * for a stated setting other than `off`.
+ * for a stated setting other than `off`. #896: on GPT-5.6 and later at OpenAI's own address, the
+ * agent also asks for 30 minutes, or for nothing under `off`.
  */
 function openaiCachingWords(
   promptCache: PromptCacheSetting | undefined,
   endpoint: RequestEndpoint,
+  model: string,
 ): string {
+  if (endpoint === 'default' && openAiExplicitCacheModel(model)) {
+    return promptCache === 'off'
+      ? 'off: OpenAI is asked to cache nothing'
+      : '30 minutes, the one lifetime Realm can ask OpenAI for, and a cache key';
+  }
   if (endpoint === 'custom') {
     if (promptCache === 'off') return 'off: no cache key to the custom endpoint';
     return promptCache === undefined
@@ -1758,7 +1771,7 @@ export const listenCommand = new Command('listen')
   .option(
     '--prompt-cache <setting>',
     // eslint-disable-next-line no-restricted-syntax -- help prose naming the setting, not a command to copy (#729 PR-3, L-2); #898: its numbers come from the provider's constants.
-    `Passed to each realm agent it starts: auto, short, long or off. auto (the default): each agent asks Anthropic for off, 5 minutes or 1 hour, by the gaps between the recent triggers of its workflow, priced from runner.cache.economics (with no usable prices: ${autoLongText()} when a recent gap is under ${autoFallbackWindowText()}, else off). short: 5 minutes. long: 1 hour. off: nothing. With \`--provider openai\`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but \`off\`, and to another endpoint only for a setting you state other than \`off\`. Other providers' own caching applies.`,
+    `Passed to each realm agent it starts: auto, short, long or off. auto (the default): each agent asks Anthropic for off, 5 minutes or 1 hour, by the gaps between the recent triggers of its workflow, priced from runner.cache.economics (with no usable prices: ${autoLongText()} when a recent gap is under ${autoFallbackWindowText()}, else off). short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: nothing. With \`--provider openai\`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but \`off\`, and to another endpoint only for a setting you state other than \`off\`. On GPT-5.6 and later at OpenAI's own address, the agent also asks OpenAI to cache the fixed part of each step without tools for 30 minutes, and \`off\` turns OpenAI's caching off. Other providers' own caching applies.`,
     parsePromptCache,
   )
   .option(
@@ -1934,7 +1947,7 @@ export const listenCommand = new Command('listen')
         opts.provider === 'anthropic' ? 'default' : await resolveOpenAiEndpoint();
       logger.info(
         'listen: caching',
-        listenCachingFacts(opts.provider, opts.promptCache, openaiEndpoint),
+        listenCachingFacts(opts.provider, opts.promptCache, openaiEndpoint, model),
       );
       const addr = handle.server.address() as { port: number } | null;
       logger.info(

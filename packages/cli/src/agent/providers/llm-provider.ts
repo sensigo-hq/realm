@@ -71,9 +71,10 @@ export interface ProviderCapabilities {
    * choice the provider resolved, `auto` included). Caching 3-B: `'provider'` — the service caches
    * by its own rules, which Realm cannot set; Realm may send it a hint (OpenAI's cache key). Absent
    * means Realm asks this provider for nothing. The Anthropic provider declares `'off'` or a
-   * lifetime; the OpenAI providers declare `'provider'` under every setting; a provider module may
-   * declare any of the three (the start line says what it reads, and that `--prompt-cache` does not
-   * reach a module).
+   * lifetime; the OpenAI providers declare `'provider'`, except (#896) the `openai` provider on a
+   * GPT-5.6-or-later model at OpenAI's own address ({@link openAiExplicitCacheModel}), which declares
+   * `{ lifetime_s: 1800 }`, or `'off'` under `off`; a provider module may declare any of the three
+   * (the start line says what it reads, and that `--prompt-cache` does not reach a module).
    */
   promptCache?: 'off' | 'provider' | { lifetime_s: number };
   /**
@@ -514,6 +515,24 @@ async function resolvedEndpoint(
   } catch {
     return baseUrl === undefined ? 'default' : 'custom';
   }
+}
+
+/**
+ * #896 — whether OpenAI accepts its explicit cache controls (`prompt_cache_options`, a content
+ * part's `prompt_cache_breakpoint`) from this model, by name, compared without regard to case:
+ * `gpt-5.<minor ≥ 6>` and `gpt-<major ≥ 6>[.<minor>]`, each then the end or `-…` (GPT-5.6 and later:
+ * OpenAI charges for writes and accepts the fields; gpt-5.5 refuses both with a 400, measured), and
+ * `ft:<base>:…` judged by its base (LiteLLM's rule). Not `gpt-5`, `gpt-5.1`–`gpt-5.5`, `gpt-4o`,
+ * `gpt-4.1`, `gpt-oss-…`, `chatgpt-…`, the o-series, nor `ft:` of those. Applied only by the `openai`
+ * provider, only at OpenAI's own address.
+ */
+export function openAiExplicitCacheModel(model: string): boolean {
+  const name = model.toLowerCase();
+  const base = name.startsWith('ft:') ? (name.slice(3).split(':')[0] ?? '') : name;
+  const m = /^gpt-(\d+)(?:\.(\d+))?(?:-|$)/.exec(base);
+  if (m === null) return false;
+  const major = Number(m[1]);
+  return major >= 6 || (major === 5 && m[2] !== undefined && Number(m[2]) >= 6);
 }
 
 /**

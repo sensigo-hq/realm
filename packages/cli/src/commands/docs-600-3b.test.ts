@@ -130,15 +130,19 @@ describe('caching 3-B Part C — the head on Anthropic (rows 8, 9, A3, B8)', () 
     // The start line's OpenAI words: `openai-endpoint-3b.test.ts` (D4).
     claim(
       AGENT_GUIDE,
-      'The `Caching:` line says what `realm agent` asks Anthropic to cache, or whether it sends OpenAI a cache key, and where the setting came from;',
+      "The `Caching:` line says what `realm agent` asks Anthropic, or OpenAI on GPT-5.6 and later at OpenAI's own address, to cache, or whether it sends another OpenAI model a cache key, and where the setting came from;",
     );
   });
 });
 
 const AGENT_REF = 'docs/reference/cli/realm-agent.md';
 const LISTEN_REF = 'docs/reference/cli/realm-listen.md';
-const OPENAI_WORDS =
-  "With `--provider openai`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but `off`, and to another endpoint only for a setting you state other than `off`. Other providers' own caching applies.";
+const OPENAI_KEY_WORDS =
+  "With `--provider openai`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but `off`, and to another endpoint only for a setting you state other than `off`.";
+/** #896: each flag row's GPT-5.6 sentence sits between 3-B's OpenAI sentence and the last one
+ *  (`docs-896.test.ts` pins its words). */
+const OPENAI_WORDS = (gpt56: string): string =>
+  `${OPENAI_KEY_WORDS} ${gpt56} (added after version 0.48.0). Other providers' own caching applies.`;
 /** (a) red when the page holds the old words again; (b) prints them. */
 function gone(page: string, words: string): void {
   expect(flat(read(page)).includes(flat(words)), `${page} still says: ${words}`).toBe(false);
@@ -149,9 +153,12 @@ describe('caching 3-B Part D — OpenAI’s cache key (rows 3, 4, 5, 9, 11–15,
     // The key's rule: `openai-cache-key-3b.test.ts` (D2); G18 stays: `prompt-cache-600.test.ts`.
     claim(
       AGENT_REF,
-      `${OPENAI_WORDS} See [What a run costs](../../guides/realm-agent.md#what-a-run-costs). Refused with \`--provider-module\`, and for a workflow with no agent step.`,
+      `${OPENAI_WORDS("On GPT-5.6 and later at OpenAI's own address, Realm also asks OpenAI to cache the fixed part of each step without tools for 30 minutes, the one lifetime Realm can ask OpenAI for (`short` and `long` alike), and `off` turns OpenAI's caching off")} See [What a run costs](../../guides/realm-agent.md#what-a-run-costs). Refused with \`--provider-module\`, and for a workflow with no agent step.`,
     );
-    claim(LISTEN_REF, `\`off\`. ${OPENAI_WORDS} Added after version 0.47.0.`);
+    claim(
+      LISTEN_REF,
+      `\`off\`. ${OPENAI_WORDS("On GPT-5.6 and later at OpenAI's own address, the agent also asks OpenAI to cache the fixed part of each step without tools for 30 minutes, and `off` turns OpenAI's caching off")} Added after version 0.47.0.`,
+    );
   });
 
   it('rows 4, 5, 19, 20: the refusals 3-B deletes are gone from the pages', () => {
@@ -169,7 +176,7 @@ describe('caching 3-B Part D — OpenAI’s cache key (rows 3, 4, 5, 9, 11–15,
     // Each line: `openai-endpoint-3b.test.ts` (D4, per branch).
     claim(
       AGENT_REF,
-      "With OpenAI it is `Caching: OpenAI caches by its own rules; Realm sends a cache key that helps repeated steps reach the same cache (OpenAI treats it as a hint). Realm cannot set OpenAI's lifetime or turn its caching off.`, and with `--prompt-cache short` or `long` stated it adds `--prompt-cache long sets no lifetime on OpenAI.`; with `off` it is `Caching: off; Realm sends OpenAI no cache key. OpenAI's own caching, if any, applies.`",
+      "On other OpenAI models, it is `Caching: OpenAI caches by its own rules; Realm sends a cache key that helps repeated steps reach the same cache (OpenAI treats it as a hint). Realm cannot set OpenAI's lifetime or turn its caching off.`, and with `--prompt-cache short` or `long` stated it adds `--prompt-cache long sets no lifetime on OpenAI.`; with `off` it is `Caching: off; Realm sends OpenAI no cache key. OpenAI's own caching, if any, applies.`",
     );
     claim(
       AGENT_REF,
