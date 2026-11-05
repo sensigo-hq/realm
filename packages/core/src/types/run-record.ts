@@ -425,7 +425,8 @@ export type CacheAutoBasis = (typeof CACHE_AUTO_BASES)[number];
  * - `input_zero` — the row prices input at 0, or at no finite positive number
  *   (`chooseAutoLifetime`, row 3);
  * - `rate_missing` — the row has no read rate, or no write rate for either lifetime
- *   (`chooseAutoLifetime`, row 4; `missing` names them).
+ *   (`chooseAutoLifetime`, row 4; `missing` names them); #896 unit B: for a provider with one
+ *   lifetime, no read rate or no `cache_write` (`chooseAutoOneLifetime`).
  */
 export const CACHE_AUTO_PRICE_CAUSES = [
   'no_file',
@@ -437,8 +438,18 @@ export const CACHE_AUTO_PRICE_CAUSES = [
 ] as const;
 export type CacheAutoPriceCause = (typeof CACHE_AUTO_PRICE_CAUSES)[number];
 
-/** Issue #898 — the price-file rates `auto`'s choice reads, in the order a `missing` list names them. */
-export const CACHE_AUTO_RATES = ['cache_read', 'cache_write_5m', 'cache_write_1h'] as const;
+/**
+ * Issue #898 — the price-file rates `auto`'s choice reads, in the order a `missing` list names them
+ * (the price file's own order). #896 unit B: `cache_write`, the one write rate of a provider with one
+ * lifetime (OpenAI). Anthropic's `missing` names only `cache_read`, `cache_write_5m` and
+ * `cache_write_1h`; OpenAI's only `cache_read` and `cache_write`.
+ */
+export const CACHE_AUTO_RATES = [
+  'cache_read',
+  'cache_write',
+  'cache_write_5m',
+  'cache_write_1h',
+] as const;
 export type CacheAutoRate = (typeof CACHE_AUTO_RATES)[number];
 
 /**

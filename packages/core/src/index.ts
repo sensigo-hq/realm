@@ -666,6 +666,7 @@ export {
   CACHE_GAP_MAX_S,
   chooseCacheLifetime,
   chooseAutoLifetime,
+  chooseAutoOneLifetime,
   keptCacheGaps,
   normalizeCacheAuto,
 } from './economics/cache-lifetime.js';
