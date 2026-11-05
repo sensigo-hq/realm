@@ -835,6 +835,9 @@ describe('OpenAIProvider.capabilities', () => {
       jsonMode: true,
       providerId: 'openai',
       toolArgsStrict: true,
+      // caching 3-B (D1, D3): OpenAI caches by its own rules; built without a base URL: default.
+      promptCache: 'provider',
+      endpoint: 'default',
     });
   });
 
@@ -850,6 +853,9 @@ describe('OpenAIProvider.capabilities', () => {
       providerId: 'openai',
       toolArgsStrict: true,
       strictGate: 'compat_endpoint',
+      // caching 3-B (D1, D3): built with a base URL and no resolved endpoint: custom.
+      promptCache: 'provider',
+      endpoint: 'custom',
     });
   });
 

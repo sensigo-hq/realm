@@ -4,13 +4,16 @@ import {
   WorkflowError,
   validateAgentSubmission,
   type JsonSchema,
+  type RequestEndpoint,
   type StructuredOutputMeta,
   type UsageRecord,
 } from '@sensigo/realm';
 import {
   ToolCapableLlmProvider,
   endpointOf,
+  openAiExplicitCacheModel,
   responseModel,
+  type PromptCacheRequest,
   type ProviderCapabilities,
 } from './llm-provider.js';
 import type {
@@ -30,6 +33,9 @@ import {
   renderSubmissionProblems,
   extractHttpStatus,
   extractApiErrorFields,
+  sha256Hex,
+  sendUnderGatewayRule,
+  type CacheFieldMemory,
   driveCreate,
   makeCountingFetch,
   MAX_RETRIES,
@@ -61,10 +67,136 @@ const JSON_SCHEMA_NAME = 'realm_step_output';
 export const OPENAI_DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 
 /**
+ * Caching 3-B (D2; B2, D4.6-10, -11) — one step's OpenAI cache plan. With a split
+ * (`cachePrefixChars`), `head` is the prompt's first n characters, and `key` — the SHA-256 of the
+ * head's UTF-8 bytes, 64 lowercase hex, the record's `prefix_sha256` — is set only when the key is
+ * sent: on OpenAI's own endpoint under every setting but `off` (`off` is honoured); on a custom
+ * endpoint only for a setting the operator STATED, other than `off` (the runner's default sends it
+ * none); never for a head with no non-space character (every such step would share one key). A
+ * provider built without a setting (a host constructing it directly) reads as the runner's default,
+ * `auto`. Every request of one step carries the same key.
+ */
+export interface OpenAiCachePlan {
+  head: string;
+  key?: string;
+}
+
+export function openAiCachePlan(
+  prompt: string,
+  cachePrefixChars: number | undefined,
+  endpoint: RequestEndpoint,
+  promptCache: PromptCacheRequest | undefined,
+): OpenAiCachePlan | undefined {
+  if (cachePrefixChars === undefined) return undefined;
+  const head = prompt.slice(0, cachePrefixChars);
+  const value = promptCache?.value ?? 'auto';
+  const stated = promptCache?.source === 'stated';
+  const send = /\S/.test(head) && value !== 'off' && (endpoint === 'default' || stated);
+  return send ? { head, key: sha256Hex(head) } : { head };
+}
+
+/** #896 (A1): the one lifetime Realm can ask OpenAI for on Chat Completions, in seconds. */
+const OPENAI_EXPLICIT_LIFETIME_S = 1800;
+
+/** #896: an explicit cache mark on one text part. It never carries a `ttl` (refused on Chat). */
+function markedPart(text: string): Rec {
+  return { type: 'text', text, prompt_cache_breakpoint: { mode: 'explicit' } };
+}
+
+/**
+ * #896 unit A (A1, A2) — a single-shot body with OpenAI's explicit cache controls, for a request in
+ * the set (the `openai` provider, OpenAI's own address, {@link openAiExplicitCacheModel}). Under
+ * `off`: explicit mode with no mark, which writes and reads nothing (measured). Otherwise: explicit
+ * mode with the 30-minute lifetime, so only up to the marks is written; the system text as one
+ * marked part (it is never blank); and the prompt in 3-B's shapes — head and tail both with text:
+ * two parts, the head marked; a blank tail: one marked part, the whole text; a blank head, or no
+ * split: the plain string. Only the system text and the prompt are shaped; the JSON retry's turns
+ * after them go as they are, so every re-send carries the same options and marks.
+ */
+export function withExplicitCache(body: Rec, plan: OpenAiCachePlan | undefined, off: boolean): Rec {
+  if (off) return { ...body, prompt_cache_options: { mode: 'explicit' } };
+  const [system, user, ...rest] = body['messages'] as Array<{ role: string; content: string }>;
+  let prompt: unknown = user!.content;
+  if (plan !== undefined && /\S/.test(plan.head)) {
+    const tail = user!.content.slice(plan.head.length);
+    prompt = /\S/.test(tail)
+      ? [markedPart(plan.head), { type: 'text', text: tail }]
+      : [markedPart(user!.content)];
+  }
+  return {
+    ...body,
+    prompt_cache_options: { mode: 'explicit', ttl: '30m' },
+    messages: [
+      { ...system!, content: [markedPart(system!.content)] },
+      { ...user!, content: prompt },
+      ...rest,
+    ],
+  };
+}
+
+/** #896: whether a message's content (as sent) carries an explicit cache mark. */
+function carriesMark(message: unknown): boolean {
+  const content = (message as { content?: unknown } | undefined)?.content;
+  return (
+    Array.isArray(content) &&
+    content.some((part) => (part as { prompt_cache_breakpoint?: unknown }).prompt_cache_breakpoint)
+  );
+}
+
+/** Caching 3-B (D2): a Chat Completions body with the plan's key, when it is sent. */
+export function withCacheKey(
+  body: Record<string, unknown>,
+  plan: OpenAiCachePlan | undefined,
+): Record<string, unknown> {
+  return plan?.key !== undefined ? { ...body, prompt_cache_key: plan.key } : body;
+}
+
+/**
+ * Caching 3-B (A6, D2) — the split's facts for one OpenAI request, read off the body SENT: the
+ * head's digest and length, a digest per part (the system text, the head, the tools and the
+ * response format where the body has them), the key when it went out, and whether strict did.
+ * `cache_requested` stays `provider_rules`: the key is a hint, not an ask (D4.6-9). #896: on a body
+ * with explicit marks, `cache_marked` also names the marked system text and prompt head.
+ */
+export function openAiSplitFacts(
+  body: Record<string, unknown>,
+  plan: OpenAiCachePlan,
+  systemText: string,
+): Partial<UsageRecord> {
+  const keySent = typeof body['prompt_cache_key'] === 'string';
+  // #896: what carried a mark or the key, from the body sent: the system text, the prompt's head.
+  const messages = (body['messages'] ?? []) as unknown[];
+  const marked = [
+    ...(carriesMark(messages[0]) ? (['system'] as const) : []),
+    ...(carriesMark(messages[1]) ? (['prompt'] as const) : []),
+    ...(keySent ? (['key'] as const) : []),
+  ];
+  const tools = body['tools'] as Array<{ function?: { strict?: boolean } }> | undefined;
+  const format = body['response_format'] as { json_schema?: { strict?: boolean } } | undefined;
+  return {
+    prefix_sha256: sha256Hex(plan.head),
+    prefix_chars: plan.head.length,
+    prefix_parts: {
+      ...(tools !== undefined ? { tools: sha256Hex(JSON.stringify(tools)) } : {}),
+      system: sha256Hex(systemText),
+      prompt: sha256Hex(plan.head),
+      ...(format !== undefined ? { format: sha256Hex(JSON.stringify(format)) } : {}),
+    },
+    ...(marked.length > 0 ? { cache_marked: marked } : {}),
+    ...(keySent ? { cache_key_sent: true as const } : {}),
+    request_strict_sent:
+      format?.json_schema?.strict === true ||
+      (tools ?? []).some((t) => t.function?.strict === true),
+  };
+}
+
+/**
  * Issue #600 PR 2 (B3) — what realm asked for on an OpenAI request, and where it sent it: the
- * response's `model`, `provider_rules` (realm sends no cache field; OpenAI's own caching, if any,
- * applies), the endpoint, and that OpenAI reports no lifetime split. Never `provider`: `realm
- * agent` stamps that.
+ * response's `model`, `provider_rules` (realm asks for nothing; OpenAI's own caching, if any,
+ * applies — caching 3-B: the cache key, when sent, is a hint recorded as `cache_key_sent` by
+ * {@link openAiSplitFacts}), the endpoint, and that OpenAI reports no lifetime split. Never
+ * `provider`: `realm agent` stamps that. #896: a request in the explicit set records its ask
+ * instead (`OpenAIProvider`'s `explicitAskFacts`).
  */
 function openAiRequestFacts(response: unknown, client: unknown): Partial<UsageRecord> {
   const model = responseModel(response);
@@ -167,12 +299,25 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
   private readonly model: string;
   private readonly baseUrl: string | undefined;
   private readonly strictBaseUrl: boolean;
+  /** Caching 3-B (D1): resolved once by `resolveProvider`; built directly, the flag decides. */
+  private readonly endpoint: RequestEndpoint;
+  /** Caching 3-B (D3): the runner's setting, which decides whether the cache key is sent. */
+  private readonly promptCache: PromptCacheRequest | undefined;
+  /** Caching 3-B (E3): this drive's memory of a gateway's refusal of the cache key. */
+  private readonly cacheFields: CacheFieldMemory = {};
 
-  constructor(model: string, baseUrl?: string, strictBaseUrl = false) {
+  constructor(
+    model: string,
+    baseUrl?: string,
+    strictBaseUrl = false,
+    opts?: { endpoint?: RequestEndpoint; promptCache?: PromptCacheRequest },
+  ) {
     super();
     this.model = model;
     this.baseUrl = baseUrl;
     this.strictBaseUrl = strictBaseUrl;
+    this.endpoint = opts?.endpoint ?? (baseUrl === undefined ? 'default' : 'custom');
+    this.promptCache = opts?.promptCache;
   }
 
   /**
@@ -198,7 +343,50 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       ...(this.baseUrl !== undefined && !this.strictBaseUrl
         ? { strictGate: 'compat_endpoint' as const }
         : {}),
+      // caching 3-B (D1, D3): OpenAI caches by its own rules; the endpoint decides the start line's
+      // words and whether the key goes out. #896: in the explicit set, Realm asks for 30 minutes,
+      // or for nothing under `off`.
+      promptCache: this.explicitCache()
+        ? this.promptCache?.value === 'off'
+          ? 'off'
+          : { lifetime_s: OPENAI_EXPLICIT_LIFETIME_S }
+        : 'provider',
+      endpoint: this.endpoint,
     };
+  }
+
+  /**
+   * #896 unit A — whether OpenAI's explicit cache controls apply: this model is GPT-5.6 or later,
+   * at OpenAI's own address. The o-series route is another provider; custom addresses keep 3-B's.
+   */
+  private explicitCache(): boolean {
+    return this.endpoint === 'default' && openAiExplicitCacheModel(this.model);
+  }
+
+  /**
+   * #896 unit A — the ask a request in the explicit set records, as Anthropic's does: 30 minutes,
+   * sent (OpenAI has no default to leave out), or `off`; the setting's source facts when given; no
+   * `cache_auto` (unit A chooses nothing by gaps or prices).
+   */
+  private explicitAskFacts(): Partial<UsageRecord> {
+    const p = this.promptCache;
+    return {
+      ...(p?.value === 'off'
+        ? { cache_requested: 'off' as const }
+        : {
+            cache_requested: 'lifetime' as const,
+            cache_lifetime_s: OPENAI_EXPLICIT_LIFETIME_S,
+            cache_ttl_sent: true,
+          }),
+      ...(p !== undefined ? { cache_requested_source: p.source, cache_requested_by: p.by } : {}),
+    };
+  }
+
+  /** Caching 3-B (E3): the gateway's refusal, on the request that worked and every later one. */
+  private rejectedFact(): Partial<UsageRecord> {
+    return this.cacheFields.rejected !== undefined
+      ? { cache_controls_rejected: this.cacheFields.rejected }
+      : {};
   }
 
   /**
@@ -211,7 +399,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     prompt: string,
     inputSchema?: Record<string, unknown>,
     agentProfileInstructions?: string,
-    callOpts?: { llmClock?: LlmClock },
+    callOpts?: { llmClock?: LlmClock; cachePrefixChars?: number },
     // issue #600 PR 1a (D9): owned by the entry point so one `catch` there sees everything billed.
     billed?: UsageRecord[],
   ): Promise<{ output: Record<string, unknown>; usage?: UsageRecord[] }> {
@@ -253,6 +441,16 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       clock !== undefined ? driveCreate(rawCreate, body, clock, counters) : rawCreate(body, {});
 
     const systemPrompt = buildSystemPrompt(inputSchema, agentProfileInstructions);
+    // caching 3-B (D2, site 1): the cache key, on this request and on its JSON retry.
+    const plan = openAiCachePlan(
+      prompt,
+      callOpts?.cachePrefixChars,
+      this.endpoint,
+      this.promptCache,
+    );
+    // #896: OpenAI's explicit cache controls, in the set (GPT-5.6+, OpenAI's own address).
+    const explicit = this.explicitCache();
+    const off = this.promptCache?.value === 'off';
     type Message = { role: 'system' | 'user' | 'assistant'; content: string };
     const messages: Message[] = [
       { role: 'system', content: systemPrompt },
@@ -264,22 +462,30 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     // false number by construction the moment the retry fires.
     const requests: UsageRecord[] = billed ?? [];
     const makeRequest = async (msgs: Message[]): Promise<string> => {
-      const opts: Record<string, unknown> = {
+      const base: Record<string, unknown> = {
         model: this.model,
         messages: msgs,
       };
       if (this.capabilities().jsonMode) {
-        opts['response_format'] = { type: 'json_object' };
+        base['response_format'] = { type: 'json_object' };
       }
       const requestStart = new Date().toISOString();
-      const response = await bounded(opts);
+      // caching 3-B (E3): under the gateway rule — a custom endpoint that refuses the key gets the
+      // request once more without it.
+      let opts = base;
+      const response = await sendUnderGatewayRule(this.cacheFields, this.endpoint, (withCache) => {
+        opts = withCache ? withCacheKey(base, plan) : base;
+        // #896 (A1, A2): in the explicit set, the marks and the mode (the retry carries the same).
+        if (explicit) opts = withExplicitCache(opts, plan, off);
+        return bounded(opts);
+      });
       requests.push(
-        toUsageRecord(
-          requests.length,
-          requestStart,
-          readOpenAiUsage(response),
-          openAiRequestFacts(response, client),
-        ),
+        toUsageRecord(requests.length, requestStart, readOpenAiUsage(response), {
+          ...openAiRequestFacts(response, client),
+          ...(explicit ? this.explicitAskFacts() : {}),
+          ...(plan !== undefined ? openAiSplitFacts(opts, plan, systemPrompt) : {}),
+          ...this.rejectedFact(),
+        }),
       );
       return (response.choices[0]?.message?.content as string | undefined) ?? '';
     };
@@ -347,7 +553,9 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
    *   ALWAYS explicit. Omitting `strict` is NOT a neutral default — probe P1 executed it: an
    *   omitted flag yields 200 with the schema unenforced, i.e. a silent non-enforcement mode.
    *
-   * The ladder is status-keyed, never message-keyed: a 400 on a strict-carrying request drops
+   * The strict ladder is status-keyed (caching 3-B: on a custom endpoint, a 400 that names the cache
+   * key Realm added drops that key first — the gateway rule; owner, 2026-11-03): a 400 on a
+   * strict-carrying request drops
    * strict and retries the turn once; a second 400 throws an error CARRYING the meta. Anything
    * else — 5xx, transport, timeouts — propagates untouched and never drops or sticks, because
    * OpenAI has no 503-grammar analog and a slow first strict call (schema compilation) must be
@@ -357,7 +565,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     prompt: string,
     inputSchema?: Record<string, unknown>,
     agentProfileInstructions?: string,
-    opts?: { structuredOutputStrict?: boolean; llmClock?: LlmClock },
+    opts?: { structuredOutputStrict?: boolean; llmClock?: LlmClock; cachePrefixChars?: number },
   ): Promise<{
     output: Record<string, unknown>;
     meta?: StructuredOutputMeta;
@@ -375,7 +583,12 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
           prompt,
           inputSchema,
           agentProfileInstructions,
-          { ...(clock !== undefined ? { llmClock: clock } : {}) },
+          {
+            ...(clock !== undefined ? { llmClock: clock } : {}),
+            ...(opts?.cachePrefixChars !== undefined
+              ? { cachePrefixChars: opts.cachePrefixChars }
+              : {}),
+          },
           billed,
         );
       } catch (err) {
@@ -419,21 +632,33 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       { role: 'system', content: systemPrompt },
       { role: 'user', content: prompt },
     ];
-
-    const buildOpts = (strict: boolean): Record<string, unknown> => ({
-      model: this.model,
-      messages,
-      ...(strict
-        ? {
-            response_format: {
-              type: 'json_schema',
-              json_schema: { name: JSON_SCHEMA_NAME, strict: true, schema: inputSchema },
-            },
-          }
-        : this.capabilities().jsonMode
-          ? { response_format: { type: 'json_object' } }
-          : {}),
-    });
+    // caching 3-B (D2, site 2): the cache key, on the strict request and on its drop retry.
+    const plan = openAiCachePlan(prompt, opts.cachePrefixChars, this.endpoint, this.promptCache);
+    // #896 (A1, A2): in the explicit set, the strict body and its drop retry carry the same marks.
+    const explicit = this.explicitCache();
+    const off = this.promptCache?.value === 'off';
+    const buildOpts = (strict: boolean, withCache: boolean): Record<string, unknown> => {
+      const body = buildKeyedOpts(strict, withCache);
+      return explicit ? withExplicitCache(body, plan, off) : body;
+    };
+    const buildKeyedOpts = (strict: boolean, withCache: boolean): Record<string, unknown> =>
+      (withCache ? withCacheKey : (body: Record<string, unknown>) => body)(
+        {
+          model: this.model,
+          messages,
+          ...(strict
+            ? {
+                response_format: {
+                  type: 'json_schema',
+                  json_schema: { name: JSON_SCHEMA_NAME, strict: true, schema: inputSchema },
+                },
+              }
+            : this.capabilities().jsonMode
+              ? { response_format: { type: 'json_object' } }
+              : {}),
+        },
+        plan,
+      );
 
     const rawCreate = (b: Rec, o: Rec): Promise<unknown> => client.chat.completions.create(b, o);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -449,12 +674,12 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
         const requestStart = new Date().toISOString();
         const response = await create(o);
         requests.push(
-          toUsageRecord(
-            requests.length,
-            requestStart,
-            readOpenAiUsage(response),
-            openAiRequestFacts(response, client),
-          ),
+          toUsageRecord(requests.length, requestStart, readOpenAiUsage(response), {
+            ...openAiRequestFacts(response, client),
+            ...(explicit ? this.explicitAskFacts() : {}),
+            ...(plan !== undefined ? openAiSplitFacts(o, plan, systemPrompt) : {}),
+            ...this.rejectedFact(),
+          }),
         );
         return response as Record<string, unknown>;
       };
@@ -487,37 +712,40 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
         );
       };
 
-      try {
-        const response = await timedCreate(buildOpts(true));
-        return {
-          output: readContent(response),
-          meta: { requested: true, sent: true },
-          usage: requests,
-        };
-      } catch (err) {
-        const status = extractHttpStatus(err);
-        // 5xx / transport / timeout: NEVER a downgrade and never sticky — the schema is not what
-        // failed. Propagates so the caller's own retry treats it as the transport error it is.
-        if (status !== 400) throw err;
-        const api_message = err instanceof Error ? err.message : String(err);
-        const meta: StructuredOutputMeta = {
-          requested: true,
-          sent: false,
-          downgrade_reason: 'api_rejected_schema',
-          api_message,
-          ...extractApiErrorFields(err),
-        };
-        try {
-          const retry = await timedCreate(buildOpts(false));
-          return { output: readContent(retry), meta, usage: requests };
-        } catch (retryErr) {
-          throw new OpenAIStructuredOutputLadderError(
-            retryErr instanceof Error ? retryErr.message : String(retryErr),
-            meta,
-            { cause: retryErr },
-          );
-        }
-      }
+      // caching 3-B (E3, D4.5): the gateway rule first, then #313's status-keyed strict ladder on
+      // anything it does not take (a 400 drops strict and retries once; anything else propagates).
+      let meta: StructuredOutputMeta = { requested: true, sent: true };
+      const response = await sendUnderGatewayRule(
+        this.cacheFields,
+        this.endpoint,
+        (withCache) => timedCreate(buildOpts(true, withCache)),
+        async (err, withCache) => {
+          const status = extractHttpStatus(err);
+          // 5xx / transport / timeout: NEVER a downgrade and never sticky — the schema is not what
+          // failed. Propagates so the caller's own retry treats it as the transport error it is.
+          if (status !== 400) throw err;
+          const api_message = err instanceof Error ? err.message : String(err);
+          const dropped: StructuredOutputMeta = {
+            requested: true,
+            sent: false,
+            downgrade_reason: 'api_rejected_schema',
+            api_message,
+            ...extractApiErrorFields(err),
+          };
+          try {
+            const retry = await timedCreate(buildOpts(false, withCache));
+            meta = dropped;
+            return retry;
+          } catch (retryErr) {
+            throw new OpenAIStructuredOutputLadderError(
+              retryErr instanceof Error ? retryErr.message : String(retryErr),
+              dropped,
+              { cause: retryErr },
+            );
+          }
+        },
+      );
+      return { output: readContent(response), meta, usage: requests };
     } catch (err) {
       attachBilledUsage(err, requests);
       throw err;
@@ -541,6 +769,8 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       toolTimeoutMs?: number;
       agentProfileInstructions?: string;
       llmClock?: LlmClock;
+      /** Caching 3-B (C2, D2): derives the cache key of every request of the loop. */
+      cachePrefixChars?: number;
     },
   ): Promise<StepWithToolsResult> {
     // issue #610: the accumulator is owned by the ENTRY POINT, as `callStep`'s is. One catch here
@@ -603,6 +833,13 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const send = (body: Rec): Promise<any> =>
       clock !== undefined ? driveCreate(rawCreate, body, clock, counters) : rawCreate(body, {});
+    // caching 3-B (D2, sites 3 and 4): one key for every request of the loop — its main turns
+    // (and #311's retry) and its final request.
+    const systemText = buildSystemPrompt(options.inputSchema, options.agentProfileInstructions);
+    const plan = openAiCachePlan(prompt, options.cachePrefixChars, this.endpoint, this.promptCache);
+    // #896 (A2): in the explicit set under `off`, every request of the loop asks OpenAI to cache
+    // nothing (explicit mode, no mark); under any other setting the loop is as on the base.
+    const explicitOff = this.explicitCache() && this.promptCache?.value === 'off';
     // issue #610: the ONE point every request of this loop goes through, and the one place it is
     // recorded. The record is pushed the instant the answer arrives, before any code reads it: a
     // throw while reading must not lose what was billed. A request that fails on the wire has no
@@ -612,12 +849,12 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       const requestStart = new Date().toISOString();
       const response = await send(body);
       requests.push(
-        toUsageRecord(
-          requests.length,
-          requestStart,
-          readOpenAiUsage(response),
-          openAiRequestFacts(response, client),
-        ),
+        toUsageRecord(requests.length, requestStart, readOpenAiUsage(response), {
+          ...openAiRequestFacts(response, client),
+          ...(explicitOff ? this.explicitAskFacts() : {}),
+          ...(plan !== undefined ? openAiSplitFacts(body, plan, systemText) : {}),
+          ...this.rejectedFact(),
+        }),
       );
       return response;
     };
@@ -685,12 +922,12 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     const history: any[] = [
       {
         role: 'system',
-        content: buildSystemPrompt(options.inputSchema, options.agentProfileInstructions),
+        content: systemText,
       },
       { role: 'user', content: prompt },
     ];
 
-    const buildMainCallOpts = (): Record<string, unknown> => {
+    const buildMainCallOpts = (withCache = true): Record<string, unknown> => {
       const opts: Record<string, unknown> = { model: this.model, messages: history };
       if (openaiTools.length > 0) {
         // issue #313: after a drop, later turns send STRIPPED COPIES rather than the mutated
@@ -706,7 +943,8 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
           : openaiTools;
       }
       if (responseFormat !== undefined) opts['response_format'] = responseFormat;
-      return opts;
+      if (explicitOff) opts['prompt_cache_options'] = { mode: 'explicit' };
+      return withCache ? withCacheKey(opts, plan) : opts;
     };
 
     // -------------------------------------------------------------------------------------------
@@ -728,30 +966,39 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const createMainTurn = async (): Promise<any> => {
       const carriedStrict = toolArgsStrictActive;
-      try {
-        const response = await bounded(buildMainCallOpts());
-        if (carriedStrict) strictTurnsBeforeDrop += 1;
-        return response;
-      } catch (err) {
-        // A turn that carried no strict is none of this ladder's business.
-        if (!carriedStrict) throw err;
-        if (extractHttpStatus(err) !== 400) throw err;
-        toolArgsStrictDrop = {
-          reason: 'api_rejected_schema',
-          api_message: err instanceof Error ? err.message : String(err),
-          strict_turns_before_drop: strictTurnsBeforeDrop,
-          ...extractApiErrorFields(err),
-        };
-        toolArgsStrictActive = false;
-        toolArgsStrictStripped = true;
-        return await bounded(buildMainCallOpts());
-      }
+      return sendUnderGatewayRule(
+        this.cacheFields,
+        this.endpoint,
+        async (withCache) => {
+          const sentStrict = toolArgsStrictActive;
+          const response = await bounded(buildMainCallOpts(withCache));
+          if (sentStrict) strictTurnsBeforeDrop += 1;
+          return response;
+        },
+        // A turn that carried strict: #313's tools ladder (a 400 drops strict, retries once; a second
+        // 400 propagates plainly), after the gateway rule (caching 3-B, D4.5).
+        carriedStrict
+          ? async (err, withCache) => {
+              if (extractHttpStatus(err) !== 400) throw err;
+              toolArgsStrictDrop = {
+                reason: 'api_rejected_schema',
+                api_message: err instanceof Error ? err.message : String(err),
+                strict_turns_before_drop: strictTurnsBeforeDrop,
+                ...extractApiErrorFields(err),
+              };
+              toolArgsStrictActive = false;
+              toolArgsStrictStripped = true;
+              return await bounded(buildMainCallOpts(withCache));
+            }
+          : undefined,
+      );
     };
 
-    const buildFinalCallOpts = (): Record<string, unknown> => {
+    const buildFinalCallOpts = (withCache = true): Record<string, unknown> => {
       const opts: Record<string, unknown> = { model: this.model, messages: history };
       if (responseFormat !== undefined) opts['response_format'] = responseFormat;
-      return opts;
+      if (explicitOff) opts['prompt_cache_options'] = { mode: 'explicit' };
+      return withCache ? withCacheKey(opts, plan) : opts;
     };
 
     // Injects the over-budget message and calls the API without tools to produce a final answer.
@@ -761,7 +1008,10 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
         content:
           'You have reached the maximum number of tool calls. Produce your final JSON answer now using only what you have already gathered. No further tool calls will be executed.',
       });
-      const final = await bounded(buildFinalCallOpts());
+      // caching 3-B (E3): the final request under the gateway rule too.
+      const final = await sendUnderGatewayRule(this.cacheFields, this.endpoint, (withCache) =>
+        bounded(buildFinalCallOpts(withCache)),
+      );
       const text: string = (final.choices[0].message.content as string | null) ?? '';
       const parsed = extractJsonObject(text);
       // issue #224 (D4, §4 budget-exhaustion terminal): RETURN the best-effort output

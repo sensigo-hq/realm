@@ -2,15 +2,16 @@
 import { Command } from 'commander';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { atomicWriteFile } from '@sensigo/realm';
+// Its own line: migrate.test.ts's T3 pins the atomicWriteFile import line word for word.
+import { realmHomePath } from '@sensigo/realm';
 
 export const migrateCommand = new Command('migrate')
   .description(
     'Back-fill origin field on local workflow definitions that predate provenance tracking',
   )
   .action(async () => {
-    const workflowsDir = join(homedir(), '.realm', 'workflows');
+    const workflowsDir = join(realmHomePath(), 'workflows');
     if (!existsSync(workflowsDir)) {
       console.log('No local workflow store found. Nothing to migrate.');
       return;

@@ -222,6 +222,7 @@ const CLOCK_OUTSIDE_SITES = [
   'cli/src/commands/watch.ts#renderProfilesGone',
   'cli/src/extensions/extension-identity.ts#computeExtensionIdentity',
   'cli/src/extensions/extension-identity.ts#errorExtensionIdentityEntry',
+  'cli/src/lib/cacheability.ts#buildCacheabilityReport',
   'cli/src/lib/dedup-store.ts#FileDedupStore.check',
   'cli/src/lib/dedup-store.ts#FileDedupStore.cleanup',
   'cli/src/lib/dedup-store.ts#FileDedupStore.record',

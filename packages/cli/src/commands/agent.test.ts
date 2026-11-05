@@ -369,6 +369,9 @@ describe('resolveProvider — issue #313 dead-config cells 3 and 4', () => {
       jsonMode: false,
       providerId: 'openai',
       toolArgsStrict: true,
+      // caching 3-B (D1, D3): resolved from the real SDK client, the compat address is custom.
+      promptCache: 'provider',
+      endpoint: 'custom',
     });
   });
 
@@ -385,6 +388,8 @@ describe('resolveProvider — issue #313 dead-config cells 3 and 4', () => {
       providerId: 'openai',
       toolArgsStrict: true,
       strictGate: 'compat_endpoint',
+      promptCache: 'provider',
+      endpoint: 'custom',
     });
     // …and omitted entirely (the CLI passes nothing when the flag is absent).
     const { provider: omitted } = await resolveProvider({
@@ -398,6 +403,8 @@ describe('resolveProvider — issue #313 dead-config cells 3 and 4', () => {
       providerId: 'openai',
       toolArgsStrict: true,
       strictGate: 'compat_endpoint',
+      promptCache: 'provider',
+      endpoint: 'custom',
     });
   });
 
@@ -851,7 +858,7 @@ describe('realm agent --cache-gaps and --prompt-cache auto (issue #600, the life
       }).toEqual({
         code: 0,
         startLine:
-          "Caching: Anthropic is asked to cache each step's fixed instructions for 1 hour (auto: realm listen's measurement could not be read; realm listen's default; change it with realm listen --prompt-cache).",
+          "Caching: Anthropic is asked to cache each step's fixed instructions and the stable start of its prompt for 1 hour (auto: realm listen's measurement could not be read; realm listen's default; change it with realm listen --prompt-cache).",
         recorded: {
           lifetime: 3600,
           by: 'realm listen',
@@ -903,7 +910,7 @@ describe('realm agent --cache-gaps and --prompt-cache auto (issue #600, the life
   // keeps the old words, with no price file and no fallback; (b) prints it.
   it("the help: realm agent's --prompt-cache description", () => {
     expect(agentCommand.options.find((o) => o.long === '--prompt-cache')?.description).toBe(
-      "What Anthropic is asked to cache: auto, short, long or off. auto (the default) chooses per drive — the short lifetime for a drive realm agent starts on its own; for a drive realm listen starts, off, short or long by the gaps between that workflow's recent triggers, priced from the runner's price file (runner.cache.economics); with no usable prices, long when a recent gap is under 54 minutes, else off. short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: Anthropic is asked to cache nothing. Other providers are asked for no caching.",
+      "What Anthropic is asked to cache: auto, short, long or off. auto (the default) chooses per drive — the short lifetime for a drive realm agent starts on its own; for a drive realm listen starts, off, short or long by the gaps between that workflow's recent triggers, priced from the runner's price file (runner.cache.economics); with no usable prices, long when a recent gap is under 54 minutes, else off. short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: Anthropic is asked to cache nothing. With `--provider openai`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but `off`, and to another endpoint only for a setting you state other than `off`. On GPT-5.6 and later at OpenAI's own address, Realm also asks OpenAI to cache the fixed part of each step without tools for 30 minutes, the one lifetime Realm can ask OpenAI for (`short` and `long` alike), and `off` turns OpenAI's caching off. Other providers' own caching applies.",
     );
   });
 });

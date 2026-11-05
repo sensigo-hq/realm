@@ -8,6 +8,18 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- **`realm agent` caches the stable start of each agent step's prompt on Anthropic.** The start runs up to the prompt's first placeholder whose value can differ between runs; Realm sends it as a text block of its own, marked with the drive's one lifetime, and the rest after it. A blank start or a blank rest is never sent as a marked block. The JSON retry and a repair attempt send the same start. Put fixed text first in a prompt to cache more of it. (#600)
+- **OpenAI gets a cache key.** On OpenAI's own endpoint, Realm sends `prompt_cache_key` — the SHA-256 of the prompt's stable start — on every request of a step, under every `--prompt-cache` setting but `off`; on another endpoint (`--base-url` or `OPENAI_BASE_URL`) only for a setting you state. It is a hint: OpenAI caches by its own rules. (#600)
+- **OpenAI GPT-5.6 and later cache only each step's fixed part.** At OpenAI's own address, Realm marks the fixed instructions and the stable start of the prompt of each step without tools, for 30 minutes (the one lifetime Realm can ask OpenAI for; `short` and `long` both ask for it). It asks OpenAI to write only up to the marks, so the rest of the prompt is not written at the cache price. Steps with tools are left to OpenAI's own caching. (#896)
+- **`--prompt-cache off` turns OpenAI's caching off on GPT-5.6 and later** at OpenAI's own address: nothing is written or read. (#896)
+- **An MCP `run_step` entry carries `stable_prefix`: `{ chars, unit: 'utf16', sha256 }`.** A client cuts the `prompt` it received at `chars` and checks the SHA-256 of that start against `sha256`, so it can cache the same start with its own provider. It is absent when Realm cannot vouch for it. See [Cache a step's prompt over MCP](docs/guides/cache-an-mcp-step-prompt.md). (#600)
+- **On a custom endpoint, a 400 that names Realm's cache fields drops them.** When a gateway refuses `cache_control` or `prompt_cache_key` by name, Realm sends the request again once without its cache fields, strict structured output as it was sent; when that works, every later request of the drive goes without them, the record says so (`cache_controls_rejected`; on Anthropic such a request records no ask, since it asked for nothing) and `realm run inspect` prints `the endpoint refused the cache fields (400)` with how to stop sending them. On a provider's own endpoint nothing changes. (#600)
+- **Each request whose prompt was split records the split:** `prefix_sha256`, `prefix_chars`, `prefix_parts`, `cache_marked`, `request_strict_sent`, `cache_controls_rejected` and `cache_key_sent`. `realm run inspect` adds `cached head: <n> characters (marked: …)` for a head that was marked or keyed, and the store contract (`USAGE_RECORD_ROUNDTRIP`) holds every one. (#600)
+- **Core exports `discloseSplit`, `discloseSplitSize`, `discloseLeaf` and `renderStepPromptWithBoundary`,** with the types `DisclosedSplit`, `DisclosedSplitSize`, `StableBoundary`, `CacheSizeBlock` and `CacheLayoutBlock`, and `isSizeBlock`. (#600)
+- **`ProviderCapabilities.promptCache` may be `'provider'`** (the service caches by its own rules; the OpenAI providers declare it), and **`capabilities()` carries `endpoint`** (`default` or `custom`), resolved once from the SDK client. A provider module may declare `'provider'`. (#600)
+- **`callStepWithMeta` and `callStepWithTools` take `cachePrefixChars`,** where the prompt's stable start ends; the prompt is still sent whole, so a provider module that ignores it sends what it always sent. (#600)
+- **`McpNextAction` gains `stable_prefix`.** (#600)
+- **The composed cost view gains `CostView.cache_head` and `CostView.cache_fields_refused`, and `CacheRequestedEntry.key_sent`.** Numbers and closed words only. (#600)
 - **An MCP reply is kept at or under 40,000 characters when shortening its lists can make it fit
   (issue #872).** `get_workflow_protocol`, `list_workflows` and `start_run_batch` shorten nothing
   yet, and a step's prompt or schema is never shortened. When a reply would pass the ceiling, its
@@ -85,9 +97,15 @@ All notable changes to this project are documented here.
 - **When `realm agent` or `realm listen` drives a step that calls tools, it now asks Anthropic to cache the step's fixed instructions and the conversation so far at each turn, so a turn can read what the turn before wrote once that part reaches the model's minimum.** The request a step makes after using up its tool calls is sent with no cache marker. `--prompt-cache off` sends what it sent before. A workflow whose every agent step calls tools no longer refuses `--prompt-cache`. **Upgrading:** a gateway or proxy that rejects `cache_control` now also fails steps that call tools, which worked before; run with `--prompt-cache off`. (#899)
 - **`DedupStore`, `ReplayStore`, `ReplayRecord` and `ReplayStepResult` are exported from
   `@sensigo/realm` (issue #616).** `DedupStore`'s `check`, `record` and `cleanup` return promises.
+- **`classifyRegisteredCopy`, `workflowNotFoundError`, `legacyCopyError`, `newerCopyError` and
+  `storedCopyFaultError` are exported from `@sensigo/realm` (issue #616).** They judge and refuse a
+  registered workflow copy that has no file, with the words a copy with a file gets.
 
 ### Changed
 
+- **BREAKING: on those models the record and `capabilities()` state the ask:** `cache_requested: 'lifetime'` with `cache_lifetime_s: 1800`, `cache_marked` with `system` and `prompt`, and `promptCache: { lifetime_s: 1800 }`. (#896)
+- **BREAKING: `--prompt-cache` with `--provider openai` is accepted** by `realm agent` and `realm listen`: the setting decides whether the cache key is sent. The start line says what OpenAI is sent, per endpoint and setting, and `realm listen`'s caching line names the key. (#600)
+- **`realm workflow validate`, `register` and `watch` count the stable start of each step's prompt in its fixed part**, so their sizes grow. Two steps share a whole fixed part only when their prompts also start the same way. (#600)
 - **`--prompt-cache auto` now chooses from the prices in the runner's price file
   (`runner.cache.economics`); Realm uses no price of its own for the choice.** On a drive `realm
 listen` starts, with measured gaps, each cached lifetime is costed only when the file states its
@@ -157,6 +175,8 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
   `new JsonFileFailedAttemptStore(dir)`. A value typed `FailedAttemptStore` has `append`, `read`,
   `deleteAllForRun` and `statAllForRun`; for `listOrphans`, type it `JsonFileFailedAttemptStore`.
   Errors that name the store now name `JsonFileFailedAttemptStore`.
+- **BREAKING — `NewerDefinitionFacts.path` is optional (issue #616).** It is absent for a registered
+  copy that has no file; code that reads it handles `undefined`.
 
 - **BREAKING — every run store call returns the time it was judged at (issue #715).** `get`,
   `update` and `claimStep` return `{ record, at }`; `create` returns `{ record, at, created }`;
@@ -207,6 +227,8 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
   says how long before or after the reply's time the date is; in a gate's `message`, which Realm
   stores, it writes the date itself. `renderTemplate` takes the time to render at (`time`); with
   none, a `from_now` stays as written.
+- **One function in core names realm's home (`~/.realm`, read when a command opens its stores) (issue #616).** A command run with `HOME` empty or not absolute now stops with one line instead of keeping its runs under the current folder; one run on an account with no home stops with the same line instead of a stack.
+- **Every `realm` command opens its stores through one place, once per command (`run gc` and `run reconcile` keep their own until they leave); `realm serve` shares that one home across every request it serves (issue #616).** Nothing a command prints, creates or refuses changes, with one exception: on a copy of a test location, the commands that only read workflows or replays (`realm workflow list`, `realm workflow register`, `realm workflow watch`, `realm workflow validate --registered`, and `realm run diff` of two replays) now stop with the same clock refusal the run commands always gave there, because every command opens its home through the one door.
 
 ### Removed
 
@@ -278,6 +300,9 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
   behind every realm sentence, and the e-mail scrub in stored error bodies) now run in one pass.
   What they match is unchanged; the tests compare the old patterns and the new scans on a
   generated corpus.
+- The check that a sentence ends with a realm command no longer uses a regular expression that could
+  take seconds on a hostile text (CodeQL #22); it tokenizes in one pass and produces the same tokens,
+  proven against the old pattern on a generated corpus.
 
 ## [0.48.0] — 2026-10-26
 

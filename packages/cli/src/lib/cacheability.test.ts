@@ -268,7 +268,7 @@ describe('the once-lines, once per process (C3.4)', () => {
     fresh.printCacheabilityLines(lines, '> ');
     expect(logged.map((l) => l.slice(0, 18))).toEqual([
       '> cache: a — 155 c',
-      '> openai: realm se',
+      '> openai: on OpenA',
       '> cache: a — 155 c',
     ]);
   });

@@ -3,7 +3,7 @@
 import { createServer, type Server } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { Command } from 'commander';
-import { GATE_ANSWERS_VALUES, JsonWorkflowStore } from '@sensigo/realm';
+import { GATE_ANSWERS_VALUES } from '@sensigo/realm';
 import type {
   ExtensionRegistry,
   WorkflowDefinition,
@@ -16,6 +16,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { makeProjectProviders } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
 import { hostRefusalLine } from '../lib/host-refusal-line.js';
+import { openCliHome, type CliHome } from '../lib/home.js';
 import { parseHost, parseWholeNumber } from '../lib/option-parsers.js';
 import { bindFailureLine } from '../lib/bind-failure.js';
 import { cliDisclosureProvider, writerCtx, writerInstalled } from '../output/writer.js';
@@ -43,13 +44,24 @@ export function checkBearerToken(authHeader: string | undefined, expectedToken: 
   return timingSafeEqual(a, b);
 }
 
-export interface StartServerOptions {
+/**
+ * #616 PR-2a (iii): the four stores every server this process builds is handed — all four, or none
+ * (then the starter opens realm's home through the one door). Tests pass the four of a temp home.
+ */
+type ServeStores =
+  | Pick<CliHome, 'workflowStore' | 'runStore' | 'traceBufferStore' | 'failedAttemptStore'>
+  | {
+      workflowStore?: never;
+      runStore?: never;
+      traceBufferStore?: never;
+      failedAttemptStore?: never;
+    };
+
+export type StartServerOptions = ServeStores & {
   port: number;
   host: string;
   devMode: boolean;
   token: string | undefined;
-  /** Custom workflow store — useful in tests to avoid writing to ~/.realm/. */
-  workflowStore?: JsonWorkflowStore;
   /**
    * Per-definition registry resolution (project extensions). Backed by the process-lifetime
    * loader cache — module content changes require a server restart.
@@ -65,7 +77,7 @@ export interface StartServerOptions {
   driver?: Attributed;
   /** #627 W: the `--gate-answers` flag's value, passed to every per-request server (source `flag`). */
   gateAnswersFlag?: string;
-}
+};
 
 /**
  * Creates and starts the HTTP MCP server. Resolves once the server is listening.
@@ -86,20 +98,26 @@ export async function startHttpMcpServer(options: StartServerOptions): Promise<S
     host,
     devMode,
     token,
-    workflowStore,
     registryProvider,
     priceSourceProvider,
     driver,
     gateAnswersFlag,
   } = options;
 
-  // ONE workflow store per process (constructed at startup when none is injected).
-  // JsonWorkflowStore.get() is readFileSync-per-call, so reusing the instance across
-  // requests introduces zero staleness — re-registered workflows are picked up on the
-  // next read.
-  const store = workflowStore ?? new JsonWorkflowStore();
+  // #616 PR-2a (iii): ONE home per process — the door opened once, at startup, before anything
+  // listens (when no stores are injected). The startup server below and every per-request server
+  // are handed these same four objects. JsonWorkflowStore.get() is readFileSync-per-call, so
+  // reusing the registry across requests introduces zero staleness — re-registered workflows are
+  // picked up on the next read.
+  const stores: Pick<
+    CliHome,
+    'workflowStore' | 'runStore' | 'traceBufferStore' | 'failedAttemptStore'
+  > = options.runStore !== undefined ? options : await openCliHome();
   const serverOptions = {
-    workflowStore: store,
+    workflowStore: stores.workflowStore,
+    runStore: stores.runStore,
+    traceBufferStore: stores.traceBufferStore,
+    failedAttemptStore: stores.failedAttemptStore,
     ...(registryProvider !== undefined ? { registryProvider } : {}),
     ...(priceSourceProvider !== undefined ? { priceSourceProvider } : {}),
     ...(driver !== undefined ? { driver } : {}),
@@ -161,8 +179,8 @@ export async function startHttpMcpServer(options: StartServerOptions): Promise<S
         }
       }
 
-      // The per-request MCP server shares the process-lifetime workflow store and
-      // registryProvider — extension registries (and their rate-limiter buckets) stay
+      // The per-request MCP server shares the process-lifetime stores (#616 PR-2a (iii): all four)
+      // and registryProvider — extension registries (and their rate-limiter buckets) stay
       // stable across requests. An error while a request is handled is logged below (a registry
       // a tool resolves per call is checked inside that tool, which answers with the refusal).
       const mcpServer = createRealmMcpServer(serverOptions);

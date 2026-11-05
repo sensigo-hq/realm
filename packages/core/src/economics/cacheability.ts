@@ -38,6 +38,30 @@ export interface CacheBlock {
   segments: CacheBlockSegment[];
 }
 
+/**
+ * Caching 3-B (F2; MA1-3B-01 and MA 2's rulings, 2026-11-04): a stable block known by its SIZE only —
+ * the disclosed head of a step's prompt, whose text the describer must never hold. `chars` and
+ * `asciiChars` (its UTF-16 code units below 0x80) give the token interval its text would give.
+ * `group` stands in for the text when two steps are compared: two size blocks are the same text
+ * exactly when their groups are equal (the host interns the raw text it compared, per call); any
+ * other pair is treated as different, so the comparison ends at the block.
+ */
+export interface CacheSizeBlock {
+  name: string;
+  chars: number;
+  asciiChars: number;
+  stable: true;
+  group: number;
+}
+
+/** A block of a step's layout: its text, or its size alone. */
+export type CacheLayoutBlock = CacheBlock | CacheSizeBlock;
+
+/** Whether a block is known by its size alone. */
+export function isSizeBlock(block: CacheLayoutBlock): block is CacheSizeBlock {
+  return !('text' in block);
+}
+
 /** The default characters per token at the low end of the token count (`lo = chars / 5`). */
 export const DEFAULT_CHARS_PER_TOKEN_HIGH = 5;
 /** The default characters per token at the high end of the token count (`hi = asciiChars / 2.5 + …`). */
@@ -67,7 +91,7 @@ export type CacheNotJudgedCause =
 /** One step's blocks on one layout, and the tokens the host adds to its count. */
 export interface CacheabilityStepInput {
   step: string;
-  blocks: CacheBlock[];
+  blocks: CacheLayoutBlock[];
   extraTokens?: { low: number; high: number };
 }
 
@@ -109,15 +133,32 @@ export function cacheTokenInterval(
   text: string,
   opts: { ratio?: { chars_per_token: number }; extraTokens?: { low: number; high: number } } = {},
 ): { low: number; high: number } {
-  const chars = text.length;
+  return cacheTokenIntervalOfSize({ chars: text.length, asciiChars: asciiCount(text) }, opts);
+}
+
+/** The UTF-16 code units of `text` below 0x80. */
+function asciiCount(text: string): number {
+  let ascii = 0;
+  for (let i = 0; i < text.length; i += 1) if (text.charCodeAt(i) < 0x80) ascii += 1;
+  return ascii;
+}
+
+/**
+ * Caching 3-B (F2; MA 2's ruling) — the token interval of a text known by its size: `chars` code
+ * units, `asciiChars` of them below 0x80. The one formula {@link cacheTokenInterval} uses, so a size
+ * gives exactly the interval its text gives.
+ */
+export function cacheTokenIntervalOfSize(
+  size: { chars: number; asciiChars: number },
+  opts: { ratio?: { chars_per_token: number }; extraTokens?: { low: number; high: number } } = {},
+): { low: number; high: number } {
+  const { chars, asciiChars: ascii } = size;
   let lo: number;
   let hi: number;
   if (opts.ratio !== undefined) {
     lo = chars / (opts.ratio.chars_per_token * RATIO_PLUS);
     hi = chars / (opts.ratio.chars_per_token * RATIO_MINUS);
   } else {
-    let ascii = 0;
-    for (let i = 0; i < chars; i += 1) if (text.charCodeAt(i) < 0x80) ascii += 1;
     lo = chars / DEFAULT_CHARS_PER_TOKEN_HIGH;
     hi = ascii / DEFAULT_CHARS_PER_TOKEN_LOW + (chars - ascii);
   }
@@ -138,19 +179,93 @@ export function cacheVerdict(
   return 'near_floor';
 }
 
-/** The concatenated text of a step's stable blocks, with every segment placed in it. */
-function stableText(blocks: CacheBlock[]): { text: string; segments: CacheBlockSegment[] } {
-  let text = '';
-  const segments: CacheBlockSegment[] = [];
+/**
+ * A step's stable blocks in wire order: each text block's text, and each size block as one piece of
+ * its own (caching 3-B), with every segment placed at its offset — a size block is one segment, named
+ * as the block. `chars` and `ascii` sum both kinds.
+ */
+interface StableSequence {
+  pieces: Array<{ text: string } | { size: CacheSizeBlock }>;
+  chars: number;
+  ascii: number;
+  segments: CacheBlockSegment[];
+}
+
+function stableSequence(blocks: CacheLayoutBlock[]): StableSequence {
+  const out: StableSequence = { pieces: [], chars: 0, ascii: 0, segments: [] };
   for (const block of blocks) {
     if (!block.stable) continue;
-    const offset = text.length;
-    for (const s of block.segments) {
-      segments.push({ name: s.name, start: offset + s.start, end: offset + s.end });
+    const offset = out.chars;
+    if (isSizeBlock(block)) {
+      out.segments.push({ name: block.name, start: offset, end: offset + block.chars });
+      out.pieces.push({ size: block });
+      out.chars += block.chars;
+      out.ascii += block.asciiChars;
+      continue;
     }
-    text += block.text;
+    for (const s of block.segments) {
+      out.segments.push({ name: s.name, start: offset + s.start, end: offset + s.end });
+    }
+    const last = out.pieces.at(-1);
+    if (last !== undefined && 'text' in last) last.text += block.text;
+    else out.pieces.push({ text: block.text });
+    out.chars += block.text.length;
+    out.ascii += asciiCount(block.text);
   }
-  return { text, segments };
+  return out;
+}
+
+/**
+ * How many leading code units two sequences share. Text is compared character by character; two size
+ * blocks are the same only when their `group`s (and sizes) are equal, else the comparison ends where
+ * they start.
+ */
+function commonPrefixOf(a: StableSequence, b: StableSequence): number {
+  let p = 0;
+  for (let i = 0; i < Math.min(a.pieces.length, b.pieces.length); i += 1) {
+    const x = a.pieces[i]!;
+    const y = b.pieces[i]!;
+    if ('text' in x && 'text' in y) {
+      const shared = commonPrefix(x.text, y.text);
+      p += shared;
+      if (shared < x.text.length || shared < y.text.length) return p;
+      continue;
+    }
+    if (
+      'size' in x &&
+      'size' in y &&
+      x.size.group === y.size.group &&
+      x.size.chars === y.size.chars
+    ) {
+      p += x.size.chars;
+      continue;
+    }
+    return p;
+  }
+  return p;
+}
+
+/** The token interval of a sequence's first `p` code units (no host extra tokens). */
+function prefixInterval(
+  seq: StableSequence,
+  p: number,
+  opts: { ratio?: { chars_per_token: number } },
+): { low: number; high: number } {
+  let chars = 0;
+  let ascii = 0;
+  for (const piece of seq.pieces) {
+    if (chars >= p) break;
+    if ('text' in piece) {
+      const take = piece.text.slice(0, p - chars);
+      chars += take.length;
+      ascii += asciiCount(take);
+    } else {
+      // A shared prefix never ends inside a size block: it ends before one or passes it whole.
+      chars += piece.size.chars;
+      ascii += piece.size.asciiChars;
+    }
+  }
+  return cacheTokenIntervalOfSize({ chars, asciiChars: ascii }, opts);
 }
 
 /** The segment holding character `at`, or `null` (past the end, or in no named segment). */
@@ -160,16 +275,12 @@ function segmentAt(segments: CacheBlockSegment[], at: number): string | null {
 }
 
 /**
- * Where two texts that share their first `p` characters part. Read from both sides: the same
+ * Where two sequences that share their first `p` characters part. Read from both sides: the same
  * segment on both is that segment; a strict flag on either side is the strict flag (the other side's
  * closing characters belong to no segment); one side ended (or in no segment) is the other's.
  */
-function divergenceAt(
-  a: { text: string; segments: CacheBlockSegment[] },
-  b: { text: string; segments: CacheBlockSegment[] },
-  p: number,
-): string | null {
-  if (p === a.text.length && p === b.text.length) return null;
+function divergenceAt(a: StableSequence, b: StableSequence, p: number): string | null {
+  if (p === a.chars && p === b.chars) return null;
   const sa = segmentAt(a.segments, p);
   const sb = segmentAt(b.segments, p);
   if (sa === sb) return sa;
@@ -194,20 +305,23 @@ export function describeCacheability(
   steps: CacheabilityStepInput[],
   opts: CacheabilityOptions = {},
 ): CacheabilityStep[] {
-  const texts = steps.map((s) => stableText(s.blocks));
+  const texts = steps.map((s) => stableSequence(s.blocks));
   return steps.map((s, i) => {
     const own = texts[i]!;
-    const tokens = cacheTokenInterval(own.text, {
-      ...(opts.ratio !== undefined ? { ratio: opts.ratio } : {}),
-      ...(s.extraTokens !== undefined ? { extraTokens: s.extraTokens } : {}),
-    });
+    const tokens = cacheTokenIntervalOfSize(
+      { chars: own.chars, asciiChars: own.ascii },
+      {
+        ...(opts.ratio !== undefined ? { ratio: opts.ratio } : {}),
+        ...(s.extraTokens !== undefined ? { extraTokens: s.extraTokens } : {}),
+      },
+    );
     const shares: CacheShare[] = [];
-    if (own.text.length > 0) {
+    if (own.chars > 0) {
       steps.forEach((other, j) => {
         if (j === i) return;
         const theirs = texts[j]!;
-        if (theirs.text.length === 0) return;
-        const p = commonPrefix(own.text, theirs.text);
+        if (theirs.chars === 0) return;
+        const p = commonPrefixOf(own, theirs);
         if (p === 0) return;
         const divergence = divergenceAt(own, theirs, p);
         shares.push({
@@ -217,10 +331,7 @@ export function describeCacheability(
           tokens:
             divergence === null
               ? { ...tokens }
-              : cacheTokenInterval(
-                  own.text.slice(0, p),
-                  opts.ratio !== undefined ? { ratio: opts.ratio } : {},
-                ),
+              : prefixInterval(own, p, opts.ratio !== undefined ? { ratio: opts.ratio } : {}),
           divergence_at: divergence,
         });
       });
@@ -229,7 +340,7 @@ export function describeCacheability(
     return {
       step: s.step,
       prefix: {
-        chars: own.text.length,
+        chars: own.chars,
         tokens,
         basis: opts.ratio !== undefined ? 'ratio' : 'default',
       },

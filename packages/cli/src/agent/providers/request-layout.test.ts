@@ -55,9 +55,13 @@ function rows(withStrict: boolean): Array<{ label: string; parts: RequestParts }
 
 /** The describer's stable blocks, as [name, text]. */
 function described(adapter: Parameters<typeof describeRequestLayout>[0], parts: RequestParts) {
-  return describeRequestLayout(adapter, parts)
-    .filter((b) => b.stable)
-    .map((b) => [b.name, b.text]);
+  return (
+    describeRequestLayout(adapter, parts)
+      .filter((b) => b.stable)
+      // Caching 3-B (F2): these cells pass no head, so every block has text; a size-only block would
+      // show its size.
+      .map((b) => [b.name, 'text' in b ? b.text : `<${b.chars} chars>`])
+  );
 }
 
 beforeEach(() => {

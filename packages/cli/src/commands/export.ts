@@ -47,7 +47,7 @@ import {
   withoutMarks,
   writerCtx,
 } from '../output/writer.js';
-import { openRunStore } from '../lib/run-store.js';
+import { openCliHome } from '../lib/home.js';
 
 /** Fixed redaction marker (issue #197 PR-2, design §6) — replaces every `nonce` value belonging
  *  to a step currently in `in_progress_steps` on a NON-terminal export (the claimant-nonce
@@ -495,18 +495,19 @@ export const exportCommand = new Command('export')
     "Write the bundle even when the run's declared secrets are not all known (its manifest changed, could not be read, or the run has no project): it is masked with what is known, and its header says so",
   )
   .action(async (runId: string, opts: { out?: string; acceptPartialDisclosure?: boolean }) => {
-    const { JsonFileFailedAttemptStore } = await import('@sensigo/realm');
-    const { JsonTraceBufferStore } = await import('@sensigo/realm-mcp');
-    const runStore = openRunStore();
+    // #616 PR-2a (iii): the one door, opened once; its trace buffer reads through its run store, and
+    // the registry is built on its first use.
+    const home = await openCliHome();
+    const runStore = home.runStore;
     const runsDir = runStore.runsDirPath;
-    const failedAttemptStore = new JsonFileFailedAttemptStore(runsDir);
-    const traceBufferStore = new JsonTraceBufferStore(runsDir, runStore);
+    const failedAttemptStore = home.failedAttemptStore;
+    const traceBufferStore = home.traceBufferStore;
 
     try {
       // #729 PR-3 (RECORD 01 #17; owner Q4): the run's declared secrets, read without the loader.
-      const { JsonWorkflowStore, getWorkflowForRun } = await import('@sensigo/realm');
+      const { getWorkflowForRun } = await import('@sensigo/realm');
       const { record: record } = await runStore.get(runId);
-      const definition = await getWorkflowForRun(new JsonWorkflowStore(), record, {
+      const definition = await getWorkflowForRun(home.workflowStore, record, {
         retryVerb: 'export again',
         verb: 'export',
         terminalOk: true,

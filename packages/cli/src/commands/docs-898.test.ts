@@ -112,7 +112,7 @@ describe('#898 S12 — the docs say what auto reads, when, and what it does with
     );
     claim(
       LISTEN,
-      "Caching: Anthropic is asked to cache each step's fixed instructions for 1 hour (auto: the last 2 gaps between this workflow's triggers were about 7 minutes and 12 minutes; priced from your price file; realm listen's default; change it with realm listen --prompt-cache).",
+      "Caching: Anthropic is asked to cache each step's fixed instructions and the stable start of its prompt for 1 hour (auto: the last 2 gaps between this workflow's triggers were about 7 minutes and 12 minutes; priced from your price file; realm listen's default; change it with realm listen --prompt-cache).",
     );
     // (a) red when the shipped multiples return; (b) prints which.
     const page = flat(read(LISTEN));

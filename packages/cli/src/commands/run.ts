@@ -85,7 +85,7 @@ import {
   writerSetFor,
   type RenderCtx,
 } from '../output/writer.js';
-import { openRunStore } from '../lib/run-store.js';
+import { openCliHome, type CliHome } from '../lib/home.js';
 
 /**
  * Dormant strict posture (issue #197 PR-2, design §6 — the #169→#170 template): read PER CALL,
@@ -678,6 +678,11 @@ export const runCommand = new Command('run')
         process.exit(1);
       }
 
+      // #616 PR-2a (iii): the one door, opened once, where the first store was built before: the
+      // earlier run's read under --params-from-run, or the run's creation below (3).
+      let opened: Promise<CliHome> | undefined;
+      const home = (): Promise<CliHome> => (opened ??= openCliHome());
+
       // 2. Parse params
       let params: Record<string, unknown>;
       if (options.paramsFromRun !== undefined) {
@@ -690,7 +695,7 @@ export const runCommand = new Command('run')
           process.exit(1);
         }
         try {
-          const { record: earlier } = await openRunStore().get(options.paramsFromRun);
+          const { record: earlier } = await (await home()).runStore.get(options.paramsFromRun);
           if (earlier.workflow_id !== definition.id) {
             console.error(
               `Error: run '${options.paramsFromRun}' is a run of workflow '${earlier.workflow_id}', not '${definition.id}'; its params are not this workflow's.`,
@@ -756,14 +761,11 @@ export const runCommand = new Command('run')
       }
 
       // 3. Create store and initial run record
-      const store = openRunStore();
-      // issue #207 PR-2 (D3 §5, mixed-wiring gap): construct a JsonTraceBufferStore beside the
-      // run store (same runsDir) and thread it into executeChain below — without this, `realm
-      // run`'s own dev-mode driver never adopted/fenced a step's streamed WAL trace at all.
-      const { JsonTraceBufferStore } = await import('@sensigo/realm-mcp');
-      // issue #616 PR-0: the run reader is the run store this driver writes — every fence
-      // predicate is evaluated against it inside the trace buffer's own critical section.
-      const traceBufferStore = new JsonTraceBufferStore(store.runsDirPath, store);
+      // issue #207 PR-2 (D3 §5, mixed-wiring gap): the door's trace buffer sits beside its run store
+      // (same runsDir) and is threaded into executeChain below — without it, `realm run`'s own
+      // dev-mode driver never adopted/fenced a step's streamed WAL trace at all. issue #616 PR-0:
+      // its run reader is the run store this driver writes.
+      const { runStore: store, traceBufferStore } = await home();
 
       const { record: initialRecord } = await store.create({
         workflowId: definition.id,

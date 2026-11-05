@@ -121,7 +121,7 @@ import {
   writerTally,
 } from '../output/writer.js';
 import { readRunManifest, type RunManifest } from '../lib/read-run-manifest.js';
-import { openRunStore } from '../lib/run-store.js';
+import { openCliHome } from '../lib/home.js';
 
 /**
  * Renders one skipped step's reason inline (issue #111) — kind plus the salient detail.
@@ -599,7 +599,10 @@ function askEntryText(entry: CacheRequestedEntry): string {
   if (entry.value === 'off')
     return `asked for no caching (${askSourceText(entry)}${autoFor('off')})`;
   if (entry.value === 'provider_rules') {
-    return "asked for nothing (the provider's own caching, if any, applies)";
+    // caching 3-B (D2): OpenAI's cache key is a hint, not an ask.
+    return entry.key_sent === true
+      ? "asked for nothing but a cache key, a hint (the provider's own caching applies)"
+      : "asked for nothing (the provider's own caching, if any, applies)";
   }
   if (entry.value !== 'lifetime') return `asked: unrecognized ${quotedForTerminal(entry.value)}`;
   if (entry.lifetime_s === undefined) return 'asked for a lifetime the record does not state';
@@ -637,13 +640,17 @@ function requestFactsText(cost: CostView): { model?: string; ask?: string } {
         : base;
   }
   const asked = cost.cache_requested;
+  // caching 3-B (E4): a recorded refusal of the cache fields says why nothing was cached; the
+  // nothing-written clause and its gateway reason are not printed beside it.
+  const refused = cost.cache_fields_refused !== undefined;
+  const clauses: string[] = [];
   if (asked !== undefined && !('absent_cause' in asked)) {
-    const clauses = [
+    clauses.push(
       asked.entries.map(askEntryText).join(', then ') +
         (asked.reported < asked.of
           ? ` (recorded by ${asked.reported} of ${asked.of} requests)`
           : ''),
-    ];
+    );
     const only = asked.entries.length === 1 ? asked.entries[0] : undefined;
     if (only?.value === 'lifetime') {
       const kept5m = cost.cache_write_5m?.value ?? 0;
@@ -661,6 +668,7 @@ function requestFactsText(cost: CostView): { model?: string; ask?: string } {
     const zeroFromEvery = (fig: CostFigure | undefined): boolean =>
       fig !== undefined && fig.reported === fig.of && fig.value === 0;
     if (
+      !refused &&
       asked.entries.some((e) => e.value === 'lifetime') &&
       zeroFromEvery(cost.cache_read) &&
       zeroFromEvery(cost.cache_write)
@@ -673,8 +681,28 @@ function requestFactsText(cost: CostView): { model?: string; ask?: string } {
           (gateway ? ', or the endpoint dropped the request to cache' : ''),
       );
     }
-    out.ask = clauses.join('; ');
   }
+  // caching 3-B (A6; MA 2's ruling, 2026-11-04; MA 1's wording list, 2026-11-05): the cached head the
+  // requests sent, for each head that was itself marked (`prompt`) or keyed (`key`). A head nothing
+  // marked (under `off`, after a refusal), or one sent beside a marked system text only (a head of
+  // whitespace goes out unmarked), is not called cached: it adds nothing, and then there is no clause.
+  const marked = (cost.cache_head?.entries ?? []).filter(
+    (e) => e.marked?.includes('prompt') === true || e.marked?.includes('key') === true,
+  );
+  if (marked.length > 0) {
+    clauses.push(
+      'cached head: ' +
+        marked
+          .map((e) => `${e.chars} characters (marked: ${e.marked!.join(', ')})`)
+          .join(', then '),
+    );
+  }
+  if (refused) {
+    clauses.push(
+      'the endpoint refused the cache fields (400); sent without them for the rest of the drive — to stop sending them: --prompt-cache off',
+    );
+  }
+  if (clauses.length > 0) out.ask = clauses.join('; ');
   return out;
 }
 
@@ -1996,9 +2024,10 @@ export const inspectCommand = new Command('inspect')
       runId: string,
       cmdOpts: { verbose?: boolean; checkDrift?: boolean; acceptPartialDisclosure?: boolean },
     ) => {
-      const { JsonWorkflowStore } = await import('@sensigo/realm');
-      const store = openRunStore();
-      const workflowStore = new JsonWorkflowStore();
+      // #616 PR-2a (iii): the one door, opened once.
+      const home = await openCliHome();
+      const store = home.runStore;
+      const workflowStore = home.workflowStore;
       try {
         // #729 PR-3 (L-4): the run's declared values join the writer's set before anything prints,
         // and the receipt line says what the law hid in this record for stdout's audience.

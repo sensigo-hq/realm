@@ -36,7 +36,7 @@ const GUIDE = 'docs/guides/realm-agent.md';
 const ONCE_ANTHROPIC =
   "anthropic: when realm agent or realm listen drives a step, realm marks its fixed part for caching, and on steps with tools the conversation at each turn, unless --prompt-cache turns it off; below the model's minimum nothing is cached, silently";
 const ONCE_OPENAI =
-  "openai: realm sends no cache marker; the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)";
+  "openai: on OpenAI's own address realm sends a cache key and, for GPT-5.6 and later, marks the fixed instructions and the stable start of the prompt of each step without tools for 30 minutes, unless --prompt-cache turns it off; otherwise the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)";
 const ONCE_SCOPE =
   "anthropic: the cache is kept per workspace (per organization on Bedrock and Google Cloud), as Anthropic's page said on 2026-10-09: drives from different workspaces each pay the write";
 
@@ -44,7 +44,8 @@ describe('#899 — the docs sentences', () => {
   it('§3.2 realm-agent.md: the --prompt-cache row, the Caching line and the refusal row (M10, M11)', () => {
     claim(
       REF,
-      'Refused for a provider Realm asks for no caching, and for a workflow with no agent step. Added after version 0.47.0.',
+      // caching 3-B (row 11): the one refusal left is with --provider-module (G18).
+      'Refused with `--provider-module`, and for a workflow with no agent step. Added after version 0.47.0.',
     );
     claim(
       REF,
@@ -73,7 +74,7 @@ describe('#899 — the docs sentences', () => {
     );
     claim(
       GUIDE,
-      "On a step without tools, the step's prompt is not cached. A step that calls tools also asks Anthropic, at each turn, to cache the conversation so far, so a turn can read what the turn before wrote once that part reaches the model's minimum. Its last request, made only when it has used up its tool calls, is sent with no cache marker.",
+      "A step that calls tools also asks Anthropic, at each turn, to cache the conversation so far, so a turn can read what the turn before wrote once that part reaches the model's minimum. Its last request, made only when it has used up its tool calls, is sent with no cache marker.",
     );
   });
 
@@ -84,7 +85,7 @@ describe('#899 — the docs sentences', () => {
     );
     claim(
       'docs/reference/run-record-and-export.md',
-      'A request `realm agent` sent also records what Realm asked for (except, on Anthropic, the last request of a step that used up its tool calls: it is sent with no cache marker and records no ask), what answered',
+      "A request `realm agent` sent also records what Realm asked for (except, on Anthropic, the last request of a step that used up its tool calls: it is sent with no cache marker and records no ask; so does a request sent without Realm's cache fields after the endpoint refused them), what answered",
     );
   });
 
