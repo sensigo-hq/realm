@@ -96,6 +96,25 @@ export type ErrorCode =
   // path, the account has no home, or a program passed a home that is not an absolute path. Raised
   // by `realmHomePath()` before any store opens anything.
   | 'STATE_HOME_UNUSABLE'
+  // issue #616 (unit 3): the codes the SQLite store raises. Nothing raises them yet: the unit that
+  // first raises a code writes its message and its facts, and moves its row on the error-codes page
+  // from "the codes nothing raises" into the table.
+  | 'STATE_STORE_DRIVER_UNAVAILABLE'
+  | 'STATE_STORE_FILESYSTEM_REFUSED'
+  | 'STATE_STORE_SETTINGS_REFUSED'
+  | 'STATE_STORE_VERSION_OLDER'
+  | 'STATE_STORE_VERSION_NEWER'
+  | 'STATE_STORE_SCHEMA_TAMPERED'
+  | 'STATE_STORE_FULL'
+  | 'STATE_STORE_READONLY'
+  | 'STATE_STORE_WRITES_FENCED'
+  | 'STATE_STORE_LIMIT_EXCEEDED'
+  | 'STATE_HOME_HOLDS_LEGACY_STORE'
+  | 'STATE_RUN_PURGED'
+  | 'STATE_RUN_TIMESTAMP_INVALID'
+  | 'STATE_WRITE_ONCE_REWRITTEN'
+  | 'STATE_EVIDENCE_REWRITTEN'
+  | 'STATE_RUN_IDENTITY'
   | 'RUN_ABORTING'
   // VALIDATION
   | 'VALIDATION_INPUT_SCHEMA'

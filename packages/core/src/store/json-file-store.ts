@@ -40,6 +40,7 @@ import type { Clock } from '../utils/clock.js';
 import { floorAtHolder, floorAtRecord, takeRawReading, takeReading } from './take-reading.js';
 import { parseStamp } from '../engine/instants.js';
 import { resolveStoreClock } from './test-clock-file.js';
+import { pickCanonical, versionConflictError } from './key-holder.js';
 import {
   statIfExists,
   readIfExists,
@@ -168,54 +169,6 @@ export interface RunListing extends Listing {
    *  sorted by file name. Not a damaged run: no decision over the runs counts or refuses over
    *  it. */
   copies: UnreadableRunFileEntry[];
-}
-
-/**
- * Newest-first comparator: by `created_at` descending, tie-broken by lexicographically
- * greatest `id`. Used to deterministically pick a canonical run for a key.
- *
- * issue #715 (a) (D6-51, D6-58): the stamps are compared by VALUE (parsed), never as
- * strings — an ISO string compare sorts `…:00Z` after `…:00.001Z`. A `created_at` that does not
- * parse ({@link parseStamp} gives `undefined`) is OLDER than every one that does; equal values (or two unparseable stamps) tie-break by
- * id, so the order never depends on the input order.
- */
-function compareCanonical(a: RunRecord, b: RunRecord): number {
-  // #715 (b) (D-25): through the one stamp parser; `undefined` sorts OLDEST (D6-58).
-  const ta = parseStamp(a.created_at);
-  const tb = parseStamp(b.created_at);
-  if ((ta === undefined) !== (tb === undefined)) return ta !== undefined ? -1 : 1;
-  if (ta !== undefined && tb !== undefined && ta !== tb) return ta < tb ? 1 : -1;
-  return a.id < b.id ? 1 : -1;
-}
-
-/**
- * The version conflict `update()` refuses with, and `deleteAllForRun`'s `expectVersion` guard
- * (issue #715 (a)): one builder, so the two refusals carry the same message and `details`.
- */
-function versionConflictError(runId: string, expected: number, actual: number): WorkflowError {
-  return new WorkflowError('Version conflict — run was modified by another process', {
-    code: 'STATE_SNAPSHOT_MISMATCH',
-    category: 'STATE',
-    agentAction: 'report_to_user',
-    retryable: true,
-    details: { runId, expected, actual },
-  });
-}
-
-/**
- * Canonical-pick rule (decision on record): exactly one live (non-terminal) run → it;
- * multiple live → newest live by created_at (the rest are reported as extraLive); else
- * the newest terminal by created_at (tie-break: greatest id).
- */
-function pickCanonical(runs: RunRecord[]): { canonical: RunRecord; extraLive: RunRecord[] } {
-  const live = runs.filter((r) => !r.terminal_state);
-  if (live.length === 1) return { canonical: live[0]!, extraLive: [] };
-  if (live.length > 1) {
-    const sorted = [...live].sort(compareCanonical);
-    return { canonical: sorted[0]!, extraLive: sorted.slice(1) };
-  }
-  const sorted = [...runs].sort(compareCanonical);
-  return { canonical: sorted[0]!, extraLive: [] };
 }
 
 /**
