@@ -33,13 +33,13 @@ function makeDeps(): ListenDeps {
       clock: doubleClock,
     },
     dedupStoreFor: () => ({
-      // The real DedupStore contract is entirely SYNCHRONOUS (check/record/cleanup) and `check`
-      // is consumed synchronously (`if (dedupStore.check(...))`, listen.ts) — an async double
-      // would hand that `if` an always-truthy Promise. `cleanup` is required and was absent.
-      // This path is not exercised by this test, but the double must not lie about the contract.
-      check: () => false,
-      record: () => {},
-      cleanup: () => {},
+      // The DedupStore contract is asynchronous (#616 B1: core's interface): `check`, `record` and
+      // `cleanup` each return a promise, and listen awaits each (`if (await dedupStore.check(...))`,
+      // listen.ts). `cleanup` is required. This path is not exercised by this test, but the double
+      // must not lie about the contract.
+      check: async () => false,
+      record: async () => {},
+      cleanup: async () => {},
     }),
     spawnAgent: async () => ({ pid: 1 }),
     logger: silentLogger,

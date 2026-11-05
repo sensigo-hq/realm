@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
-  FailedAttemptStore,
+  JsonFileFailedAttemptStore,
   InMemoryTraceBufferStore,
   JsonWorkflowStore,
   type WorkflowDefinition,
@@ -47,7 +47,7 @@ async function server() {
     runStore,
     workflowStore,
     traceBufferStore: new InMemoryTraceBufferStore(runStore),
-    failedAttemptStore: new FailedAttemptStore(join(dir, 'attempts')),
+    failedAttemptStore: new JsonFileFailedAttemptStore(join(dir, 'attempts')),
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'composers-mcp-715b', version: '0' });
@@ -143,7 +143,7 @@ describe('#715 (b) §B.2 — the MCP composers judge at the record’s reading',
       runStore: counting,
       workflowStore,
       traceBufferStore: new InMemoryTraceBufferStore(counting),
-      failedAttemptStore: new FailedAttemptStore(join(dir, 'attempts')),
+      failedAttemptStore: new JsonFileFailedAttemptStore(join(dir, 'attempts')),
     });
     const [ct, st] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: 'answer-ends-715b', version: '0' });

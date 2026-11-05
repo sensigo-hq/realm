@@ -1,4 +1,4 @@
-// Tests for `realm run attempts <run-id>`. The command builds a FailedAttemptStore from the default
+// Tests for `realm run attempts <run-id>`. The command builds a JsonFileFailedAttemptStore from the default
 // $HOME/.realm/runs (JsonFileStore default, computed ONCE at module-load), so $HOME is set in
 // beforeAll — before the first `@sensigo/realm` import — and shared across tests; each test uses a
 // distinct run id for isolation. No static core import here; load it lazily.
@@ -65,7 +65,7 @@ describe('realm run attempts (CLI command)', () => {
       error_code: 'VALIDATION_OUTPUT_SCHEMA',
     },
   ): Promise<void> {
-    const { FailedAttemptStore, buildFailedAttemptRecord, serializeFailedAttemptLine } =
+    const { JsonFileFailedAttemptStore, buildFailedAttemptRecord, serializeFailedAttemptLine } =
       await import('@sensigo/realm');
     const rec = buildFailedAttemptRecord({
       run_id: runId,
@@ -84,7 +84,7 @@ describe('realm run attempts (CLI command)', () => {
       params: { ticket_body: 'x' },
       trace_entry_count: 0,
     });
-    const store = new FailedAttemptStore(runsDir);
+    const store = new JsonFileFailedAttemptStore(runsDir);
     await store.append(runId, serializeFailedAttemptLine({ ...rec }).line);
   }
 
@@ -188,7 +188,7 @@ describe('issue #759 — realm run attempts prints every problem', () => {
     }));
 
   async function seed(id: string, n: number, errorCount?: number): Promise<void> {
-    const { FailedAttemptStore, buildFailedAttemptRecord, serializeFailedAttemptLine } =
+    const { JsonFileFailedAttemptStore, buildFailedAttemptRecord, serializeFailedAttemptLine } =
       await import('@sensigo/realm');
     const rec = buildFailedAttemptRecord({
       run_id: id,
@@ -201,7 +201,10 @@ describe('issue #759 — realm run attempts prints every problem', () => {
       params: {},
       trace_entry_count: 0,
     });
-    await new FailedAttemptStore(runs759).append(id, serializeFailedAttemptLine({ ...rec }).line);
+    await new JsonFileFailedAttemptStore(runs759).append(
+      id,
+      serializeFailedAttemptLine({ ...rec }).line,
+    );
   }
 
   it('13 problems → `13 problems` on the row, ten lines, then `and 3 more` (reds: `(+N more)`; the builder dropping the count)', async () => {

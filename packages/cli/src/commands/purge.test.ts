@@ -16,7 +16,7 @@ import { isPurgeEligible, purgeRuns, printPurgeReport } from './purge.js';
 import type { PurgeRunsResult } from './purge.js';
 import {
   JsonFileStore,
-  FailedAttemptStore,
+  JsonFileFailedAttemptStore,
   buildFailedAttemptRecord,
   serializeFailedAttemptLine,
   WorkflowError,
@@ -65,7 +65,7 @@ function makeRun(overrides: Partial<RunRecord> & { id?: string }): RunRecord {
 interface Stores {
   dir: string;
   runStore: JsonFileStore;
-  failedAttemptStore: FailedAttemptStore;
+  failedAttemptStore: JsonFileFailedAttemptStore;
   traceBufferStore: JsonTraceBufferStore;
   artifactStores: PerRunArtifactStore[];
 }
@@ -73,7 +73,7 @@ interface Stores {
 async function makeStores(): Promise<Stores> {
   const dir = await mkdtemp(join(tmpdir(), 'purge-test-'));
   const runStore = new JsonFileStore(dir);
-  const failedAttemptStore = new FailedAttemptStore(dir);
+  const failedAttemptStore = new JsonFileFailedAttemptStore(dir);
   // issue #616 PR-0: the trace buffer evaluates fences against the anchor run store.
   const traceBufferStore = new JsonTraceBufferStore(dir, runStore);
   return {
@@ -87,7 +87,7 @@ async function makeStores(): Promise<Stores> {
   };
 }
 
-async function appendSidecarLine(store: FailedAttemptStore, runId: string): Promise<void> {
+async function appendSidecarLine(store: JsonFileFailedAttemptStore, runId: string): Promise<void> {
   const rec = buildFailedAttemptRecord({
     run_id: runId,
     workflow_id: 'wf-1',
@@ -965,12 +965,12 @@ describe('purgeRuns — fenced WAL delete (issue #207 PR-2)', () => {
     }
   });
 
-  it('a non-declaring artifact store (FailedAttemptStore) keeps the plain, unfenced deleteAllForRun call (named residual, D3 §8 residual 4)', async () => {
+  it('a non-declaring artifact store (JsonFileFailedAttemptStore) keeps the plain, unfenced deleteAllForRun call (named residual, D3 §8 residual 4)', async () => {
     const { dir, runStore } = await makeStores();
     try {
       const run = makeRun({ id: 'sidecar-unfenced', run_phase: 'completed', terminal_state: true });
       await injectRun(dir, run);
-      const failedAttemptStore = new FailedAttemptStore(dir);
+      const failedAttemptStore = new JsonFileFailedAttemptStore(dir);
       await appendSidecarLine(failedAttemptStore, run.id);
 
       const result = await purgeRuns({ runId: 'sidecar-unfenced', dryRun: false }, runStore, [

@@ -1,8 +1,8 @@
 // orphan-sweepable-store.ts — marker interface for run-less orphan-artifact remediation (#163).
 //
 // Its OWN marker, deliberately separate from PerRunArtifactStore/TraceBufferStore (the same split
-// PerRunArtifactStore itself got from RunStore, issue #107): FailedAttemptStore needs this and
-// isn't a trace buffer, so it can't live on TraceBufferStore; a future Postgres-backed store has
+// PerRunArtifactStore itself got from RunStore, issue #107): JsonFileFailedAttemptStore needs this
+// and isn't a trace buffer, so it can't live on TraceBufferStore; a future Postgres-backed store has
 // no filesystem-orphan analogue at all (there is no glob, no mtime, no filename to parse a runId
 // out of) and must not be forced to implement a meaningless no-op just to satisfy an interface it
 // has nothing to contribute to.
