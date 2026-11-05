@@ -15,6 +15,7 @@ import { handleSubmitHumanResponse, registerSubmitHumanResponse } from './submit
 import { handleGetRunState } from './get-run-state.js';
 import { handleAdvanceRun } from './advance-run.js';
 import { createDefaultRegistry } from '../server.js';
+import { makeTempHome } from '../test-support/temp-home.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Client } from '@modelcontextprotocol/sdk/client';
@@ -327,6 +328,8 @@ describe('mcp tool handlers', () => {
         },
         list: async () => [],
       } as unknown as JsonFileStore),
+      // #616 PR-2a (ii-b): the registry the handler needs (it built one on the real home before).
+      workflowStore: new JsonWorkflowStore(workflowDir),
     };
 
     const result = await handleExecuteStepTool(
@@ -367,6 +370,8 @@ describe('mcp tool handlers', () => {
         },
         list: async () => [],
       } as unknown as JsonFileStore),
+      // #616 PR-2a (ii-b): the registry the handler needs (it built one on the real home before).
+      workflowStore: new JsonWorkflowStore(workflowDir),
     };
 
     const result = await handleExecuteStepTool(
@@ -696,7 +701,9 @@ describe('registerStartRun — ResponseEnvelope error shape', () => {
   it('emits error_code when workflow is not found', async () => {
     const server = new McpServer({ name: 'test', version: '0' });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    registerStartRun(server, {});
+    // #616 PR-2a (ii-b): a temp home's stores (the tool built its own on the real home before).
+    const home = await makeTempHome();
+    registerStartRun(server, home.stores);
     await server.connect(serverTransport);
     const client = new Client({ name: 'test-client', version: '0' });
     await client.connect(clientTransport);
@@ -717,6 +724,7 @@ describe('registerStartRun — ResponseEnvelope error shape', () => {
     // so it must never carry the remedy.
     expect((envelope['errors'] as string[])[0]).not.toContain('most often');
     await client.close();
+    home.cleanup();
   });
 });
 
@@ -724,7 +732,9 @@ describe('registerSubmitHumanResponse — ResponseEnvelope error shape', () => {
   it('emits error_code when run is not found', async () => {
     const server = new McpServer({ name: 'test', version: '0' });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    registerSubmitHumanResponse(server, {});
+    // #616 PR-2a (ii-b): a temp home's stores (the tool built its own on the real home before).
+    const home = await makeTempHome();
+    registerSubmitHumanResponse(server, home.stores);
     await server.connect(serverTransport);
     const client = new Client({ name: 'test-client', version: '0' });
     await client.connect(clientTransport);
@@ -741,6 +751,7 @@ describe('registerSubmitHumanResponse — ResponseEnvelope error shape', () => {
     expect(envelope['run_version']).toBe(0);
     expect(Array.isArray(envelope['next_actions'])).toBe(true);
     await client.close();
+    home.cleanup();
   });
 });
 

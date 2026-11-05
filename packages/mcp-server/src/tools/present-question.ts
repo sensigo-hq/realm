@@ -7,8 +7,6 @@
 import { z } from 'zod';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   WorkflowError,
   admitWay,
   assertRegistryLine,
@@ -99,12 +97,12 @@ export function notSentWords(why: 'not_open' | 'due' | 'budget' | 'cancelled' | 
  */
 export async function handlePresentQuestion(
   args: { run_id: string; gate_id: string },
-  stores?: HandleRunStores,
+  stores: HandleRunStores,
   call?: FormCall,
 ): Promise<WithPersonBlock<McpEnvelope>> {
-  assertToolStores(stores, 'handlePresentQuestion');
-  const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
-  const runStore = stores?.runStore ?? new JsonFileStore();
+  assertToolStores(stores, 'handlePresentQuestion', ['runStore', 'workflowStore']);
+  const workflowStore = stores.workflowStore;
+  const runStore = stores.runStore;
   const snap = await loadSnapshot(runStore, args.run_id).catch((err: unknown) => {
     throw runReadError(err);
   });
@@ -237,7 +235,7 @@ export async function handlePresentQuestion(
 /** Registers the present_question MCP tool on the server, and returns it (listed per session). */
 export function registerPresentQuestion(
   server: McpServer,
-  opts?: HandleRunStores & WithDoorDisclosure,
+  opts: HandleRunStores & WithDoorDisclosure,
 ): RegisteredTool {
   markServedByTool(opts);
   const door = disclosureOfTool(opts);

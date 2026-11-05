@@ -295,7 +295,8 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
       offered: readBinDoorSettings('mcp', { gateAnswers: 'offered', formWaitSeconds: '60' }, {}).ok,
       stateless: (() => {
         try {
-          createRealmMcpServer({ statelessHttp: true, formWaitSeconds: 60 });
+          // #616 PR-2a (ii-b): no store, on purpose (a refusal that comes first); cast past the four required.
+          createRealmMcpServer({ statelessHttp: true, formWaitSeconds: 60 } as never);
           return true;
         } catch {
           return false;

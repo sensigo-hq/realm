@@ -4,7 +4,6 @@ import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server
 import {
   capText,
   ABANDON_KILL_ADVISORY,
-  JsonFileStore,
   WorkflowError,
   abandonRun,
   buildPreExecutionErrorEnvelope,
@@ -29,8 +28,9 @@ import { assertToolStores } from './assert-tool-stores.js';
 import { boundedRefusal } from './refusal-format.js';
 
 export interface HandleAbandonRunStores {
-  /** Any `RunStore` implementation (issue #188, PR-1 — was `JsonFileStore`-only). */
-  runStore?: RunStore;
+  /** Any `RunStore` implementation (issue #188, PR-1 — was `JsonFileStore`-only). #616 PR-2a (ii-b):
+   *  required — the handler builds no store. */
+  runStore: RunStore;
   /**
    * #627 W: this server's door — a refusal at an open question is worded by its answers row (no
    * answer tool is named where the door hands questions to the person).
@@ -88,10 +88,10 @@ const ABANDON_NO_OP_NOTE = 'already abandoned (no change this call).';
  */
 export async function handleAbandonRun(
   args: { run_id: string; reason?: string | undefined },
-  stores?: HandleAbandonRunStores,
+  stores: HandleAbandonRunStores,
 ): Promise<AbandonRunSummary> {
-  assertToolStores(stores, 'handleAbandonRun');
-  const runStore = stores?.runStore ?? new JsonFileStore();
+  assertToolStores(stores, 'handleAbandonRun', ['runStore']);
+  const runStore = stores.runStore;
   // issue #367: read first, so the response can say whether THIS call changed anything. Core's
   // `abandonRun` is idempotent — a second abandon returns the stored record untouched — and the
   // response used to be byte-identical either way, leaving an operator unable to tell a no-op from
@@ -126,7 +126,7 @@ export async function handleAbandonRun(
  */
 export function registerAbandonRun(
   server: McpServer,
-  opts?: HandleAbandonRunStores & WithDoorDisclosure,
+  opts: HandleAbandonRunStores & WithDoorDisclosure,
 ): RegisteredTool {
   const door = disclosureOfTool(opts);
   return server.registerTool(

@@ -3,8 +3,6 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   BUFFER_LIMIT_COUNT,
-  JsonWorkflowStore,
-  JsonFileStore,
   WorkflowError,
   buildPreExecutionErrorEnvelope,
   deriveRunPhase,
@@ -18,6 +16,7 @@ import {
   type AgentTraceEntry,
   type RunStore,
   type DisclosureClass,
+  type WorkflowRegistrar,
 } from '@sensigo/realm';
 import {
   traceEntrySchema,
@@ -45,9 +44,10 @@ import { assertToolStores } from './assert-tool-stores.js';
 import { boundedRefusal } from './refusal-format.js';
 
 export interface HandleAppendTraceStores {
-  /** Any `RunStore` implementation (issue #188, PR-1 — was `JsonFileStore`-only). */
-  runStore?: RunStore;
-  workflowStore?: JsonWorkflowStore;
+  /** Any `RunStore` implementation (issue #188, PR-1 — was `JsonFileStore`-only). #616 PR-2a (ii-b):
+   *  required, with the registry — the handler builds no store. */
+  runStore: RunStore;
+  workflowStore: WorkflowRegistrar;
   /** The trace buffer the entries land in. Its run reader must read the same runs as `runStore`:
    *  the write-time fence reads the trace buffer's own reader (issue #616), never `runStore`. */
   traceBufferStore?: TraceBufferStore;
@@ -233,11 +233,11 @@ export async function handleAppendTrace(
     entries: AgentTraceEntry[];
     writer_nonce?: string | undefined;
   },
-  stores?: HandleAppendTraceStores,
+  stores: HandleAppendTraceStores,
 ): Promise<AppendTraceOkResult> {
-  assertToolStores(stores, 'handleAppendTrace');
-  const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
-  const runStore = stores?.runStore ?? new JsonFileStore();
+  assertToolStores(stores, 'handleAppendTrace', ['runStore', 'workflowStore']);
+  const workflowStore = stores.workflowStore;
+  const runStore = stores.runStore;
   const traceBufferStore = stores?.traceBufferStore;
 
   // 1. Load the run. Throws STATE_RUN_NOT_FOUND if missing.
@@ -418,7 +418,7 @@ export async function handleAppendTrace(
 /** Registers the append_trace MCP tool on the server. */
 export function registerAppendTrace(
   server: McpServer,
-  opts?: HandleAppendTraceStores & WithDoorDisclosure,
+  opts: HandleAppendTraceStores & WithDoorDisclosure,
 ): void {
   const door = disclosureOfTool(opts);
   server.registerTool(

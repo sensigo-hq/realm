@@ -3,8 +3,6 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   capText,
-  JsonWorkflowStore,
-  JsonFileStore,
   advanceRun,
   WorkflowError,
   buildPreExecutionErrorEnvelope,
@@ -72,14 +70,14 @@ export type AdvanceRunReply = WithPersonBlock<McpEnvelope> & {
  */
 export async function handleAdvanceRun(
   args: { run_id: string },
-  stores?: HandleRunStores,
+  stores: HandleRunStores,
   call?: FormCall,
   /** #729 PR-4: told the set this call built before its engine call (the door's reply reuses it). */
   onDisclosureSet?: (set: DisclosureSet) => void,
 ): Promise<AdvanceRunReply> {
-  assertToolStores(stores, 'handleAdvanceRun');
-  const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
-  const runStore = stores?.runStore ?? new JsonFileStore();
+  assertToolStores(stores, 'handleAdvanceRun', ['runStore', 'workflowStore']);
+  const workflowStore = stores.workflowStore;
+  const runStore = stores.runStore;
   // decision C172: a run that cannot be read is answered as the library answers it — the store's own
   // WorkflowError (issue #719: a damaged JSON-store run file is RESOURCE_FORMAT_INVALID,
   // STATE_LEGACY_FORMAT or ENGINE_STORE_FAILED, naming the file and its way out), or, for an
@@ -148,7 +146,7 @@ export async function handleAdvanceRun(
 /** Registers the advance_run MCP tool on the server. */
 export function registerAdvanceRun(
   server: McpServer,
-  opts?: HandleRunStores & WithDoorDisclosure,
+  opts: HandleRunStores & WithDoorDisclosure,
 ): void {
   markServedByTool(opts);
   const door = disclosureOfTool(opts);

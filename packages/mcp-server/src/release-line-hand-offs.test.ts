@@ -127,13 +127,6 @@ describe('H1 createRealmMcpServer', () => {
       );
     });
   }
-  it('runs before the trace buffer is derived: an undeclared run store is refused, not the runsDirPath error', () => {
-    // Today an undeclared non-JsonFileStore run store reaches the runsDirPath derivation and throws
-    // ENGINE_INTERNAL; the hand-off check refuses it first.
-    expect(codeOf(() => createRealmMcpServer({ runStore: plain() } as never))).toBe(
-      'ENGINE_RELEASE_LINE_UNDECLARED',
-    );
-  });
   it('a static registry of another release: refused at construction, the whole message names createRealmMcpServer', () => {
     const reg = {};
     Object.defineProperty(reg, Symbol.for('@sensigo/realm/ExtensionRegistry'), { value: OTHER });
@@ -199,8 +192,10 @@ describe('H1 createRealmMcpServer', () => {
         workflowStore: new JsonWorkflowStore(join(dir, 'wf')),
       }),
     ).not.toThrow();
+    // #616 PR-2a (ii-b): got past the release-line check — the missing-store refusal, which comes
+    // after it, names the three stores not given (the runsDirPath derivation it reached before is gone).
     expect(codeOf(() => createRealmMcpServer({ runStore: host } as never))).toBe(
-      'ENGINE_INTERNAL', // got past the check; the runsDirPath derivation refuses a non-JsonFileStore
+      'VALIDATION_OPTION_INVALID',
     );
   });
 });

@@ -28,7 +28,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { createRealmMcpServer, type RealmMcpServerOptions } from './server.js';
+import { createRealmMcpServer } from './server.js';
 import {
   renderOutcome,
   sendQuestionForm,
@@ -38,7 +38,7 @@ import {
 } from './form-path.js';
 import { McpDoor } from './door.js';
 import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
-import { withArtifactStores } from './test-support/temp-home.js';
+import { withArtifactStores, type ServerExtras } from './test-support/temp-home.js';
 
 // #715 (b) 04 §D (B4): no cell here waits on the real clock for a question to expire. The run store a
 // cell opens sits at a TEST LOCATION (`located`), and `passes(ms)` moves the clock of every location
@@ -106,7 +106,7 @@ interface Session {
 }
 
 async function session(
-  options: Omit<RealmMcpServerOptions, 'runStore' | 'workflowStore'> = {},
+  options: ServerExtras = {},
   handler: Handler = async () => ({ action: 'decline' }),
   timeout?: number,
   // Correction 1: a workflow of the cell's own, and a store of its own (B5's failing settle).

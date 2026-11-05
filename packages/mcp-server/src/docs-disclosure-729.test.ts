@@ -19,7 +19,7 @@ import {
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from './server.js';
-import { withArtifactStores } from './test-support/temp-home.js';
+import { withArtifactStores, type ServerExtras } from './test-support/temp-home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const TOOLS_PAGE = 'docs/reference/mcp/tools.md';
@@ -43,7 +43,7 @@ const FLOW: WorkflowDefinition = {
   steps: { a: { description: 'A.', execution: 'agent', depends_on: [] } },
 };
 
-async function connect(extra: Parameters<typeof createRealmMcpServer>[0] = {}) {
+async function connect(extra: ServerExtras = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'realm-docs-mcp-729-'));
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
   await workflowStore.register(FLOW);
@@ -174,7 +174,7 @@ describe("#729 PR-3 — the library page: createRealmMcpServer's disclosure opti
     vi.stubEnv('DOCS_729_SHOWN', 'FAKE-DOCS-SHOWN-0729');
     vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const params = { e: 'FAKE-DOCS-ENV-0729', s: 'FAKE-DOCS-SHOWN-0729', d: 'FAKE-DOCS-DECL-0729' };
-    const shownBy = async (extra: Parameters<typeof createRealmMcpServer>[0]) => {
+    const shownBy = async (extra: ServerExtras) => {
       const call = await connect(extra);
       const started = await call('start_run', { workflow_id: FLOW.id, params });
       const state = await call('get_run_state', { run_id: started.body['run_id'] as string });

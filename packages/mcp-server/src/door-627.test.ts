@@ -39,7 +39,7 @@ import {
 } from './server.js';
 import { effectiveGateAnswers } from './door.js';
 import { POLL_CAP_MS, renderReply, tokenStrayed, type McpEnvelope } from './render-reply.js';
-import { makeTempHome, withArtifactStores } from './test-support/temp-home.js';
+import { makeTempHome, withArtifactStores, type ServerExtras } from './test-support/temp-home.js';
 
 type Reply = Record<string, unknown>;
 
@@ -87,7 +87,7 @@ interface Session {
 
 /** One session: a server built with `options`, a client that declares forms or not. */
 async function session(
-  options: Omit<RealmMcpServerOptions, 'runStore' | 'workflowStore'> = {},
+  options: ServerExtras = {},
   client: {
     forms?: boolean;
     onElicit?: () => Promise<{
@@ -432,11 +432,7 @@ describe('#627 W — asked’s fallback: the answer tool asks the app to have th
 // ─── H: the protocol per session (cells 23, 28, 12) and author text (cell 27b) ─────────────────
 
 describe('#627 W — the protocol says what this session’s way means', () => {
-  async function protocolOf(
-    options: Omit<RealmMcpServerOptions, 'runStore' | 'workflowStore'>,
-    forms: boolean,
-    rules?: string,
-  ) {
+  async function protocolOf(options: ServerExtras, forms: boolean, rules?: string) {
     const s = await session(options, { forms });
     const def = await registered(s, rules !== undefined ? { rules } : {});
     return s.call('get_workflow_protocol', { workflow_id: def.id });
@@ -610,10 +606,7 @@ describe('#627 W — the protocol says what this session’s way means', () => {
   });
 
   it('cell 27b — a reply’s gate.agent_hint is labelled as the author’s, under every value', async () => {
-    const hintOf = async (
-      options: Omit<RealmMcpServerOptions, 'runStore' | 'workflowStore'>,
-      forms: boolean,
-    ) => {
+    const hintOf = async (options: ServerExtras, forms: boolean) => {
       const s = await session(
         options,
         forms ? { forms, onElicit: async () => ({ action: 'decline' }) } : {},
@@ -1078,7 +1071,8 @@ describe('#627 W — an embedder: env + option, the most restrictive wins; a bad
     process.env['REALM_MCP_GATE_ANSWERS'] = 'witheld';
     const bad = (() => {
       try {
-        createRealmMcpServer({});
+        // #616 PR-2a (ii-b): no store, on purpose (a refusal that comes first); cast past the four required.
+        createRealmMcpServer({} as never);
       } catch (e) {
         return (e as Error).message;
       }
@@ -1087,7 +1081,8 @@ describe('#627 W — an embedder: env + option, the most restrictive wins; a bad
     delete process.env['REALM_MCP_GATE_ANSWERS'];
     const badWait = (() => {
       try {
-        createRealmMcpServer({ formWaitSeconds: 10 });
+        // #616 PR-2a (ii-b): no store, on purpose (a refusal that comes first); cast past the four required.
+        createRealmMcpServer({ formWaitSeconds: 10 } as never);
       } catch (e) {
         return (e as Error).message;
       }
@@ -1337,9 +1332,10 @@ describe('#627 W correction 2 (4.2, 4.3) — the library refuses an inert form w
   it('a form wait under withheld, or on a statelessHttp door, builds no server; an empty gateAnswers is refused', async () => {
     // #616 PR-2a (ii-a): the one build that succeeds is on a temp home's four stores.
     const home = await makeTempHome();
-    const build = (options: Parameters<typeof createRealmMcpServer>[0]) => {
+    const build = (options: ServerExtras) => {
       try {
-        createRealmMcpServer(options);
+        // #616 PR-2a (ii-b): no store, on purpose (a refusal that comes first); cast past the four required.
+        createRealmMcpServer(options as RealmMcpServerOptions);
         return 'built';
       } catch (e) {
         return (e as Error).message.split(' — ')[0];
@@ -1371,7 +1367,8 @@ describe('#627 W correction 1 (C1) — the principal option is checked when the 
     const home = await makeTempHome();
     const build = (principal: unknown, stores: Partial<typeof home.stores> = {}) => {
       try {
-        createRealmMcpServer({ ...stores, principal: principal as never });
+        // #616 PR-2a (ii-b): no store, on purpose (a refusal that comes first); cast past the four required.
+        createRealmMcpServer({ ...stores, principal: principal as never } as RealmMcpServerOptions);
         return 'built';
       } catch (e) {
         return (e as Error).message;

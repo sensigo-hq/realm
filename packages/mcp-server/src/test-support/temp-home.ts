@@ -20,7 +20,15 @@ import {
   type JsonWorkflowStore,
 } from '@sensigo/realm';
 import { openMcpHome } from '../home.js';
+import type { RealmMcpServerOptions } from '../server.js';
 import { JsonTraceBufferStore } from '../json-trace-buffer-store.js';
+
+type StoreKey = 'runStore' | 'workflowStore' | 'traceBufferStore' | 'failedAttemptStore';
+
+/** #616 PR-2a (ii-b): the server's options with its four stores optional — what a test helper that
+ *  supplies the four itself takes from a cell (which may still hand one of its own). */
+export type ServerExtras = Omit<RealmMcpServerOptions, StoreKey> &
+  Partial<Pick<RealmMcpServerOptions, StoreKey>>;
 
 /** A temp realm home and the four stores on it. */
 export interface TempHome {

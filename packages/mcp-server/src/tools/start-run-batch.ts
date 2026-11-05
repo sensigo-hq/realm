@@ -2,8 +2,6 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
-  JsonWorkflowStore,
-  JsonFileStore,
   WorkflowError,
   buildPreExecutionErrorEnvelope,
   validateRunParams,
@@ -144,11 +142,11 @@ export async function handleStartRunBatch(
     on_terminal_match?: 'reuse' | 'reject' | 'rerun_if_failed' | 'rerun' | undefined;
     on_live_match?: 'use_existing' | 'fail' | undefined;
   },
-  stores?: HandleRunStores,
+  stores: HandleRunStores,
 ): Promise<StartRunBatchResult> {
-  assertToolStores(stores, 'handleStartRunBatch');
-  const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
-  const runStore = stores?.runStore ?? new JsonFileStore();
+  assertToolStores(stores, 'handleStartRunBatch', ['runStore', 'workflowStore']);
+  const workflowStore = stores.workflowStore;
+  const runStore = stores.runStore;
 
   const cap = args.max_items ?? 100;
   if (args.items.length > cap) {
@@ -332,7 +330,7 @@ export async function handleStartRunBatch(
 
 export function registerStartRunBatch(
   server: McpServer,
-  opts?: HandleRunStores & WithDoorDisclosure,
+  opts: HandleRunStores & WithDoorDisclosure,
 ): void {
   markServedByTool(opts);
   const door = disclosureOfTool(opts);
