@@ -9,13 +9,16 @@
 // lock, is unit 9's: until then a COMMIT error rolls back and throws the mapped error).
 //
 // The rules all three forms share:
-//   - a body is synchronous (a returned promise is refused) and a transaction never spans an await;
+//   - a body is synchronous, so a transaction never spans an await: a body whose type returns a
+//     promise (or any thenable) does not compile, and a returned promise is refused at run time;
 //   - on ANY error the transaction is rolled back, swallowing only "no transaction is active" (after
 //     a full disk SQLite has rolled back by itself, and an unguarded ROLLBACK would hide the real
 //     error behind its own);
 //   - a busy store (`errcode & 0xff == 5`) is waited for ASYNCHRONOUSLY, a flat 5-50 ms at a time, up
 //     to the busy budget, then refused with `STATE_RUN_BUSY`; the event loop is blocked at most for
-//     the connection's own busy timeout per attempt ({@link BUSY_SLICE_MS}, set by the open);
+//     the connection's own busy timeout per attempt ({@link BUSY_SLICE_MS}, set by the open). The
+//     budget counts from the call, so time spent queued behind this process's other calls counts
+//     too; a call whose budget passed in the queue still makes one attempt before it is refused;
 //   - every SQLite error leaves the class mapped ({@link mapSqliteError}), none raw;
 //   - a call that starts while a transaction is open on the connection (only possible from code that
 //     runs inside it: a clock's `now()` under the lock, or a body) is refused, and so is the
@@ -48,6 +51,16 @@ const BUSY_WAIT_MAX_MS = 50;
 
 /** The write's own content check, kept for the COMMIT outcome protocol (unit 9). */
 export type Verify<T> = (db: DatabaseLike, result: T) => boolean;
+
+/** Anything with a callable `then`: a promise, or any other thenable. */
+type Thenable = { readonly then: (...args: never) => unknown };
+
+/**
+ * A body's result: anything but a thenable. A body typed to return a promise (an `async` arrow, a
+ * `Promise.resolve`, a union that may be one) does not compile, because the code after its first
+ * `await` would run outside the transaction and the lock; every synchronous result keeps its type.
+ */
+type SyncResult<T> = T extends Thenable ? never : T;
 
 /** What a `RealmDb` is built over, besides its connection. */
 export interface RealmDbOptions {
@@ -207,7 +220,9 @@ export class InProcessLock {
 
 /**
  * The one primitive every statement on a store file goes through (see the module comment). Exported
- * to the package's own modules; the package's entry does not export it.
+ * to the package's own modules; the package's entry does not export it. An `autocommit` body must be
+ * ONE statement or safe to run again: it is re-run whole on a busy store, and when a later statement
+ * in it fails, the earlier ones stay.
  */
 export class RealmDb {
   /** The clock every reading is taken from. */
@@ -230,7 +245,7 @@ export class RealmDb {
   }
 
   /** Runs `body` with no transaction: the open's pragmas, checkpoints, a copy of the file. */
-  autocommit<T>(body: (db: DatabaseLike) => T): Promise<T> {
+  autocommit<T>(body: (db: DatabaseLike) => SyncResult<T>): Promise<T> {
     this.#refuseIfNested();
     return this.#withLockAndBusyWait(() => {
       const db = this.#db;
@@ -249,7 +264,7 @@ export class RealmDb {
    * Runs `body` in a read transaction (deferred BEGIN, `query_only` on for the body), with the raw
    * reading taken before the BEGIN and before the in-process lock.
    */
-  snapshot<T>(body: (db: DatabaseLike, reading: Date) => T): Promise<T> {
+  snapshot<T>(body: (db: DatabaseLike, reading: Date) => SyncResult<T>): Promise<T> {
     this.#refuseIfNested();
     let reading: Date;
     try {
@@ -265,10 +280,13 @@ export class RealmDb {
    * the raw reading taken after the lock. `verify` is the write's own content check: required, and
    * used by the COMMIT outcome protocol (unit 9).
    */
-  immediate<T>(body: (db: DatabaseLike, reading: Date) => T, verify: Verify<T>): Promise<T>;
+  immediate<T>(
+    body: (db: DatabaseLike, reading: Date) => SyncResult<T>,
+    verify: Verify<T>,
+  ): Promise<T>;
   /** The same, but the body receives no reading: it takes its own, or none. */
   immediate<T>(
-    body: (db: DatabaseLike) => T,
+    body: (db: DatabaseLike) => SyncResult<T>,
     verify: Verify<T>,
     options: { takesReading: false },
   ): Promise<T>;
@@ -300,27 +318,38 @@ export class RealmDb {
 
   /**
    * Takes the in-process lock (synchronously when it is free) and runs `attempt`, waiting
-   * asynchronously and running it again while the store is busy, up to the budget.
+   * asynchronously and running it again while the store is busy, up to the budget. The budget
+   * counts from the call, the time queued for the lock included; the first attempt always runs, so
+   * a call whose budget passed in the queue still gets one try.
    */
   async #withLockAndBusyWait<T>(attempt: () => T): Promise<T> {
-    if (!this.lock.tryTake()) await this.lock.take();
+    let calledAt: number | undefined;
+    let held = false;
     try {
-      let firstBusyAt: number | undefined;
       for (;;) {
-        try {
-          return attempt();
-        } catch (err) {
-          if (!isBusy(err)) throw mapSqliteError(err);
-          const now = performance.now();
-          firstBusyAt ??= now;
-          const left = this.#budgetMs - (now - firstBusyAt);
+        // The one clock read: at the call, then after each busy answer.
+        const now = performance.now();
+        if (calledAt === undefined) {
+          calledAt = now;
+          held = this.lock.tryTake();
+          if (!held) {
+            await this.lock.take();
+            held = true;
+          }
+        } else {
+          const left = this.#budgetMs - (now - calledAt);
           if (left <= 0) throw busyError(this.#budgetMs);
           const jitter = BUSY_WAIT_MIN_MS + Math.random() * (BUSY_WAIT_MAX_MS - BUSY_WAIT_MIN_MS);
           await new Promise<void>((resolve) => setTimeout(resolve, Math.min(jitter, left)));
         }
+        try {
+          return attempt();
+        } catch (err) {
+          if (!isBusy(err)) throw mapSqliteError(err);
+        }
       }
     } finally {
-      this.lock.release();
+      if (held) this.lock.release();
     }
   }
 

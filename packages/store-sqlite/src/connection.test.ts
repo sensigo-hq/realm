@@ -87,6 +87,25 @@ const insert =
   };
 const verified = (): boolean => true;
 
+/**
+ * A body that returns a promise, cast past the compile-time rule (a body's type may not return
+ * one), so a cell can reach the run-time refusal: the second line of the same rule.
+ */
+function pastTheType<A extends unknown[]>(body: (...args: A) => unknown): (...args: A) => string {
+  return body as (...args: A) => string;
+}
+
+/** Compile-time only: `true` when A and B are the same type, `false` otherwise. */
+type Same<A, B> =
+  (<X>() => X extends A ? 1 : 2) extends <X>() => X extends B ? 1 : 2 ? true : false;
+/** Compile-time check of a call's type: `resultOf(x).is<T>(true)` compiles only when x is a T. */
+const resultOf = <A>(actual: A) => ({
+  is: <B>(same: Same<A, B>): void => void [actual, same],
+});
+
+/** Waits `ms` on the event loop. */
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
 /** What a call settled with: its value, or its error. */
 async function settle<T>(p: Promise<T>): Promise<{ value?: T; error?: unknown }> {
   try {
@@ -403,10 +422,13 @@ describe('#616 unit 8 — the write path', () => {
     const file = freshFile();
     const { db } = realmDb(file);
     const out = await settle(
-      db.immediate((d) => {
-        insert('before the promise')(d);
-        return Promise.resolve(1);
-      }, verified),
+      db.immediate(
+        pastTheType((d: DatabaseLike) => {
+          insert('before the promise')(d);
+          return Promise.resolve(1);
+        }),
+        verified,
+      ),
     );
     // (1) red when a returned promise is accepted (the call resolves and the row stays).
     //     (2) prints the error and the rows.
@@ -599,6 +621,244 @@ describe('#616 unit 8 — the write path', () => {
       bodysOwnErrorUnchanged: true,
       raw: 0,
       rows: [517],
+    });
+  });
+
+  it('correction check 1: a body typed to return a promise does not compile in any form; every synchronous body does, with its own result type', () => {
+    const calls = (db: RealmDb): void => {
+      // (1) red as a compile error in typecheck:tests (an unused @ts-expect-error) when a form's
+      //     body type accepts a promise again. (2) the compiler prints the file and line.
+      // @ts-expect-error — an async body in autocommit
+      void db.autocommit(async (d) => insert('a')(d));
+      // @ts-expect-error — an async body in snapshot
+      void db.snapshot(async (_d, r) => r.toISOString());
+      // @ts-expect-error — an async body in immediate
+      void db.immediate(async (d) => insert('i')(d), verified);
+      // @ts-expect-error — an async body in immediate, opted out of the reading
+      void db.immediate(async (d) => insert('o')(d), verified, { takesReading: false });
+      // @ts-expect-error — a body that returns a promise without being async
+      void db.immediate(() => Promise.resolve(1), verified);
+      // @ts-expect-error — a body that returns some other thenable
+      void db.autocommit(() => ({ then: (): void => undefined }));
+      // @ts-expect-error — a body that may return a promise
+      void db.snapshot((): number | Promise<number> => 1);
+
+      // (1) red as a compile error when an ordinary synchronous body stops compiling, or when its
+      //     call's result type changes (the `is` argument no longer fits). (2) the compiler
+      //     prints the file, the line and both types.
+      resultOf(
+        db.autocommit((d) => {
+          d.exec('PRAGMA optimize');
+        }),
+      ).is<Promise<void>>(true);
+      resultOf(db.autocommit(() => undefined)).is<Promise<undefined>>(true);
+      resultOf(db.snapshot((_d, r) => r.toISOString())).is<Promise<string>>(true);
+      resultOf(db.snapshot((d) => d.prepare('SELECT x FROM t').get())).is<
+        Promise<Record<string, unknown> | undefined>
+      >(true);
+      resultOf(db.immediate((_d, r) => ({ id: 'run-1', at: r }), verified)).is<
+        Promise<{ id: string; at: Date }>
+      >(true);
+      resultOf(db.immediate(() => [1, 2], verified, { takesReading: false })).is<Promise<number[]>>(
+        true,
+      );
+      resultOf(
+        db.immediate(
+          (_d, r) => r,
+          (_d, result) => result instanceof Date,
+        ),
+      ).is<Promise<Date>>(true);
+    };
+    // The run-time part only shows the function compiled into the suite.
+    expect(typeof calls).toBe('function');
+  });
+
+  it('correction check 2: five calls queued behind an outside writer are all refused within about the budget, in call order, nothing written', async () => {
+    const file = freshFile();
+    const holder = connect(file);
+    holder.exec('BEGIN IMMEDIATE');
+    const budgetMs = 400;
+    const { db } = realmDb(file, { budgetMs });
+    const started = performance.now();
+    const refused: Array<{ call: number; atMs: number; error: Record<string, unknown> }> = [];
+    await Promise.all(
+      [1, 2, 3, 4, 5].map(async (call) => {
+        const out = await settle(db.immediate(insert(call), verified));
+        refused.push({ call, atMs: performance.now() - started, error: summary(out.error) });
+      }),
+    );
+    holder.exec('ROLLBACK');
+    const last = Math.max(...refused.map((r) => r.atMs));
+    const first = Math.min(...refused.map((r) => r.atMs));
+    // (1) red when the budget counts from each call's first busy answer, not from the call (the
+    //     queued calls wait a budget each: the last is refused near 5 x 400 ms), when a call is
+    //     refused before its budget, out of call order, with another refusal, or a row landed.
+    //     The bound is the budget plus one attempt for each call (each up to the connection's
+    //     busy timeout) and room for a loaded machine: 2 x the budget. (2) prints every call's
+    //     refusal time and outcome.
+    expect(
+      {
+        order: refused.map((r) => r.call),
+        withinTwiceTheBudget: last < 2 * budgetMs,
+        notBeforeTheBudget: first >= budgetMs,
+        errors: refused.map((r) => r.error),
+        rows: values(file),
+      },
+      refused.map((r) => `#${r.call} at ${r.atMs.toFixed(0)} ms`).join(', '),
+    ).toEqual({
+      order: [1, 2, 3, 4, 5],
+      withinTwiceTheBudget: true,
+      notBeforeTheBudget: true,
+      errors: Array(5).fill({
+        workflowError: true,
+        code: 'STATE_RUN_BUSY',
+        errcode: undefined,
+        message:
+          'The store was busy for 0.4 s: another writer held it. Nothing was written. Try again.',
+        details: { budget_ms: 400 },
+      }),
+      rows: [],
+    });
+  });
+
+  it('correction check 2: a call whose budget passed in the queue still makes one attempt — it lands when the writer let go, and is refused after that one attempt when it did not', async () => {
+    const budgetMs = 100;
+    // The in-process lock held for longer than the budget: as the COMMIT outcome protocol (unit
+    // 9) holds it. The outside writer holds the file meanwhile.
+    const queuedPastTheBudget = async (writerLetsGo: boolean) => {
+      const file = freshFile();
+      const holder = connect(file);
+      holder.exec('BEGIN IMMEDIATE');
+      const { wrapped, begins } = withFault(
+        connect(file),
+        () => false,
+        () => new Error('never thrown'),
+        0,
+      );
+      const { db } = realmDb(file, { budgetMs, connection: wrapped });
+      // The setup's own check: (1) red when the lock is not free at the start (a call left it
+      // held); (2) prints the value tryTake returned.
+      expect(db.lock.tryTake()).toBe(true);
+      const pending = settle(db.immediate(insert('queued'), verified));
+      await sleep(budgetMs + 50);
+      if (writerLetsGo) holder.exec('ROLLBACK');
+      db.lock.release();
+      const out = await pending;
+      if (!writerLetsGo) holder.exec('ROLLBACK');
+      return { error: summary(out.error), attempts: begins.length, rows: values(file) };
+    };
+    const landed = await queuedPastTheBudget(true);
+    const stillHeld = await queuedPastTheBudget(false);
+    // (1) red when a call whose budget passed in the queue is refused without an attempt (the
+    //     first case's row does not land and its attempts are 0), or, counting from the first busy
+    //     answer, waits a fresh budget (the second case makes several attempts). (2) prints both
+    //     outcomes, the BEGINs each made and the rows.
+    expect({ landed, stillHeld }).toEqual({
+      landed: { error: summary(undefined), attempts: 1, rows: ['queued'] },
+      stillHeld: {
+        error: {
+          workflowError: true,
+          code: 'STATE_RUN_BUSY',
+          errcode: undefined,
+          message:
+            'The store was busy for 0.1 s: another writer held it. Nothing was written. Try again.',
+          details: { budget_ms: 100 },
+        },
+        attempts: 1,
+        rows: [],
+      },
+    });
+  });
+
+  it('correction check 3: autocommit waits for a busy store, then refuses it with STATE_RUN_BUSY, nothing written', async () => {
+    const file = freshFile();
+    const holder = connect(file);
+    holder.exec('BEGIN IMMEDIATE');
+    const { db } = realmDb(file, { budgetMs: 200 });
+    const out = await settle(db.autocommit(insert('while busy')));
+    holder.exec('ROLLBACK');
+    // (1) red when autocommit takes no busy wait or no mapping (SQLite's raw "database is locked",
+    //     code ERR_SQLITE_ERROR, errcode 5, leaves), or when a row landed. (2) prints the error and
+    //     the rows.
+    expect({ error: summary(out.error), rows: values(file) }).toEqual({
+      error: {
+        workflowError: true,
+        code: 'STATE_RUN_BUSY',
+        errcode: undefined,
+        message:
+          'The store was busy for 0.2 s: another writer held it. Nothing was written. Try again.',
+        details: { budget_ms: 200 },
+      },
+      rows: [],
+    });
+  });
+
+  it('correction check 3: autocommit maps a real full database to STATE_STORE_FULL', async () => {
+    const file = freshFile();
+    const conn = connect(file);
+    const pages = Number(conn.prepare('PRAGMA page_count').get()?.['page_count']);
+    conn.exec(`PRAGMA max_page_count = ${pages + 1}`);
+    const { db } = realmDb(file, { connection: conn });
+    const out = await settle(db.autocommit(insert('x'.repeat(200_000))));
+    // (1) red when autocommit does not map SQLite's error 13 (the raw "database or disk is full"
+    //     leaves), or when a row landed. (2) prints the error and the rows.
+    expect({ error: summary(out.error), rows: values(file) }).toEqual({
+      error: {
+        workflowError: true,
+        code: 'STATE_STORE_FULL',
+        errcode: undefined,
+        message:
+          "The Realm store could not be written: its disk, or the database's size limit, is full. " +
+          'Nothing was written. Free space, then try again.',
+        details: {},
+      },
+      rows: [],
+    });
+  });
+
+  it('correction check 4: a body that returns a promise is refused in all three forms; the lock is released and the next call works', async () => {
+    const file = freshFile();
+    const { db } = realmDb(file);
+    const promise = (): Promise<string> => Promise.resolve('late');
+    const lockFree = (): boolean => {
+      const free = db.lock.tryTake();
+      if (free) db.lock.release();
+      return free;
+    };
+    const autocommit = {
+      refused: summary((await settle(db.autocommit(pastTheType(promise)))).error),
+      lockFree: lockFree(),
+      next: (await settle(db.autocommit(() => 'next'))).value,
+    };
+    const snapshot = {
+      refused: summary((await settle(db.snapshot(pastTheType(promise)))).error),
+      lockFree: lockFree(),
+      next: (await settle(db.snapshot(() => 'next'))).value,
+    };
+    const immediate = {
+      refused: summary((await settle(db.immediate(pastTheType(promise), verified))).error),
+      lockFree: lockFree(),
+      next: (await settle(db.immediate(() => 'next', verified))).value,
+    };
+    const each = {
+      refused: {
+        workflowError: false,
+        code: undefined,
+        errcode: undefined,
+        message:
+          'A store body returned a promise: a body is synchronous, so that a transaction never ' +
+          'spans an await. This is a bug in the caller.',
+      },
+      lockFree: true,
+      next: 'next',
+    };
+    // (1) red when a form accepts a returned promise (its call resolves with 'late'), when the
+    //     refusal leaves the in-process lock held, or when the next call in that form fails.
+    //     (2) prints each form's refusal, whether the lock was free and the next call's value.
+    expect({ autocommit, snapshot, immediate }).toEqual({
+      autocommit: each,
+      snapshot: each,
+      immediate: each,
     });
   });
 });
