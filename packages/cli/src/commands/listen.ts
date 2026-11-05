@@ -29,7 +29,6 @@ import { Socket } from 'node:net';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { Command, InvalidArgumentError } from 'commander';
 // issue #409: the SAME parser `realm agent --llm-timeout` uses — never a second copy, so the two
 // flags cannot drift on what they accept. The listen→agent edge is one-way and cycle-free.
@@ -61,6 +60,7 @@ import {
   isPastDeadline,
   parseStamp,
   persistsField,
+  realmHomePath,
   startIdentityEntry,
 } from '@sensigo/realm';
 import { cannotGoOnLines } from './ways-renderer.js';
@@ -834,14 +834,15 @@ function isLoopbackHost(host: string): boolean {
  * (never module load; the #285 class), exported so the `.action` closure below and any future
  * consumer/test can call it without constructing a full `listen` invocation. Previously an inline
  * `process.env['HOME'] ?? '.'` expression in the closure — house-pattern-inconsistent (every other
- * store's default resolves via `homedir()`, matching `JsonFileStore`/`JsonFileReplayStore`),
+ * store's default resolves realm's home the same way, matching `JsonFileStore`/`JsonFileReplayStore`),
  * Windows-blind (`HOME` is a POSIX-only env var; Windows sets `USERPROFILE`, so a bare `HOME`
  * check silently falls through to `'.'` on every Windows install), and silently wrote under the
  * CURRENT WORKING DIRECTORY rather than failing loudly when `HOME` was unset for any reason.
- * `homedir()` resolves correctly on both platforms and never returns an empty/undefined value.
+ * Issue #616 PR-2a (i): the home comes from core's `realmHomePath()`, which refuses an empty or
+ * relative HOME with `STATE_HOME_UNUSABLE` (Node's own `homedir()` returns `''` for an empty HOME).
  */
 export function defaultDedupBase(): string {
-  return join(homedir(), '.realm', 'dedup');
+  return join(realmHomePath(), 'dedup');
 }
 
 /**

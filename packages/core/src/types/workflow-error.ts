@@ -92,6 +92,10 @@ export type ErrorCode =
   // for ANOTHER location (a copied test location) — refused at construction, so a copy never runs on
   // another location's test clock.
   | 'STATE_TEST_CLOCK_FOREIGN'
+  // issue #616 PR-2a (i): the home realm would use cannot be used — HOME is empty or not an absolute
+  // path, the account has no home, or a program passed a home that is not an absolute path. Raised
+  // by `realmHomePath()` before any store opens anything.
+  | 'STATE_HOME_UNUSABLE'
   // issue #616 (unit 3): the codes the SQLite store raises. Nothing raises them yet: the unit that
   // first raises a code writes its message and its facts, and moves its row on the error-codes page
   // from "the codes nothing raises" into the table.

@@ -72,7 +72,7 @@ function machine(
   const base: SeparationProbes = {
     login: () => 'agent',
     uid: () => ME,
-    home: () => HOME,
+    home: () => STORE,
     // Correction 1 (D4): the login's own home, where the agent-scoped paths are read.
     loginHome: () => '/home/agent',
     stat: () => ({ error: 'unset' }),

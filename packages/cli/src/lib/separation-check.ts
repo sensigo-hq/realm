@@ -16,7 +16,6 @@ import {
   statSync,
 } from 'node:fs';
 import { createConnection } from 'node:net';
-import { homedir } from 'node:os';
 import { osLogin } from './program-identity.js';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -38,6 +37,7 @@ import {
   type SwitchWhose,
   switchClausesOf,
   switchPathsCondition,
+  realmHomePath,
 } from '@sensigo/realm';
 import { PLAIN, type RenderCtx } from '../output/writer.js';
 import {
@@ -59,7 +59,8 @@ import {
  * runner), plus what the other conditions read.
  */
 export interface SeparationProbes extends SwitchProbes {
-  /** `$HOME`: where Realm's store is read (correction 1 D4: the store only). */
+  /** Realm's home, `~/.realm` (core's `realmHomePath()`): where Realm's store is read (correction 1
+   *  D4: the store only). An unusable HOME refuses here with `STATE_HOME_UNUSABLE` (#616 PR-2a i). */
   home: () => string;
   /** The Node binary that runs this check, and Realm's own package folder (correction 1 D3). */
   execPath: () => string;
@@ -92,7 +93,7 @@ export function systemProbes(): SeparationProbes {
       return id !== undefined ? `uid ${id}` : 'an unnamed login';
     },
     uid,
-    home: () => homedir(),
+    home: () => realmHomePath(),
     loginHome: () => osLogin()?.home,
     stat: (path) => {
       try {
@@ -555,7 +556,7 @@ export async function measureSeparation(args: {
   door: 'mcp' | 'serve';
 }): Promise<CheckEvidence> {
   const { probes } = args;
-  const store = join(probes.home(), '.realm');
+  const store = probes.home();
   // Correction 1 (D1): stat the store and tell the reasons apart — an EACCES store is there and out
   // of this login's reach; its owner is the owner of the nearest folder above it that can be stat'ed.
   const stat = probes.stat(store);
