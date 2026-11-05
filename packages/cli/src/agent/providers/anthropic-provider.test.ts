@@ -1087,6 +1087,8 @@ describe('AnthropicProvider.capabilities', () => {
       providerId: 'anthropic',
       // issue #600 PR 2: always declared; a provider built without a setting asks for nothing.
       promptCache: 'off',
+      // caching 3-B (D1): built without a resolved endpoint, it reads as `default`.
+      endpoint: 'default',
     });
   });
 });

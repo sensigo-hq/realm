@@ -139,7 +139,7 @@ describe('the lines and verdicts (C5)', { timeout: 60_000 }, () => {
     expect([r.code, cacheLines(r.stdout)]).toEqual([
       0,
       [
-        "cache: review_changes — anthropic 1,010 chars ≈ 422–934 tokens, with Anthropic's tool text · openai 515 chars ≈ 103–206 tokens (estimates: 2.5–5 chars/token, with margin)",
+        "cache: review_changes — anthropic 1,655 chars ≈ 551–1,193 tokens, with Anthropic's tool text · openai 1,160 chars ≈ 232–465 tokens (estimates: 2.5–5 chars/token, with margin)",
       ],
     ]);
   });
@@ -147,9 +147,11 @@ describe('the lines and verdicts (C5)', { timeout: 60_000 }, () => {
   // Break: two-layout near given its tail, or a layout's verdict dropped. (a) red when the line
   // changes; (b) prints the cache lines.
   it('--floor on both layouts: each layout its own verdict, before the ·', () => {
-    const r = realm(['workflow', 'validate', ex('01-code-reviewer'), '--floor', '512']);
+    // Caching 3-B (F2; MA2-3B-IA1-11, 2): the prompt head grew the sizes, so the floor moves from
+    // 512 to 1,000 to keep Anthropic near and OpenAI below.
+    const r = realm(['workflow', 'validate', ex('01-code-reviewer'), '--floor', '1000']);
     expect(cacheLines(r.stdout)).toEqual([
-      "cache: review_changes — anthropic 1,010 chars ≈ 422–934 tokens, with Anthropic's tool text — near the floor (512, your --floor) · openai 515 chars ≈ 103–206 tokens — below the floor (512, your --floor): this step cannot cache at that minimum",
+      "cache: review_changes — anthropic 1,655 chars ≈ 551–1,193 tokens, with Anthropic's tool text — near the floor (1,000, your --floor) · openai 1,160 chars ≈ 232–465 tokens — below the floor (1,000, your --floor): this step cannot cache at that minimum",
     ]);
   });
 
@@ -157,10 +159,12 @@ describe('the lines and verdicts (C5)', { timeout: 60_000 }, () => {
   // tail; "on it" because the minimum is the economics file's for that model (correction 1, C-4).
   // Break: the two wordings swapped ("at that minimum").
   // (a) red when the line changes; (b) prints the cache lines.
-  it('below on anthropic at 1,024, from the economics file, with --model', () => {
+  // Caching 3-B (F2; MA2-3B-IA1-11, 2): the head grew the sizes past 1,024, so the economics file's
+  // minimum — this cell's floor — moves to 2,048 to keep the below branch.
+  it('below on anthropic at 2,048, from the economics file, with --model', () => {
     const dir = project({
       example: '01-code-reviewer',
-      economics: economics('claude-sonnet-4-6', 1024),
+      economics: economics('claude-sonnet-4-6', 2048),
     });
     const r = realm([
       'workflow',
@@ -172,12 +176,13 @@ describe('the lines and verdicts (C5)', { timeout: 60_000 }, () => {
       'claude-sonnet-4-6',
     ]);
     expect(cacheLines(r.stdout)).toEqual([
-      "cache: review_changes — 1,010 chars ≈ 422–934 tokens, with Anthropic's tool text (estimate) — below the floor for claude-sonnet-4-6 (1,024, your economics file): this step cannot cache on it",
+      "cache: review_changes — 1,655 chars ≈ 551–1,193 tokens, with Anthropic's tool text (estimate) — below the floor for claude-sonnet-4-6 (2,048, your economics file): this step cannot cache on it",
     ]);
   });
 
   // The band's cell: tag_content caches on claude-sonnet-5-5 (PR5M-04), and its bare bytes alone
-  // (188–375) would read below 512. Break: the band dropped → below. (a) red when the band is not
+  // (196–391 with its prompt head, caching 3-B; 188–375 before) would read below 512. Break: the
+  // band dropped → below. (a) red when the band is not
   // added; (b) prints the cache lines.
   it("near on anthropic at 512 where realm's bytes alone would read below: examples/04 tag_content", () => {
     const dir = project({
@@ -194,7 +199,7 @@ describe('the lines and verdicts (C5)', { timeout: 60_000 }, () => {
       'claude-sonnet-5-5',
     ]);
     expect(cacheLines(r.stdout)[1]).toBe(
-      "cache: tag_content — 938 chars ≈ 408–905 tokens, with Anthropic's tool text (estimate) — near the floor for claude-sonnet-5-5 (512, your economics file): not judged from an estimate; --ratio <chars-per-token> narrows it",
+      "cache: tag_content — 978 chars ≈ 416–921 tokens, with Anthropic's tool text (estimate) — near the floor for claude-sonnet-5-5 (512, your economics file): not judged from an estimate; --ratio <chars-per-token> narrows it",
     );
   });
 
@@ -206,10 +211,10 @@ describe('the lines and verdicts (C5)', { timeout: 60_000 }, () => {
     const one = realm(['workflow', 'validate', dir, '--provider', 'anthropic', '--floor', '512']);
     expect([cacheLines(both.stdout), cacheLines(one.stdout)]).toEqual([
       [
-        'cache: ask — anthropic 155 chars ≈ 31–62 tokens (no schema: realm sends no tool) · openai 155 chars ≈ 31–62 tokens (estimates: 2.5–5 chars/token, with margin)',
+        'cache: ask — anthropic 161 chars ≈ 33–65 tokens (no schema: realm sends no tool) · openai 161 chars ≈ 33–65 tokens (estimates: 2.5–5 chars/token, with margin)',
       ],
       [
-        'cache: ask — 155 chars ≈ 31–62 tokens (estimate) (no schema: realm sends no tool) — below the floor (512, your --floor): this step cannot cache at that minimum',
+        'cache: ask — 161 chars ≈ 33–65 tokens (estimate) (no schema: realm sends no tool) — below the floor (512, your --floor): this step cannot cache at that minimum',
       ],
     ]);
   });
@@ -223,7 +228,7 @@ describe('the lines and verdicts (C5)', { timeout: 60_000 }, () => {
     });
     const r = realm(['workflow', 'validate', dir, '--provider', 'openai', '--floor', '1024']);
     expect(cacheLines(r.stdout)).toEqual([
-      "cache: strict_step — 503 chars ≈ 101–201 tokens (estimate) — below the floor (1,024, your --floor): this step cannot cache at that minimum; by realm's bytes — OpenAI's own schema text is not counted",
+      "cache: strict_step — 509 chars ≈ 102–204 tokens (estimate) — below the floor (1,024, your --floor): this step cannot cache at that minimum; by realm's bytes — OpenAI's own schema text is not counted",
     ]);
   });
 
@@ -240,7 +245,7 @@ describe('the lines and verdicts (C5)', { timeout: 60_000 }, () => {
       '512',
     ]);
     expect(cacheLines(r.stdout)).toEqual([
-      'cache: review_changes — 515 chars ≈ 103–206 tokens (estimate) — below the floor (512, your --floor): this step cannot cache at that minimum',
+      'cache: review_changes — 1,160 chars ≈ 232–465 tokens (estimate) — below the floor (512, your --floor): this step cannot cache at that minimum',
     ]);
   });
 
@@ -268,8 +273,8 @@ describe('the lines and verdicts (C5)', { timeout: 60_000 }, () => {
       '200',
     ]);
     expect([cacheLines(a.stdout)[0], cacheLines(o.stdout)[0]]).toEqual([
-      "cache: analyze_cause — 1,782 chars ≈ 577–1,244 tokens, with Anthropic's tool text (estimate) — above the floor (512, your --floor): long enough to cache at that minimum when the drive asks for caching",
-      "cache: analyze_cause — 1,118 chars ≈ 224–448 tokens (estimate) — above the floor (200, your --floor): within the provider's own rules (realm sends no marker)",
+      "cache: analyze_cause — 2,251 chars ≈ 671–1,434 tokens, with Anthropic's tool text (estimate) — above the floor (512, your --floor): long enough to cache at that minimum when the drive asks for caching",
+      "cache: analyze_cause — 1,587 chars ≈ 318–638 tokens (estimate) — above the floor (200, your --floor): within the provider's own rules (realm sends no marker)",
     ]);
   });
 
@@ -289,19 +294,20 @@ describe('the lines and verdicts (C5)', { timeout: 60_000 }, () => {
     const both = realm(['workflow', 'validate', ex('01-code-reviewer'), '--ratio', '4']);
     expect([cacheLines(one.stdout), cacheLines(both.stdout)]).toEqual([
       [
-        'cache: review_changes — 1,010 chars ≈ 220–297 tokens (estimate: 4 chars/token ±15%, your --ratio) — the floor was not judged: no --model named',
+        'cache: review_changes — 1,655 chars ≈ 360–486 tokens (estimate: 4 chars/token ±15%, your --ratio) — the floor was not judged: no --model named',
       ],
       [
-        'cache: review_changes — anthropic 1,010 chars ≈ 220–297 tokens · openai 515 chars ≈ 112–151 tokens (estimates: 4 chars/token ±15%, your --ratio)',
+        'cache: review_changes — anthropic 1,655 chars ≈ 360–486 tokens · openai 1,160 chars ≈ 253–341 tokens (estimates: 4 chars/token ±15%, your --ratio)',
       ],
     ]);
   });
 
   // Correction 1 (C-2): the line's `±15%` is on characters per token, so at --ratio 4
-  // examples/03's analyze_cause (1,782 chars) reads 388–524. A floor of 520 is inside that range:
-  // near, never `cannot cache`. (a) red when the high end is chars / r × 1.15 again (520 then reads
-  // below); (b) prints the two verdict clauses' heads.
-  it('C-2: --ratio 4 on 1,782 chars reads 388–524 — near at 520, below at 525', () => {
+  // examples/03's analyze_cause (2,251 chars with its prompt head, caching 3-B; 1,782 before) reads
+  // 490–662. A floor of 660 is inside that range: near, never `cannot cache` (MA2-3B-IA1-11, 2: the
+  // floors move from 520/525 to 660/663). (a) red when the high end is chars / r × 1.15 again (647:
+  // 660 then reads below); (b) prints the two verdict clauses' heads.
+  it('C-2: --ratio 4 on 2,251 chars reads 490–662 — near at 660, below at 663', () => {
     const verdict = (floor: string): string => {
       const line = cacheLines(
         realm([
@@ -317,11 +323,11 @@ describe('the lines and verdicts (C5)', { timeout: 60_000 }, () => {
         ]).stdout,
       )[0]!;
       const end = line.indexOf('your --floor)') + 'your --floor)'.length;
-      return line.slice(line.indexOf('1,782'), end);
+      return line.slice(line.indexOf('2,251'), end);
     };
-    expect([verdict('520'), verdict('525')]).toEqual([
-      '1,782 chars ≈ 388–524 tokens (estimate: 4 chars/token ±15%, your --ratio) — near the floor (520, your --floor)',
-      '1,782 chars ≈ 388–524 tokens (estimate: 4 chars/token ±15%, your --ratio) — below the floor (525, your --floor)',
+    expect([verdict('660'), verdict('663')]).toEqual([
+      '2,251 chars ≈ 490–662 tokens (estimate: 4 chars/token ±15%, your --ratio) — near the floor (660, your --floor)',
+      '2,251 chars ≈ 490–662 tokens (estimate: 4 chars/token ±15%, your --ratio) — below the floor (663, your --floor)',
     ]);
   });
 
@@ -338,13 +344,13 @@ describe('the lines and verdicts (C5)', { timeout: 60_000 }, () => {
         realm(['workflow', 'validate', ex('06-ticket-router'), '--floor', '512', ...args]).stdout,
       )[2]!;
     const BELOW = 'below the floor (512, your --floor): this step cannot cache at that minimum';
-    const SHARES =
-      'shares its whole fixed part with handle_bug, handle_feature, handle_account, handle_other';
     // Correction 2 (F-4) re-pin: a below layout names no sharing, so with --ratio 4 (both below) the
-    // clause is gone, and without it only the near Anthropic layout names it, labelled.
+    // clause is gone. Caching 3-B (F2; MA2-3B-IA1-11, 3): handle_billing's prompt head differs from
+    // its siblings', so the near Anthropic layout names no share either now (the labelled clause:
+    // 'F-4 exception'); the ratio's naming, this cell's point, is unchanged.
     expect([line(['--ratio', '4']), line([])]).toEqual([
-      `cache: handle_billing — anthropic 650 chars ≈ 142–191 tokens — ${BELOW} · openai 335 chars ≈ 73–98 tokens — ${BELOW} (estimates: 4 chars/token ±15%, your --ratio)`,
-      `cache: handle_billing — anthropic 650 chars ≈ 350–790 tokens, with Anthropic's tool text — near the floor (512, your --floor) · openai 335 chars ≈ 67–134 tokens — ${BELOW} — anthropic: ${SHARES}`,
+      `cache: handle_billing — anthropic 708 chars ≈ 154–208 tokens — ${BELOW} · openai 393 chars ≈ 86–115 tokens — ${BELOW} (estimates: 4 chars/token ±15%, your --ratio)`,
+      `cache: handle_billing — anthropic 708 chars ≈ 362–813 tokens, with Anthropic's tool text — near the floor (512, your --floor) · openai 393 chars ≈ 79–157 tokens — ${BELOW}`,
     ]);
   });
 
@@ -356,9 +362,11 @@ describe('the lines and verdicts (C5)', { timeout: 60_000 }, () => {
       )[0]!;
       return line.slice(line.indexOf(' — near'));
     };
-    expect([near(['--floor', '512']), near(['--ratio', '4', '--floor', '300'])]).toEqual([
-      ' — near the floor (512, your --floor): not judged from an estimate; --ratio <chars-per-token> narrows it',
-      ' — near the floor (300, your --floor): not judged from an estimate',
+    // Caching 3-B (F2; MA2-3B-IA1-11, 2): with its prompt head identify_ticket reads 562–1,215
+    // (372–502 at --ratio 4), so the floors move from 512/300 to 1,000/450 to stay near.
+    expect([near(['--floor', '1000']), near(['--ratio', '4', '--floor', '450'])]).toEqual([
+      ' — near the floor (1,000, your --floor): not judged from an estimate; --ratio <chars-per-token> narrows it',
+      ' — near the floor (450, your --floor): not judged from an estimate',
     ]);
   });
 
@@ -374,13 +382,15 @@ describe('the lines and verdicts (C5)', { timeout: 60_000 }, () => {
     // 1,257 chars: 1,100 CJK, the profile's `\n\n`, realm's 155-char base (its em dash is non-ASCII):
     // hi = 156 / 2.5 + 1,101 = 1,163.4.
     expect(cacheLines(r.stdout)).toEqual([
-      'cache: zh — 1,257 chars ≈ 252–1,163 tokens (estimate) (no schema: realm sends no tool) — near the floor (512, your --floor): not judged from an estimate; --ratio <chars-per-token> narrows it',
+      'cache: zh — 1,263 chars ≈ 253–1,165 tokens (estimate) (no schema: realm sends no tool) — near the floor (512, your --floor): not judged from an estimate; --ratio <chars-per-token> narrows it',
     ]);
   });
 
   // Both bases, differing: the flag wins and the line names both; --json carries economics_tokens.
   // Break: the second basis left out. (a) red when the line or the floor changes; (b) prints them.
-  it('both bases, differing: "512, your --floor; your economics file says 1,024"', () => {
+  // Caching 3-B (F2; MA2-3B-IA1-11, 2): the head grew the sizes, so the flag moves from 512 to 1,000
+  // to stay near (and still differ from the economics file's 1,024).
+  it('both bases, differing: "1,000, your --floor; your economics file says 1,024"', () => {
     const dir = project({
       example: '01-code-reviewer',
       economics: economics('claude-sonnet-4-6', 1024),
@@ -394,7 +404,7 @@ describe('the lines and verdicts (C5)', { timeout: 60_000 }, () => {
       '--model',
       'claude-sonnet-4-6',
       '--floor',
-      '512',
+      '1000',
     ];
     const r = realm(args);
     const j = realm([...args, '--json']);
@@ -403,9 +413,9 @@ describe('the lines and verdicts (C5)', { timeout: 60_000 }, () => {
       (JSON.parse(j.stdout) as { cacheability: { floor: unknown } }).cacheability.floor,
     ]).toEqual([
       [
-        "cache: review_changes — 1,010 chars ≈ 422–934 tokens, with Anthropic's tool text (estimate) — near the floor for claude-sonnet-4-6 (512, your --floor; your economics file says 1,024): not judged from an estimate; --ratio <chars-per-token> narrows it",
+        "cache: review_changes — 1,655 chars ≈ 551–1,193 tokens, with Anthropic's tool text (estimate) — near the floor for claude-sonnet-4-6 (1,000, your --floor; your economics file says 1,024): not judged from an estimate; --ratio <chars-per-token> narrows it",
       ],
-      { tokens: 512, basis: 'flag', economics_tokens: 1024 },
+      { tokens: 1000, basis: 'flag', economics_tokens: 1024 },
     ]);
   });
 });
@@ -430,7 +440,7 @@ describe('the causes, one per row of the decision table (C5)', { timeout: 60_000
         "cache: analyze_changes — uses tools: each tool's definition comes from its MCP server at run time, so the request cannot be measured before a run: not judged",
       ],
       [
-        "cache: no_tools — 486 chars ≈ 318–725 tokens, with Anthropic's tool text (estimate) — the floor was not judged: no --model named",
+        "cache: no_tools — 492 chars ≈ 319–727 tokens, with Anthropic's tool text (estimate) — the floor was not judged: no --model named",
       ],
     ]);
   });
@@ -452,8 +462,8 @@ describe('the causes, one per row of the decision table (C5)', { timeout: 60_000
     rmSync(dir, { recursive: true, force: true });
     const r = realm(['workflow', 'validate', '--registered', 'gone-tree']);
     expect(cacheLines(r.stdout)).toEqual([
-      'cache: with_profile — anthropic 173 chars ≈ 35–69 tokens (no schema: realm sends no tool) · openai 173 chars ≈ 35–69 tokens (estimates: 2.5–5 chars/token, with margin)',
-      'cache: without_profile — anthropic 155 chars ≈ 31–62 tokens (no schema: realm sends no tool) · openai 155 chars ≈ 31–62 tokens (estimates: 2.5–5 chars/token, with margin)',
+      'cache: with_profile — anthropic 179 chars ≈ 36–72 tokens (no schema: realm sends no tool) · openai 179 chars ≈ 36–72 tokens (estimates: 2.5–5 chars/token, with margin)',
+      'cache: without_profile — anthropic 161 chars ≈ 33–65 tokens (no schema: realm sends no tool) · openai 161 chars ≈ 33–65 tokens (estimates: 2.5–5 chars/token, with margin)',
     ]);
   });
 
@@ -470,7 +480,7 @@ describe('the causes, one per row of the decision table (C5)', { timeout: 60_000
       return cacheLines(realm(model !== undefined ? [...args, '--model', model] : args).stdout)[0]!;
     };
     const SIZE =
-      "cache: review_changes — 1,010 chars ≈ 422–934 tokens, with Anthropic's tool text (estimate)";
+      "cache: review_changes — 1,655 chars ≈ 551–1,193 tokens, with Anthropic's tool text (estimate)";
     expect([
       line(undefined, 'claude-sonnet-5-5'),
       line(null, 'claude-sonnet-5-5'),
@@ -491,6 +501,8 @@ describe('the causes, one per row of the decision table (C5)', { timeout: 60_000
   // Row 3 shadows an economics file that does not parse: the flag decides, and the file's problem is
   // not printed. Break: the economics cause printed under --floor. (a) red when the line changes;
   // (b) prints it.
+  // Caching 3-B (F2; MA2-3B-IA1-11, 2): the head grew the size, so the floor moves from 1,024 to
+  // 2,048 to keep the below branch.
   it('row 3: --floor decides, and an unreadable economics file is not printed', () => {
     const dir = project({ example: '01-code-reviewer', economics: 'version: 2\n' });
     const r = realm([
@@ -502,10 +514,10 @@ describe('the causes, one per row of the decision table (C5)', { timeout: 60_000
       '--model',
       'claude-sonnet-5-5',
       '--floor',
-      '1024',
+      '2048',
     ]);
     expect(cacheLines(r.stdout)).toEqual([
-      "cache: review_changes — 1,010 chars ≈ 422–934 tokens, with Anthropic's tool text (estimate) — below the floor for claude-sonnet-5-5 (1,024, your --floor): this step cannot cache at that minimum",
+      "cache: review_changes — 1,655 chars ≈ 551–1,193 tokens, with Anthropic's tool text (estimate) — below the floor for claude-sonnet-5-5 (2,048, your --floor): this step cannot cache at that minimum",
     ]);
   });
 
@@ -575,9 +587,12 @@ describe('the causes, one per row of the decision table (C5)', { timeout: 60_000
 });
 
 describe('the sharing (C5; Δ12)', { timeout: 60_000 }, () => {
-  // The whole-part clause. Break: the whole clause given a size or
-  // put last. (a) red when the line changes; (b) prints it.
-  it('whole: examples/05 review_security and review_performance send the same fixed part', () => {
+  // Caching 3-B (F2; MA 2's ruling MA2-3B-IA1-11, 3): review_security and review_performance send
+  // the same profile and schema but different prompt heads, so their whole fixed parts — the head
+  // included — are no longer shared; this cell now pins that the clause is absent for them. The share
+  // branch itself (identical heads) stays pinned by C-1 below (twin_a and twin_b). (a) red when the
+  // line changes; (b) prints it.
+  it('whole: examples/05 review_security and review_performance part at their prompt heads (no whole-share clause)', () => {
     const r = realm([
       'workflow',
       'validate',
@@ -586,7 +601,7 @@ describe('the sharing (C5; Δ12)', { timeout: 60_000 }, () => {
       'anthropic',
     ]);
     expect(cacheLines(r.stdout)[0]).toBe(
-      "cache: review_security — 954 chars ≈ 411–912 tokens, with Anthropic's tool text (estimate) — the floor was not judged: no --model named — shares its whole fixed part with review_performance",
+      "cache: review_security — 1,867 chars ≈ 594–1,278 tokens, with Anthropic's tool text (estimate) — the floor was not judged: no --model named",
     );
   });
 
@@ -613,12 +628,12 @@ describe('the sharing (C5; Δ12)', { timeout: 60_000 }, () => {
     const NOT_JUDGED =
       "with Anthropic's tool text (estimate) — the floor was not judged: no --model named";
     expect(cacheLines(r.stdout)).toEqual([
-      `cache: cat_one — 596 chars ≈ 340–769 tokens, ${NOT_JUDGED}`,
-      `cache: cat_two — 580 chars ≈ 336–762 tokens, ${NOT_JUDGED}`,
-      `cache: sp_plain — 606 chars ≈ 342–773 tokens, ${NOT_JUDGED}`,
-      `cache: sp_strict — 620 chars ≈ 344–778 tokens, ${NOT_JUDGED}`,
-      `cache: twin_a — 592 chars ≈ 339–767 tokens, ${NOT_JUDGED} — shares its whole fixed part with twin_b`,
-      `cache: twin_b — 592 chars ≈ 339–767 tokens, ${NOT_JUDGED} — shares its whole fixed part with twin_a`,
+      `cache: cat_one — 602 chars ≈ 341–771 tokens, ${NOT_JUDGED}`,
+      `cache: cat_two — 586 chars ≈ 338–765 tokens, ${NOT_JUDGED}`,
+      `cache: sp_plain — 612 chars ≈ 343–775 tokens, ${NOT_JUDGED}`,
+      `cache: sp_strict — 626 chars ≈ 346–781 tokens, ${NOT_JUDGED}`,
+      `cache: twin_a — 598 chars ≈ 340–769 tokens, ${NOT_JUDGED} — shares its whole fixed part with twin_b`,
+      `cache: twin_b — 598 chars ≈ 340–769 tokens, ${NOT_JUDGED} — shares its whole fixed part with twin_a`,
     ]);
   });
 
@@ -740,7 +755,11 @@ describe('correction 2, F-4: a step below the floor names no sharing', { timeout
 
   // (a) red when the filter is removed (below keeps the clause), or widened to every layout with a
   // floor (near or above loses it: the near row is the boundary); (b) prints each line.
-  it('F-4 one layout: below drops the clause; above, no floor and near keep it', () => {
+  // Caching 3-B (F2; MA2-3B-IA1-11, 3): handle_bug's prompt head differs from its siblings', so no
+  // layout names a whole share now; this cell pins that, and the verdict words. The floor filter
+  // itself (below drops the clause; no floor and above keep it) is pinned with identical heads by
+  // `validate-head-3b.test.ts` (a).
+  it('F-4 one layout on examples/06: handle_bug parts from its siblings at its prompt head, so no floor names a share', () => {
     const lines = [
       bugLine(['--floor', '1000']),
       bugLine(['--floor', '300']),
@@ -752,9 +771,9 @@ describe('correction 2, F-4: a step below the floor names no sharing', { timeout
       lines.join('\n'),
     ).toEqual([
       [false, false],
-      [true, true],
-      [true, true],
-      [true, true],
+      [false, false],
+      [false, false],
+      [false, false],
     ]);
     expect(lines[0], lines[0]).toMatch(
       /below the floor \(1,000, your --floor\): this step cannot cache at that minimum$/,
@@ -788,9 +807,11 @@ describe('correction 2, F-4: a step below the floor names no sharing', { timeout
       const l = json.cacheability.steps.find((s) => s.step === 'handle_bug')!.layouts[0]!;
       return [l.verdict, l.shares_with.map((w) => w.step)];
     };
+    // Caching 3-B (F2): no step shares handle_bug's head, so the near layout lists none either; the
+    // JSON filter with identical heads follows the line's (`validate-head-3b.test.ts` (a)).
     expect([list('1000'), list('512')]).toEqual([
       ['below_floor', []],
-      ['near_floor', ['handle_billing', 'handle_feature', 'handle_account', 'handle_other']],
+      ['near_floor', []],
     ]);
   });
 
@@ -812,8 +833,8 @@ describe('correction 2, F-4: a step below the floor names no sharing', { timeout
     const openai = first(['--provider', 'openai']);
     const both = first([]);
     expect([openai, both], [openai, both].join('\n')).toEqual([
-      "cache: twin_a — 507 chars ≈ 102–203 tokens (estimate) — below the floor (2,000, your --floor): this step cannot cache at that minimum; by realm's bytes — OpenAI's own schema text is not counted — shares its whole fixed part with twin_b",
-      "cache: twin_a — anthropic 606 chars ≈ 342–773 tokens, with Anthropic's tool text — below the floor (2,000, your --floor): this step cannot cache at that minimum · openai 507 chars ≈ 102–203 tokens — below the floor (2,000, your --floor): this step cannot cache at that minimum; by realm's bytes — OpenAI's own schema text is not counted — openai: shares its whole fixed part with twin_b",
+      "cache: twin_a — 513 chars ≈ 103–205 tokens (estimate) — below the floor (2,000, your --floor): this step cannot cache at that minimum; by realm's bytes — OpenAI's own schema text is not counted — shares its whole fixed part with twin_b",
+      "cache: twin_a — anthropic 612 chars ≈ 343–775 tokens, with Anthropic's tool text — below the floor (2,000, your --floor): this step cannot cache at that minimum · openai 513 chars ≈ 103–205 tokens — below the floor (2,000, your --floor): this step cannot cache at that minimum; by realm's bytes — OpenAI's own schema text is not counted — openai: shares its whole fixed part with twin_b",
     ]);
   });
 
@@ -821,7 +842,7 @@ describe('correction 2, F-4: a step below the floor names no sharing', { timeout
   // --ratio Anthropic is near and OpenAI below, so only Anthropic names the sharing, labelled; with
   // --ratio 4 both are below and the clause is gone. (a) red when the filter is removed or widened;
   // (b) prints each sharing tail.
-  it('F-4 two layouts at --floor 512: near Anthropic keeps the clause, labelled; --ratio 4 drops it', () => {
+  it('F-4 two layouts at --floor 512 on examples/06: handle_bug names no share on either form (its head differs)', () => {
     const tail = (args: string[]): string => {
       const l = cacheLines(
         realm(['workflow', 'validate', ex('06-ticket-router'), '--floor', '512', ...args]).stdout,
@@ -829,10 +850,9 @@ describe('correction 2, F-4: a step below the floor names no sharing', { timeout
       const at = l.indexOf(' — anthropic: ');
       return at >= 0 ? l.slice(at) : l.includes(' — shares ') ? 'UNLABELLED' : '';
     };
-    expect([tail([]), tail(['--ratio', '4'])]).toEqual([
-      ' — anthropic: shares its whole fixed part with handle_billing, handle_feature, handle_account, handle_other',
-      '',
-    ]);
+    // Caching 3-B (F2; MA2-3B-IA1-11, 3): handle_bug's head differs from its siblings', so neither
+    // form names a share now (the labelled two-layout clause stays pinned by 'F-4 exception' above).
+    expect([tail([]), tail(['--ratio', '4'])]).toEqual(['', '']);
   });
 });
 
@@ -952,7 +972,7 @@ describe('where the block prints (C5; Δ10)', { timeout: 60_000 }, () => {
     expect(hide(r.stdout).split('\n').slice(0, 3)).toEqual([
       'Registered: described v1 (1 step)',
       '  What it is for.',
-      'cache: described — anthropic 155 chars ≈ 31–62 tokens (no schema: realm sends no tool) · openai 155 chars ≈ 31–62 tokens (estimates: 2.5–5 chars/token, with margin)',
+      'cache: described — anthropic 161 chars ≈ 33–65 tokens (no schema: realm sends no tool) · openai 161 chars ≈ 33–65 tokens (estimates: 2.5–5 chars/token, with margin)',
     ]);
   });
 
@@ -997,7 +1017,7 @@ describe('where the block prints (C5; Δ10)', { timeout: 60_000 }, () => {
         [
           [
             true,
-            'cache: watched — anthropic 173 chars ≈ 35–69 tokens (no schema: realm sends no tool) · openai 173 chars ≈ 35–69 tokens (estimates: 2.5–5 chars/token, with margin)',
+            'cache: watched — anthropic 179 chars ≈ 36–72 tokens (no schema: realm sends no tool) · openai 179 chars ≈ 36–72 tokens (estimates: 2.5–5 chars/token, with margin)',
           ],
           [true, ONCE_ANTHROPIC],
           [true, ONCE_OPENAI],
@@ -1007,7 +1027,7 @@ describe('where the block prints (C5; Δ10)', { timeout: 60_000 }, () => {
         [
           [
             true,
-            'cache: watched — anthropic 183 chars ≈ 37–73 tokens (no schema: realm sends no tool) · openai 183 chars ≈ 37–73 tokens (estimates: 2.5–5 chars/token, with margin)',
+            'cache: watched — anthropic 189 chars ≈ 38–76 tokens (no schema: realm sends no tool) · openai 189 chars ≈ 38–76 tokens (estimates: 2.5–5 chars/token, with margin)',
           ],
         ],
       ]);
@@ -1059,7 +1079,8 @@ describe('--json (C5; C3.6)', { timeout: 60_000 }, () => {
           layouts: [
             {
               adapter: 'anthropic',
-              prefix: { chars: 1010, tokens: { low: 422, high: 934 }, basis: 'default' },
+              // Caching 3-B (F2): the prompt's stable head counts (645 chars), by its size alone.
+              prefix: { chars: 1655, tokens: { low: 551, high: 1193 }, basis: 'default' },
               blocks: [
                 {
                   name: 'tools',
@@ -1077,6 +1098,7 @@ describe('--json (C5; C3.6)', { timeout: 60_000 }, () => {
                     { name: 'schema_line', start: 209, end: 569 },
                   ],
                 },
+                { name: 'prompt-head', chars: 645, segments: [] },
               ],
               shares_with: [],
               extra_tokens: { low: 220, high: 530, source: 'anthropic_tool_text' },
@@ -1086,7 +1108,7 @@ describe('--json (C5; C3.6)', { timeout: 60_000 }, () => {
             },
             {
               adapter: 'openai',
-              prefix: { chars: 515, tokens: { low: 103, high: 206 }, basis: 'default' },
+              prefix: { chars: 1160, tokens: { low: 232, high: 465 }, basis: 'default' },
               blocks: [
                 {
                   name: 'system',
@@ -1096,6 +1118,7 @@ describe('--json (C5; C3.6)', { timeout: 60_000 }, () => {
                     { name: 'schema_line', start: 155, end: 515 },
                   ],
                 },
+                { name: 'prompt-head', chars: 645, segments: [] },
               ],
               shares_with: [],
               strict_rung: false,
@@ -1220,7 +1243,7 @@ describe(
     // cause ignores --model, or the clause quotes a reason, or the JSON value stays; (b) prints the
     // lines, the scratch folder written `<dir>`.
     const MOVED_SIZE =
-      'cache: plain — 155 chars ≈ 31–62 tokens (estimate) (no schema: realm sends no tool)';
+      'cache: plain — 161 chars ≈ 33–65 tokens (estimate) (no schema: realm sends no tool)';
     function moved(): (flags: string[]) => { lines: string[]; out: string } {
       const dir = project({ workflow: oneStep('plain') });
       expect(realm(['workflow', 'register', dir]).code).toBe(0);
@@ -1235,7 +1258,7 @@ describe(
     it('G-3 (1): no flags: no cache line says `economics not checked`', () => {
       const { lines } = moved()([]);
       expect(lines).toEqual([
-        'cache: plain — anthropic 155 chars ≈ 31–62 tokens (no schema: realm sends no tool) · openai 155 chars ≈ 31–62 tokens (estimates: 2.5–5 chars/token, with margin)',
+        'cache: plain — anthropic 161 chars ≈ 33–65 tokens (no schema: realm sends no tool) · openai 161 chars ≈ 33–65 tokens (estimates: 2.5–5 chars/token, with margin)',
       ]);
     });
 
@@ -1266,7 +1289,7 @@ describe(
     // clause printed in place of the floor's verdict.
     it('G-3 (4) CONTROL: --floor 512 alone: the verdict, no clause', () => {
       expect(moved()(['--floor', '512']).lines).toEqual([
-        'cache: plain — anthropic 155 chars ≈ 31–62 tokens (no schema: realm sends no tool) — below the floor (512, your --floor): this step cannot cache at that minimum · openai 155 chars ≈ 31–62 tokens — below the floor (512, your --floor): this step cannot cache at that minimum',
+        'cache: plain — anthropic 161 chars ≈ 33–65 tokens (no schema: realm sends no tool) — below the floor (512, your --floor): this step cannot cache at that minimum · openai 161 chars ≈ 33–65 tokens — below the floor (512, your --floor): this step cannot cache at that minimum',
       ]);
     });
 
@@ -1290,7 +1313,7 @@ describe(
         'm',
       ]);
       expect(cacheLines(r.stdout)).toEqual([
-        'cache: agentmade — 155 chars ≈ 31–62 tokens (estimate) (no schema: realm sends no tool) — economics not checked (no project folder to read it from)',
+        'cache: agentmade — 161 chars ≈ 33–65 tokens (estimate) (no schema: realm sends no tool) — economics not checked (no project folder to read it from)',
       ]);
     });
 
@@ -1441,22 +1464,22 @@ describe(
           [
             'first',
             [
-              [173, 'not_judged', 'no_model'],
-              [173, 'not_judged', 'no_model'],
+              [179, 'not_judged', 'no_model'],
+              [179, 'not_judged', 'no_model'],
             ],
           ],
           [
             'second',
             [
-              [204, 'not_judged', 'no_model'],
-              [204, 'not_judged', 'no_model'],
+              [210, 'not_judged', 'no_model'],
+              [210, 'not_judged', 'no_model'],
             ],
           ],
           [
             'plain',
             [
-              [155, 'not_judged', 'no_model'],
-              [155, 'not_judged', 'no_model'],
+              [161, 'not_judged', 'no_model'],
+              [161, 'not_judged', 'no_model'],
             ],
           ],
         ],
@@ -1591,9 +1614,9 @@ describe(
           .map((s) => s.step),
       }).toEqual({
         lines: [
-          'cache: first — anthropic 173 chars ≈ 35–69 tokens (no schema: realm sends no tool) · openai 173 chars ≈ 35–69 tokens (estimates: 2.5–5 chars/token, with margin)',
+          'cache: first — anthropic 179 chars ≈ 36–72 tokens (no schema: realm sends no tool) · openai 179 chars ≈ 36–72 tokens (estimates: 2.5–5 chars/token, with margin)',
           'cache: second — profile text not stored in the registered copy: sizes not computed — register the workflow again to store it',
-          'cache: plain — anthropic 155 chars ≈ 31–62 tokens (no schema: realm sends no tool) · openai 155 chars ≈ 31–62 tokens (estimates: 2.5–5 chars/token, with margin)',
+          'cache: plain — anthropic 161 chars ≈ 33–65 tokens (no schema: realm sends no tool) · openai 161 chars ≈ 33–65 tokens (estimates: 2.5–5 chars/token, with margin)',
         ],
         marked: ['second'],
       });

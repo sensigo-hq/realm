@@ -131,6 +131,11 @@ export const CENSUS: Record<string, Entry> = {
     'outside',
     'captured_at: minted when the project code loads, before any store (D6-67)',
   ],
+  'cli/src/lib/cacheability.ts#buildCacheabilityReport#new Date()': [
+    1,
+    'outside',
+    "validate sizes a step's prompt with no run store; the instant only fills a context snapshot the render discards",
+  ],
   'cli/src/lib/dedup-store.ts#FileDedupStore.check#Date.now()': [
     1,
     'outside',

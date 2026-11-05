@@ -544,6 +544,8 @@ export {
 export { isTestLocationClock } from './store/test-clock-file.js';
 // #715 (b) (02 §C.3, D6-53): a store at a test location says so once per process, on its first read.
 export { withTestClockNotice, testClockNoticeLine } from './store/test-clock-notice.js';
+// issue #616 PR-2a (i): realm's home (`~/.realm`), the one place that asks the system for it.
+export { realmHomePath } from './store/realm-home.js';
 // issue #600 PR 1b: one cost view per step, derived once and rendered by inspect + get_run_state.
 export {
   composeCostView,
@@ -560,6 +562,8 @@ export type {
   CostCacheRequested,
   CacheRequestedEntry,
   CostEndpoints,
+  CostCacheHead,
+  CostCacheFieldsRefused,
   CostUnrecordedCause,
   AttemptView,
   AnswerView,
@@ -592,11 +596,14 @@ export type {
 export {
   cacheVerdict,
   describeCacheability,
+  isSizeBlock,
   DEFAULT_CHARS_PER_TOKEN_HIGH,
   DEFAULT_CHARS_PER_TOKEN_LOW,
 } from './economics/cacheability.js';
 export type {
   CacheBlock,
+  CacheSizeBlock,
+  CacheLayoutBlock,
   CacheBlockSegment,
   CacheVerdict,
   CacheNotJudgedCause,
@@ -855,9 +862,15 @@ export {
   unmaskableWarning,
   isCredentialName,
   disclose,
+  discloseSplit,
+  discloseSplitSize,
   markersIn,
   inboundMarkerWarning,
 } from './utils/redaction.js';
+// Caching 3-B (A5, D4.6-12): the describer's one narrow way to a step's rendered prompt and its
+// stable boundary; `renderTemplate` and `loadWorkflowContext` stay off this index.
+export { renderStepPromptWithBoundary } from './engine/step-prompt-boundary.js';
+export type { StableBoundary } from './engine/render-template.js';
 // #872 (b1) correction 1 (H1): the one producer of a bounded list in words.
 export { listWords, quotedNames, NAMES_SHOWN } from './utils/list-words.js';
 export type {
@@ -872,9 +885,12 @@ export type {
   DeclaredStanding,
   HiddenCounts,
   Disclosed,
+  DisclosedSplit,
+  DisclosedSplitSize,
 } from './utils/redaction.js';
 export {
   discloseByTable,
+  discloseLeaf,
   discloseValue,
   disclosureReceipt,
   shapeOf,

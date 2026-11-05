@@ -2,11 +2,17 @@
 // it builds the request each adapter would send (`describeRequestLayout`), lets core measure and judge
 // it (`describeCacheability`), and renders the `cache:` lines `realm workflow validate`, `register`
 // and `watch` print, and validate's `--json` field. It reads the runner's economics file through
-// `@sensigo/realm-mcp`'s one reader, uncached, and nothing else: no key, no environment, no model
-// table. The floor is the runner's (its economics file) or the author's (`--floor`), never realm's.
+// `@sensigo/realm-mcp`'s one reader, uncached, and nothing else: no key and no model table. Caching
+// 3-B (F2): to size each prompt's stable start as a drive sends it, it also builds the agent
+// audience's disclosure set (`agentDisclosureSet()`: the environment and declared values) and reads
+// the workflow's context files; it keeps only sizes. The floor is the runner's (its economics file)
+// or the author's (`--floor`), never realm's.
 import {
   describeCacheability,
+  discloseSplitSize,
+  isSizeBlock,
   minCacheableTokensFor,
+  renderStepPromptWithBoundary,
   type CacheabilityStep,
   type CacheNotJudgedCause,
   type CacheVerdict,
@@ -15,9 +21,10 @@ import {
 import {
   ANTHROPIC_TOOL_TEXT_TOKENS,
   describeRequestLayout,
-  type Block,
+  type LayoutBlock,
   type RequestAdapter,
 } from '../agent/providers/request-layout.js';
+import { agentDisclosureSet } from '../agent/providers/agent-utils.js';
 import { chooseAdapter, type ProviderName } from '../agent/providers/llm-provider.js';
 import { quotedForTerminal } from './holder-render.js';
 
@@ -136,7 +143,7 @@ interface LayoutResult {
   /** Present when the step is sized on this layout. */
   sized?: {
     step: CacheabilityStep;
-    blocks: Block[];
+    blocks: LayoutBlock[];
     banded: boolean;
     noSchemaAnthropic: boolean;
     openaiStrictSchema: boolean;
@@ -273,6 +280,37 @@ export async function buildCacheabilityReport(
     return { step: name, kind: 'sized', layouts: [], ...(cause !== undefined ? { cause } : {}) };
   });
 
+  // Caching 3-B (F2; MA1-3B-01, MA 2's rulings of 2026-11-04): each sized step's prompt head, by
+  // size only — rendered against the workflow's static context, cut at its stable boundary and
+  // disclosed with the agent audience's set (`agentDisclosureSet()`, the set `realm agent` sends the
+  // prompt with), so the size is the head a drive in this environment sends. `group` interns the RAW
+  // head by direct string comparison, never a digest: a step takes the group of the first step whose
+  // raw head is `===` its own AND whose disclosed sizes are equal. Within this one call both of that
+  // equality's conditions hold — the same cut (each brief's own `chars`) and the same set — so equal
+  // raw heads with equal sizes are equal disclosed heads (a mask crossing one step's cut moves that
+  // cut and changes its sizes). The interned heads live only in this call.
+  const heads = new Map<string, { chars: number; asciiChars: number; group: number }>();
+  {
+    const set = agentDisclosureSet();
+    const interned: { raw: string; chars: number; asciiChars: number; group: number }[] = [];
+    for (const [name] of agentSteps.filter((_, i) => results[i]!.kind === 'sized')) {
+      // #715 (b) (3-B rev 4): validate has no run store; the instant only fills a context snapshot
+      // the render discards (an `outside` read, in the clock census).
+      const rendered = await renderStepPromptWithBoundary(definition, name, new Date());
+      if (rendered === undefined) continue;
+      const size = discloseSplitSize(rendered.text, rendered.stable.chars, set, 'all');
+      const raw = rendered.text.slice(0, rendered.stable.chars);
+      const same = interned.find(
+        (e) => e.raw === raw && e.chars === size.headChars && e.asciiChars === size.headAsciiChars,
+      );
+      const group = same?.group ?? interned.length;
+      if (same === undefined) {
+        interned.push({ raw, chars: size.headChars, asciiChars: size.headAsciiChars, group });
+      }
+      heads.set(name, { chars: size.headChars, asciiChars: size.headAsciiChars, group });
+    }
+  }
+
   for (const adapter of adapters) {
     const sized = agentSteps.filter((_, i) => results[i]!.kind === 'sized');
     const inputs = sized.map(([name, step]) => {
@@ -283,10 +321,12 @@ export async function buildCacheabilityReport(
           ? definition.resolved_profiles?.[step.agent_profile]?.content
           : undefined;
       const strict = step.structured_output === 'strict';
+      const head = heads.get(name);
       const blocks = describeRequestLayout(adapter, {
         ...(profile !== undefined ? { profile } : {}),
         ...(schema !== undefined ? { schema } : {}),
         strict,
+        ...(head !== undefined ? { head } : {}),
       });
       const banded =
         adapter === 'anthropic' &&
@@ -587,7 +627,12 @@ export function cacheabilityJson(report: CacheabilityReport): Record<string, unk
                 prefix: sized.step.prefix,
                 blocks: sized.blocks
                   .filter((b) => b.stable)
-                  .map((b) => ({ name: b.name, chars: b.text.length, segments: b.segments })),
+                  .map((b) =>
+                    // Caching 3-B (F2): the head's size, never its comparison number.
+                    isSizeBlock(b)
+                      ? { name: b.name, chars: b.chars, segments: [] }
+                      : { name: b.name, chars: b.text.length, segments: b.segments },
+                  ),
                 // #918: each step the clause names, as `{ step }` (its size is `prefix`'s).
                 shares_with: sized.step.shares_with
                   .filter((w) => sized.clauses.some((c) => c.steps.includes(w.step)))

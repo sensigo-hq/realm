@@ -68,12 +68,21 @@ export interface ProviderCapabilities {
    * Issue #600 — what this provider instance asks its service to cache on each request it marks:
    * a single-shot request, and every main turn of a tool step: `'off'` (nothing), or
    * `{ lifetime_s }` (the cache lifetime asked for, in whole seconds — the lifetime unit: the one
-   * choice the provider resolved, `auto` included). Absent means Realm asks
-   * this provider for no caching, and any caching it does is its own. The Anthropic provider declares
-   * it (`'off'` included); the OpenAI providers declare nothing; a provider module may declare either
-   * shape (the start line says what it reads, and that `--prompt-cache` does not reach a module).
+   * choice the provider resolved, `auto` included). Caching 3-B: `'provider'` — the service caches
+   * by its own rules, which Realm cannot set; Realm may send it a hint (OpenAI's cache key). Absent
+   * means Realm asks this provider for nothing. The Anthropic provider declares `'off'` or a
+   * lifetime; the OpenAI providers declare `'provider'` under every setting; a provider module may
+   * declare any of the three (the start line says what it reads, and that `--prompt-cache` does not
+   * reach a module).
    */
-  promptCache?: 'off' | { lifetime_s: number };
+  promptCache?: 'off' | 'provider' | { lifetime_s: number };
+  /**
+   * Caching 3-B (D1) — which kind of endpoint this instance sends to, resolved once from the SDK
+   * client a request would go through (so `--base-url`, `ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL`
+   * all count): `default` for the provider's own address, `custom` for any other. The built-in
+   * providers declare it; a provider module may leave it out.
+   */
+  endpoint?: RequestEndpoint;
 }
 
 /**
@@ -162,7 +171,17 @@ export abstract class LlmProvider {
     prompt: string,
     inputSchema?: Record<string, unknown>,
     agentProfileInstructions?: string,
-    opts?: { structuredOutputStrict?: boolean; llmClock?: LlmClock },
+    opts?: {
+      structuredOutputStrict?: boolean;
+      llmClock?: LlmClock;
+      /**
+       * Caching 3-B (C2): where the stable start of `prompt` ends, in its UTF-16 code units — the
+       * part that repeats between runs, which a provider may cache (Anthropic marks it as its own
+       * block; OpenAI derives its cache key from it). `prompt` is always sent whole: a provider that
+       * ignores this option sends what it always sent. Absent when Realm found no split.
+       */
+      cachePrefixChars?: number;
+    },
   ): Promise<CallStepWithMetaResult> {
     // issue #401: the clock is PASSED THROUGH here. This base delegation is the route every
     // provider that does NOT override this method takes for a step declaring `structured_output:
@@ -242,6 +261,11 @@ export abstract class ToolCapableLlmProvider extends LlmProvider {
       agentProfileInstructions?: string;
       /** Issue #401 — the per-create clock for this step's model requests. */
       llmClock?: LlmClock;
+      /**
+       * Caching 3-B (C2): as `callStepWithMeta`'s. On a tool step it is used only to derive
+       * OpenAI's cache key; Anthropic's tool loop keeps #899's marking and does not split.
+       */
+      cachePrefixChars?: number;
     },
   ): Promise<StepWithToolsResult>;
 }
@@ -458,6 +482,51 @@ export function listenModelRefusal(provider: ProviderName | undefined): string {
 }
 
 /**
+ * Caching 3-B (D1, B3; D4.6-8) — "the provider's own endpoint" as ONE value, resolved once: build
+ * one client of the SDK with the same `apiKey` and `baseURL` options the per-call clients use and
+ * read its resolved address (`endpointOf`). The SDK also reads `OPENAI_BASE_URL` /
+ * `ANTHROPIC_BASE_URL`, so this is right where `--base-url` alone is not. A client without a string
+ * `baseURL` is only built by a test double (the real SDK always resolves one): `undefined` reads as
+ * `default`. When the SDK cannot be loaded, the flag decides (`--base-url` ⇒ `custom`) and the
+ * per-call import reports the missing package as it always has (`sdk_missing`).
+ */
+async function resolvedEndpoint(
+  moduleId: string,
+  baseUrl: string | undefined,
+  defaultBaseUrl: string,
+): Promise<RequestEndpoint> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let mod: any;
+  try {
+    mod = await import(moduleId);
+  } catch {
+    return baseUrl === undefined ? 'default' : 'custom';
+  }
+  const apiKey =
+    moduleId === 'openai' ? process.env['OPENAI_API_KEY'] : process.env['ANTHROPIC_API_KEY'];
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const client = new (mod.default as new (opts: Record<string, unknown>) => any)({
+      apiKey,
+      ...(baseUrl !== undefined ? { baseURL: baseUrl } : {}),
+    });
+    return endpointOf(client, defaultBaseUrl) ?? 'default';
+  } catch {
+    return baseUrl === undefined ? 'default' : 'custom';
+  }
+}
+
+/**
+ * Caching 3-B (MA 1's wording list, 2026-11-05) — the endpoint an OpenAI drive started with no
+ * `--base-url` resolves, read the way {@link resolveProvider} reads it (so `OPENAI_BASE_URL` counts):
+ * what each `realm agent` that `realm listen` starts will use. Nothing is sent.
+ */
+export async function resolveOpenAiEndpoint(): Promise<RequestEndpoint> {
+  const { OPENAI_DEFAULT_BASE_URL } = await import('./openai-provider.js');
+  return resolvedEndpoint('openai', undefined, OPENAI_DEFAULT_BASE_URL);
+}
+
+/**
  * Resolves the correct LLM provider from environment and CLI flags.
  *
  * Throws when no API key is set, when a named provider's own key is not set, when `--base-url` is
@@ -477,7 +546,9 @@ export async function resolveProvider(options: {
   /** Issue #313: the author's attestation that the `--base-url` endpoint genuinely enforces
    *  strict. Only meaningful together with `--base-url` on the OpenAI provider. */
   strictBaseUrl?: boolean | undefined;
-  /** Issue #600 PR 2: the cache setting and its origin. Only the Anthropic provider takes it. */
+  /** Issue #600 PR 2: the cache setting and its origin. Caching 3-B: every built-in provider takes
+   *  it — Anthropic asks for a lifetime by it; the OpenAI providers decide by it whether to send the
+   *  cache key. */
   promptCache: PromptCacheRequest;
 }): Promise<{
   provider: LlmProvider;
@@ -512,13 +583,33 @@ export async function resolveProvider(options: {
         );
       }
       const { OpenAIReasoningProvider } = await import('./openai-reasoning-provider.js');
-      return { provider: new OpenAIReasoningProvider(model) };
+      const { OPENAI_DEFAULT_BASE_URL } = await import('./openai-provider.js');
+      // The o1 provider never takes --base-url; its client still reads OPENAI_BASE_URL.
+      const endpoint = await resolvedEndpoint('openai', undefined, OPENAI_DEFAULT_BASE_URL);
+      return {
+        provider: new OpenAIReasoningProvider(model, {
+          endpoint,
+          promptCache: options.promptCache,
+        }),
+      };
     }
-    const { OpenAIProvider } = await import('./openai-provider.js');
-    return { provider: new OpenAIProvider(model, baseUrlFlag, strictBaseUrlFlag === true) };
+    const { OpenAIProvider, OPENAI_DEFAULT_BASE_URL } = await import('./openai-provider.js');
+    const endpoint = await resolvedEndpoint('openai', baseUrlFlag, OPENAI_DEFAULT_BASE_URL);
+    return {
+      provider: new OpenAIProvider(model, baseUrlFlag, strictBaseUrlFlag === true, {
+        endpoint,
+        promptCache: options.promptCache,
+      }),
+    };
   } else {
-    const { AnthropicProvider } = await import('./anthropic-provider.js');
-    const anthropic = new AnthropicProvider(model, { promptCache: options.promptCache });
+    const { AnthropicProvider, ANTHROPIC_DEFAULT_BASE_URL } =
+      await import('./anthropic-provider.js');
+    const endpoint = await resolvedEndpoint(
+      '@anthropic-ai/sdk',
+      undefined,
+      ANTHROPIC_DEFAULT_BASE_URL,
+    );
+    const anthropic = new AnthropicProvider(model, { promptCache: options.promptCache, endpoint });
     return anthropic.isAutoChoicePending()
       ? { provider: anthropic, settleAuto: anthropic.settleAutoChoice.bind(anthropic) }
       : { provider: anthropic };

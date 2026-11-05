@@ -35,9 +35,6 @@ const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url))
 const CLOSED_PORT = 'http://127.0.0.1:9';
 const DATED = 'claude-x-20260101';
 
-const C3B =
-  'Error: --prompt-cache sets caching only for Anthropic; Realm asks OpenAI for no caching, so the flag would change nothing. ' +
-  'Remove --prompt-cache, or use --provider anthropic with an Anthropic model.';
 const C3E = (id: string) =>
   `Error: --prompt-cache has nothing to apply to: workflow '${id}' has no agent step, so the flag would change nothing. ` +
   'Remove --prompt-cache.';
@@ -148,6 +145,10 @@ function runCli(args: string[], childEnv: Record<string, string>): Promise<Done>
   });
 }
 
+/** caching 3-B (D4): the start line of an OpenAI drive to a custom endpoint given `long`. */
+const OPENAI_CUSTOM_LONG =
+  "Caching: this endpoint caches by its own rules; Realm sends a cache key that helps repeated steps reach the same cache (this endpoint treats it as a hint). Realm cannot set this endpoint's lifetime or turn its caching off. --prompt-cache long sets no lifetime on this endpoint.";
+
 const runsDir = () => join(home, '.realm', 'runs');
 function runFiles(): string[] {
   if (!existsSync(runsDir())) return [];
@@ -240,7 +241,7 @@ describe('realm agent asks Anthropic to cache, and records the ask (issue #600 P
       port: false,
     });
     expect(r.stdout).toContain(
-      "Caching: Anthropic is asked to cache each step's fixed instructions for 5 minutes (auto: a drive realm agent starts on its own has no trigger history; realm agent's default; turn it off with --prompt-cache off).",
+      "Caching: Anthropic is asked to cache each step's fixed instructions and the stable start of its prompt for 5 minutes (auto: a drive realm agent starts on its own has no trigger history; realm agent's default; turn it off with --prompt-cache off).",
     );
   }, 30_000);
 
@@ -260,50 +261,26 @@ describe('realm agent asks Anthropic to cache, and records the ask (issue #600 P
       request.cache_auto,
     ]).toEqual([3600, true, 'stated', undefined]);
     expect(r.stdout).toContain(
-      "Caching: Anthropic is asked to cache each step's fixed instructions for 1 hour (set by --prompt-cache long).",
+      "Caching: Anthropic is asked to cache each step's fixed instructions and the stable start of its prompt for 1 hour (set by --prompt-cache long).",
     );
   }, 30_000);
 });
 
 describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C3)', () => {
-  // G17. (a) red when the capability refusal is removed; (b) prints stderr.
-  it('G17 --prompt-cache long --provider openai → refused, no run file; with --run-id the run is not changed', async () => {
+  // G17, caching 3-B (row 4): ACCEPTED — OpenAI applies the setting (it decides the cache key).
+  // (a) red when the refusal is put back; (b) prints whether it refused, the run files and the
+  // start line's verdict. The stand-in endpoint is OPENAI_BASE_URL's closed port: custom, so the
+  // stated `long` sends the key and says it sets no lifetime there.
+  it('G17 --prompt-cache long --provider openai → accepted: the drive starts, its start line says the key goes to this endpoint', async () => {
     const r = await runCli(
       ['agent', ...wf('wf'), '--provider', 'openai', '--model', 'gpt-x', '--prompt-cache', 'long'],
       OPENAI(),
     );
-    expect({ code: r.code, stderr: r.stderr.trim(), runs: runFiles() }).toEqual({
-      code: 1,
-      stderr: `${C3B} Nothing was started.`,
-      runs: [],
-    });
-    const store = new JsonFileStore(runsDir());
-    const { record: run } = await store.create({
-      workflowId: 'prompt-cache-600',
-      workflowVersion: 1,
-      params: {},
-    });
-    const file = join(runsDir(), `${run.id}.json`);
-    const before = readFileSync(file);
-    const attach = await runCli(
-      [
-        'agent',
-        '--run-id',
-        run.id,
-        '--provider',
-        'openai',
-        '--model',
-        'gpt-x',
-        '--prompt-cache',
-        'long',
-      ],
-      OPENAI(),
-    );
-    expect({ code: attach.code, stderr: attach.stderr.trim() }).toEqual({
-      code: 1,
-      stderr: `${C3B} If run ${run.id} exists, it was not changed.`,
-    });
-    expect(readFileSync(file).equals(before)).toBe(true);
+    expect({
+      refused: r.stderr.includes('sets caching only'),
+      runs: runFiles().length,
+      startLine: r.stdout.includes(OPENAI_CUSTOM_LONG),
+    }).toEqual({ refused: false, runs: 1, startLine: true });
   }, 30_000);
 
   // G18. (a) red when promptCache is dropped from the sibling condition; (b) prints stderr.
@@ -320,9 +297,11 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
     });
   }, 30_000);
 
-  // G19. (a) red when listen's refusal is removed (listen then starts listening); (b) prints the
-  // exit code and both streams.
-  it('G19 realm listen --provider openai --prompt-cache long → refused at startup, nothing listening', async () => {
+  // G19, caching 3-B (row 5): ACCEPTED — listen no longer refuses the flag; it goes on to read the
+  // workflows (this fixture's has no trigger block, so it stops THERE, after the old refusal's
+  // place). The caching line's words are pinned by `listen.test.ts` (listenCachingFacts). (a) red
+  // when listen's refusal is put back; (b) prints both checks and stderr's first line.
+  it('G19 realm listen --provider openai --prompt-cache long → accepted: listen goes on to read its workflows', async () => {
     const r = await runCli(
       [
         'listen',
@@ -341,15 +320,13 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
       OPENAI(),
     );
     expect({
-      code: r.code,
-      stderr: r.stderr.trim(),
-      listening: r.stdout.includes('realm listen on'),
+      refused: r.stderr.includes('sets caching only'),
+      readWorkflows: r.stderr.includes('no workflows with a trigger'),
+      first: r.stderr.trim().split('\n')[0],
     }).toEqual({
-      code: 1,
-      stderr:
-        'Error: --prompt-cache sets caching only for Anthropic; with --provider openai every agent realm listen starts uses OpenAI, ' +
-        'which Realm asks for no caching, so the flag would change nothing. Remove --prompt-cache, or use --provider anthropic.',
-      listening: false,
+      refused: false,
+      readWorkflows: true,
+      first: expect.any(String),
     });
   }, 30_000);
 
@@ -533,9 +510,10 @@ describe('the re-attach command and a listen child (issue #600 PR 2, C6, G22)', 
     );
   }, 30_000);
 
-  // (a) red when the command repeats a setting the provider cannot apply; (b) prints the command
-  // and the start line.
-  it("a listen child that picked OpenAI, given long: the command does not repeat it, and the start line says listen's flag applies only to Anthropic", async () => {
+  // caching 3-B (row 1): OpenAI applies the setting now, so the command repeats it. (a) red when
+  // the command drops a setting OpenAI applies, or the start line keeps the old words; (b) prints
+  // the command and the start line's verdict.
+  it('a listen child that picked OpenAI, given long: the command repeats --prompt-cache long, and the start line says the key goes to this endpoint', async () => {
     const r = await runCli(
       [
         'agent',
@@ -552,10 +530,30 @@ describe('the re-attach command and a listen child (issue #600 PR 2, C6, G22)', 
     );
     const runId = runFiles()[0]!.replace(/\.json$/, '');
     expect(blockedCommand(r), r.stderr).toBe(
-      `realm agent --run-id ${runId} --provider openai --model gpt-x`,
+      `realm agent --run-id ${runId} --provider openai --model gpt-x --prompt-cache long`,
     );
-    expect(r.stdout).toContain(
-      'Caching: Realm asks OpenAI for no caching; any caching it does is its own. realm listen --prompt-cache long applies only to Anthropic.',
+    expect(r.stdout).toContain(OPENAI_CUSTOM_LONG);
+  }, 30_000);
+
+  // caching 3-B (row 1): OpenAI's re-attach and Go on: lines on a drive the operator started.
+  // (a) red when the command drops the stated setting; (b) prints the command.
+  it('an OpenAI drive given long: the re-attach command repeats --prompt-cache long', async () => {
+    const r = await runCli(
+      [
+        'agent',
+        ...wf('blocked'),
+        '--provider',
+        'openai',
+        '--model',
+        'gpt-x',
+        '--prompt-cache',
+        'long',
+      ],
+      OPENAI(),
+    );
+    const runId = runFiles()[0]!.replace(/\.json$/, '');
+    expect(blockedCommand(r), r.stderr).toBe(
+      `realm agent --run-id ${runId} --provider openai --model gpt-x --prompt-cache long`,
     );
   }, 30_000);
 

@@ -10,9 +10,11 @@ import {
   type CacheAuto,
   type CacheAutoPrices,
   type CacheChoice,
+  type CacheMarkedPart,
   type CacheRequestSource,
   type JsonSchema,
   type PromptCacheSetting,
+  type RequestEndpoint,
   type StructuredOutputMeta,
   type UsageRecord,
 } from '@sensigo/realm';
@@ -47,6 +49,9 @@ import {
   type WireCounters,
   attachBilledUsage,
   passedSnippet,
+  sha256Hex,
+  sendUnderGatewayRule,
+  type CacheFieldMemory,
 } from './agent-utils.js';
 import { SUBMIT_TOOL_NAME, buildSubmitTool } from './request-layout.js';
 
@@ -118,8 +123,8 @@ function cacheControlFor(choice: Exclude<CacheChoice, 'off'>): Record<string, st
 /**
  * Issue #600 PR 2 (B1) — a request's `system`: the plain string when nothing is asked
  * to be cached (byte-for-byte the request before caching), else one text block whose
- * `cache_control` marks the whole fixed part — the profile, Realm's instructions and the schema —
- * as the part to cache. `short` sends no `ttl` (the provider's default lifetime, 5 minutes); `long`
+ * `cache_control` marks the system text — the profile, Realm's instructions and the schema — as a
+ * part to cache (caching 3-B: the prompt's stable head is marked as a block of its own). `short` sends no `ttl` (the provider's default lifetime, 5 minutes); `long`
  * sends `ttl: '1h'` — byte-identical to the two bodies sent before the lifetime unit. The tool
  * loop's main turns call it too (issue #899); its final extraction does not.
  */
@@ -129,6 +134,73 @@ function systemWithCache(
 ): string | Array<{ type: 'text'; text: string; cache_control: Record<string, string> }> {
   if (choice === 'off') return systemPrompt;
   return [{ type: 'text', text: systemPrompt, cache_control: cacheControlFor(choice) }];
+}
+
+/**
+ * Caching 3-B (C3; D3 §2.3.1 with B1) — a single-shot request's user content when its prompt has a
+ * stable head of `cut` characters. When caching applies: two text blocks, the head marked with the
+ * request's one lifetime, when the head and the tail both hold a non-space character; ONE marked
+ * block, the whole text, when the tail holds none (the head is then the whole text); the plain string
+ * when the head holds none — Anthropic refuses an empty or whitespace-only marked block, and text is
+ * never trimmed or replaced (LiteLLM's placeholder leaked into answers, #24498). Under `off`, or with
+ * no cut, the plain string. `headSent` is the head as sent, for the record: absent with no cut.
+ */
+function userContentWithHead(
+  text: string,
+  cut: number | undefined,
+  choice: CacheChoice,
+): {
+  content: string | Array<{ type: 'text'; text: string; cache_control?: Record<string, string> }>;
+  headSent?: string;
+} {
+  if (cut === undefined) return { content: text };
+  const head = text.slice(0, cut);
+  const tail = text.slice(cut);
+  if (choice === 'off' || !/\S/.test(head)) return { content: text, headSent: head };
+  const cacheControl = cacheControlFor(choice);
+  if (!/\S/.test(tail)) {
+    return { content: [{ type: 'text', text, cache_control: cacheControl }], headSent: text };
+  }
+  return {
+    content: [
+      { type: 'text', text: head, cache_control: cacheControl },
+      { type: 'text', text: tail },
+    ],
+    headSent: head,
+  };
+}
+
+/**
+ * Caching 3-B (A6, C3) — the split's facts for one single-shot request, read off the body that was
+ * SENT (after any ladder rung): the head's digest and length, a digest per part of the cached start,
+ * what carried a marker, and whether strict went out.
+ */
+function anthropicSplitFacts(
+  body: Record<string, unknown>,
+  headSent: string,
+  systemText: string,
+): Partial<UsageRecord> {
+  const marked: CacheMarkedPart[] = [];
+  const system = body['system'];
+  if (Array.isArray(system) && system.some((b) => (b as Rec)['cache_control'] !== undefined)) {
+    marked.push('system');
+  }
+  const content = (body['messages'] as Array<{ content: unknown }>)[0]?.content;
+  if (Array.isArray(content) && (content[0] as Rec | undefined)?.['cache_control'] !== undefined) {
+    marked.push('prompt');
+  }
+  const tools = body['tools'] as Array<Rec> | undefined;
+  return {
+    prefix_sha256: sha256Hex(headSent),
+    prefix_chars: headSent.length,
+    prefix_parts: {
+      ...(tools !== undefined ? { tools: sha256Hex(JSON.stringify(tools)) } : {}),
+      system: sha256Hex(systemText),
+      prompt: sha256Hex(headSent),
+    },
+    ...(marked.length > 0 ? { cache_marked: marked } : {}),
+    request_strict_sent: tools?.[0]?.['strict'] === true,
+  };
 }
 
 /**
@@ -188,7 +260,9 @@ export function assertMaxTokensCoherent(maxTokens: number, clock: LlmClock | und
 // ---------------------------------------------------------------------------------------------
 // issue #236 — the fallback ladder. Any 400/503 on a request that carried `strict: true` drops
 // strict, discloses, and retries ONCE; any other status propagates untouched (the arm keys on
-// HTTP status ∧ strict-sent, NEVER on message text — design §4 [Rv5]).
+// HTTP status ∧ strict-sent — design §4 [Rv5]). Strict stays status-keyed; on a custom endpoint, a
+// 400 that names a cache field Realm added drops that field first (caching 3-B, the gateway rule,
+// `sendUnderGatewayRule`; owner, 2026-11-03).
 // ---------------------------------------------------------------------------------------------
 
 /** The captured grammar-compilation-unavailable text (premise-probe-raw.md's own canonical mock
@@ -351,12 +425,16 @@ export function readAnthropicUsage(response: unknown): AnthropicUsage | undefine
 async function createMessageWithLadder(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   client: any,
-  buildOpts: (strict: boolean) => Record<string, unknown>,
+  // caching 3-B (E3): `withCache` false sends the request without Realm's cache markers.
+  buildOpts: (strict: boolean, withCache: boolean) => Record<string, unknown>,
   state: LadderState,
   // issue #401: the per-create ceiling and the wire counters. Absent for a caller that has no
   // clock (a bare unit test) — driveCreate is then bypassed and behaviour is as before.
   clock?: LlmClock,
   counters?: WireCounters,
+  // caching 3-B (E1, E3): the drive's memory of a gateway's refusal, and the endpoint; absent, the
+  // request is on Anthropic's own endpoint, where a 400 surfaces as before.
+  gateway?: { memory: CacheFieldMemory; endpoint: RequestEndpoint },
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Promise<any> {
   // ONE signature fits every create site: the body, plus the per-create options driveCreate adds.
@@ -366,14 +444,16 @@ async function createMessageWithLadder(
       ? driveCreate(rawCreate, body, clock, counters)
       : rawCreate(body, {});
 
-  if (!state.strict) {
-    return bounded(buildOpts(false));
-  }
-  try {
-    const response = await bounded(buildOpts(true));
+  const send = async (withCache: boolean): Promise<unknown> => {
+    if (!state.strict) return bounded(buildOpts(false, withCache));
+    const response = await bounded(buildOpts(true, withCache));
     state.meta = { requested: true, sent: true };
     return response;
-  } catch (err) {
+  };
+  // #236's ladder: a 400/503 on a strict-carrying request drops strict and retries ONCE; anything
+  // else propagates untouched. Status-keyed: it never reads the message (caching 3-B: the gateway
+  // rule, which does, runs before it and only on a custom endpoint).
+  const strictLadder = async (err: unknown, withCache: boolean): Promise<unknown> => {
     const status = extractHttpStatus(err);
     if (status !== 400 && status !== 503) throw err; // unrelated failure — never engage the ladder
     const api_message = extractErrorMessage(err);
@@ -385,7 +465,7 @@ async function createMessageWithLadder(
           : 'service_unavailable';
     state.strict = false; // sticky for the rest of THIS invocation
     try {
-      const response = await bounded(buildOpts(false));
+      const response = await bounded(buildOpts(false, withCache));
       state.meta = { requested: true, sent: false, downgrade_reason, api_message };
       return response;
     } catch (retryErr) {
@@ -395,7 +475,13 @@ async function createMessageWithLadder(
         { cause: retryErr },
       );
     }
-  }
+  };
+  return sendUnderGatewayRule(
+    gateway?.memory ?? {},
+    gateway?.endpoint ?? 'default',
+    send,
+    state.strict ? strictLadder : undefined,
+  );
 }
 
 /**
@@ -417,6 +503,10 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
    * it. Read only through {@link settledChoice}.
    */
   private cacheChoice: CacheChoice | 'pending';
+  /** Caching 3-B (D1, E1): `default` or `custom`, resolved once (`resolveProvider`). */
+  private readonly endpoint: RequestEndpoint;
+  /** Caching 3-B (E3): this drive's memory of a gateway's refusal of the cache fields. */
+  private readonly cacheFields: CacheFieldMemory = {};
   /** Issue #898 — where the settled `auto` choice took its prices; absent when none was needed. */
   private autoPrices: CacheAutoPrices | undefined;
 
@@ -437,9 +527,13 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         by?: string;
         auto?: CacheAuto;
       };
+      /** Caching 3-B (D1): the endpoint `resolveProvider` resolved once; absent reads as `default`
+       *  (a client without a string `baseURL` is only built by a test double). */
+      endpoint?: RequestEndpoint;
     },
   ) {
     super();
+    this.endpoint = opts?.endpoint ?? 'default';
     this.promptCache = opts?.promptCache ?? { value: 'off' };
     const { value } = this.promptCache;
     this.cacheChoice =
@@ -515,6 +609,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       providerId: 'anthropic',
       promptCache:
         choice === 'off' ? 'off' : { lifetime_s: ANTHROPIC_CACHE_TIERS[choice].lifetime_s },
+      endpoint: this.endpoint,
     };
   }
 
@@ -563,7 +658,9 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
    * Issue #610 — what the tool loop's FINAL EXTRACTION records about itself: the response's
    * `model`, the endpoint, and that Anthropic reports a lifetime split. No cache ask: that request
    * carries no cache marker (issue #899), so any ask written here would be false. The main turns
-   * record {@link requestFacts}. Never `provider`: `realm agent` stamps that.
+   * record {@link requestFacts}. Never `provider`: `realm agent` stamps that. Caching 3-B (E3;
+   * MA2-3B-IA1-12): also what a request sent without the cache fields records, after an endpoint
+   * refused them — it carries no marker either.
    */
   private toolsRequestFacts(response: unknown, client: unknown): Partial<UsageRecord> {
     const model = responseModel(response);
@@ -658,6 +755,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     // issue #600 PR 1a (D9): the accumulator is owned by the ENTRY POINT so one `catch` there sees
     // everything billed, whatever throws below. Defaulted, so any other caller still works.
     billed?: UsageRecord[],
+    // caching 3-B (C2): where the prompt's stable head ends; every request of the step cuts there.
+    cachePrefixChars?: number,
   ): Promise<CallStepWithMetaResult> {
     // issue #401: counters are PER-INVOCATION, minted beside the client they count for. A
     // module-global would attribute one step's wire attempts to another's failure.
@@ -694,23 +793,36 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     const requests: UsageRecord[] = billed ?? [];
     const makeRequest = async (userContent: string): Promise<CallResult> => {
       const requestStart = new Date().toISOString();
-      const buildOpts = (strict: boolean): Record<string, unknown> => {
+      // caching 3-B (C3): the head block, when the step's prompt was split. The JSON retry and a
+      // repair attempt both START with the prompt, so they send the same head seconds later.
+      const shaped = userContentWithHead(userContent, cachePrefixChars, this.settledChoice());
+      // caching 3-B (E3): the same request without Realm's markers, after a gateway refused them.
+      const bare = userContentWithHead(userContent, cachePrefixChars, 'off');
+      let sent: Record<string, unknown> = {};
+      // caching 3-B (E3; MA2-3B-IA1-12): whether the request that answered carried the cache fields.
+      let sentWithCache = true;
+      const buildOpts = (strict: boolean, withCache: boolean): Record<string, unknown> => {
         const submitTool = hasSchema
           ? buildSubmitTool(inputSchema!, strict ? { strict: true } : undefined)
           : undefined;
         const opts: Record<string, unknown> = {
           model: this.model,
           max_tokens: resolveMaxTokens(this.model),
-          system: systemWithCache(systemPrompt, this.settledChoice()),
-          messages: [{ role: 'user', content: userContent }],
+          system: systemWithCache(systemPrompt, withCache ? this.settledChoice() : 'off'),
+          messages: [{ role: 'user', content: (withCache ? shaped : bare).content }],
         };
         if (submitTool !== undefined) {
           opts['tools'] = [submitTool];
           opts['tool_choice'] = { type: 'auto' };
         }
+        sent = opts;
+        sentWithCache = withCache;
         return opts;
       };
-      const response = await createMessageWithLadder(client, buildOpts, state, clock, counters);
+      const response = await createMessageWithLadder(client, buildOpts, state, clock, counters, {
+        memory: this.cacheFields,
+        endpoint: this.endpoint,
+      });
       const blocks = response.content as Array<{
         type: string;
         text?: string;
@@ -721,7 +833,20 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       const textBlock = blocks.find((b) => b.type === 'text');
       const usage = readAnthropicUsage(response);
       requests.push(
-        toUsageRecord(requests.length, requestStart, usage, this.requestFacts(response, client)),
+        toUsageRecord(requests.length, requestStart, usage, {
+          // caching 3-B (E3; MA2-3B-IA1-12): sent without the cache fields after an endpoint refused
+          // them, the request records no ask, as #899's final request does: any ask would be false.
+          ...(sentWithCache
+            ? this.requestFacts(response, client)
+            : this.toolsRequestFacts(response, client)),
+          ...(shaped.headSent !== undefined
+            ? anthropicSplitFacts(sent, shaped.headSent, systemPrompt)
+            : {}),
+          // caching 3-B (E3): the gateway's refusal, on the request that worked and every later one.
+          ...(this.cacheFields.rejected !== undefined
+            ? { cache_controls_rejected: this.cacheFields.rejected }
+            : {}),
+        }),
       );
       return {
         ...(toolUse !== undefined ? { toolInput: toolUse.input as Record<string, unknown> } : {}),
@@ -822,7 +947,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     prompt: string,
     inputSchema?: Record<string, unknown>,
     agentProfileInstructions?: string,
-    opts?: { structuredOutputStrict?: boolean; llmClock?: LlmClock },
+    opts?: { structuredOutputStrict?: boolean; llmClock?: LlmClock; cachePrefixChars?: number },
   ): Promise<CallStepWithMetaResult> {
     const billed: UsageRecord[] = [];
     try {
@@ -833,6 +958,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         opts?.structuredOutputStrict === true,
         opts?.llmClock,
         billed,
+        opts?.cachePrefixChars,
       );
     } catch (err) {
       attachBilledUsage(err, billed);
@@ -858,6 +984,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       toolTimeoutMs?: number;
       agentProfileInstructions?: string;
       llmClock?: LlmClock;
+      /** Caching 3-B (C2): not read here — Anthropic's tool loop keeps #899's marking. */
+      cachePrefixChars?: number;
     },
   ): Promise<StepWithToolsResult> {
     // issue #610: the accumulator is owned by the ENTRY POINT, as `callStep`'s is. One catch here
@@ -1092,7 +1220,9 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
 
     /** A main turn's request body and its key. The `tools` value is decided first so the key is
      *  the exact list this request sends (after a #311 drop, the stripped copies). */
-    const buildMainCallOpts = (): { body: Record<string, unknown>; key: string } => {
+    const buildMainCallOpts = (
+      withCache = true,
+    ): { body: Record<string, unknown>; key: string } => {
       let requestTools: unknown;
       if (anthropicTools.length > 0) {
         // issue #311: once strict has been dropped, every later turn sends STRIPPED COPIES rather
@@ -1110,7 +1240,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       // that needs nothing removed is byte-for-byte what it was before issue #677.
       // Issue #899: unless the choice is `off`, the turn asks to cache `system` and the
       // conversation so far — a marker on a COPY of the last message, never on `history`.
-      const choice = this.settledChoice();
+      // Caching 3-B (E3): without the markers after a gateway refused them.
+      const choice = withCache ? this.settledChoice() : 'off';
       const opts: Record<string, unknown> = {
         model: this.model,
         max_tokens: resolveMaxTokens(this.model),
@@ -1132,7 +1263,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     // Deliberately SEPARATE from the #236 ladder above (which owns the step-OUTPUT dimension on
     // the callStep/callStepWithMeta path): the two dimensions fail independently, and the
     // stickiness rules differ (see below). Status-only, exactly like #236 — the arm keys on HTTP
-    // status ∧ strict-carried, NEVER on message text.
+    // status ∧ strict-carried. Strict stays status-keyed; on a custom endpoint, a 400 that names a
+    // cache field Realm added drops that field first (caching 3-B; owner, 2026-11-03).
     // -----------------------------------------------------------------------------------------
     let toolArgsStrictActive = anthropicTools.some((t) => t.strict === true);
     let toolArgsStrictStripped = false;
@@ -1150,20 +1282,35 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const createMainTurn = async (): Promise<{ response: any; key: string }> => {
       const carriedStrict = toolArgsStrictActive;
-      try {
-        const request = buildMainCallOpts();
-        const response = await bounded(request.body, (response, client) =>
-          this.requestFacts(response, client),
-        );
+      // caching 3-B (E3): a main turn's record carries the gateway's refusal once it is known.
+      // caching 3-B (MA2-3B-IA1-12): a turn sent without the cache fields records no ask (#899's rule).
+      const facts =
+        (withCache: boolean) =>
+        (response: unknown, client: unknown): Partial<UsageRecord> => ({
+          ...(withCache
+            ? this.requestFacts(response, client)
+            : this.toolsRequestFacts(response, client)),
+          ...(this.cacheFields.rejected !== undefined
+            ? { cache_controls_rejected: this.cacheFields.rejected }
+            : {}),
+        });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const send = async (withCache: boolean): Promise<{ response: any; key: string }> => {
+        const sentStrict = toolArgsStrictActive;
+        const request = buildMainCallOpts(withCache);
+        const response = await bounded(request.body, facts(withCache));
         // Only a strict-DECORATED request that came back 200 counts toward the disclosed
         // "turns before drop" — that is exactly what the number claims.
-        if (carriedStrict) strictTurnsBeforeDrop += 1;
+        if (sentStrict) strictTurnsBeforeDrop += 1;
         return { response, key: request.key };
-      } catch (err) {
-        // A turn that carried NO strict is none of this ladder's business: its 400 is a real
-        // failure of the request itself and must propagate untouched, never be re-attributed to
-        // structured output.
-        if (!carriedStrict) throw err;
+      };
+      // #311's ladder, status-keyed (caching 3-B: the gateway rule runs before it, and only on a
+      // custom endpoint). A turn that carried NO strict is none of this ladder's business.
+      const strictLadder = async (
+        err: unknown,
+        withCache: boolean,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ): Promise<{ response: any; key: string }> => {
         const status = extractHttpStatus(err);
         if (status !== 400 && status !== 503) throw err; // unrelated failure — never engage
         const api_message = extractErrorMessage(err);
@@ -1185,14 +1332,15 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         // propagates — realm does not swallow it behind the ladder. The retry builds its own
         // `messages` from its own key (issue #677): the stripped list is a different list, so the
         // thinking of the turns made while strict was on stays out of it.
-        const retry = buildMainCallOpts();
-        return {
-          response: await bounded(retry.body, (response, client) =>
-            this.requestFacts(response, client),
-          ),
-          key: retry.key,
-        };
-      }
+        const retry = buildMainCallOpts(withCache);
+        return { response: await bounded(retry.body, facts(withCache)), key: retry.key };
+      };
+      return sendUnderGatewayRule(
+        this.cacheFields,
+        this.endpoint,
+        send,
+        carriedStrict ? strictLadder : undefined,
+      );
     };
 
     // Forces a final answer: offers the __realm_submit__ tool at tool_choice:'auto' when a schema is

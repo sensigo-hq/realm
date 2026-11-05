@@ -28,6 +28,7 @@ import { createRealmMcpServer } from './server.js';
 import {
   REPLY_CEILING_CHARS,
   REPLY_PLAN,
+  withStablePrefixes,
   type ReplyPlan,
   type ToolDisclosure,
 } from './render-reply.js';
@@ -164,8 +165,9 @@ function handedFor(sent: Sent) {
   const entry = handed.find((h) => h.text === sent.text)!;
   const reply = entry.reply as Reply & { [REPLY_PLAN]?: ReplyPlan };
   const plan = entry.plan ?? reply[REPLY_PLAN];
+  // caching 3-B (B2): the door walks the reply after its stable-prefix pass.
   const walked = discloseReply(
-    reply,
+    withStablePrefixes(reply, entry.disclosure) as object,
     entry.disclosure.set,
     entry.disclosure.audience,
     entry.disclosure.table,

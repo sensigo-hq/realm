@@ -86,7 +86,6 @@ export const mcpCommand = new Command('mcp')
       // that cannot be used prints one line to stderr and exits 1 — a stdio server prints nothing on
       // stdout before the client's first message, and this does not either.
       const driver = resolveProgramIdentity('mcp-stdio');
-      const workflowStore = new JsonWorkflowStore();
       // SECURITY (recorded decision): unlike serve/agent/run there is NO cwd default here —
       // an MCP client opening a cloned repo must not cause its realm.yaml to resolve secrets
       // and import code. Do not "improve" this.
@@ -95,6 +94,8 @@ export const mcpCommand = new Command('mcp')
       // refusal here means this command's own install is split: `hostRefusalLine` says so.
       let server: ReturnType<typeof createRealmMcpServer>;
       try {
+        // #616 PR-2a (i): built inside the handler, so an unusable home prints `realm mcp: …`.
+        const workflowStore = new JsonWorkflowStore();
         // issue #600 caching PR P: the registry and the prices share one load per definition call.
         const { registryProvider, priceSourceProvider } = makeProjectProviders(
           options.extensionsModule,

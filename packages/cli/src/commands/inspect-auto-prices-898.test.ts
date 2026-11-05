@@ -187,7 +187,7 @@ describe('#898 S10 — the start line says where auto took its prices', () => {
         name,
         asked === 'off'
           ? `Caching: off; Anthropic is asked to cache nothing (${EVIDENCE}; ${WORDS[name]}; ${source}).`
-          : `Caching: Anthropic is asked to cache each step's fixed instructions for ${asked === 3600 ? '1 hour' : '5 minutes'} (${EVIDENCE}; ${WORDS[name]}; ${source}).`,
+          : `Caching: Anthropic is asked to cache each step's fixed instructions and the stable start of its prompt for ${asked === 3600 ? '1 hour' : '5 minutes'} (${EVIDENCE}; ${WORDS[name]}; ${source}).`,
       ]),
     );
   });
