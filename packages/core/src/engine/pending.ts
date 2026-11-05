@@ -496,6 +496,114 @@ export function withFullStop(text: string): string {
   return /[\p{Sentence_Terminal}…]$/u.test(visibleText(text)) ? text : `${text}.`;
 }
 
+/** A line terminator: a character the old pattern's `.` (no `s` flag) did not match. */
+const isLineTerminator = (c: string | undefined): boolean =>
+  c === '\n' || c === '\r' || c === '\u2028' || c === '\u2029';
+
+/** Whitespace exactly as `\s` has it, Unicode spaces included; a one-character test. */
+const WHITESPACE = /\s/;
+
+/**
+ * The tokens of a command's tail ({@link endsWithCommand}'s F6), in one pass: the language of the
+ * regular expression this replaced (CodeQL #22), which `pending-redos-22.test.ts` keeps as its oracle.
+ * Left to right, a placeholder is tried at each position, then a word; where neither matches, the
+ * character is skipped and no token is made.
+ * - A placeholder is `<`, a body, then the first `>` that is neither quoted nor escaped. The body is
+ *   any character but `>`, `'` and a backslash; a backslash and one character that is not a line
+ *   terminator; or a `'…'` span to the next quote. It fails at the end of the text, at a backslash
+ *   with no such character after it, or at a quote with no closing quote.
+ * - A word is one or more of: any character but whitespace, `'` and a backslash; a backslash and one
+ *   character that is not a line terminator; or a `'…'` span to the next quote.
+ * Bounded time: the next quote from every position is found once, from the end, and the placeholder
+ * walk records its answer at every position it passes outside a quote or an escape, so a later `<`
+ * whose walk reaches one of them stops there. The pattern re-walked the text from every `<` it could
+ * not close, so `<a ` repeated took seconds.
+ */
+export function commandTokens(s: string): string[] {
+  const n = s.length;
+  const nextQuote = new Int32Array(n + 1);
+  nextQuote[n] = -1;
+  for (let i = n - 1; i >= 0; i -= 1) nextQuote[i] = s[i] === "'" ? i : nextQuote[i + 1]!;
+  // memo[q]: the placeholder walk's answer from q — 0 not yet known, -1 none, else the index after `>`.
+  const memo = new Int32Array(n + 1);
+  const placeholderEnd = (p: number): number => {
+    const passed: number[] = [];
+    let q = p;
+    let answer = -1;
+    for (;;) {
+      if (memo[q] !== 0) {
+        answer = memo[q]!;
+        break;
+      }
+      passed.push(q);
+      if (q >= n) break;
+      const c = s[q];
+      if (c === '>') {
+        answer = q + 1;
+        break;
+      }
+      if (c === '\\') {
+        if (q + 1 < n && !isLineTerminator(s[q + 1])) {
+          q += 2;
+          continue;
+        }
+        break;
+      }
+      if (c === "'") {
+        const j = nextQuote[q + 1]!;
+        if (j === -1) break;
+        q = j + 1;
+        continue;
+      }
+      q += 1;
+    }
+    for (const v of passed) memo[v] = answer;
+    return answer;
+  };
+  const wordEnd = (p: number): number => {
+    let q = p;
+    while (q < n) {
+      const c = s[q]!;
+      if (c === '\\') {
+        if (q + 1 < n && !isLineTerminator(s[q + 1])) {
+          q += 2;
+          continue;
+        }
+        break;
+      }
+      if (c === "'") {
+        const j = nextQuote[q + 1]!;
+        if (j === -1) break;
+        q = j + 1;
+        continue;
+      }
+      if (WHITESPACE.test(c)) break;
+      q += 1;
+    }
+    return q;
+  };
+  const tokens: string[] = [];
+  let i = 0;
+  while (i < n) {
+    if (s[i] === '<') {
+      const end = placeholderEnd(i + 1);
+      if (end > 0) {
+        tokens.push(s.slice(i, end));
+        i = end;
+        continue;
+      }
+    }
+    const end = wordEnd(i);
+    if (end > i) {
+      tokens.push(s.slice(i, end));
+      i = end;
+      continue;
+    }
+    i += 1;
+  }
+  return tokens;
+}
+
 /**
  * Decision C212: whether the text ends with a command a reader pastes — its last clause, from the
  * last `realm ` that starts a word, is `realm <group> <command>` followed only by a positional
@@ -509,8 +617,8 @@ export function endsWithCommand(marked: string): boolean {
   // F6: a token is a POSIX word — quoted with '…' (as `shellWord` writes it), with backslash escapes —
   // or a `<one of: …>` placeholder whose members are quoted words, kept as ONE token (a quoted member
   // may hold `>`, such as the choice `yes>`).
-  const tokens =
-    text.slice(start).match(/<(?:[^>'\\]|\\.|'[^']*')*>|(?:[^\s'\\]|\\.|'[^']*')+/g) ?? [];
+  // A one-pass scan, not a regex: the regex was quadratic on a hostile text (CodeQL #22).
+  const tokens = commandTokens(text.slice(start));
   const [, group, name, ...rest] = tokens;
   if (group === undefined) return false;
   // `realm agent` takes flags only; `realm run|workflow <command>` one positional, then flags.
