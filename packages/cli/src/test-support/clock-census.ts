@@ -233,6 +233,12 @@ export const CENSUS: Record<string, Entry> = {
     'outside',
     "a telemetry line's stamp",
   ],
+  // #616 unit 8: how long the write path has waited for a busy store (its budget).
+  'store-sqlite/src/connection.ts#RealmDb.#withLockAndBusyWait#performance.now()': [
+    1,
+    'duration',
+    MONOTONIC,
+  ],
   'testing/src/store/run-store-fidelity-contract.ts#run#Date.now()': [
     4,
     'outside',

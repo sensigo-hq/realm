@@ -345,19 +345,32 @@ function sources(): string[] {
 
 describe('#715 (a) — the facts two docs sentences rest on', () => {
   it('the clock’s reach: only the two stores take a reading (core-library.md, "times taken outside the store")', () => {
-    // (a) red when a module outside the stores calls `takeReading(`; (b) prints the files.
-    const callers = sources().filter((file) =>
-      read(file)
-        .split('\n')
-        .some(
-          (line) =>
-            /\btakeReading\(/.test(line) &&
-            !/^\s*(\/\/|\*)/.test(line) &&
-            !/function takeReading/.test(line),
-        ),
+    // #616 unit 8: a store can take its reading in two halves, `takeRawReading` and then the pure
+    // `foldReading` (the SQLite write path takes the raw one; its bodies fold it), so the cell counts
+    // every caller of the three, outside the module that defines them.
+    // (a) red when a module not listed calls `takeReading(`, `takeRawReading(` or `foldReading(`,
+    //     or a listed one stops; (b) prints the files.
+    const callers = sources().filter(
+      (file) =>
+        file !== join('packages', 'core', 'src', 'store', 'take-reading.ts') &&
+        read(file)
+          .split('\n')
+          .some(
+            (line) =>
+              /\b(?:takeReading|takeRawReading|foldReading)\(/.test(line) &&
+              !/^\s*(\/\/|\*)/.test(line),
+          ),
     );
     expect(callers.sort(), callers.join(', ')).toEqual([
+      // A test double of what a store writes: it stamps a snapshot with the system clock.
+      'packages/cli/src/test-support/snapshot-double.ts',
       'packages/core/src/store/json-file-store.ts',
+      'packages/core/src/test-support/snapshot-double.ts',
+      'packages/mcp-server/src/test-support/snapshot-double.ts',
+      // #616 unit 8: the SQLite write path takes each call's raw reading.
+      'packages/store-sqlite/src/connection.ts',
+      // The fenced contract's run reader returns a read's reading, as a store's read does.
+      'packages/testing/src/store/fence-run-source.ts',
       'packages/testing/src/store/in-memory-store.ts',
       // #715 (b) B.3: the TCK's own fixture store (`LossyFixtureStore`) reads its clock as a store.
       'packages/testing/src/store/settlement-contract.ts',
