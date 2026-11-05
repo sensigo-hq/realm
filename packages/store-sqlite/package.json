@@ -23,6 +23,7 @@
   },
   "scripts": {
     "build": "tsc --build",
+    "test": "vitest run",
     "lint": "eslint src"
   },
   "dependencies": {

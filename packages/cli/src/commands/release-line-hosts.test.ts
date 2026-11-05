@@ -11,13 +11,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
-import {
-  JsonWorkflowStore,
-  REALM_BRAND,
-  RELEASE_LINE_KEY,
-  assertReleaseLine,
-  createRealmBrand,
-} from '@sensigo/realm';
+import { REALM_BRAND, RELEASE_LINE_KEY, assertReleaseLine, createRealmBrand } from '@sensigo/realm';
+import { openCliHome } from '../lib/home.js';
 
 const REFUSAL = (() => {
   try {
@@ -152,6 +147,8 @@ describe('realm’s own hosts with a refusing createRealmMcpServer', () => {
   it('startHttpMcpServer: a startup construction refusal rejects and nothing listens', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'realm-serve-host-'));
     const port = await freePort();
+    // #616 PR-2a (iii): the starter takes all four stores or none — the four of this temp home.
+    const home = await openCliHome({ home: dir });
     try {
       await expect(
         startHttpMcpServer({
@@ -159,7 +156,10 @@ describe('realm’s own hosts with a refusing createRealmMcpServer', () => {
           host: '127.0.0.1',
           devMode: true,
           token: undefined,
-          workflowStore: new JsonWorkflowStore(dir),
+          workflowStore: home.workflowStore,
+          runStore: home.runStore,
+          traceBufferStore: home.traceBufferStore,
+          failedAttemptStore: home.failedAttemptStore,
         }),
       ).rejects.toBe(REFUSAL);
       expect(mode.calls).toBe(1);
@@ -282,12 +282,17 @@ describe('realm’s own hosts with a refusing createRealmMcpServer', () => {
       errors.push(a);
     });
     const dir = mkdtempSync(join(tmpdir(), 'realm-serve-host-'));
+    // #616 PR-2a (iii): the starter takes all four stores or none — the four of this temp home.
+    const home = await openCliHome({ home: dir });
     const server = await startHttpMcpServer({
       port: 0,
       host: '127.0.0.1',
       devMode: true,
       token: undefined,
-      workflowStore: new JsonWorkflowStore(dir),
+      workflowStore: home.workflowStore,
+      runStore: home.runStore,
+      traceBufferStore: home.traceBufferStore,
+      failedAttemptStore: home.failedAttemptStore,
     });
     try {
       const { port } = server.address() as AddressInfo;

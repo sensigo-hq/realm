@@ -24,7 +24,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION, abandonRun, JsonFileStore } from '@sensigo/realm';
 import type { WorkflowDefinition, WebhookTrigger, WorkflowRegistrar } from '@sensigo/realm';
-import { homedir, tmpdir, constants as osConstants } from 'node:os';
+import { tmpdir, constants as osConstants } from 'node:os';
 import {
   accessSync,
   chmodSync,
@@ -42,7 +42,6 @@ import {
   buildRouteTable,
   normalizeHeaders,
   prepareListenWorkflows,
-  defaultDedupBase,
   buildAgentArgv,
   defaultSpawnAgent,
   makeAgentSpawner,
@@ -1176,30 +1175,6 @@ describe('project extensions — listen startup and webhook pipeline', () => {
     expect(status).toBe(202);
     expect(deps.spawnAgent).toHaveBeenCalledOnce();
     expect(deps.workflowStore.register).not.toHaveBeenCalled();
-  });
-});
-
-describe('defaultDedupBase (issue #332 item 3 — call-time, never module-scope, the #285 class)', () => {
-  it("HOME set: resolves under homedir(), byte-compatible with the old ?? '.' expression (which agreed with homedir() whenever HOME was set)", () => {
-    // Read-only path assertion — never a write (the #285 caution).
-    expect(defaultDedupBase()).toBe(join(homedir(), '.realm', 'dedup'));
-  });
-
-  it("HOME UNSET: the discriminating cell — defaultDedupBase() still resolves under the OS home (via os.homedir()'s /etc/passwd fallback), NEVER under '.' (the old expression's silent-CWD failure mode)", () => {
-    // The set-HOME cell above is confirmation theater on its own: `?? '.'` and `homedir()` AGREE
-    // whenever HOME is set, so it can't distinguish the fix from the old expression. Only
-    // deleting HOME discriminates — the old code would have resolved to './.realm/dedup' (CWD);
-    // the fix must still resolve under the real OS home.
-    const savedHome = process.env['HOME'];
-    delete process.env['HOME'];
-    try {
-      const resolved = defaultDedupBase();
-      expect(resolved).toBe(join(homedir(), '.realm', 'dedup'));
-      expect(resolved.startsWith('.')).toBe(false);
-      expect(resolved).not.toBe(join('.', '.realm', 'dedup'));
-    } finally {
-      if (savedHome !== undefined) process.env['HOME'] = savedHome;
-    }
   });
 });
 

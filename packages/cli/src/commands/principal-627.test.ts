@@ -23,6 +23,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { startHttpMcpServer } from './serve.js';
 import { CLI_COMMANDS, NO_DRIVE_FLAGS } from './ways-renderer.js';
+import { openCliHome } from '../lib/home.js';
 
 const CLI = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 
@@ -94,14 +95,20 @@ describe('#627 W — cell 25: the principal each door stamps', () => {
       const home = mkdtempSync(join(tmpdir(), 'realm-pr-627-serve-'));
       const { store, runId, gateId } = await opened(home);
       const token = 'test-token-not-a-secret';
+      // #616 PR-2a (iii): the starter takes all four stores or none — the four of this HOME's home.
+      const realmHome = await openCliHome({ home: join(home, '.realm') });
       const server = await startHttpMcpServer({
         port: 0,
         host: '127.0.0.1',
         devMode,
         token,
-        workflowStore: new JsonWorkflowStore(join(home, '.realm', 'workflows')),
+        workflowStore: realmHome.workflowStore,
+        runStore: realmHome.runStore,
+        traceBufferStore: realmHome.traceBufferStore,
+        failedAttemptStore: realmHome.failedAttemptStore,
       });
-      // The per-request server reads the run store from HOME's default; point it at this HOME.
+      // #616 PR-2a (iii): the per-request server takes the four stores above, all on this HOME's
+      // home (it read the run store from HOME's default before); HOME is still pointed at it.
       const previous = process.env['HOME'];
       process.env['HOME'] = home;
       try {

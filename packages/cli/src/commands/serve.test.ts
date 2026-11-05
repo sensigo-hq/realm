@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
-import { JsonWorkflowStore } from '@sensigo/realm';
 import { checkBearerToken, startHttpMcpServer } from './serve.js';
+import { openCliHome } from '../lib/home.js';
 
 // ---------------------------------------------------------------------------
 // Pure unit tests for checkBearerToken
@@ -42,10 +42,17 @@ describe('checkBearerToken', () => {
 // Integration tests for the HTTP server
 // ---------------------------------------------------------------------------
 
-function makeTempStore(): JsonWorkflowStore {
+/** #616 PR-2a (iii): the starter takes all four stores or none — the four of a fresh temp home. */
+async function makeTempStores() {
   const dir = join(tmpdir(), `realm-serve-test-${randomUUID()}`);
   mkdirSync(dir, { recursive: true });
-  return new JsonWorkflowStore(dir);
+  const home = await openCliHome({ home: dir });
+  return {
+    workflowStore: home.workflowStore,
+    runStore: home.runStore,
+    traceBufferStore: home.traceBufferStore,
+    failedAttemptStore: home.failedAttemptStore,
+  };
 }
 
 /** Starts the server on a random OS-assigned port and returns it + the base URL. */
@@ -53,13 +60,12 @@ async function startTestServer(opts: {
   devMode?: boolean;
   token?: string;
 }): Promise<{ server: Server; url: string }> {
-  const workflowStore = makeTempStore();
   const server = await startHttpMcpServer({
     port: 0,
     host: '127.0.0.1',
     devMode: opts.devMode ?? false,
     token: opts.token,
-    workflowStore,
+    ...(await makeTempStores()),
   });
   const addr = server.address() as { port: number };
   return { server, url: `http://127.0.0.1:${addr.port}` };
@@ -188,7 +194,7 @@ describe('realm serve — HTTP protocol', () => {
           host: '127.0.0.1',
           devMode: true,
           token: undefined,
-          workflowStore: makeTempStore(),
+          ...(await makeTempStores()),
         }),
       ).rejects.toThrow();
     } finally {

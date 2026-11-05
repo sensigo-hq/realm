@@ -3,7 +3,7 @@ import { Command } from 'commander';
 import type { ReplayStepResult, ReplayStore, RunRecord, WorkflowDefinition } from '@sensigo/realm';
 import { checkPreconditions, buildSettlementNamespace, getWorkflowForRun } from '@sensigo/realm';
 import { formatPrecondColumn } from './replay-format.js';
-import { openRunStore } from '../lib/run-store.js';
+import { openCliHome } from '../lib/home.js';
 
 export interface ReplayOverride {
   step: string;
@@ -140,9 +140,10 @@ export const replayCommand = new Command('replay')
   .option('--save', 'Persist the replay result and print the replay ID')
   .description('Re-evaluate preconditions with modified step outputs (read-only)')
   .action(async (runId: string, opts: { with?: string[]; save?: boolean }) => {
-    const { JsonWorkflowStore } = await import('@sensigo/realm');
-    const runStore = openRunStore();
-    const workflowStore = new JsonWorkflowStore();
+    // #616 PR-2a (iii): the one door, opened once.
+    const home = await openCliHome();
+    const runStore = home.runStore;
+    const workflowStore = home.workflowStore;
 
     let run;
     try {
@@ -209,8 +210,7 @@ export const replayCommand = new Command('replay')
     }
 
     if (opts.save) {
-      const { JsonFileReplayStore } = await import('../store/replay-store.js');
-      const replayStore = new JsonFileReplayStore();
+      const replayStore = home.replayStore;
       const replayId = await saveReplay(replayStore, runId, run, withExprs, results);
       console.log(`\nSaved replay: ${replayId}`);
     }
