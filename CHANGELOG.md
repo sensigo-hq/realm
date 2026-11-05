@@ -212,6 +212,7 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
   says how long before or after the reply's time the date is; in a gate's `message`, which Realm
   stores, it writes the date itself. `renderTemplate` takes the time to render at (`time`); with
   none, a `from_now` stays as written.
+- **One function in core names realm's home (`~/.realm`, read when a command opens its stores) (issue #616).** A command run with `HOME` empty or not absolute now stops with one line instead of keeping its runs under the current folder; one run on an account with no home stops with the same line instead of a stack.
 
 ### Removed
 

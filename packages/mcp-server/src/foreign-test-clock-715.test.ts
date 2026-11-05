@@ -9,7 +9,7 @@
 // written `<dir>`.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -55,5 +55,48 @@ describe('#715 (a) correction 1 (C-6) — realm-mcp on a copied test location', 
       },
       shown,
     ).toEqual({ code: 1, stdout: '', line: true, wayOut: true, stack: false });
+  }, 20_000);
+});
+
+// #616 PR-2a (i): with HOME set but empty, realm-mcp used to keep its registry in a `.realm` folder
+// under its working directory; now its first store refuses with STATE_HOME_UNUSABLE, and this catch
+// prints that refusal the same way as the clock's.
+describe('#616 PR-2a (i) — realm-mcp with an empty HOME', () => {
+  it('exits 1 with one realm-mcp line after its start line, no stack, nothing on stdout or in its folder', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'realm-mcp-616-'));
+    try {
+      const r = spawnSync(process.execPath, [DIST_SERVER], {
+        cwd,
+        env: { PATH: process.env['PATH'] ?? '', HOME: '' },
+        encoding: 'utf8',
+        input: '',
+        timeout: 20_000,
+      });
+      const lines = r.stderr.split('\n').filter((l) => l !== '');
+      const got = {
+        code: r.status,
+        stdout: r.stdout,
+        startLine: lines[0]?.startsWith('Gate answers over MCP: asked (the default).') ?? false,
+        refusal: lines.slice(1),
+        stack: /^ {4}at /m.test(r.stderr),
+        created: readdirSync(cwd),
+      };
+      // (1) red when server.ts's catch rethrows STATE_HOME_UNUSABLE again (a stack, no refusal line),
+      //     or the refusal's words change;
+      // (2) prints the exit code, stdout, the start line's presence, the lines after it, and what was
+      //     created in the working directory.
+      expect(got, JSON.stringify(got, null, 1)).toEqual({
+        code: 1,
+        stdout: '',
+        startLine: true,
+        refusal: [
+          'realm-mcp: no home directory: HOME is empty or unset and this account has no home, so realm cannot find ~/.realm. Set HOME to your home directory and run the command again.',
+        ],
+        stack: false,
+        created: [],
+      });
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   }, 20_000);
 });

@@ -2,15 +2,15 @@
 // `ReplayStore` (#616 B1: the interface and its record live in `@sensigo/realm`).
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { realmHomePath } from '@sensigo/realm';
 import type { ReplayRecord, ReplayStore } from '@sensigo/realm';
 
 export class JsonFileReplayStore implements ReplayStore {
   private readonly replaysDir: string;
 
   constructor(replaysDir?: string) {
-    this.replaysDir = replaysDir ?? join(homedir(), '.realm', 'replays');
+    this.replaysDir = replaysDir ?? join(realmHomePath(), 'replays');
   }
 
   async save(record: Omit<ReplayRecord, 'id' | 'created_at'>): Promise<ReplayRecord> {

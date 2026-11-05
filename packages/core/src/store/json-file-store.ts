@@ -4,7 +4,6 @@ import { mkdir, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { v4 as uuidv4 } from 'uuid';
 import lockfile from 'proper-lockfile';
 import type { RunRecord, SealedBy } from '../types/run-record.js';
@@ -33,6 +32,7 @@ import { applySettlement } from '../engine/settlement.js';
 import { TERMINAL_PHASES } from '../engine/lifecycle.js';
 import { runNotFoundError } from './fence-predicate.js';
 import { hashParams } from './params-hash.js';
+import { realmHomePath } from './realm-home.js';
 import { assertSealIntegrity } from './seal-integrity.js';
 import { decideIdempotencyPolicy } from './idempotency-policy.js';
 import { atomicWriteFile } from './atomic-write.js';
@@ -223,7 +223,7 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
   readonly clock: Clock;
 
   constructor(runsDir?: string) {
-    this.runsDir = runsDir ?? join(homedir(), '.realm', 'runs');
+    this.runsDir = runsDir ?? join(realmHomePath(), 'runs');
     this.clock = resolveStoreClock(this.runsDir);
   }
 

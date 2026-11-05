@@ -544,6 +544,8 @@ export {
 export { isTestLocationClock } from './store/test-clock-file.js';
 // #715 (b) (02 §C.3, D6-53): a store at a test location says so once per process, on its first read.
 export { withTestClockNotice, testClockNoticeLine } from './store/test-clock-notice.js';
+// issue #616 PR-2a (i): realm's home (`~/.realm`), the one place that asks the system for it.
+export { realmHomePath } from './store/realm-home.js';
 // issue #600 PR 1b: one cost view per step, derived once and rendered by inspect + get_run_state.
 export {
   composeCostView,
