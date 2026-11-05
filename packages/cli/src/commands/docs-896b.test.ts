@@ -58,11 +58,12 @@ describe('#896 unit B — the docs sentences', () => {
     );
   });
 
-  it('CHANGELOG: the behaviour and the two vocabularies', () => {
+  it('CHANGELOG: the behaviour, the two vocabularies and the new export', () => {
     for (const lead of [
       "**`--prompt-cache auto` chooses for OpenAI GPT-5.6 and later too,** at OpenAI's own address. On a drive `realm listen` starts, a step without tools asks for 30 minutes or for no caching, by the gaps between the workflow's recent triggers and your price file's `cache_read` and `cache_write` rates. Without usable prices it asks for 30 minutes when any of the last five gaps is under 27 minutes, and for no caching otherwise. Steps with tools are left to OpenAI's own caching. (#896)",
       '**`CACHE_AUTO_RATES` gains `cache_write`.** (#896)',
       '**`CacheRequestedEntry` gains `provider`.** (#896)',
+      "**Core exports `chooseAutoOneLifetime`,** `--prompt-cache auto`'s rule for a provider with one cache lifetime. (#896)",
     ])
       claimChangelog(lead);
   });

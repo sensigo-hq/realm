@@ -23,6 +23,7 @@ All notable changes to this project are documented here.
 - **The composed cost view gains `CostView.cache_head` and `CostView.cache_fields_refused`, and `CacheRequestedEntry.key_sent`.** Numbers and closed words only. (#600)
 - **`CACHE_AUTO_RATES` gains `cache_write`.** (#896)
 - **`CacheRequestedEntry` gains `provider`.** (#896)
+- **Core exports `chooseAutoOneLifetime`,** `--prompt-cache auto`'s rule for a provider with one cache lifetime. (#896)
 - **An MCP reply is kept at or under 40,000 characters when shortening its lists can make it fit
   (issue #872).** `get_workflow_protocol`, `list_workflows` and `start_run_batch` shorten nothing
   yet, and a step's prompt or schema is never shortened. When a reply would pass the ceiling, its
