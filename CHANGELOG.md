@@ -85,6 +85,9 @@ All notable changes to this project are documented here.
 - **When `realm agent` or `realm listen` drives a step that calls tools, it now asks Anthropic to cache the step's fixed instructions and the conversation so far at each turn, so a turn can read what the turn before wrote once that part reaches the model's minimum.** The request a step makes after using up its tool calls is sent with no cache marker. `--prompt-cache off` sends what it sent before. A workflow whose every agent step calls tools no longer refuses `--prompt-cache`. **Upgrading:** a gateway or proxy that rejects `cache_control` now also fails steps that call tools, which worked before; run with `--prompt-cache off`. (#899)
 - **`DedupStore`, `ReplayStore`, `ReplayRecord` and `ReplayStepResult` are exported from
   `@sensigo/realm` (issue #616).** `DedupStore`'s `check`, `record` and `cleanup` return promises.
+- **`classifyRegisteredCopy`, `workflowNotFoundError`, `legacyCopyError`, `newerCopyError` and
+  `storedCopyFaultError` are exported from `@sensigo/realm` (issue #616).** They judge and refuse a
+  registered workflow copy that has no file, with the words a copy with a file gets.
 
 ### Changed
 
@@ -157,6 +160,8 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
   `new JsonFileFailedAttemptStore(dir)`. A value typed `FailedAttemptStore` has `append`, `read`,
   `deleteAllForRun` and `statAllForRun`; for `listOrphans`, type it `JsonFileFailedAttemptStore`.
   Errors that name the store now name `JsonFileFailedAttemptStore`.
+- **BREAKING — `NewerDefinitionFacts.path` is optional (issue #616).** It is absent for a registered
+  copy that has no file; code that reads it handles `undefined`.
 
 - **BREAKING — every run store call returns the time it was judged at (issue #715).** `get`,
   `update` and `claimStep` return `{ record, at }`; `create` returns `{ record, at, created }`;
