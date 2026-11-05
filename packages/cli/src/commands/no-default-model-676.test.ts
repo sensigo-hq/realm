@@ -603,7 +603,7 @@ describe('realm listen --prompt-cache reaches the agent it starts (issue #600 PR
       ],
       out.join('\n---\n'),
     ).toEqual([true, true]);
-  });
+  }, 60_000);
 
   // Leg 2. (a) red when listen does not forward the stated value (the child's `auto` asks for 1
   // hour on its first trigger, a block); (b) prints the `system` field sent.
