@@ -189,7 +189,18 @@ describe('caching 3-B M10 — a recorded refusal replaces the nothing-written cl
   it('the clause prints without the refusal, and not with it (cross cell)', async () => {
     const nothing = { ...anthropic, endpoint: 'custom', cache_creation_input_tokens: 0 };
     const without = await lineOf([nothing]);
-    const withIt = await lineOf([{ ...withoutAsk(nothing), cache_controls_rejected: REFUSED }]);
+    // With a refusal, the step that can print the clause at all is one with an ask recorded: a tool
+    // step whose later turn a gateway refused (the turn before kept its ask; the refused turn's
+    // retry records none, MA2-3B-IA1-12).
+    const withIt = await lineOf([
+      nothing,
+      {
+        ...withoutAsk(nothing),
+        request_index: 1,
+        request_start: '2026-01-01T00:00:01.000Z',
+        cache_controls_rejected: REFUSED,
+      },
+    ]);
     // (a) red when the refusal does not suppress the clause, or the control loses it; (b) prints
     //     both lines.
     expect({
