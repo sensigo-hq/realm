@@ -17,7 +17,9 @@ import { toolMeta } from '../tool-annotations.js';
 import { assertToolStores } from './assert-tool-stores.js';
 
 export interface HandleStores {
-  workflowStore?: JsonWorkflowStore;
+  /** The workflow registry — the class: the listing reads its `listWithDiagnostics`. #616 PR-2a
+   *  (ii-b): required — the handler builds no store. */
+  workflowStore: JsonWorkflowStore;
 }
 
 /** A registered copy the listing could not read — the same census `realm workflow list` prints. */
@@ -69,9 +71,9 @@ const HEALTHY_HINT =
  * be read may still be a registered workflow that only needs its file repaired, and realm cannot
  * tell which until an operator looks — so the steer is withdrawn rather than guessed.
  */
-export async function handleListWorkflows(stores?: HandleStores): Promise<ListWorkflowsResult> {
-  assertToolStores(stores, 'handleListWorkflows');
-  const store = stores?.workflowStore ?? new JsonWorkflowStore();
+export async function handleListWorkflows(stores: HandleStores): Promise<ListWorkflowsResult> {
+  assertToolStores(stores, 'handleListWorkflows', ['workflowStore']);
+  const store = stores.workflowStore;
   const { workflows, unreadable } = await store.listWithDiagnostics();
   const broken = unreadable.find((u) => u.class === 'registry_broken');
   if (broken !== undefined) {
@@ -143,7 +145,7 @@ export const LIST_WORKFLOWS_TABLE = {
 /** Registers the list_workflows MCP tool on the server. */
 export function registerListWorkflows(
   server: McpServer,
-  opts?: HandleStores & WithDoorDisclosure,
+  opts: HandleStores & WithDoorDisclosure,
 ): void {
   const door = disclosureOfTool(opts);
   server.registerTool(

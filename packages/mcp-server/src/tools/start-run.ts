@@ -3,8 +3,6 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   validateRunParams,
-  JsonWorkflowStore,
-  JsonFileStore,
   advanceRun,
   classifyStop,
   endedRunWaysSentence,
@@ -33,6 +31,7 @@ import {
   persistsField,
   startIdentityEntry,
   type DisclosureSet,
+  type WorkflowRegistrar,
 } from '@sensigo/realm';
 import type { McpDoor } from '../door.js';
 import { withQuestionForm, type FormCall, type FormDeps } from '../form-path.js';
@@ -190,18 +189,20 @@ function logDedup(fields: Record<string, unknown>): void {
  * class has a private `runsDir` field, so a plain object literal implementing these methods could
  * never be assignable to the class type itself (issue #188, PR-1: the co-location injection seam).
  * Used anywhere a `JsonFileFailedAttemptStore`-like store is threaded through as an injectable
- * option. It keeps the class's `listOrphans`, which core's `FailedAttemptStore` interface does not
- * carry (#616 B1).
+ * option. #616 PR-2a (ii-b): no longer `listOrphans` — nothing the library or its tools run calls it
+ * (only `realm run gc` does, on the class itself), and a store without it (SQLite's) can be handed.
  */
 export type FailedAttemptStoreLike = Pick<
   JsonFileFailedAttemptStore,
-  'append' | 'read' | 'deleteAllForRun' | 'listOrphans'
+  'append' | 'read' | 'deleteAllForRun'
 >;
 
 export interface HandleRunStores extends WithDoorDisclosure {
-  /** Run store. Any `RunStore` implementation (issue #188, PR-1 — was `JsonFileStore`-only). */
-  runStore?: RunStore;
-  workflowStore?: JsonWorkflowStore;
+  /** Run store. Any `RunStore` implementation (issue #188, PR-1 — was `JsonFileStore`-only).
+   *  #616 PR-2a (ii-b): required, with the registry — the handlers build no store. */
+  runStore: RunStore;
+  /** The workflow registry (the interface: these handlers use no extra of the file store's). */
+  workflowStore: WorkflowRegistrar;
   /** Extension registry for resolving service adapters and step handlers. */
   registry?: ExtensionRegistry;
   /**
@@ -258,14 +259,14 @@ export async function handleStartRun(
     on_terminal_match?: 'reuse' | 'reject' | 'rerun_if_failed' | 'rerun' | undefined;
     on_live_match?: 'use_existing' | 'fail' | undefined;
   },
-  stores?: HandleRunStores,
+  stores: HandleRunStores,
   call?: FormCall,
   /** #729 PR-4: told the set this call built before its engine call (the door's reply reuses it). */
   onDisclosureSet?: (set: DisclosureSet) => void,
 ): Promise<WithPersonBlock<McpEnvelope> & { deduped: boolean; rerun_of?: string }> {
-  assertToolStores(stores, 'handleStartRun');
-  const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
-  const runStore = stores?.runStore ?? new JsonFileStore();
+  assertToolStores(stores, 'handleStartRun', ['runStore', 'workflowStore']);
+  const workflowStore = stores.workflowStore;
+  const runStore = stores.runStore;
   const definition = await workflowStore.get(args.workflow_id);
   const params = args.params ?? {};
 
@@ -519,7 +520,7 @@ export const START_RUN_TABLE = {
 /** Registers the start_run MCP tool on the server. */
 export function registerStartRun(
   server: McpServer,
-  opts?: HandleRunStores & WithDoorDisclosure,
+  opts: HandleRunStores & WithDoorDisclosure,
 ): void {
   markServedByTool(opts);
   const door = disclosureOfTool(opts);

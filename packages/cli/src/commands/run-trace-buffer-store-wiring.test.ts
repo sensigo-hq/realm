@@ -71,8 +71,8 @@ const HOSTS: Array<{ file: string; path: string; readerName: string }> = [
   // #616 PR-2a (ii-a): the `realm-mcp` program's opener (mcp-server's src/home.ts), its own run store
   // as the reader.
   { file: 'mcp-server home.ts', path: mcpServerSrcPath('home.ts'), readerName: 'runStore' },
-  // The library's derivation stays until unit (ii-b).
-  { file: 'server.ts', path: mcpServerSrcPath('server.ts'), readerName: 'effectiveRunStore' },
+  // #616 PR-2a (ii-b): the library builds no trace buffer any more (its caller passes all four), so
+  // its `server.ts` row went with the derivation.
 ];
 
 /** The D5 pin: the reader argument is EXACTLY `readerName` — whitespace-tolerant, a trailing comma

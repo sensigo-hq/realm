@@ -2,11 +2,11 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
-  JsonWorkflowStore,
   WorkflowError,
   answersRowOf,
   AUTHOR_RULES_LABEL,
   type DisclosureClass,
+  type WorkflowRegistrar,
 } from '@sensigo/realm';
 import {
   disclosureOfTool,
@@ -23,7 +23,11 @@ import {
   type EffectiveWay,
   type WorkflowProtocol,
 } from '../protocol/generator.js';
-import type { HandleStores } from './list-workflows.js';
+/** #616 PR-2a (ii-b): the protocol reads one workflow (`get`), so it takes the interface. */
+export interface HandleProtocolStores {
+  workflowStore: WorkflowRegistrar;
+  door?: McpDoor;
+}
 import type { McpDoor } from '../door.js';
 import { assertToolStores } from './assert-tool-stores.js';
 import { boundedRefusal } from './refusal-format.js';
@@ -87,10 +91,10 @@ export function valueLineOf(way: EffectiveWay): string | undefined {
  */
 export async function handleGetWorkflowProtocol(
   args: { workflow_id: string },
-  stores?: HandleStores & { door?: McpDoor },
+  stores: HandleProtocolStores,
 ): Promise<WorkflowProtocol> {
-  assertToolStores(stores, 'handleGetWorkflowProtocol');
-  const store = stores?.workflowStore ?? new JsonWorkflowStore();
+  assertToolStores(stores, 'handleGetWorkflowProtocol', ['workflowStore']);
+  const store = stores.workflowStore;
   const definition = await store.get(args.workflow_id);
   const way: EffectiveWay = answersRowOf(stores?.door?.answers()) ?? 'offered';
   const protocol = generateProtocol(definition, way);
@@ -133,7 +137,7 @@ export const WORKFLOW_PROTOCOL_TABLE = {
 /** Registers the get_workflow_protocol MCP tool on the server. */
 export function registerGetWorkflowProtocol(
   server: McpServer,
-  opts?: HandleStores & { door?: McpDoor } & WithDoorDisclosure,
+  opts: HandleProtocolStores & WithDoorDisclosure,
 ): void {
   const door = disclosureOfTool(opts);
   server.registerTool(
