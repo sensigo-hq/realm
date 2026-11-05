@@ -227,12 +227,19 @@ BEGIN SELECT RAISE(ABORT, 'realm.db: the store''s recorded horizon cannot move b
   // number, and a TEXT column stores a number as text, so a value of another type passes "never lower"
   // and then refuses every later write. The first row is judged in full; an update, on the columns
   // that may change (the others cannot change at all). NULL is left to NOT NULL and the guard above.
+  // A whole number stays at most 9007199254740991 (DELTAS row 26): Realm reads the row as JavaScript
+  // numbers, so a larger one makes the next +1 refused or the row unreadable. The horizon counter needs
+  // no cap on update: the forward guard already refuses it above the counter.
   `CREATE TRIGGER store_meta_insert_types BEFORE INSERT ON store_meta
 WHEN NOT EXISTS (SELECT 1 FROM store_meta)
   AND (typeof(new.page_size) NOT IN ('integer', 'null')
     OR typeof(new.commit_epoch) NOT IN ('integer', 'null')
     OR typeof(new.tomb_seq) NOT IN ('integer', 'null')
     OR typeof(new.tombstones_through_seq) NOT IN ('integer', 'null')
+    OR (typeof(new.page_size) = 'integer' AND new.page_size > 9007199254740991)
+    OR (typeof(new.commit_epoch) = 'integer' AND new.commit_epoch > 9007199254740991)
+    OR (typeof(new.tomb_seq) = 'integer' AND new.tomb_seq > 9007199254740991)
+    OR (typeof(new.tombstones_through_seq) = 'integer' AND new.tombstones_through_seq > 9007199254740991)
     OR (new.created_at IS NOT NULL AND (typeof(new.created_at) IS NOT 'text' OR new.created_at NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]Z'))
     OR (new.tombstones_since IS NOT NULL AND (typeof(new.tombstones_since) IS NOT 'text' OR new.tombstones_since NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]Z')))
 BEGIN SELECT RAISE(ABORT, 'realm.db: the store''s meta row holds whole numbers and timestamps of one shape'); END`,
@@ -240,6 +247,8 @@ BEGIN SELECT RAISE(ABORT, 'realm.db: the store''s meta row holds whole numbers a
 WHEN typeof(new.commit_epoch) NOT IN ('integer', 'null')
   OR typeof(new.tomb_seq) NOT IN ('integer', 'null')
   OR typeof(new.tombstones_through_seq) NOT IN ('integer', 'null')
+  OR (typeof(new.commit_epoch) = 'integer' AND new.commit_epoch > 9007199254740991)
+  OR (typeof(new.tomb_seq) = 'integer' AND new.tomb_seq > 9007199254740991)
   OR (new.tombstones_since IS NOT NULL AND (typeof(new.tombstones_since) IS NOT 'text' OR new.tombstones_since NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]Z'))
 BEGIN SELECT RAISE(ABORT, 'realm.db: the store''s meta row holds whole numbers and timestamps of one shape'); END`,
 

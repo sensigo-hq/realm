@@ -1366,6 +1366,51 @@ describe('#616 unit 6b — the tombstones cannot be rewritten', () => {
       compacted: { default: 'landed', realm: 'landed' },
     });
   });
+
+  it("purged_runs: a tombstone written under a clock stepped back before the horizon's time is kept by its seq, and compaction's selection by seq removes only what the horizon passed (DELTAS row 26)", () => {
+    const results: Record<string, unknown> = {};
+    for (const [setting, settings] of Object.entries(SETTINGS)) {
+      const db = freshWith(settings);
+      addFinished(db, 'run-1');
+      addFinished(db, 'run-2');
+      db.prepare(SET_CLOCK).run('2031-01-02T00:00:00.000Z');
+      db.prepare(DELETE_RUN).run('run-1');
+      db.exec(CLEAR_CLOCK);
+      // Compaction's order: the horizon passes run-1's tombstone on both counts.
+      db.exec(
+        "UPDATE store_meta SET tombstones_through_seq = 1, tombstones_since = '2031-01-02T00:00:00.000Z'",
+      );
+      // The clock steps back: run-2 is deleted later (seq 2) with a stamp before the horizon's time.
+      db.prepare(SET_CLOCK).run('2031-01-01T00:00:00.000Z');
+      db.prepare(DELETE_RUN).run('run-2');
+      db.exec(CLEAR_CLOCK);
+      const before = tombRows(db);
+      // A delete chosen by the clock: both tombstones are at or before the horizon's time, so only
+      // the guard's seq half stands between run-2's tombstone (seq 2, above the horizon) and the delete.
+      const byTime = outcome(
+        db,
+        'DELETE FROM purged_runs WHERE purged_at <= (SELECT tombstones_since FROM store_meta)',
+      );
+      const rowsUnchanged = tombRows(db) === before;
+      const bySeq = outcome(
+        db,
+        'DELETE FROM purged_runs WHERE seq <= (SELECT tombstones_through_seq FROM store_meta)',
+      );
+      const left = db.prepare('SELECT seq, id FROM purged_runs ORDER BY seq').all();
+      results[setting] = { byTime, rowsUnchanged, bySeq, left };
+    }
+    const want = {
+      byTime: MSG.tombstone,
+      rowsUnchanged: true,
+      bySeq: 'landed',
+      left: [{ seq: 2, id: 'run-2' }],
+    };
+    // (1) red when the delete guard's seq half is removed: the delete by time lands and both
+    //     tombstones are gone, run-2's above the horizon; also red when the guard refuses below the
+    //     horizon (compaction's delete by seq refused); (2) prints, per connection setting, both
+    //     outcomes, whether the rows stayed, and the tombstones left.
+    expect(results).toEqual({ default: want, realm: want });
+  });
 });
 
 describe("#616 unit 6b — the store's meta row", () => {
@@ -1529,6 +1574,103 @@ describe("#616 unit 6b — the store's meta row", () => {
     // (1) red when a guard refuses a forward move (the commit counter's +1 is every write's), or the
     //     purged id is forgotten once the horizon passes it; (2) prints each step per setting.
     expect(results).toEqual({ default: want, realm: want });
+  });
+
+  it("a whole number above 9007199254740991 is refused on update and in the first row, at that number it lands, and Realm's +1 from just below it lands, also with CHECKs off (DELTAS row 26)", () => {
+    // Literals in the SQL text: the largest 64-bit whole number has no exact JavaScript number.
+    const CAP = '9007199254740991';
+    const levels = { atTheCap: CAP, overTheCap: '9007199254740992', max64: '9223372036854775807' };
+    const want = (level: string) => (level === 'atTheCap' ? 'landed' : MSG.metaTypes);
+    // On update: the two counters that may move up (the horizon counter is held below the counter by
+    // the forward guard).
+    const updates: Record<string, string> = {};
+    for (const column of ['commit_epoch', 'tomb_seq']) {
+      for (const [level, n] of Object.entries(levels)) {
+        updates[`${column}:${level}`] = `UPDATE store_meta SET ${column} = ${n}`;
+      }
+    }
+    // The row read as SQL text, so a value past 2^53 that lands prints instead of throwing RangeError.
+    const rowText = (db: DatabaseLike) =>
+      String(
+        db
+          .prepare(
+            'SELECT json_array(one, page_size, commit_epoch, created_at, tomb_seq, tombstones_through_seq, tombstones_since) AS r FROM store_meta',
+          )
+          .get()?.['r'],
+      );
+    const onUpdate: Record<string, { outcome: string; rowUnchanged: boolean }> = {};
+    for (const [setting, settings] of Object.entries(SETTINGS)) {
+      for (const checksOff of [0, 1] as const) {
+        for (const [name, sql] of Object.entries(updates)) {
+          const db = moved(settings);
+          pragma(db, 'ignore_check_constraints', checksOff);
+          const before = rowText(db);
+          const res = outcome(db, sql);
+          onUpdate[`${name}/${setting}/checksOff=${checksOff}`] = {
+            outcome: res,
+            rowUnchanged: rowText(db) === before,
+          };
+        }
+      }
+    }
+    // The first row: the page size and the three counters, each alone at a level, the rest good.
+    const firstRow: Record<string, string> = {};
+    const plusOne: Record<string, unknown> = {};
+    for (const [setting, settings] of Object.entries(SETTINGS)) {
+      for (const checksOff of [0, 1] as const) {
+        const mode = `${setting}/checksOff=${checksOff}`;
+        for (const column of ['page_size', 'commit_epoch', 'tomb_seq', 'tombstones_through_seq']) {
+          for (const [level, n] of Object.entries(levels)) {
+            const value = (c: string, good: string) => (c === column ? n : good);
+            const db = freshWith(settings, 0, false);
+            pragma(db, 'ignore_check_constraints', checksOff);
+            firstRow[`${column}:${level}/${mode}`] = outcome(
+              db,
+              `INSERT INTO store_meta (one, page_size, commit_epoch, created_at, tomb_seq, tombstones_through_seq, tombstones_since) VALUES (1, ${value('page_size', '16384')}, ${value('commit_epoch', '0')}, '${CREATED}', ${value('tomb_seq', '0')}, ${value('tombstones_through_seq', '0')}, '${CREATED}')`,
+            );
+          }
+        }
+        // Realm's own +1 from just below: every write's commit bump, and a purge's tombstone bump.
+        const db = moved(settings);
+        pragma(db, 'ignore_check_constraints', checksOff);
+        addFinished(db, 'run-1');
+        db.exec(
+          'UPDATE store_meta SET commit_epoch = 9007199254740990, tomb_seq = 9007199254740990',
+        );
+        plusOne[mode] = {
+          commitEpoch: outcome(db, 'UPDATE store_meta SET commit_epoch = commit_epoch + 1'),
+          deleteRun: outcome(db, DELETE_RUN, 'run-1'),
+          row: db.prepare('SELECT commit_epoch, tomb_seq FROM store_meta').get(),
+          seq: db.prepare('SELECT seq FROM purged_runs WHERE id = ?').get('run-1')?.['seq'],
+        };
+      }
+    }
+    // (1) red when one column's cap clause is removed from the update or the first-row guard (that
+    //     column's value past the cap lands: Realm's next +1 is refused, or from 2^53 the row cannot
+    //     be read as a number), or when the cap refuses the cap itself or Realm's +1 up to it;
+    //     (2) prints each case per setting and CHECK mode, whether the row stayed, and the counters.
+    expect({ onUpdate, firstRow, plusOne }).toEqual({
+      onUpdate: Object.fromEntries(
+        Object.keys(onUpdate).map((k) => {
+          const level = k.split('/')[0]?.split(':')[1] ?? '';
+          return [k, { outcome: want(level), rowUnchanged: level !== 'atTheCap' }];
+        }),
+      ),
+      firstRow: Object.fromEntries(
+        Object.keys(firstRow).map((k) => [k, want(k.split('/')[0]?.split(':')[1] ?? '')]),
+      ),
+      plusOne: Object.fromEntries(
+        Object.keys(plusOne).map((k) => [
+          k,
+          {
+            commitEpoch: 'landed',
+            deleteRun: 'landed',
+            row: { commit_epoch: 9007199254740991, tomb_seq: 9007199254740991 },
+            seq: 9007199254740991,
+          },
+        ]),
+      ),
+    });
   });
 });
 
