@@ -1,15 +1,18 @@
 // openai-reasoning-provider.ts — OpenAI reasoning model provider (o1-series) for realm agent.
 // Extends LlmProvider (not ToolCapableLlmProvider) — o1-series models do not support the tools parameter.
-import type { UsageRecord } from '@sensigo/realm';
+import type { RequestEndpoint, UsageRecord } from '@sensigo/realm';
 import {
   LlmProvider,
   endpointOf,
   responseModel,
+  type PromptCacheRequest,
   type ProviderCapabilities,
   type CallStepWithMetaResult,
 } from './llm-provider.js';
 // issue #600 PR 2 (B4): the OpenAI SDK's default address, OpenAI's one copy.
 import { OPENAI_DEFAULT_BASE_URL } from './openai-provider.js';
+// caching 3-B (D2): the one cache-key rule, shared with the Chat Completions provider.
+import { openAiCachePlan, openAiSplitFacts, withCacheKey } from './openai-provider.js';
 import {
   buildSystemPrompt,
   extractJsonObject,
@@ -21,6 +24,8 @@ import {
   type WireCounters,
   attachBilledUsage,
   passedSnippet,
+  sendUnderGatewayRule,
+  type CacheFieldMemory,
 } from './agent-utils.js';
 
 /**
@@ -62,8 +67,9 @@ function toUsageRecord(
 
 /**
  * Issue #600 PR 2 (B3) — what realm asked for on an o1 request, and where it sent it: the
- * response's `model`, `provider_rules` (realm sends no cache field), the endpoint, and that OpenAI
- * reports no lifetime split. Never `provider`: `realm agent` stamps that.
+ * response's `model`, `provider_rules` (realm asks for nothing; caching 3-B: a cache key, when sent,
+ * is recorded as `cache_key_sent`), the endpoint, and that OpenAI reports no lifetime split. Never
+ * `provider`: `realm agent` stamps that.
  */
 function reasoningRequestFacts(response: unknown, client: unknown): Partial<UsageRecord> {
   const model = responseModel(response);
@@ -116,10 +122,21 @@ function resolveMaxCompletionTokens(model: string): number {
  */
 export class OpenAIReasoningProvider extends LlmProvider {
   private readonly model: string;
+  /** Caching 3-B (D1): resolved once by `resolveProvider` (the client reads `OPENAI_BASE_URL`). */
+  private readonly endpoint: RequestEndpoint;
+  /** Caching 3-B (D3): the runner's setting, which decides whether the cache key is sent. */
+  private readonly promptCache: PromptCacheRequest | undefined;
+  /** Caching 3-B (E3): this drive's memory of a gateway's refusal of the cache key. */
+  private readonly cacheFields: CacheFieldMemory = {};
 
-  constructor(model: string) {
+  constructor(
+    model: string,
+    opts?: { endpoint?: RequestEndpoint; promptCache?: PromptCacheRequest },
+  ) {
     super();
     this.model = model;
+    this.endpoint = opts?.endpoint ?? 'default';
+    this.promptCache = opts?.promptCache;
   }
 
   /**
@@ -129,7 +146,13 @@ export class OpenAIReasoningProvider extends LlmProvider {
    * work here: the o1 family's structured-output support is deliberately out of scope (#351).
    */
   capabilities(): ProviderCapabilities {
-    return { jsonMode: false, providerId: 'openai-reasoning' };
+    // caching 3-B (D1, D3): OpenAI caches by its own rules; the endpoint decides the key's words.
+    return {
+      jsonMode: false,
+      providerId: 'openai-reasoning',
+      promptCache: 'provider',
+      endpoint: this.endpoint,
+    };
   }
 
   /**
@@ -141,7 +164,7 @@ export class OpenAIReasoningProvider extends LlmProvider {
     prompt: string,
     inputSchema?: Record<string, unknown>,
     agentProfileInstructions?: string,
-    callOpts?: { llmClock?: LlmClock },
+    callOpts?: { llmClock?: LlmClock; cachePrefixChars?: number },
     // issue #600 PR 1a (D9): owned by the entry point so one `catch` there sees everything billed.
     billed?: UsageRecord[],
   ): Promise<{ output: Record<string, unknown>; usage?: UsageRecord[] }> {
@@ -184,6 +207,13 @@ export class OpenAIReasoningProvider extends LlmProvider {
     // Fold system prompt into the user message — safe for all o1-series API revisions.
     const systemPrompt = buildSystemPrompt(inputSchema, agentProfileInstructions);
     const userContent = `${systemPrompt}\n\n${prompt}`;
+    // caching 3-B (D2, site 5): the cache key, on this request and on its JSON retry.
+    const plan = openAiCachePlan(
+      prompt,
+      callOpts?.cachePrefixChars,
+      this.endpoint,
+      this.promptCache,
+    );
 
     type Message = { role: 'user' | 'assistant'; content: string };
     const messages: Message[] = [{ role: 'user', content: userContent }];
@@ -192,18 +222,26 @@ export class OpenAIReasoningProvider extends LlmProvider {
     const requests: UsageRecord[] = billed ?? [];
     const makeRequest = async (msgs: Message[]): Promise<string> => {
       const requestStart = new Date().toISOString();
-      const response = await bounded({
+      const base = {
         model: this.model,
         max_completion_tokens: resolveMaxCompletionTokens(this.model),
         messages: msgs,
+      };
+      // caching 3-B (E3): under the gateway rule — a custom endpoint that refuses the key gets the
+      // request once more without it.
+      let body: Record<string, unknown> = base;
+      const response = await sendUnderGatewayRule(this.cacheFields, this.endpoint, (withCache) => {
+        body = withCache ? withCacheKey(base, plan) : base;
+        return bounded(body);
       });
       requests.push(
-        toUsageRecord(
-          requests.length,
-          requestStart,
-          readOpenAiReasoningUsage(response),
-          reasoningRequestFacts(response, client),
-        ),
+        toUsageRecord(requests.length, requestStart, readOpenAiReasoningUsage(response), {
+          ...reasoningRequestFacts(response, client),
+          ...(plan !== undefined ? openAiSplitFacts(body, plan, systemPrompt) : {}),
+          ...(this.cacheFields.rejected !== undefined
+            ? { cache_controls_rejected: this.cacheFields.rejected }
+            : {}),
+        }),
       );
       return (response.choices[0]?.message?.content as string | undefined) ?? '';
     };
@@ -265,7 +303,7 @@ export class OpenAIReasoningProvider extends LlmProvider {
     prompt: string,
     inputSchema?: Record<string, unknown>,
     agentProfileInstructions?: string,
-    opts?: { structuredOutputStrict?: boolean; llmClock?: LlmClock },
+    opts?: { structuredOutputStrict?: boolean; llmClock?: LlmClock; cachePrefixChars?: number },
   ): Promise<CallStepWithMetaResult> {
     const billed: UsageRecord[] = [];
     try {
@@ -273,7 +311,12 @@ export class OpenAIReasoningProvider extends LlmProvider {
         prompt,
         inputSchema,
         agentProfileInstructions,
-        { ...(opts?.llmClock !== undefined ? { llmClock: opts.llmClock } : {}) },
+        {
+          ...(opts?.llmClock !== undefined ? { llmClock: opts.llmClock } : {}),
+          ...(opts?.cachePrefixChars !== undefined
+            ? { cachePrefixChars: opts.cachePrefixChars }
+            : {}),
+        },
         billed,
       );
     } catch (err) {

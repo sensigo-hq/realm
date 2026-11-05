@@ -32,8 +32,9 @@ type DisclosureRoute =
       // so its probe cannot be satisfied by a clause another field produced. Issue #600 PR 2 adds
       // `mismatch`: a request that asked for 1 hour, part of whose write was kept for 5 minutes,
       // carrying every request fact — the only shape on which the lifetime split has text of its
-      // own.
-      probe: (out: string, partial: string, mismatch: string) => void;
+      // own. Caching 3-B adds `split`: an OpenAI drive to a custom endpoint whose requests carry the
+      // split's facts — the cache key, then the endpoint's refusal of it.
+      probe: (out: string, partial: string, mismatch: string, split: string) => void;
     }
   | { surface: 'waived'; reason: string };
 
@@ -239,6 +240,64 @@ const mismatchStore = {
   get: async () => snap(mismatchRun),
   list: async () => listing([mismatchRun]),
 } as never;
+// caching 3-B (A6) — the SPLIT shape: an OpenAI drive to a custom endpoint whose setting was stated.
+// Its first request carried the cache key; a later one was answered 400 naming `prompt_cache_key`,
+// was sent again without it, and that worked, so the refusal is on that request's record. Each
+// carries the split's facts (fake digests).
+const SPLIT_FACTS = {
+  provider: 'openai',
+  endpoint: 'custom',
+  cache_requested: 'provider_rules',
+  cache_requested_source: 'stated',
+  cache_requested_by: 'realm agent',
+  prompt_tokens: 900,
+  output_tokens: 5,
+  prefix_sha256: 'a'.repeat(64),
+  prefix_chars: 48,
+  prefix_parts: { system: 'b'.repeat(64), prompt: 'a'.repeat(64) },
+  request_strict_sent: false,
+};
+const splitRun = {
+  ...(run as unknown as RunRecord),
+  id: 'run_diag4',
+  evidence: [
+    {
+      ...(run as unknown as RunRecord).evidence[0]!,
+      diagnostics: {
+        ...DIAG,
+        cache: {
+          state: 'never_engaged',
+          basis: 'provider_reported',
+          requests: [
+            {
+              request_index: 0,
+              request_start: '2026-01-01T00:00:00.000Z',
+              ...SPLIT_FACTS,
+              cache_marked: ['key'],
+              cache_key_sent: true,
+            },
+            {
+              request_index: 1,
+              request_start: '2026-01-01T00:00:01.000Z',
+              ...SPLIT_FACTS,
+              cache_controls_rejected: {
+                status: 400,
+                dropped: ['cache_fields'],
+                proven: 'cache_fields',
+                fields: ['prompt_cache_key'],
+              },
+            },
+          ],
+        },
+      },
+    },
+  ],
+} as unknown as RunRecord;
+const splitStore = {
+  get: async () => snap(splitRun),
+  list: async () => listing([splitRun]),
+} as never;
+
 const workflowStore = {
   get: async () => {
     throw new Error('not registered');
@@ -275,10 +334,11 @@ describe('#600 PR 1a (D7) — every StepDiagnostics field reaches an inspect rea
       verbose: true,
       priceSource: ECHO_PRICES,
     });
+    const split = await inspectRun('run_diag4', splitStore, workflowStore, { verbose: true });
     for (const [field, route] of Object.entries(STEP_DIAGNOSTICS_DISCLOSURE) as Array<
       [string, DisclosureRoute]
     >) {
-      if (route.surface === 'rendered') route.probe(out, partial, mismatch);
+      if (route.surface === 'rendered') route.probe(out, partial, mismatch, split);
       else
         expect(
           route.reason.trim().length,
@@ -457,6 +517,55 @@ const USAGE_DISCLOSURE = {
     reason:
       "No reader renders it: it exists so the driver can tell two requests apart when it decides whether a request is already on the step's record.",
   },
+  // caching 3-B (A6): the split's facts. Four are rendered on the step's cache line (read on the
+  // split shape; the conforming shape, which carries none, shows none of their words); three are
+  // waived, each with its reason.
+  prefix_chars: {
+    surface: 'rendered',
+    probe: (out, _partial, _mismatch, split) => {
+      expect(split).toContain('; cached head: 48 characters (marked: key);');
+      expect(out).not.toContain('cached head');
+    },
+  },
+  cache_marked: {
+    surface: 'rendered',
+    // What carried the key; the request after the refusal carried nothing, so it adds nothing.
+    probe: (_out, _partial, _mismatch, split) => {
+      expect(split).toContain('cached head: 48 characters (marked: key);');
+      expect(split).not.toContain('nothing marked');
+    },
+  },
+  cache_key_sent: {
+    surface: 'rendered',
+    probe: (out, _partial, _mismatch, split) => {
+      expect(split).toContain(
+        "asked for nothing but a cache key, a hint (the provider's own caching applies)",
+      );
+      expect(out).not.toContain('cache key');
+    },
+  },
+  cache_controls_rejected: {
+    surface: 'rendered',
+    probe: (out, _partial, _mismatch, split) => {
+      expect(split).toContain(
+        '; the endpoint refused the cache fields (400); sent without them for the rest of the drive — to stop sending them: --prompt-cache off',
+      );
+      expect(out).not.toContain('refused the cache fields');
+    },
+  },
+  prefix_sha256: {
+    surface: 'waived',
+    reason: "a digest for 3-M's comparison and the export; never operator words",
+  },
+  prefix_parts: {
+    surface: 'waived',
+    reason: "a digest for 3-M's comparison and the export; never operator words",
+  },
+  request_strict_sent: {
+    surface: 'waived',
+    reason:
+      "inspect's strict words come from the #311 drop facts; this fact feeds 3-M's comparison and the export",
+  },
 } satisfies Record<keyof UsageRecord, DisclosureRoute>;
 
 describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader, or says why not', () => {
@@ -467,10 +576,11 @@ describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader,
       verbose: true,
       priceSource: ECHO_PRICES,
     });
+    const split = await inspectRun('run_diag4', splitStore, workflowStore, { verbose: true });
     for (const [field, route] of Object.entries(USAGE_DISCLOSURE) as Array<
       [string, DisclosureRoute]
     >) {
-      if (route.surface === 'rendered') route.probe(out, partial, mismatch);
+      if (route.surface === 'rendered') route.probe(out, partial, mismatch, split);
       else
         expect(
           route.reason.trim().length,
@@ -479,12 +589,15 @@ describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader,
     }
   });
 
-  it('the registry covers every UsageRecord field, and the waiver set is exactly the four named above', () => {
+  it('the registry covers every UsageRecord field, and the waiver set is exactly the seven named above', () => {
     expect(Object.keys(USAGE_DISCLOSURE).sort()).toEqual([
       'cache_auto',
+      'cache_controls_rejected',
       'cache_creation',
       'cache_creation_input_tokens',
+      'cache_key_sent',
       'cache_lifetime_s',
+      'cache_marked',
       'cache_read_input_tokens',
       'cache_requested',
       'cache_requested_by',
@@ -495,11 +608,15 @@ describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader,
       'endpoint',
       'model',
       'output_tokens',
+      'prefix_chars',
+      'prefix_parts',
+      'prefix_sha256',
       'prompt_tokens',
       'provider',
       'request_id',
       'request_index',
       'request_start',
+      'request_strict_sent',
       'uncached_input_tokens',
     ]);
     const waived = Object.entries(USAGE_DISCLOSURE)
@@ -515,7 +632,17 @@ describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader,
     // the change that would render it; caching PR P renders `provider` and `endpoint`, and leaves
     // three: `cache_split_offered` (a precondition only) and the two per-request ordinals. #715 (R)
     // makes the fourth decision here: `request_id`, the request's identity, which no reader renders
-    // (its row above gives the reason).
-    expect(waived).toEqual(['cache_split_offered', 'request_id', 'request_index', 'request_start']);
+    // (its row above gives the reason). Caching 3-B makes three more: `prefix_sha256` and
+    // `prefix_parts` (digests, never operator words) and `request_strict_sent` (inspect's strict
+    // words come from the #311 drop facts), each for 3-M's comparison and the export.
+    expect(waived).toEqual([
+      'cache_split_offered',
+      'prefix_parts',
+      'prefix_sha256',
+      'request_id',
+      'request_index',
+      'request_start',
+      'request_strict_sent',
+    ]);
   });
 });

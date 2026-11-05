@@ -20,6 +20,8 @@ import type {
   StepDiagnostics,
   StructuredOutputMeta,
   UsageRecord,
+  PrefixParts,
+  CacheControlsRejected,
   WorkflowContextSnapshot,
 } from '../types/run-record.js';
 import type { DisclosureAudience, DisclosureSet } from './redaction.js';
@@ -76,6 +78,23 @@ export const GATE_INFO_TABLE = {
 
 // ── The record views (inspect, export) ────────────────────────────────────────────────────────
 
+/** Caching 3-B (A6): a SHA-256 per part of a request's cached start, as sent — Realm's digests. */
+const PREFIX_PARTS_TABLE = {
+  tools: 'fact',
+  system: 'fact',
+  prompt: 'fact',
+  format: 'fact',
+} as const satisfies Row<PrefixParts>;
+
+/** Caching 3-B (A6, E3): an endpoint's refusal of Realm's cache fields — Realm's closed words; what
+ *  the provider said stays in the verbatim error facts, never here. */
+const CACHE_CONTROLS_REJECTED_TABLE = {
+  status: 'fact',
+  dropped: 'fact',
+  proven: 'fact',
+  fields: 'fact',
+} as const satisfies Row<CacheControlsRejected>;
+
 /** A provider's per-request usage. `model` is a value (the model a provider answered with can be
  *  anything a configuration says); realm agent's own prints, where the requested model is known,
  *  show it (01 #16). */
@@ -102,6 +121,15 @@ export const USAGE_RECORD_TABLE = {
   cache_split_offered: 'fact',
   // #715 (R): an id realm mints per request (`mintRequestIds`), never a provider's.
   request_id: 'fact',
+  // Caching 3-B (A6): each written at the request's mint by the adapter, normalised at the write
+  // (`boundRequestFacts`): digests of the head and parts as sent, a count, closed words, a boolean.
+  prefix_sha256: 'fact',
+  prefix_chars: 'fact',
+  prefix_parts: { nested: PREFIX_PARTS_TABLE },
+  cache_marked: 'fact',
+  request_strict_sent: 'fact',
+  cache_controls_rejected: { nested: CACHE_CONTROLS_REJECTED_TABLE },
+  cache_key_sent: 'fact',
 } as const satisfies Row<UsageRecord>;
 
 const STEP_CACHE_TABLE = {
@@ -439,7 +467,22 @@ export const USAGE_RECORD_FACTS = {
   provider: 'enum',
   endpoint: 'enum',
   request_id: 'id',
+  prefix_sha256: 'hash',
+  cache_marked: 'enum',
 } as const satisfies FactProducers<typeof USAGE_RECORD_TABLE, UsageRecord>;
+
+export const PREFIX_PARTS_FACTS = {
+  tools: 'hash',
+  system: 'hash',
+  prompt: 'hash',
+  format: 'hash',
+} as const satisfies FactProducers<typeof PREFIX_PARTS_TABLE, PrefixParts>;
+
+export const CACHE_CONTROLS_REJECTED_FACTS = {
+  dropped: 'enum',
+  proven: 'enum',
+  fields: 'enum',
+} as const satisfies FactProducers<typeof CACHE_CONTROLS_REJECTED_TABLE, CacheControlsRejected>;
 
 export const STEP_CACHE_FACTS = {
   state: 'enum',

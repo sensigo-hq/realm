@@ -48,7 +48,8 @@ export function cacheableStepCounts(definition: Pick<WorkflowDefinition, 'steps'
 }
 
 /**
- * The setting a drive asks Anthropic for, where it came from, which runner chose it and — when the
+ * The setting a drive asks Anthropic for (caching 3-B: and by which an OpenAI drive sends its cache
+ * key, or not), where it came from, which runner chose it and — when the
  * setting is `auto` — on what basis the adapter chooses (`UsageRecord.cache_auto`). Issue #898: after
  * a settle, `realm agent` adds `auto.prices` from its outcome for the start line.
  */
@@ -237,9 +238,11 @@ function readableLifetime(asked: unknown): asked is { lifetime_s: number } {
  * provider to cache, and why (the lifetime unit: the duration in words, and what `auto` read). The
  * first form that matches wins:
  * - F1, a provider module that declares `promptCache`: its own setting, which the flag does not reach
- *   (`'off'`, a readable `{ lifetime_s }`, or a value Realm cannot read);
- * - F2, a provider without the capability: Realm asks it for no caching (and a `realm listen` child
- *   given the flag says that listen's flag applies only to Anthropic);
+ *   (`'off'`, `'provider'` — it caches by its own rules —, a readable `{ lifetime_s }`, or a value
+ *   Realm cannot read);
+ * - caching 3-B (D4), a provider that caches by its own rules (`'provider'`: the OpenAI providers):
+ *   whether Realm sends it the cache key, by the endpoint and the setting;
+ * - F2, a provider without the capability: Realm asks it for no caching;
  * - F3, `off`;
  * - F4b, on, but the workflow has no agent step;
  * - F5, on, with the steps it applies to.
@@ -247,7 +250,7 @@ function readableLifetime(asked: unknown): asked is { lifetime_s: number } {
  * F3 and F5 leave out their parenthetical.
  */
 export function promptCacheStartLine(input: {
-  caps: Pick<ProviderCapabilities, 'promptCache' | 'providerId' | 'jsonMode'>;
+  caps: Pick<ProviderCapabilities, 'promptCache' | 'providerId' | 'jsonMode' | 'endpoint'>;
   promptCache: ResolvedPromptCache | undefined;
   moduleProviderId: string | undefined;
   definition: Pick<WorkflowDefinition, 'steps'>;
@@ -258,18 +261,20 @@ export function promptCacheStartLine(input: {
     const tail = '; --prompt-cache does not apply to provider modules.';
     if (asked === 'off')
       return `Caching: your provider module asks for no caching by its own setting${tail}`;
+    // caching 3-B (D3): a module may declare that its service caches by its own rules.
+    if (asked === 'provider') return 'Caching: this provider caches by its own rules.';
     if (readableLifetime(asked)) {
       return `Caching: your provider module asks for ${lifetimeText(asked.lifetime_s)} by its own setting${tail}`;
     }
     return `Caching: your provider module declares a caching setting Realm cannot read${tail}`;
   }
+  // caching 3-B (D4, B10): the OpenAI providers — OpenAI caches by its own rules, and Realm sends a
+  // cache key (a hint) on OpenAI's own endpoint under every setting but `off`, and on a custom
+  // endpoint only for a setting the operator stated. A `realm listen` child says the same words.
+  if (asked === 'provider') return providerCachingLine(caps, promptCache);
   if (asked === undefined) {
-    const notice =
-      promptCache?.by === 'realm listen' && promptCache.source === 'stated'
-        ? // eslint-disable-next-line no-restricted-syntax -- prose naming the setting, not a command to copy (#729 PR-3, L-2).
-          ` realm listen --prompt-cache ${promptCache.value} applies only to Anthropic.`
-        : '';
-    return `Caching: Realm asks ${providerName(caps, 'this provider')} for no caching; any caching it does is its own.${notice}`;
+    // F2: a provider without the capability (a provider module or a host's own provider).
+    return `Caching: Realm asks ${providerName(caps, 'this provider')} for no caching; any caching it does is its own.`;
   }
   const source =
     promptCache === undefined
@@ -284,20 +289,49 @@ export function promptCacheStartLine(input: {
     counts.withTools > 0
       ? ' On a step that calls tools, it is also asked to cache the conversation so far, at each turn.'
       : '';
-  return `Caching: Anthropic is asked to cache each step's fixed instructions for ${lifetimeText(asked.lifetime_s)}${source}.${tools}`;
+  return `Caching: Anthropic is asked to cache each step's fixed instructions and the stable start of its prompt for ${lifetimeText(asked.lifetime_s)}${source}.${tools}`;
 }
 
 /**
- * The name `realm agent` gives a provider that Realm asks for no caching: `OpenAI` for the o1
- * provider and for the OpenAI provider on its native endpoint, `this endpoint` for the OpenAI
- * provider on a `--base-url` endpoint, and `fallback` otherwise. The start line (F2) and the
- * refusal of a setting the provider cannot apply both use it.
+ * The name the start line gives a provider: for the OpenAI providers, `OpenAI` on OpenAI's own
+ * endpoint and `this endpoint` on a custom one — read from the endpoint resolved once from the SDK
+ * client (caching 3-B, D1), so `OPENAI_BASE_URL` counts as `--base-url` does; `fallback` otherwise.
  */
 export function providerName(
-  caps: Pick<ProviderCapabilities, 'providerId' | 'jsonMode'>,
+  caps: Pick<ProviderCapabilities, 'providerId' | 'endpoint'>,
   fallback: string,
 ): string {
-  if (caps.providerId === 'openai-reasoning') return 'OpenAI';
-  if (caps.providerId === 'openai') return caps.jsonMode ? 'OpenAI' : 'this endpoint';
+  if (caps.providerId === 'openai' || caps.providerId === 'openai-reasoning') {
+    return caps.endpoint === 'custom' ? 'this endpoint' : 'OpenAI';
+  }
   return fallback;
+}
+
+/**
+ * Caching 3-B (D4, B10) — the start line of a provider that caches by its own rules (`'provider'`):
+ * - the OpenAI providers on OpenAI's own endpoint: the key is sent under every setting but `off`;
+ *   a stated `short` or `long` adds that it sets no lifetime there;
+ * - on a custom endpoint: the key only for a stated setting other than `off`;
+ * - `off`: no key, the service's own caching, if any, applies.
+ */
+function providerCachingLine(
+  caps: Pick<ProviderCapabilities, 'providerId' | 'endpoint'>,
+  promptCache: ResolvedPromptCache | undefined,
+): string {
+  const custom = caps.endpoint === 'custom';
+  const name = providerName(caps, 'this provider');
+  const value = promptCache?.value;
+  const stated = promptCache?.source === 'stated';
+  if (value === 'off') {
+    return custom
+      ? 'Caching: off; Realm sends this endpoint no cache key. Its own caching, if any, applies.'
+      : "Caching: off; Realm sends OpenAI no cache key. OpenAI's own caching, if any, applies.";
+  }
+  if (custom && !stated) {
+    return 'Caching: this endpoint caches by its own rules; Realm sends it no cache key (state --prompt-cache to send one).';
+  }
+  const line = `Caching: ${name} caches by its own rules; Realm sends a cache key that helps repeated steps reach the same cache (${name} treats it as a hint). Realm cannot set ${name}'s lifetime or turn its caching off.`;
+  return stated && (value === 'short' || value === 'long')
+    ? `${line} --prompt-cache ${value} sets no lifetime on ${name}.`
+    : line;
 }

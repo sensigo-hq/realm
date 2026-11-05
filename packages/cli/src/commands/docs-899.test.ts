@@ -44,7 +44,8 @@ describe('#899 — the docs sentences', () => {
   it('§3.2 realm-agent.md: the --prompt-cache row, the Caching line and the refusal row (M10, M11)', () => {
     claim(
       REF,
-      'Refused for a provider Realm asks for no caching, and for a workflow with no agent step. Added after version 0.47.0.',
+      // caching 3-B (row 11): the one refusal left is with --provider-module (G18).
+      'Refused with `--provider-module`, and for a workflow with no agent step. Added after version 0.47.0.',
     );
     claim(
       REF,
@@ -73,7 +74,7 @@ describe('#899 — the docs sentences', () => {
     );
     claim(
       GUIDE,
-      "On a step without tools, the step's prompt is not cached. A step that calls tools also asks Anthropic, at each turn, to cache the conversation so far, so a turn can read what the turn before wrote once that part reaches the model's minimum. Its last request, made only when it has used up its tool calls, is sent with no cache marker.",
+      "A step that calls tools also asks Anthropic, at each turn, to cache the conversation so far, so a turn can read what the turn before wrote once that part reaches the model's minimum. Its last request, made only when it has used up its tool calls, is sent with no cache marker.",
     );
   });
 
@@ -84,7 +85,7 @@ describe('#899 — the docs sentences', () => {
     );
     claim(
       'docs/reference/run-record-and-export.md',
-      'A request `realm agent` sent also records what Realm asked for (except, on Anthropic, the last request of a step that used up its tool calls: it is sent with no cache marker and records no ask), what answered',
+      "A request `realm agent` sent also records what Realm asked for (except, on Anthropic, the last request of a step that used up its tool calls: it is sent with no cache marker and records no ask; so does a request sent without Realm's cache fields after the endpoint refused them), what answered",
     );
   });
 

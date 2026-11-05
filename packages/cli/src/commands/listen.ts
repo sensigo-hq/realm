@@ -33,13 +33,19 @@ import { Command, InvalidArgumentError } from 'commander';
 // issue #409: the SAME parser `realm agent --llm-timeout` uses — never a second copy, so the two
 // flags cannot drift on what they accept. The listen→agent edge is one-way and cycle-free.
 import { parseLlmTimeout, parseProvider } from './agent.js';
-import { hasText, listenModelRefusal, type ProviderName } from '../agent/providers/llm-provider.js';
+import {
+  hasText,
+  listenModelRefusal,
+  resolveOpenAiEndpoint,
+  type ProviderName,
+} from '../agent/providers/llm-provider.js';
 // issue #600 PR 2: the SAME parser `realm agent --prompt-cache` uses.
 import { autoFallbackWindowText, autoLongText, parsePromptCache } from '../agent/prompt-cache.js';
 import {
   AUTO_GAPS_KEPT,
   CACHE_GAP_MAX_S,
   type PromptCacheSetting,
+  type RequestEndpoint,
   loadWorkflowFromFile,
   validateRunParams,
   WorkflowError,
@@ -1587,15 +1593,21 @@ export function makeAgentSpawner(
  * Issue #600 (D2; the lifetime unit) — what listen's startup line says each provider is asked to
  * cache. A child that uses Anthropic asks for the stated setting, or listen's default, `auto` (off,
  * 5 minutes or 1 hour per workflow, by the gaps between its recent triggers and the prices in the
- * runner's price file — #898); Realm asks OpenAI for
- * no caching. With `--provider`, only that provider's agents are started, so the other is named
- * only as `not used` (OpenAI) or not at all (Anthropic).
+ * runner's price file — #898); caching 3-B: a child that uses OpenAI sends a cache key (a hint;
+ * OpenAI caches by its own rules) as {@link openaiCachingWords} says, by the endpoint it will resolve
+ * and the setting it is given. With `--provider`, only that provider's agents are started, so the
+ * other is named only as `not used` (Anthropic) or not at all (OpenAI).
  */
 export function listenCachingFacts(
   provider: ProviderName | undefined,
   promptCache: PromptCacheSetting | undefined,
+  // Caching 3-B (MA 1's wording list): the endpoint each OpenAI agent will resolve (realm listen
+  // passes no --base-url, so only OPENAI_BASE_URL can make it custom).
+  openaiEndpoint: RequestEndpoint,
 ): Record<string, string> {
-  if (provider === 'openai') return { openai: 'asked for no caching', anthropic: 'not used' };
+  if (provider === 'openai') {
+    return { openai: openaiCachingWords(promptCache, openaiEndpoint), anthropic: 'not used' };
+  }
   const words: Record<PromptCacheSetting, string> = {
     auto: 'auto: off, 5 minutes or 1 hour for each workflow, by the gaps between its recent triggers and the prices in runner.cache.economics',
     short: '5 minutes',
@@ -1606,7 +1618,30 @@ export function listenCachingFacts(
     anthropic: words[promptCache ?? 'auto'],
     set_by: promptCache === undefined ? "realm listen's default" : `--prompt-cache ${promptCache}`,
   };
-  return provider === 'anthropic' ? anthropic : { ...anthropic, openai: 'asked for no caching' };
+  return provider === 'anthropic'
+    ? anthropic
+    : { ...anthropic, openai: openaiCachingWords(promptCache, openaiEndpoint) };
+}
+
+/**
+ * Caching 3-B (D2; MA 1's wording list, 2026-11-05) — what an OpenAI agent `realm listen` starts sends,
+ * by the setting it is given (none: the runner's default) and the endpoint it will resolve: on
+ * OpenAI's own endpoint the key goes out under every setting but `off`; on a custom endpoint only
+ * for a stated setting other than `off`.
+ */
+function openaiCachingWords(
+  promptCache: PromptCacheSetting | undefined,
+  endpoint: RequestEndpoint,
+): string {
+  if (endpoint === 'custom') {
+    if (promptCache === 'off') return 'off: no cache key to the custom endpoint';
+    return promptCache === undefined
+      ? 'no cache key to the custom endpoint (state --prompt-cache to send one)'
+      : 'sends a cache key to the custom endpoint';
+  }
+  return promptCache === 'off'
+    ? "off: no cache key on OpenAI's own endpoint"
+    : "sends a cache key on OpenAI's own endpoint";
 }
 
 function resolveWorkflowFile(input: string): string {
@@ -1723,7 +1758,7 @@ export const listenCommand = new Command('listen')
   .option(
     '--prompt-cache <setting>',
     // eslint-disable-next-line no-restricted-syntax -- help prose naming the setting, not a command to copy (#729 PR-3, L-2); #898: its numbers come from the provider's constants.
-    `Passed to each realm agent it starts: auto, short, long or off. auto (the default): each agent asks Anthropic for off, 5 minutes or 1 hour, by the gaps between the recent triggers of its workflow, priced from runner.cache.economics (with no usable prices: ${autoLongText()} when a recent gap is under ${autoFallbackWindowText()}, else off). short: 5 minutes. long: 1 hour. off: nothing. Other providers are asked for no caching.`,
+    `Passed to each realm agent it starts: auto, short, long or off. auto (the default): each agent asks Anthropic for off, 5 minutes or 1 hour, by the gaps between the recent triggers of its workflow, priced from runner.cache.economics (with no usable prices: ${autoLongText()} when a recent gap is under ${autoFallbackWindowText()}, else off). short: 5 minutes. long: 1 hour. off: nothing. With \`--provider openai\`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but \`off\`, and to another endpoint only for a setting you state other than \`off\`. Other providers' own caching applies.`,
     parsePromptCache,
   )
   .option(
@@ -1773,16 +1808,8 @@ export const listenCommand = new Command('listen')
         process.exit(1);
         return;
       }
-      // issue #600 PR 2 (C3c): with `--provider openai` every agent listen starts uses OpenAI, so a
-      // caching setting can never apply. Refused here, before anything listens, rather than
-      // disclosed by every child it would start.
-      if (opts.provider === 'openai' && opts.promptCache !== undefined) {
-        console.error(
-          'Error: --prompt-cache sets caching only for Anthropic; with --provider openai every agent realm listen starts uses OpenAI, which Realm asks for no caching, so the flag would change nothing. Remove --prompt-cache, or use --provider anthropic.',
-        );
-        process.exit(1);
-        return;
-      }
+      // caching 3-B (row 5): `--prompt-cache` with `--provider openai` is no longer refused: the
+      // setting decides whether each agent sends OpenAI its cache key.
 
       const levels = ['debug', 'info', 'warn', 'error'];
       const threshold = levels.indexOf(opts['logLevel'] ?? 'info');
@@ -1902,7 +1929,13 @@ export const listenCommand = new Command('listen')
       }
 
       // issue #600 PR 2 (D2): what each provider's agents are asked to cache.
-      logger.info('listen: caching', listenCachingFacts(opts.provider, opts.promptCache));
+      // Caching 3-B: the endpoint the OpenAI agents will resolve (nothing is sent to read it).
+      const openaiEndpoint: RequestEndpoint =
+        opts.provider === 'anthropic' ? 'default' : await resolveOpenAiEndpoint();
+      logger.info(
+        'listen: caching',
+        listenCachingFacts(opts.provider, opts.promptCache, openaiEndpoint),
+      );
       const addr = handle.server.address() as { port: number } | null;
       logger.info(
         // eslint-disable-next-line no-restricted-syntax -- prose naming the listener and its address, not a command to copy (#729 PR-3, L-2).

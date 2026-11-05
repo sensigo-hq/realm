@@ -32,7 +32,7 @@ import {
   type Basis,
   type Snapshot,
 } from './snapshot.js';
-import { renderTemplate } from './render-template.js';
+import { renderTemplateWithBoundary, type StableBoundary } from './render-template.js';
 import { clockBasis, type Clock } from '../utils/clock.js';
 import { buildEvidenceByStep, deriveRunPhase, findEligibleSteps } from './eligibility.js';
 import {
@@ -141,6 +141,13 @@ export interface StepBrief {
   prompt?: string;
   input_schema?: Record<string, unknown>;
   handler?: string;
+  /**
+   * Caching 3-B (C1, M4): where `prompt` stops repeating between runs — at its first placeholder
+   * whose value can differ — in UTF-16 code units of `prompt` as rendered (before disclosure). Set
+   * whenever `prompt` is. It rides internally only: the MCP door turns it into the disclosed
+   * `stable_prefix` and strips it; `realm agent` cuts its marked head with it.
+   */
+  stable_prefix?: StableBoundary;
 }
 
 /** Answer the run's open question (PR0-CONTRACT §1). */
@@ -1132,9 +1139,9 @@ export function stepBrief(
   const run = snapshot.record;
   const def = definition.steps[step];
   const execution = def?.execution === 'agent' ? 'agent' : 'auto';
-  const prompt =
+  const rendered =
     def?.prompt !== undefined
-      ? renderTemplate(
+      ? renderTemplateWithBoundary(
           def.prompt,
           {
             evidenceByStep: buildEvidenceByStep(run),
@@ -1154,7 +1161,7 @@ export function stepBrief(
   return {
     execution,
     description: def?.description ?? '',
-    ...(prompt !== undefined ? { prompt } : {}),
+    ...(rendered !== undefined ? { prompt: rendered.text, stable_prefix: rendered.stable } : {}),
     ...(execution === 'agent' && def?.input_schema !== undefined
       ? { input_schema: def.input_schema as Record<string, unknown> }
       : {}),
