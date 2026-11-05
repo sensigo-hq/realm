@@ -27,6 +27,7 @@ const MSG = {
   evidence: 'realm.db: evidence rows are append-only',
   writeOnce: 'realm.db: a write-once field cannot change',
   invalidJson: 'realm.db: evidence and fields must be valid JSON',
+  rowNumber: 'realm.db: a row number must be 1 or more',
 } as const;
 
 const PHASE_STAMP = '0123456789abcdef';
@@ -81,7 +82,7 @@ function pragma(db: DatabaseLike, name: string, value: 0 | 1) {
 }
 
 describe('#616 unit 6 — the schema constant', () => {
-  it('a database created from the constant stores exactly its text, and holds the three tables, three indexes and thirteen guards of this unit', () => {
+  it('a database created from the constant stores exactly its text, and holds the three tables, three indexes and twenty-one guards of this unit', () => {
     const db = fresh();
     const rows = db
       .prepare('SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY rowid')
@@ -115,6 +116,14 @@ describe('#616 unit 6 — the schema constant', () => {
         'trigger run_blobs_insert_once',
         'trigger run_blobs_no_update',
         'trigger run_blobs_delete_after_run',
+        'trigger runs_update_valid',
+        'trigger runs_insert_rowid_free',
+        'trigger runs_rowid_fixed',
+        'trigger evidence_insert_rowid_free',
+        'trigger run_blobs_insert_rowid_free',
+        'trigger runs_rowid_positive',
+        'trigger evidence_rowid_positive',
+        'trigger run_blobs_rowid_positive',
       ],
     });
   });
@@ -570,4 +579,428 @@ describe('#616 unit 6 — GROUNDING for unit 7: tampering is visible only in the
       sameText: JSON.stringify(texts) === JSON.stringify(REALM_STORE_SCHEMA),
     }).toEqual({ rewrite: 'landed', sameText: false });
   });
+});
+
+// ---- The correction (review of unit 6, DELTAS row 24): what a foreign writer could still do ----
+
+const INSERT_EVIDENCE =
+  'INSERT INTO evidence (run_id, seq, entry, entry_sha256) VALUES (?, ?, ?, ?)';
+const INSERT_BLOB = 'INSERT INTO run_blobs (run_id, name, value) VALUES (?, ?, ?)';
+
+/** The connection settings each new attack runs under: SQLite's defaults, and the ones Realm opens with. */
+const SETTINGS: Record<string, readonly string[]> = {
+  default: [],
+  realm: ['PRAGMA trusted_schema = OFF', 'PRAGMA foreign_keys = ON'],
+};
+
+/** `fresh()` under the given connection settings and recursive-trigger mode. */
+function freshWith(settings: readonly string[], recursive: 0 | 1 = 0): DatabaseLike {
+  const db = openDatabase(':memory:');
+  open.push(db);
+  for (const statement of settings) db.exec(statement);
+  for (const statement of REALM_STORE_SCHEMA) db.exec(statement);
+  pragma(db, 'recursive_triggers', recursive);
+  return db;
+}
+
+/** Every combination the row-number attacks run under. */
+const MODES = Object.entries(SETTINGS).flatMap(([name, settings]) =>
+  ([0, 1] as const).map((recursive) => ({
+    label: `${name}/recursive=${recursive}`,
+    settings,
+    recursive,
+  })),
+);
+
+describe('#616 unit 6 correction — the hidden row number', () => {
+  /** A database holding the victims at row number 1: live run-1, its evidence row and its field; run-2 at 2. */
+  function withVictims(settings: readonly string[], recursive: 0 | 1): DatabaseLike {
+    const db = freshWith(settings, recursive);
+    addRun(db, doc());
+    addRun(db, doc({ id: 'run-2' }));
+    db.prepare(INSERT_EVIDENCE).run('run-1', 0, '{"a":1}', 'sha-0');
+    db.prepare(INSERT_BLOB).run('run-1', 'workflow_context_snapshots', '{"s":1}');
+    return db;
+  }
+  /** Every row of the three tables, with its row number. */
+  const rows = (db: DatabaseLike) =>
+    JSON.stringify([
+      db.prepare('SELECT rowid, id FROM runs ORDER BY rowid').all(),
+      db.prepare('SELECT rowid, run_id, seq, entry FROM evidence ORDER BY rowid').all(),
+      db.prepare('SELECT rowid, run_id, name, value FROM run_blobs ORDER BY rowid').all(),
+    ]);
+
+  /** Runs `sql` against the victims in every mode: its outcome, and whether every row is as before. */
+  function attack(sql: string, ...params: unknown[]) {
+    const results: Record<string, { outcome: string; rowsUnchanged: boolean }> = {};
+    for (const mode of MODES) {
+      const db = withVictims(mode.settings, mode.recursive);
+      const before = rows(db);
+      const res = outcome(db, sql, ...params);
+      results[mode.label] = { outcome: res, rowsUnchanged: rows(db) === before };
+    }
+    return results;
+  }
+  const refusedEverywhere = (message: string) =>
+    Object.fromEntries(MODES.map((m) => [m.label, { outcome: message, rowsUnchanged: true }]));
+
+  it("runs: INSERT OR REPLACE aimed at a live run's row number, by each of its three names, is refused and the run stays", () => {
+    const results: Record<string, unknown> = {};
+    for (const name of ['rowid', 'oid', '_rowid_']) {
+      results[name] = attack(
+        `INSERT OR REPLACE INTO runs (${name}, id, record, run_phase, phase_version, key_hash) VALUES (1, ?, ?, ?, ?, ?)`,
+        'run-x',
+        JSON.stringify(doc({ id: 'run-x' })),
+        'running',
+        PHASE_STAMP,
+        null,
+      );
+    }
+    // (1) red when the runs row-number guard is dropped: the REPLACE deletes run-1 with recursive
+    //     triggers off (no trigger fires) and meets the delete guard's message with them on;
+    //     (2) prints, per name and mode, the outcome and whether every row is as before.
+    expect(results).toEqual({
+      rowid: refusedEverywhere(MSG.exists),
+      oid: refusedEverywhere(MSG.exists),
+      _rowid_: refusedEverywhere(MSG.exists),
+    });
+  });
+
+  it("runs: UPDATE OR REPLACE moving a run onto another run's row number, by each of its three names, is refused and both runs stay", () => {
+    const results: Record<string, unknown> = {};
+    for (const name of ['rowid', 'oid', '_rowid_']) {
+      results[name] = attack(`UPDATE OR REPLACE runs SET ${name} = 1 WHERE id = ?`, 'run-2');
+    }
+    // (1) red when the row-number update guard is dropped, or scoped to `rowid` alone (the `oid` and
+    //     `_rowid_` spellings then delete run-1); (2) prints, per name and mode, the outcome and
+    //     whether every row is as before.
+    expect(results).toEqual({
+      rowid: refusedEverywhere(MSG.identity),
+      oid: refusedEverywhere(MSG.identity),
+      _rowid_: refusedEverywhere(MSG.identity),
+    });
+  });
+
+  it("evidence: INSERT OR REPLACE aimed at an evidence row's row number is refused and the row stays", () => {
+    const results = attack(
+      'INSERT OR REPLACE INTO evidence (rowid, run_id, seq, entry, entry_sha256) VALUES (1, ?, ?, ?, ?)',
+      'run-1',
+      5,
+      '{"f":1}',
+      'sha-5',
+    );
+    // (1) red when the evidence row-number guard is dropped: with recursive triggers off the REPLACE
+    //     deletes seq 0 and no trigger fires; (2) prints, per mode, the outcome and whether every row
+    //     is as before.
+    expect(results).toEqual(refusedEverywhere(MSG.evidence));
+  });
+
+  it("run_blobs: INSERT OR REPLACE aimed at a write-once field's row number is refused and the field stays", () => {
+    const results = attack(
+      'INSERT OR REPLACE INTO run_blobs (rowid, run_id, name, value) VALUES (1, ?, ?, ?)',
+      'run-1',
+      'other_field',
+      '{"f":1}',
+    );
+    // (1) red when the run_blobs row-number guard is dropped: with recursive triggers off the REPLACE
+    //     deletes the field and no trigger fires; (2) prints, per mode, the outcome and whether every
+    //     row is as before.
+    expect(results).toEqual(refusedEverywhere(MSG.writeOnce));
+  });
+});
+
+/** A record's JSON text with a second copy of `key` at the end: SQLite reads the first, JSON.parse the last. */
+function repeating(record: Record<string, unknown>, key: string, value: unknown): string {
+  const text = JSON.stringify(record);
+  return `${text.slice(0, -1)},${JSON.stringify(key)}:${JSON.stringify(value)}}`;
+}
+
+describe('#616 unit 6 correction — what Realm reads is what the guards judge', () => {
+  /** Each key a guard reads, with the value a second copy would make Realm read instead. */
+  const REPEATS: Array<[string, unknown]> = [
+    ['id', 'run-x'],
+    ['workflow_id', 'wf-x'],
+    ['created_at', '2026-01-01T00:00:00.000Z'],
+    ['version', 9],
+    ['terminal_state', true],
+  ];
+
+  it('a run record that repeats a top-level key is refused on insert and on update, CHECKs on and off, in both connection settings', () => {
+    const results: Record<string, string> = {};
+    for (const [setting, settings] of Object.entries(SETTINGS)) {
+      for (const checksOff of [0, 1] as const) {
+        for (const [key, value] of REPEATS) {
+          const label = `${key}/${setting}/checksOff=${checksOff}`;
+          const ins = freshWith(settings);
+          pragma(ins, 'ignore_check_constraints', checksOff);
+          // The first copy is what a guard reads: the right id, the right version, a live run.
+          results[`insert ${label}`] = outcome(
+            ins,
+            INSERT_RUN,
+            'run-1',
+            repeating(doc(), key, value),
+            'running',
+            PHASE_STAMP,
+            null,
+          );
+          const upd = freshWith(settings);
+          addRun(upd, doc());
+          pragma(upd, 'ignore_check_constraints', checksOff);
+          // The first copies move the version by one and keep the identity: every other guard passes.
+          results[`update ${label}`] = outcome(
+            upd,
+            'UPDATE runs SET record = ? WHERE id = ?',
+            repeating(doc({ version: 2 }), key, value),
+            'run-1',
+          );
+        }
+      }
+    }
+    // (1) red when the repeated-key clause is removed from the insert or the update validity guard:
+    //     the record lands while Realm would read the second copy (another id, another version, a
+    //     finished run); (2) prints each case's outcome.
+    expect(results).toEqual(
+      Object.fromEntries(Object.keys(results).map((k) => [k, MSG.invalidRun])),
+    );
+  });
+
+  it('an update of the record to JSON5, and a record, evidence entry or field stored as a BLOB, are refused, CHECKs on and off, in both connection settings', () => {
+    const bytes = (text: string) => new TextEncoder().encode(text);
+    const results: Record<string, string> = {};
+    for (const [setting, settings] of Object.entries(SETTINGS)) {
+      for (const checksOff of [0, 1] as const) {
+        const label = `${setting}/checksOff=${checksOff}`;
+        const db = freshWith(settings);
+        addRun(db, doc());
+        pragma(db, 'ignore_check_constraints', checksOff);
+        results[`JSON5 record update ${label}`] = outcome(
+          db,
+          'UPDATE runs SET record = ? WHERE id = ?',
+          '{id:"run-1",workflow_id:"wf",version:2,created_at:"2026-11-05T10:00:00.000Z",terminal_state:false}',
+          'run-1',
+        );
+        results[`BLOB record update ${label}`] = outcome(
+          db,
+          'UPDATE runs SET record = ? WHERE id = ?',
+          bytes(JSON.stringify(doc({ version: 2 }))),
+          'run-1',
+        );
+        results[`BLOB record insert ${label}`] = outcome(
+          db,
+          INSERT_RUN,
+          'run-2',
+          bytes(JSON.stringify(doc({ id: 'run-2' }))),
+          'running',
+          PHASE_STAMP,
+          null,
+        );
+        results[`BLOB evidence entry ${label}`] = outcome(
+          db,
+          INSERT_EVIDENCE,
+          'run-1',
+          0,
+          bytes('{"a":1}'),
+          'sha-0',
+        );
+        results[`BLOB field value ${label}`] = outcome(
+          db,
+          INSERT_BLOB,
+          'run-1',
+          'workflow_context_snapshots',
+          bytes('{"s":1}'),
+        );
+      }
+    }
+    // (1) red when the update validity guard's JSON clause is removed (the JSON5 update lands with
+    //     CHECKs off), or a guard's text clause is removed (that BLOB lands, CHECKs on or off);
+    //     (2) prints each case's outcome.
+    expect(results).toEqual(
+      Object.fromEntries(
+        Object.keys(results).map((k) => [
+          k,
+          k.startsWith('BLOB evidence') || k.startsWith('BLOB field')
+            ? MSG.invalidJson
+            : MSG.invalidRun,
+        ]),
+      ),
+    );
+  });
+});
+
+describe("#616 unit 6 correction — Realm's own writes still land", () => {
+  it('a plain and a multi-row insert, an insert at a free row number, a +1 update, a re-stamp, evidence at the next seq, a field, and deleting a finished run, in both connection settings', () => {
+    const results: Record<string, Record<string, string>> = {};
+    for (const [setting, settings] of Object.entries(SETTINGS)) {
+      const db = freshWith(settings);
+      const steps: Record<string, string> = {};
+      steps['insert'] = outcome(
+        db,
+        INSERT_RUN,
+        'run-1',
+        JSON.stringify(doc()),
+        'running',
+        PHASE_STAMP,
+        null,
+      );
+      steps['multi-row insert'] = outcome(
+        db,
+        `${INSERT_RUN}, (?, ?, ?, ?, ?)`,
+        'run-2',
+        JSON.stringify(doc({ id: 'run-2' })),
+        'running',
+        PHASE_STAMP,
+        null,
+        'run-3',
+        JSON.stringify(doc({ id: 'run-3' })),
+        'running',
+        PHASE_STAMP,
+        null,
+      );
+      steps['insert at a free row number'] = outcome(
+        db,
+        'INSERT INTO runs (rowid, id, record, run_phase, phase_version, key_hash) VALUES (500, ?, ?, ?, ?, ?)',
+        'run-9',
+        JSON.stringify(doc({ id: 'run-9' })),
+        'running',
+        PHASE_STAMP,
+        null,
+      );
+      steps['+1 update'] = outcome(
+        db,
+        'UPDATE runs SET record = ? WHERE id = ?',
+        JSON.stringify(doc({ version: 2 })),
+        'run-1',
+      );
+      steps['re-stamp'] = outcome(
+        db,
+        'UPDATE runs SET run_phase = ?, phase_version = ? WHERE id = ?',
+        'waiting',
+        'fedcba9876543210',
+        'run-1',
+      );
+      steps['evidence seq 0'] = outcome(db, INSERT_EVIDENCE, 'run-1', 0, '{"a":1}', 'sha-0');
+      steps['evidence seq 1'] = outcome(db, INSERT_EVIDENCE, 'run-1', 1, '{"a":2}', 'sha-1');
+      steps['field'] = outcome(db, INSERT_BLOB, 'run-1', 'workflow_context_snapshots', '{"s":1}');
+      steps['finish run-2'] = outcome(
+        db,
+        'UPDATE runs SET record = ? WHERE id = ?',
+        JSON.stringify(doc({ id: 'run-2', version: 2, terminal_state: true })),
+        'run-2',
+      );
+      steps['delete run-2'] = outcome(db, 'DELETE FROM runs WHERE id = ?', 'run-2');
+      results[setting] = steps;
+    }
+    const allLand = Object.fromEntries(
+      Object.keys(results['default'] ?? {}).map((k) => [k, 'landed']),
+    );
+    // (1) red when a new guard refuses Realm's own write: the row-number guard written as "a number
+    //     was given" (it is always set inside the trigger), the repeated-key or text clause catching a
+    //     valid record, the row-number update guard firing on an update that keeps the number;
+    //     (2) prints each step's outcome per connection setting.
+    expect(results).toEqual({ default: allLand, realm: allLand });
+  });
+});
+
+describe('#616 unit 6 correction — two runs side by side', () => {
+  it("with two runs, each one's first evidence row and its field land beside the other's, and the finished run's row, then its evidence and field, delete while the other run is live", () => {
+    const results: Record<string, unknown> = {};
+    for (const [setting, settings] of Object.entries(SETTINGS)) {
+      const db = freshWith(settings);
+      addRun(db, doc({ terminal_state: true }));
+      addRun(db, doc({ id: 'run-2' }));
+      const steps = {
+        'run-1 evidence seq 0': outcome(db, INSERT_EVIDENCE, 'run-1', 0, '{"a":1}', 'sha-0'),
+        'run-2 evidence seq 0': outcome(db, INSERT_EVIDENCE, 'run-2', 0, '{"b":1}', 'sha-0'),
+        'run-1 field': outcome(db, INSERT_BLOB, 'run-1', 'workflow_context_snapshots', '{"s":1}'),
+        'run-2 field': outcome(db, INSERT_BLOB, 'run-2', 'workflow_context_snapshots', '{"s":2}'),
+        'delete run-1': outcome(db, 'DELETE FROM runs WHERE id = ?', 'run-1'),
+        'delete run-1 evidence': outcome(db, 'DELETE FROM evidence WHERE run_id = ?', 'run-1'),
+        'delete run-1 field': outcome(db, 'DELETE FROM run_blobs WHERE run_id = ?', 'run-1'),
+      };
+      const left = {
+        evidence: db.prepare('SELECT run_id, seq FROM evidence').all(),
+        fields: db.prepare('SELECT run_id, name FROM run_blobs').all(),
+      };
+      results[setting] = { steps, left };
+    }
+    const want = {
+      steps: {
+        'run-1 evidence seq 0': 'landed',
+        'run-2 evidence seq 0': 'landed',
+        'run-1 field': 'landed',
+        'run-2 field': 'landed',
+        'delete run-1': 'landed',
+        'delete run-1 evidence': 'landed',
+        'delete run-1 field': 'landed',
+      },
+      left: {
+        evidence: [{ run_id: 'run-2', seq: 0 }],
+        fields: [{ run_id: 'run-2', name: 'workflow_context_snapshots' }],
+      },
+    };
+    // (1) red when a guard refuses too much across runs: the evidence repeated-key guard keyed on
+    //     `seq` alone or the field's on `name` alone (the second run's first row is refused), or a
+    //     delete guard that looks for any run instead of this row's run (the finished run's rows
+    //     cannot be deleted while the other run lives); (2) prints each step and the rows left.
+    expect(results).toEqual({ default: want, realm: want });
+  });
+});
+
+describe('#616 unit 6 correction — no row is stored below row number 1 (DELTAS row 24b)', () => {
+  /** Per table: an insert with an explicit row number, and Realm's plain insert. */
+  const TABLES = [
+    {
+      table: 'runs',
+      at: (n: number) =>
+        [
+          'INSERT INTO runs (rowid, id, record, run_phase, phase_version, key_hash) VALUES (?, ?, ?, ?, ?, ?)',
+          [n, 'run-x', JSON.stringify(doc({ id: 'run-x' })), 'running', PHASE_STAMP, null],
+        ] as const,
+      plain: [INSERT_RUN, ['run-1', JSON.stringify(doc()), 'running', PHASE_STAMP, null]] as const,
+    },
+    {
+      table: 'evidence',
+      at: (n: number) =>
+        [
+          'INSERT INTO evidence (rowid, run_id, seq, entry, entry_sha256) VALUES (?, ?, ?, ?, ?)',
+          [n, 'run-x', 0, '{"x":1}', 'sha-x'],
+        ] as const,
+      plain: [INSERT_EVIDENCE, ['run-1', 0, '{"a":1}', 'sha-0']] as const,
+    },
+    {
+      table: 'run_blobs',
+      at: (n: number) =>
+        [
+          'INSERT INTO run_blobs (rowid, run_id, name, value) VALUES (?, ?, ?, ?)',
+          [n, 'run-x', 'workflow_context_snapshots', '{"x":1}'],
+        ] as const,
+      plain: [INSERT_BLOB, ['run-1', 'workflow_context_snapshots', '{"a":1}']] as const,
+    },
+  ];
+
+  for (const t of TABLES) {
+    it(`${t.table}: an explicit row number of -1 or 0 is refused, also by INSERT OR REPLACE, and a plain insert lands after it`, () => {
+      const results: Record<string, unknown> = {};
+      for (const mode of MODES) {
+        for (const n of [-1, 0]) {
+          for (const form of ['INSERT INTO', 'INSERT OR REPLACE INTO']) {
+            const db = freshWith(mode.settings, mode.recursive);
+            const [sql, params] = t.at(n);
+            const planted = outcome(db, sql.replace('INSERT INTO', form), ...params);
+            const [plainSql, plainParams] = t.plain;
+            const plain = outcome(db, plainSql, ...plainParams);
+            results[`${mode.label}/${form}/${n}`] = { planted, plain };
+          }
+        }
+      }
+      // (1) red when the table's row-number-below-1 guard is dropped: the row is stored at -1 (or 0),
+      //     and after the -1 row Realm's plain insert is refused by the row-number guard;
+      //     (2) prints, per mode, form and number, the attempt's outcome and the plain insert's.
+      expect(results).toEqual(
+        Object.fromEntries(
+          Object.keys(results).map((k) => [k, { planted: MSG.rowNumber, plain: 'landed' }]),
+        ),
+      );
+    });
+  }
 });

@@ -17,7 +17,9 @@
 // the frozen design's §3 by the design owner's ruling of 2026-11-05 (DELTAS row 23): every key and
 // payload column is NOT NULL; a malformed run record is refused by SQLite's own "malformed JSON" (the
 // generated columns read the record before any trigger runs); the insert guard against a purged id is
-// unit 6b's, created with the table it reads.
+// unit 6b's, created with the table it reads. The guards on the tables' hidden row number, a record's
+// repeated top-level keys and values not stored as text come from the review of unit 6 (DELTAS rows 24
+// and 24b).
 
 /**
  * The run record's fields written once per run and stored in `run_blobs`, one row per field, each left
@@ -88,9 +90,13 @@ BEGIN SELECT RAISE(ABORT, 'realm.db: a run''s identity cannot change'); END`,
   `CREATE TRIGGER runs_insert_once BEFORE INSERT ON runs
 WHEN EXISTS (SELECT 1 FROM runs WHERE id = new.id)
 BEGIN SELECT RAISE(ABORT, 'realm.db: a run with this id already exists'); END`,
-  // The CHECKs above, as a trigger, so they bind a connection that switches CHECKs off.
+  // The CHECKs above, as a trigger, so they bind a connection that switches CHECKs off. A record must
+  // also be stored as text, and must not repeat a top-level key: SQLite reads the first of two equal
+  // keys and JSON.parse the last, so the guards would judge a value Realm does not read.
   `CREATE TRIGGER runs_insert_valid BEFORE INSERT ON runs
 WHEN json_valid(new.record) IS NOT 1
+  OR typeof(new.record) IS NOT 'text'
+  OR (SELECT count(*) <> count(DISTINCT key) FROM json_each(new.record))
   OR json_extract(new.record, '$.id') IS NULL
   OR new.id IS NOT json_extract(new.record, '$.id')
   OR (new.key_hash IS NULL) IS NOT (json_extract(new.record, '$.idempotency_key') IS NULL)
@@ -110,6 +116,7 @@ BEGIN SELECT RAISE(ABORT, 'realm.db: a run that is not finished cannot be delete
 )`,
   `CREATE TRIGGER evidence_insert_valid BEFORE INSERT ON evidence
 WHEN json_valid(new.entry) IS NOT 1
+  OR typeof(new.entry) IS NOT 'text'
 BEGIN SELECT RAISE(ABORT, 'realm.db: evidence and fields must be valid JSON'); END`,
   // A REPLACE deletes and re-inserts: refused here, before its delete could run.
   `CREATE TRIGGER evidence_insert_once BEFORE INSERT ON evidence
@@ -131,6 +138,7 @@ BEGIN SELECT RAISE(ABORT, 'realm.db: evidence rows are append-only'); END`,
 )`,
   `CREATE TRIGGER run_blobs_insert_valid BEFORE INSERT ON run_blobs
 WHEN json_valid(new.value) IS NOT 1
+  OR typeof(new.value) IS NOT 'text'
 BEGIN SELECT RAISE(ABORT, 'realm.db: evidence and fields must be valid JSON'); END`,
   `CREATE TRIGGER run_blobs_insert_once BEFORE INSERT ON run_blobs
 WHEN EXISTS (SELECT 1 FROM run_blobs WHERE run_id = new.run_id AND name = new.name)
@@ -140,4 +148,41 @@ BEGIN SELECT RAISE(ABORT, 'realm.db: a write-once field cannot change'); END`,
   `CREATE TRIGGER run_blobs_delete_after_run BEFORE DELETE ON run_blobs
 WHEN EXISTS (SELECT 1 FROM runs WHERE id = old.run_id)
 BEGIN SELECT RAISE(ABORT, 'realm.db: a write-once field cannot change'); END`,
+
+  // ---- appended by the review of unit 6 (DELTAS row 24) ----
+  // The record's validity on update too: text, valid JSON, no repeated top-level key.
+  `CREATE TRIGGER runs_update_valid BEFORE UPDATE OF record ON runs
+WHEN json_valid(new.record) IS NOT 1
+  OR typeof(new.record) IS NOT 'text'
+  OR (SELECT count(*) <> count(DISTINCT key) FROM json_each(new.record))
+BEGIN SELECT RAISE(ABORT, 'realm.db: a run record must be valid JSON, carry its own id, and pair its key hash with its key'); END`,
+  // The hidden row number. INSERT OR REPLACE aimed at a taken row number deletes the row there without
+  // firing a delete trigger (unless recursive triggers are on), so an insert is refused when an existing
+  // row holds its number. Judged by looking for that row, never by whether a number was given.
+  `CREATE TRIGGER runs_insert_rowid_free BEFORE INSERT ON runs
+WHEN EXISTS (SELECT 1 FROM runs WHERE rowid = new.rowid)
+BEGIN SELECT RAISE(ABORT, 'realm.db: a run with this id already exists'); END`,
+  // UPDATE OR REPLACE that moves a run to a taken row number deletes the run there. All three names of
+  // the row number are listed: a trigger scoped to one of them does not fire for the others.
+  `CREATE TRIGGER runs_rowid_fixed BEFORE UPDATE OF rowid, oid, _rowid_ ON runs
+WHEN new.rowid IS NOT old.rowid
+BEGIN SELECT RAISE(ABORT, 'realm.db: a run''s identity cannot change'); END`,
+  `CREATE TRIGGER evidence_insert_rowid_free BEFORE INSERT ON evidence
+WHEN EXISTS (SELECT 1 FROM evidence WHERE rowid = new.rowid)
+BEGIN SELECT RAISE(ABORT, 'realm.db: evidence rows are append-only'); END`,
+  `CREATE TRIGGER run_blobs_insert_rowid_free BEFORE INSERT ON run_blobs
+WHEN EXISTS (SELECT 1 FROM run_blobs WHERE rowid = new.rowid)
+BEGIN SELECT RAISE(ABORT, 'realm.db: a write-once field cannot change'); END`,
+  // Inside a BEFORE INSERT trigger SQLite gives an insert with no row number the value -1, so a row
+  // stored at -1 would make the guards above refuse every plain insert. No row is stored below 1
+  // (DELTAS row 24b); Realm's own rows are numbered from 1.
+  `CREATE TRIGGER runs_rowid_positive AFTER INSERT ON runs
+WHEN new.rowid < 1
+BEGIN SELECT RAISE(ABORT, 'realm.db: a row number must be 1 or more'); END`,
+  `CREATE TRIGGER evidence_rowid_positive AFTER INSERT ON evidence
+WHEN new.rowid < 1
+BEGIN SELECT RAISE(ABORT, 'realm.db: a row number must be 1 or more'); END`,
+  `CREATE TRIGGER run_blobs_rowid_positive AFTER INSERT ON run_blobs
+WHEN new.rowid < 1
+BEGIN SELECT RAISE(ABORT, 'realm.db: a row number must be 1 or more'); END`,
 ];
