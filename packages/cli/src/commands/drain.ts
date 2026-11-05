@@ -47,7 +47,7 @@ import { resolveProgramIdentity } from '../lib/program-identity.js';
 import { agentReadyReason, inFlightReasons } from './run-advance.js';
 import { listRunsDiagnosed, unreadableRunLines } from './list.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
-import { openRunStore } from '../lib/run-store.js';
+import { openCliHome } from '../lib/home.js';
 
 /**
  * issue #558 PR-C: ONE mint, rendered by BOTH surfaces that can find nothing to drain — the
@@ -1025,10 +1025,11 @@ export const drainCommand = new Command('drain')
     // issue #625 (holder slice): this program's name, made once, before any other output. A name
     // that cannot be used prints one line and exits 1 here; nothing has been started.
     const driver = resolveProgramIdentity('drain');
-    const { JsonWorkflowStore, drainFinalizers, captureEvidence, DRAIN_LEASE_MAX } =
-      await import('@sensigo/realm');
-    const runStore = openRunStore();
-    const workflowStore = new JsonWorkflowStore();
+    const { drainFinalizers, captureEvidence, DRAIN_LEASE_MAX } = await import('@sensigo/realm');
+    // #616 PR-2a (iii): the one door, opened once.
+    const home = await openCliHome();
+    const runStore = home.runStore;
+    const workflowStore = home.workflowStore;
     await runDrainAction(runId, opts, runStore, workflowStore, {
       drainFinalizers,
       captureEvidence,

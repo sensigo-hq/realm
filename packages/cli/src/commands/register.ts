@@ -6,7 +6,8 @@
 // and watch take the identical path.
 import { Command } from 'commander';
 import { join } from 'node:path';
-import { renderLoaderWarning, JsonWorkflowStore, WorkflowError } from '@sensigo/realm';
+import { renderLoaderWarning, WorkflowError } from '@sensigo/realm';
+import { openCliHome } from '../lib/home.js';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import {
   printLoaderWarnings,
@@ -92,7 +93,8 @@ export const registerCommand = new Command('register')
           return;
         }
 
-        const store = new JsonWorkflowStore();
+        // #616 PR-2a (iii): the one door, opened inside this try, as the registry was built here.
+        const store = (await openCliHome()).workflowStore;
         await store.register(definition);
         printLoaderWarnings(warnings);
         const contextWarnings = lintWorkflowContext(definition);

@@ -159,16 +159,24 @@ describe('#107/#184 PerRunArtifactStore.deleteAllForRun — declarer enumeration
     const callMatch = /purgeRuns\(\s*\{[\s\S]*?\},\s*(\w+),\s*(\w+),?\s*\)/.exec(purgeSrc);
     expect(callMatch, 'purgeRuns(...) call site was not found').not.toBeNull();
     const anchorVarName = callMatch![1]!;
-    // #715 (b) (02 §C.3): `openRunStore()` is the file store a command opens (it says once on stderr
-    // when it is a test location's) — the same JsonFileStore instance kind.
+    // #616 PR-2a (iii): the anchor is the one door's run store (`home.runStore`), and the door
+    // builds that store as the JsonFileStore (wrapped for the #715 (b) test-clock notice, which
+    // keeps the same instance kind). (1) red when purge.ts takes its anchor from anything but the
+    // door's run store, or the door's run store stops being the JsonFileStore; (2) prints the
+    // variable name, or the file that no longer matches.
     const anchorDeclMatch = new RegExp(
-      `\\bconst\\s+${anchorVarName}\\s*=\\s*(?:new\\s+JsonFileStore|openRunStore)\\(`,
+      `\\bconst\\s+${anchorVarName}\\s*=\\s*home\\.runStore\\s*;`,
     ).exec(purgeSrc);
     expect(
       anchorDeclMatch,
-      `expected purgeRuns's 2nd argument ('${anchorVarName}') to be constructed via ` +
-        `'new JsonFileStore(...)' — the anchorStore param must be the JsonFileStore instance`,
+      `expected purgeRuns's 2nd argument ('${anchorVarName}') to be the door's run store ` +
+        `('home.runStore') — the anchorStore param must be the JsonFileStore instance`,
     ).not.toBeNull();
+    const homeSrc = readFileSync(join(PACKAGES_DIR, 'cli', 'src', 'lib', 'home.ts'), 'utf8');
+    expect(
+      homeSrc,
+      "lib/home.ts must build its run store as the JsonFileStore ('new JsonFileStore(…)')",
+    ).toMatch(/\bconst\s+runStore\s*=\s*withTestClockNotice\(\s*new\s+JsonFileStore\(/);
   });
 
   it('the TraceBufferStore interface declaration is excluded structurally (ends ";", not "{")', () => {

@@ -41,7 +41,6 @@ import {
   CACHE_GAP_MAX_S,
   type PromptCacheSetting,
   loadWorkflowFromFile,
-  JsonWorkflowStore,
   validateRunParams,
   WorkflowError,
   renderLoaderWarning,
@@ -54,7 +53,6 @@ import {
   isPastDeadline,
   parseStamp,
   persistsField,
-  realmHomePath,
   startIdentityEntry,
 } from '@sensigo/realm';
 import { cannotGoOnLines } from './ways-renderer.js';
@@ -80,7 +78,7 @@ import {
   verifySharedSecret,
 } from '../lib/webhook-verifiers.js';
 import { extractParams, extractDedupId, resolveDotPath } from '../lib/webhook-params.js';
-import { FileDedupStore, InMemoryDedupStore } from '../lib/dedup-store.js';
+import { InMemoryDedupStore } from '../lib/dedup-store.js';
 import { parseHost, parseOneOf, parseWholeNumber } from '../lib/option-parsers.js';
 import { bindFailureLine } from '../lib/bind-failure.js';
 import { listRunsDiagnosed } from './list.js';
@@ -90,7 +88,7 @@ import {
 } from '../extensions/load-project-extensions.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
 import { addDeclaredValues } from '../output/writer.js';
-import { openRunStore } from '../lib/run-store.js';
+import { openCliHome } from '../lib/home.js';
 
 const DEFAULT_TTL_MINUTES = 60;
 // Fixed signature-header names for the body-signature presets.
@@ -821,22 +819,6 @@ export function makeListenHandler(
 
 function isLoopbackHost(host: string): boolean {
   return host === '127.0.0.1' || host === '::1' || host === 'localhost' || host.startsWith('127.');
-}
-
-/**
- * issue #332 item 3: the webhook dedup store's default base directory — resolved at CALL time
- * (never module load; the #285 class), exported so the `.action` closure below and any future
- * consumer/test can call it without constructing a full `listen` invocation. Previously an inline
- * `process.env['HOME'] ?? '.'` expression in the closure — house-pattern-inconsistent (every other
- * store's default resolves realm's home the same way, matching `JsonFileStore`/`JsonFileReplayStore`),
- * Windows-blind (`HOME` is a POSIX-only env var; Windows sets `USERPROFILE`, so a bare `HOME`
- * check silently falls through to `'.'` on every Windows install), and silently wrote under the
- * CURRENT WORKING DIRECTORY rather than failing loudly when `HOME` was unset for any reason.
- * Issue #616 PR-2a (i): the home comes from core's `realmHomePath()`, which refuses an empty or
- * relative HOME with `STATE_HOME_UNUSABLE` (Node's own `homedir()` returns `''` for an empty HOME).
- */
-export function defaultDedupBase(): string {
-  return join(realmHomePath(), 'dedup');
 }
 
 /**
@@ -1858,11 +1840,13 @@ export const listenCommand = new Command('listen')
       }
 
       const dedupKind = opts['dedupStore'] ?? 'file';
-      const dedupBase = defaultDedupBase();
+      // #616 PR-2a (iii): the one door, opened once, after every refusal above; its dedup marks sit
+      // under the home's `dedup` folder (`--dedup-store memory` keeps its in-memory map).
+      const home = await openCliHome();
       const memoryStores = new Map<string, DedupStore>();
       const deps: ListenDeps = {
-        workflowStore: new JsonWorkflowStore(),
-        runStore: openRunStore(),
+        workflowStore: home.workflowStore,
+        runStore: home.runStore,
         dedupStoreFor: (workflowId: string): DedupStore => {
           if (dedupKind === 'memory') {
             let s = memoryStores.get(workflowId);
@@ -1872,7 +1856,7 @@ export const listenCommand = new Command('listen')
             }
             return s;
           }
-          return new FileDedupStore(dedupBase, workflowId);
+          return home.dedupStoreFor(workflowId);
         },
         spawnAgent: makeAgentSpawner({ ...opts, model }, logger),
         logger,

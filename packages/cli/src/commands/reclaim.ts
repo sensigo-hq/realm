@@ -12,7 +12,7 @@ import { parseDuration } from '../lib/parse-duration.js';
 import { listRunsDiagnosed, unreadableRunLines } from './list.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
 import { formatInstantWords, overdueOf } from '@sensigo/realm';
-import { openRunStore } from '../lib/run-store.js';
+import { openCliHome } from '../lib/home.js';
 
 /**
  * Pure outcome→(glyph, message) renderer (issue #221 [M4]) — the SINGLE source of both reclaim
@@ -113,23 +113,19 @@ export const reclaimCommand = new Command('reclaim')
         olderThan?: string;
       },
     ) => {
-      const {
-        JsonWorkflowStore,
-        reclaimStep,
-        classifyInProgressClaims,
-        shellWord,
-        writtenSnapshot,
-      } = await import('@sensigo/realm');
-      const { JsonTraceBufferStore } = await import('@sensigo/realm-mcp');
-      const store = openRunStore();
+      const { reclaimStep, classifyInProgressClaims, shellWord, writtenSnapshot } =
+        await import('@sensigo/realm');
+      // #616 PR-2a (iii): the one door, opened once; the registry is built on its first use.
+      const home = await openCliHome();
+      const store = home.runStore;
       // issue #198: wire the trace buffer so a reclaim clears the reclaimed step's stale WAL —
       // without this, reclaimStep's own clearStaleWal hook is inert (traceBufferStore stays
       // undefined) and the next attempt adopts the dead attempt's buffered lines, which is the
       // mechanical reason a sequential-abandon-then-retry is #185's dominant "adopted a
       // prior/concurrent writer's lines" population.
-      // issue #616 PR-0: the run reader is the run store reclaim writes — reclaim's
-      // `run_at_version` fence is evaluated against it inside the trace buffer's critical section.
-      const traceBufferStore = new JsonTraceBufferStore(store.runsDirPath, store);
+      // issue #616 PR-0: the door's trace buffer reads through the run store reclaim writes —
+      // reclaim's `run_at_version` fence is evaluated against it inside its critical section.
+      const traceBufferStore = home.traceBufferStore;
 
       // Loud-fail on a store that cannot persist the claim clock (liveness recovery unavailable).
       if (!store.persistsClaims) {
@@ -159,7 +155,7 @@ export const reclaimCommand = new Command('reclaim')
           }
         }
 
-        const workflowStore = new JsonWorkflowStore();
+        const workflowStore = home.workflowStore;
         // #715 (b) (D-26): no clock read here — each row is judged at its own snapshot's `at`.
         const selected: Array<{ runId: string; claim: InProgressClaimInfo; at: Date }> = [];
         try {

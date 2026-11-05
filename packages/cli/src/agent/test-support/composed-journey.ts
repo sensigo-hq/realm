@@ -24,12 +24,13 @@
 import { mkdtempSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { JsonFileStore, JsonWorkflowStore, ExtensionRegistry } from '@sensigo/realm';
+import { ExtensionRegistry } from '@sensigo/realm';
 import type { RunRecord, ToolCallRecord, WorkflowDefinition } from '@sensigo/realm';
 import type { LlmProvider } from '../providers/llm-provider.js';
 import { runAgent, type AgentRunResult } from '../run-agent.js';
 import { inspectRun } from '../../commands/inspect.js';
 import { resolveMcpServerEntry } from './mcp-server-entry.js';
+import { openCliHome } from '../../lib/home.js';
 
 export interface ComposedJourneyOptions {
   /** The real provider under test, already pointed at its own stub seam. */
@@ -129,8 +130,10 @@ export async function runComposedJourney(
     },
   } as unknown as WorkflowDefinition;
 
-  const store = new JsonFileStore(join(tempHome, '.realm', 'runs'));
-  const workflowStore = new JsonWorkflowStore(join(tempHome, '.realm', 'workflows'));
+  // #616 PR-2a (iii): the CLI's one door, opened on the temp home.
+  const home = await openCliHome({ home: join(tempHome, '.realm') });
+  const store = home.runStore;
+  const workflowStore = home.workflowStore;
   await workflowStore.register(definition);
 
   const result = await runAgent(

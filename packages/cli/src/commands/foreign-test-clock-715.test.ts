@@ -11,7 +11,15 @@
 // (b) what it prints: the first stderr line and the exit code, the scratch folders written `<dir>`.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, cpSync, mkdirSync, mkdtempSync, rmSync, unlinkSync } from 'node:fs';
+import {
+  chmodSync,
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  unlinkSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -119,6 +127,29 @@ describe('#715 (a) correction 1 (C-6) — a copied test location, on the built C
       `${mcp.shown} | ${serve.shown}`,
     ).toEqual({ mcp: [1, true, false], serve: [1, true, false] });
   }, 25_000);
+
+  it('#616 PR-2a (iii): realm workflow list — a command that reads only workflows — gives the same line, creates nothing', () => {
+    // Every command opens its home through the CLI's one door, and the door builds the run store
+    // first (it reads the clock file), so a command that never built a run store before now meets
+    // the refusal too. `realm workflow register`, `realm workflow watch`, `realm workflow validate
+    // --registered` and `realm run diff` of two replays take the same path (the same door, the same
+    // open); this one cell stands for the five.
+    const before = readdirSync(join(home, '.realm')).sort();
+    const r = realm(['workflow', 'list']);
+    // (a) red when the door builds the registry before its run store, or the run store lazily (the
+    //     table prints and the command exits 0, or the registry's folder appears first); (b) prints
+    //     the first stderr line and the exit code, and what the home held before and after.
+    expect(
+      {
+        code: r.code,
+        stdout: r.stdout,
+        starts: r.stderr.startsWith("Error: This store's clock file was created for"),
+        stack: STACK.test(r.stderr),
+        created: readdirSync(join(home, '.realm')).sort(),
+      },
+      `${r.shown} | home before: ${before.join(', ')}`,
+    ).toEqual({ code: 1, stdout: '', starts: true, stack: false, created: before });
+  }, 20_000);
 
   it('deleting the copied clock file makes the folder an ordinary store: realm run list exits 0', () => {
     // (a) red when the way out the message names does not work; (b) prints the first stderr line and
