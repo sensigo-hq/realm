@@ -517,6 +517,16 @@ async function resolvedEndpoint(
 }
 
 /**
+ * Caching 3-B (MA 1's wording list, 2026-11-05) — the endpoint an OpenAI drive started with no
+ * `--base-url` resolves, read the way {@link resolveProvider} reads it (so `OPENAI_BASE_URL` counts):
+ * what each `realm agent` that `realm listen` starts will use. Nothing is sent.
+ */
+export async function resolveOpenAiEndpoint(): Promise<RequestEndpoint> {
+  const { OPENAI_DEFAULT_BASE_URL } = await import('./openai-provider.js');
+  return resolvedEndpoint('openai', undefined, OPENAI_DEFAULT_BASE_URL);
+}
+
+/**
  * Resolves the correct LLM provider from environment and CLI flags.
  *
  * Throws when no API key is set, when a named provider's own key is not set, when `--base-url` is

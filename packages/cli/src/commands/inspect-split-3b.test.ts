@@ -126,10 +126,17 @@ describe('caching 3-B — the cached head on inspect’s step cache line, per pr
     expect(line).toContain('; cached head: 1310 characters (marked: system, prompt)');
   });
 
-  it('Anthropic, a whitespace head: the prompt unmarked, only the system text marked', async () => {
+  it('Anthropic, a whitespace head: the prompt unmarked, only the system text marked — no head clause', async () => {
     const line = await lineOf([{ ...anthropic, prefix_chars: 3, cache_marked: ['system'] }]);
-    // (a) red when an unmarked prompt is reported as marked; (b) prints the line.
-    expect(line).toContain('; cached head: 3 characters (marked: system)');
+    const control = await lineOf([{ ...anthropic }]);
+    // MA 1's wording list (2026-11-05): the clause names a head that was itself marked or keyed;
+    // here only the system text was, so it prints none, and every other clause is the same as for
+    // a request with no split. (a) red when a head marked by nothing but the system text is called
+    // cached; (b) prints both lines.
+    expect({
+      head: line.includes('cached head'),
+      sameAsNoSplit: line === control,
+    }).toEqual({ head: false, sameAsNoSplit: true });
   });
 
   it('OpenAI: the key, and the ask that says so (row 7’s key branch)', async () => {

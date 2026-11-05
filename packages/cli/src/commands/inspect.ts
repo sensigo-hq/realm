@@ -682,10 +682,13 @@ function requestFactsText(cost: CostView): { model?: string; ask?: string } {
       );
     }
   }
-  // caching 3-B (A6; MA 2's ruling, 2026-11-04): the cached head the requests sent, for each head
-  // that carried a cache marker or the key. A head nothing marked (under `off`, after a refusal) is
-  // not called cached: it adds nothing, and with none marked there is no clause.
-  const marked = (cost.cache_head?.entries ?? []).filter((e) => e.marked !== undefined);
+  // caching 3-B (A6; MA 2's ruling, 2026-11-04; MA 1's wording list, 2026-11-05): the cached head the
+  // requests sent, for each head that was itself marked (`prompt`) or keyed (`key`). A head nothing
+  // marked (under `off`, after a refusal), or one sent beside a marked system text only (a head of
+  // whitespace goes out unmarked), is not called cached: it adds nothing, and then there is no clause.
+  const marked = (cost.cache_head?.entries ?? []).filter(
+    (e) => e.marked?.includes('prompt') === true || e.marked?.includes('key') === true,
+  );
   if (marked.length > 0) {
     clauses.push(
       'cached head: ' +

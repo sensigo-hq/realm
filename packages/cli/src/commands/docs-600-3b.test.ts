@@ -193,6 +193,17 @@ describe('caching 3-B Part D — OpenAI’s cache key (rows 3, 4, 5, 9, 11–15,
     );
   });
 
+  it('row 14 (MA 1’s wording list): the listen caching line’s openai value per endpoint and setting', () => {
+    // Each value is executed by `listen.test.ts` (the five branch cells, "3-B — the openai value on
+    // …") and, with OPENAI_BASE_URL, by the built listen in `no-default-model-676.test.ts`.
+    for (const sentence of [
+      "Both quotes show OpenAI's own endpoint with a setting other than `off`.",
+      'With `--prompt-cache off` it reads `"off: no cache key on OpenAI\'s own endpoint"`; when `OPENAI_BASE_URL` names another endpoint, it reads `"sends a cache key to the custom endpoint"` for a stated setting, `"no cache key to the custom endpoint (state --prompt-cache to send one)"` without one, and `"off: no cache key to the custom endpoint"` with off.',
+    ]) {
+      claim(LISTEN_REF, sentence);
+    }
+  });
+
   it('row 15: provider_rules with cache_key_sent, on the three pages', () => {
     // The fact: `openai-cache-key-3b.test.ts`; inspect's words: `inspect-split-3b.test.ts`.
     claim(
