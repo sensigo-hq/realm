@@ -15,7 +15,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { writeTestClockFile } from '@sensigo/realm';
 
-const DIST_SERVER = join(dirname(fileURLToPath(import.meta.url)), '..', 'dist', 'server.js');
+const DIST_SERVER = join(dirname(fileURLToPath(import.meta.url)), '..', 'dist', 'bin.js');
 
 let scratch = '';
 let home = '';

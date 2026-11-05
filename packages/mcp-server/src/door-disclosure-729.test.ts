@@ -33,6 +33,7 @@ import {
 } from './render-reply.js';
 import type { START_RUN_TABLE, StartRunReply } from './tools/start-run.js';
 import { handleExecuteStepTool } from './tools/execute-step.js';
+import { withArtifactStores } from './test-support/temp-home.js';
 
 const CANARY_NAME = 'FAKE_DOOR_CANARY_729';
 const CANARY = 'FAKE-DOOR-CANARY-VALUE-0729';
@@ -62,7 +63,7 @@ async function connect(
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
   await workflowStore.register(FLOW);
   for (const definition of more) await workflowStore.register(definition);
-  const server = createRealmMcpServer({ runStore, workflowStore, ...extra });
+  const server = createRealmMcpServer({ ...withArtifactStores(runStore), workflowStore, ...extra });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   // Every byte the server sends, captured at its transport.
   const sent: string[] = [];
@@ -512,7 +513,7 @@ describe('#729 PR-3 correction 1 (F34) — when a tool cannot compose its reply'
     vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const dir = await mkdtemp(join(tmpdir(), 'realm-door-f34-'));
     const server = createRealmMcpServer({
-      runStore: poisoned(new JsonFileStore(join(dir, 'r'))),
+      ...withArtifactStores(poisoned(new JsonFileStore(join(dir, 'r')))),
       workflowStore: poisoned(new JsonWorkflowStore(join(dir, 'w'))),
     });
     const [ct, st] = InMemoryTransport.createLinkedPair();
@@ -587,8 +588,9 @@ function providerSpy(declared: DisclosureEntry[] = []) {
   return { asked, disclosureProvider };
 }
 
-/** A server built with NO run store (the default, under a fresh HOME), the provider spy, and a client
- *  that shows forms when `forms` (its handler declines). */
+/** A server built with the run store on a fresh HOME's default folder (explicit since #616 PR-2a
+ *  (ii-a); it was the library's default), the provider spy, and a client that shows forms when
+ *  `forms` (its handler declines). */
 async function connectNoRunStore(
   extra: Parameters<typeof createRealmMcpServer>[0],
   forms: { capture?: (params: { message?: string }) => void } | undefined,
@@ -597,7 +599,11 @@ async function connectNoRunStore(
   vi.stubEnv('HOME', home);
   const workflowStore = new JsonWorkflowStore(join(home, 'wf'));
   for (const definition of [FLOW, GATED, PRE]) await workflowStore.register(definition);
-  const server = createRealmMcpServer({ workflowStore, ...extra });
+  const server = createRealmMcpServer({
+    ...withArtifactStores(new JsonFileStore(join(home, '.realm', 'runs'))),
+    workflowStore,
+    ...extra,
+  });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client(
     { name: 'door-729-c2', version: '0' },
@@ -726,7 +732,7 @@ describe('#729 PR-3 correction 2 — the door', () => {
     await workflowStore.register(ASKING);
     const server = createRealmMcpServer({
       workflowStore,
-      runStore: new JsonFileStore(join(home, 'runs')),
+      ...withArtifactStores(new JsonFileStore(join(home, 'runs'))),
       disclosureProvider: spy.disclosureProvider,
       gateAnswers: 'asked',
     });
@@ -821,7 +827,7 @@ describe('#729 PR-3 correction 2 — the door', () => {
     await writeFile(join(dir, 'wf', `${DECLARED}.json`), 'not json');
     const server = createRealmMcpServer({
       workflowStore,
-      runStore: new JsonFileStore(join(dir, 'runs')),
+      ...withArtifactStores(new JsonFileStore(join(dir, 'runs'))),
       disclosureProvider,
     });
     const [ct, st] = InMemoryTransport.createLinkedPair();

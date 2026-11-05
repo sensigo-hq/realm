@@ -24,6 +24,7 @@ import {
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
+import { withArtifactStores } from '../test-support/temp-home.js';
 
 const YAML = [
   'id: at627',
@@ -56,7 +57,11 @@ async function atGate(gateAnswers: Door, forms = false) {
   const runStore = new JsonFileStore(join(dir, 'runs'));
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
   await workflowStore.register(loadWorkflowFromString(YAML));
-  const server = createRealmMcpServer({ runStore, workflowStore, gateAnswers });
+  const server = createRealmMcpServer({
+    ...withArtifactStores(runStore),
+    workflowStore,
+    gateAnswers,
+  });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client(
     { name: 'at-627', version: '0' },
@@ -209,7 +214,11 @@ describe('#627 W correction 2 (8.1) — append_trace on a step waiting at its ow
     const runStore = new JsonFileStore(join(dir, 'runs'));
     const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
     await workflowStore.register(loadWorkflowFromString(GATED));
-    const server = createRealmMcpServer({ runStore, workflowStore, gateAnswers });
+    const server = createRealmMcpServer({
+      ...withArtifactStores(runStore),
+      workflowStore,
+      gateAnswers,
+    });
     const [ct, st] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: 'at8-627', version: '0' });
     await Promise.all([server.connect(st), client.connect(ct)]);

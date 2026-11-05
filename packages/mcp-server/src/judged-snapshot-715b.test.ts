@@ -32,6 +32,7 @@ import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { createRealmMcpServer, type RealmMcpServerOptions } from './server.js';
 import { renderReply } from './render-reply.js';
 import { mcpHostOf } from './tools/start-run.js';
+import { withArtifactStores } from './test-support/temp-home.js';
 
 /** A unique value put in the run's `params` — a record field no engine reply carries. */
 const SENTINEL = 'SENTINEL-715B-MCP-6c1d';
@@ -78,7 +79,11 @@ async function connect(
   const runStore = new CountingStore(join(dir, 'runs'));
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
   for (const d of definitions) await workflowStore.register(d);
-  const server = createRealmMcpServer({ runStore, workflowStore, ...options });
+  const server = createRealmMcpServer({
+    ...withArtifactStores(runStore),
+    workflowStore,
+    ...options,
+  });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   // Every byte the server sends, captured at its transport.
   const sent: string[] = [];

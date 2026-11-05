@@ -16,10 +16,11 @@ import { fileURLToPath } from 'node:url';
 import {
   JsonFileStore,
   JsonWorkflowStore,
+  JsonFileFailedAttemptStore,
   executeStep,
   loadWorkflowFromString,
 } from '@sensigo/realm';
-import { createRealmMcpServer } from '@sensigo/realm-mcp';
+import { createRealmMcpServer, JsonTraceBufferStore } from '@sensigo/realm-mcp';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
@@ -137,7 +138,12 @@ async function refuse(
     const workflowStore = new JsonWorkflowStore(join(home, '.realm', 'workflows'));
     const definition = loadWorkflowFromString(yaml);
     await workflowStore.register(definition);
-    const server = createRealmMcpServer({ runStore, workflowStore });
+    const server = createRealmMcpServer({
+      runStore,
+      traceBufferStore: new JsonTraceBufferStore(runStore.runsDirPath, runStore),
+      failedAttemptStore: new JsonFileFailedAttemptStore(runStore.runsDirPath),
+      workflowStore,
+    });
     const [ct, st] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: 'docs-759', version: '0' });
     await Promise.all([server.connect(st), client.connect(ct)]);
@@ -249,7 +255,12 @@ describe('issue #759 — json-schema-blocks.md', { timeout: 60_000 }, () => {
       const runStore = new JsonFileStore(join(home, 'runs'));
       const workflowStore = new JsonWorkflowStore(join(home, 'wf'));
       await workflowStore.register(loadWorkflowFromString(yaml));
-      const server = createRealmMcpServer({ runStore, workflowStore });
+      const server = createRealmMcpServer({
+        runStore,
+        traceBufferStore: new JsonTraceBufferStore(runStore.runsDirPath, runStore),
+        failedAttemptStore: new JsonFileFailedAttemptStore(runStore.runsDirPath),
+        workflowStore,
+      });
       const [ct, st] = InMemoryTransport.createLinkedPair();
       const client = new Client({ name: 'docs-759-enforce', version: '0' });
       await Promise.all([server.connect(st), client.connect(ct)]);

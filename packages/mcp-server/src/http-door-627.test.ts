@@ -23,6 +23,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { createRealmMcpServer } from './server.js';
+import { withArtifactStores } from './test-support/temp-home.js';
 
 const YAML = [
   'id: http627',
@@ -68,7 +69,11 @@ async function httpDoor(
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
   await workflowStore.register(loadWorkflowFromString(YAML));
   const build = () =>
-    createRealmMcpServer({ runStore, workflowStore, ...(statelessHttp ? { statelessHttp } : {}) });
+    createRealmMcpServer({
+      ...withArtifactStores(runStore),
+      workflowStore,
+      ...(statelessHttp ? { statelessHttp } : {}),
+    });
   const sessions = new Map<string, StreamableHTTPServerTransport>();
   const http = createServer((req, res) => {
     void (async () => {

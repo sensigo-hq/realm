@@ -20,6 +20,7 @@ import { handleGetRunState } from './get-run-state.js';
 import { loadPriceSource } from '../price-source.js';
 import { createRealmMcpServer } from '../server.js';
 import { snap, doubleClock, noSettle } from '../test-support/snapshot-double.js';
+import { withArtifactStores } from '../test-support/temp-home.js';
 
 function makeStore(run: RunRecord): RunStore {
   return declared({
@@ -414,7 +415,7 @@ describe('#600 caching PR P (G12) — get_run_state money', () => {
     const record = run('claude-sonnet-5-5', { provider: 'anthropic' });
     writeFileSync(join(dir, `${record.id}.json`), JSON.stringify(record), 'utf8');
     const server = createRealmMcpServer({
-      runStore: new JsonFileStore(dir),
+      ...withArtifactStores(new JsonFileStore(dir)),
       workflowStore: workflowStore(),
     });
     const [ct, st] = InMemoryTransport.createLinkedPair();

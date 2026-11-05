@@ -3,7 +3,7 @@
 // finite call budget and without polling — through realm's own MCP server, spawned over stdio.
 //
 // Every server child gets a scratch HOME; nothing here reads or writes the real `~/.realm`.
-// `FOLLOWER_SERVER_ENTRY` points the cells at another build's `dist/server.js` (the red-first run).
+// `FOLLOWER_SERVER_ENTRY` points the cells at another build's `dist/bin.js` (the red-first run).
 import { describe, it, expect } from 'vitest';
 import { mkdtempSync, rmSync, existsSync, writeFileSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -25,7 +25,7 @@ import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
 
 const SERVER_ENTRY =
   process.env['FOLLOWER_SERVER_ENTRY'] ??
-  fileURLToPath(new URL('../../dist/server.js', import.meta.url));
+  fileURLToPath(new URL('../../dist/bin.js', import.meta.url));
 if (!existsSync(SERVER_ENTRY)) {
   throw new Error(`mcp-server dist not built — run the build first (looked for: ${SERVER_ENTRY})`);
 }

@@ -12,11 +12,12 @@ import {
   ExtensionRegistry,
   JsonFileStore,
   JsonWorkflowStore,
+  JsonFileFailedAttemptStore,
   composeWaysAt,
   libraryCannotRunWords,
   type WorkflowDefinition,
 } from '@sensigo/realm';
-import { createRealmMcpServer } from '@sensigo/realm-mcp';
+import { createRealmMcpServer, JsonTraceBufferStore } from '@sensigo/realm-mcp';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { cannotRunClause } from './ways-renderer.js';
@@ -56,6 +57,8 @@ describe('issue #759 — the cannot-run line is the same three-problem sentence 
       await workflowStore.register(refusedHead);
       const server = createRealmMcpServer({
         runStore,
+        traceBufferStore: new JsonTraceBufferStore(runStore.runsDirPath, runStore),
+        failedAttemptStore: new JsonFileFailedAttemptStore(runStore.runsDirPath),
         workflowStore,
         registry: new ExtensionRegistry(),
       });

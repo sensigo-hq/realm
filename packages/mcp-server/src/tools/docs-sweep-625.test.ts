@@ -23,6 +23,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
 import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
+import { withArtifactStores } from '../test-support/temp-home.js';
 
 // #715 (b) 04 §D (B4): no cell here waits on the real clock for a question to expire. The run store a
 // cell opens sits at a TEST LOCATION (`located`), and `passes(ms)` moves the clock of every location
@@ -71,7 +72,7 @@ async function connect(registry?: ExtensionRegistry) {
   const runStore = new JsonFileStore(await located(dir));
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
   const server = createRealmMcpServer({
-    runStore,
+    ...withArtifactStores(runStore),
     workflowStore,
     ...(registry !== undefined ? { registry } : {}),
   });

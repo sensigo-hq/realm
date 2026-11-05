@@ -41,7 +41,7 @@ Other commands use the folder they are started in as the project. `realm mcp` do
 
 ### `realm-mcp`
 
-The package `@sensigo/realm-mcp` installs a command `realm-mcp`, which starts the same server. It takes no flags and refuses any; it reads `REALM_MCP_GATE_ANSWERS` and `REALM_MCP_FORM_WAIT_SECONDS`, and prints its start line on stderr. It loads no project code: a step that needs a handler from a workflow's `extensions` is blocked. `start_run` still creates the run and replies `status: ok`; the block is in its `warnings` (added after version 0.46.0, which replies `status: error`):
+The package `@sensigo/realm-mcp` installs a command `realm-mcp`, which starts the same server. It opens `~/.realm` itself, the same home every `realm` command uses. It takes no flags and refuses any; it reads `REALM_MCP_GATE_ANSWERS` and `REALM_MCP_FORM_WAIT_SECONDS`, and prints its start line on stderr. It loads no project code: a step that needs a handler from a workflow's `extensions` is blocked. `start_run` still creates the run and replies `status: ok`; the block is in its `warnings` (added after version 0.46.0, which replies `status: error`):
 
 ```text
 Step 'fetch' is blocked: its handler 'fetch_record' is not registered in this runner. The run is NOT terminated — the step remains eligible, so a runner that provides this handler can execute it. …
