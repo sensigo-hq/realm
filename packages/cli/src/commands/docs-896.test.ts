@@ -4,7 +4,7 @@
 // 1–10). Each assertion names (a) the change that turns it red and (b) what it prints when it fails:
 // the sentence, never a record or an environment.
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -104,6 +104,29 @@ describe('#896 unit A — the docs sentences', () => {
       'docs/reference/cli/realm-workflow.md',
       "On GPT-5.6 and later at OpenAI's own address, the drive also marks the fixed part of each step without tools, for 30 minutes (added after version 0.48.0).",
     );
+  });
+
+  it('no docs page still shows validate’s old OpenAI words in a transcript', () => {
+    // The transcripts were re-derived by running validate; `docs-pr5-cacheability.test.ts`'s example
+    // cell runs realm-workflow.md's commands but finds each printed line anywhere on the page, so one
+    // transcript put back to the old words would pass it while another holds the new ones.
+    const pages = (dir: string): string[] =>
+      readdirSync(join(ROOT, dir)).flatMap((name) => {
+        const rel = join(dir, name);
+        if (statSync(join(ROOT, rel)).isDirectory()) return pages(rel);
+        return name.endsWith('.md') ? [rel] : [];
+      });
+    const old = [
+      "openai: realm sends no cache marker; the provider's own rules decide",
+      "— above the floor (200, your --floor): within the provider's own rules (realm sends no marker)",
+    ];
+    // (a) red when a transcript holds the old once-line or the old above-the-floor clause; (b)
+    //     prints each page with the old words it holds.
+    expect(
+      pages('docs').flatMap((page) =>
+        old.filter((w) => flat(read(page)).includes(flat(w))).map((w) => `${page}: ${w}`),
+      ),
+    ).toEqual([]);
   });
 
   it('CHANGELOG: one bullet per behaviour and the breaking shape', () => {
