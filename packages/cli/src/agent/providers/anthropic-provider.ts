@@ -658,7 +658,9 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
    * Issue #610 — what the tool loop's FINAL EXTRACTION records about itself: the response's
    * `model`, the endpoint, and that Anthropic reports a lifetime split. No cache ask: that request
    * carries no cache marker (issue #899), so any ask written here would be false. The main turns
-   * record {@link requestFacts}. Never `provider`: `realm agent` stamps that.
+   * record {@link requestFacts}. Never `provider`: `realm agent` stamps that. Caching 3-B (E3;
+   * MA2-3B-IA1-12): also what a request sent without the cache fields records, after an endpoint
+   * refused them — it carries no marker either.
    */
   private toolsRequestFacts(response: unknown, client: unknown): Partial<UsageRecord> {
     const model = responseModel(response);
@@ -797,6 +799,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       // caching 3-B (E3): the same request without Realm's markers, after a gateway refused them.
       const bare = userContentWithHead(userContent, cachePrefixChars, 'off');
       let sent: Record<string, unknown> = {};
+      // caching 3-B (E3; MA2-3B-IA1-12): whether the request that answered carried the cache fields.
+      let sentWithCache = true;
       const buildOpts = (strict: boolean, withCache: boolean): Record<string, unknown> => {
         const submitTool = hasSchema
           ? buildSubmitTool(inputSchema!, strict ? { strict: true } : undefined)
@@ -812,6 +816,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
           opts['tool_choice'] = { type: 'auto' };
         }
         sent = opts;
+        sentWithCache = withCache;
         return opts;
       };
       const response = await createMessageWithLadder(client, buildOpts, state, clock, counters, {
@@ -829,7 +834,11 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       const usage = readAnthropicUsage(response);
       requests.push(
         toUsageRecord(requests.length, requestStart, usage, {
-          ...this.requestFacts(response, client),
+          // caching 3-B (E3; MA2-3B-IA1-12): sent without the cache fields after an endpoint refused
+          // them, the request records no ask, as #899's final request does: any ask would be false.
+          ...(sentWithCache
+            ? this.requestFacts(response, client)
+            : this.toolsRequestFacts(response, client)),
           ...(shaped.headSent !== undefined
             ? anthropicSplitFacts(sent, shaped.headSent, systemPrompt)
             : {}),
@@ -1274,17 +1283,22 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     const createMainTurn = async (): Promise<{ response: any; key: string }> => {
       const carriedStrict = toolArgsStrictActive;
       // caching 3-B (E3): a main turn's record carries the gateway's refusal once it is known.
-      const facts = (response: unknown, client: unknown): Partial<UsageRecord> => ({
-        ...this.requestFacts(response, client),
-        ...(this.cacheFields.rejected !== undefined
-          ? { cache_controls_rejected: this.cacheFields.rejected }
-          : {}),
-      });
+      // caching 3-B (MA2-3B-IA1-12): a turn sent without the cache fields records no ask (#899's rule).
+      const facts =
+        (withCache: boolean) =>
+        (response: unknown, client: unknown): Partial<UsageRecord> => ({
+          ...(withCache
+            ? this.requestFacts(response, client)
+            : this.toolsRequestFacts(response, client)),
+          ...(this.cacheFields.rejected !== undefined
+            ? { cache_controls_rejected: this.cacheFields.rejected }
+            : {}),
+        });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const send = async (withCache: boolean): Promise<{ response: any; key: string }> => {
         const sentStrict = toolArgsStrictActive;
         const request = buildMainCallOpts(withCache);
-        const response = await bounded(request.body, facts);
+        const response = await bounded(request.body, facts(withCache));
         // Only a strict-DECORATED request that came back 200 counts toward the disclosed
         // "turns before drop" — that is exactly what the number claims.
         if (sentStrict) strictTurnsBeforeDrop += 1;
@@ -1319,7 +1333,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         // `messages` from its own key (issue #677): the stripped list is a different list, so the
         // thinking of the turns made while strict was on stays out of it.
         const retry = buildMainCallOpts(withCache);
-        return { response: await bounded(retry.body, facts), key: retry.key };
+        return { response: await bounded(retry.body, facts(withCache)), key: retry.key };
       };
       return sendUnderGatewayRule(
         this.cacheFields,

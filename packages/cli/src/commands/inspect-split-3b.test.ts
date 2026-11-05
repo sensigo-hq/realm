@@ -97,6 +97,17 @@ const REFUSED = {
   proven: 'cache_fields',
   fields: ['cache_control'],
 };
+/** MA2-3B-IA1-12: a request sent without the cache fields after a refusal records no ask (#899's
+ *  rule), so its record has none of these. */
+const ASK = [
+  'cache_requested',
+  'cache_lifetime_s',
+  'cache_ttl_sent',
+  'cache_requested_source',
+  'cache_requested_by',
+];
+const withoutAsk = (r: Record<string, unknown>): Record<string, unknown> =>
+  Object.fromEntries(Object.entries(r).filter(([k]) => !ASK.includes(k)));
 
 describe('caching 3-B — the cached head on inspect’s step cache line, per producing branch', () => {
   it('Anthropic, two blocks: the head marked with the system text', async () => {
@@ -136,7 +147,12 @@ describe('caching 3-B — the cached head on inspect’s step cache line, per pr
 
   it('after a remembered drop: no head clause (nothing marked it), and the refusal with its remedy (E4)', async () => {
     const line = await lineOf([
-      { ...anthropic, endpoint: 'custom', prefix_chars: 48, cache_controls_rejected: REFUSED },
+      {
+        ...withoutAsk(anthropic),
+        endpoint: 'custom',
+        prefix_chars: 48,
+        cache_controls_rejected: REFUSED,
+      },
     ]);
     // (a) red when an unmarked head is called cached, or the refusal line is missing; (b) prints
     //     the line.
@@ -173,7 +189,7 @@ describe('caching 3-B M10 — a recorded refusal replaces the nothing-written cl
   it('the clause prints without the refusal, and not with it (cross cell)', async () => {
     const nothing = { ...anthropic, endpoint: 'custom', cache_creation_input_tokens: 0 };
     const without = await lineOf([nothing]);
-    const withIt = await lineOf([{ ...nothing, cache_controls_rejected: REFUSED }]);
+    const withIt = await lineOf([{ ...withoutAsk(nothing), cache_controls_rejected: REFUSED }]);
     // (a) red when the refusal does not suppress the clause, or the control loses it; (b) prints
     //     both lines.
     expect({
@@ -183,5 +199,44 @@ describe('caching 3-B M10 — a recorded refusal replaces the nothing-written cl
       suppressed: withIt.includes('nothing was written or read'),
       refusal: withIt.includes('the endpoint refused the cache fields (400)'),
     }).toEqual({ control: true, suppressed: false, refusal: true });
+  });
+});
+
+describe('caching 3-B E3 (MA2-3B-IA1-12) — a request sent without the cache fields records no ask', () => {
+  it('after a gateway refused cache_control: the refusal and no asked-for words; a step that mixes the two says how many recorded an ask', async () => {
+    // The real case: a gateway in front of Anthropic that refuses `cache_control`. A step whose
+    // first request was refused records only the retry, sent without the cache fields (no ask); a
+    // tool step whose later turn was refused (a `tool_result` block's marker) mixes the two.
+    const refusedOnly = await lineOf([
+      {
+        ...withoutAsk(anthropic),
+        endpoint: 'custom',
+        prefix_chars: 48,
+        cache_controls_rejected: REFUSED,
+      },
+    ]);
+    const mixed = await lineOf([
+      { ...anthropic, endpoint: 'custom', cache_marked: ['system'] },
+      {
+        ...withoutAsk(anthropic),
+        request_index: 1,
+        request_start: '2026-01-01T00:00:01.000Z',
+        endpoint: 'custom',
+        cache_controls_rejected: REFUSED,
+      },
+    ]);
+    // (a) red when a request with no ask is described as asked for (or sent as) a lifetime, or the
+    //     mixed step does not say how many requests recorded the ask; (b) prints both lines.
+    expect({
+      refusedOnly: [refusedOnly.includes('asked for'), refusedOnly.includes('sent as')],
+      refusedOnlyRefusal: refusedOnly.includes('the endpoint refused the cache fields (400)'),
+      mixed: mixed.includes('(recorded by 1 of 2 requests)'),
+      mixedRefusal: mixed.includes('the endpoint refused the cache fields (400)'),
+    }).toEqual({
+      refusedOnly: [false, false],
+      refusedOnlyRefusal: true,
+      mixed: true,
+      mixedRefusal: true,
+    });
   });
 });

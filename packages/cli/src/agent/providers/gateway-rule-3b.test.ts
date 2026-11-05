@@ -361,3 +361,109 @@ describe('caching 3-B E3 — the ladder’s paths', () => {
     });
   });
 });
+
+describe('caching 3-B E3 (MA2-3B-IA1-12) — a request sent without the cache fields records no ask', () => {
+  /** The ask facts a request records: #899's omission set when it carried no cache field. */
+  const askOf = (r: Record<string, unknown>) => ({
+    requested: r['cache_requested'],
+    lifetime: r['cache_lifetime_s'],
+    ttlSent: r['cache_ttl_sent'],
+    source: r['cache_requested_source'],
+    by: r['cache_requested_by'],
+    auto: r['cache_auto'],
+  });
+  const NO_ASK = {
+    requested: undefined,
+    lifetime: undefined,
+    ttlSent: undefined,
+    source: undefined,
+    by: undefined,
+    auto: undefined,
+  };
+  const ASKED = {
+    requested: 'lifetime',
+    lifetime: 300,
+    ttlSent: false,
+    source: 'stated',
+    by: 'realm agent',
+    auto: undefined,
+  };
+
+  it('single-shot: a gateway that refuses cache_control — the retry and the next request record no ask; with no refusal, the ask', async () => {
+    const p = anthropic('custom');
+    script = [err400(REFUSAL), anthropicAnswer('{"x":"a"}')];
+    const first = await p.callStepWithMeta(PROMPT, undefined, undefined, {
+      cachePrefixChars: HEAD.length,
+    });
+    const second = await p.callStepWithMeta(PROMPT, undefined, undefined, {
+      cachePrefixChars: HEAD.length,
+    });
+    const control = await anthropic('custom').callStepWithMeta(PROMPT, undefined, undefined, {
+      cachePrefixChars: HEAD.length,
+    });
+    const rec = (r: typeof first) => r.usage![0]! as unknown as Record<string, unknown>;
+    // (a) red when a request sent without the cache fields records the drive's ask (it would say a
+    //     lifetime was sent that was not), or the split facts and the refusal go with it; (b)
+    //     prints each record's ask facts, its head length and its refusal.
+    expect({
+      first: [
+        askOf(rec(first)),
+        rec(first)['prefix_chars'],
+        rec(first)['cache_controls_rejected'] !== undefined,
+      ],
+      second: [
+        askOf(rec(second)),
+        rec(second)['prefix_chars'],
+        rec(second)['cache_controls_rejected'] !== undefined,
+      ],
+      control: [askOf(rec(control)), rec(control)['cache_controls_rejected']],
+    }).toEqual({
+      first: [NO_ASK, HEAD.length, true],
+      second: [NO_ASK, HEAD.length, true],
+      control: [ASKED, undefined],
+    });
+  });
+
+  it('the tool step: a gateway that refuses cache_control on a later turn’s tool_result — the turn before keeps its ask, the refused turn records none', async () => {
+    const tool = {
+      id: 'srv:t',
+      serverId: 'srv',
+      name: 't',
+      description: 'A tool',
+      inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+    };
+    script = [
+      {
+        model: 'claude-test-1',
+        content: [{ type: 'tool_use', id: 'toolu_1', name: 't', input: {} }],
+        stop_reason: 'tool_use',
+        usage: {
+          input_tokens: 10,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+          output_tokens: 1,
+        },
+      },
+      err400('messages.2.content.0.tool_result.cache_control: Extra inputs are not permitted'),
+      anthropicAnswer('{"x":"a"}'),
+    ];
+    const r = await anthropic('custom').callStepWithTools(
+      PROMPT,
+      [tool],
+      (async () => ({ content: [{ type: 'text', text: 'ok' }] })) as never,
+      {},
+    );
+    const records = r.usage!.map((u) => u as unknown as Record<string, unknown>);
+    // (a) red when the refused turn's retry records the ask, or the turn before loses its own; (b)
+    //     prints each turn's markers, ask and refusal.
+    expect({
+      marked: sent.map(marked),
+      asks: records.map(askOf),
+      refused: records.map((u) => u['cache_controls_rejected'] !== undefined),
+    }).toEqual({
+      marked: [true, true, false],
+      asks: [ASKED, NO_ASK],
+      refused: [false, true],
+    });
+  });
+});

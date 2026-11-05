@@ -85,7 +85,7 @@ describe('#899 — the docs sentences', () => {
     );
     claim(
       'docs/reference/run-record-and-export.md',
-      'A request `realm agent` sent also records what Realm asked for (except, on Anthropic, the last request of a step that used up its tool calls: it is sent with no cache marker and records no ask), what answered',
+      "A request `realm agent` sent also records what Realm asked for (except, on Anthropic, the last request of a step that used up its tool calls: it is sent with no cache marker and records no ask; so does a request sent without Realm's cache fields after the endpoint refused them), what answered",
     );
   });
 

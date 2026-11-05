@@ -295,5 +295,8 @@ describe('caching 3-B Part F — the reference text, the describer and the CHANG
       "**`realm workflow validate`, `register` and `watch` count the stable start of each step's prompt in its fixed part**",
     ])
       claimChangelog(lead);
+    // MA2-3B-IA1-12: a request sent without the cache fields records no ask (#899's rule):
+    // `gateway-rule-3b.test.ts` (the single-shot request, the tool step's turns).
+    claimChangelog('on Anthropic such a request records no ask, since it asked for nothing');
   });
 });
