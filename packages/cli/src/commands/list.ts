@@ -7,7 +7,6 @@ import {
   RUN_HEALTH_STUCK_EXCLUDED,
   deriveRunPhase,
   DEFAULT_IDLE_THRESHOLD_MS,
-  JsonFileFailedAttemptStore,
   type FailedAttemptStore,
   computeGateDueState,
   reminderScheduleOf,
@@ -29,7 +28,7 @@ import type {
 import { dirname } from 'node:path';
 import { parseDuration } from '../lib/parse-duration.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
-import { openRunStore } from '../lib/run-store.js';
+import { openCliHome } from '../lib/home.js';
 
 /**
  * issue #719 (B3): a run store as Realm's commands list it — the JSON store's
@@ -599,25 +598,22 @@ export const listCommand = new Command('list')
   )
   .action(
     async (opts: { workflow?: string; status?: string; stuck?: boolean; olderThan?: string }) => {
-      const store = openRunStore();
-      // issue #219: explicit injection — `JsonFileStore.runsDirPath` is a real, nominal public
-      // getter (not duck-typed off `RunStore`, which stays plain). Constructed ONLY for --stuck,
-      // at the SAME runsDir the run store persists to.
-      const failedAttemptStore =
-        opts.stuck === true ? new JsonFileFailedAttemptStore(store.runsDirPath) : undefined;
+      // #616 PR-2a (iii): the one door, opened once; the registry is built on its first use (only
+      // under --stuck, as before).
+      const home = await openCliHome();
+      const store = home.runStore;
+      // issue #219: explicit injection — handed on ONLY for --stuck; the door's failed-attempt store
+      // sits in the SAME runsDir the run store persists to.
+      const failedAttemptStore = opts.stuck === true ? home.failedAttemptStore : undefined;
 
       // issue #558 PR-T — the --stuck probe closure. The 4 MB parse cap lives HERE and NOWHERE
       // else: `get()` stays uncapped (#552's door B, its Resolution). Memoised per workflow id
       // per invocation — a hundred runs of one workflow cost one probe.
       let workflowProbe: ((workflowId: string) => StuckDefinitionProbe | undefined) | undefined;
       if (opts.stuck === true) {
-        const {
-          JsonWorkflowStore,
-          WorkflowError,
-          probeClassToError,
-          STUCK_DEFINITION_PARSE_CAP_BYTES,
-        } = await import('@sensigo/realm');
-        const wfStore = new JsonWorkflowStore();
+        const { WorkflowError, probeClassToError, STUCK_DEFINITION_PARSE_CAP_BYTES } =
+          await import('@sensigo/realm');
+        const wfStore = home.workflowStore;
         const memo = new Map<string, StuckDefinitionProbe | undefined>();
         workflowProbe = (workflowId: string) => {
           if (memo.has(workflowId)) return memo.get(workflowId);

@@ -14,7 +14,7 @@ import {
   writerCtx,
 } from '../output/writer.js';
 import type { ClassTable } from '@sensigo/realm';
-import { openRunStore } from '../lib/run-store.js';
+import { openCliHome } from '../lib/home.js';
 
 /** The two core renderers this command needs, loaded lazily with the rest of core (see the test's
  *  header for the idiom). */
@@ -66,16 +66,12 @@ export const attemptsCommand = new Command('attempts')
     "Print the attempts' stored values even when Realm cannot read every declared secret of the run (masked with what is known)",
   )
   .action(async (runId: string, opts: { json?: boolean; acceptPartialDisclosure?: boolean }) => {
-    const {
-      JsonWorkflowStore,
-      JsonFileFailedAttemptStore,
-      getWorkflowForRun,
-      moreOf,
-      renderProblemsLines,
-      WorkflowError,
-    } = await import('@sensigo/realm');
-    const runs = openRunStore();
-    const store = new JsonFileFailedAttemptStore(runs.runsDirPath);
+    const { getWorkflowForRun, moreOf, renderProblemsLines, WorkflowError } =
+      await import('@sensigo/realm');
+    // #616 PR-2a (iii): the one door, opened once; the registry is built on its first use.
+    const home = await openCliHome();
+    const runs = home.runStore;
+    const store = home.failedAttemptStore;
     try {
       // #729 PR-3 correction 3 (H-7''): the run's declared values are read as `inspect` reads them,
       // so its stored values are masked with them — and withheld under a failed or changed manifest
@@ -94,7 +90,7 @@ export const attemptsCommand = new Command('attempts')
           });
       }
       if (run !== undefined) {
-        const definition = await getWorkflowForRun(new JsonWorkflowStore(), run, {
+        const definition = await getWorkflowForRun(home.workflowStore, run, {
           retryVerb: 'read the attempts again',
           verb: 'read the attempts',
           terminalOk: true,

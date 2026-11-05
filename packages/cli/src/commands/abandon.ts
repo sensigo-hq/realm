@@ -1,6 +1,6 @@
 // abandon command — explicitly abandons a non-terminal run via the shared core primitive.
 import { Command } from 'commander';
-import type { RunRecord } from '@sensigo/realm';
+import type { RunRecord, WorkflowRegistrar } from '@sensigo/realm';
 import { cliCommandOf, writerHost } from './ways-renderer.js';
 import {
   RUN_PHASE_WORDS,
@@ -10,7 +10,7 @@ import {
   withholdUnlessAccepted,
   writerCtx,
 } from '../output/writer.js';
-import { openRunStore } from '../lib/run-store.js';
+import { openCliHome } from '../lib/home.js';
 
 /**
  * #819 correction 1 (02 C2): an empty or blank `--reason` is refused. #819 follow-up 2 (R1, the
@@ -30,10 +30,13 @@ export function emptyReasonRefusal(): string {
  * older or a later Realm registered gets its own remedy. `undefined` only when the workflow reads:
  * the refusal then names the answer.
  */
-async function repairOf(run: RunRecord): Promise<string | undefined> {
-  const { JsonWorkflowStore, getWorkflowForRun, gateRepairOf } = await import('@sensigo/realm');
+async function repairOf(
+  workflowStore: Pick<WorkflowRegistrar, 'get'>,
+  run: RunRecord,
+): Promise<string | undefined> {
+  const { getWorkflowForRun, gateRepairOf } = await import('@sensigo/realm');
   try {
-    await getWorkflowForRun(new JsonWorkflowStore(), run, {
+    await getWorkflowForRun(workflowStore, run, {
       retryVerb: 'answer the gate',
       verb: 'abandon',
     });
@@ -49,7 +52,6 @@ export const abandonCommand = new Command('abandon')
   .option('--reason <text>', 'Human-readable reason recorded as terminal_reason')
   .action(async (runId: string, opts: { reason?: string }) => {
     const {
-      JsonWorkflowStore,
       abandonRun,
       WorkflowError,
       ABANDON_KILL_ADVISORY,
@@ -62,7 +64,9 @@ export const abandonCommand = new Command('abandon')
       process.exit(1);
       return;
     }
-    const runStore = openRunStore();
+    // #616 PR-2a (iii): the one door, opened once; the registry is built on its first use.
+    const home = await openCliHome();
+    const runStore = home.runStore;
     let before: RunRecord | undefined;
     try {
       // issue #367: read first, so the output can say whether THIS call changed anything —
@@ -74,7 +78,7 @@ export const abandonCommand = new Command('abandon')
       // declared values, and shown as its type and size while they cannot all be read (this command
       // takes no flag; the line names the one that does).
       const { getWorkflowForRun } = await import('@sensigo/realm');
-      const definition = await getWorkflowForRun(new JsonWorkflowStore(), before, {
+      const definition = await getWorkflowForRun(home.workflowStore, before, {
         retryVerb: 'abandon again',
         verb: 'abandon',
         terminalOk: true,
@@ -104,7 +108,7 @@ export const abandonCommand = new Command('abandon')
       let runAgain = `${ctx.cmd(`realm workflow run <the workflow.yaml you registered '${run.workflow_id}' from>${paramsClause}`)}`;
       let fromNote = '';
       try {
-        const copy = await new JsonWorkflowStore().get(run.workflow_id);
+        const copy = await home.workflowStore.get(run.workflow_id);
         if (copy.source_dir !== undefined) {
           runAgain = `${ctx.cmd(`realm workflow run ${shellWord(copy.source_dir)}${paramsClause}`)}`;
           fromNote = 'That is the directory it was registered from. ';
@@ -156,7 +160,8 @@ export const abandonCommand = new Command('abandon')
           // #819 correction 1 (01): the answer waits on a workflow that cannot be read — then the
           // way on is its repair, read once here (the record is not touched: core refused). #819
           // follow-up 2 (R2): once the read has failed, the answer is never offered.
-          const repair = before !== undefined ? await repairOf(before) : undefined;
+          const repair =
+            before !== undefined ? await repairOf(home.workflowStore, before) : undefined;
           console.error(
             repair !== undefined
               ? `${err.message} ${repair}`

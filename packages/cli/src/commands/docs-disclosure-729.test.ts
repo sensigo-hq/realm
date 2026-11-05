@@ -145,15 +145,28 @@ describe(`${ENV_PAGE} — REALM_NOT_SECRET`, () => {
       rows++;
       names.push(lines[i]!.split('`')[1]!);
     }
+    // #616 PR-1a unit 5: names core reads that the page does not document yet, each with its
+    // reason. An entry is deleted with the row that documents it.
+    const NOT_YET_ON_THE_PAGE: ReadonlyMap<string, string> = new Map([
+      [
+        'REALM_STORE_FS',
+        "read only by the unreleased SQLite package's filesystem check; the switch-over unit writes its row and deletes this entry",
+      ],
+    ]);
     // (a) red when a row is added or removed without the count, or the table's REALM_ names part
-    //     from the variables realm's code reads (core's two lists and REALM_NOT_SECRET); (b) prints
-    //     the row count and the names.
+    //     from the variables realm's code reads (core's two lists and REALM_NOT_SECRET, less the
+    //     names not yet documented), or a name not yet documented is on the page (its entry here
+    //     must then go); (b) prints the row count and the names.
     expect({
       rows,
       realm: names.filter((n) => n.startsWith('REALM_')).sort(),
+      exemptOnThePage: [...NOT_YET_ON_THE_PAGE.keys()].filter((n) => read(ENV_PAGE).includes(n)),
     }).toEqual({
       rows: 11,
-      realm: [...REALM_SETTING_VARIABLES, ...REALM_CREDENTIAL_VARIABLES, 'REALM_NOT_SECRET'].sort(),
+      realm: [...REALM_SETTING_VARIABLES, ...REALM_CREDENTIAL_VARIABLES, 'REALM_NOT_SECRET']
+        .filter((n) => !NOT_YET_ON_THE_PAGE.has(n))
+        .sort(),
+      exemptOnThePage: [],
     });
   });
 

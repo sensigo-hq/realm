@@ -1472,7 +1472,7 @@ describe('correction 2, F-8: the pages that print the cache lines say what they 
     );
     for (const sentence of [
       '**Words on the provider lines.**',
-      "_The drive_ is one `realm agent` driving one run, whether you start it or `realm listen` starts it for a run; its `--prompt-cache` flag sets what Anthropic is asked to cache, and whether OpenAI receives a cache key: with `--provider openai`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but `off`, and to another endpoint only for a setting you state other than `off`. Other providers' own caching applies (see [`realm agent`](realm-agent.md)).",
+      "_The drive_ is one `realm agent` driving one run, whether you start it or `realm listen` starts it for a run; its `--prompt-cache` flag sets what Anthropic is asked to cache, and whether OpenAI receives a cache key: with `--provider openai`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but `off`, and to another endpoint only for a setting you state other than `off`. On GPT-5.6 and later at OpenAI's own address, the drive also marks the fixed part of each step without tools, for 30 minutes (added after version 0.48.0). Other providers' own caching applies (see [`realm agent`](realm-agent.md)).",
       "_Nothing is cached, silently_: below the model's minimum nothing is cached, and the provider says nothing about it.",
       '_Pay the write_: the request that writes a cache entry is billed for what it writes at the cache-write price (see [How a request is priced](../cache-economics.md#how-a-request-is-priced) and [What a run costs](../../guides/realm-agent.md#what-a-run-costs)).',
     ])

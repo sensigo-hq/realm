@@ -444,9 +444,13 @@ function verdictText(report: CacheabilityReport, layout: LayoutResult, short: bo
     case 'above_floor':
       // As `below`: `long enough to cache` speaks for the model only on the economics file's
       // minimum; on the author's `--floor` it is `at that minimum` (correction 2, F-5).
-      return isOpenAi(layout.adapter)
-        ? ` — above ${head}: within the provider's own rules (realm sends no marker)`
-        : ` — above ${head}: long enough to cache ` +
+      // #896: on the `openai` layout Realm marks the fixed part on GPT-5.6 and later at OpenAI's own
+      // address; the o-series layout (`openai-reasoning`) is sent no mark.
+      return layout.adapter === 'openai'
+        ? ` — above ${head}: within the provider's own rules (realm marks it on GPT-5.6 and later, at OpenAI's own address)`
+        : isOpenAi(layout.adapter)
+          ? ` — above ${head}: within the provider's own rules (realm sends no marker)`
+          : ` — above ${head}: long enough to cache ` +
             (floor.basis === 'economics' ? '' : 'at that minimum ') +
             'when the drive asks for caching';
     default:
@@ -557,8 +561,9 @@ function stepLine(report: CacheabilityReport, result: StepResult): string {
 
 const ANTHROPIC_ONCE =
   "anthropic: when realm agent or realm listen drives a step, realm marks its fixed part for caching, and on steps with tools the conversation at each turn, unless --prompt-cache turns it off; below the model's minimum nothing is cached, silently";
+// #896: what the drive sends OpenAI — the key on its own address, and on GPT-5.6 and later the marks.
 const OPENAI_ONCE =
-  "openai: realm sends no cache marker; the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)";
+  "openai: on OpenAI's own address realm sends a cache key and, for GPT-5.6 and later, marks the fixed instructions and the stable start of the prompt of each step without tools for 30 minutes, unless --prompt-cache turns it off; otherwise the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)";
 const SCOPE_ONCE =
   "anthropic: the cache is kept per workspace (per organization on Bedrock and Google Cloud), as Anthropic's page said on 2026-10-09: drives from different workspaces each pay the write";
 

@@ -47,7 +47,7 @@ import {
   type ProjectLoad,
 } from './run-advance.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
-import { openRunStore } from '../lib/run-store.js';
+import { openCliHome } from '../lib/home.js';
 
 /**
  * issue #625: the last line for an answer the gate's expiry beat — never `Responded:`. The choice
@@ -442,9 +442,10 @@ export const respondCommand = new Command('respond')
         'respond',
         "it is written as the program's name on any cleanup steps the answer lets run, and respond checks it before reading the run, so nothing was recorded",
       );
-      const { JsonWorkflowStore } = await import('@sensigo/realm');
-      const runStore = openRunStore();
-      const workflowStore = new JsonWorkflowStore();
+      // #616 PR-2a (iii): the one door, opened once.
+      const home = await openCliHome();
+      const runStore = home.runStore;
+      const workflowStore = home.workflowStore;
       try {
         // issue #466 — the run/workflow fetches stay OUTSIDE the sentence-try: a bad run-id is
         // respond's most common operator error, and it must never wear the extensions sentence

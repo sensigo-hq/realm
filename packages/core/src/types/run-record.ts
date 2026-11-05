@@ -383,6 +383,8 @@ export type PromptCacheSetting = (typeof PROMPT_CACHE_SETTINGS)[number];
  * `--prompt-cache off`, or `auto` choosing off), `lifetime` (asked for a cache lifetime; the Anthropic
  * adapter with `short`, `long`, or `auto` choosing one), `provider_rules` (realm asks for nothing and the provider's own caching rules apply;
  * the OpenAI and o1 adapters; with `cache_key_sent`, realm also sent a cache key — caching 3-B).
+ * #896: the OpenAI adapter on GPT-5.6 and later at OpenAI's own address records `lifetime` (30
+ * minutes) or `off` for a single-shot request, and `off` for a tool step's requests under `off`.
  */
 export const CACHE_REQUESTS = ['off', 'lifetime', 'provider_rules'] as const;
 export type CacheRequest = (typeof CACHE_REQUESTS)[number];
@@ -509,8 +511,9 @@ export const CACHE_CONTROL_FIELDS = ['cache_control', 'prompt_cache_key'] as con
 export type CacheControlField = (typeof CACHE_CONTROL_FIELDS)[number];
 
 /**
- * Caching 3-B (A6): what carried a cache marker, or OpenAI's key, on one request: Anthropic's
- * `system` text and the prompt's head block, or OpenAI's `key`. (A `breakpoint` is #896's, not 3-B's.)
+ * Caching 3-B (A6): what carried a cache marker, or OpenAI's key, on one request: the `system` text
+ * and the prompt's head block (Anthropic's markers, and #896 OpenAI's marks on GPT-5.6 and later),
+ * or OpenAI's `key`.
  */
 export const CACHE_MARKED_PARTS = ['system', 'prompt', 'key'] as const;
 export type CacheMarkedPart = (typeof CACHE_MARKED_PARTS)[number];
@@ -652,8 +655,8 @@ export interface UsageRecord {
   /** Caching 3-B (A6, E3): the endpoint's refusal of Realm's cache fields, recorded on the request
    *  whose retry without them worked, and on every later request of the drive. */
   cache_controls_rejected?: CacheControlsRejected;
-  /** Caching 3-B (A6, D2): this OpenAI request carried the cache key (`cache_requested` stays
-   *  `provider_rules`: the key is a hint, not an ask). */
+  /** Caching 3-B (A6, D2): this OpenAI request carried the cache key, a hint, not an ask: beside
+   *  `provider_rules`, or (#896) beside the 30-minute ask on GPT-5.6 and later. */
   cache_key_sent?: true;
 }
 

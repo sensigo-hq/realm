@@ -127,7 +127,7 @@ const shareWorkflow = (id: string, steps: string[]): string =>
 const ONCE_ANTHROPIC =
   "anthropic: when realm agent or realm listen drives a step, realm marks its fixed part for caching, and on steps with tools the conversation at each turn, unless --prompt-cache turns it off; below the model's minimum nothing is cached, silently";
 const ONCE_OPENAI =
-  "openai: realm sends no cache marker; the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)";
+  "openai: on OpenAI's own address realm sends a cache key and, for GPT-5.6 and later, marks the fixed instructions and the stable start of the prompt of each step without tools for 30 minutes, unless --prompt-cache turns it off; otherwise the provider's own rules decide — see https://developers.openai.com/api/docs/guides/prompt-caching (as of 2026-10-16)";
 const ONCE_SCOPE =
   "anthropic: the cache is kept per workspace (per organization on Bedrock and Google Cloud), as Anthropic's page said on 2026-10-09: drives from different workspaces each pay the write";
 
@@ -274,7 +274,7 @@ describe('the lines and verdicts (C5)', { timeout: 60_000 }, () => {
     ]);
     expect([cacheLines(a.stdout)[0], cacheLines(o.stdout)[0]]).toEqual([
       "cache: analyze_cause — 2,251 chars ≈ 671–1,434 tokens, with Anthropic's tool text (estimate) — above the floor (512, your --floor): long enough to cache at that minimum when the drive asks for caching",
-      "cache: analyze_cause — 1,587 chars ≈ 318–638 tokens (estimate) — above the floor (200, your --floor): within the provider's own rules (realm sends no marker)",
+      "cache: analyze_cause — 1,587 chars ≈ 318–638 tokens (estimate) — above the floor (200, your --floor): within the provider's own rules (realm marks it on GPT-5.6 and later, at OpenAI's own address)",
     ]);
   });
 

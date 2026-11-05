@@ -242,6 +242,7 @@ function readableLifetime(asked: unknown): asked is { lifetime_s: number } {
  *   Realm cannot read);
  * - caching 3-B (D4), a provider that caches by its own rules (`'provider'`: the OpenAI providers):
  *   whether Realm sends it the cache key, by the endpoint and the setting;
+ * - #896, the `openai` provider on GPT-5.6 or later at OpenAI's own address (a lifetime or `'off'`);
  * - F2, a provider without the capability: Realm asks it for no caching;
  * - F3, `off`;
  * - F4b, on, but the workflow has no agent step;
@@ -272,6 +273,11 @@ export function promptCacheStartLine(input: {
   // cache key (a hint) on OpenAI's own endpoint under every setting but `off`, and on a custom
   // endpoint only for a setting the operator stated. A `realm listen` child says the same words.
   if (asked === 'provider') return providerCachingLine(caps, promptCache);
+  // #896: the `openai` provider on GPT-5.6 or later at OpenAI's own address asks for 30 minutes, or
+  // for nothing under `off` (its capability is a lifetime or `'off'` only there).
+  if (caps.providerId === 'openai' && asked !== undefined) {
+    return openAiExplicitLine(asked, promptCache, input.definition);
+  }
   if (asked === undefined) {
     // F2: a provider without the capability (a provider module or a host's own provider).
     return `Caching: Realm asks ${providerName(caps, 'this provider')} for no caching; any caching it does is its own.`;
@@ -290,6 +296,48 @@ export function promptCacheStartLine(input: {
       ? ' On a step that calls tools, it is also asked to cache the conversation so far, at each turn.'
       : '';
   return `Caching: Anthropic is asked to cache each step's fixed instructions and the stable start of its prompt for ${lifetimeText(asked.lifetime_s)}${source}.${tools}`;
+}
+
+/**
+ * #896 unit A — the start line of the `openai` provider in the explicit set (GPT-5.6 and later at
+ * OpenAI's own address): `off` first, whatever the steps (Anthropic's order); then a workflow with
+ * no agent step; a workflow whose every agent step calls tools (those are left to OpenAI's own
+ * caching, the key still sent); otherwise the 30-minute ask, with a sentence on tool steps when one
+ * calls tools. With no setting given (a host calling `runAgent`), no parenthetical.
+ */
+function openAiExplicitLine(
+  asked: 'off' | { lifetime_s: number },
+  promptCache: ResolvedPromptCache | undefined,
+  definition: Pick<WorkflowDefinition, 'steps'>,
+): string {
+  const source = promptCache === undefined ? '' : ` (${openAiReasonText(promptCache)})`;
+  if (asked === 'off') return `Caching: off; OpenAI is asked to cache nothing${source}.`;
+  const counts = cacheableStepCounts(definition);
+  if (counts.singleShot + counts.withTools === 0) {
+    return 'Caching: no step is cached; this workflow has no agent step.';
+  }
+  const leftToOpenAi = "OpenAI's own caching, which reuses each turn at the next";
+  if (counts.singleShot === 0) {
+    return `Caching: every agent step calls tools, so each is left to ${leftToOpenAi}; Realm sends a cache key${source}.`;
+  }
+  const tools = counts.withTools > 0 ? ` A step that calls tools is left to ${leftToOpenAi}.` : '';
+  return `Caching: OpenAI is asked to cache each step's fixed instructions and the stable start of its prompt for ${lifetimeText(asked.lifetime_s)}, the one lifetime Realm can ask OpenAI for${source}.${tools}`;
+}
+
+/**
+ * #896 unit A — the reason clause of the OpenAI start line: where the setting came from. `auto`
+ * chooses nothing here (unit B adds its priced words), so it names only who set it.
+ */
+function openAiReasonText(promptCache: ResolvedPromptCache): string {
+  const v = promptCache.value;
+  const listen = promptCache.by === 'realm listen';
+  if (v !== 'auto' || promptCache.source === 'stated') {
+    // eslint-disable-next-line no-restricted-syntax -- prose naming the setting's source, not a command to copy (#729 PR-3, L-2).
+    return listen ? `set by realm listen --prompt-cache ${v}` : `set by --prompt-cache ${v}`;
+  }
+  return listen
+    ? "auto, realm listen's default; change it with realm listen --prompt-cache"
+    : "auto, realm agent's default; turn it off with --prompt-cache off";
 }
 
 /**

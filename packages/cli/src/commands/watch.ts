@@ -30,6 +30,7 @@ import {
   extensionKeysOf,
   renderExtensionKeysClause,
 } from '../lib/loader-warnings.js';
+import { openCliHome } from '../lib/home.js';
 
 /**
  * issue #425: watch's own lines are timestamped and its warnings block was not, so on a busy
@@ -548,8 +549,8 @@ export const watchCommand = new Command('watch')
           ? inputPath
           : join(inputPath, 'workflow.yaml');
 
-      const { JsonWorkflowStore } = await import('@sensigo/realm');
-      const store = new JsonWorkflowStore();
+      // #616 PR-2a (iii): the one door, opened once.
+      const store = (await openCliHome()).workflowStore;
 
       console.log(`Watching ${filePath} — press Ctrl+C to stop`);
       try {

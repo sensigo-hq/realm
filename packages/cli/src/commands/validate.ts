@@ -21,13 +21,14 @@ import {
   renderLoaderWarning,
   assessStructuredOutputEligibility,
   renderIneligibleMessage,
-  JsonWorkflowStore,
   RUNTIME_ONLY_WORKFLOW_KEYS,
   VERSION,
   probeClassOf,
   repairActFor,
   type LoaderWarning,
+  type WorkflowRegistrar,
 } from '@sensigo/realm';
+import { openCliHome } from '../lib/home.js';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import type { LoadedProjectExtensions } from '../extensions/load-project-extensions.js';
 import {
@@ -533,14 +534,13 @@ function rejectIfPolicyEscalates(warnings: LoaderWarning[]): boolean {
  * entirely — see the legacy arm below: it is not grandfathered, it is already unreachable.
  */
 async function validateRegistered(
+  store: Pick<WorkflowRegistrar, 'get'>,
   id: string,
   strict: boolean,
   json: boolean,
   overrideModule: string | undefined,
   cacheFlags: CacheFlags,
 ): Promise<void> {
-  const store = new JsonWorkflowStore();
-
   let stored: WorkflowDefinition;
   try {
     stored = await store.get(id);
@@ -1075,7 +1075,16 @@ export const validateCommand = new Command('validate')
       }
 
       if (opts.registered !== undefined) {
-        await validateRegistered(opts.registered, strict, json, opts.extensionsModule, cacheFlags);
+        // #616 PR-2a (iii): the one door, opened here, where the check built its registry before.
+        const home = await openCliHome();
+        await validateRegistered(
+          home.workflowStore,
+          opts.registered,
+          strict,
+          json,
+          opts.extensionsModule,
+          cacheFlags,
+        );
         return;
       }
 

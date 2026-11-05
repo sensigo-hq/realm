@@ -49,7 +49,7 @@ import {
 import { parseDuration } from '../lib/parse-duration.js';
 import { listRunsDiagnosed, unreadableRunLines } from './list.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
-import { openRunStore } from '../lib/run-store.js';
+import { openCliHome } from '../lib/home.js';
 
 export type PurgeEligibility =
   | { eligible: true; overriddenClaimStep?: string | undefined }
@@ -618,14 +618,14 @@ export const purgeCommand = new Command('purge')
         process.exit(1);
       }
 
-      const { JsonFileFailedAttemptStore, JsonWorkflowStore } = await import('@sensigo/realm');
-      const { JsonTraceBufferStore } = await import('@sensigo/realm-mcp');
-      const runStore = openRunStore();
-      const runsDir = runStore.runsDirPath;
-      const failedAttemptStore = new JsonFileFailedAttemptStore(runsDir);
-      // The run reader is the anchor store: the `run_at_version` fence (issue #715 (a)) is evaluated
-      // against it, inside the trace buffer's own critical section (issue #616 PR-0).
-      const traceBufferStore = new JsonTraceBufferStore(runsDir, runStore);
+      // #616 PR-2a (iii): the one door, opened once, after the flag refusals; the registry is built
+      // on its first use.
+      const home = await openCliHome();
+      const runStore = home.runStore;
+      const failedAttemptStore = home.failedAttemptStore;
+      // The door's trace buffer reads through the anchor store: the `run_at_version` fence (issue
+      // #715 (a)) is evaluated against it, inside the trace buffer's own critical section (#616 PR-0).
+      const traceBufferStore = home.traceBufferStore;
       // The crash-anchor is now STRUCTURAL, not positional (issue #184): runStore (JsonFileStore)
       // is passed to purgeRuns as the separate anchorStore argument, and purgeRuns's own control
       // flow guarantees it is only ever deleted after every entry below has succeeded — it is
@@ -649,7 +649,7 @@ export const purgeCommand = new Command('purge')
             olderThan: opts.olderThan,
             workflow: opts.workflow,
             dryRun,
-            workflows: new JsonWorkflowStore(),
+            workflows: home.workflowStore,
             onUnreadable,
           },
           runStore,

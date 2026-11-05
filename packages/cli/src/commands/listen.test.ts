@@ -24,7 +24,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION, abandonRun, JsonFileStore } from '@sensigo/realm';
 import type { WorkflowDefinition, WebhookTrigger, WorkflowRegistrar } from '@sensigo/realm';
-import { homedir, tmpdir, constants as osConstants } from 'node:os';
+import { tmpdir, constants as osConstants } from 'node:os';
 import {
   accessSync,
   chmodSync,
@@ -42,7 +42,6 @@ import {
   buildRouteTable,
   normalizeHeaders,
   prepareListenWorkflows,
-  defaultDedupBase,
   buildAgentArgv,
   defaultSpawnAgent,
   makeAgentSpawner,
@@ -1179,30 +1178,6 @@ describe('project extensions — listen startup and webhook pipeline', () => {
   });
 });
 
-describe('defaultDedupBase (issue #332 item 3 — call-time, never module-scope, the #285 class)', () => {
-  it("HOME set: resolves under homedir(), byte-compatible with the old ?? '.' expression (which agreed with homedir() whenever HOME was set)", () => {
-    // Read-only path assertion — never a write (the #285 caution).
-    expect(defaultDedupBase()).toBe(join(homedir(), '.realm', 'dedup'));
-  });
-
-  it("HOME UNSET: the discriminating cell — defaultDedupBase() still resolves under the OS home (via os.homedir()'s /etc/passwd fallback), NEVER under '.' (the old expression's silent-CWD failure mode)", () => {
-    // The set-HOME cell above is confirmation theater on its own: `?? '.'` and `homedir()` AGREE
-    // whenever HOME is set, so it can't distinguish the fix from the old expression. Only
-    // deleting HOME discriminates — the old code would have resolved to './.realm/dedup' (CWD);
-    // the fix must still resolve under the real OS home.
-    const savedHome = process.env['HOME'];
-    delete process.env['HOME'];
-    try {
-      const resolved = defaultDedupBase();
-      expect(resolved).toBe(join(homedir(), '.realm', 'dedup'));
-      expect(resolved.startsWith('.')).toBe(false);
-      expect(resolved).not.toBe(join('.', '.realm', 'dedup'));
-    } finally {
-      if (savedHome !== undefined) process.env['HOME'] = savedHome;
-    }
-  });
-});
-
 // =================================================================================================
 // issue #409 — the operator's fallback clock reaches spawned drives
 //
@@ -1474,7 +1449,10 @@ describe('issue #600 PR 2 — the listen: caching line', () => {
 
   // (a) red when the openai field is dropped.
   it("no --provider: Anthropic's setting, who set it, and OpenAI sends a cache key on its own endpoint", () => {
-    expect([line(undefined, undefined, 'default'), line(undefined, 'short', 'default')]).toEqual([
+    expect([
+      line(undefined, undefined, 'default', 'gpt-4o'),
+      line(undefined, 'short', 'default', 'gpt-4o'),
+    ]).toEqual([
       'listen: caching {"anthropic":"auto: off, 5 minutes or 1 hour for each workflow, by the gaps between its recent triggers and the prices in runner.cache.economics","set_by":"realm listen\'s default","openai":"sends a cache key on OpenAI\'s own endpoint"}',
       'listen: caching {"anthropic":"5 minutes","set_by":"--prompt-cache short","openai":"sends a cache key on OpenAI\'s own endpoint"}',
     ]);
@@ -1485,7 +1463,7 @@ describe('issue #600 PR 2 — the listen: caching line', () => {
   it('--provider anthropic: one line per setting — unstated, auto, short, long, off', () => {
     expect(
       [undefined, 'auto', 'short', 'long', 'off'].map((w) =>
-        line('anthropic', w as never, 'default'),
+        line('anthropic', w as never, 'default', 'claude-sonnet-4-6'),
       ),
     ).toEqual([
       'listen: caching {"anthropic":"auto: off, 5 minutes or 1 hour for each workflow, by the gaps between its recent triggers and the prices in runner.cache.economics","set_by":"realm listen\'s default"}',
@@ -1498,18 +1476,20 @@ describe('issue #600 PR 2 — the listen: caching line', () => {
 
   // (a) red when the openai field is printed with --provider anthropic.
   it('--provider anthropic: the same, without openai', () => {
-    expect(line('anthropic', 'off', 'default')).toBe(
+    expect(line('anthropic', 'off', 'default', 'claude-sonnet-4-6')).toBe(
       'listen: caching {"anthropic":"off","set_by":"--prompt-cache off"}',
     );
   });
 
   // (a) red when --provider openai claims an Anthropic setting.
   it('--provider openai: OpenAI sends a cache key on its own endpoint, Anthropic not used', () => {
-    expect(line('openai', undefined, 'default')).toBe(
+    expect(line('openai', undefined, 'default', 'gpt-4o')).toBe(
       'listen: caching {"openai":"sends a cache key on OpenAI\'s own endpoint","anthropic":"not used"}',
     );
   });
 
+  // #896: these cells name an --model outside the GPT-5.6-and-later set (`gpt-4o`), so they pin
+  // 3-B's words; the set's words are pinned in `openai-explicit-cache-896.test.ts`.
   // Caching 3-B (MA 1's wording list, 2026-11-05): the `openai` value says what an OpenAI agent
   // listen starts will send, by the endpoint it resolves (OPENAI_BASE_URL can make it custom) and
   // the setting it is given. One cell per branch; `no-default-model-676.test.ts` runs the built
@@ -1537,7 +1517,7 @@ describe('issue #600 PR 2 — the listen: caching line', () => {
     ],
     ['a custom endpoint, off', 'off', 'custom', 'off: no cache key to the custom endpoint'],
   ] as const)('3-B — the openai value on %s', (_name, setting, endpoint, words) => {
-    expect(line('openai', setting, endpoint)).toBe(
+    expect(line('openai', setting, endpoint, 'gpt-4o')).toBe(
       `listen: caching {"openai":${JSON.stringify(words)},"anthropic":"not used"}`,
     );
   });
@@ -1770,7 +1750,7 @@ describe("issue #600 (the lifetime unit) — listen measures each workflow's tri
   // keeps the old words, with no price file and no fallback; (b) prints it.
   it("the help: listen's --prompt-cache description", () => {
     expect(listenCommand.options.find((o) => o.long === '--prompt-cache')?.description).toBe(
-      "Passed to each realm agent it starts: auto, short, long or off. auto (the default): each agent asks Anthropic for off, 5 minutes or 1 hour, by the gaps between the recent triggers of its workflow, priced from runner.cache.economics (with no usable prices: 1 hour when a recent gap is under 54 minutes, else off). short: 5 minutes. long: 1 hour. off: nothing. With `--provider openai`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but `off`, and to another endpoint only for a setting you state other than `off`. Other providers' own caching applies.",
+      "Passed to each realm agent it starts: auto, short, long or off. auto (the default): each agent asks Anthropic for off, 5 minutes or 1 hour, by the gaps between the recent triggers of its workflow, priced from runner.cache.economics (with no usable prices: 1 hour when a recent gap is under 54 minutes, else off). short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: nothing. With `--provider openai`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but `off`, and to another endpoint only for a setting you state other than `off`. On GPT-5.6 and later at OpenAI's own address, the agent also asks OpenAI to cache the fixed part of each step without tools for 30 minutes, and `off` turns OpenAI's caching off. Other providers' own caching applies.",
     );
   });
 });

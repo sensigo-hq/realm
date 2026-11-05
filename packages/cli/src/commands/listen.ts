@@ -36,6 +36,7 @@ import { parseLlmTimeout, parseProvider } from './agent.js';
 import {
   hasText,
   listenModelRefusal,
+  openAiExplicitCacheModel,
   resolveOpenAiEndpoint,
   type ProviderName,
 } from '../agent/providers/llm-provider.js';
@@ -47,7 +48,6 @@ import {
   type PromptCacheSetting,
   type RequestEndpoint,
   loadWorkflowFromFile,
-  JsonWorkflowStore,
   validateRunParams,
   WorkflowError,
   renderLoaderWarning,
@@ -60,7 +60,6 @@ import {
   isPastDeadline,
   parseStamp,
   persistsField,
-  realmHomePath,
   startIdentityEntry,
 } from '@sensigo/realm';
 import { cannotGoOnLines } from './ways-renderer.js';
@@ -86,7 +85,7 @@ import {
   verifySharedSecret,
 } from '../lib/webhook-verifiers.js';
 import { extractParams, extractDedupId, resolveDotPath } from '../lib/webhook-params.js';
-import { FileDedupStore, InMemoryDedupStore } from '../lib/dedup-store.js';
+import { InMemoryDedupStore } from '../lib/dedup-store.js';
 import { parseHost, parseOneOf, parseWholeNumber } from '../lib/option-parsers.js';
 import { bindFailureLine } from '../lib/bind-failure.js';
 import { listRunsDiagnosed } from './list.js';
@@ -96,7 +95,7 @@ import {
 } from '../extensions/load-project-extensions.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
 import { addDeclaredValues } from '../output/writer.js';
-import { openRunStore } from '../lib/run-store.js';
+import { openCliHome } from '../lib/home.js';
 
 const DEFAULT_TTL_MINUTES = 60;
 // Fixed signature-header names for the body-signature presets.
@@ -827,22 +826,6 @@ export function makeListenHandler(
 
 function isLoopbackHost(host: string): boolean {
   return host === '127.0.0.1' || host === '::1' || host === 'localhost' || host.startsWith('127.');
-}
-
-/**
- * issue #332 item 3: the webhook dedup store's default base directory — resolved at CALL time
- * (never module load; the #285 class), exported so the `.action` closure below and any future
- * consumer/test can call it without constructing a full `listen` invocation. Previously an inline
- * `process.env['HOME'] ?? '.'` expression in the closure — house-pattern-inconsistent (every other
- * store's default resolves realm's home the same way, matching `JsonFileStore`/`JsonFileReplayStore`),
- * Windows-blind (`HOME` is a POSIX-only env var; Windows sets `USERPROFILE`, so a bare `HOME`
- * check silently falls through to `'.'` on every Windows install), and silently wrote under the
- * CURRENT WORKING DIRECTORY rather than failing loudly when `HOME` was unset for any reason.
- * Issue #616 PR-2a (i): the home comes from core's `realmHomePath()`, which refuses an empty or
- * relative HOME with `STATE_HOME_UNUSABLE` (Node's own `homedir()` returns `''` for an empty HOME).
- */
-export function defaultDedupBase(): string {
-  return join(realmHomePath(), 'dedup');
 }
 
 /**
@@ -1622,9 +1605,14 @@ export function listenCachingFacts(
   // Caching 3-B (MA 1's wording list): the endpoint each OpenAI agent will resolve (realm listen
   // passes no --base-url, so only OPENAI_BASE_URL can make it custom).
   openaiEndpoint: RequestEndpoint,
+  // #896: listen's --model, which every agent it starts is given.
+  model: string,
 ): Record<string, string> {
   if (provider === 'openai') {
-    return { openai: openaiCachingWords(promptCache, openaiEndpoint), anthropic: 'not used' };
+    return {
+      openai: openaiCachingWords(promptCache, openaiEndpoint, model),
+      anthropic: 'not used',
+    };
   }
   const words: Record<PromptCacheSetting, string> = {
     auto: 'auto: off, 5 minutes or 1 hour for each workflow, by the gaps between its recent triggers and the prices in runner.cache.economics',
@@ -1638,19 +1626,26 @@ export function listenCachingFacts(
   };
   return provider === 'anthropic'
     ? anthropic
-    : { ...anthropic, openai: openaiCachingWords(promptCache, openaiEndpoint) };
+    : { ...anthropic, openai: openaiCachingWords(promptCache, openaiEndpoint, model) };
 }
 
 /**
  * Caching 3-B (D2; MA 1's wording list, 2026-11-05) — what an OpenAI agent `realm listen` starts sends,
  * by the setting it is given (none: the runner's default) and the endpoint it will resolve: on
  * OpenAI's own endpoint the key goes out under every setting but `off`; on a custom endpoint only
- * for a stated setting other than `off`.
+ * for a stated setting other than `off`. #896: on GPT-5.6 and later at OpenAI's own address, the
+ * agent also asks for 30 minutes, or for nothing under `off`.
  */
 function openaiCachingWords(
   promptCache: PromptCacheSetting | undefined,
   endpoint: RequestEndpoint,
+  model: string,
 ): string {
+  if (endpoint === 'default' && openAiExplicitCacheModel(model)) {
+    return promptCache === 'off'
+      ? 'off: OpenAI is asked to cache nothing'
+      : '30 minutes, the one lifetime Realm can ask OpenAI for, and a cache key';
+  }
   if (endpoint === 'custom') {
     if (promptCache === 'off') return 'off: no cache key to the custom endpoint';
     return promptCache === undefined
@@ -1776,7 +1771,7 @@ export const listenCommand = new Command('listen')
   .option(
     '--prompt-cache <setting>',
     // eslint-disable-next-line no-restricted-syntax -- help prose naming the setting, not a command to copy (#729 PR-3, L-2); #898: its numbers come from the provider's constants.
-    `Passed to each realm agent it starts: auto, short, long or off. auto (the default): each agent asks Anthropic for off, 5 minutes or 1 hour, by the gaps between the recent triggers of its workflow, priced from runner.cache.economics (with no usable prices: ${autoLongText()} when a recent gap is under ${autoFallbackWindowText()}, else off). short: 5 minutes. long: 1 hour. off: nothing. With \`--provider openai\`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but \`off\`, and to another endpoint only for a setting you state other than \`off\`. Other providers' own caching applies.`,
+    `Passed to each realm agent it starts: auto, short, long or off. auto (the default): each agent asks Anthropic for off, 5 minutes or 1 hour, by the gaps between the recent triggers of its workflow, priced from runner.cache.economics (with no usable prices: ${autoLongText()} when a recent gap is under ${autoFallbackWindowText()}, else off). short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: nothing. With \`--provider openai\`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but \`off\`, and to another endpoint only for a setting you state other than \`off\`. On GPT-5.6 and later at OpenAI's own address, the agent also asks OpenAI to cache the fixed part of each step without tools for 30 minutes, and \`off\` turns OpenAI's caching off. Other providers' own caching applies.`,
     parsePromptCache,
   )
   .option(
@@ -1885,11 +1880,13 @@ export const listenCommand = new Command('listen')
       }
 
       const dedupKind = opts['dedupStore'] ?? 'file';
-      const dedupBase = defaultDedupBase();
+      // #616 PR-2a (iii): the one door, opened once, after every refusal above; its dedup marks sit
+      // under the home's `dedup` folder (`--dedup-store memory` keeps its in-memory map).
+      const home = await openCliHome();
       const memoryStores = new Map<string, DedupStore>();
       const deps: ListenDeps = {
-        workflowStore: new JsonWorkflowStore(),
-        runStore: openRunStore(),
+        workflowStore: home.workflowStore,
+        runStore: home.runStore,
         dedupStoreFor: (workflowId: string): DedupStore => {
           if (dedupKind === 'memory') {
             let s = memoryStores.get(workflowId);
@@ -1899,7 +1896,7 @@ export const listenCommand = new Command('listen')
             }
             return s;
           }
-          return new FileDedupStore(dedupBase, workflowId);
+          return home.dedupStoreFor(workflowId);
         },
         spawnAgent: makeAgentSpawner({ ...opts, model }, logger),
         logger,
@@ -1950,7 +1947,7 @@ export const listenCommand = new Command('listen')
         opts.provider === 'anthropic' ? 'default' : await resolveOpenAiEndpoint();
       logger.info(
         'listen: caching',
-        listenCachingFacts(opts.provider, opts.promptCache, openaiEndpoint),
+        listenCachingFacts(opts.provider, opts.promptCache, openaiEndpoint, model),
       );
       const addr = handle.server.address() as { port: number } | null;
       logger.info(

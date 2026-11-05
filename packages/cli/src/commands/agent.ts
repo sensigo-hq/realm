@@ -11,7 +11,6 @@ import { pathToFileURL } from 'node:url';
 import {
   validateRunParams,
   loadWorkflowFromFile,
-  JsonWorkflowStore,
   WorkflowError,
   describeUnrecognised,
   describeForeignProvider,
@@ -65,7 +64,7 @@ import {
   writerMode,
   writerReceiptLine,
 } from '../output/writer.js';
-import { openRunStore } from '../lib/run-store.js';
+import { openCliHome } from '../lib/home.js';
 
 /**
  * Builds the Slack gate handler from the deployment manifest's `notifiers.slack_gate`
@@ -300,7 +299,7 @@ export const agentCommand = new Command('agent')
   .option(
     '--prompt-cache <setting>',
     // eslint-disable-next-line no-restricted-syntax -- help prose naming the setting, not a command to copy (#729 PR-3, L-2); #898: its numbers come from the provider's constants.
-    `What Anthropic is asked to cache: auto, short, long or off. auto (the default) chooses per drive — the short lifetime for a drive realm agent starts on its own; for a drive realm listen starts, off, short or long by the gaps between that workflow's recent triggers, priced from the runner's price file (runner.cache.economics); with no usable prices, long when a recent gap is under ${autoFallbackWindowText()}, else off. short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: Anthropic is asked to cache nothing. With \`--provider openai\`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but \`off\`, and to another endpoint only for a setting you state other than \`off\`. Other providers' own caching applies.`,
+    `What Anthropic is asked to cache: auto, short, long or off. auto (the default) chooses per drive — the short lifetime for a drive realm agent starts on its own; for a drive realm listen starts, off, short or long by the gaps between that workflow's recent triggers, priced from the runner's price file (runner.cache.economics); with no usable prices, long when a recent gap is under ${autoFallbackWindowText()}, else off. short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: Anthropic is asked to cache nothing. With \`--provider openai\`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but \`off\`, and to another endpoint only for a setting you state other than \`off\`. On GPT-5.6 and later at OpenAI's own address, Realm also asks OpenAI to cache the fixed part of each step without tools for 30 minutes, the one lifetime Realm can ask OpenAI for (\`short\` and \`long\` alike), and \`off\` turns OpenAI's caching off. Other providers' own caching applies.`,
     parsePromptCache,
   )
   // issue #620 PR-C: the repo's first hidden option. `realm listen` appends it to every child it
@@ -399,15 +398,13 @@ export const agentCommand = new Command('agent')
       };
       let exitCode: number;
       try {
-        const workflowStore = new JsonWorkflowStore();
-        const store = openRunStore();
-        // issue #207 PR-2 (D3 §5, mixed-wiring gap): construct the trace-buffer store beside the
-        // concrete JsonFileStore (same runsDir), mirroring reclaim.ts's own wiring shape — without
-        // this, `realm agent`'s driver never adopted/fenced a step's streamed WAL trace at all.
-        const { JsonTraceBufferStore } = await import('@sensigo/realm-mcp');
-        // issue #616 PR-0: the run reader is the run store the driver writes — every fence
-        // predicate is evaluated against it inside the trace buffer's own critical section.
-        const traceBufferStore = new JsonTraceBufferStore(store.runsDirPath, store);
+        // #616 PR-2a (iii): the one door, opened once. Its trace buffer sits beside the run store and
+        // fences against it (issue #207 PR-2's mixed-wiring gap; #616 PR-0's reader): without it,
+        // `realm agent`'s driver never adopted/fenced a step's streamed WAL trace at all.
+        const home = await openCliHome();
+        const workflowStore = home.workflowStore;
+        const store = home.runStore;
+        const traceBufferStore = home.traceBufferStore;
         let provider: LlmProvider;
         // issue #898: an Anthropic provider whose `auto` choice is pending (a drive `realm listen`
         // started, with measured gaps) — settled from the runner's price file after the load — and
