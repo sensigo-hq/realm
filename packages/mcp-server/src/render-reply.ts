@@ -53,10 +53,15 @@ import {
   type WayRenderer,
   type WayVerb,
 } from '@sensigo/realm';
+import { createHash } from 'node:crypto';
 import {
   buildDisclosureSet,
   disclose,
+  discloseLeaf,
   discloseReply,
+  discloseSplit,
+  tierFor,
+  withheldCauseOf,
   weakestDeclared,
   withDeclaredStanding,
   EVIDENCE_TABLE,
@@ -143,7 +148,30 @@ export interface McpNextAction {
   input_schema?: Record<string, unknown>;
   /** Template-resolved step prompt, delivered to the agent at step entry. */
   prompt?: string;
+  /**
+   * Caching 3-B (B1): where the received `prompt` stops repeating between runs, so an agent can cache
+   * the same head Realm caches. Cut the `prompt` you RECEIVED at `chars` UTF-16 code units: the
+   * SHA-256 of that head (its UTF-8 bytes) is `sha256`. Absent when Realm cannot vouch for it.
+   */
+  stable_prefix?: McpStablePrefix;
 }
+
+/** Caching 3-B (B1): the boundary of a `run_step` entry's cacheable head. */
+export interface McpStablePrefix {
+  /** The head's length in the received `prompt`, in UTF-16 code units. */
+  chars: number;
+  unit: 'utf16';
+  /** The SHA-256 of the head's UTF-8 bytes: 64 lowercase hex characters, no prefix. */
+  sha256: string;
+}
+
+/**
+ * Caching 3-B (B2): the key a `run_step` entry carries from its step's brief to {@link toolContentOf}:
+ * the brief's boundary in the RAW prompt. Internal: `toolContentOf` turns it into `stable_prefix` and
+ * removes it from every entry before the walk — the walk passes a key no table classes unchanged, so
+ * this removal is the only thing that keeps it from the agent.
+ */
+export const BRIEF_STABLE_CHARS = 'brief_stable_chars';
 
 /** A way the agent may read about but never counts as a next step: reading the run, ending it (A-1). */
 export interface McpAlsoEntry extends McpNextAction {
@@ -437,7 +465,11 @@ export const MCP_WAYS: WayRenderer<McpNextAction, McpHost> = {
       human_readable: `Execute step '${way.step}': ${brief.description}`,
       orientation: `Run is active. Next step ready: '${way.step}'.`,
       ...(brief.prompt !== undefined ? { prompt: brief.prompt } : {}),
-    };
+      // caching 3-B (B2): the brief's boundary rides to the door under its internal key.
+      ...(brief.prompt !== undefined && brief.stable_prefix !== undefined
+        ? { [BRIEF_STABLE_CHARS]: brief.stable_prefix.chars }
+        : {}),
+    } as McpNextAction;
   },
   advance: (way) => {
     const items = owedItems(way);
@@ -1493,9 +1525,10 @@ export function mcpReplyOf(rendered: RenderedReply): WithPersonBlock<McpEnvelope
 // ─── The disclosure step (#729 PR-3; RECORD 01 #9, #10; D3/03) ──────────────────────────────────
 //
 // Every reply leaves through {@link toolContentOf}, which walks it by its class table with the
-// reply's disclosure set, adds the `disclosure` receipt and serializes it: the LAST transformation.
-// Every reshaping (`withHintTail`, the spreads, abandon's respread) happens before it. The library's
-// `handle*` results stay raw (D9): only this door masks.
+// reply's disclosure set, adds the `disclosure` receipt and serializes it. Every reshaping
+// (`withHintTail`, the spreads, abandon's respread) happens before it; after the walk, only #916's
+// ceiling adds its overflow line (`withOverflowLine`) to a walked reply. The library's `handle*`
+// results stay raw (D9): only this door masks.
 
 /** How a reply field reaches the agent (#729 PR-0, A-13): the envelope table's second column. */
 export type ReplyRoute =
@@ -1509,6 +1542,17 @@ export interface EnvelopeRow {
   readonly route?: ReplyRoute;
 }
 
+/** Caching 3-B (B3): `stable_prefix`'s leaves are Realm's own facts — a count, a closed word, a
+ *  digest of text in which every hidden value is already replaced (no `deriveOf` row: MA 1's ruling,
+ *  C3). */
+const STABLE_PREFIX_TABLE = {
+  // A count Realm computes (the head's length): its producer is `count`, which the producers entry
+  // cannot name — `FactProducers` takes one only for a row that can hold a string.
+  chars: 'fact',
+  unit: 'fact',
+  sha256: 'fact',
+} as const satisfies Record<keyof McpStablePrefix, DisclosureClass>;
+
 export const NEXT_ACTION_TABLE = {
   instruction: 'fact',
   // #627 W: an await entry's facts — the run, the gate, the step, its choices, its deadline.
@@ -1518,6 +1562,8 @@ export const NEXT_ACTION_TABLE = {
   input_schema: 'fact',
   // The template-resolved step prompt carries the run's values (D1 §3.3: the brief, every tier).
   prompt: 'value',
+  // Caching 3-B (B3): computed by `toolContentOf` from the disclosed head, before the walk.
+  stable_prefix: { nested: STABLE_PREFIX_TABLE },
 } as const satisfies Record<keyof McpNextAction, DisclosureClass>;
 
 export const ALSO_TABLE = {
@@ -1949,22 +1995,18 @@ export function toolContentOf(
     };
   }
   const person = reply[PERSON_BLOCK];
+  // Caching 3-B (B2): each `run_step` entry's boundary, computed on the RAW reply before the first
+  // walk, so the ceiling's cut copies (`fitted`) inherit it; the internal key goes from every entry.
+  const raw = withStablePrefixes(reply, disclosure) as Record<string, unknown>;
   const walk = (r: Readonly<Record<string, unknown>>): Record<string, unknown> =>
     discloseReply(r, disclosure.set, disclosure.audience, disclosure.table) as Record<
       string,
       unknown
     >;
-  const shown = walk(reply as Record<string, unknown>);
+  const shown = walk(raw);
   let text = sseJsonStringify(shown);
   if (text.length > REPLY_CEILING_CHARS) {
-    text = fitted(
-      reply as Record<string, unknown>,
-      shown,
-      text.length,
-      walk,
-      plan ?? reply[REPLY_PLAN],
-      guardWayOut,
-    );
+    text = fitted(raw, shown, text.length, walk, plan ?? reply[REPLY_PLAN], guardWayOut);
   }
   return {
     content: [
@@ -1973,6 +2015,74 @@ export function toolContentOf(
         ? [{ type: 'text' as const, text: person, annotations: { audience: ['user'] as ['user'] } }]
         : []),
     ],
+  };
+}
+
+/**
+ * Caching 3-B (B2): `node` with every object that carries {@link BRIEF_STABLE_CHARS} — a `run_step`
+ * entry, at any depth: the envelope's `next_actions`, `get_run_state`'s, `start_run_batch`'s
+ * `started[].next_actions` — given its `stable_prefix` (when {@link stablePrefixOf} vouches for one)
+ * and stripped of the internal key. Copy on write: an unchanged subtree is returned as it is, a
+ * changed object keeps its own properties (symbol keys included). Exported for the ceiling cells,
+ * which measure the walk the door makes: the walk of this function's result.
+ */
+export function withStablePrefixes(node: unknown, disclosure: ToolDisclosure): unknown {
+  if (Array.isArray(node)) {
+    let changed = false;
+    const out = node.map((item) => {
+      const next = withStablePrefixes(item, disclosure);
+      if (next !== item) changed = true;
+      return next;
+    });
+    return changed ? out : node;
+  }
+  if (node === null || typeof node !== 'object') return node;
+  const own = node as Record<string, unknown>;
+  let copy: Record<string, unknown> | undefined;
+  const writable = (): Record<string, unknown> =>
+    (copy ??= Object.defineProperties({}, Object.getOwnPropertyDescriptors(own)) as Record<
+      string,
+      unknown
+    >);
+  for (const key of Object.keys(own)) {
+    const next = withStablePrefixes(own[key], disclosure);
+    if (next !== own[key]) writable()[key] = next;
+  }
+  if (Object.hasOwn(own, BRIEF_STABLE_CHARS)) {
+    const entry = writable();
+    const chars = entry[BRIEF_STABLE_CHARS];
+    delete entry[BRIEF_STABLE_CHARS];
+    const prompt = entry['prompt'];
+    if (typeof chars === 'number' && typeof prompt === 'string') {
+      const stable = stablePrefixOf(prompt, chars, disclosure);
+      if (stable !== undefined) entry['stable_prefix'] = stable;
+    }
+  }
+  return copy ?? node;
+}
+
+/**
+ * Caching 3-B (B2, F-B1; D4.6-1…4): the boundary of `prompt`'s disclosed head, cut at the brief's
+ * `chars` (raw coordinates; the door strips no span marks) with the walk's own set at the agent's
+ * tier. Published ONLY when the agent receives exactly `disclose`'s text: the set withholds
+ * nothing, and the walk's leaf transforms the prompt no further than
+ * `disclose` does (`discloseLeaf(prompt) === head + tail`). Otherwise `undefined`: the boundary is
+ * never published for text the agent does not receive.
+ */
+function stablePrefixOf(
+  prompt: string,
+  chars: number,
+  disclosure: ToolDisclosure,
+): McpStablePrefix | undefined {
+  // The door's audience is the agent (`ToolDisclosure`); a withholding set shapes the prompt.
+  if (withheldCauseOf(disclosure.set) !== undefined) return undefined;
+  const tier = tierFor('agent');
+  const { head, tail } = discloseSplit(prompt, chars, disclosure.set, tier);
+  if (discloseLeaf(prompt, disclosure.set, tier) !== head + tail) return undefined;
+  return {
+    chars: head.length,
+    unit: 'utf16',
+    sha256: createHash('sha256').update(head, 'utf8').digest('hex'),
   };
 }
 
@@ -2330,6 +2440,12 @@ export const DOOR_FACTS = {
     input_schema: 'author_literal',
     verb: 'enum',
   } satisfies FactProducers<typeof ALSO_TABLE, McpAlsoEntry>,
+  // Caching 3-B (B3): the nested table both `next_action` and `also` carry; `chars` is a number,
+  // so it takes no producer.
+  stable_prefix: { unit: 'enum', sha256: 'hash' } satisfies FactProducers<
+    typeof STABLE_PREFIX_TABLE,
+    McpStablePrefix
+  >,
   ended_by: { arm: 'enum', step: 'author_literal' } satisfies FactProducers<
     (typeof MCP_ENVELOPE_ROWS)['ended_by']['class']['nested'],
     NonNullable<McpEnvelope['ended_by']>

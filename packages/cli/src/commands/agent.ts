@@ -45,7 +45,6 @@ import {
   autoFallbackWindowText,
   cacheableStepCounts,
   parsePromptCache,
-  providerName,
   resolvePromptCache,
 } from '../agent/prompt-cache.js';
 import { reattachable, resolveRunAttach } from '../agent/run-attach.js';
@@ -301,7 +300,7 @@ export const agentCommand = new Command('agent')
   .option(
     '--prompt-cache <setting>',
     // eslint-disable-next-line no-restricted-syntax -- help prose naming the setting, not a command to copy (#729 PR-3, L-2); #898: its numbers come from the provider's constants.
-    `What Anthropic is asked to cache: auto, short, long or off. auto (the default) chooses per drive — the short lifetime for a drive realm agent starts on its own; for a drive realm listen starts, off, short or long by the gaps between that workflow's recent triggers, priced from the runner's price file (runner.cache.economics); with no usable prices, long when a recent gap is under ${autoFallbackWindowText()}, else off. short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: Anthropic is asked to cache nothing. Other providers are asked for no caching.`,
+    `What Anthropic is asked to cache: auto, short, long or off. auto (the default) chooses per drive — the short lifetime for a drive realm agent starts on its own; for a drive realm listen starts, off, short or long by the gaps between that workflow's recent triggers, priced from the runner's price file (runner.cache.economics); with no usable prices, long when a recent gap is under ${autoFallbackWindowText()}, else off. short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: Anthropic is asked to cache nothing. With \`--provider openai\`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but \`off\`, and to another endpoint only for a setting you state other than \`off\`. Other providers' own caching applies.`,
     parsePromptCache,
   )
   // issue #620 PR-C: the repo's first hidden option. `realm listen` appends it to every child it
@@ -501,21 +500,9 @@ export const agentCommand = new Command('agent')
             promptCache,
           }));
           requestedModel = flags.model;
-          // issue #600 PR 2 (C3b): a stated setting for a provider that cannot apply it is refused,
-          // keyed on the capability, never on a provider's name. A child `realm listen` started is
-          // never refused: listen's flag is fleet-wide, so the child's start line discloses it.
-          if (
-            opts.promptCache !== undefined &&
-            opts.spawnedByListen !== true &&
-            !appliesPromptCache()
-          ) {
-            // #898: reached only when no choice is pending, so `capabilities()` can be read here.
-            const caps = provider.capabilities();
-            console.error(
-              `Error: --prompt-cache sets caching only for Anthropic; Realm asks ${providerName(caps, 'this provider')} for no caching, so the flag would change nothing. Remove --prompt-cache, or use --provider anthropic with an Anthropic model. ${tail}`,
-            );
-            process.exit(1);
-          }
+          // caching 3-B (row 4): every built-in provider applies the setting (Anthropic asks for a
+          // lifetime; OpenAI decides by it whether to send the cache key), so no stated setting is
+          // refused here; `--provider-module` with `--prompt-cache` is refused above (G18).
         }
         // issue #600 PR 2 (C6): the re-attach command repeats a stated setting only when this
         // provider applies it — a listen child that picked OpenAI was given the flag, and repeating

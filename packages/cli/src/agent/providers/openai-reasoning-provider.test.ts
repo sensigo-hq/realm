@@ -145,7 +145,13 @@ describe('OpenAIReasoningProvider.callStep', () => {
   // -----------------------------------------------------------------------
   it('capabilities() returns jsonMode: false', () => {
     const provider = new OpenAIReasoningProvider('o1-mini');
-    expect(provider.capabilities()).toEqual({ jsonMode: false, providerId: 'openai-reasoning' });
+    // caching 3-B (D1, D3): OpenAI caches by its own rules; built without an endpoint: default.
+    expect(provider.capabilities()).toEqual({
+      jsonMode: false,
+      providerId: 'openai-reasoning',
+      promptCache: 'provider',
+      endpoint: 'default',
+    });
   });
 
   // -----------------------------------------------------------------------

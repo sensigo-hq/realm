@@ -1,0 +1,1635 @@
+{
+  "captured_from": "941bc877",
+  "entries": [
+    {
+      "value": "FAKE-ENV-VALUE-0001",
+      "source": "env:SOME_VAR"
+    },
+    {
+      "value": "FAKE-DECLARED-0002",
+      "source": "declared:SOME_SECRET"
+    },
+    {
+      "value": "FAKE\"Q\\uote-0003",
+      "source": "declared:QUOTED_SECRET"
+    },
+    {
+      "value": "FAKE-PART-ONE:FAKE-PART-TWO",
+      "source": "declared:PARTS_SECRET"
+    }
+  ],
+  "cases": [
+    {
+      "name": "plain",
+      "audience": "agent",
+      "tier": "all",
+      "text": "plain text, nothing to hide here.",
+      "expected": {
+        "text": "plain text, nothing to hide here.",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "plain",
+      "audience": "agent",
+      "tier": "declared",
+      "text": "plain text, nothing to hide here.",
+      "expected": {
+        "text": "plain text, nothing to hide here.",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "plain",
+      "audience": "private",
+      "tier": "declared",
+      "text": "plain text, nothing to hide here.",
+      "expected": {
+        "text": "plain text, nothing to hide here.",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "plain",
+      "audience": "private",
+      "tier": "all",
+      "text": "plain text, nothing to hide here.",
+      "expected": {
+        "text": "plain text, nothing to hide here.",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "empty",
+      "audience": "agent",
+      "tier": "all",
+      "text": "",
+      "expected": {
+        "text": "",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "empty",
+      "audience": "agent",
+      "tier": "declared",
+      "text": "",
+      "expected": {
+        "text": "",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "empty",
+      "audience": "private",
+      "tier": "declared",
+      "text": "",
+      "expected": {
+        "text": "",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "empty",
+      "audience": "private",
+      "tier": "all",
+      "text": "",
+      "expected": {
+        "text": "",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "bearer",
+      "audience": "agent",
+      "tier": "all",
+      "text": "Use Bearer FAKE.TOKEN-1A2B3C end",
+      "expected": {
+        "text": "Use Bearer [REDACTED] end",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 1
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "bearer",
+      "audience": "agent",
+      "tier": "declared",
+      "text": "Use Bearer FAKE.TOKEN-1A2B3C end",
+      "expected": {
+        "text": "Use Bearer FAKE.TOKEN-1A2B3C end",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "bearer",
+      "audience": "private",
+      "tier": "declared",
+      "text": "Use Bearer FAKE.TOKEN-1A2B3C end",
+      "expected": {
+        "text": "Use Bearer FAKE.TOKEN-1A2B3C end",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "bearer",
+      "audience": "private",
+      "tier": "all",
+      "text": "Use Bearer FAKE.TOKEN-1A2B3C end",
+      "expected": {
+        "text": "Use Bearer [REDACTED] end",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 1
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "basic",
+      "audience": "agent",
+      "tier": "all",
+      "text": "Basic RkFLRTpGQUtF== end",
+      "expected": {
+        "text": "Basic [REDACTED] end",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 1
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "basic",
+      "audience": "agent",
+      "tier": "declared",
+      "text": "Basic RkFLRTpGQUtF== end",
+      "expected": {
+        "text": "Basic RkFLRTpGQUtF== end",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "basic",
+      "audience": "private",
+      "tier": "declared",
+      "text": "Basic RkFLRTpGQUtF== end",
+      "expected": {
+        "text": "Basic RkFLRTpGQUtF== end",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "basic",
+      "audience": "private",
+      "tier": "all",
+      "text": "Basic RkFLRTpGQUtF== end",
+      "expected": {
+        "text": "Basic [REDACTED] end",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 1
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "token-eq",
+      "audience": "agent",
+      "tier": "all",
+      "text": "?token=FAKE-Q-1&a=b",
+      "expected": {
+        "text": "?token=[REDACTED]&a=b",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 1
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "token-eq",
+      "audience": "agent",
+      "tier": "declared",
+      "text": "?token=FAKE-Q-1&a=b",
+      "expected": {
+        "text": "?token=FAKE-Q-1&a=b",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "token-eq",
+      "audience": "private",
+      "tier": "declared",
+      "text": "?token=FAKE-Q-1&a=b",
+      "expected": {
+        "text": "?token=FAKE-Q-1&a=b",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "token-eq",
+      "audience": "private",
+      "tier": "all",
+      "text": "?token=FAKE-Q-1&a=b",
+      "expected": {
+        "text": "?token=[REDACTED]&a=b",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 1
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "url-user",
+      "audience": "agent",
+      "tier": "all",
+      "text": "https://someone:FAKE-URL-PW@example.test/x",
+      "expected": {
+        "text": "https://someone:[REDACTED]@example.test/x",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 1
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "url-user",
+      "audience": "agent",
+      "tier": "declared",
+      "text": "https://someone:FAKE-URL-PW@example.test/x",
+      "expected": {
+        "text": "https://someone:FAKE-URL-PW@example.test/x",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "url-user",
+      "audience": "private",
+      "tier": "declared",
+      "text": "https://someone:FAKE-URL-PW@example.test/x",
+      "expected": {
+        "text": "https://someone:FAKE-URL-PW@example.test/x",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "url-user",
+      "audience": "private",
+      "tier": "all",
+      "text": "https://someone:FAKE-URL-PW@example.test/x",
+      "expected": {
+        "text": "https://someone:[REDACTED]@example.test/x",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 1
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "cred-names",
+      "audience": "agent",
+      "tier": "all",
+      "text": "password=FAKE-PW-1 and api_key: FAKE-K-2; ok",
+      "expected": {
+        "text": "password=[REDACTED] and api_key: [REDACTED]; ok",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 2
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "cred-names",
+      "audience": "agent",
+      "tier": "declared",
+      "text": "password=FAKE-PW-1 and api_key: FAKE-K-2; ok",
+      "expected": {
+        "text": "password=FAKE-PW-1 and api_key: FAKE-K-2; ok",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "cred-names",
+      "audience": "private",
+      "tier": "declared",
+      "text": "password=FAKE-PW-1 and api_key: FAKE-K-2; ok",
+      "expected": {
+        "text": "password=FAKE-PW-1 and api_key: FAKE-K-2; ok",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "cred-names",
+      "audience": "private",
+      "tier": "all",
+      "text": "password=FAKE-PW-1 and api_key: FAKE-K-2; ok",
+      "expected": {
+        "text": "password=[REDACTED] and api_key: [REDACTED]; ok",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 2
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "json-cred",
+      "audience": "agent",
+      "tier": "all",
+      "text": "{\"secret\": \"FAKE\\\"S-3\", \"a\": 1}",
+      "expected": {
+        "text": "{\"secret\": \"[REDACTED]\", \"a\": 1}",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 1
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "json-cred",
+      "audience": "agent",
+      "tier": "declared",
+      "text": "{\"secret\": \"FAKE\\\"S-3\", \"a\": 1}",
+      "expected": {
+        "text": "{\"secret\": \"FAKE\\\"S-3\", \"a\": 1}",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "json-cred",
+      "audience": "private",
+      "tier": "declared",
+      "text": "{\"secret\": \"FAKE\\\"S-3\", \"a\": 1}",
+      "expected": {
+        "text": "{\"secret\": \"FAKE\\\"S-3\", \"a\": 1}",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "json-cred",
+      "audience": "private",
+      "tier": "all",
+      "text": "{\"secret\": \"FAKE\\\"S-3\", \"a\": 1}",
+      "expected": {
+        "text": "{\"secret\": \"[REDACTED]\", \"a\": 1}",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 1
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "pem",
+      "audience": "agent",
+      "tier": "all",
+      "text": "key:\n-----BEGIN RSA PRIVATE KEY-----\nMIIEFAKEbody0729\nmoreFAKE0729==\n-----END RSA PRIVATE KEY-----\nafter",
+      "expected": {
+        "text": "key:\n-----BEGIN RSA PRIVATE KEY-----\n[REDACTED]\n-----END RSA PRIVATE KEY-----\nafter",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 1
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "pem",
+      "audience": "agent",
+      "tier": "declared",
+      "text": "key:\n-----BEGIN RSA PRIVATE KEY-----\nMIIEFAKEbody0729\nmoreFAKE0729==\n-----END RSA PRIVATE KEY-----\nafter",
+      "expected": {
+        "text": "key:\n-----BEGIN RSA PRIVATE KEY-----\nMIIEFAKEbody0729\nmoreFAKE0729==\n-----END RSA PRIVATE KEY-----\nafter",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "pem",
+      "audience": "private",
+      "tier": "declared",
+      "text": "key:\n-----BEGIN RSA PRIVATE KEY-----\nMIIEFAKEbody0729\nmoreFAKE0729==\n-----END RSA PRIVATE KEY-----\nafter",
+      "expected": {
+        "text": "key:\n-----BEGIN RSA PRIVATE KEY-----\nMIIEFAKEbody0729\nmoreFAKE0729==\n-----END RSA PRIVATE KEY-----\nafter",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "pem",
+      "audience": "private",
+      "tier": "all",
+      "text": "key:\n-----BEGIN RSA PRIVATE KEY-----\nMIIEFAKEbody0729\nmoreFAKE0729==\n-----END RSA PRIVATE KEY-----\nafter",
+      "expected": {
+        "text": "key:\n-----BEGIN RSA PRIVATE KEY-----\n[REDACTED]\n-----END RSA PRIVATE KEY-----\nafter",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 1
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "authorization",
+      "audience": "agent",
+      "tier": "all",
+      "text": "Authorization: Digest FAKE-D-1 rest",
+      "expected": {
+        "text": "Authorization: [REDACTED] rest",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 1
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "authorization",
+      "audience": "agent",
+      "tier": "declared",
+      "text": "Authorization: Digest FAKE-D-1 rest",
+      "expected": {
+        "text": "Authorization: Digest FAKE-D-1 rest",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "authorization",
+      "audience": "private",
+      "tier": "declared",
+      "text": "Authorization: Digest FAKE-D-1 rest",
+      "expected": {
+        "text": "Authorization: Digest FAKE-D-1 rest",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "authorization",
+      "audience": "private",
+      "tier": "all",
+      "text": "Authorization: Digest FAKE-D-1 rest",
+      "expected": {
+        "text": "Authorization: [REDACTED] rest",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 1
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "auth-bearer",
+      "audience": "agent",
+      "tier": "all",
+      "text": "Authorization: Bearer FAKE.TOKEN-ABCDEF12 rest",
+      "expected": {
+        "text": "Authorization: [REDACTED] rest",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 1
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "auth-bearer",
+      "audience": "agent",
+      "tier": "declared",
+      "text": "Authorization: Bearer FAKE.TOKEN-ABCDEF12 rest",
+      "expected": {
+        "text": "Authorization: Bearer FAKE.TOKEN-ABCDEF12 rest",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "auth-bearer",
+      "audience": "private",
+      "tier": "declared",
+      "text": "Authorization: Bearer FAKE.TOKEN-ABCDEF12 rest",
+      "expected": {
+        "text": "Authorization: Bearer FAKE.TOKEN-ABCDEF12 rest",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "auth-bearer",
+      "audience": "private",
+      "tier": "all",
+      "text": "Authorization: Bearer FAKE.TOKEN-ABCDEF12 rest",
+      "expected": {
+        "text": "Authorization: [REDACTED] rest",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 1
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "env-member",
+      "audience": "agent",
+      "tier": "all",
+      "text": "head FAKE-ENV-VALUE-0001 tail",
+      "expected": {
+        "text": "head [REDACTED] tail",
+        "hidden": {
+          "declared": 0,
+          "environment": 1,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "env-member",
+      "audience": "agent",
+      "tier": "declared",
+      "text": "head FAKE-ENV-VALUE-0001 tail",
+      "expected": {
+        "text": "head FAKE-ENV-VALUE-0001 tail",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "env-member",
+      "audience": "private",
+      "tier": "declared",
+      "text": "head FAKE-ENV-VALUE-0001 tail",
+      "expected": {
+        "text": "head FAKE-ENV-VALUE-0001 tail",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "env-member",
+      "audience": "private",
+      "tier": "all",
+      "text": "head FAKE-ENV-VALUE-0001 tail",
+      "expected": {
+        "text": "head [REDACTED] tail",
+        "hidden": {
+          "declared": 0,
+          "environment": 1,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": ["env:SOME_VAR"]
+      }
+    },
+    {
+      "name": "declared-member",
+      "audience": "agent",
+      "tier": "all",
+      "text": "head FAKE-DECLARED-0002 tail",
+      "expected": {
+        "text": "head [REDACTED] tail",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "declared-member",
+      "audience": "agent",
+      "tier": "declared",
+      "text": "head FAKE-DECLARED-0002 tail",
+      "expected": {
+        "text": "head [REDACTED] tail",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "declared-member",
+      "audience": "private",
+      "tier": "declared",
+      "text": "head FAKE-DECLARED-0002 tail",
+      "expected": {
+        "text": "head [REDACTED] tail",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": ["declared:SOME_SECRET"]
+      }
+    },
+    {
+      "name": "declared-member",
+      "audience": "private",
+      "tier": "all",
+      "text": "head FAKE-DECLARED-0002 tail",
+      "expected": {
+        "text": "head [REDACTED] tail",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": ["declared:SOME_SECRET"]
+      }
+    },
+    {
+      "name": "adjacent-members",
+      "audience": "agent",
+      "tier": "all",
+      "text": "FAKE-ENV-VALUE-0001FAKE-DECLARED-0002",
+      "expected": {
+        "text": "[REDACTED]",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "adjacent-members",
+      "audience": "agent",
+      "tier": "declared",
+      "text": "FAKE-ENV-VALUE-0001FAKE-DECLARED-0002",
+      "expected": {
+        "text": "FAKE-ENV-VALUE-0001[REDACTED]",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "adjacent-members",
+      "audience": "private",
+      "tier": "declared",
+      "text": "FAKE-ENV-VALUE-0001FAKE-DECLARED-0002",
+      "expected": {
+        "text": "FAKE-ENV-VALUE-0001[REDACTED]",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": ["declared:SOME_SECRET"]
+      }
+    },
+    {
+      "name": "adjacent-members",
+      "audience": "private",
+      "tier": "all",
+      "text": "FAKE-ENV-VALUE-0001FAKE-DECLARED-0002",
+      "expected": {
+        "text": "[REDACTED]",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": ["env:SOME_VAR", "declared:SOME_SECRET"]
+      }
+    },
+    {
+      "name": "member-in-pattern",
+      "audience": "agent",
+      "tier": "all",
+      "text": "password=FAKE-DECLARED-0002 next",
+      "expected": {
+        "text": "password=[REDACTED] next",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "member-in-pattern",
+      "audience": "agent",
+      "tier": "declared",
+      "text": "password=FAKE-DECLARED-0002 next",
+      "expected": {
+        "text": "password=[REDACTED] next",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "member-in-pattern",
+      "audience": "private",
+      "tier": "declared",
+      "text": "password=FAKE-DECLARED-0002 next",
+      "expected": {
+        "text": "password=[REDACTED] next",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": ["declared:SOME_SECRET"]
+      }
+    },
+    {
+      "name": "member-in-pattern",
+      "audience": "private",
+      "tier": "all",
+      "text": "password=FAKE-DECLARED-0002 next",
+      "expected": {
+        "text": "password=[REDACTED] next",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": ["declared:SOME_SECRET"]
+      }
+    },
+    {
+      "name": "blocked-marker",
+      "audience": "agent",
+      "tier": "all",
+      "text": "x[REDACTED]y FAKE-DECLARED-0002",
+      "expected": {
+        "text": "x[REDACTED]y [REDACTED]",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "blocked-marker",
+      "audience": "agent",
+      "tier": "declared",
+      "text": "x[REDACTED]y FAKE-DECLARED-0002",
+      "expected": {
+        "text": "x[REDACTED]y [REDACTED]",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "blocked-marker",
+      "audience": "private",
+      "tier": "declared",
+      "text": "x[REDACTED]y FAKE-DECLARED-0002",
+      "expected": {
+        "text": "x[REDACTED]y [REDACTED]",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": ["declared:SOME_SECRET"]
+      }
+    },
+    {
+      "name": "blocked-marker",
+      "audience": "private",
+      "tier": "all",
+      "text": "x[REDACTED]y FAKE-DECLARED-0002",
+      "expected": {
+        "text": "x[REDACTED]y [REDACTED]",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": ["declared:SOME_SECRET"]
+      }
+    },
+    {
+      "name": "token-env",
+      "audience": "agent",
+      "tier": "all",
+      "text": "token=FAKE-ENV-VALUE-0001",
+      "expected": {
+        "text": "token=[REDACTED]",
+        "hidden": {
+          "declared": 0,
+          "environment": 1,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "token-env",
+      "audience": "agent",
+      "tier": "declared",
+      "text": "token=FAKE-ENV-VALUE-0001",
+      "expected": {
+        "text": "token=FAKE-ENV-VALUE-0001",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "token-env",
+      "audience": "private",
+      "tier": "declared",
+      "text": "token=FAKE-ENV-VALUE-0001",
+      "expected": {
+        "text": "token=FAKE-ENV-VALUE-0001",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "token-env",
+      "audience": "private",
+      "tier": "all",
+      "text": "token=FAKE-ENV-VALUE-0001",
+      "expected": {
+        "text": "token=[REDACTED]",
+        "hidden": {
+          "declared": 0,
+          "environment": 1,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": ["env:SOME_VAR"]
+      }
+    },
+    {
+      "name": "json-escaped-declared",
+      "audience": "agent",
+      "tier": "all",
+      "text": "{\"v\": \"FAKE\\\"Q\\\\uote-0003\"}",
+      "expected": {
+        "text": "{\"v\": \"[REDACTED]\"}",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "json-escaped-declared",
+      "audience": "agent",
+      "tier": "declared",
+      "text": "{\"v\": \"FAKE\\\"Q\\\\uote-0003\"}",
+      "expected": {
+        "text": "{\"v\": \"[REDACTED]\"}",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "json-escaped-declared",
+      "audience": "private",
+      "tier": "declared",
+      "text": "{\"v\": \"FAKE\\\"Q\\\\uote-0003\"}",
+      "expected": {
+        "text": "{\"v\": \"[REDACTED]\"}",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": ["declared:QUOTED_SECRET"]
+      }
+    },
+    {
+      "name": "json-escaped-declared",
+      "audience": "private",
+      "tier": "all",
+      "text": "{\"v\": \"FAKE\\\"Q\\\\uote-0003\"}",
+      "expected": {
+        "text": "{\"v\": \"[REDACTED]\"}",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": ["declared:QUOTED_SECRET"]
+      }
+    },
+    {
+      "name": "declared-raw-quote",
+      "audience": "agent",
+      "tier": "all",
+      "text": "say FAKE\"Q\\uote-0003 now",
+      "expected": {
+        "text": "say [REDACTED] now",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "declared-raw-quote",
+      "audience": "agent",
+      "tier": "declared",
+      "text": "say FAKE\"Q\\uote-0003 now",
+      "expected": {
+        "text": "say [REDACTED] now",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "declared-raw-quote",
+      "audience": "private",
+      "tier": "declared",
+      "text": "say FAKE\"Q\\uote-0003 now",
+      "expected": {
+        "text": "say [REDACTED] now",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": ["declared:QUOTED_SECRET"]
+      }
+    },
+    {
+      "name": "declared-raw-quote",
+      "audience": "private",
+      "tier": "all",
+      "text": "say FAKE\"Q\\uote-0003 now",
+      "expected": {
+        "text": "say [REDACTED] now",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": ["declared:QUOTED_SECRET"]
+      }
+    },
+    {
+      "name": "declared-part",
+      "audience": "agent",
+      "tier": "all",
+      "text": "user FAKE-PART-ONE and FAKE-PART-TWO",
+      "expected": {
+        "text": "user FAKE-PART-ONE and FAKE-PART-TWO",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "declared-part",
+      "audience": "agent",
+      "tier": "declared",
+      "text": "user FAKE-PART-ONE and FAKE-PART-TWO",
+      "expected": {
+        "text": "user FAKE-PART-ONE and FAKE-PART-TWO",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "declared-part",
+      "audience": "private",
+      "tier": "declared",
+      "text": "user FAKE-PART-ONE and FAKE-PART-TWO",
+      "expected": {
+        "text": "user FAKE-PART-ONE and FAKE-PART-TWO",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "declared-part",
+      "audience": "private",
+      "tier": "all",
+      "text": "user FAKE-PART-ONE and FAKE-PART-TWO",
+      "expected": {
+        "text": "user FAKE-PART-ONE and FAKE-PART-TWO",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "only-secret",
+      "audience": "agent",
+      "tier": "all",
+      "text": "FAKE-DECLARED-0002",
+      "expected": {
+        "text": "[REDACTED]",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "only-secret",
+      "audience": "agent",
+      "tier": "declared",
+      "text": "FAKE-DECLARED-0002",
+      "expected": {
+        "text": "[REDACTED]",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "only-secret",
+      "audience": "private",
+      "tier": "declared",
+      "text": "FAKE-DECLARED-0002",
+      "expected": {
+        "text": "[REDACTED]",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": ["declared:SOME_SECRET"]
+      }
+    },
+    {
+      "name": "only-secret",
+      "audience": "private",
+      "tier": "all",
+      "text": "FAKE-DECLARED-0002",
+      "expected": {
+        "text": "[REDACTED]",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": ["declared:SOME_SECRET"]
+      }
+    },
+    {
+      "name": "ends",
+      "audience": "agent",
+      "tier": "all",
+      "text": "FAKE-DECLARED-0002 middle FAKE-ENV-VALUE-0001",
+      "expected": {
+        "text": "[REDACTED] middle [REDACTED]",
+        "hidden": {
+          "declared": 1,
+          "environment": 1,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "ends",
+      "audience": "agent",
+      "tier": "declared",
+      "text": "FAKE-DECLARED-0002 middle FAKE-ENV-VALUE-0001",
+      "expected": {
+        "text": "[REDACTED] middle FAKE-ENV-VALUE-0001",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "ends",
+      "audience": "private",
+      "tier": "declared",
+      "text": "FAKE-DECLARED-0002 middle FAKE-ENV-VALUE-0001",
+      "expected": {
+        "text": "[REDACTED] middle FAKE-ENV-VALUE-0001",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": ["declared:SOME_SECRET"]
+      }
+    },
+    {
+      "name": "ends",
+      "audience": "private",
+      "tier": "all",
+      "text": "FAKE-DECLARED-0002 middle FAKE-ENV-VALUE-0001",
+      "expected": {
+        "text": "[REDACTED] middle [REDACTED]",
+        "hidden": {
+          "declared": 1,
+          "environment": 1,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": ["declared:SOME_SECRET", "env:SOME_VAR"]
+      }
+    },
+    {
+      "name": "two-bearers",
+      "audience": "agent",
+      "tier": "all",
+      "text": "Bearer FAKE.TOKEN-AAAA1111 Bearer FAKE.TOKEN-BBBB2222",
+      "expected": {
+        "text": "Bearer [REDACTED] Bearer [REDACTED]",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 2
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "two-bearers",
+      "audience": "agent",
+      "tier": "declared",
+      "text": "Bearer FAKE.TOKEN-AAAA1111 Bearer FAKE.TOKEN-BBBB2222",
+      "expected": {
+        "text": "Bearer FAKE.TOKEN-AAAA1111 Bearer FAKE.TOKEN-BBBB2222",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "two-bearers",
+      "audience": "private",
+      "tier": "declared",
+      "text": "Bearer FAKE.TOKEN-AAAA1111 Bearer FAKE.TOKEN-BBBB2222",
+      "expected": {
+        "text": "Bearer FAKE.TOKEN-AAAA1111 Bearer FAKE.TOKEN-BBBB2222",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "two-bearers",
+      "audience": "private",
+      "tier": "all",
+      "text": "Bearer FAKE.TOKEN-AAAA1111 Bearer FAKE.TOKEN-BBBB2222",
+      "expected": {
+        "text": "Bearer [REDACTED] Bearer [REDACTED]",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 2
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "unicode",
+      "audience": "agent",
+      "tier": "all",
+      "text": "Résumé ✓ token=FAKE-Ü-9 fin",
+      "expected": {
+        "text": "Résumé ✓ token=[REDACTED] fin",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 1
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "unicode",
+      "audience": "agent",
+      "tier": "declared",
+      "text": "Résumé ✓ token=FAKE-Ü-9 fin",
+      "expected": {
+        "text": "Résumé ✓ token=FAKE-Ü-9 fin",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "unicode",
+      "audience": "private",
+      "tier": "declared",
+      "text": "Résumé ✓ token=FAKE-Ü-9 fin",
+      "expected": {
+        "text": "Résumé ✓ token=FAKE-Ü-9 fin",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "unicode",
+      "audience": "private",
+      "tier": "all",
+      "text": "Résumé ✓ token=FAKE-Ü-9 fin",
+      "expected": {
+        "text": "Résumé ✓ token=[REDACTED] fin",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 1
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "surrogate",
+      "audience": "agent",
+      "tier": "all",
+      "text": "😀 password=FAKE-E-1 😀",
+      "expected": {
+        "text": "😀 password=[REDACTED] 😀",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 1
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "surrogate",
+      "audience": "agent",
+      "tier": "declared",
+      "text": "😀 password=FAKE-E-1 😀",
+      "expected": {
+        "text": "😀 password=FAKE-E-1 😀",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "surrogate",
+      "audience": "private",
+      "tier": "declared",
+      "text": "😀 password=FAKE-E-1 😀",
+      "expected": {
+        "text": "😀 password=FAKE-E-1 😀",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "surrogate",
+      "audience": "private",
+      "tier": "all",
+      "text": "😀 password=FAKE-E-1 😀",
+      "expected": {
+        "text": "😀 password=[REDACTED] 😀",
+        "hidden": {
+          "declared": 0,
+          "environment": 0,
+          "pattern": 1
+        },
+        "unchecked": 0,
+        "members": []
+      }
+    },
+    {
+      "name": "likely-prompt",
+      "audience": "agent",
+      "tier": "all",
+      "text": "You are a reviewer. Read the diff below.\n\nRules:\n1. Be brief.\n2. Name each file.\n\nThe diff:\nAuthorization: Bearer FAKE.TOKEN-ABCDEF12 FAKE-DECLARED-0002\n+ const x = 1;\n-----BEGIN RSA PRIVATE KEY-----\nMIIEFAKEbody0729\nmoreFAKE0729==\n-----END RSA PRIVATE KEY-----\ntoken=FAKE-T-77&q=1 https://u:FAKE-UP@h.test/ end",
+      "expected": {
+        "text": "You are a reviewer. Read the diff below.\n\nRules:\n1. Be brief.\n2. Name each file.\n\nThe diff:\nAuthorization: [REDACTED] [REDACTED]\n+ const x = 1;\n-----BEGIN RSA PRIVATE KEY-----\n[REDACTED]\n-----END RSA PRIVATE KEY-----\ntoken=[REDACTED]&q=1 https://u:[REDACTED]@h.test/ end",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 4
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "likely-prompt",
+      "audience": "agent",
+      "tier": "declared",
+      "text": "You are a reviewer. Read the diff below.\n\nRules:\n1. Be brief.\n2. Name each file.\n\nThe diff:\nAuthorization: Bearer FAKE.TOKEN-ABCDEF12 FAKE-DECLARED-0002\n+ const x = 1;\n-----BEGIN RSA PRIVATE KEY-----\nMIIEFAKEbody0729\nmoreFAKE0729==\n-----END RSA PRIVATE KEY-----\ntoken=FAKE-T-77&q=1 https://u:FAKE-UP@h.test/ end",
+      "expected": {
+        "text": "You are a reviewer. Read the diff below.\n\nRules:\n1. Be brief.\n2. Name each file.\n\nThe diff:\nAuthorization: Bearer FAKE.TOKEN-ABCDEF12 [REDACTED]\n+ const x = 1;\n-----BEGIN RSA PRIVATE KEY-----\nMIIEFAKEbody0729\nmoreFAKE0729==\n-----END RSA PRIVATE KEY-----\ntoken=FAKE-T-77&q=1 https://u:FAKE-UP@h.test/ end",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0
+      }
+    },
+    {
+      "name": "likely-prompt",
+      "audience": "private",
+      "tier": "declared",
+      "text": "You are a reviewer. Read the diff below.\n\nRules:\n1. Be brief.\n2. Name each file.\n\nThe diff:\nAuthorization: Bearer FAKE.TOKEN-ABCDEF12 FAKE-DECLARED-0002\n+ const x = 1;\n-----BEGIN RSA PRIVATE KEY-----\nMIIEFAKEbody0729\nmoreFAKE0729==\n-----END RSA PRIVATE KEY-----\ntoken=FAKE-T-77&q=1 https://u:FAKE-UP@h.test/ end",
+      "expected": {
+        "text": "You are a reviewer. Read the diff below.\n\nRules:\n1. Be brief.\n2. Name each file.\n\nThe diff:\nAuthorization: Bearer FAKE.TOKEN-ABCDEF12 [REDACTED]\n+ const x = 1;\n-----BEGIN RSA PRIVATE KEY-----\nMIIEFAKEbody0729\nmoreFAKE0729==\n-----END RSA PRIVATE KEY-----\ntoken=FAKE-T-77&q=1 https://u:FAKE-UP@h.test/ end",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 0
+        },
+        "unchecked": 0,
+        "members": ["declared:SOME_SECRET"]
+      }
+    },
+    {
+      "name": "likely-prompt",
+      "audience": "private",
+      "tier": "all",
+      "text": "You are a reviewer. Read the diff below.\n\nRules:\n1. Be brief.\n2. Name each file.\n\nThe diff:\nAuthorization: Bearer FAKE.TOKEN-ABCDEF12 FAKE-DECLARED-0002\n+ const x = 1;\n-----BEGIN RSA PRIVATE KEY-----\nMIIEFAKEbody0729\nmoreFAKE0729==\n-----END RSA PRIVATE KEY-----\ntoken=FAKE-T-77&q=1 https://u:FAKE-UP@h.test/ end",
+      "expected": {
+        "text": "You are a reviewer. Read the diff below.\n\nRules:\n1. Be brief.\n2. Name each file.\n\nThe diff:\nAuthorization: [REDACTED] [REDACTED]\n+ const x = 1;\n-----BEGIN RSA PRIVATE KEY-----\n[REDACTED]\n-----END RSA PRIVATE KEY-----\ntoken=[REDACTED]&q=1 https://u:[REDACTED]@h.test/ end",
+        "hidden": {
+          "declared": 1,
+          "environment": 0,
+          "pattern": 4
+        },
+        "unchecked": 0,
+        "members": ["declared:SOME_SECRET"]
+      }
+    }
+  ]
+}

@@ -296,7 +296,8 @@ describe('provider conformance — promptCache is a promise about the wire (issu
       const asked = p.capabilities().promptCache;
       seen.push({
         name: cell.name,
-        declared: asked !== undefined && asked !== 'off',
+        // caching 3-B (D3): `'provider'` promises the service's own caching, never a marker.
+        declared: asked !== undefined && asked !== 'off' && asked !== 'provider',
         onWire: JSON.stringify(cell.sent()).includes('cache_control'),
       });
     }

@@ -48,7 +48,7 @@ It prints:
 ```text
 Realm Agent — Triage a ticket v1
 Run ID: 4950eb94-37c0-41a0-8632-0b6f59cc999a
-Caching: Anthropic is asked to cache each step's fixed instructions for 5 minutes (auto: a drive realm agent starts on its own has no trigger history; realm agent's default; turn it off with --prompt-cache off).
+Caching: Anthropic is asked to cache each step's fixed instructions and the stable start of its prompt for 5 minutes (auto: a drive realm agent starts on its own has no trigger history; realm agent's default; turn it off with --prompt-cache off).
 
 
 → [agent] classify
@@ -64,7 +64,7 @@ The customer was charged twice this month.
 
 Notice `Result`. It is the last agent step's answer, shown through that step's `display` template.
 
-The `Caching:` line says what `realm agent` asks Anthropic to cache, and where the setting came from; see [What the model is sent](#what-the-model-is-sent). It was added after version 0.47.0.
+The `Caching:` line says what `realm agent` asks Anthropic to cache, or whether it sends OpenAI a cache key, and where the setting came from; see [What the model is sent](#what-the-model-is-sent). It was added after version 0.47.0.
 
 ## What the model is sent
 
@@ -90,13 +90,13 @@ I was charged twice this month.
 
 The request also offers the model one tool, `__realm_submit__`, whose input is the step's schema; the model can answer by calling it.
 
-The system prompt is the fixed part of the request: it is the same for every request of the step. Realm sends it as one block that asks Anthropic to cache it, and keep it for 5 minutes (`--prompt-cache auto`, the default, on a drive you start):
+The system prompt is the fixed part of the request, with the start of the step's prompt: both are the same for every request of the step. Realm sends the system prompt as one block that asks Anthropic to cache it, and keep it for 5 minutes (`--prompt-cache auto`, the default, on a drive you start):
 
 ```json
 "system": [{ "type": "text", "text": "You are a support lead. …", "cache_control": { "type": "ephemeral" } }]
 ```
 
-A later request of the step within those 5 minutes, a repair pass for one, can then read it from the cache. Anthropic charges more than ordinary input for writing it to the cache and much less for reading it back, so caching costs more for a step that runs less often than the lifetime ([Anthropic's prompt-caching pricing](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#pricing)). `--prompt-cache long` asks for 1 hour (`"ttl": "1h"`), and `--prompt-cache short` for 5 minutes. On a drive that `realm listen` starts, `auto` asks for off, 5 minutes or 1 hour, whichever costs least over the gaps between the workflow's recent triggers at the prices in the runner's price file, `runner.cache.economics` (see [`realm listen`](../reference/cli/realm-listen.md#what-it-does-for-a-request)). When that file cannot price the choice, it asks for 1 hour when a recent gap is under 54 minutes, and for no caching otherwise (added after version 0.48.0). `--prompt-cache off` sends the system prompt as plain text, as before. On a step without tools, the step's prompt is not cached. A step that calls tools also asks Anthropic, at each turn, to cache the conversation so far, so a turn can read what the turn before wrote once that part reaches the model's minimum. Its last request, made only when it has used up its tool calls, is sent with no cache marker. Realm asks OpenAI for no caching: OpenAI's own automatic caching is unchanged, and `--prompt-cache off` does not turn it off. This was added after version 0.47.0.
+A later request of the step within those 5 minutes, a repair pass for one, can then read it from the cache. Anthropic charges more than ordinary input for writing it to the cache and much less for reading it back, so caching costs more for a step that runs less often than the lifetime ([Anthropic's prompt-caching pricing](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#pricing)). `--prompt-cache long` asks for 1 hour (`"ttl": "1h"`), and `--prompt-cache short` for 5 minutes. On a drive that `realm listen` starts, `auto` asks for off, 5 minutes or 1 hour, whichever costs least over the gaps between the workflow's recent triggers at the prices in the runner's price file, `runner.cache.economics` (see [`realm listen`](../reference/cli/realm-listen.md#what-it-does-for-a-request)). When that file cannot price the choice, it asks for 1 hour when a recent gap is under 54 minutes, and for no caching otherwise (added after version 0.48.0). `--prompt-cache off` sends the system prompt as plain text, as before. On a step without tools, the start of the step's prompt is cached too: Realm sends it as a block of its own, marked the same way, and the rest of the prompt after it (added after version 0.48.0). The cached start of a step's prompt ends at its first placeholder whose value can differ between runs; put fixed text first. A request sent without the split — under `--prompt-cache off`, or when Realm withholds it — never reads a split head's cache. That is expected. A step that calls tools also asks Anthropic, at each turn, to cache the conversation so far, so a turn can read what the turn before wrote once that part reaches the model's minimum. Its last request, made only when it has used up its tool calls, is sent with no cache marker. OpenAI caches by its own rules: Realm cannot set its lifetime or turn its caching off. On OpenAI's own endpoint Realm sends a cache key with each request whose prompt has a fixed start, a hint that helps repeated steps reach the same cache, under every setting but `off`; on another endpoint, only for a setting you state (added after version 0.48.0). This was added after version 0.47.0.
 
 ## When the model answers wrongly
 
@@ -151,7 +151,7 @@ It prints:
 ```text
 Realm Agent — Triage a ticket v1
 Run ID: a9fd51c7-b84d-49c9-afe5-07156edf8c27
-Caching: Anthropic is asked to cache each step's fixed instructions for 5 minutes (auto: a drive realm agent starts on its own has no trigger history; realm agent's default; turn it off with --prompt-cache off).
+Caching: Anthropic is asked to cache each step's fixed instructions and the stable start of its prompt for 5 minutes (auto: a drive realm agent starts on its own has no trigger history; realm agent's default; turn it off with --prompt-cache off).
 
 
 → [agent] classify

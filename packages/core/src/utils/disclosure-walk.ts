@@ -302,6 +302,26 @@ function escapedSpellingHides(shown: string, tier: DisclosureTier, ctx: WalkCont
   return REDACTED_MARKER;
 }
 
+/**
+ * Caching 3-B (F-B1): the walk's leaf transform for one string at `tier` — {@link discloseText} then
+ * the F7 escaped-spelling check, exactly as the walk applies them to a `value` leaf. It IS the walk's
+ * leaf (`walkValue` calls the same two functions on a string; a cell checks equality over the disclosure-law corpus),
+ * exported so the MCP door can tell when the walk would transform a prompt beyond `disclose` — on
+ * such a prompt the door publishes no `stable_prefix`.
+ */
+export function discloseLeaf(text: string, set: DisclosureSet, tier: DisclosureTier): string {
+  const ctx: WalkContext = {
+    set,
+    audience: set.audience,
+    tier,
+    tally: newTally(set.audience),
+    onUnclassified: undefined,
+    stack: new Set(),
+    withhold: undefined,
+  };
+  return escapedSpellingHides(discloseText(text, tier, ctx), tier, ctx);
+}
+
 function noteShaped(ctx: WalkContext, path: string): void {
   if (!ctx.tally.shaped.includes(path)) ctx.tally.shaped.push(path);
 }

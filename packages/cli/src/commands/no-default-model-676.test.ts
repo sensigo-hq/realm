@@ -566,6 +566,45 @@ describe('realm listen --prompt-cache reaches the agent it starts (issue #600 PR
     }
   }
 
+  // Caching 3-B (MA 1's wording list, 2026-11-05): the `openai` value names the endpoint the agents
+  // will resolve. The real case: OPENAI_BASE_URL naming a gateway. No webhook is posted, so nothing
+  // is sent. (a) red when listen reads the endpoint from anything but the resolved client (the
+  // gateway would read as OpenAI's own endpoint); (b) prints listen's output.
+  it('3-B: OPENAI_BASE_URL naming another endpoint makes the openai value name the custom endpoint', async () => {
+    const out: string[] = [];
+    for (const extra of [{ OPENAI_BASE_URL: 'http://127.0.0.1:9/v1' }, {}]) {
+      const listen = await startListen(
+        [
+          'wf',
+          '--port',
+          '0',
+          '--provider',
+          'openai',
+          '--model',
+          'm-600',
+          '--prompt-cache',
+          'short',
+          '--dedup-store',
+          'memory',
+        ],
+        env({ OPENAI_API_KEY: 'sk-fake-not-a-key', ...extra }),
+      );
+      listen.child.kill('SIGKILL');
+      out.push(listen.output());
+    }
+    expect(
+      [
+        out[0]!.includes(
+          'listen: caching {"openai":"sends a cache key to the custom endpoint","anthropic":"not used"}',
+        ),
+        out[1]!.includes(
+          'listen: caching {"openai":"sends a cache key on OpenAI\'s own endpoint","anthropic":"not used"}',
+        ),
+      ],
+      out.join('\n---\n'),
+    ).toEqual([true, true]);
+  }, 60_000);
+
   // Leg 2. (a) red when listen does not forward the stated value (the child's `auto` asks for 1
   // hour on its first trigger, a block); (b) prints the `system` field sent.
   it('G20 leg 2: listen --prompt-cache off → the child sends the plain string', async () => {
@@ -657,7 +696,7 @@ describe('realm listen --prompt-cache reaches the agent it starts (issue #600 PR
         cacheControl: { type: 'ephemeral' },
       });
       expect(listen.output()).toContain(
-        "Caching: Anthropic is asked to cache each step's fixed instructions for 5 minutes (set by realm listen --prompt-cache short).",
+        "Caching: Anthropic is asked to cache each step's fixed instructions and the stable start of its prompt for 5 minutes (set by realm listen --prompt-cache short).",
       );
     } finally {
       listen?.child.kill('SIGKILL');
