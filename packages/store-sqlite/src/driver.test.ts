@@ -255,3 +255,62 @@ describe('#616 unit 4 — the interface a sibling module gets', () => {
     }
   });
 });
+
+describe('#616 unit 4 correction — the door: open checks before it builds a database', () => {
+  /** A built-in whose database reports `version` and records the arguments of every construction. */
+  function recordingBuiltin(version: string): { builtin: unknown; built: unknown[][] } {
+    const built: unknown[][] = [];
+    return {
+      built,
+      builtin: {
+        DatabaseSync: class {
+          constructor(...args: unknown[]) {
+            built.push(args);
+          }
+          prepare() {
+            return { get: () => ({ v: version }) };
+          }
+          close() {}
+        },
+      },
+    };
+  }
+
+  it('on an unsafe SQLite, open refuses with the refusal and builds no database but the in-memory one the check uses', () => {
+    const { builtin, built } = recordingBuiltin('3.51.2');
+    const loader = createSqliteLoader({ loadBuiltin: () => builtin, nodeVersion: 'v24.13.1' });
+    const refusals = ['/home/u/.realm/realm.db', ':memory:'].map((path) => {
+      try {
+        loader.open(path, { timeout: 5 });
+        return 'opened';
+      } catch (err) {
+        const e = err as { code?: string; message?: string };
+        return `${e.code}: ${e.message}`;
+      }
+    });
+    const refusal = `STATE_STORE_DRIVER_UNAVAILABLE: This Node bundles SQLite 3.51.2, which has a bug that can, in rare cases, corrupt a database that two connections write at the same moment (the WAL-reset bug, fixed in SQLite 3.51.3). ${FLOORS}`;
+    // (1) red when `open` builds the database without the check passing (a constructor kept outside
+    //     the checked result, so the store would open on a SQLite with the corruption bug): a
+    //     construction for the given path appears, or a call returns `opened`; (2) prints each call's
+    //     outcome and every construction's arguments.
+    expect({ refusals, built }).toEqual({
+      refusals: [refusal, refusal],
+      built: [[':memory:']],
+    });
+  });
+
+  it('on a safe SQLite, open hands the path and the options through, and passes no options when none were given', () => {
+    const { builtin, built } = recordingBuiltin('3.53.4');
+    const loader = createSqliteLoader({ loadBuiltin: () => builtin, nodeVersion: 'v24.21.0' });
+    loader.open('/home/u/.realm/realm.db', { timeout: 5, readOnly: true });
+    loader.open('/home/u/.realm/other.db');
+    // (1) red when `open` changes the path or the options, or passes an `undefined` options argument
+    //     (Node's constructor refuses it: "must be an object"); (2) prints every construction's
+    //     arguments (the first is the check's own in-memory database).
+    expect(built).toEqual([
+      [':memory:'],
+      ['/home/u/.realm/realm.db', { timeout: 5, readOnly: true }],
+      ['/home/u/.realm/other.db'],
+    ]);
+  });
+});
