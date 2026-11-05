@@ -69,7 +69,6 @@ import type {
 import { parseDuration } from '../lib/parse-duration.js';
 import { listRunsDiagnosed } from './list.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
-import { openRunStore } from '../lib/run-store.js';
 
 /**
  * Minimum `--older-than` EITHER sweep will ever honor (1 hour) — a conservative floor for hygiene
@@ -857,9 +856,15 @@ export const gcCommand = new Command('gc')
     // deriveRunPhase destructured from the SAME existing dynamic import as JsonFileStore/
     // JsonFileFailedAttemptStore — gc.ts's top-level `@sensigo/realm` VALUE import (line 36) stays
     // byte-unchanged; only this dynamic import widens.
-    const { JsonFileFailedAttemptStore, deriveRunPhase } = await import('@sensigo/realm');
+    const { JsonFileFailedAttemptStore, JsonFileStore, withTestClockNotice, deriveRunPhase } =
+      await import('@sensigo/realm');
     const { JsonTraceBufferStore } = await import('@sensigo/realm-mcp');
-    const runStore = openRunStore();
+    // #616 PR-2a (iii): `realm run gc` keeps its own constructions until 2c deletes it (the one door,
+    // lib/home.ts, is not routed here). Its run store says it runs on a test clock once per process,
+    // at its first read, as every command's does (#715 (b)).
+    const runStore = withTestClockNotice(new JsonFileStore(), (line) => {
+      process.stderr.write(`${line}\n`);
+    });
     const runsDir = runStore.runsDirPath;
     const failedAttemptStore = new JsonFileFailedAttemptStore(runsDir);
     // The run reader is the run store this sweep enumerates: the `run_absent` fence is evaluated

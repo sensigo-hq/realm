@@ -68,7 +68,7 @@ import {
   writerSetFor,
   type RenderCtx,
 } from '../output/writer.js';
-import { openRunStore } from '../lib/run-store.js';
+import { openCliHome } from '../lib/home.js';
 
 /** How the project code of this program compares with the run's last record, in words. */
 export const FIT_WORDS: Record<ProgramFit, string> = {
@@ -730,9 +730,10 @@ export const runAdvanceCommand = new Command('advance')
       'advance',
       'it is written as the program that ran the steps, and advance checks it before reading the run, so nothing was run',
     );
-    const { JsonWorkflowStore } = await import('@sensigo/realm');
-    const runStore = openRunStore();
-    const workflowStore = new JsonWorkflowStore();
+    // #616 PR-2a (iii): the one door, opened once.
+    const home = await openCliHome();
+    const runStore = home.runStore;
+    const workflowStore = home.workflowStore;
     try {
       const code = await advanceRunFromShell(runId, opts, runStore, workflowStore, driver, (l) =>
         console.log(l),

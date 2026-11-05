@@ -2,15 +2,19 @@
 // Lets operators front-load the index (e.g. pausing the producer) so no lazy O(n) fallback
 // hits occur at runtime. Skipping it is safe: the store self-migrates lazily on first touch.
 import { Command } from 'commander';
-import { shellWord } from '@sensigo/realm';
-import { openRunStore } from '../lib/run-store.js';
+import { JsonFileStore, shellWord, withTestClockNotice } from '@sensigo/realm';
 
 export const reconcileCommand = new Command('reconcile')
   .description('Build the idempotency-key pointer index from existing runs')
   .option('--workflow <id>', 'Reconcile only runs of this workflow')
   .option('--dry-run', 'Report what would be written without writing anything')
   .action(async (opts: { workflow?: string; dryRun?: boolean }) => {
-    const store = openRunStore();
+    // #616 PR-2a (iii): `realm run reconcile` keeps its own construction until 2c deletes it (the one
+    // door, lib/home.ts, is not routed here). Its run store says it runs on a test clock once per
+    // process, at its first read, as every command's does (#715 (b)).
+    const store = withTestClockNotice(new JsonFileStore(), (line) => {
+      process.stderr.write(`${line}\n`);
+    });
     try {
       // issue #719 (C2, C6): core names no CLI command — the refusal of a store holding a damaged
       // run file tells the operator to run THIS command again, flags included.

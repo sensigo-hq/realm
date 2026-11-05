@@ -14,7 +14,7 @@ import type {
   Snapshot,
 } from '@sensigo/realm';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
-import { openRunStore } from '../lib/run-store.js';
+import { openCliHome } from '../lib/home.js';
 
 // issue #279 (increment 1, PR-B): NO top-level VALUE import from `@sensigo/realm` — JsonFileStore's
 // default runsDir is computed at module-load time (`homedir()`), so a top-level value import here
@@ -227,9 +227,10 @@ export const resumeCommand = new Command('resume')
     'Override the claim_unknown_age refusal ONLY (never a healthy claim or an unexpired drain lease)',
   )
   .action(async (runId: string, opts: { from: string; force?: boolean }) => {
-    const { JsonWorkflowStore } = await import('@sensigo/realm');
-    const runStore = openRunStore();
-    const workflowStore = new JsonWorkflowStore();
+    // #616 PR-2a (iii): the one door, opened once.
+    const home = await openCliHome();
+    const runStore = home.runStore;
+    const workflowStore = home.workflowStore;
     try {
       const {
         voided,

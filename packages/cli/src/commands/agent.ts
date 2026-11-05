@@ -11,7 +11,6 @@ import { pathToFileURL } from 'node:url';
 import {
   validateRunParams,
   loadWorkflowFromFile,
-  JsonWorkflowStore,
   WorkflowError,
   describeUnrecognised,
   describeForeignProvider,
@@ -65,7 +64,7 @@ import {
   writerMode,
   writerReceiptLine,
 } from '../output/writer.js';
-import { openRunStore } from '../lib/run-store.js';
+import { openCliHome } from '../lib/home.js';
 
 /**
  * Builds the Slack gate handler from the deployment manifest's `notifiers.slack_gate`
@@ -399,15 +398,13 @@ export const agentCommand = new Command('agent')
       };
       let exitCode: number;
       try {
-        const workflowStore = new JsonWorkflowStore();
-        const store = openRunStore();
-        // issue #207 PR-2 (D3 §5, mixed-wiring gap): construct the trace-buffer store beside the
-        // concrete JsonFileStore (same runsDir), mirroring reclaim.ts's own wiring shape — without
-        // this, `realm agent`'s driver never adopted/fenced a step's streamed WAL trace at all.
-        const { JsonTraceBufferStore } = await import('@sensigo/realm-mcp');
-        // issue #616 PR-0: the run reader is the run store the driver writes — every fence
-        // predicate is evaluated against it inside the trace buffer's own critical section.
-        const traceBufferStore = new JsonTraceBufferStore(store.runsDirPath, store);
+        // #616 PR-2a (iii): the one door, opened once. Its trace buffer sits beside the run store and
+        // fences against it (issue #207 PR-2's mixed-wiring gap; #616 PR-0's reader): without it,
+        // `realm agent`'s driver never adopted/fenced a step's streamed WAL trace at all.
+        const home = await openCliHome();
+        const workflowStore = home.workflowStore;
+        const store = home.runStore;
+        const traceBufferStore = home.traceBufferStore;
         let provider: LlmProvider;
         // issue #898: an Anthropic provider whose `auto` choice is pending (a drive `realm listen`
         // started, with measured gaps) — settled from the runner's price file after the load — and

@@ -14,7 +14,7 @@ import {
   withholdUnlessAccepted,
 } from '../output/writer.js';
 import { recordedAnswer } from '../lib/holder-render.js';
-import { openRunStore } from '../lib/run-store.js';
+import { openCliHome } from '../lib/home.js';
 
 /** Returns true when the given ID is a replay ID (starts with "rpl_"). */
 export function isReplayId(id: string): boolean {
@@ -216,9 +216,11 @@ export const diffCommand = new Command('diff')
       process.exit(1);
     }
 
+    // #616 PR-2a (iii): the one door, opened once, before the branch that reads replays or runs; the
+    // registry is built on its first use.
+    const home = await openCliHome();
     if (isReplayId(runIdA) && isReplayId(runIdB)) {
-      const { JsonFileReplayStore } = await import('../store/replay-store.js');
-      const replayStore = new JsonFileReplayStore();
+      const replayStore = home.replayStore;
 
       let recordA: ReplayRecord;
       let recordB: ReplayRecord;
@@ -269,7 +271,7 @@ export const diffCommand = new Command('diff')
       return;
     }
 
-    const store = openRunStore();
+    const store = home.runStore;
 
     let runA: RunRecord;
     let runB: RunRecord;
@@ -296,8 +298,8 @@ export const diffCommand = new Command('diff')
     // reads it, each standing noted under its own run (two runs may name one manifest path), so an
     // output's hash is withheld with the output under a failed or changed manifest unless the flag
     // is given. `=`/`≠` is a fact and prints whole.
-    const { JsonWorkflowStore, getWorkflowForRun } = await import('@sensigo/realm');
-    const workflowStore = new JsonWorkflowStore();
+    const { getWorkflowForRun } = await import('@sensigo/realm');
+    const workflowStore = home.workflowStore;
     for (const run of [runA, runB]) {
       const definition = await getWorkflowForRun(workflowStore, run, {
         retryVerb: 'diff again',

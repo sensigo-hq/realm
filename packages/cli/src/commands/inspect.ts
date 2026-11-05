@@ -121,7 +121,7 @@ import {
   writerTally,
 } from '../output/writer.js';
 import { readRunManifest, type RunManifest } from '../lib/read-run-manifest.js';
-import { openRunStore } from '../lib/run-store.js';
+import { openCliHome } from '../lib/home.js';
 
 /**
  * Renders one skipped step's reason inline (issue #111) — kind plus the salient detail.
@@ -2024,9 +2024,10 @@ export const inspectCommand = new Command('inspect')
       runId: string,
       cmdOpts: { verbose?: boolean; checkDrift?: boolean; acceptPartialDisclosure?: boolean },
     ) => {
-      const { JsonWorkflowStore } = await import('@sensigo/realm');
-      const store = openRunStore();
-      const workflowStore = new JsonWorkflowStore();
+      // #616 PR-2a (iii): the one door, opened once.
+      const home = await openCliHome();
+      const store = home.runStore;
+      const workflowStore = home.workflowStore;
       try {
         // #729 PR-3 (L-4): the run's declared values join the writer's set before anything prints,
         // and the receipt line says what the law hid in this record for stdout's audience.

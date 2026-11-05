@@ -15,7 +15,7 @@
 // time: a trace buffer now fences against the run store it was BUILT with, so a host that builds
 // it over a different store fences against the wrong one, silently. `JsonTraceBufferStore`'s
 // constructor requiring a reader (D2) catches a MISSING one; it cannot catch a WRONG one. The
-// seven-host table below pins, for every production construction site, that the reader argument
+// host table below pins, for every production construction site, that the reader argument
 // names the exact run store that host writes (or, for `export.ts`, reads) — replacing the two
 // narrower `run.ts`/`agent.ts` constructor pins this file carried before D5, which pinned the SAME
 // fact under the pre-D2 argument order and would otherwise duplicate the new table's first two
@@ -63,12 +63,11 @@ function mcpServerSrcPath(file: string): string {
  *  argument must name — the exact source-text pin issue #616 PR-0 D5 requires. Read on `60a21eb`
  *  and on the D2-shaped build alike: the argument POSITION changed, the NAMES did not. */
 const HOSTS: Array<{ file: string; path: string; readerName: string }> = [
-  { file: 'run.ts', path: join(DIR, 'run.ts'), readerName: 'store' },
-  { file: 'agent.ts', path: join(DIR, 'agent.ts'), readerName: 'store' },
-  { file: 'reclaim.ts', path: join(DIR, 'reclaim.ts'), readerName: 'store' },
+  // #616 PR-2a (iii): the CLI's one door builds the trace buffer for run, agent, reclaim, purge and
+  // export (their five rows before), with its own run store as the reader.
+  { file: 'lib/home.ts', path: join(DIR, '..', 'lib', 'home.ts'), readerName: 'runStore' },
+  // `realm run gc` keeps its own constructions until 2c deletes it.
   { file: 'gc.ts', path: join(DIR, 'gc.ts'), readerName: 'runStore' },
-  { file: 'purge.ts', path: join(DIR, 'purge.ts'), readerName: 'runStore' },
-  { file: 'export.ts', path: join(DIR, 'export.ts'), readerName: 'runStore' },
   { file: 'server.ts', path: mcpServerSrcPath('server.ts'), readerName: 'effectiveRunStore' },
 ];
 

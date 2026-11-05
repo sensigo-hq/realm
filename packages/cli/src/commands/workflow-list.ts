@@ -8,7 +8,8 @@
 // each copy it cannot (an older or a later Realm's among them, #627 W), and each one is audited
 // with `realm workflow validate --registered <id>`.
 import { Command } from 'commander';
-import { JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
+import { openCliHome } from '../lib/home.js';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { printJsonByTable } from '../output/writer.js';
 import type { ClassTable } from '@sensigo/realm';
@@ -54,7 +55,8 @@ export const workflowListCommand = new Command('list')
   .description('List registered workflow definitions (sorted by id)')
   .option('--json', 'Emit the listing as JSON on stdout, and nothing else')
   .action(async (opts: { json?: boolean }) => {
-    const store = new JsonWorkflowStore();
+    // #616 PR-2a (iii): the one door, opened once; the registry's listing with diagnostics.
+    const store = (await openCliHome()).workflowStore;
     const { workflows, unreadable, mismatched } = await store.listWithDiagnostics();
     const sorted = sortedById(workflows);
 

@@ -4,7 +4,7 @@ import type { RunStore, RunRecord, UnreadableRunFileEntry } from '@sensigo/realm
 import { isIdleForCleanup } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
 import { listRunsDiagnosed, unreadableRunLines } from './list.js';
-import { openRunStore } from '../lib/run-store.js';
+import { openCliHome } from '../lib/home.js';
 
 /**
  * List all non-terminal runs idle for longer than `olderThan` and mark them abandoned.
@@ -67,7 +67,8 @@ export const cleanupCommand = new Command('cleanup')
   .option('--dry-run', 'Preview which runs would be abandoned without modifying them')
   .action(async (opts: { olderThan: string; dryRun?: boolean }) => {
     const { ABANDON_KILL_ADVISORY } = await import('@sensigo/realm');
-    const runStore = openRunStore();
+    // #616 PR-2a (iii): the one door, opened once.
+    const runStore = (await openCliHome()).runStore;
     try {
       const { affected } = await cleanupRuns(
         {
