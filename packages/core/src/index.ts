@@ -389,6 +389,8 @@ export {
   findEligibleSteps,
   isWorkflowComplete,
   deriveRunPhase,
+  // #616 PR-1a unit 2b: the stamp a stored phase index carries (design d4-frozen-r3 §3).
+  runPhaseDerivationFingerprint,
   buildEvidenceByStep,
   buildSettlementNamespace,
   propagateSkips,
@@ -814,6 +816,16 @@ export {
 export { JsonWorkflowStore } from './workflow/registrar.js';
 export type { WorkflowRegistrar } from './workflow/registrar.js';
 export { getWorkflowForRun, definitionAbsenceOf } from './workflow/registrar.js';
+// #616 B2: the one judge of a registered copy, and the refusals of a copy that has no file, with the
+// words a copy with a file gets.
+export {
+  classifyRegisteredCopy,
+  workflowNotFoundError,
+  legacyCopyError,
+  newerCopyError,
+  storedCopyFaultError,
+} from './workflow/registrar.js';
+export type { RegisteredCopyVerdict, DamagedCopyFault } from './workflow/registrar.js';
 // issue #729 PR-0: the skeleton of an input schema — the MCP renderer's `call_with` for a step's way.
 export { generateSchemaSkeleton } from './utils/schema-skeleton.js';
 // issue #729 PR-0 (E1 (b), (d)): the ONE escaped, bounded value renderer — a value read from a run or
