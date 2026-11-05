@@ -45,9 +45,11 @@ export const LINUX_REFUSED_NAMES: ReadonlyMap<number, string> = new Map([
 export interface FilesystemProbe {
   readonly platform: string;
   readonly env: Readonly<Record<string, string | undefined>>;
-  /** The path with every symbolic link resolved; throws when the path or a link's target is missing. */
+  /** The path as the system stores it, every symbolic link resolved; throws when the path or a
+   *  link's target is missing. */
   realpath(path: string): string;
-  /** Whether something is at `path`, a dangling symbolic link included (the link is not followed). */
+  /** Whether something is at `path`, a dangling symbolic link included (the link is not followed):
+   *  false only when the system says there is nothing there (`ENOENT`); any other failure throws. */
   lexists(path: string): boolean;
   /** The text of the symbolic link at `path`, or `undefined` when `path` is not a link. */
   readlink(path: string): string | undefined;
@@ -61,13 +63,18 @@ export interface FilesystemProbe {
 export const SYSTEM_PROBE: FilesystemProbe = {
   platform: process.platform,
   env: process.env,
-  realpath: (path) => realpathSync(path),
+  // The system's resolver: on a case-insensitive macOS volume it returns the case the volume
+  // stores, which the mount table holds; the JavaScript resolver keeps the case that was typed.
+  realpath: (path) => realpathSync.native(path),
   lexists: (path) => {
     try {
       lstatSync(path);
       return true;
-    } catch {
-      return false;
+    } catch (err) {
+      // Only "no such file" means "not there yet". A file in the path (ENOTDIR), a folder this user
+      // cannot search (EACCES), a loop and every other failure pass up with their code.
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
+      throw err;
     }
   },
   readlink: (path) => {

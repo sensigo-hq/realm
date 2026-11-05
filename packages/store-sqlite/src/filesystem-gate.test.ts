@@ -6,7 +6,7 @@
 //
 // Each assertion carries the two questions of `~/.claude/TESTING-RULES.md` rule 8 next to it.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WorkflowError } from '@sensigo/realm';
@@ -222,6 +222,39 @@ describe('#616 PR-1a unit 5 — the filesystem gate', { timeout: 30_000 }, () =>
       code: (caught as NodeJS.ErrnoException | undefined)?.code,
     }).toEqual({ workflowError: false, code: 'ELOOP' });
   });
+
+  it('a home whose path runs through a regular file passes up the system error (ENOTDIR), never judged by the folder above', () => {
+    const file = join(local, 'afile');
+    writeFileSync(file, '');
+    let caught: unknown;
+    try {
+      assertLocalFilesystem(join(file, 'realm'), linux());
+    } catch (e) {
+      caught = e;
+    }
+    // (1) Can it fail: red when an lstat failure other than "no such file" is taken as "not there
+    //     yet" (the named break: the catch-all put back in the existence check), so the gate climbs
+    //     to the folder above and accepts it.
+    // (2) Prints: whether a WorkflowError came out, and the error's code (no path, no secret).
+    expect({
+      workflowError: caught instanceof WorkflowError,
+      code: (caught as NodeJS.ErrnoException | undefined)?.code,
+    }).toEqual({ workflowError: false, code: 'ENOTDIR' });
+  });
+
+  it.skipIf(process.platform !== 'darwin')(
+    'macOS: a home typed in another case resolves to the case the volume stores (case-insensitive APFS)',
+    () => {
+      mkdirSync(join(root, 'CaseCheck'));
+      // (1) Can it fail: red when the real path keeps the typed case (the named break: the
+      //     JavaScript resolver), so a mis-cased home misses its mount table entry. Runs on a
+      //     macOS runner only; skipped elsewhere.
+      // (2) Prints: the path the gate judged (a temporary path).
+      expect(
+        assertLocalFilesystem(join(root, 'casecheck'), { ...SYSTEM_PROBE, env: {} }).judged,
+      ).toBe(join(root, 'CaseCheck'));
+    },
+  );
 
   it('REALM_STORE_FS=local accepts a refused filesystem without asking; any other value does not', () => {
     const home = join(refusedDir, 'realm');
