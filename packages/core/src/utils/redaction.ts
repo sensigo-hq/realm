@@ -435,6 +435,7 @@ export const REALM_SETTING_VARIABLES: ReadonlySet<string> = new Set([
   'REALM_NO_NUDGE', // a flag ('1')
   'REALM_OPERATOR', // a name (attribution, axis 1)
   'REALM_REQUIRE_WRITER_NONCE', // a flag
+  'REALM_STORE_FS', // an enum: 'local' (#616 PR-1a unit 5, the filesystem gate's escape)
 ]);
 /** D-14: realm's own variables that hold a credential: never excluded. */
 export const REALM_CREDENTIAL_VARIABLES: ReadonlySet<string> = new Set(['REALM_SERVE_TOKEN']);
