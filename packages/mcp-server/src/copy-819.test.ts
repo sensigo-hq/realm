@@ -15,6 +15,7 @@ import { JsonFileStore, JsonWorkflowStore } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from './server.js';
+import { withArtifactStores } from './test-support/temp-home.js';
 
 type Reply = Record<string, unknown>;
 
@@ -37,7 +38,7 @@ async function atGate(workflowId: string, copy?: unknown) {
       opened_at: '2026-01-01T00:00:00.000Z',
     },
   });
-  const server = createRealmMcpServer({ runStore, workflowStore });
+  const server = createRealmMcpServer({ ...withArtifactStores(runStore), workflowStore });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'copy-819', version: '0' });
   await Promise.all([server.connect(st), client.connect(ct)]);

@@ -15,6 +15,7 @@ import {
   asyncSchemaValidity,
 } from '@sensigo/realm';
 import { createRealmMcpServer } from '../server.js';
+import { withArtifactStores } from '../test-support/temp-home.js';
 
 type Reply = Record<string, unknown>;
 
@@ -22,7 +23,7 @@ async function connect() {
   const base = await mkdtemp(join(tmpdir(), 'realm-async-create-'));
   const runStore = new JsonFileStore(join(base, 'runs'));
   const workflowStore = new JsonWorkflowStore(join(base, 'wf'));
-  const server = createRealmMcpServer({ runStore, workflowStore });
+  const server = createRealmMcpServer({ ...withArtifactStores(runStore), workflowStore });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'async-schema-create', version: '0' });
   await Promise.all([server.connect(st), client.connect(ct)]);

@@ -17,6 +17,7 @@ import {
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../index.js';
+import { withArtifactStores } from '../test-support/temp-home.js';
 
 type Reply = Record<string, unknown>;
 const GATED = {
@@ -41,7 +42,7 @@ async function connect() {
   const runStore = new JsonFileStore(join(dir, 'runs'));
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
   await workflowStore.register(GATED);
-  const server = createRealmMcpServer({ runStore, workflowStore });
+  const server = createRealmMcpServer({ ...withArtifactStores(runStore), workflowStore });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'echoes-872', version: '0' });
   await Promise.all([server.connect(st), client.connect(ct)]);

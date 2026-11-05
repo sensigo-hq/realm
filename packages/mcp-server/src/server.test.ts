@@ -42,6 +42,7 @@ import type {
   SettlementDelta,
   StoreSettlement,
 } from '@sensigo/realm';
+import { withArtifactStores } from './test-support/temp-home.js';
 
 /**
  * Minimal hand-rolled `RunStore` — deliberately does NOT expose `runsDirPath` (no filesystem
@@ -251,7 +252,7 @@ describe('createRealmMcpServer — RunStore injection seam (issue #188, PR-1)', 
         await workflowStore.register(def);
 
         const server = createRealmMcpServer({
-          runStore: new JsonFileStore(runDir),
+          ...withArtifactStores(new JsonFileStore(runDir)),
           workflowStore,
         });
         const callTool = await connectClient(server);

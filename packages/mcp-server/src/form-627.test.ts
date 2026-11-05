@@ -38,6 +38,7 @@ import {
 } from './form-path.js';
 import { McpDoor } from './door.js';
 import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
+import { withArtifactStores } from './test-support/temp-home.js';
 
 // #715 (b) 04 §D (B4): no cell here waits on the real clock for a question to expire. The run store a
 // cell opens sits at a TEST LOCATION (`located`), and `passes(ms)` moves the clock of every location
@@ -109,7 +110,7 @@ async function session(
   handler: Handler = async () => ({ action: 'decline' }),
   timeout?: number,
   // Correction 1: a workflow of the cell's own, and a store of its own (B5's failing settle).
-  own: { yaml?: string; runStore?: (dir: string) => RunStore; located?: true } = {},
+  own: { yaml?: string; runStore?: (dir: string) => JsonFileStore; located?: true } = {},
 ): Promise<Session> {
   const dir = await mkdtemp(join(tmpdir(), 'realm-form-627-'));
   const runStore =
@@ -118,7 +119,11 @@ async function session(
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
   const def = loadWorkflowFromString(own.yaml ?? WORKFLOW(timeout));
   await workflowStore.register(def);
-  const server = createRealmMcpServer({ runStore, workflowStore, ...options });
+  const server = createRealmMcpServer({
+    ...withArtifactStores(runStore),
+    workflowStore,
+    ...options,
+  });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client(
     { name: 'form-627', version: '0' },

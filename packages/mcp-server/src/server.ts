@@ -1,15 +1,11 @@
-#!/usr/bin/env node
-// realm-mcp — MCP server exposing the Realm workflow engine to AI agents.
-import { realpathSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+// realm-mcp — MCP server exposing the Realm workflow engine to AI agents. The library: importing it
+// starts nothing. The `realm-mcp` program is `bin.ts` (#616 PR-2a, unit ii-a).
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
   ExtensionRegistry,
   JsonWorkflowStore,
   JsonFileStore,
   withTestClockNotice,
-  setClockErrorSink,
   JsonFileFailedAttemptStore,
   WorkflowError,
   createDefaultRegistry,
@@ -29,7 +25,6 @@ import { discloseByTable, type DisclosureClass, type DisclosureSet } from '@sens
 import { loadPriceSource, withSourceNote } from './price-source.js';
 import { JsonTraceBufferStore } from './json-trace-buffer-store.js';
 import { VERSION } from './version.js';
-import { composeBinIdentity } from './bin-identity.js';
 import { registerListWorkflows } from './tools/list-workflows.js';
 import { registerGetWorkflowProtocol } from './tools/get-workflow-protocol.js';
 import { registerStartRun } from './tools/start-run.js';
@@ -42,12 +37,7 @@ import { registerAbandonRun } from './tools/abandon-run.js';
 import { registerCreateWorkflow } from './tools/create-workflow.js';
 import { registerAppendTrace } from './tools/append-trace.js';
 import { registerStartRunBatch } from './tools/start-run-batch.js';
-import {
-  doorDisclosureOf,
-  logMasked,
-  type DoorDisclosure,
-  type OperatorRoute,
-} from './render-reply.js';
+import { doorDisclosureOf, type DoorDisclosure, type OperatorRoute } from './render-reply.js';
 import { registerPresentQuestion } from './tools/present-question.js';
 import { ABANDON_RUN_DESCRIPTION_NO_ANSWER_TOOL } from './tools/abandon-run.js';
 import {
@@ -60,7 +50,6 @@ import {
   judgeFormWait,
   judgeGateAnswers,
 } from './door.js';
-import { gateAnswersStartLine, readBinDoorSettings } from './bin-settings.js';
 import type { ElicitFn } from './form-path.js';
 
 export interface RealmMcpServerOptions {
@@ -530,20 +519,6 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
   return server;
 }
 
-// Entry point: start the MCP server on stdio when run directly.
-// argv[1] is realpath-resolved because npm/npx bin shims invoke this file through
-// a symlink (node_modules/.bin/realm-mcp), while import.meta.url holds the resolved
-// target path — a plain string comparison never matches and the process would exit
-// silently without connecting the transport.
-function isRunDirectly(): boolean {
-  if (process.argv[1] === undefined) return false;
-  try {
-    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
 /** Correction 1 (C1): the library refusal of a `principal` option the total reader cannot read. */
 export const INVALID_PRINCIPAL_OPTION =
   "createRealmMcpServer: the principal option is not a principal — expected { kind: 'api_key', id: <a non-empty string> }, { kind: 'shared_token' }, or a typed absence such as { absent: 'door_authenticates_no_principal' }. Refused when the server is built: every answer it records would name it. Fix the option.";
@@ -556,47 +531,3 @@ export const INVALID_PRINCIPAL_OPTION =
  */
 export const REALM_MCP_TAKES_NO_FLAGS =
   "realm-mcp takes no flags: set REALM_MCP_GATE_ANSWERS or REALM_MCP_FORM_WAIT_SECONDS in your MCP client's env block, or run realm mcp with the flag.";
-
-if (isRunDirectly() && process.argv.length > 2) {
-  console.error(REALM_MCP_TAKES_NO_FLAGS);
-  process.exit(1);
-}
-
-if (isRunDirectly()) {
-  // Correction 2 (4.1): the variables judged as `realm mcp` judges its flags — a refusal is one line
-  // naming the variable and exit 1, never a stack trace; then the start line, on stderr (stdout
-  // carries the protocol), before anything is built.
-  const settings = readBinDoorSettings('realm-mcp', {}, process.env);
-  if (!settings.ok) {
-    console.error(settings.line);
-    process.exit(1);
-  }
-  // This program's name, which may itself refuse with one line — then no start line is printed.
-  const driver = composeBinIdentity();
-  console.error(gateAnswersStartLine(settings.answers, false, 'realm-mcp'));
-  // #715 (b) (03 §A.1, D-22): the bin's waiter-error sink — a waiter on the store's clock that fails is
-  // one masked line on stderr (stdout carries the protocol). An embedded server sets none: it is a
-  // library, and core's loud default applies.
-  setClockErrorSink((err: unknown): void => {
-    logMasked(`realm-mcp: ${err instanceof Error ? err.message : String(err)}`);
-  });
-  // #627 W (§5.8): the stdio transport authenticates no one, so this bin's answers name no principal.
-  // #715 (a) correction 1 (C-6): a run store opened on a copy of a test location refuses with one line
-  // on stderr, masked for a log as `realm mcp`'s line is, and exit 1 — never Node's crash dump, and
-  // nothing on stdout. #616 PR-2a (i): an unusable home (`STATE_HOME_UNUSABLE`) the same way. Any
-  // other error escapes as before. Read by its code, never `instanceof`.
-  let server: ReturnType<typeof createRealmMcpServer>;
-  try {
-    server = createRealmMcpServer({
-      ...(driver !== undefined ? { driver } : {}),
-      principal: { absent: 'door_authenticates_no_principal' },
-    });
-  } catch (err) {
-    const code = (err as { code?: unknown } | null)?.code;
-    if (code !== 'STATE_TEST_CLOCK_FOREIGN' && code !== 'STATE_HOME_UNUSABLE') throw err;
-    logMasked(`realm-mcp: ${(err as Error).message}`);
-    process.exit(1);
-  }
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-}

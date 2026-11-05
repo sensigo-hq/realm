@@ -30,6 +30,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { createRealmMcpServer } from '../server.js';
 import { renderWaysOf } from '../render-reply.js';
 import { writtenSnapshot } from '@sensigo/realm';
+import { withArtifactStores } from '../test-support/temp-home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const CLI = join(ROOT, 'packages/cli/dist/index.js');
@@ -98,7 +99,7 @@ async function connect(h: string, registry?: ExtensionRegistry) {
   const runStore = new JsonFileStore(join(h, '.realm', 'runs'));
   const workflowStore = new JsonWorkflowStore(join(h, '.realm', 'workflows'));
   const server = createRealmMcpServer({
-    runStore,
+    ...withArtifactStores(runStore),
     workflowStore,
     ...(registry !== undefined ? { registry } : {}),
   });

@@ -18,6 +18,7 @@ import { handleExecuteStepTool } from './execute-step.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
+import { withArtifactStores } from '../test-support/temp-home.js';
 
 const fields = Array.from({ length: 13 }, (_, i) => `f${String(i + 1).padStart(2, '0')}`);
 const wf: WorkflowDefinition = {
@@ -141,7 +142,7 @@ describe('issue #759 — the wire and the sidecar carry the same ten and the tot
       steps: { first: { description: 'First.', execution: 'agent', depends_on: [] } },
     } as WorkflowDefinition;
     await workflowStore.register(withParams);
-    const server = createRealmMcpServer({ runStore, workflowStore });
+    const server = createRealmMcpServer({ ...withArtifactStores(runStore), workflowStore });
     const [ct, st] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: 'refusal-759', version: '0' });
     await Promise.all([server.connect(st), client.connect(ct)]);

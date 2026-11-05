@@ -29,6 +29,7 @@ import {
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
+import { makeTempHome, withArtifactStores } from '../test-support/temp-home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const flat = (t: string) => t.replace(/\s+/g, ' ');
@@ -60,7 +61,7 @@ async function connect(registry?: ExtensionRegistry) {
   const runStore = new JsonFileStore(join(dir, 'runs'));
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
   const server = createRealmMcpServer({
-    runStore,
+    ...withArtifactStores(runStore),
     workflowStore,
     ...(registry !== undefined ? { registry } : {}),
   });
@@ -213,10 +214,15 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       [...listed].sort(),
     ]);
     // Correction 2 (4.4): the REGISTERED set per value — the SDK's own table of the server's tools.
+    // #616 PR-2a (ii-a): each server is built on a temp home's four stores.
+    const home = await makeTempHome();
     const registered = (gateAnswers: 'asked' | 'offered' | 'withheld') =>
       Object.keys(
-        (createRealmMcpServer({ gateAnswers }) as unknown as { _registeredTools: object })
-          ._registeredTools,
+        (
+          createRealmMcpServer({ ...home.stores, gateAnswers }) as unknown as {
+            _registeredTools: object;
+          }
+        )._registeredTools,
       );
     const answerTools = (names: string[]) =>
       names.filter((n) => n === 'submit_human_response' || n === 'present_question').sort();
@@ -231,6 +237,7 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       offered: [11, ['submit_human_response']],
       withheld: [10, []],
     });
+    home.cleanup();
   });
 
   it('connect-an-mcp-client.md: execute_step submits the answer to an agent step; an automatic step is the engine’s — advance_run runs it (#729, the Q3 unit)', async () => {
@@ -817,17 +824,17 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     ]);
   });
 
-  it('error-codes.md: 108 codes defined — 78 raised, 30 that nothing raises', () => {
+  it('error-codes.md: 108 codes defined — 79 raised, 29 that nothing raises', () => {
     claim(
       'docs/reference/error-codes.md',
-      'This page lists all 108 codes that Realm defines: the 78 it raises, with when each is raised and what it tells the caller to do, and the 30 that nothing raises.',
+      'This page lists all 108 codes that Realm defines: the 79 it raises, with when each is raised and what it tells the caller to do, and the 29 that nothing raises.',
     );
     // #616 unit 3: the "nothing raises" block's own header, whose count the units that first raise
     // these codes change (the list's length is checked below, as `unraised`). (1) red when the
     // header's count is not the list's; (2) prints the sentence.
     claim(
       'docs/reference/error-codes.md',
-      'These 30 are in the `ErrorCode` type, and no code in Realm raises them:',
+      'These 29 are in the `ErrorCode` type, and no code in Realm raises them:',
     );
     const types = readFileSync(join(ROOT, 'packages/core/src/types/workflow-error.ts'), 'utf8');
     const lines = types.slice(types.indexOf('export type ErrorCode')).split('\n');
@@ -880,8 +887,8 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       raisedNowhere: listedRaised.filter((c) => !written(c)),
     }).toEqual({
       defined: 108,
-      raised: 78,
-      unraised: 30,
+      raised: 79,
+      unraised: 29,
       cover: [...defined].sort(),
       unraisedWritten: [],
       raisedNowhere: [],

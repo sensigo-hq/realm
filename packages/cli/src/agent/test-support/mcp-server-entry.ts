@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url';
  * symptom otherwise is a confident "not built" message about a path that was never right).
  */
 export const DEFAULT_MCP_SERVER_ENTRY = fileURLToPath(
-  new URL('../../../../mcp-server/dist/server.js', import.meta.url),
+  new URL('../../../../mcp-server/dist/bin.js', import.meta.url),
 );
 
 /** The message a caller sees when the dist is missing — exported so a test can pin it. */

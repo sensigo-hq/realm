@@ -18,6 +18,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
 import { REPLY_CEILING_CHARS } from '../render-reply.js';
+import { withArtifactStores } from '../test-support/temp-home.js';
 
 type Reply = Record<string, unknown>;
 
@@ -27,7 +28,7 @@ async function door(definition: WorkflowDefinition, registry?: ExtensionRegistry
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
   await workflowStore.register(definition);
   const server = createRealmMcpServer({
-    runStore,
+    ...withArtifactStores(runStore),
     workflowStore,
     ...(registry !== undefined ? { registry } : {}),
   });

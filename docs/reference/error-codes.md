@@ -2,7 +2,7 @@
 
 <!-- description: Every error code Realm defines: when each one is raised and what it tells the caller to do, and the codes that nothing raises. -->
 
-Every error Realm raises on purpose has a code. This page lists all 108 codes that Realm defines: the 78 it raises, with when each is raised and what it tells the caller to do, and the 30 that nothing raises. The lists were made by a script that read the `ErrorCode` type and every place in Realm's code that raises one. The replies shown came from calls to a running server.
+Every error Realm raises on purpose has a code. This page lists all 108 codes that Realm defines: the 79 it raises, with when each is raised and what it tells the caller to do, and the 29 that nothing raises. The lists were made by a script that read the `ErrorCode` type and every place in Realm's code that raises one. The replies shown came from calls to a running server.
 
 ## Where a code appears
 
@@ -105,6 +105,7 @@ The last two columns are what the error carries where it is raised. Where a code
 | `STATE_TEST_CLOCK_FOREIGN`       | A run store was opened on a folder whose test clock file was made for another folder, as when a test location is copied. A store there would run on another location's test clock. The message names both folders and the three ways out: delete the folder's clock file to use it as an ordinary store, open the store at the folder the file names, or make a new test location with `createTestLocation` on a folder that has none. Added after version 0.48.0. | `report_to_user`                         | No          |
 | `STATE_HOME_UNUSABLE`            | The home realm would use cannot be used: HOME is empty, or the account has no home directory, or HOME, or a home a program gave the opener, is not an absolute path. The command stops before anything is opened; set HOME to an absolute path, or pass one. Added after version 0.48.0.                                                                                                                                                                           | `report_to_user`                         | No          |
 | `STATE_STORE_DRIVER_UNAVAILABLE` | The Node running Realm has no built-in SQLite, or bundles a SQLite with a known database-corruption bug.                                                                                                                                                                                                                                                                                                                                                           | `report_to_user`                         | No          |
+| `STATE_STORE_FILESYSTEM_REFUSED` | The Realm home is on a network or unrecognised filesystem, the platform cannot say, or the home is reached through a symbolic link whose target cannot be found.                                                                                                                                                                                                                                                                                                   | `report_to_user`                         | No          |
 | `STATE_STEP_PENDING`             | Used inside the trace buffer: a step's entries cannot be sealed while the step is in progress.                                                                                                                                                                                                                                                                                                                                                                     | `report_to_user`                         | Yes         |
 | `STATE_SEAL_UNSTAMPED`           | A store was asked to end a run without recording how it ended.                                                                                                                                                                                                                                                                                                                                                                                                     | `report_to_user`                         | No          |
 | `STATE_SEAL_ORPHANED`            | A store was asked to reopen a run and keep the record of how it ended.                                                                                                                                                                                                                                                                                                                                                                                             | `report_to_user`                         | No          |
@@ -174,13 +175,13 @@ The last two columns are what the error carries where it is raised. Where a code
 
 ## The codes nothing raises
 
-These 30 are in the `ErrorCode` type, and no code in Realm raises them:
+These 29 are in the `ErrorCode` type, and no code in Realm raises them:
 
 ```text
 NETWORK_TIMEOUT, NETWORK_DNS_FAILED, NETWORK_CONNECTION_RESET, STATE_PRECONDITION_FAILED,
 STATE_RUN_LOCKED, RUN_ABORTING, VALIDATION_HASH_MISMATCH, VALIDATION_QUOTE_NOT_FOUND,
 VALIDATION_FIELD_UNKNOWN, VALIDATION_FIELD_EXCLUDED, STEP_HANDLER_ERROR, ENGINE_GATE_OPEN_FAILED,
-GUARD_RESOLUTION_ERROR, RESOURCE_TOO_LARGE, RESOURCE_NOT_ACCESSIBLE, STATE_STORE_FILESYSTEM_REFUSED,
+GUARD_RESOLUTION_ERROR, RESOURCE_TOO_LARGE, RESOURCE_NOT_ACCESSIBLE,
 STATE_STORE_SETTINGS_REFUSED, STATE_STORE_VERSION_OLDER, STATE_STORE_VERSION_NEWER,
 STATE_STORE_SCHEMA_TAMPERED, STATE_STORE_FULL, STATE_STORE_READONLY, STATE_STORE_WRITES_FENCED,
 STATE_STORE_LIMIT_EXCEEDED, STATE_HOME_HOLDS_LEGACY_STORE, STATE_RUN_PURGED,
