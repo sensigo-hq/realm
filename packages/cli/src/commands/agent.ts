@@ -299,7 +299,7 @@ export const agentCommand = new Command('agent')
   .option(
     '--prompt-cache <setting>',
     // eslint-disable-next-line no-restricted-syntax -- help prose naming the setting, not a command to copy (#729 PR-3, L-2); #898: its numbers come from the provider's constants.
-    `What Anthropic is asked to cache: auto, short, long or off. auto (the default) chooses per drive — the short lifetime for a drive realm agent starts on its own; for a drive realm listen starts, off, short or long by the gaps between that workflow's recent triggers, priced from the runner's price file (runner.cache.economics); with no usable prices, long when a recent gap is under ${autoFallbackWindowText()}, else off. short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: Anthropic is asked to cache nothing. With \`--provider openai\`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but \`off\`, and to another endpoint only for a setting you state other than \`off\`. On GPT-5.6 and later at OpenAI's own address, Realm also asks OpenAI to cache the fixed part of each step without tools for 30 minutes, the one lifetime Realm can ask OpenAI for (\`short\` and \`long\` alike), and \`off\` turns OpenAI's caching off. Other providers' own caching applies.`,
+    `What Anthropic is asked to cache: auto, short, long or off. auto (the default) chooses per drive — the short lifetime for a drive realm agent starts on its own; for a drive realm listen starts, off, short or long by the gaps between that workflow's recent triggers, priced from the runner's price file (runner.cache.economics); with no usable prices, long when a recent gap is under ${autoFallbackWindowText()}, else off. short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: Anthropic is asked to cache nothing. With \`--provider openai\`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but \`off\`, and to another endpoint only for a setting you state other than \`off\`. On GPT-5.6 and later at OpenAI's own address, Realm also asks OpenAI to cache the fixed part of each step without tools for 30 minutes, the one lifetime Realm can ask OpenAI for (\`short\` and \`long\` alike); on a drive realm listen starts, \`auto\` chooses between that and no caching, as for Anthropic, and without usable prices asks for 30 minutes when a recent gap is under 27 minutes; \`off\` turns OpenAI's caching off. Other providers' own caching applies.`,
     parsePromptCache,
   )
   // issue #620 PR-C: the repo's first hidden option. `realm listen` appends it to every child it
@@ -408,13 +408,15 @@ export const agentCommand = new Command('agent')
         let provider: LlmProvider;
         // issue #898: an Anthropic provider whose `auto` choice is pending (a drive `realm listen`
         // started, with measured gaps) — settled from the runner's price file after the load — and
-        // the requested `--model` the file is read by.
+        // the requested `--model` the file is read by. #896 unit B: or an OpenAI provider on GPT-5.6
+        // and later at OpenAI's own address.
         let settleAuto:
           | ((prices: AutoPriceInput) => { choice: CacheChoice; prices?: CacheAutoPrices })
           | undefined;
         let requestedModel: string | undefined;
         // issue #898 (C.1): whether the provider applies --prompt-cache, never by reading a pending
-        // choice: a provider with one pending is Anthropic, which applies the setting.
+        // choice: a provider with one pending (Anthropic; #896 unit B: OpenAI on GPT-5.6 and later at
+        // OpenAI's own address) applies the setting.
         const appliesPromptCache = (): boolean =>
           settleAuto !== undefined || provider.capabilities().promptCache !== undefined;
         // issue #313: a third-party provider cannot declare a `providerId` capability (realm

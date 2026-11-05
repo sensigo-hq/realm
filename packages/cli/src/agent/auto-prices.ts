@@ -1,7 +1,8 @@
 // auto-prices.ts — issue #898: `--prompt-cache auto` reads its prices from the runner's price file
-// (`runner.cache.economics`). `realm agent` builds the Anthropic provider before the workflow and
-// `realm.yaml` load, so a drive `realm listen` started with measured gaps leaves the provider's choice
-// PENDING; after the load, `realm agent` reads the file once here and settles it. Nothing here can stop
+// (`runner.cache.economics`). `realm agent` builds the Anthropic provider (#896 unit B: or the OpenAI
+// one on GPT-5.6 and later at OpenAI's own address) before the workflow and `realm.yaml` load, so a
+// drive `realm listen` started with measured gaps leaves the provider's choice PENDING; after the
+// load, `realm agent` reads the file once here and settles it. Nothing here can stop
 // a run: every failure of the file is a named cause, and the choice falls back by the owner's rule.
 import {
   selectEconomicsRates,
