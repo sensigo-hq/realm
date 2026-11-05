@@ -525,6 +525,15 @@ export {
 // #616 PR-1a unit 2: the key-holder ordering and the version conflict every run store shares.
 export { compareCanonical, pickCanonical, versionConflictError } from './store/key-holder.js';
 export type { KeyHolderFields } from './store/key-holder.js';
+// #616 PR-1a unit 6: the SQLite store's schema, as data (the store package creates a file from it).
+export {
+  REALM_STORE_SCHEMA,
+  REALM_STORE_SCHEMA_VERSION,
+  REALM_STORE_APPLICATION_ID,
+  REALM_STORE_PAGE_SIZE,
+  WRITE_ONCE_RUN_FIELDS,
+} from './store/store-schema.js';
+export type { WriteOnceRunField } from './store/store-schema.js';
 // issue #715 (a) (D6-1, D6-54): a test location's clock file. For `@sensigo/realm-testing`, not for
 // hosts: a lint rule (static imports) and a source scan (the names as text, in any import form;
 // `lint-test-location-715.test.ts`; it reads the `.ts` and `.mjs` files of the four packages' `src`
