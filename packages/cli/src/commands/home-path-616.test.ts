@@ -138,17 +138,18 @@ describe('#616 PR-2a (i) — the docs', () => {
     // realm-home.test.ts (no home directory; HOME, or a program's home, not an absolute path).
     claim(
       'docs/reference/error-codes.md',
-      '| `STATE_HOME_UNUSABLE` | The home realm would use cannot be used: HOME is empty, or the account has no home directory, or HOME, or a home a program gave the opener, is not an absolute path. The command stops before anything is opened; set HOME to an absolute path, or pass one. | `report_to_user` | No |',
+      '| `STATE_HOME_UNUSABLE` | The home realm would use cannot be used: HOME is empty, or the account has no home directory, or HOME, or a home a program gave the opener, is not an absolute path. The command stops before anything is opened; set HOME to an absolute path, or pass one. Added after version 0.48.0. | `report_to_user` | No |',
     );
   });
 
   it('environment-and-files.md: the HOME row', () => {
     // Executed: "never at start" — the three #285 cells (lazy-home-resolution-285.test.ts in core and
     // the CLI); the stop and its two shapes — this file's empty-HOME cells and core's realm-home.test.ts
-    // (no home, not absolute). The sudo sentence is sudoers(5)'s, not a realm behaviour.
+    // (no home, not absolute); the two `--check` doors reading it — this file's `--check` cell. The
+    // sudo sentence is sudoers(5)'s, not a realm behaviour.
     claim(
       'docs/reference/environment-and-files.md',
-      "| `HOME` | Every command that opens its stores | The home folder. `~/.realm` is inside it. Read when a command opens its stores, never at start. Empty, not an absolute path, or absent on an account with no home: the command stops with `Error: no home directory: …` (`realm mcp` and `realm serve` print it as `realm mcp: no home directory: …`; the code is `STATE_HOME_UNUSABLE`). Under `sudo`, HOME is what your sudoers passes on — root's on a stock Linux (`env_reset`), the invoking user's where `HOME` is in `env_keep`; `sudo -H` always makes it root's. |",
+      "| `HOME` | Every command that opens its stores, and `realm mcp --check` / `realm serve --check` | The home folder. `~/.realm` is inside it. Read when a command opens its stores, never at start. Empty, not an absolute path, or absent on an account with no home: the command stops with `Error: no home directory: …` (`realm mcp` and `realm serve` print it as `realm mcp: no home directory: …`; the code is `STATE_HOME_UNUSABLE`). Under `sudo`, HOME is what your sudoers passes on — root's on a stock Linux (`env_reset`), the invoking user's where `HOME` is in `env_keep`; `sudo -H` always makes it root's. |",
     );
   });
 
