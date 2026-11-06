@@ -169,10 +169,10 @@ describe(`${ENV_PAGE} — REALM_NOT_SECRET`, () => {
     });
   });
 
-  it("realm's own settings, and the shell's PWD, OLDPWD and _, are not treated as secrets; REALM_SERVE_TOKEN is (D-14, D-6)", () => {
+  it("realm's own settings, the shell's PWD, OLDPWD and _, and npm's three, are not treated as secrets; REALM_SERVE_TOKEN is (D-14, D-6)", () => {
     claim(
       ENV_PAGE,
-      "Realm's own settings in this table (`REALM_DEV`, `REALM_NO_NUDGE`, `REALM_REQUIRE_WRITER_NONCE`, `REALM_OPERATOR`, `REALM_MCP_GATE_ANSWERS` and `REALM_MCP_FORM_WAIT_SECONDS`) are not treated as secrets, and neither are `PWD`, `OLDPWD` and `_`, which the shell sets to paths; `REALM_SERVE_TOKEN`, a credential, is.",
+      "Realm's own settings in this table (`REALM_DEV`, `REALM_NO_NUDGE`, `REALM_REQUIRE_WRITER_NONCE`, `REALM_OPERATOR`, `REALM_MCP_GATE_ANSWERS` and `REALM_MCP_FORM_WAIT_SECONDS`) are not treated as secrets, and neither are `PWD`, `OLDPWD` and `_`, which the shell sets to paths, nor `npm_package_name`, `npm_package_version` and `npm_lifecycle_event`, which npm sets; `REALM_SERVE_TOKEN`, a credential, is.",
     );
     const env = {
       REALM_OPERATOR: 'fake-operator-0729',
@@ -181,9 +181,12 @@ describe(`${ENV_PAGE} — REALM_NOT_SECRET`, () => {
       PWD: '/srv/fake-work-0729',
       OLDPWD: '/srv/fake-old-0729',
       _: '/usr/bin/fake-cmd-0729',
+      npm_package_name: 'fake-package-0729',
+      npm_package_version: '0.0.0-fake0729',
+      npm_lifecycle_event: 'fake-script-0729',
     };
-    // (a) red when a setting or a shell path is hidden, or the serve token shows; (b) prints the
-    //     variable names that are members (names only).
+    // (a) red when a setting, a shell path or an npm value is hidden, or the serve token shows;
+    //     (b) prints the variable names that are members (names only).
     expect(
       ['log', 'agent'].map((audience) =>
         environmentEntries(env, { audience: audience as DisclosureAudience }).map((e) => e.source),

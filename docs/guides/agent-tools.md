@@ -153,7 +153,7 @@ This does not catch everything, so do not rely on it to keep a secret out of a r
 
 - an environment value of seven characters or fewer, and a declared secret of three or fewer (`realm agent` says so when it loads such a secret);
 - an environment value that is the word `false`, or two or three numbers joined by dots, such as the version number `11.8.0` (a declared secret with that value is hidden);
-- the values of three variables that npm sets: `npm_package_name`, `npm_package_version` and `npm_lifecycle_event`;
+- the values of three variables that npm sets (`npm_package_name`, `npm_package_version` and `npm_lifecycle_event`) and of three the shell sets to paths (`PWD`, `OLDPWD` and `_`);
 - in base64 and base64url, a value of 6 bytes or fewer that was encoded together with other text (it is hidden at some positions and not at others);
 - a value split across lines by the program that printed it, for example base64 wrapped at 76 characters, or a long YAML string folded at its spaces or after an escaped character; a multi-line value written one line at a time keeps its lines that hold blanks;
 - a value that a template filter changed in the agent step's prompt (for example `| truncate` or `| upper`), except that a whole line of a multi-line value, and a part of a declared secret, are still hidden there;

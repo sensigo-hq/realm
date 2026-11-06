@@ -621,6 +621,14 @@ describe('F2 — the working directory (B2, load-project-extensions :648, the lo
       vi.stubEnv('REALM_NOT_SECRET', '');
       vi.stubEnv('INIT_CWD', root);
       vi.stubEnv('npm_config_local_prefix', root);
+      // The host's temp-folder variables are pinned to the cell's folder too, as npm's are: macOS
+      // sets `TMPDIR` in every session, Windows `TMP` and `TEMP`, and a shell may export `TMPDIR`.
+      // Each names a folder above `root`, so its value would hide the path's start for a reason
+      // that is not the one under test (the cells went red wherever `TMPDIR` was set, #616 PR-2b
+      // b2's litter check). Windows' profile-folder variables are #778's.
+      vi.stubEnv('TMPDIR', root);
+      vi.stubEnv('TMP', root);
+      vi.stubEnv('TEMP', root);
       const mod = writeFactoryModule();
       writeManifest(`version: 1\nadapters:\n  boom:\n    use: ${mod}#throwingFactory\n`);
       let message = '';
