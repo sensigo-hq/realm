@@ -73,6 +73,13 @@ export type AutoPriceInput =
 /** What `auto` asks for. */
 export type CacheChoice = 'off' | 'short' | 'long';
 
+/** Issue #898 — the rates a provider that splits its writes by lifetime reads (Anthropic). */
+const BY_LIFETIME_RATES = CACHE_AUTO_RATES.filter((rate) => rate !== 'cache_write');
+/** #896 unit B — the rates a provider with one lifetime and one write rate reads (OpenAI). */
+const ONE_WRITE_RATES = CACHE_AUTO_RATES.filter(
+  (rate) => rate === 'cache_read' || rate === 'cache_write',
+);
+
 /** A gap a choice reads: a whole number of seconds from 0 to {@link CACHE_GAP_MAX_S}. */
 function readableGap(gap: unknown): gap is number {
   return Number.isInteger(gap) && (gap as number) >= 0 && (gap as number) <= CACHE_GAP_MAX_S;
@@ -126,8 +133,8 @@ export function chooseCacheLifetime(
  * 1. no kept gap ({@link keptCacheGaps}) — the `prior`, with no `prices` (none was needed);
  * 2. the file gave no rates (`cause`) — FALLBACK, `{ from: 'none', cause }`;
  * 3. `input` is not a finite number above 0 — FALLBACK, `input_zero`;
- * 4. no `cache_read`, or neither write — FALLBACK, `rate_missing` with the absent rates named in
- *    {@link CACHE_AUTO_RATES}' order;
+ * 4. no `cache_read`, or neither write — FALLBACK, `rate_missing` with the absent ones of
+ *    `cache_read`, `cache_write_5m` and `cache_write_1h` named, in {@link CACHE_AUTO_RATES}' order;
  * 5. exactly one write absent — the rule over `off` and the option the file can cost, that option
  *    named as excluded;
  * 6. every rate present — the rule over all three, `{ from: 'economics' }`.
@@ -159,7 +166,7 @@ export function chooseAutoLifetime(input: {
   const w5m = rates.cache_write_5m;
   const w1h = rates.cache_write_1h;
   if (read === undefined || (w5m === undefined && w1h === undefined)) {
-    const missing = CACHE_AUTO_RATES.filter((rate) => rates[rate] === undefined);
+    const missing = BY_LIFETIME_RATES.filter((rate) => rates[rate] === undefined);
     return fallback({ from: 'none', cause: 'rate_missing', missing });
   }
   const tiers: CacheTiers = {
@@ -184,6 +191,53 @@ export function chooseAutoLifetime(input: {
       prices: { from: 'economics', excluded: ['long'], missing: ['cache_write_1h'] },
     };
   }
+  return { choice, prices: { from: 'economics' } };
+}
+
+/**
+ * #896 unit B — `--prompt-cache auto`'s choice for a provider with ONE cache lifetime and one write
+ * rate (OpenAI's 30 minutes, `cache_write`): {@link chooseAutoLifetime}'s rule over `off` and that
+ * lifetime, which takes `long`'s place (it is the prior, and it wins a tie with `off`). In order:
+ * 1. no kept gap — `long`, with no `prices`;
+ * 2. the file gave no rates — FALLBACK, `{ from: 'none', cause }`;
+ * 3. `input` is not a finite number above 0 — FALLBACK, `input_zero`;
+ * 4. no `cache_read`, or no `cache_write` — FALLBACK, `rate_missing` with the absent ones of the two
+ *    named, in {@link CACHE_AUTO_RATES}' order (`cache_write_5m` and `cache_write_1h` are never read
+ *    as its write);
+ * 5. both present — {@link chooseCacheLifetime} over `off` and the lifetime, `{ from: 'economics' }`.
+ * FALLBACK: the lifetime when any kept gap is below {@link AUTO_LIFETIME_MARGIN} × it, else `off`.
+ * Pure.
+ */
+export function chooseAutoOneLifetime(input: {
+  gapsS: readonly number[] | undefined;
+  lifetime_s: number;
+  prices: AutoPriceInput;
+}): { choice: 'off' | 'long'; prices?: CacheAutoPrices } {
+  const kept = keptCacheGaps(input.gapsS);
+  if (kept.length === 0) return { choice: 'long' };
+  const fallback = (
+    prices: CacheAutoPrices,
+  ): { choice: 'off' | 'long'; prices: CacheAutoPrices } => ({
+    choice: kept.some((gap) => gap < AUTO_LIFETIME_MARGIN * input.lifetime_s) ? 'long' : 'off',
+    prices,
+  });
+  if ('cause' in input.prices) return fallback({ from: 'none', cause: input.prices.cause });
+  const rates = input.prices.rates;
+  const unit = rates.input;
+  if (typeof unit !== 'number' || !Number.isFinite(unit) || unit <= 0) {
+    return fallback({ from: 'none', cause: 'input_zero' });
+  }
+  const read = rates.cache_read;
+  const write = rates.cache_write;
+  if (read === undefined || write === undefined) {
+    const missing = ONE_WRITE_RATES.filter((rate) => rates[rate] === undefined);
+    return fallback({ from: 'none', cause: 'rate_missing', missing });
+  }
+  const tiers: CacheTiers = {
+    read: read / unit,
+    long: { lifetime_s: input.lifetime_s, write: write / unit },
+  };
+  const choice = chooseCacheLifetime(kept, tiers, 'long') === 'off' ? 'off' : 'long';
   return { choice, prices: { from: 'economics' } };
 }
 

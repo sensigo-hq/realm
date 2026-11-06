@@ -589,6 +589,8 @@ describe('#600 PR 1b (D4) — context 3, get_run_state.steps', () => {
                 ttl_sent: true,
                 source: 'stated',
                 by: 'realm listen',
+                // #896 unit B: the provider the request records.
+                provider: 'anthropic',
                 // #898: the fixture's record predates priced auto (gaps, no prices): the view
                 // says so.
                 auto: {
@@ -772,6 +774,9 @@ describe('#600 PR 1b (D4) — context 3, get_run_state.steps', () => {
             ),
           ).toEqual([true, undefined]),
       },
+      // #896 unit B: the provider that answered, as data (a reader names an `auto` fallback's
+      // window by it).
+      provider: { surface: 'rendered', probe: () => expect(entry.provider).toBe('anthropic') },
     } satisfies Record<keyof CacheRequestedEntry, DisclosureRoute>;
 
     const COST_FIGURE = {
@@ -1199,6 +1204,8 @@ describe('#600 PR 1b (D4) — context 4, get_run_state.drive_failure_costs', () 
                 ttl_sent: true,
                 source: 'stated',
                 by: 'realm listen',
+                // #896 unit B: the provider the request records.
+                provider: 'anthropic',
                 // #898: the fixture's record predates priced auto (gaps, no prices): the view
                 // says so.
                 auto: {
@@ -1330,6 +1337,9 @@ describe('#600 PR 1b (D4) — context 4, get_run_state.drive_failure_costs', () 
             ),
           ).toEqual([true, undefined]),
       },
+      // #896 unit B: the provider that answered, as data (a reader names an `auto` fallback's
+      // window by it).
+      provider: { surface: 'rendered', probe: () => expect(entry.provider).toBe('anthropic') },
     } satisfies Record<keyof CacheRequestedEntry, DisclosureRoute>;
 
     const COST_FIGURE = {

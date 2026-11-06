@@ -5,8 +5,6 @@ import {
   type DriveFailuresField,
   NAMES_SHOWN,
   SEAL_ARMS,
-  JsonFileStore,
-  JsonWorkflowStore,
   WorkflowError,
   capText,
   getWorkflowForRun,
@@ -59,6 +57,7 @@ import {
   type Attributed,
   type ActorAbsent,
   runReadError,
+  type WorkflowRegistrar,
 } from '@sensigo/realm';
 import { mcpHostOf } from './start-run.js';
 import type { McpDoor } from '../door.js';
@@ -114,14 +113,15 @@ function toDefinitionError(err: unknown): { code: string; message: string; class
 }
 
 export interface HandleRunStateStores {
-  /** Any `RunStore` implementation (issue #188, PR-1 — was `JsonFileStore`-only). */
-  runStore?: RunStore;
+  /** Any `RunStore` implementation (issue #188, PR-1 — was `JsonFileStore`-only). #616 PR-2a (ii-b):
+   *  required — the handler builds no store. */
+  runStore: RunStore;
   /**
    * Optional workflow store used to compute `next_actions`. When absent (or the workflow is not
    * registered), `next_actions_status` is `'workflow_unresolved'`. Intentionally NOT defaulted to a
    * fresh JsonWorkflowStore so the function stays hermetic for tests/programmatic callers.
    */
-  workflowStore?: JsonWorkflowStore;
+  workflowStore?: WorkflowRegistrar;
   /**
    * issue #625 PR-2a (decision C8): the server's registry, so the run's view can judge the
    * capability check (`describePending`). Absent ⇒ the capability check is `'unknown'` and the act
@@ -916,9 +916,9 @@ export async function handleGetRunState(
     step_names?: string[] | undefined;
     cursor?: string | undefined;
   },
-  stores?: HandleRunStateStores,
+  stores: HandleRunStateStores,
 ): Promise<WithPersonBlock<RunStateSummary>> {
-  assertToolStores(stores, 'handleGetRunState');
+  assertToolStores(stores, 'handleGetRunState', ['runStore']);
   // #872 (b1): "asked" — every attempted step's detail, or the named steps' — read ONCE by every
   // gate below; a `cursor` pages the asked steps, so it is refused without them.
   const named =
@@ -927,7 +927,7 @@ export async function handleGetRunState(
   if (args.cursor !== undefined && !asked) {
     throw cursorRefusal('cursor pages steps: pass include_steps: true, or step_names, with it.');
   }
-  const runStore = stores?.runStore ?? new JsonFileStore();
+  const runStore = stores.runStore;
   // decision C172: a run that cannot be read is answered as the library answers it — the store's own
   // WorkflowError (issue #719: a damaged JSON-store run file is RESOURCE_FORMAT_INVALID,
   // STATE_LEGACY_FORMAT or ENGINE_STORE_FAILED, naming the file and its way out), or, for an
@@ -1382,7 +1382,7 @@ export async function handleGetRunState(
 /** Registers the get_run_state MCP tool on the server. */
 export function registerGetRunState(
   server: McpServer,
-  opts?: HandleRunStateStores & WithDoorDisclosure,
+  opts: HandleRunStateStores & WithDoorDisclosure,
 ): void {
   markServedByTool(opts);
   const door = disclosureOfTool(opts);

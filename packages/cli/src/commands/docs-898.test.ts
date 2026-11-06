@@ -38,11 +38,11 @@ describe('#898 S12 — the docs say what auto reads, when, and what it does with
     // and (f) OpenAI read none; S8 (no settle for short, long, off, or auto with no kept gap).
     claim(
       ECON,
-      "On a drive `realm listen` starts with Anthropic, `--prompt-cache auto` chooses which cache lifetime to ask for from the gaps between the workflow's recent triggers, priced from this file. This section was added after version 0.48.0.",
+      "On a drive `realm listen` starts with Anthropic, or with OpenAI on GPT-5.6 and later at OpenAI's own address, `--prompt-cache auto` chooses which cache lifetime to ask for from the gaps between the workflow's recent triggers, priced from this file. This section was added after version 0.48.0.",
     );
     claim(
       ECON,
-      "`realm agent` reads the file once, when the drive starts, after the workflow and `realm.yaml` load. A drive with no measured gap reads no file: a drive `realm agent` starts on its own, and a workflow's first trigger since `realm listen` started. So do `--prompt-cache short`, `long` and `off`, OpenAI and a provider module.",
+      "`realm agent` reads the file once, when the drive starts, after the workflow and `realm.yaml` load. A drive with no measured gap reads no file: a drive `realm agent` starts on its own, and a workflow's first trigger since `realm listen` started. So do `--prompt-cache short`, `long` and `off`, OpenAI other than GPT-5.6 and later at OpenAI's own address, and a provider module.",
     );
     // The key and the row: S1 (the exact id, a dated id finding its undated key, the day, the base
     // tier) and readAutoPrices' cell (`auto-prices.test.ts`: the base row, the dated --model).
@@ -92,7 +92,7 @@ describe('#898 S12 — the docs say what auto reads, when, and what it does with
   it("deployment-manifest.md: the economics row of the reload table (S9 (a): read at the drive's start)", () => {
     claim(
       'docs/reference/deployment-manifest.md',
-      "| The economics file named by `runner.cache.economics` | The costs `realm mcp` and `realm serve` show: no, restart the process. Added after version 0.47.0. `auto`'s choice: yes. Each drive `realm listen` starts with Anthropic, `--prompt-cache auto` and measured gaps reads the file when it starts; other drives read no file. Added after version 0.48.0. |",
+      "| The economics file named by `runner.cache.economics` | The costs `realm mcp` and `realm serve` show: no, restart the process. Added after version 0.47.0. `auto`'s choice: yes. Each drive `realm listen` starts with Anthropic, or with OpenAI GPT-5.6 and later at OpenAI's own address, under `--prompt-cache auto` and with measured gaps, reads the file when it starts; other drives read no file. Added after version 0.48.0. |",
     );
   });
 

@@ -3,8 +3,6 @@ import { z } from 'zod';
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   capText,
-  JsonWorkflowStore,
-  JsonFileStore,
   submitHumanResponse,
   judgedSnapshotOf,
   endedRunWaysSentence,
@@ -134,11 +132,11 @@ export async function handleSubmitHumanResponse(
     responded_by?: string | undefined;
     claim_token?: string | undefined;
   },
-  stores?: HandleRunStores,
+  stores: HandleRunStores,
 ): Promise<WithPersonBlock<McpEnvelope>> {
   // issue #620 PR-C + the admission order (framework v1.27 §4): what the host handed in is checked
   // first, then what this caller sent.
-  assertToolStores(stores, 'handleSubmitHumanResponse');
+  assertToolStores(stores, 'handleSubmitHumanResponse', ['runStore', 'workflowStore']);
   // Issue #625: `responded_by` is bounded exactly as `realm run respond --by` is — refused before
   // anything is read or written, so nothing is recorded (#604's `responded_by` member: one helper
   // guards both doors).
@@ -157,8 +155,8 @@ export async function handleSubmitHumanResponse(
       });
     }
   }
-  const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
-  const runStore = stores?.runStore ?? new JsonFileStore();
+  const workflowStore = stores.workflowStore;
+  const runStore = stores.runStore;
   // decision C172: a run that cannot be read is answered as the library answers it — the store's own
   // WorkflowError (issue #719: a damaged JSON-store run file is RESOURCE_FORMAT_INVALID,
   // STATE_LEGACY_FORMAT or ENGINE_STORE_FAILED, naming the file and its way out), or, for an
@@ -250,7 +248,7 @@ function onFallback(stores: HandleRunStores | undefined): boolean {
  */
 export function registerSubmitHumanResponse(
   server: McpServer,
-  opts?: HandleRunStores & WithDoorDisclosure,
+  opts: HandleRunStores & WithDoorDisclosure,
   config: 'offered' | 'fallback' = 'offered',
 ): RegisteredTool {
   markServedByTool(opts);

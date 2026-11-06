@@ -1634,7 +1634,8 @@ export function listenCachingFacts(
  * by the setting it is given (none: the runner's default) and the endpoint it will resolve: on
  * OpenAI's own endpoint the key goes out under every setting but `off`; on a custom endpoint only
  * for a stated setting other than `off`. #896: on GPT-5.6 and later at OpenAI's own address, the
- * agent also asks for 30 minutes, or for nothing under `off`.
+ * agent also asks for 30 minutes, or for nothing under `off`; unit B: under `auto` (or no setting),
+ * for 30 minutes or nothing, by the gaps and the price file.
  */
 function openaiCachingWords(
   promptCache: PromptCacheSetting | undefined,
@@ -1642,8 +1643,9 @@ function openaiCachingWords(
   model: string,
 ): string {
   if (endpoint === 'default' && openAiExplicitCacheModel(model)) {
-    return promptCache === 'off'
-      ? 'off: OpenAI is asked to cache nothing'
+    if (promptCache === 'off') return 'off: OpenAI is asked to cache nothing';
+    return promptCache === undefined || promptCache === 'auto'
+      ? 'auto: off or 30 minutes for each workflow, by the gaps between its recent triggers and the prices in runner.cache.economics; a cache key, except on a step without tools when off'
       : '30 minutes, the one lifetime Realm can ask OpenAI for, and a cache key';
   }
   if (endpoint === 'custom') {
@@ -1771,7 +1773,7 @@ export const listenCommand = new Command('listen')
   .option(
     '--prompt-cache <setting>',
     // eslint-disable-next-line no-restricted-syntax -- help prose naming the setting, not a command to copy (#729 PR-3, L-2); #898: its numbers come from the provider's constants.
-    `Passed to each realm agent it starts: auto, short, long or off. auto (the default): each agent asks Anthropic for off, 5 minutes or 1 hour, by the gaps between the recent triggers of its workflow, priced from runner.cache.economics (with no usable prices: ${autoLongText()} when a recent gap is under ${autoFallbackWindowText()}, else off). short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: nothing. With \`--provider openai\`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but \`off\`, and to another endpoint only for a setting you state other than \`off\`. On GPT-5.6 and later at OpenAI's own address, the agent also asks OpenAI to cache the fixed part of each step without tools for 30 minutes, and \`off\` turns OpenAI's caching off. Other providers' own caching applies.`,
+    `Passed to each realm agent it starts: auto, short, long or off. auto (the default): each agent asks Anthropic for off, 5 minutes or 1 hour, by the gaps between the recent triggers of its workflow, priced from runner.cache.economics (with no usable prices: ${autoLongText()} when a recent gap is under ${autoFallbackWindowText()}, else off). short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: nothing. With \`--provider openai\`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but \`off\`, and to another endpoint only for a setting you state other than \`off\`. On GPT-5.6 and later at OpenAI's own address, the agent also asks OpenAI to cache the fixed part of each step without tools for 30 minutes (under \`auto\`, 30 minutes or no caching for each workflow, by the gaps between its recent triggers and the prices in runner.cache.economics; without usable prices, 30 minutes when a recent gap is under 27 minutes), and \`off\` turns OpenAI's caching off. Other providers' own caching applies.`,
     parsePromptCache,
   )
   .option(

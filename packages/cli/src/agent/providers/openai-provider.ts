@@ -2,7 +2,13 @@
 // Requires openai >= 4.0.0 as an optional peer dependency (npm install openai).
 import {
   WorkflowError,
+  chooseAutoOneLifetime,
+  keptCacheGaps,
+  normalizeCacheAuto,
   validateAgentSubmission,
+  type AutoPriceInput,
+  type CacheAutoPrices,
+  type CacheChoice,
   type JsonSchema,
   type RequestEndpoint,
   type StructuredOutputMeta,
@@ -96,7 +102,11 @@ export function openAiCachePlan(
 }
 
 /** #896 (A1): the one lifetime Realm can ask OpenAI for on Chat Completions, in seconds. */
-const OPENAI_EXPLICIT_LIFETIME_S = 1800;
+export const OPENAI_EXPLICIT_LIFETIME_S = 1800;
+
+/** #896 unit B — thrown when a request or `capabilities()` reads an `auto` choice not yet settled. */
+const AUTO_CHOICE_PENDING =
+  'OpenAIProvider: the auto cache choice is not settled; call settleAutoChoice first';
 
 /** #896: an explicit cache mark on one text part. It never carries a `ttl` (refused on Chat). */
 function markedPart(text: string): Rec {
@@ -305,6 +315,15 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
   private readonly promptCache: PromptCacheRequest | undefined;
   /** Caching 3-B (E3): this drive's memory of a gateway's refusal of the cache key. */
   private readonly cacheFields: CacheFieldMemory = {};
+  /**
+   * #896 unit B — in the explicit set, what a step without tools asks for: `off`, or the 30-minute
+   * lifetime (`long`, the one lifetime's place in {@link chooseAutoOneLifetime}). Settled at build,
+   * except `auto` with kept gaps in the set, which is `'pending'` until {@link settleAutoChoice}
+   * prices it. Read only through {@link settledChoice}. A tool step reads the setting, never this.
+   */
+  private explicitChoice: Exclude<CacheChoice, 'short'> | 'pending';
+  /** #896 unit B — where the settled `auto` choice took its prices; absent when none was needed. */
+  private autoPrices: CacheAutoPrices | undefined;
 
   constructor(
     model: string,
@@ -318,6 +337,48 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     this.strictBaseUrl = strictBaseUrl;
     this.endpoint = opts?.endpoint ?? (baseUrl === undefined ? 'default' : 'custom');
     this.promptCache = opts?.promptCache;
+    const value = this.promptCache?.value;
+    this.explicitChoice =
+      value === 'off'
+        ? 'off'
+        : value === 'auto' &&
+            this.explicitCache() &&
+            keptCacheGaps(this.promptCache?.auto?.gaps_s).length > 0
+          ? 'pending'
+          : 'long';
+  }
+
+  /** #896 unit B — the one way to read the choice: it throws while an `auto` choice is pending. */
+  private settledChoice(): Exclude<CacheChoice, 'short'> {
+    if (this.explicitChoice === 'pending') throw new Error(AUTO_CHOICE_PENDING);
+    return this.explicitChoice;
+  }
+
+  /** #896 unit B — whether an `auto` choice waits for {@link settleAutoChoice}. */
+  isAutoChoicePending(): boolean {
+    return this.explicitChoice === 'pending';
+  }
+
+  /**
+   * #896 unit B — settles a pending `auto` choice from the runner's price file (`AutoPriceInput`)
+   * by `chooseAutoOneLifetime`, over `off` and OpenAI's one lifetime, 30 minutes. Returns the choice
+   * and where its prices came from. Throws when no choice is pending — which also covers a second
+   * call.
+   */
+  settleAutoChoice(prices: AutoPriceInput): { choice: CacheChoice; prices?: CacheAutoPrices } {
+    if (this.explicitChoice !== 'pending') {
+      throw new Error(
+        'OpenAIProvider: no auto cache choice is pending; settleAutoChoice runs once, for an auto choice with measured gaps',
+      );
+    }
+    const outcome = chooseAutoOneLifetime({
+      gapsS: this.promptCache?.auto?.gaps_s,
+      lifetime_s: OPENAI_EXPLICIT_LIFETIME_S,
+      prices,
+    });
+    this.explicitChoice = outcome.choice;
+    this.autoPrices = outcome.prices;
+    return outcome;
   }
 
   /**
@@ -345,9 +406,9 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
         : {}),
       // caching 3-B (D1, D3): OpenAI caches by its own rules; the endpoint decides the start line's
       // words and whether the key goes out. #896: in the explicit set, Realm asks for 30 minutes,
-      // or for nothing under `off`.
+      // or for nothing under `off` (unit B: or when `auto` chose it; a pending choice throws).
       promptCache: this.explicitCache()
-        ? this.promptCache?.value === 'off'
+        ? this.settledChoice() === 'off'
           ? 'off'
           : { lifetime_s: OPENAI_EXPLICIT_LIFETIME_S }
         : 'provider',
@@ -365,13 +426,25 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
 
   /**
    * #896 unit A — the ask a request in the explicit set records, as Anthropic's does: 30 minutes,
-   * sent (OpenAI has no default to leave out), or `off`; the setting's source facts when given; no
-   * `cache_auto` (unit A chooses nothing by gaps or prices).
+   * sent (OpenAI has no default to leave out), or `off`; the setting's source facts when given.
+   * Unit B: the settled choice (`auto` may choose `off`), and under `auto` also `cache_auto` — the
+   * basis, the gaps read and, when a price was needed, where it came from (Anthropic's shape). A
+   * tool step records this only under a stated `off`, so never with `cache_auto`.
    */
   private explicitAskFacts(): Partial<UsageRecord> {
     const p = this.promptCache;
+    const choice = this.settledChoice();
+    const basis = p?.auto ?? { basis: 'no_measurement' as const };
+    const cacheAuto =
+      p?.value === 'auto'
+        ? normalizeCacheAuto({
+            basis: basis.basis,
+            ...(basis.gaps_s !== undefined ? { gaps_s: basis.gaps_s } : {}),
+            ...(this.autoPrices !== undefined ? { prices: this.autoPrices } : {}),
+          })
+        : undefined;
     return {
-      ...(p?.value === 'off'
+      ...(choice === 'off'
         ? { cache_requested: 'off' as const }
         : {
             cache_requested: 'lifetime' as const,
@@ -379,7 +452,20 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
             cache_ttl_sent: true,
           }),
       ...(p !== undefined ? { cache_requested_source: p.source, cache_requested_by: p.by } : {}),
+      ...(cacheAuto !== undefined ? { cache_auto: cacheAuto } : {}),
     };
+  }
+
+  /**
+   * #896 unit B — a single-shot step's plan in the explicit set: when the step asks for nothing
+   * (`off` stated, or chosen by `auto`), no key goes out, as under a stated `off`. The split's
+   * facts are still recorded from the head.
+   */
+  private explicitPlan(
+    plan: OpenAiCachePlan | undefined,
+    off: boolean,
+  ): OpenAiCachePlan | undefined {
+    return off && plan !== undefined ? { head: plan.head } : plan;
   }
 
   /** Caching 3-B (E3): the gateway's refusal, on the request that worked and every later one. */
@@ -441,16 +527,15 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       clock !== undefined ? driveCreate(rawCreate, body, clock, counters) : rawCreate(body, {});
 
     const systemPrompt = buildSystemPrompt(inputSchema, agentProfileInstructions);
-    // caching 3-B (D2, site 1): the cache key, on this request and on its JSON retry.
-    const plan = openAiCachePlan(
-      prompt,
-      callOpts?.cachePrefixChars,
-      this.endpoint,
-      this.promptCache,
-    );
-    // #896: OpenAI's explicit cache controls, in the set (GPT-5.6+, OpenAI's own address).
+    // #896: OpenAI's explicit cache controls, in the set (GPT-5.6+, OpenAI's own address); unit B:
+    // `off` is stated or chosen by `auto` (a pending choice throws).
     const explicit = this.explicitCache();
-    const off = this.promptCache?.value === 'off';
+    const off = explicit && this.settledChoice() === 'off';
+    // caching 3-B (D2, site 1): the cache key, on this request and on its JSON retry.
+    const plan = this.explicitPlan(
+      openAiCachePlan(prompt, callOpts?.cachePrefixChars, this.endpoint, this.promptCache),
+      off,
+    );
     type Message = { role: 'system' | 'user' | 'assistant'; content: string };
     const messages: Message[] = [
       { role: 'system', content: systemPrompt },
@@ -632,11 +717,15 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       { role: 'system', content: systemPrompt },
       { role: 'user', content: prompt },
     ];
-    // caching 3-B (D2, site 2): the cache key, on the strict request and on its drop retry.
-    const plan = openAiCachePlan(prompt, opts.cachePrefixChars, this.endpoint, this.promptCache);
-    // #896 (A1, A2): in the explicit set, the strict body and its drop retry carry the same marks.
+    // #896 (A1, A2): in the explicit set, the strict body and its drop retry carry the same marks;
+    // unit B: `off` is stated or chosen by `auto`.
     const explicit = this.explicitCache();
-    const off = this.promptCache?.value === 'off';
+    const off = explicit && this.settledChoice() === 'off';
+    // caching 3-B (D2, site 2): the cache key, on the strict request and on its drop retry.
+    const plan = this.explicitPlan(
+      openAiCachePlan(prompt, opts.cachePrefixChars, this.endpoint, this.promptCache),
+      off,
+    );
     const buildOpts = (strict: boolean, withCache: boolean): Record<string, unknown> => {
       const body = buildKeyedOpts(strict, withCache);
       return explicit ? withExplicitCache(body, plan, off) : body;
@@ -838,7 +927,8 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     const systemText = buildSystemPrompt(options.inputSchema, options.agentProfileInstructions);
     const plan = openAiCachePlan(prompt, options.cachePrefixChars, this.endpoint, this.promptCache);
     // #896 (A2): in the explicit set under `off`, every request of the loop asks OpenAI to cache
-    // nothing (explicit mode, no mark); under any other setting the loop is as on the base.
+    // nothing (explicit mode, no mark); under any other setting the loop is as on the base. Unit B:
+    // the stated setting, never `auto`'s choice — a tool step is not part of the choice.
     const explicitOff = this.explicitCache() && this.promptCache?.value === 'off';
     // issue #610: the ONE point every request of this loop goes through, and the one place it is
     // recorded. The record is pushed the instant the answer arrives, before any code reads it: a

@@ -1152,7 +1152,8 @@ describe(
       const dir = nodeProject();
       writeFileSync(
         join(dir, 'server.ts'),
-        `${fence('packages/mcp-server/README.md', 'createRealmMcpServer();')}\n`,
+        // #616 PR-2a (ii-b): the example passes the four stores (the library has no default).
+        `${fence('packages/mcp-server/README.md', 'createRealmMcpServer({')}\n`,
       );
       // (a) red when the program does not start a server that serves the 11 tools; (b) prints the count.
       expect(await toolCount(await client(process.execPath, ['server.ts'], dir))).toBe(11);

@@ -19,6 +19,9 @@
 // asked, the only place their text appears. Issue #600's lifetime unit adds the entry's `auto` (the
 // evidence `--prompt-cache auto` chose by), probed on the fixture listen's default asked for.
 //
+// #896 unit B adds the entry's `provider`, probed on an OpenAI drive whose `auto` chose no caching
+// without prices: the fallback's window it names is OpenAI's.
+//
 // Issue #600 caching PR P adds two `CostView` rows (`money`, `endpoints`), `StepView.total`, and the
 // `Money` and `RunCost` registries, rendered with no waiver. Money exists only when a price source is
 // given, so its rows probe a second render (`PRICED`) of a priced fixture through `inspectRun`'s
@@ -555,6 +558,11 @@ const STEP_LINE_CACHE_REQUESTED_ENTRY = {
     surface: 'rendered',
     probe: () => expect(SPLIT.stepLine).toContain(SPLIT_WORDS.ask),
   },
+  // #896 unit B: the provider names the fallback's window, on the OpenAI off render.
+  provider: {
+    surface: 'rendered',
+    probe: () => expect(OPENAI_OFF.stepLine).toContain(OPENAI_OFF_WINDOW),
+  },
 } satisfies Record<keyof CacheRequestedEntry, DisclosureRoute>;
 
 const STEP_LINE_COST_FIGURE = {
@@ -678,6 +686,32 @@ const SPLIT_WORDS = {
     'the endpoint refused the cache fields (400); sent without them for the rest of the drive — to stop sending them: --prompt-cache off',
 };
 
+// #896 unit B: a fourth render per context. An OpenAI drive on GPT-5.6 and later at OpenAI's own
+// address, started by `realm listen` with no price file, whose gaps (40 minutes, 2 hours) made `auto`
+// choose no caching: the fallback's window is OpenAI's, read from the entry's `provider`.
+const OPENAI_OFF = { stepLine: '', failureLine: '' };
+const OPENAI_OFF_REQUESTS = [
+  {
+    request_index: 0,
+    request_start: '2026-01-01T00:00:00.000Z',
+    provider: 'openai',
+    endpoint: 'default',
+    cache_requested: 'off',
+    cache_requested_source: 'runner_default',
+    cache_requested_by: 'realm listen',
+    cache_auto: {
+      basis: 'listen_trigger_gaps',
+      gaps_s: [2400, 7200],
+      prices: { from: 'none', cause: 'no_file' },
+    },
+    prompt_tokens: 900,
+    output_tokens: 5,
+  },
+];
+/** The window an OpenAI off fallback names (Anthropic's reads 54 minutes). */
+const OPENAI_OFF_WINDOW =
+  'no price file (runner.cache.economics is not set), and no gap was under 27 minutes, so no caching)';
+
 // issue #600 caching PR P: a second run, rendered with `PRICES`. `gateway_step` is the gateway
 // fixture; `mixed_step` has two attempts (the second with a request per source and one with no
 // model); the three unmeasured attempts and a failed drive no longer on the record feed the run's
@@ -710,6 +744,14 @@ const splitStepRun = {
   in_progress_steps: [],
   claims: undefined,
   evidence: [pricedAttempt('split_step', 'success', 'never_engaged', SPLIT_REQUESTS)],
+  drive_failures: undefined,
+} as unknown as RunRecord;
+const openAiOffStepRun = {
+  ...contextOneRun,
+  id: 'run_ctx1o',
+  in_progress_steps: [],
+  claims: undefined,
+  evidence: [pricedAttempt('openai_step', 'success', 'never_engaged', OPENAI_OFF_REQUESTS)],
   drive_failures: undefined,
 } as unknown as RunRecord;
 const pricedStepRun = {
@@ -865,6 +907,7 @@ describe('#600 PR 1b (D4) — context 1, the step line', () => {
       priceSource: PRICES,
     });
     SPLIT.stepLine = await inspectRun('run_ctx1s', makeStore(splitStepRun), workflowStore);
+    OPENAI_OFF.stepLine = await inspectRun('run_ctx1o', makeStore(openAiOffStepRun), workflowStore);
     for (const registry of [
       STEP_LINE_COST_VIEW,
       STEP_LINE_CACHE_REQUESTED_ENTRY,
@@ -1232,6 +1275,16 @@ const splitFailureRun = {
   },
 } as unknown as RunRecord;
 
+const openAiOffFailureRun = {
+  ...contextTwoRun,
+  id: 'run_ctx2o',
+  drive_failures: {
+    first_failed_at: ENTRY_A.at,
+    total: 1,
+    entries: [{ ...ENTRY_A, usage: OPENAI_OFF_REQUESTS }],
+  },
+} as unknown as RunRecord;
+
 const pricedFailureRun = {
   ...contextTwoRun,
   id: 'run_ctx2p',
@@ -1327,6 +1380,11 @@ const FAILURE_CACHE_REQUESTED_ENTRY = {
     surface: 'rendered',
     probe: () => expect(SPLIT.failureLine).toContain(SPLIT_WORDS.ask),
   },
+  // #896 unit B: the provider names the fallback's window, on the OpenAI off render's failure block.
+  provider: {
+    surface: 'rendered',
+    probe: () => expect(OPENAI_OFF.failureLine).toContain(OPENAI_OFF_WINDOW),
+  },
 } satisfies Record<keyof CacheRequestedEntry, DisclosureRoute>;
 
 const FAILURE_COST_FIGURE = {
@@ -1372,6 +1430,11 @@ describe('#600 PR 1b (D4) — context 2, the failure block', () => {
       priceSource: PRICES,
     });
     SPLIT.failureLine = await inspectRun('run_ctx2s', makeStore(splitFailureRun), workflowStore);
+    OPENAI_OFF.failureLine = await inspectRun(
+      'run_ctx2o',
+      makeStore(openAiOffFailureRun),
+      workflowStore,
+    );
     for (const registry of [
       FAILURE_COST_VIEW,
       FAILURE_CACHE_REQUESTED_ENTRY,

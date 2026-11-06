@@ -2,8 +2,6 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
-  JsonWorkflowStore,
-  JsonFileStore,
   executeChain,
   WorkflowError,
   buildPreExecutionErrorEnvelope,
@@ -247,14 +245,14 @@ export async function handleExecuteStep(
     trace?: AgentTraceEntry[] | undefined;
     writer_nonce?: string | undefined;
   },
-  stores?: HandleRunStores,
+  stores: HandleRunStores,
   call?: FormCall,
   /** #729 PR-4: told the set this call built before its engine call (the door's reply reuses it). */
   onDisclosureSet?: (set: DisclosureSet) => void,
 ): Promise<WithPersonBlock<McpEnvelope>> {
-  assertToolStores(stores, 'handleExecuteStep');
-  const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
-  const runStore = stores?.runStore ?? new JsonFileStore();
+  assertToolStores(stores, 'handleExecuteStep', ['runStore', 'workflowStore']);
+  const workflowStore = stores.workflowStore;
+  const runStore = stores.runStore;
   // decision C172: a run that cannot be read is answered as the library answers it — the store's own
   // WorkflowError (issue #719: a damaged JSON-store run file is RESOURCE_FORMAT_INVALID,
   // STATE_LEGACY_FORMAT or ENGINE_STORE_FAILED, naming the file and its way out), or, for an
@@ -400,14 +398,14 @@ export async function handleExecuteStepTool(
     trace?: AgentTraceEntry[] | undefined;
     writer_nonce?: string | undefined;
   },
-  stores?: HandleRunStores & WithDoorDisclosure,
+  stores: HandleRunStores & WithDoorDisclosure,
   call?: FormCall,
 ): Promise<ReturnType<typeof toolContentOf>> {
   const door = disclosureOfTool(stores);
   return safeTool(
     async () => {
       // F34: inside safeTool, so a store misconfiguration is a reply, never a raw throw to the SDK.
-      assertToolStores(stores, 'handleExecuteStepTool');
+      assertToolStores(stores, 'handleExecuteStepTool', ['runStore', 'workflowStore']);
       // The zod 4 unit, R2 (O2): before the claim — a non-finite number in params is refused
       // (ArgsNumbersRefusal, the door's own refusal shape); an integer beyond 2^53−1 in params or
       // in a trace entry's data draws a warning.
@@ -485,7 +483,7 @@ export async function handleExecuteStepTool(
 /** Registers the execute_step MCP tool on the server. */
 export function registerExecuteStep(
   server: McpServer,
-  opts?: HandleRunStores & WithDoorDisclosure,
+  opts: HandleRunStores & WithDoorDisclosure,
 ): void {
   markServedByTool(opts);
   server.registerTool(

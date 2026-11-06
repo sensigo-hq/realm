@@ -57,11 +57,14 @@ function handlerEntry(home: string): string {
     entry,
     [
       `import { StdioServerTransport } from '${stdio}';`,
-      `import { createRealmMcpServer } from '${mcp}';`,
-      `import { createDefaultRegistry } from '${core}';`,
+      `import { createRealmMcpServer, JsonTraceBufferStore } from '${mcp}';`,
+      `import { createDefaultRegistry, JsonFileStore, JsonWorkflowStore, JsonFileFailedAttemptStore } from '${core}';`,
       `const registry = createDefaultRegistry();`,
       `registry.register('handler', 'stamp', { id: 'stamp', execute: async () => ({ data: { stamped: true } }) });`,
-      `const server = createRealmMcpServer({ registry });`,
+      // #616 PR-2a (ii-b): an embedding host passes the four stores (the library has no default);
+      // here the file stores on this child's HOME, as the README's example opens them.
+      `const runStore = new JsonFileStore();`,
+      `const server = createRealmMcpServer({ registry, runStore, workflowStore: new JsonWorkflowStore(), traceBufferStore: new JsonTraceBufferStore(runStore.runsDirPath, runStore), failedAttemptStore: new JsonFileFailedAttemptStore(runStore.runsDirPath) });`,
       `await server.connect(new StdioServerTransport());`,
     ].join('\n'),
   );

@@ -33,7 +33,7 @@ import {
 } from './render-reply.js';
 import type { START_RUN_TABLE, StartRunReply } from './tools/start-run.js';
 import { handleExecuteStepTool } from './tools/execute-step.js';
-import { withArtifactStores } from './test-support/temp-home.js';
+import { withArtifactStores, type ServerExtras } from './test-support/temp-home.js';
 
 const CANARY_NAME = 'FAKE_DOOR_CANARY_729';
 const CANARY = 'FAKE-DOOR-CANARY-VALUE-0729';
@@ -54,10 +54,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-async function connect(
-  extra: Parameters<typeof createRealmMcpServer>[0] = {},
-  more: WorkflowDefinition[] = [],
-) {
+async function connect(extra: ServerExtras = {}, more: WorkflowDefinition[] = []) {
   const dir = await mkdtemp(join(tmpdir(), 'realm-door-729-'));
   const runStore = new JsonFileStore(join(dir, 'runs'));
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
@@ -555,9 +552,14 @@ describe('#729 PR-3 correction 1 (F34) — when a tool cannot compose its reply'
     const undeclared = { get: async () => undefined } as never;
     // (a) red when the store check runs before safeTool (the call rejects and the SDK prints the
     //     raw message); (b) prints whether it resolved and the reply's status and code.
+    // #616 PR-2a (ii-b): with the registry the handler needs, so the store check that answers is the
+    // run store's release line (the cell's subject), not the missing-store refusal.
+    const workflowStore = new JsonWorkflowStore(
+      await mkdtemp(join(tmpdir(), 'realm-door-729-st-')),
+    );
     const outcome = await handleExecuteStepTool(
       { run_id: 'r', command: 'a', params: {} },
-      { runStore: undeclared },
+      { runStore: undeclared, workflowStore },
     ).then(
       (r) => {
         const reply = JSON.parse(r.content[0]!.text) as { status?: string; error_code?: string };
@@ -592,7 +594,7 @@ function providerSpy(declared: DisclosureEntry[] = []) {
  *  (ii-a); it was the library's default), the provider spy, and a client that shows forms when
  *  `forms` (its handler declines). */
 async function connectNoRunStore(
-  extra: Parameters<typeof createRealmMcpServer>[0],
+  extra: ServerExtras,
   forms: { capture?: (params: { message?: string }) => void } | undefined,
 ) {
   const home = await mkdtemp(join(tmpdir(), 'realm-door-c2-home-'));

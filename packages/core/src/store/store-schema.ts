@@ -6,8 +6,7 @@
 //
 // Every statement is written in the form SQLite keeps in `sqlite_master` (no `IF NOT EXISTS`, no
 // trailing semicolon), so a created file's text equals this constant byte for byte. Later units APPEND
-// to version 1 (unit 6b: the tombstones, `store_meta` and `write_clock`; PR-1b: the other stores'
-// tables): nothing is released in between (SEAMS S2). After the first release, changing any statement
+// to version 1 (PR-1b: the other stores' tables): nothing is released in between (SEAMS S2). After the first release, changing any statement
 // here is a schema change: a new `user_version` and its upgrade step.
 //
 // Every rule a writer that is not Realm must obey is a TRIGGER, because a connection that sets
@@ -17,7 +16,7 @@
 // the frozen design's §3 by the design owner's ruling of 2026-11-05 (DELTAS row 23): every key and
 // payload column is NOT NULL; a malformed run record is refused by SQLite's own "malformed JSON" (the
 // generated columns read the record before any trigger runs); the insert guard against a purged id is
-// unit 6b's, created with the table it reads. The guards on the tables' hidden row number, a record's
+// created after the table it reads (unit 6b). The guards on the tables' hidden row number, a record's
 // repeated top-level keys and values not stored as text come from the review of unit 6 (DELTAS rows 24
 // and 24b).
 
@@ -41,9 +40,11 @@ export const REALM_STORE_PAGE_SIZE = 16384;
 
 /**
  * The schema, version 1: one statement per element, in creation order, each exactly as `sqlite_master`
- * stores it. Tables in this part: `runs` (the run's core document, placeholders in place, with a
- * generated column for every field a read filters on), `evidence` (append-only rows) and `run_blobs`
- * (the write-once fields).
+ * stores it. Tables: `runs` (the run's core document, placeholders in place, with a generated column
+ * for every field a read filters on), `evidence` (append-only rows), `run_blobs` (the write-once
+ * fields); `store_meta` (the store's one meta row: its tombstone counter and horizon), `write_clock`
+ * (the instant of the deleting write), and the tombstones a deleted run leaves: `purged_ids` (its id,
+ * kept forever) and `purged_runs` (its detail, compactable below the horizon).
  */
 export const REALM_STORE_SCHEMA: readonly string[] = [
   // ---- runs: the core document; the generated columns read it, never the reverse ----
@@ -185,4 +186,139 @@ BEGIN SELECT RAISE(ABORT, 'realm.db: a row number must be 1 or more'); END`,
   `CREATE TRIGGER run_blobs_rowid_positive AFTER INSERT ON run_blobs
 WHEN new.rowid < 1
 BEGIN SELECT RAISE(ABORT, 'realm.db: a row number must be 1 or more'); END`,
+
+  // ---- store_meta: the store's one meta row (unit 6b; design §3). Unit 7 writes it at creation ----
+  // Every column NOT NULL: a NULL passes a "never lower" comparison (NULL < old is NULL).
+  `CREATE TABLE store_meta (
+  one INTEGER PRIMARY KEY NOT NULL CHECK (one = 1),
+  page_size INTEGER NOT NULL,
+  commit_epoch INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  tomb_seq INTEGER NOT NULL,
+  tombstones_through_seq INTEGER NOT NULL,
+  tombstones_since TEXT NOT NULL
+)`,
+  // One row: a second insert, INSERT OR REPLACE included, is refused before its conflict is resolved.
+  `CREATE TRIGGER store_meta_insert_once BEFORE INSERT ON store_meta
+WHEN EXISTS (SELECT 1 FROM store_meta)
+BEGIN SELECT RAISE(ABORT, 'realm.db: the store''s meta row cannot be replaced or deleted'); END`,
+  `CREATE TRIGGER store_meta_no_delete BEFORE DELETE ON store_meta
+BEGIN SELECT RAISE(ABORT, 'realm.db: the store''s meta row cannot be replaced or deleted'); END`,
+  `CREATE TRIGGER store_meta_immutable BEFORE UPDATE ON store_meta
+WHEN new.one IS NOT old.one
+  OR new.page_size IS NOT old.page_size
+  OR new.created_at IS NOT old.created_at
+BEGIN SELECT RAISE(ABORT, 'realm.db: the store''s meta row cannot be replaced or deleted'); END`,
+  // The counter and the horizon only move forward, and the horizon never passes the counter. A value
+  // of the wrong type is left to the type guards below, so one statement trips one guard.
+  `CREATE TRIGGER store_meta_forward BEFORE UPDATE ON store_meta
+WHEN new.commit_epoch IS NULL
+  OR (typeof(new.commit_epoch) = 'integer' AND new.commit_epoch < old.commit_epoch)
+  OR new.tomb_seq IS NULL
+  OR (typeof(new.tomb_seq) = 'integer' AND new.tomb_seq < old.tomb_seq)
+  OR new.tombstones_through_seq IS NULL
+  OR (typeof(new.tombstones_through_seq) = 'integer' AND new.tombstones_through_seq < old.tombstones_through_seq)
+  OR new.tombstones_since IS NULL
+  OR (new.tombstones_since GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]Z' AND new.tombstones_since < old.tombstones_since)
+  OR (typeof(new.tombstones_through_seq) = 'integer' AND typeof(new.tomb_seq) = 'integer'
+    AND new.tombstones_through_seq > new.tomb_seq)
+BEGIN SELECT RAISE(ABORT, 'realm.db: the store''s recorded horizon cannot move backwards'); END`,
+  // Whole numbers and stamps of the one shape only (DELTAS row 25): SQLite sorts every text above every
+  // number, and a TEXT column stores a number as text, so a value of another type passes "never lower"
+  // and then refuses every later write. The first row is judged in full; an update, on the columns
+  // that may change (the others cannot change at all). NULL is left to NOT NULL and the guard above.
+  // A whole number stays at most 9007199254740991 (DELTAS row 26): Realm reads the row as JavaScript
+  // numbers, so a larger one makes the next +1 refused or the row unreadable. The horizon counter needs
+  // no cap on update: the forward guard already refuses it above the counter.
+  `CREATE TRIGGER store_meta_insert_types BEFORE INSERT ON store_meta
+WHEN NOT EXISTS (SELECT 1 FROM store_meta)
+  AND (typeof(new.page_size) NOT IN ('integer', 'null')
+    OR typeof(new.commit_epoch) NOT IN ('integer', 'null')
+    OR typeof(new.tomb_seq) NOT IN ('integer', 'null')
+    OR typeof(new.tombstones_through_seq) NOT IN ('integer', 'null')
+    OR (typeof(new.page_size) = 'integer' AND new.page_size > 9007199254740991)
+    OR (typeof(new.commit_epoch) = 'integer' AND new.commit_epoch > 9007199254740991)
+    OR (typeof(new.tomb_seq) = 'integer' AND new.tomb_seq > 9007199254740991)
+    OR (typeof(new.tombstones_through_seq) = 'integer' AND new.tombstones_through_seq > 9007199254740991)
+    OR (new.created_at IS NOT NULL AND (typeof(new.created_at) IS NOT 'text' OR new.created_at NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]Z'))
+    OR (new.tombstones_since IS NOT NULL AND (typeof(new.tombstones_since) IS NOT 'text' OR new.tombstones_since NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]Z')))
+BEGIN SELECT RAISE(ABORT, 'realm.db: the store''s meta row holds whole numbers and timestamps of one shape'); END`,
+  `CREATE TRIGGER store_meta_update_types BEFORE UPDATE ON store_meta
+WHEN typeof(new.commit_epoch) NOT IN ('integer', 'null')
+  OR typeof(new.tomb_seq) NOT IN ('integer', 'null')
+  OR typeof(new.tombstones_through_seq) NOT IN ('integer', 'null')
+  OR (typeof(new.commit_epoch) = 'integer' AND new.commit_epoch > 9007199254740991)
+  OR (typeof(new.tomb_seq) = 'integer' AND new.tomb_seq > 9007199254740991)
+  OR (new.tombstones_since IS NOT NULL AND (typeof(new.tombstones_since) IS NOT 'text' OR new.tombstones_since NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]Z'))
+BEGIN SELECT RAISE(ABORT, 'realm.db: the store''s meta row holds whole numbers and timestamps of one shape'); END`,
+
+  // ---- write_clock: the instant of the write that deletes a run (design R4-01). It starts empty;
+  // the store sets it with an upsert and clears it (at = NULL) before COMMIT. A plain UPDATE on the
+  // empty table matches no row, so the upsert is the only way to set it ----
+  `CREATE TABLE write_clock (
+  one INTEGER PRIMARY KEY NOT NULL CHECK (one = 1),
+  at TEXT
+)`,
+
+  // ---- purged_ids: every id that ever left runs, kept forever ----
+  `CREATE TABLE purged_ids (
+  id TEXT PRIMARY KEY NOT NULL,
+  purged_at TEXT NOT NULL
+) WITHOUT ROWID`,
+  // A purged run is never created again (DELTAS row 23: created after the table it reads).
+  `CREATE TRIGGER runs_insert_not_purged BEFORE INSERT ON runs
+WHEN EXISTS (SELECT 1 FROM purged_ids WHERE id = new.id)
+BEGIN SELECT RAISE(ABORT, 'realm.db: a purged run id cannot be created again'); END`,
+  // A REPLACE would delete and re-insert the id: refused here, before its delete.
+  `CREATE TRIGGER purged_ids_insert_once BEFORE INSERT ON purged_ids
+WHEN EXISTS (SELECT 1 FROM purged_ids WHERE id = new.id)
+BEGIN SELECT RAISE(ABORT, 'realm.db: the tombstone record is append-only'); END`,
+  // A live run's id recorded as purged would refuse that run's later purge.
+  `CREATE TRIGGER purged_ids_not_live BEFORE INSERT ON purged_ids
+WHEN EXISTS (SELECT 1 FROM runs WHERE id = new.id)
+BEGIN SELECT RAISE(ABORT, 'realm.db: a live run cannot be recorded as purged'); END`,
+  `CREATE TRIGGER purged_ids_no_update BEFORE UPDATE ON purged_ids
+BEGIN SELECT RAISE(ABORT, 'realm.db: the tombstone record is append-only'); END`,
+  `CREATE TRIGGER purged_ids_no_delete BEFORE DELETE ON purged_ids
+BEGIN SELECT RAISE(ABORT, 'realm.db: the tombstone record is append-only'); END`,
+
+  // ---- purged_runs: a deleted run's detail, ordered by seq (never by the clock), compactable ----
+  `CREATE TABLE purged_runs (
+  seq INTEGER PRIMARY KEY NOT NULL,
+  id TEXT NOT NULL UNIQUE,
+  purged_at TEXT NOT NULL,
+  workflow_id TEXT,
+  key_hash TEXT,
+  sealed_by_arm TEXT,
+  run_phase TEXT NOT NULL,
+  phase_version TEXT NOT NULL
+)`,
+  `CREATE INDEX purged_runs_by_key ON purged_runs (workflow_id, key_hash, id, purged_at)`,
+  // Only the deleting trigger's own row: its seq is the counter, its id is purged and not live, and no
+  // row holds that seq or id (a REPLACE fires no update guard, and a delete guard only with recursive
+  // triggers on).
+  `CREATE TRIGGER purged_runs_insert_own BEFORE INSERT ON purged_runs
+WHEN new.seq IS NOT (SELECT tomb_seq FROM store_meta)
+  OR NOT EXISTS (SELECT 1 FROM purged_ids WHERE id = new.id)
+  OR EXISTS (SELECT 1 FROM runs WHERE id = new.id)
+  OR EXISTS (SELECT 1 FROM purged_runs WHERE seq = new.seq OR id = new.id)
+BEGIN SELECT RAISE(ABORT, 'realm.db: the tombstone record is append-only'); END`,
+  `CREATE TRIGGER purged_runs_no_update BEFORE UPDATE ON purged_runs
+BEGIN SELECT RAISE(ABORT, 'realm.db: the tombstone record is append-only'); END`,
+  // Compaction moves the horizon first, then deletes what is below it on both counts.
+  `CREATE TRIGGER purged_runs_delete_below_horizon BEFORE DELETE ON purged_runs
+WHEN (old.seq <= (SELECT tombstones_through_seq FROM store_meta)
+  AND old.purged_at <= (SELECT tombstones_since FROM store_meta)) IS NOT 1
+BEGIN SELECT RAISE(ABORT, 'realm.db: the tombstone record is append-only'); END`,
+
+  // A run that leaves runs, by any writer, leaves both rows under the next seq. purged_at is the
+  // deleting write's instant from write_clock; only when it is not set (a delete by anything other
+  // than Realm) does SQLite's own clock stamp it, in the store's one shape.
+  `CREATE TRIGGER runs_tombstone AFTER DELETE ON runs
+BEGIN
+  UPDATE store_meta SET tomb_seq = tomb_seq + 1;
+  INSERT INTO purged_ids (id, purged_at) VALUES (old.id, COALESCE((SELECT at FROM write_clock WHERE one = 1), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')));
+  INSERT INTO purged_runs (seq, id, purged_at, workflow_id, key_hash, sealed_by_arm, run_phase, phase_version)
+  VALUES ((SELECT tomb_seq FROM store_meta), old.id, COALESCE((SELECT at FROM write_clock WHERE one = 1), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), old.workflow_id, old.key_hash, old.sealed_by_arm, old.run_phase, old.phase_version);
+END`,
 ];

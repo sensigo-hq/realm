@@ -534,6 +534,9 @@ export {
   WRITE_ONCE_RUN_FIELDS,
 } from './store/store-schema.js';
 export type { WriteOnceRunField } from './store/store-schema.js';
+// #616 PR-1a unit 6c: every schema version the store knows, and the step into each (the ladder runs them).
+export { REALM_STORE_VERSIONS } from './store/store-schema-versions.js';
+export type { StoreSchemaVersion, StoreSchemaVersions } from './store/store-schema-versions.js';
 // issue #715 (a) (D6-1, D6-54): a test location's clock file. For `@sensigo/realm-testing`, not for
 // hosts: a lint rule (static imports) and a source scan (the names as text, in any import form;
 // `lint-test-location-715.test.ts`; it reads the `.ts` and `.mjs` files of the four packages' `src`
@@ -663,6 +666,7 @@ export {
   CACHE_GAP_MAX_S,
   chooseCacheLifetime,
   chooseAutoLifetime,
+  chooseAutoOneLifetime,
   keptCacheGaps,
   normalizeCacheAuto,
 } from './economics/cache-lifetime.js';

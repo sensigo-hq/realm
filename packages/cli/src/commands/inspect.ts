@@ -588,14 +588,17 @@ function askSourceText(entry: CacheRequestedEntry): string {
 /**
  * Issue #600 PR 2 (D3) — one distinct ask, in words; the lifetime unit: when `auto` chose it, what it
  * read (`; auto: <evidence>`, the start line's words); issue #898: then where its prices came from
- * (`; <prices text>`, from core's view — `not_recorded` included), by the lifetime asked.
+ * (`; <prices text>`, from core's view — `not_recorded` included), by the lifetime asked and (#896
+ * unit B) the entry's provider, whose fallback window it names.
  */
 function askEntryText(entry: CacheRequestedEntry): string {
   const autoFor = (asked: number | 'off'): string =>
     entry.auto === undefined
       ? ''
       : `; auto: ${autoEvidence(entry.auto)}` +
-        (entry.auto.prices !== undefined ? `; ${autoPricesText(entry.auto.prices, asked)}` : '');
+        (entry.auto.prices !== undefined
+          ? `; ${autoPricesText(entry.auto.prices, asked, entry.provider)}`
+          : '');
   if (entry.value === 'off')
     return `asked for no caching (${askSourceText(entry)}${autoFor('off')})`;
   if (entry.value === 'provider_rules') {
