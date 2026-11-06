@@ -1357,7 +1357,7 @@ describe('#627 W correction 2 (4.2, 4.3) — the library refuses an inert form w
       emptyAnswers:
         "createRealmMcpServer: invalid gateAnswers option value '': expected asked, offered or withheld",
     });
-    home.cleanup();
+    await home.cleanup();
   });
 });
 
@@ -1380,6 +1380,6 @@ describe('#627 W correction 1 (C1) — the principal option is checked when the 
       bad: build({ kind: 'api_key' }),
       good: build({ kind: 'api_key', id: 'key-627' }, home.stores),
     }).toEqual({ bad: INVALID_PRINCIPAL_OPTION, good: 'built' });
-    home.cleanup();
+    await home.cleanup();
   });
 });

@@ -724,7 +724,7 @@ describe('registerStartRun — ResponseEnvelope error shape', () => {
     // so it must never carry the remedy.
     expect((envelope['errors'] as string[])[0]).not.toContain('most often');
     await client.close();
-    home.cleanup();
+    await home.cleanup();
   });
 });
 
@@ -751,7 +751,7 @@ describe('registerSubmitHumanResponse — ResponseEnvelope error shape', () => {
     expect(envelope['run_version']).toBe(0);
     expect(Array.isArray(envelope['next_actions'])).toBe(true);
     await client.close();
-    home.cleanup();
+    await home.cleanup();
   });
 });
 

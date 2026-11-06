@@ -237,7 +237,7 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       offered: [11, ['submit_human_response']],
       withheld: [10, []],
     });
-    home.cleanup();
+    await home.cleanup();
   });
 
   it('connect-an-mcp-client.md: execute_step submits the answer to an agent step; an automatic step is the engine’s — advance_run runs it (#729, the Q3 unit)', async () => {

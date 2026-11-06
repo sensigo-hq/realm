@@ -150,7 +150,7 @@ describe('H1 createRealmMcpServer', () => {
     try {
       expect(() => createRealmMcpServer({ ...home.stores, registryProvider })).not.toThrow();
     } finally {
-      home.cleanup();
+      await home.cleanup();
     }
     expect(calls).toBe(0);
     const runStore = new JsonFileStore(dir);
@@ -179,7 +179,7 @@ describe('H1 createRealmMcpServer', () => {
         createRealmMcpServer({ ...home.stores, registry: new ExtensionRegistry() } as never),
       ).not.toThrow();
     } finally {
-      home.cleanup();
+      await home.cleanup();
     }
   });
   it('realm’s own stores and a declared host class are accepted', () => {
