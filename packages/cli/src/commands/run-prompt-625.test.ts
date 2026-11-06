@@ -28,6 +28,8 @@ import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
 import { quotedForTerminal } from '../lib/holder-render.js';
 import { lagless } from '../test-support/lag.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import type { CliHome } from '../lib/home.js';
 
 /** C163: (a) red when gates.md no longer holds the sentence these cells pin, word for word; (b) prints it. */
 // #729 PR-4 (02, G9), re-pinned: the late answer's lines are printed where `realm agent` runs, and
@@ -125,6 +127,7 @@ function workflowYaml(opts: {
 
 describe('issue #625 — the terminal run prompt after a gate answer', () => {
   let home: string;
+  let h: TempHome & { readonly root: string };
   let dir: string;
   let savedHome: string | undefined;
   let savedTTY: boolean | undefined;
@@ -132,11 +135,12 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
   let errSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     clearProjectExtensionsCache();
-    home = mkdtempSync(join(tmpdir(), 'realm-625-prompt-home-'));
+    h = await makeTempHome();
+    home = h.root;
     dir = mkdtempSync(join(tmpdir(), 'realm-625-prompt-wf-'));
-    mkdirSync(join(home, '.realm'), { recursive: true });
+    mkdirSync(h.path, { recursive: true });
     savedHome = process.env['HOME'];
     process.env['HOME'] = home;
     // Without this the non-TTY guard refuses before the loop.
@@ -150,13 +154,15 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
     }) as never);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     location = undefined;
     if (savedTTY === undefined) delete (process.stdin as { isTTY?: boolean }).isTTY;
     else process.stdin.isTTY = savedTTY;
     if (savedHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = savedHome;
-    rmSync(home, { recursive: true, force: true });
+    await located?.cleanup();
+    located = undefined;
+    await h.cleanup();
     rmSync(dir, { recursive: true, force: true });
     mocks.question.mockReset();
     vi.restoreAllMocks();
@@ -172,7 +178,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
     return lines.slice(preview + 1);
   };
   const runId = (): string =>
-    readdirSync(join(home, '.realm', 'runs'))
+    readdirSync(h.home.runStore.runsDirPath)
       .filter((f) => f.endsWith('.json'))[0]!
       .replace('.json', '');
   const gateId = (): string => {
@@ -181,10 +187,9 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
     return line.replace('  ⏸  Gate: confirm | gate_id: ', '');
   };
 
-  /** The stored record, read with a store constructed while the scratch HOME is live. */
+  /** The stored record, read through the cell's handle on the scratch home. */
   async function readRecord() {
-    const { JsonFileStore } = await import('@sensigo/realm');
-    return (await new JsonFileStore().get(runId())).record;
+    return (await stores().runStore.get(runId())).record;
   }
 
   /**
@@ -195,9 +200,15 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
    * (C146's race cells below keep the real clock, with their reason.)
    */
   let location: TestLocation | undefined;
+  /** #616 PR-2b: a second handle on the location, opened after it (a store takes its clock when it
+   *  is opened); the home's own handle keeps the cleanup. */
+  let located: TempHome | undefined;
   async function locate(): Promise<void> {
-    location = await createTestLocation({ start: new Date(), root: join(home, '.realm') });
+    location = await createTestLocation({ start: new Date(), root: h.path });
+    located = await makeTempHome({ home: h.path });
   }
+  /** The stores a cell's sites use: the location's handle once `locate()` made one, else the home's. */
+  const stores = (): CliHome => (located ?? h).home;
   async function pastDue(): Promise<void> {
     const expiresAt = Date.parse((await readRecord()).pending_gate!.expires_at!);
     await location!.clock.set(new Date(expiresAt + 50));
@@ -495,12 +506,11 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
     it('another process answers while the prompt waits: the prompt closes and prints that answer — never re-asks, never refuses', async () => {
       claimWorkflowPage(PROMPT_CLOSES);
       const prompts = waitAtPrompt(async () => {
-        const { JsonFileStore, loadWorkflowFromString, submitHumanResponse } =
-          await import('@sensigo/realm');
+        const { loadWorkflowFromString, submitHumanResponse } = await import('@sensigo/realm');
         const def = loadWorkflowFromString(
           workflowYaml({ id: 'prompt-625-c158-other', finish: true }),
         );
-        const reply = await submitHumanResponse(new JsonFileStore(), def, {
+        const reply = await submitHumanResponse(stores().runStore, def, {
           runId: runId(),
           gateId: gateId(),
           choice: 'approve',
@@ -642,12 +652,11 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
             );
             // Another process runs `finish` while this prompt waits.
             void (async () => {
-              const { JsonFileStore, loadWorkflowFromString, executeStep } =
-                await import('@sensigo/realm');
+              const { loadWorkflowFromString, executeStep } = await import('@sensigo/realm');
               const def = loadWorkflowFromString(
                 workflowYaml({ id: 'prompt-625-c165', finish: true, finishAuto: true }),
               );
-              await executeStep(new JsonFileStore(), def, {
+              await executeStep(stores().runStore, def, {
                 runId: runId(),
                 command: 'finish',
                 input: { done: true },
@@ -687,12 +696,11 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
           stepPrompts += 1;
           // The other process runs `finish` (the run completes) before this answer is handed back —
           // inside the watch's half second, so the prompt never sees it close.
-          const { JsonFileStore, loadWorkflowFromString, executeStep } =
-            await import('@sensigo/realm');
+          const { loadWorkflowFromString, executeStep } = await import('@sensigo/realm');
           const def = loadWorkflowFromString(
             workflowYaml({ id: 'prompt-625-c165-late', finish: true, finishAuto: true }),
           );
-          await executeStep(new JsonFileStore(), def, {
+          await executeStep(stores().runStore, def, {
             runId: runId(),
             command: 'finish',
             input: { done: true },
@@ -751,9 +759,8 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
                 { once: true },
               );
               void (async () => {
-                const { JsonFileStore, loadWorkflowFromString, abandonRun } =
-                  await import('@sensigo/realm');
-                const store = new JsonFileStore();
+                const { loadWorkflowFromString, abandonRun } = await import('@sensigo/realm');
+                const store = stores().runStore;
                 if (kase === 'another process holds the step') {
                   const def = loadWorkflowFromString(
                     workflowYaml({ id: 'prompt-625-c165-hold', finish: true, finishAuto: true }),
@@ -890,10 +897,9 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
               // Another process runs `finish`; its work takes `holdMs`, during which it holds the
               // step (as `realm run advance` holds a step whose handler takes that long).
               void (async () => {
-                const { JsonFileStore, loadWorkflowFromString, executeStep } =
-                  await import('@sensigo/realm');
+                const { loadWorkflowFromString, executeStep } = await import('@sensigo/realm');
                 const def = loadWorkflowFromString(withLast('prompt-625-c173'));
-                await executeStep(new JsonFileStore(), def, {
+                await executeStep(stores().runStore, def, {
                   runId: runId(),
                   command: 'finish',
                   input: {},
@@ -1028,8 +1034,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       mocks.question.mockImplementation(async (prompt: string) => {
         if (prompt.startsWith('  Choice ')) return 'approve';
         if (prompt.startsWith('  Agent output')) {
-          const { JsonFileStore, loadWorkflowFromString, executeStep } =
-            await import('@sensigo/realm');
+          const { loadWorkflowFromString, executeStep } = await import('@sensigo/realm');
           const record = await readRecord();
           atPrompt = {
             inProgress: record.in_progress_steps,
@@ -1037,7 +1042,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
           };
           let ran = false;
           const r = await executeStep(
-            new JsonFileStore(),
+            stores().runStore,
             loadWorkflowFromString(workflowYaml({ id: 'prompt-625-c179', finish: true })),
             {
               runId: runId(),
@@ -1245,11 +1250,11 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
         'a command killed outright (SIGKILL) leaves it, and `realm run reclaim <run> --step <step> --force` releases it.',
       );
       // The record a killed prompt leaves: the agent step's claim, holder via `run`, no time limit.
-      const { JsonFileStore, loadWorkflowFromString } = await import('@sensigo/realm');
+      const { loadWorkflowFromString } = await import('@sensigo/realm');
       const def = loadWorkflowFromString(
         workflowYaml({ id: 'prompt-625-c179-killed', finish: true }),
       );
-      const store = new JsonFileStore();
+      const store = stores().runStore;
       const { record: created } = await store.create({
         workflowId: def.id,
         workflowVersion: 1,
@@ -1295,8 +1300,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
             opts?.signal?.addEventListener('abort', () => reject(abortError()), { once: true });
             void (async () => {
               // `realm run reclaim --force`'s effect: the claim and the in-flight mark removed.
-              const { JsonFileStore } = await import('@sensigo/realm');
-              const store = new JsonFileStore();
+              const store = stores().runStore;
               const { record: record } = await store.get(runId());
               const { finish: _gone, ...claims } = record.claims ?? {};
               await store.update({ ...record, in_progress_steps: [], claims });
@@ -1350,9 +1354,8 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
               : prompt.startsWith('  Mock output'));
           if (!isFinish) return '';
           finishPrompts += 1;
-          const { JsonFileStore, loadWorkflowFromString, executeStep } =
-            await import('@sensigo/realm');
-          const store = new JsonFileStore();
+          const { loadWorkflowFromString, executeStep } = await import('@sensigo/realm');
+          const store = stores().runStore;
           if (kind === 'agent') {
             // The prompt's claim is removed first (as `realm run reclaim --force` would) …
             const { record: record } = await store.get(runId());
@@ -1506,7 +1509,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       yaml: string,
       steps: string[],
     ): Promise<{ release: () => void; done: Promise<void> }> {
-      const { JsonFileStore, loadWorkflowFromString, executeStep } = await import('@sensigo/realm');
+      const { loadWorkflowFromString, executeStep } = await import('@sensigo/realm');
       const def = loadWorkflowFromString(yaml);
       let release!: () => void;
       const gate = new Promise<void>((resolve) => {
@@ -1517,7 +1520,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       const settled: Array<Promise<void>> = [];
       for (const step of steps) {
         settled.push(
-          executeStep(new JsonFileStore(), def, {
+          executeStep(stores().runStore, def, {
             runId: runId(),
             command: step,
             input: {},
@@ -1543,8 +1546,8 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
 
     /** `realm run advance <run>` from the built CLI, the workflow registered first (advance reads it). */
     async function advance(yaml: string): Promise<string[]> {
-      const { JsonWorkflowStore, loadWorkflowFromString } = await import('@sensigo/realm');
-      const store = new JsonWorkflowStore();
+      const { loadWorkflowFromString } = await import('@sensigo/realm');
+      const store = stores().workflowStore;
       const def = loadWorkflowFromString(yaml);
       if ((await store.list()).every((w) => w.id !== def.id)) await store.register(def);
       const { spawnSync } = await import('node:child_process');
