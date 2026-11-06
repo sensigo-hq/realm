@@ -824,17 +824,17 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     ]);
   });
 
-  it('error-codes.md: 108 codes defined — 90 raised, 18 that nothing raises', () => {
+  it('error-codes.md: 108 codes defined — 91 raised, 17 that nothing raises', () => {
     claim(
       'docs/reference/error-codes.md',
-      'This page lists all 108 codes that Realm defines: the 90 it raises, with when each is raised and what it tells the caller to do, and the 18 that nothing raises.',
+      'This page lists all 108 codes that Realm defines: the 91 it raises, with when each is raised and what it tells the caller to do, and the 17 that nothing raises.',
     );
     // #616 unit 3: the "nothing raises" block's own header, whose count the units that first raise
     // these codes change (the list's length is checked below, as `unraised`). (1) red when the
     // header's count is not the list's; (2) prints the sentence.
     claim(
       'docs/reference/error-codes.md',
-      'These 18 are in the `ErrorCode` type, and no code in Realm raises them:',
+      'These 17 are in the `ErrorCode` type, and no code in Realm raises them:',
     );
     const types = readFileSync(join(ROOT, 'packages/core/src/types/workflow-error.ts'), 'utf8');
     const lines = types.slice(types.indexOf('export type ErrorCode')).split('\n');
@@ -887,8 +887,8 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       raisedNowhere: listedRaised.filter((c) => !written(c)),
     }).toEqual({
       defined: 108,
-      raised: 90,
-      unraised: 18,
+      raised: 91,
+      unraised: 17,
       cover: [...defined].sort(),
       unraisedWritten: [],
       raisedNowhere: [],
