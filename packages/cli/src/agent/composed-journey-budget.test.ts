@@ -17,18 +17,11 @@
 // it sleeps, so it comes straight back carrying a two-hour Retry-After it never waited for. That
 // is the claim, literally: the header lands in the record, and nothing waits.
 import { describe, it, expect } from 'vitest';
-import { rmSync } from 'node:fs';
-import { join } from 'node:path';
-import {
-  JsonFileStore,
-  JsonWorkflowStore,
-  ExtensionRegistry,
-  classifyRunHealth,
-} from '@sensigo/realm';
+import { ExtensionRegistry, classifyRunHealth } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { AnthropicProvider } from './providers/anthropic-provider.js';
 import { startAnthropicStub } from './test-support/anthropic-stub.js';
-import { makeJourneyHome } from './test-support/composed-journey.js';
+import { makeTempHome } from '../test-support/temp-home.js';
 import { runAgent } from './run-agent.js';
 import { inspectRun } from '../commands/inspect.js';
 import { writtenSnapshot } from '@sensigo/realm';
@@ -60,7 +53,7 @@ const RATE_LIMITED_WF = {
 
 describe('composed journey (budget) — a server-directed Retry-After is observed, never honored', () => {
   it('records all four discriminators and renders them, without waiting two hours', async () => {
-    const tempHome = makeJourneyHome('composed-journey-budget-');
+    const h = await makeTempHome();
     const originalKey = process.env['ANTHROPIC_API_KEY'];
     const originalBaseUrl = process.env['ANTHROPIC_BASE_URL'];
 
@@ -77,8 +70,8 @@ describe('composed journey (budget) — a server-directed Retry-After is observe
     process.env['ANTHROPIC_BASE_URL'] = stub.baseUrl;
 
     try {
-      const store = new JsonFileStore(join(tempHome, '.realm', 'runs'));
-      const workflowStore = new JsonWorkflowStore(join(tempHome, '.realm', 'workflows'));
+      const store = h.home.runStore;
+      const workflowStore = h.home.workflowStore;
       await workflowStore.register(RATE_LIMITED_WF);
 
       const started = Date.now();
@@ -150,7 +143,7 @@ describe('composed journey (budget) — a server-directed Retry-After is observe
       else process.env['ANTHROPIC_API_KEY'] = originalKey;
       if (originalBaseUrl === undefined) delete process.env['ANTHROPIC_BASE_URL'];
       else process.env['ANTHROPIC_BASE_URL'] = originalBaseUrl;
-      rmSync(tempHome, { recursive: true, force: true });
+      await h.cleanup();
     }
   }, 20_000);
 });

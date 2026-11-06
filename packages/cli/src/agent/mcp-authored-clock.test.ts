@@ -12,13 +12,11 @@
 // covered by the budget suite (#401). What this pins is that the number an agent typed into
 // create_workflow arrives at the clock, with its provenance intact.
 import { describe, it, expect, vi } from 'vitest';
-import { rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { JsonFileStore, JsonWorkflowStore, ExtensionRegistry } from '@sensigo/realm';
+import { ExtensionRegistry } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { resolveMcpServerEntry } from './test-support/mcp-server-entry.js';
-import { makeJourneyHome } from './test-support/composed-journey.js';
+import { makeTempHome } from '../test-support/temp-home.js';
 import { runAgent, type AgentDeps } from './run-agent.js';
 import { LlmProvider } from './providers/llm-provider.js';
 import type { LlmClock } from './providers/agent-utils.js';
@@ -42,11 +40,11 @@ describe('#412 — an MCP-authored llm_timeout_seconds reaches the drive clock',
     // real child over stdio. Not the handler function — that is not on the package's public
     // surface, and reaching past the exports map to import it would be testing a path no agent
     // uses. HOME is redirected so the child registers into a temp store the parent then reads.
-    const tempHome = makeJourneyHome('mcp-authored-clock-');
+    const h = await makeTempHome();
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [resolveMcpServerEntry()],
-      env: { ...process.env, HOME: tempHome } as Record<string, string>,
+      env: { ...process.env, HOME: h.root } as Record<string, string>,
     });
     const client = new Client({ name: 'mcp-authored-clock', version: '0' });
 
@@ -71,7 +69,7 @@ describe('#412 — an MCP-authored llm_timeout_seconds reaches the drive clock',
     }
 
     // 2. It survives into the registered definition — read back out of the child's real store.
-    const workflowStore = new JsonWorkflowStore(join(tempHome, '.realm', 'workflows'));
+    const workflowStore = h.home.workflowStore;
     const definition = await workflowStore.get(workflowId);
     expect(definition.steps['summarise']?.llm_timeout_seconds).toBe(45);
     expect(definition.steps['summarise']?.execution).toBe('agent');
@@ -83,7 +81,7 @@ describe('#412 — an MCP-authored llm_timeout_seconds reaches the drive clock',
     vi.spyOn(console, 'error').mockImplementation(() => {});
     await runAgent(
       {
-        store: new JsonFileStore(join(tempHome, '.realm', 'runs')),
+        store: h.home.runStore,
         workflowStore,
         provider,
         registry: new ExtensionRegistry(),
@@ -97,6 +95,6 @@ describe('#412 — an MCP-authored llm_timeout_seconds reaches the drive clock',
     // 45s x 3 attempts + 1.5s backoff + the 60s download allowance.
     expect(provider.clock?.ceilingMs).toBe(196_500);
 
-    rmSync(tempHome, { recursive: true, force: true });
+    await h.cleanup();
   }, 30_000);
 });
