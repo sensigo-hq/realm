@@ -28,19 +28,35 @@ const MSG = {
   writeOnce: 'realm.db: a write-once field cannot change',
   invalidJson: 'realm.db: evidence and fields must be valid JSON',
   rowNumber: 'realm.db: a row number must be 1 or more',
+  // Unit 6b.
+  purged: 'realm.db: a purged run id cannot be created again',
+  tombstone: 'realm.db: the tombstone record is append-only',
+  liveAsPurged: 'realm.db: a live run cannot be recorded as purged',
+  metaReplaced: "realm.db: the store's meta row cannot be replaced or deleted",
+  horizon: "realm.db: the store's recorded horizon cannot move backwards",
+  metaTypes: "realm.db: the store's meta row holds whole numbers and timestamps of one shape",
 } as const;
 
 const PHASE_STAMP = '0123456789abcdef';
+/** When the test store was created: its meta row's `created_at` and first horizon (unit 6b). */
+const CREATED = '2026-11-05T09:00:00.000Z';
+/** The store's meta row as unit 7 writes it at creation: page size, counters at 0, horizon at creation. */
+const META_ROW =
+  'INSERT INTO store_meta (one, page_size, commit_epoch, created_at, tomb_seq, tombstones_through_seq, tombstones_since) VALUES (1, ?, 0, ?, 0, 0, ?)';
 const open: DatabaseLike[] = [];
 afterEach(() => {
   for (const db of open.splice(0)) db.close();
 });
 
-/** A database holding the schema, made the way unit 7 will make one: each statement in order. */
+/**
+ * A database holding the schema, made the way unit 7 will make one: each statement in order, then the
+ * store's meta row (without it a run cannot be deleted: its tombstone takes the meta row's counter).
+ */
 function fresh(): DatabaseLike {
   const db = openDatabase(':memory:');
   open.push(db);
   for (const statement of REALM_STORE_SCHEMA) db.exec(statement);
+  db.prepare(META_ROW).run(REALM_STORE_PAGE_SIZE, CREATED, CREATED);
   return db;
 }
 
@@ -82,7 +98,7 @@ function pragma(db: DatabaseLike, name: string, value: 0 | 1) {
 }
 
 describe('#616 unit 6 — the schema constant', () => {
-  it('a database created from the constant stores exactly its text, and holds the three tables, three indexes and twenty-one guards of this unit', () => {
+  it('a database created from the constant stores exactly its text, and holds its seven tables, four indexes and thirty-six triggers', () => {
     const db = fresh();
     const rows = db
       .prepare('SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY rowid')
@@ -124,6 +140,26 @@ describe('#616 unit 6 — the schema constant', () => {
         'trigger runs_rowid_positive',
         'trigger evidence_rowid_positive',
         'trigger run_blobs_rowid_positive',
+        'table store_meta',
+        'trigger store_meta_insert_once',
+        'trigger store_meta_no_delete',
+        'trigger store_meta_immutable',
+        'trigger store_meta_forward',
+        'trigger store_meta_insert_types',
+        'trigger store_meta_update_types',
+        'table write_clock',
+        'table purged_ids',
+        'trigger runs_insert_not_purged',
+        'trigger purged_ids_insert_once',
+        'trigger purged_ids_not_live',
+        'trigger purged_ids_no_update',
+        'trigger purged_ids_no_delete',
+        'table purged_runs',
+        'index purged_runs_by_key',
+        'trigger purged_runs_insert_own',
+        'trigger purged_runs_no_update',
+        'trigger purged_runs_delete_below_horizon',
+        'trigger runs_tombstone',
       ],
     });
   });
@@ -594,11 +630,16 @@ const SETTINGS: Record<string, readonly string[]> = {
 };
 
 /** `fresh()` under the given connection settings and recursive-trigger mode. */
-function freshWith(settings: readonly string[], recursive: 0 | 1 = 0): DatabaseLike {
+function freshWith(
+  settings: readonly string[],
+  recursive: 0 | 1 = 0,
+  metaRow = true,
+): DatabaseLike {
   const db = openDatabase(':memory:');
   open.push(db);
   for (const statement of settings) db.exec(statement);
   for (const statement of REALM_STORE_SCHEMA) db.exec(statement);
+  if (metaRow) db.prepare(META_ROW).run(REALM_STORE_PAGE_SIZE, CREATED, CREATED);
   pragma(db, 'recursive_triggers', recursive);
   return db;
 }
@@ -1003,4 +1044,677 @@ describe('#616 unit 6 correction — no row is stored below row number 1 (DELTAS
       );
     });
   }
+});
+
+// ---- Unit 6b: the tombstones a deleted run leaves, the store's meta row, the write clock ----
+
+/** The store's one stamp shape (`toISOString()`; never `datetime('now')`, which has a space and no Z). */
+const STAMP_SHAPE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+/** How the store sets the deleting write's instant: an upsert (a plain UPDATE on the empty table sets nothing). */
+const SET_CLOCK =
+  'INSERT INTO write_clock (one, at) VALUES (1, ?) ON CONFLICT(one) DO UPDATE SET at = excluded.at';
+const CLEAR_CLOCK = 'UPDATE write_clock SET at = NULL';
+const DELETE_RUN = 'DELETE FROM runs WHERE id = ?';
+
+/** A finished run with a key and a seal, so every detail column of its tombstone has a value. */
+function addFinished(db: DatabaseLike, id: string) {
+  db.prepare(INSERT_RUN).run(
+    id,
+    JSON.stringify(
+      doc({
+        id,
+        terminal_state: true,
+        idempotency_key: `key-${id}`,
+        sealed_by: { arm: 'completed' },
+      }),
+    ),
+    'completed',
+    PHASE_STAMP,
+    `hash-${id}`,
+  );
+}
+/** The tombstones and the meta row's counter. */
+function tombstones(db: DatabaseLike) {
+  return {
+    ids: db.prepare('SELECT id, purged_at FROM purged_ids ORDER BY id').all(),
+    detail: db.prepare('SELECT * FROM purged_runs ORDER BY seq').all(),
+    tombSeq: db.prepare('SELECT tomb_seq FROM store_meta').get()?.['tomb_seq'],
+  };
+}
+/** Every row of the tombstone and meta tables, to show a refused statement changed nothing. */
+const tombRows = (db: DatabaseLike) =>
+  JSON.stringify([
+    db.prepare('SELECT * FROM purged_ids ORDER BY id').all(),
+    db.prepare('SELECT * FROM purged_runs ORDER BY seq').all(),
+    db.prepare('SELECT * FROM store_meta').all(),
+  ]);
+
+describe('#616 unit 6b — a deleted run leaves its id and its detail', () => {
+  it('a finished run deleted by plain SQL leaves one id row and one detail row under the next seq, and its id cannot be created again, also after its detail is compacted', () => {
+    const results: Record<string, unknown> = {};
+    for (const [setting, settings] of Object.entries(SETTINGS)) {
+      const db = freshWith(settings);
+      addFinished(db, 'run-1');
+      const deleted = outcome(db, DELETE_RUN, 'run-1');
+      const { ids, detail, tombSeq } = tombstones(db);
+      const stamp = String(ids[0]?.['purged_at']);
+      const again = () =>
+        outcome(db, INSERT_RUN, 'run-1', JSON.stringify(doc()), 'running', PHASE_STAMP, null);
+      const createdAgain = again();
+      // Compaction's order: move the horizon over the row on both counts, then delete it.
+      const raised = outcome(
+        db,
+        'UPDATE store_meta SET tombstones_through_seq = 1, tombstones_since = ?',
+        stamp,
+      );
+      const compacted = outcome(db, 'DELETE FROM purged_runs WHERE seq = 1');
+      const createdAfterCompaction = again();
+      results[setting] = {
+        deleted,
+        ids: ids.map((r) => r['id']),
+        detail: detail.map((r) => ({ ...r, purged_at: r['purged_at'] === stamp })),
+        tombSeq,
+        createdAgain,
+        raised,
+        compacted,
+        createdAfterCompaction,
+        idsLeft: db.prepare('SELECT count(*) AS n FROM purged_ids').get()?.['n'],
+      };
+    }
+    const want = {
+      deleted: 'landed',
+      ids: ['run-1'],
+      detail: [
+        {
+          seq: 1,
+          id: 'run-1',
+          purged_at: true,
+          workflow_id: 'wf',
+          key_hash: 'hash-run-1',
+          sealed_by_arm: 'completed',
+          run_phase: 'completed',
+          phase_version: PHASE_STAMP,
+        },
+      ],
+      tombSeq: 1,
+      createdAgain: MSG.purged,
+      raised: 'landed',
+      compacted: 'landed',
+      createdAfterCompaction: MSG.purged,
+      idsLeft: 1,
+    };
+    // (1) red when the tombstone trigger is dropped (no rows, the id can be created again) or writes a
+    //     wrong detail column or seq, or when the purged-id insert guard is dropped (the id comes back,
+    //     before or after compaction); (2) prints, per connection setting, every step and the rows.
+    expect(results).toEqual({ default: want, realm: want });
+  });
+
+  it("purged_at is the deleting write's instant when the store set it, and SQLite's own clock, in the store's one shape, only when it did not", () => {
+    const AWAY = '2031-03-04T05:06:07.089Z';
+    /** Deletes run-1 the way `act` does, then judges the stamp its two tombstone rows carry. */
+    function stampWhen(act: (db: DatabaseLike) => void): string {
+      const db = fresh();
+      addFinished(db, 'run-1');
+      act(db);
+      const { ids, detail } = tombstones(db);
+      const a = String(ids[0]?.['purged_at']);
+      const b = String(detail[0]?.['purged_at']);
+      if (a !== b) return `two stamps: ${a} / ${b}`;
+      if (a === AWAY) return 'the set instant';
+      const now = STAMP_SHAPE.test(a) && Math.abs(Date.parse(a) - Date.now()) < 60_000;
+      return now ? "SQLite's clock, now, in the one shape" : `another stamp: ${a}`;
+    }
+    const remove = (db: DatabaseLike) => db.prepare(DELETE_RUN).run('run-1');
+    const results = {
+      // The store's own delete: set by the upsert inside the transaction, cleared before COMMIT.
+      setInTheTransaction: stampWhen((db) => {
+        db.exec('BEGIN');
+        db.prepare(SET_CLOCK).run(AWAY);
+        remove(db);
+        db.exec(CLEAR_CLOCK);
+        db.exec('COMMIT');
+      }),
+      afterTheClear: stampWhen((db) => {
+        db.prepare(SET_CLOCK).run(AWAY);
+        db.exec(CLEAR_CLOCK);
+        remove(db);
+      }),
+      afterARollback: stampWhen((db) => {
+        db.exec('BEGIN');
+        db.prepare(SET_CLOCK).run(AWAY);
+        db.exec('ROLLBACK');
+        remove(db);
+      }),
+      plainUpdateOnTheEmptyTable: stampWhen((db) => {
+        db.prepare('UPDATE write_clock SET at = ? WHERE one = 1').run(AWAY);
+        remove(db);
+      }),
+    };
+    // (1) red when the trigger reads SQLite's clock before the write clock (the set instant is lost),
+    //     or stamps with datetime('now') (a space and no Z: not the shape), or the two rows get
+    //     different stamps; (2) prints, per case, which clock stamped the tombstone.
+    expect(results).toEqual({
+      setInTheTransaction: 'the set instant',
+      afterTheClear: "SQLite's clock, now, in the one shape",
+      afterARollback: "SQLite's clock, now, in the one shape",
+      plainUpdateOnTheEmptyTable: "SQLite's clock, now, in the one shape",
+    });
+  });
+
+  it('tombstones are ordered by seq, not by the clock: with the clock stepped back between two deletions, the later has the later seq and the earlier stamp', () => {
+    const db = fresh();
+    addFinished(db, 'run-1');
+    addFinished(db, 'run-2');
+    db.prepare(SET_CLOCK).run('2031-01-02T00:00:00.000Z');
+    db.prepare(DELETE_RUN).run('run-1');
+    db.prepare(SET_CLOCK).run('2031-01-01T00:00:00.000Z');
+    db.prepare(DELETE_RUN).run('run-2');
+    db.exec(CLEAR_CLOCK);
+    // Compaction's selection: the oldest tombstones first, by seq.
+    const order = db
+      .prepare('SELECT seq, id, purged_at FROM purged_runs WHERE seq <= ? ORDER BY seq')
+      .all(2);
+    // (1) red when the order is taken from the clock (`ORDER BY purged_at` puts the later deletion
+    //     first), or the trigger numbers tombstones by anything but the counter; (2) prints the order.
+    expect(order).toEqual([
+      { seq: 1, id: 'run-1', purged_at: '2031-01-02T00:00:00.000Z' },
+      { seq: 2, id: 'run-2', purged_at: '2031-01-01T00:00:00.000Z' },
+    ]);
+  });
+});
+
+describe('#616 unit 6b — the tombstones cannot be rewritten', () => {
+  /** run-1 purged (seq 1), run-2 live; the horizon at creation. */
+  function purgedAndLive(settings: readonly string[], recursive: 0 | 1 = 0): DatabaseLike {
+    const db = freshWith(settings, recursive);
+    addFinished(db, 'run-1');
+    db.prepare(DELETE_RUN).run('run-1');
+    addRun(db, doc({ id: 'run-2' }));
+    return db;
+  }
+  /** Runs each statement on its own copy, after `setup`: its outcome and whether the rows stayed. */
+  function each(
+    statements: Record<
+      string,
+      [string, unknown[]] | [string, unknown[], (db: DatabaseLike) => void]
+    >,
+    recursive: 0 | 1 = 0,
+  ) {
+    const results: Record<string, { outcome: string; rowsUnchanged: boolean }> = {};
+    for (const [setting, settings] of Object.entries(SETTINGS)) {
+      for (const [name, [sql, params, setup]] of Object.entries(statements)) {
+        const db = purgedAndLive(settings, recursive);
+        setup?.(db);
+        const before = tombRows(db);
+        const res = outcome(db, sql, ...params);
+        results[`${name}/${setting}`] = { outcome: res, rowsUnchanged: tombRows(db) === before };
+      }
+    }
+    return results;
+  }
+  const refused = (results: Record<string, unknown>, byName: Record<string, string>) =>
+    Object.fromEntries(
+      Object.keys(results).map((k) => [
+        k,
+        { outcome: byName[k.split('/')[0] ?? ''], rowsUnchanged: true },
+      ]),
+    );
+  const T = '2026-11-05T11:00:00.000Z';
+
+  it("purged_ids: an update, a delete, a repeated id, INSERT OR REPLACE and a live run's id are each refused", () => {
+    const results = each({
+      update: ['UPDATE purged_ids SET purged_at = ? WHERE id = ?', [T, 'run-1']],
+      delete: ['DELETE FROM purged_ids WHERE id = ?', ['run-1']],
+      repeatedId: ['INSERT INTO purged_ids (id, purged_at) VALUES (?, ?)', ['run-1', T]],
+      insertOrReplace: [
+        'INSERT OR REPLACE INTO purged_ids (id, purged_at) VALUES (?, ?)',
+        ['run-1', T],
+      ],
+      liveRun: ['INSERT INTO purged_ids (id, purged_at) VALUES (?, ?)', ['run-2', T]],
+    });
+    // (1) red when one of purged_ids' guards is dropped: the update or delete rewrites the record of a
+    //     purged id, the repeat meets the key's UNIQUE message or the REPLACE re-stamps it, a live run is
+    //     recorded as purged (its later purge would be refused); (2) prints each outcome per setting.
+    expect(results).toEqual(
+      refused(results, {
+        update: MSG.tombstone,
+        delete: MSG.tombstone,
+        repeatedId: MSG.tombstone,
+        insertOrReplace: MSG.tombstone,
+        liveRun: MSG.liveAsPurged,
+      }),
+    );
+  });
+
+  it('purged_runs: an update, a row off the counter, a row whose id is not purged or is live, a repeated seq or id, and a delete above the horizon on either count are each refused', () => {
+    const ghost = (db: DatabaseLike) =>
+      db.prepare('INSERT INTO purged_ids (id, purged_at) VALUES (?, ?)').run('ghost', T);
+    const nextSeq = (db: DatabaseLike) => db.exec('UPDATE store_meta SET tomb_seq = tomb_seq + 1');
+    const ROW =
+      'INSERT INTO purged_runs (seq, id, purged_at, run_phase, phase_version) VALUES (?, ?, ?, ?, ?)';
+    const results = each({
+      update: ['UPDATE purged_runs SET purged_at = ? WHERE seq = 1', [T]],
+      // Each insert below breaks ONE condition of the insert guard; the others hold.
+      offTheCounter: [ROW, [5, 'ghost', T, 'p', 'v'], ghost],
+      idNotPurged: [ROW, [2, 'nobody', T, 'p', 'v'], nextSeq],
+      // Unreachable alone: an id cannot be both live and purged while the other guards stand, so
+      // this is refused by the "not purged" condition as well.
+      idLive: [ROW, [2, 'run-2', T, 'p', 'v'], nextSeq],
+      seqTaken: [ROW, [1, 'ghost', T, 'p', 'v'], ghost],
+      idTaken: [ROW, [2, 'run-1', T, 'p', 'v'], nextSeq],
+      deleteAboveTheHorizon: ['DELETE FROM purged_runs WHERE seq = 1', []],
+      // The horizon passes the row by seq, not by time: still kept.
+      deleteAboveTheHorizonInTime: [
+        'DELETE FROM purged_runs WHERE seq = 1',
+        [],
+        (db) => db.exec('UPDATE store_meta SET tombstones_through_seq = 1'),
+      ],
+    });
+    // (1) red when the update guard, a condition of the insert guard, or the delete guard (or its
+    //     time half) is dropped: the forged row or the delete lands, or meets SQLite's UNIQUE message;
+    //     (2) prints each outcome per setting.
+    expect(results).toEqual(
+      refused(
+        results,
+        Object.fromEntries(
+          [
+            'update',
+            'offTheCounter',
+            'idNotPurged',
+            'idLive',
+            'seqTaken',
+            'idTaken',
+            'deleteAboveTheHorizon',
+            'deleteAboveTheHorizonInTime',
+          ].map((n) => [n, MSG.tombstone]),
+        ),
+      ),
+    );
+  });
+
+  it('purged_runs: INSERT OR REPLACE onto a tombstone below the horizon is refused with recursive triggers on, and a delete at or below the horizon on both counts lands', () => {
+    /** Moves the horizon over seq 1 on both counts. */
+    const pastRow1 = (db: DatabaseLike) => {
+      const at = db.prepare('SELECT purged_at FROM purged_runs WHERE seq = 1').get()?.['purged_at'];
+      db.prepare('UPDATE store_meta SET tombstones_through_seq = 1, tombstones_since = ?').run(at);
+    };
+    // Below the horizon the delete guard would let REPLACE's delete through: only the insert guard
+    // stands between the REPLACE and the tombstone.
+    const replaced = each(
+      {
+        insertOrReplace: [
+          'INSERT OR REPLACE INTO purged_runs (seq, id, purged_at, run_phase, phase_version) VALUES (1, ?, ?, ?, ?)',
+          ['ghost', T, 'p', 'v'],
+          (db) => {
+            db.prepare('INSERT INTO purged_ids (id, purged_at) VALUES (?, ?)').run('ghost', T);
+            pastRow1(db);
+          },
+        ],
+      },
+      1,
+    );
+    const compacted: Record<string, string> = {};
+    for (const [setting, settings] of Object.entries(SETTINGS)) {
+      const db = purgedAndLive(settings);
+      pastRow1(db);
+      compacted[setting] = outcome(db, 'DELETE FROM purged_runs WHERE seq = 1');
+    }
+    // (1) red when the insert guard is dropped (the REPLACE swaps the tombstone for a forged one), or
+    //     the delete guard refuses even below the horizon (compaction impossible); (2) prints both.
+    expect({ replaced, compacted }).toEqual({
+      replaced: refused(replaced, { insertOrReplace: MSG.tombstone }),
+      compacted: { default: 'landed', realm: 'landed' },
+    });
+  });
+
+  it("purged_runs: a tombstone written under a clock stepped back before the horizon's time is kept by its seq, and compaction's selection by seq removes only what the horizon passed (DELTAS row 26)", () => {
+    const results: Record<string, unknown> = {};
+    for (const [setting, settings] of Object.entries(SETTINGS)) {
+      const db = freshWith(settings);
+      addFinished(db, 'run-1');
+      addFinished(db, 'run-2');
+      db.prepare(SET_CLOCK).run('2031-01-02T00:00:00.000Z');
+      db.prepare(DELETE_RUN).run('run-1');
+      db.exec(CLEAR_CLOCK);
+      // Compaction's order: the horizon passes run-1's tombstone on both counts.
+      db.exec(
+        "UPDATE store_meta SET tombstones_through_seq = 1, tombstones_since = '2031-01-02T00:00:00.000Z'",
+      );
+      // The clock steps back: run-2 is deleted later (seq 2) with a stamp before the horizon's time.
+      db.prepare(SET_CLOCK).run('2031-01-01T00:00:00.000Z');
+      db.prepare(DELETE_RUN).run('run-2');
+      db.exec(CLEAR_CLOCK);
+      const before = tombRows(db);
+      // A delete chosen by the clock: both tombstones are at or before the horizon's time, so only
+      // the guard's seq half stands between run-2's tombstone (seq 2, above the horizon) and the delete.
+      const byTime = outcome(
+        db,
+        'DELETE FROM purged_runs WHERE purged_at <= (SELECT tombstones_since FROM store_meta)',
+      );
+      const rowsUnchanged = tombRows(db) === before;
+      const bySeq = outcome(
+        db,
+        'DELETE FROM purged_runs WHERE seq <= (SELECT tombstones_through_seq FROM store_meta)',
+      );
+      const left = db.prepare('SELECT seq, id FROM purged_runs ORDER BY seq').all();
+      results[setting] = { byTime, rowsUnchanged, bySeq, left };
+    }
+    const want = {
+      byTime: MSG.tombstone,
+      rowsUnchanged: true,
+      bySeq: 'landed',
+      left: [{ seq: 2, id: 'run-2' }],
+    };
+    // (1) red when the delete guard's seq half is removed: the delete by time lands and both
+    //     tombstones are gone, run-2's above the horizon; also red when the guard refuses below the
+    //     horizon (compaction's delete by seq refused); (2) prints, per connection setting, both
+    //     outcomes, whether the rows stayed, and the tombstones left.
+    expect(results).toEqual({ default: want, realm: want });
+  });
+});
+
+describe("#616 unit 6b — the store's meta row", () => {
+  /** A meta row moved forward from creation: commit 5, counter 3, horizon 2 at noon. */
+  const moved = (settings: readonly string[]) => {
+    const db = freshWith(settings);
+    db.exec(
+      "UPDATE store_meta SET commit_epoch = 5, tomb_seq = 3, tombstones_through_seq = 2, tombstones_since = '2026-11-05T12:00:00.000Z'",
+    );
+    return db;
+  };
+  const metaRow = (db: DatabaseLike) =>
+    JSON.stringify(db.prepare('SELECT * FROM store_meta').all());
+
+  /** Each statement on its own copy of the moved row, CHECKs on and off: outcome, row unchanged. */
+  function each(statements: Record<string, string>) {
+    const results: Record<string, { outcome: string; rowUnchanged: boolean }> = {};
+    for (const [setting, settings] of Object.entries(SETTINGS)) {
+      for (const checksOff of [0, 1] as const) {
+        for (const [name, sql] of Object.entries(statements)) {
+          const db = moved(settings);
+          pragma(db, 'ignore_check_constraints', checksOff);
+          const before = metaRow(db);
+          const res = outcome(db, sql);
+          results[`${name}/${setting}/checksOff=${checksOff}`] = {
+            outcome: res,
+            rowUnchanged: metaRow(db) === before,
+          };
+        }
+      }
+    }
+    return results;
+  }
+  const all = (results: Record<string, unknown>, message: string) =>
+    Object.fromEntries(
+      Object.keys(results).map((k) => [k, { outcome: message, rowUnchanged: true }]),
+    );
+  const second = `(1, 16384, 0, '${CREATED}', 0, 0, '${CREATED}')`;
+
+  it('a second row, INSERT OR REPLACE, a delete, and a change of the singleton key, the page size or the creation time are each refused', () => {
+    const results = each({
+      secondInsert: `INSERT INTO store_meta VALUES ${second}`,
+      insertOrReplace: `INSERT OR REPLACE INTO store_meta VALUES ${second}`,
+      delete: 'DELETE FROM store_meta',
+      key: 'UPDATE store_meta SET one = 2',
+      keyByRowNumber: 'UPDATE store_meta SET _rowid_ = 2',
+      pageSize: 'UPDATE store_meta SET page_size = 4096',
+      createdAt: "UPDATE store_meta SET created_at = '2026-11-05T09:30:00.000Z'",
+      createdAtNull: 'UPDATE store_meta SET created_at = NULL',
+    });
+    // (1) red when the one-row, no-delete or immutable guard is dropped, or an immutable column leaves
+    //     its list; (2) prints each outcome per setting and CHECK mode, and whether the row stayed.
+    expect(results).toEqual(all(results, MSG.metaReplaced));
+  });
+
+  it('each counter and the horizon moved backwards, set to NULL, or the horizon past the counter, are each refused, also with CHECKs off', () => {
+    const results = each({
+      commitEpochBack: 'UPDATE store_meta SET commit_epoch = 4',
+      tombSeqBack: 'UPDATE store_meta SET tomb_seq = 2',
+      throughSeqBack: 'UPDATE store_meta SET tombstones_through_seq = 1',
+      sinceBack: "UPDATE store_meta SET tombstones_since = '2026-11-05T11:00:00.000Z'",
+      commitEpochNull: 'UPDATE store_meta SET commit_epoch = NULL',
+      tombSeqNull: 'UPDATE store_meta SET tomb_seq = NULL',
+      throughSeqNull: 'UPDATE store_meta SET tombstones_through_seq = NULL',
+      sinceNull: 'UPDATE store_meta SET tombstones_since = NULL',
+      throughPastCounter: 'UPDATE store_meta SET tombstones_through_seq = 4',
+    });
+    // (1) red when one clause of the forward guard is removed: that decrease or NULL lands (a NULL
+    //     passes "never lower", NULL < old being NULL), or the horizon passes the counter;
+    //     (2) prints each outcome per setting and CHECK mode, and whether the row stayed.
+    expect(results).toEqual(all(results, MSG.horizon));
+  });
+
+  it('a value of the wrong type in a counter or a stamp is refused on update, also with CHECKs off (DELTAS row 25)', () => {
+    const results = each({
+      commitEpochText: "UPDATE store_meta SET commit_epoch = 'x'",
+      commitEpochFraction: 'UPDATE store_meta SET commit_epoch = 5.5',
+      tombSeqText: "UPDATE store_meta SET tomb_seq = 'x'",
+      throughSeqText: "UPDATE store_meta SET tombstones_through_seq = 'x'",
+      sinceNumber: 'UPDATE store_meta SET tombstones_since = 99',
+      sinceOtherShape: "UPDATE store_meta SET tombstones_since = '2026-11-05 13:00:00'",
+    });
+    // (1) red when a column's type clause is removed from the update type guard: the value lands and
+    //     every later write that moves that column is refused as backwards (text sorts above numbers;
+    //     '99' above any stamp); (2) prints each outcome per setting and CHECK mode.
+    expect(results).toEqual(all(results, MSG.metaTypes));
+  });
+
+  it('the first row is refused when a counter is not a whole number or a stamp is not in the one shape, also with CHECKs off', () => {
+    const META =
+      'INSERT INTO store_meta (one, page_size, commit_epoch, created_at, tomb_seq, tombstones_through_seq, tombstones_since) VALUES (1, ?, ?, ?, ?, ?, ?)';
+    const good = [16384, 0, CREATED, 0, 0, CREATED] as const;
+    const bad: Record<string, [number, unknown]> = {
+      pageSizeText: [0, 'x'],
+      commitEpochText: [1, 'x'],
+      createdAtOtherShape: [2, '2026-11-05 09:00:00'],
+      tombSeqFraction: [3, 0.5],
+      throughSeqText: [4, 'x'],
+      sinceNumber: [5, 7],
+    };
+    const results: Record<string, string> = {};
+    for (const [setting, settings] of Object.entries(SETTINGS)) {
+      for (const checksOff of [0, 1] as const) {
+        for (const [name, [at, value]] of Object.entries(bad)) {
+          const db = freshWith(settings, 0, false);
+          pragma(db, 'ignore_check_constraints', checksOff);
+          const row: unknown[] = [...good];
+          row[at] = value;
+          results[`${name}/${setting}/checksOff=${checksOff}`] = outcome(db, META, ...row);
+        }
+        const db = freshWith(settings, 0, false);
+        results[`good/${setting}/checksOff=${checksOff}`] = outcome(db, META, ...good);
+      }
+    }
+    // (1) red when a column's clause is removed from the first-row type guard (that row is stored, and
+    //     its first forward move is refused), or the guard refuses a good row; (2) prints each case.
+    expect(results).toEqual(
+      Object.fromEntries(
+        Object.keys(results).map((k) => [k, k.startsWith('good/') ? 'landed' : MSG.metaTypes]),
+      ),
+    );
+  });
+
+  it('moving forward lands: a +1 of the commit counter, the tombstone counter, a later horizon stamp and seq; and a purged id stays refused after the horizon passes it', () => {
+    const results: Record<string, unknown> = {};
+    for (const [setting, settings] of Object.entries(SETTINGS)) {
+      const db = moved(settings);
+      addFinished(db, 'run-1');
+      const steps = {
+        commitEpoch: outcome(db, 'UPDATE store_meta SET commit_epoch = commit_epoch + 1'),
+        tombSeq: outcome(db, 'UPDATE store_meta SET tomb_seq = tomb_seq + 1'),
+        horizon: outcome(
+          db,
+          "UPDATE store_meta SET tombstones_through_seq = 3, tombstones_since = '2026-11-05T13:00:00.000Z'",
+        ),
+        deleteRun: outcome(db, DELETE_RUN, 'run-1'),
+        horizonPastTheRun: outcome(
+          db,
+          "UPDATE store_meta SET tombstones_through_seq = 5, tombstones_since = '2999-01-01T00:00:00.000Z'",
+        ),
+        createdAgain: outcome(
+          db,
+          INSERT_RUN,
+          'run-1',
+          JSON.stringify(doc()),
+          'running',
+          PHASE_STAMP,
+          null,
+        ),
+      };
+      results[setting] = steps;
+    }
+    const want = {
+      commitEpoch: 'landed',
+      tombSeq: 'landed',
+      horizon: 'landed',
+      deleteRun: 'landed',
+      horizonPastTheRun: 'landed',
+      createdAgain: MSG.purged,
+    };
+    // (1) red when a guard refuses a forward move (the commit counter's +1 is every write's), or the
+    //     purged id is forgotten once the horizon passes it; (2) prints each step per setting.
+    expect(results).toEqual({ default: want, realm: want });
+  });
+
+  it("a whole number above 9007199254740991 is refused on update and in the first row, at that number it lands, and Realm's +1 from just below it lands, also with CHECKs off (DELTAS row 26)", () => {
+    // Literals in the SQL text: the largest 64-bit whole number has no exact JavaScript number.
+    const CAP = '9007199254740991';
+    const levels = { atTheCap: CAP, overTheCap: '9007199254740992', max64: '9223372036854775807' };
+    const want = (level: string) => (level === 'atTheCap' ? 'landed' : MSG.metaTypes);
+    // On update: the two counters that may move up (the horizon counter is held below the counter by
+    // the forward guard).
+    const updates: Record<string, string> = {};
+    for (const column of ['commit_epoch', 'tomb_seq']) {
+      for (const [level, n] of Object.entries(levels)) {
+        updates[`${column}:${level}`] = `UPDATE store_meta SET ${column} = ${n}`;
+      }
+    }
+    // The row read as SQL text, so a value past 2^53 that lands prints instead of throwing RangeError.
+    const rowText = (db: DatabaseLike) =>
+      String(
+        db
+          .prepare(
+            'SELECT json_array(one, page_size, commit_epoch, created_at, tomb_seq, tombstones_through_seq, tombstones_since) AS r FROM store_meta',
+          )
+          .get()?.['r'],
+      );
+    const onUpdate: Record<string, { outcome: string; rowUnchanged: boolean }> = {};
+    for (const [setting, settings] of Object.entries(SETTINGS)) {
+      for (const checksOff of [0, 1] as const) {
+        for (const [name, sql] of Object.entries(updates)) {
+          const db = moved(settings);
+          pragma(db, 'ignore_check_constraints', checksOff);
+          const before = rowText(db);
+          const res = outcome(db, sql);
+          onUpdate[`${name}/${setting}/checksOff=${checksOff}`] = {
+            outcome: res,
+            rowUnchanged: rowText(db) === before,
+          };
+        }
+      }
+    }
+    // The first row: the page size and the three counters, each alone at a level, the rest good.
+    const firstRow: Record<string, string> = {};
+    const plusOne: Record<string, unknown> = {};
+    for (const [setting, settings] of Object.entries(SETTINGS)) {
+      for (const checksOff of [0, 1] as const) {
+        const mode = `${setting}/checksOff=${checksOff}`;
+        for (const column of ['page_size', 'commit_epoch', 'tomb_seq', 'tombstones_through_seq']) {
+          for (const [level, n] of Object.entries(levels)) {
+            const value = (c: string, good: string) => (c === column ? n : good);
+            const db = freshWith(settings, 0, false);
+            pragma(db, 'ignore_check_constraints', checksOff);
+            firstRow[`${column}:${level}/${mode}`] = outcome(
+              db,
+              `INSERT INTO store_meta (one, page_size, commit_epoch, created_at, tomb_seq, tombstones_through_seq, tombstones_since) VALUES (1, ${value('page_size', '16384')}, ${value('commit_epoch', '0')}, '${CREATED}', ${value('tomb_seq', '0')}, ${value('tombstones_through_seq', '0')}, '${CREATED}')`,
+            );
+          }
+        }
+        // Realm's own +1 from just below: every write's commit bump, and a purge's tombstone bump.
+        const db = moved(settings);
+        pragma(db, 'ignore_check_constraints', checksOff);
+        addFinished(db, 'run-1');
+        db.exec(
+          'UPDATE store_meta SET commit_epoch = 9007199254740990, tomb_seq = 9007199254740990',
+        );
+        plusOne[mode] = {
+          commitEpoch: outcome(db, 'UPDATE store_meta SET commit_epoch = commit_epoch + 1'),
+          deleteRun: outcome(db, DELETE_RUN, 'run-1'),
+          row: db.prepare('SELECT commit_epoch, tomb_seq FROM store_meta').get(),
+          seq: db.prepare('SELECT seq FROM purged_runs WHERE id = ?').get('run-1')?.['seq'],
+        };
+      }
+    }
+    // (1) red when one column's cap clause is removed from the update or the first-row guard (that
+    //     column's value past the cap lands: Realm's next +1 is refused, or from 2^53 the row cannot
+    //     be read as a number), or when the cap refuses the cap itself or Realm's +1 up to it;
+    //     (2) prints each case per setting and CHECK mode, whether the row stayed, and the counters.
+    expect({ onUpdate, firstRow, plusOne }).toEqual({
+      onUpdate: Object.fromEntries(
+        Object.keys(onUpdate).map((k) => {
+          const level = k.split('/')[0]?.split(':')[1] ?? '';
+          return [k, { outcome: want(level), rowUnchanged: level !== 'atTheCap' }];
+        }),
+      ),
+      firstRow: Object.fromEntries(
+        Object.keys(firstRow).map((k) => [k, want(k.split('/')[0]?.split(':')[1] ?? '')]),
+      ),
+      plusOne: Object.fromEntries(
+        Object.keys(plusOne).map((k) => [
+          k,
+          {
+            commitEpoch: 'landed',
+            deleteRun: 'landed',
+            row: { commit_epoch: 9007199254740991, tomb_seq: 9007199254740991 },
+            seq: 9007199254740991,
+          },
+        ]),
+      ),
+    });
+  });
+});
+
+describe('#616 unit 6b — the hidden row number on the new tables (SEAMS, DELTAS row 24)', () => {
+  it("a REPLACE or an update aimed at a tombstone's or the meta row's row number is refused, and purged_ids has none", () => {
+    const results: Record<string, unknown> = {};
+    for (const mode of MODES) {
+      const attacks: Record<string, string> = {
+        purgedRunsReplace:
+          "INSERT OR REPLACE INTO purged_runs (rowid, seq, id, purged_at, run_phase, phase_version) VALUES (1, 1, 'ghost', 'x', 'p', 'v')",
+        purgedRunsUpdate: 'UPDATE purged_runs SET oid = 9',
+        storeMetaReplace: `INSERT OR REPLACE INTO store_meta (rowid, one, page_size, commit_epoch, created_at, tomb_seq, tombstones_through_seq, tombstones_since) VALUES (1, 1, 16384, 0, '${CREATED}', 0, 0, '${CREATED}')`,
+        storeMetaUpdate: 'UPDATE store_meta SET oid = 2',
+        purgedIdsByRowNumber:
+          "INSERT INTO purged_ids (rowid, id, purged_at) VALUES (1, 'ghost', 'x')",
+      };
+      for (const [name, sql] of Object.entries(attacks)) {
+        const db = freshWith(mode.settings, mode.recursive);
+        addFinished(db, 'run-1');
+        db.prepare(DELETE_RUN).run('run-1');
+        const before = tombRows(db);
+        results[`${name}/${mode.label}`] = {
+          outcome: outcome(db, sql),
+          rowsUnchanged: tombRows(db) === before,
+        };
+      }
+    }
+    const want: Record<string, string> = {
+      purgedRunsReplace: MSG.tombstone,
+      purgedRunsUpdate: MSG.tombstone,
+      storeMetaReplace: MSG.metaReplaced,
+      storeMetaUpdate: MSG.metaReplaced,
+      purgedIdsByRowNumber: 'table purged_ids has no column named rowid',
+    };
+    // (1) red when purged_runs' insert or update guard, or the meta row's one-row or immutable guard,
+    //     is dropped (the REPLACE swaps the row there), or purged_ids gains a hidden row number;
+    //     (2) prints each outcome per mode, and whether the rows stayed.
+    expect(results).toEqual(
+      Object.fromEntries(
+        Object.keys(results).map((k) => [
+          k,
+          { outcome: want[k.split('/')[0] ?? ''], rowsUnchanged: true },
+        ]),
+      ),
+    );
+  });
 });
