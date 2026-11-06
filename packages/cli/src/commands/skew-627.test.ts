@@ -12,20 +12,16 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: the
 // versions and the differing lines — never a token.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  JsonFileStore,
-  JsonWorkflowStore,
-  advanceRun,
-  loadWorkflowFromString,
-} from '@sensigo/realm';
+import { advanceRun, loadWorkflowFromString } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const W_CLI = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 const PUBLISHED = process.env['REALM_627_PUBLISHED'];
@@ -51,11 +47,19 @@ const YAML = [
   '    depends_on: [q]',
 ].join('\n');
 
+/** Every handle `opened()` made, cleaned after each cell. */
+const homes: TempHome[] = [];
+afterEach(async () => {
+  for (const t of homes.splice(0)) await t.cleanup();
+});
+
 async function opened() {
-  const home = mkdtempSync(join(tmpdir(), 'realm-skew-627-'));
+  const t = await makeTempHome();
+  homes.push(t);
+  const home = t.root;
   const def = loadWorkflowFromString(YAML);
-  await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(def);
-  const store = new JsonFileStore(join(home, '.realm', 'runs'));
+  await t.home.workflowStore.register(def);
+  const store = t.home.runStore;
   const { record: run } = await store.create({
     workflowId: def.id,
     workflowVersion: 1,

@@ -9,12 +9,7 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   ExtensionRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   stripSpanMarks,
@@ -22,6 +17,7 @@ import {
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { advanceRunFromShell } from './run-advance.js';
+import { makeTempHome } from '../test-support/temp-home.js';
 
 const HERE: Attributed = { by: 'here-a', by_source: 'stated', channel: 'advance' };
 
@@ -50,10 +46,11 @@ const READS = 4;
  * `READS`) — between the engine's load of the snapshot it judges and its reply. Counts every read.
  */
 async function advance(interpose: boolean) {
-  const home = mkdtempSync(join(tmpdir(), 'realm-judged-715b-'));
+  const h = await makeTempHome();
+  const home = h.root;
   try {
-    const runs = new JsonFileStore(join(home, 'runs'));
-    const workflows = new JsonWorkflowStore(join(home, 'wf'));
+    const runs = h.home.runStore;
+    const workflows = h.home.workflowStore;
     await workflows.register(ONE);
     const { record: run } = await runs.create({
       workflowId: ONE.id,
@@ -103,7 +100,7 @@ async function advance(interpose: boolean) {
       storedPhase: after.run_phase,
     };
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    await h.cleanup();
   }
 }
 

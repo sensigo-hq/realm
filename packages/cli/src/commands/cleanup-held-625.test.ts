@@ -10,9 +10,8 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -24,6 +23,7 @@ import {
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { advanceRunFromShell } from './run-advance.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../../../..');
@@ -51,18 +51,22 @@ describe(
   '#625 PR-2a, F12 — a cleanup step under another drainer’s lease is said as held',
   { timeout: 60_000 },
   () => {
+    let h: TempHome & { readonly root: string };
     let home: string;
     let runs: JsonFileStore;
     let workflows: JsonWorkflowStore;
 
-    beforeEach(() => {
-      home = mkdtempSync(join(tmpdir(), 'realm-cleanup-held-625-'));
+    beforeEach(async () => {
+      h = await makeTempHome();
+      home = h.root;
       mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
       mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
-      runs = new JsonFileStore(join(home, '.realm', 'runs'));
-      workflows = new JsonWorkflowStore(join(home, '.realm', 'workflows'));
+      runs = h.home.runStore;
+      workflows = h.home.workflowStore;
     });
-    afterEach(() => rmSync(home, { recursive: true, force: true }));
+    afterEach(async () => {
+      await h.cleanup();
+    });
 
     function realm(...args: string[]) {
       const r = spawnSync(process.execPath, [CLI, ...args], {

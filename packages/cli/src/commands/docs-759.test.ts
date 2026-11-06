@@ -6,23 +6,16 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: the
 // page's sentence or lines and the run's — key names, rules and counts, never a submitted value.
-import { describe, it, expect } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { describe, it, expect, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  JsonFileStore,
-  JsonWorkflowStore,
-  JsonFileFailedAttemptStore,
-  executeStep,
-  loadWorkflowFromString,
-} from '@sensigo/realm';
-import { createRealmMcpServer, JsonTraceBufferStore } from '@sensigo/realm-mcp';
+import { executeStep, loadWorkflowFromString } from '@sensigo/realm';
+import { createRealmMcpServer } from '@sensigo/realm-mcp';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../../../..');
@@ -132,16 +125,17 @@ async function refuse(
   table: string[];
   json: Record<string, unknown>;
 }> {
-  const home = await mkdtemp(join(tmpdir(), 'realm-docs-759-'));
+  const h = await makeTempHome();
+  const home = h.root;
   try {
-    const runStore = new JsonFileStore(join(home, '.realm', 'runs'));
-    const workflowStore = new JsonWorkflowStore(join(home, '.realm', 'workflows'));
+    const runStore = h.home.runStore;
+    const workflowStore = h.home.workflowStore;
     const definition = loadWorkflowFromString(yaml);
     await workflowStore.register(definition);
     const server = createRealmMcpServer({
       runStore,
-      traceBufferStore: new JsonTraceBufferStore(runStore.runsDirPath, runStore),
-      failedAttemptStore: new JsonFileFailedAttemptStore(runStore.runsDirPath),
+      traceBufferStore: h.home.traceBufferStore,
+      failedAttemptStore: h.home.failedAttemptStore,
       workflowStore,
     });
     const [ct, st] = InMemoryTransport.createLinkedPair();
@@ -172,11 +166,16 @@ async function refuse(
     const json = JSON.parse(realm(['run', 'attempts', runId, '--json'])) as Record<string, unknown>;
     return { reply, runId, table, json };
   } finally {
-    await rm(home, { recursive: true, force: true });
+    await h.cleanup();
   }
 }
 
 describe('issue #759 — json-schema-blocks.md', { timeout: 60_000 }, () => {
+  const homes: TempHome[] = [];
+  afterEach(async () => {
+    for (const t of homes.splice(0)) await t.cleanup();
+  });
+
   it('the refusal bullet: every problem, up to 10, and the total — its `realm run attempts` example is a real run’s screen (reds: the old "first problem" sentence; a stale example)', async () => {
     // The wire clause ("the first 10 in `error_details.errors` and the total in `error_count`") is
     // pinned by execution in packages/mcp-server/src/tools/refusal-759.test.ts (ten rows,
@@ -217,7 +216,9 @@ describe('issue #759 — json-schema-blocks.md', { timeout: 60_000 }, () => {
         .map((l) => `  ${l}`)
         .join('\n')}`,
     );
-    const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-docs-759-trace-')));
+    const h = await makeTempHome();
+    homes.push(h);
+    const store = h.home.runStore;
     const { record: run } = await store.create({ workflowId: 't', workflowVersion: 1, params: {} });
     const reply = await executeStep(store, research, {
       runId: run.id,
@@ -250,15 +251,15 @@ describe('issue #759 — json-schema-blocks.md', { timeout: 60_000 }, () => {
     ]
       .map((l) => `  ${l}`)
       .join('\n')}\n`;
-    const home = await mkdtemp(join(tmpdir(), 'realm-docs-759-enforce-'));
+    const h = await makeTempHome();
     try {
-      const runStore = new JsonFileStore(join(home, 'runs'));
-      const workflowStore = new JsonWorkflowStore(join(home, 'wf'));
+      const runStore = h.home.runStore;
+      const workflowStore = h.home.workflowStore;
       await workflowStore.register(loadWorkflowFromString(yaml));
       const server = createRealmMcpServer({
         runStore,
-        traceBufferStore: new JsonTraceBufferStore(runStore.runsDirPath, runStore),
-        failedAttemptStore: new JsonFileFailedAttemptStore(runStore.runsDirPath),
+        traceBufferStore: h.home.traceBufferStore,
+        failedAttemptStore: h.home.failedAttemptStore,
         workflowStore,
       });
       const [ct, st] = InMemoryTransport.createLinkedPair();
@@ -289,7 +290,7 @@ describe('issue #759 — json-schema-blocks.md', { timeout: 60_000 }, () => {
         ),
       ).toEqual(page);
     } finally {
-      await rm(home, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 });

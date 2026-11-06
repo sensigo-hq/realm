@@ -6,14 +6,12 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { JsonFileStore, executeStep, submitHumanResponse } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { handleBidirectionalGate } from './slack-gate-notifier.js';
 import { LlmProvider } from '../providers/llm-provider.js';
 import { slackResponse } from '../test-support/slack-response.js';
+import { makeTempHome, type TempHome } from '../../test-support/temp-home.js';
 
 vi.mock('./slack-gate-server.js', () => ({
   startSlackGateServer: vi.fn().mockReturnValue({ close: vi.fn() }),
@@ -41,23 +39,23 @@ const DEF: WorkflowDefinition = {
 } as WorkflowDefinition;
 
 describe('#715 (b) §D.3 — a reminder send writes nothing to the run', () => {
-  let dir: string;
+  let h: TempHome;
   let store: JsonFileStore;
   let fetchSpy: ReturnType<typeof vi.fn>;
 
-  beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'realm-715b-reminders-'));
-    store = new JsonFileStore(dir);
+  beforeEach(async () => {
+    h = await makeTempHome();
+    store = h.home.runStore;
     fetchSpy = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } }));
     vi.stubGlobal('fetch', fetchSpy);
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
-    rmSync(dir, { recursive: true, force: true });
+    await h.cleanup();
   });
 
   it('the attending process posts its reminders; the run record is unchanged by them', async () => {

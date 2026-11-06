@@ -6,19 +6,18 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   JsonFileStore,
-  JsonWorkflowStore,
   abandonRun,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type RunRecord,
   type WorkflowDefinition,
 } from '@sensigo/realm';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../../../..');
@@ -45,17 +44,21 @@ describe(
   '#625 PR-2a, F3 — a refusal names the purge preview, never --force',
   { timeout: 60_000 },
   () => {
+    let h: TempHome & { readonly root: string };
     let home: string;
     let runStore: JsonFileStore;
 
     beforeEach(async () => {
-      home = mkdtempSync(join(tmpdir(), 'realm-purge-625-'));
+      h = await makeTempHome();
+      home = h.root;
       mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
       mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
-      runStore = new JsonFileStore(join(home, '.realm', 'runs'));
-      await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(ONE);
+      runStore = h.home.runStore;
+      await h.home.workflowStore.register(ONE);
     });
-    afterEach(() => rmSync(home, { recursive: true, force: true }));
+    afterEach(async () => {
+      await h.cleanup();
+    });
 
     function realm(...args: string[]) {
       const r = spawnSync(process.execPath, [CLI, ...args], {

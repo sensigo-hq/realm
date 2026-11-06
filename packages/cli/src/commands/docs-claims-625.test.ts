@@ -7,9 +7,8 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -27,11 +26,11 @@ import { readFileSync as readDoc625 } from 'node:fs';
 import { join as joinDoc625, dirname as dirDoc625 } from 'node:path';
 import { fileURLToPath as urlDoc625 } from 'node:url';
 import { lagless } from '../test-support/lag.js';
-import { executeChain, createDefaultRegistry, JsonFileFailedAttemptStore } from '@sensigo/realm';
-import { JsonTraceBufferStore } from '@sensigo/realm-mcp';
+import { executeChain, createDefaultRegistry } from '@sensigo/realm';
 import { inspectRun } from './inspect.js';
 import { buildExportBundle } from './export.js';
 import { declared } from '../test-support/declared.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 /** C174: (a) red when the page no longer holds the sentence word for word; (b) prints it. */
 function claimDoc625(page: string, sentence: string): void {
@@ -97,18 +96,22 @@ describe(
   '#625 PR-2a, C163 — gates.md: what the commands print, sentence by sentence, from the built realm',
   { timeout: 60_000 },
   () => {
+    let h: TempHome & { readonly root: string };
     let home: string;
     let runStore: JsonFileStore;
     let workflowStore: JsonWorkflowStore;
 
-    beforeEach(() => {
-      home = mkdtempSync(join(tmpdir(), 'realm-625-docs-cli-'));
+    beforeEach(async () => {
+      h = await makeTempHome();
+      home = h.root;
       mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
       mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
-      runStore = new JsonFileStore(join(home, '.realm', 'runs'));
-      workflowStore = new JsonWorkflowStore(join(home, '.realm', 'workflows'));
+      runStore = h.home.runStore;
+      workflowStore = h.home.workflowStore;
     });
-    afterEach(() => rmSync(home, { recursive: true, force: true }));
+    afterEach(async () => {
+      await h.cleanup();
+    });
 
     /** Runs the built `realm` with this HOME; returns exit, stdout and stderr (lines). */
     function realm(...args: string[]): { code: number | null; out: string[]; err: string[] } {
@@ -687,9 +690,9 @@ describe('#760 — a handler warning on `realm run inspect`, and the record in `
       'docs/reference/handlers.md',
       "`realm run inspect` prints the step's output cut at 120 characters and its warning whole, on the `Warn:` line.",
     );
-    const dir = mkdtempSync(join(tmpdir(), 'realm-760-cli-'));
+    const h = await makeTempHome();
     try {
-      const runStore = new JsonFileStore(dir);
+      const runStore = h.home.runStore;
       const def = {
         id: 'quotes-760',
         name: 'Q',
@@ -732,8 +735,8 @@ describe('#760 — a handler warning on `realm run inspect`, and the record in `
       );
       const { bundle } = await buildExportBundle(run.id, {
         runStore,
-        failedAttemptStore: new JsonFileFailedAttemptStore(dir),
-        traceBufferStore: new JsonTraceBufferStore(dir, runStore),
+        failedAttemptStore: h.home.failedAttemptStore,
+        traceBufferStore: h.home.traceBufferStore,
       });
       const exported = bundle.run.evidence.find((e) => e.step_id === 'quote_check')
         ?.output_summary as { results?: unknown[] } | undefined;
@@ -755,7 +758,7 @@ describe('#760 — a handler warning on `realm run inspect`, and the record in `
         exportedResults: exported?.results?.length,
       }).toEqual({ warned: true, printedWhole: true, outputCut: true, exportedResults: 1 });
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 });

@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { JsonFileStore, loadWorkflowFromFile, type WorkflowDefinition } from '@sensigo/realm';
+import { loadWorkflowFromFile, type WorkflowDefinition } from '@sensigo/realm';
 import {
   loadFixtureFromFile,
   startGitHubMockServer,
@@ -26,6 +26,7 @@ import {
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { makeTempHome } from '../test-support/temp-home.js';
 
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const CLI = join(ROOT, 'packages/cli/dist/index.js');
@@ -189,7 +190,8 @@ describe('#627 W — cell 2: the journey scan over examples 03, 07, 08, 09 × th
   for (const c of CASES) {
     for (const session of ['withheld', 'forms', 'fallback'] as const) {
       it(`${c.dir} · ${session}`, async () => {
-        const home = mkdtempSync(join(tmpdir(), 'realm-journey-627-home-'));
+        const h = await makeTempHome();
+        const home = h.root;
         const proj = mkdtempSync(join(tmpdir(), 'realm-journey-627-proj-'));
         try {
           cpSync(join(EXAMPLES, c.dir), proj, { recursive: true });
@@ -264,7 +266,7 @@ describe('#627 W — cell 2: the journey scan over examples 03, 07, 08, 09 × th
                 args['params'] = fixture.agent_responses?.[call_with['command'] as string] ?? {};
               reply = await call(`drive:${tool}`, tool, args);
             }
-            const store = new JsonFileStore(join(home, '.realm', 'runs'));
+            const store = h.home.runStore;
             const { record: atGate } = await store.get(runId);
             expect(atGate.pending_gate, `${c.dir} reached its gate`).toBeDefined();
             const gate = atGate.pending_gate!;
@@ -375,7 +377,7 @@ describe('#627 W — cell 2: the journey scan over examples 03, 07, 08, 09 × th
             heldBack: (stderr.match(/realm: held back a /g) ?? []).length,
           }).toEqual({ gateProbe: ['blocked', true], offending: [], internal: [], heldBack: 0 });
         } finally {
-          rmSync(home, { recursive: true, force: true });
+          await h.cleanup();
           rmSync(proj, { recursive: true, force: true });
         }
       }, 120_000);
@@ -387,7 +389,8 @@ describe('#627 W correction 1 (A3) — the replies after an accepted form and af
   for (const c of CASES) {
     for (const session of ['forms-accept', 'forms-settle'] as const) {
       it(`${c.dir} · ${session}`, async () => {
-        const home = mkdtempSync(join(tmpdir(), 'realm-journey-627-home-'));
+        const h = await makeTempHome();
+        const home = h.root;
         const proj = mkdtempSync(join(tmpdir(), 'realm-journey-627-proj-'));
         try {
           cpSync(join(EXAMPLES, c.dir), proj, { recursive: true });
@@ -413,9 +416,7 @@ describe('#627 W correction 1 (A3) — the replies after an accepted form and af
             const choice = schema.requestedSchema?.properties?.choice?.enum?.[0] ?? '';
             if (session === 'forms-settle') {
               // The person answers in the CLI while the form is open; the form then comes back.
-              const runs = (
-                await new JsonFileStore(join(home, '.realm', 'runs')).list()
-              ).snapshots.map((s) => s.record);
+              const runs = (await h.home.runStore.list()).snapshots.map((s) => s.record);
               const open = runs.find((r) => r.pending_gate !== undefined);
               if (open !== undefined) {
                 await realm(home, proj, [
@@ -494,7 +495,7 @@ describe('#627 W correction 1 (A3) — the replies after an accepted form and af
             heldBack: (stderr.match(/realm: held back a /g) ?? []).length,
           }).toEqual({ formSent: true, offending: [], internal: [], heldBack: 0 });
         } finally {
-          rmSync(home, { recursive: true, force: true });
+          await h.cleanup();
           rmSync(proj, { recursive: true, force: true });
         }
       }, 180_000);

@@ -1,12 +1,7 @@
 // respond-phase-625.test.ts — issue #625 PR-2a (decision C11): `realm run respond`'s last line names
 // the DERIVED phase, never the persisted label (a store whose stored label is stale reads differently).
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   ExtensionRegistry,
   executeStep,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
@@ -15,6 +10,7 @@ import {
   writtenSnapshot,
 } from '@sensigo/realm';
 import { respondToGate } from './respond.js';
+import { makeTempHome } from '../test-support/temp-home.js';
 
 const def: WorkflowDefinition = {
   id: 'respond-phase-wf',
@@ -35,10 +31,10 @@ const def: WorkflowDefinition = {
 
 describe('#625 PR-2a — respond prints the derived phase', () => {
   it('a stored label that lags the record: the line says the derived phase', async () => {
-    const home = mkdtempSync(join(tmpdir(), 'realm-respond-phase-625-'));
+    const h = await makeTempHome();
     try {
-      const json = new JsonFileStore(join(home, 'runs'));
-      const workflows = new JsonWorkflowStore(join(home, 'wf'));
+      const json = h.home.runStore;
+      const workflows = h.home.workflowStore;
       await workflows.register(def);
       const { record: run } = await json.create({
         workflowId: def.id,
@@ -89,7 +85,7 @@ describe('#625 PR-2a — respond prints the derived phase', () => {
           'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.',
       );
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 });

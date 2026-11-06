@@ -14,13 +14,12 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
-  JsonFileStore,
-  JsonWorkflowStore,
   type RunRecord,
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { startAnthropicStub, type AnthropicStub } from '../agent/test-support/anthropic-stub.js';
 import { startOpenAiStub, type OpenAiStub } from '../agent/test-support/openai-stub.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const CLI = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 /** The read log hook: every path handed to an fs read, one per line, to `$REALM_898_READ_LOG`. */
@@ -54,6 +53,8 @@ const PRICES_FULL = JSON.stringify({
 });
 
 let root: string;
+/** Every deployment's home, cleaned with the root. */
+const homes: TempHome[] = [];
 let anthropic: AnthropicStub;
 let openai: OpenAiStub;
 beforeAll(async () => {
@@ -74,6 +75,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await anthropic.close();
   await openai.close();
+  for (const t of homes.splice(0)) await t.cleanup();
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -84,7 +86,9 @@ async function deployment(
   opts: { realmYaml?: string; prices?: string },
 ): Promise<{ home: string; proj: string; runId: string; pricesPath: string }> {
   const base = join(root, name);
-  const home = join(base, 'home');
+  const h = await makeTempHome();
+  homes.push(h);
+  const home = h.root;
   const proj = join(base, 'proj');
   const wfDir = join(proj, 'workflows', 'wf');
   mkdirSync(home, { recursive: true });
@@ -102,8 +106,8 @@ async function deployment(
     source_dir: wfDir,
     trust_root: proj,
   } as unknown as WorkflowDefinition;
-  await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(definition);
-  const { record: run } = await new JsonFileStore(join(home, '.realm', 'runs')).create({
+  await h.home.workflowStore.register(definition);
+  const { record: run } = await h.home.runStore.create({
     workflowId: definition.id,
     workflowVersion: 1,
     params: {},

@@ -10,13 +10,11 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   JsonFileStore,
-  JsonWorkflowStore,
   ExtensionRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   WorkflowError,
@@ -29,6 +27,7 @@ import {
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { advanceRunFromShell } from './run-advance.js';
+import { makeTempHome } from '../test-support/temp-home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const ACTING = 'docs/reference/cli/realm-run-acting.md';
@@ -79,10 +78,11 @@ async function advance(
   moment: 'read' | 'claim',
   act: (runs: JsonFileStore, runId: string) => Promise<void>,
 ) {
-  const home = mkdtempSync(join(tmpdir(), 'realm-race-advance-625-'));
+  const h = await makeTempHome();
+  const home = h.root;
   try {
-    const runs = new JsonFileStore(join(home, 'runs'));
-    const workflows = new JsonWorkflowStore(join(home, 'wf'));
+    const runs = h.home.runStore;
+    const workflows = h.home.workflowStore;
     await workflows.register(def);
     const { record: run } = await runs.create({
       workflowId: def.id,
@@ -134,7 +134,7 @@ async function advance(
       after,
     };
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    await h.cleanup();
   }
 }
 
@@ -237,7 +237,8 @@ describe('#625 PR-2a, F7 (a) — the preview at an open question calls no writer
       ACTING,
       "At an open question the command runs nothing, and its `Nothing is owed to the engine: a question is open — realm run respond …` line is composed from the run's record as the command read it: when another program answers the question meanwhile, the steps that answer made ready are left for the next `realm run advance`.",
     );
-    const home = mkdtempSync(join(tmpdir(), 'realm-race-preview-625-'));
+    const h = await makeTempHome();
+    const home = h.root;
     try {
       const def: WorkflowDefinition = {
         id: 'race-preview',
@@ -250,8 +251,8 @@ describe('#625 PR-2a, F7 (a) — the preview at an open question calls no writer
           u: { description: 'U.', execution: 'auto', depends_on: ['t'] },
         },
       };
-      const runs = new JsonFileStore(join(home, 'runs'));
-      const workflows = new JsonWorkflowStore(join(home, 'wf'));
+      const runs = h.home.runStore;
+      const workflows = h.home.workflowStore;
       await workflows.register(def);
       const { record: run } = await runs.create({
         workflowId: def.id,
@@ -302,7 +303,7 @@ describe('#625 PR-2a, F7 (a) — the preview at an open question calls no writer
         done: ['q'],
       });
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 });

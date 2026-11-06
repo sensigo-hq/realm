@@ -5,10 +5,9 @@
 // thin formatting layer isn't unit-tested here either, consistent with cleanup.ts/reclaim.ts).
 import { declared } from '../test-support/declared.js';
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, readdir, writeFile, readFile, stat, mkdir } from 'node:fs/promises';
+import { rm, readdir, writeFile, readFile, stat, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { v4 as uuidv4 } from 'uuid';
@@ -25,6 +24,7 @@ import type { RunRecord, RunStore, PerRunArtifactStore } from '@sensigo/realm';
 import { JsonTraceBufferStore } from '@sensigo/realm-mcp';
 import { snap } from '../test-support/snapshot-double.js';
 import { writtenSnapshot } from '@sensigo/realm';
+import { makeTempHome } from '../test-support/temp-home.js';
 
 /** Recompute the pointer-file path the store uses (sha256 of workflowId\0key) — test-side only,
  *  mirroring json-file-store.test.ts's own helper; NOT a production code path. */
@@ -68,14 +68,18 @@ interface Stores {
   failedAttemptStore: JsonFileFailedAttemptStore;
   traceBufferStore: JsonTraceBufferStore;
   artifactStores: PerRunArtifactStore[];
+  cleanup: () => Promise<void>;
 }
 
 async function makeStores(): Promise<Stores> {
-  const dir = await mkdtemp(join(tmpdir(), 'purge-test-'));
-  const runStore = new JsonFileStore(dir);
-  const failedAttemptStore = new JsonFileFailedAttemptStore(dir);
+  const h = await makeTempHome();
+  const dir = h.home.runStore.runsDirPath;
+  // The cells write into the runs folder before the stores' first write.
+  await mkdir(dir, { recursive: true });
+  const runStore = h.home.runStore;
+  const failedAttemptStore = h.home.failedAttemptStore;
   // issue #616 PR-0: the trace buffer evaluates fences against the anchor run store.
-  const traceBufferStore = new JsonTraceBufferStore(dir, runStore);
+  const traceBufferStore = h.home.traceBufferStore;
   return {
     dir,
     runStore,
@@ -84,6 +88,7 @@ async function makeStores(): Promise<Stores> {
     // issue #184: runStore is now passed to purgeRuns SEPARATELY as the anchorStore argument —
     // artifactStores holds the non-anchor stores only (mechanical signature update).
     artifactStores: [traceBufferStore, failedAttemptStore],
+    cleanup: () => h.cleanup(),
   };
 }
 
@@ -217,7 +222,7 @@ describe('purgeRuns — single-run mode', () => {
   });
 
   it('force-purges a terminal run: removes the run file, idempotency pointer, attempts sidecar, and orphaned WAL (all four artifact classes)', async () => {
-    const { dir, runStore, failedAttemptStore, traceBufferStore, artifactStores } =
+    const { dir, runStore, failedAttemptStore, traceBufferStore, artifactStores, cleanup } =
       await makeStores();
     try {
       const { record: run } = await runStore.create({
@@ -252,12 +257,12 @@ describe('purgeRuns — single-run mode', () => {
       const walAfter = (await readdir(dir)).filter((f) => f.startsWith(`trace-buffer-${run.id}-`));
       expect(walAfter).toHaveLength(0);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('refuses (selects nothing) a non-terminal (running) run', async () => {
-    const { dir, runStore, artifactStores } = await makeStores();
+    const { dir, runStore, artifactStores, cleanup } = await makeStores();
     try {
       const run = makeRun({ run_phase: 'running', terminal_state: false });
       await injectRun(dir, run);
@@ -270,12 +275,12 @@ describe('purgeRuns — single-run mode', () => {
       ]);
       expect(existsSync(join(dir, `${run.id}.json`))).toBe(true);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('refuses (selects nothing) a gate_waiting run', async () => {
-    const { dir, runStore, artifactStores } = await makeStores();
+    const { dir, runStore, artifactStores, cleanup } = await makeStores();
     try {
       const run = makeRun({ run_phase: 'gate_waiting', terminal_state: false });
       await injectRun(dir, run);
@@ -285,12 +290,12 @@ describe('purgeRuns — single-run mode', () => {
       expect(result.selected).toEqual([]);
       expect(result.skipped[0]?.reason).toMatch(/not terminal/);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('refuses (selects nothing) a terminal run carrying a future-deadline (healthy) claim, even single-id + --force — the override does NOT apply to a provably-live claim', async () => {
-    const { dir, runStore, artifactStores } = await makeStores();
+    const { dir, runStore, artifactStores, cleanup } = await makeStores();
     try {
       const run = makeRun({
         run_phase: 'abandoned',
@@ -308,12 +313,12 @@ describe('purgeRuns — single-run mode', () => {
       expect(result.skipped[0]?.reason).toMatch(/future-deadline/);
       expect(existsSync(join(dir, `${run.id}.json`))).toBe(true); // NEVER deleted, even with dryRun:false
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('single-id: a terminal run with a claim_unknown_age claim IS selected via the explicit override — dry-run reports it (with overriddenClaimStep), --force purges it', async () => {
-    const { dir, runStore, artifactStores } = await makeStores();
+    const { dir, runStore, artifactStores, cleanup } = await makeStores();
     try {
       const run = makeRun({
         run_phase: 'abandoned',
@@ -338,12 +343,12 @@ describe('purgeRuns — single-run mode', () => {
       expect(forceResult.purged).toEqual([run.id]);
       expect(existsSync(join(dir, `${run.id}.json`))).toBe(false);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('dry-run (default) leaves every file intact and reports non-zero bytes-to-free', async () => {
-    const { dir, runStore, artifactStores } = await makeStores();
+    const { dir, runStore, artifactStores, cleanup } = await makeStores();
     try {
       const run = makeRun({ run_phase: 'completed', terminal_state: true });
       await injectRun(dir, run);
@@ -357,12 +362,12 @@ describe('purgeRuns — single-run mode', () => {
       expect(result.selected[0]?.bytes).toBeGreaterThan(0);
       expect(existsSync(join(dir, `${run.id}.json`))).toBe(true); // untouched
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('reports resumable correctly: failed/abandoned are resumable, completed/aborted are not', async () => {
-    const { dir, runStore, artifactStores } = await makeStores();
+    const { dir, runStore, artifactStores, cleanup } = await makeStores();
     try {
       // issue #279 (increment 2, PR-C — the #282 class closure): purge now DERIVES run_phase,
       // never trusts the persisted field, so each fixture must carry the fields deriveRunPhase
@@ -391,12 +396,12 @@ describe('purgeRuns — single-run mode', () => {
       expect(r1.selected[0]?.resumable).toBe(true);
       expect(r2.selected[0]?.resumable).toBe(false);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('is idempotent: a second single-run force-purge on an already-gone run reports already_purged, not failed', async () => {
-    const { dir, runStore, artifactStores } = await makeStores();
+    const { dir, runStore, artifactStores, cleanup } = await makeStores();
     try {
       const run = makeRun({ run_phase: 'completed', terminal_state: true });
       await injectRun(dir, run);
@@ -408,14 +413,14 @@ describe('purgeRuns — single-run mode', () => {
         purgeRuns({ runId: run.id, dryRun: false }, runStore, artifactStores),
       ).rejects.toMatchObject({ code: 'STATE_RUN_NOT_FOUND' });
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 });
 
 describe('purgeRuns — batch mode (--older-than)', () => {
   it('selects only terminal runs past the age threshold, ignoring fresh and non-terminal ones', async () => {
-    const { dir, runStore, artifactStores } = await makeStores();
+    const { dir, runStore, artifactStores, cleanup } = await makeStores();
     try {
       const old = makeRun({
         id: 'old',
@@ -439,12 +444,12 @@ describe('purgeRuns — batch mode (--older-than)', () => {
 
       expect(result.selected.map((c) => c.run.id)).toEqual(['old']);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('restricts to --workflow when given', async () => {
-    const { dir, runStore, artifactStores } = await makeStores();
+    const { dir, runStore, artifactStores, cleanup } = await makeStores();
     try {
       const a = makeRun({ id: 'a', workflow_id: 'wf-a', updated_at: ONE_DAY_AGO });
       const b = makeRun({ id: 'b', workflow_id: 'wf-b', updated_at: ONE_DAY_AGO });
@@ -459,12 +464,12 @@ describe('purgeRuns — batch mode (--older-than)', () => {
 
       expect(result.selected.map((c) => c.run.id)).toEqual(['a']);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('skip+warns a terminal-but-future-claimed run in batch mode without aborting the rest', async () => {
-    const { dir, runStore, artifactStores } = await makeStores();
+    const { dir, runStore, artifactStores, cleanup } = await makeStores();
     try {
       const blocked = makeRun({
         id: 'blocked',
@@ -492,12 +497,12 @@ describe('purgeRuns — batch mode (--older-than)', () => {
         { runId: 'blocked', reason: expect.stringMatching(/future-deadline/) },
       ]);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('batch: a terminal run with a claim_unknown_age claim is skipped+warned (never selected/purged), while a sibling with claim_stale/no-claim in the same batch IS purged — the batch does not abort on the skip', async () => {
-    const { dir, runStore, artifactStores } = await makeStores();
+    const { dir, runStore, artifactStores, cleanup } = await makeStores();
     try {
       const indeterminate = makeRun({
         id: 'indeterminate',
@@ -529,12 +534,12 @@ describe('purgeRuns — batch mode (--older-than)', () => {
       expect(existsSync(join(dir, 'indeterminate.json'))).toBe(true); // never touched — batch never overrides
       expect(existsSync(join(dir, 'stale.json'))).toBe(false); // purged normally
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('continue-on-error: a concurrently-vanished run is bucketed already_purged, a genuinely broken store is bucketed failed', async () => {
-    const { dir, runStore, artifactStores } = await makeStores();
+    const { dir, runStore, artifactStores, cleanup } = await makeStores();
     try {
       const ok = makeRun({
         id: 'ok',
@@ -613,12 +618,12 @@ describe('purgeRuns — batch mode (--older-than)', () => {
       expect(existsSync(join(dir, 'vanishing.json'))).toBe(false);
       expect(existsSync(join(dir, 'broken.json'))).toBe(true); // poisoned store threw FIRST — runStore never ran for this id, so the crash-anchor file survives
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('does one readdir up front and reuses it across the whole batch (dirEntries wiring)', async () => {
-    const { dir, runStore, traceBufferStore, artifactStores } = await makeStores();
+    const { dir, runStore, traceBufferStore, artifactStores, cleanup } = await makeStores();
     try {
       const a = makeRun({ id: 'a', updated_at: ONE_DAY_AGO });
       const b = makeRun({ id: 'b', updated_at: ONE_DAY_AGO });
@@ -633,14 +638,14 @@ describe('purgeRuns — batch mode (--older-than)', () => {
       const remainingWal = (await readdir(dir)).filter((f) => f.startsWith('trace-buffer-'));
       expect(remainingWal).toHaveLength(0);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 });
 
 describe('purgeRuns — pointer/keys directory is not touched when the run has no idempotency_key', () => {
   it('a keyless run purges cleanly with no keys/ activity', async () => {
-    const { dir, runStore, artifactStores } = await makeStores();
+    const { dir, runStore, artifactStores, cleanup } = await makeStores();
     try {
       const run = makeRun({ run_phase: 'completed', terminal_state: true });
       await injectRun(dir, run);
@@ -653,14 +658,14 @@ describe('purgeRuns — pointer/keys directory is not touched when the run has n
       // Still no keys/ dir — nothing was ever created or touched for this run.
       expect(existsSync(join(dir, 'keys'))).toBe(false);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 });
 
 describe('purgeRuns — supersede soundness (mutation-probe #2 companion, at the orchestrator level)', () => {
   it('purging a superseded (old) run never deletes the live successor’s pointer', async () => {
-    const { dir, runStore, artifactStores } = await makeStores();
+    const { dir, runStore, artifactStores, cleanup } = await makeStores();
     try {
       const { record: oldRun } = await runStore.create({
         workflowId: 'wf-1',
@@ -689,7 +694,7 @@ describe('purgeRuns — supersede soundness (mutation-probe #2 companion, at the
       expect(ptr.run_id).toBe(newRun.id);
       expect((await runStore.get(newRun.id)).record.id).toBe(newRun.id);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 });
@@ -699,7 +704,7 @@ describe('purgeRuns — purge correctness (issue #184)', () => {
     // Drives the fix deterministically at the orchestration level (JsonFileStore's OWN under-lock
     // re-verify is exercised directly and independently in json-file-store.test.ts) — this proves
     // purgeRuns correctly ROUTES whatever STATE_RUN_BUSY the anchor throws, regardless of why.
-    const { dir, runStore, artifactStores } = await makeStores();
+    const { dir, runStore, artifactStores, cleanup } = await makeStores();
     try {
       const run = makeRun({
         id: 'resumed-under-lock',
@@ -743,12 +748,12 @@ describe('purgeRuns — purge correctness (issue #184)', () => {
       expect(result.purged).toEqual([]);
       expect(existsSync(join(dir, 'resumed-under-lock.json'))).toBe(true);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('ELOCKED: an anchorStore reporting STATE_RUN_BUSY (locked) is bucketed blocked, never failed — the run is untouched, exit is not gated on it', async () => {
-    const { dir, runStore, artifactStores } = await makeStores();
+    const { dir, runStore, artifactStores, cleanup } = await makeStores();
     try {
       const run = makeRun({ id: 'held-by-writer', run_phase: 'completed', terminal_state: true });
       await injectRun(dir, run);
@@ -784,12 +789,12 @@ describe('purgeRuns — purge correctness (issue #184)', () => {
       expect(result.failed).toEqual([]); // NOT a failure — purgeCommand's exit code is gated on failed.length only
       expect(existsSync(join(dir, 'held-by-writer.json'))).toBe(true);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('anchor structural: an artifactStores failure means the anchor deleteAllForRun is NEVER called — the run file survives and the run is failed', async () => {
-    const { dir, runStore } = await makeStores();
+    const { dir, runStore, cleanup } = await makeStores();
     try {
       const run = makeRun({ id: 'r1', run_phase: 'completed', terminal_state: true });
       await injectRun(dir, run);
@@ -825,7 +830,7 @@ describe('purgeRuns — purge correctness (issue #184)', () => {
       expect(result.purged).toEqual([]);
       expect(existsSync(join(dir, 'r1.json'))).toBe(true); // survives intact — the crash-anchor guarantee
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
@@ -836,7 +841,7 @@ describe('purgeRuns — purge correctness (issue #184)', () => {
     // the existing "a second call is a no-op" guarantee json-file-store.test.ts already covers)
     // means BOTH invocations legitimately report that id as `purged` — that is not a bug; it is
     // the documented idempotent-success contract. What must NEVER happen is a genuine `failed`.
-    const { dir, runStore, artifactStores } = await makeStores();
+    const { dir, runStore, artifactStores, cleanup } = await makeStores();
     try {
       const ids = ['c1', 'c2', 'c3', 'c4', 'c5'];
       for (const id of ids) {
@@ -863,14 +868,14 @@ describe('purgeRuns — purge correctness (issue #184)', () => {
         expect(existsSync(join(dir, `${id}.json`))).toBe(false);
       }
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 });
 
 describe('purgeRuns — fenced WAL delete (issue #207 PR-2)', () => {
   it('a declaring artifact store (JsonTraceBufferStore) routes through deleteAllForRunFenced, not the legacy deleteAllForRun, and still clears the WAL', async () => {
-    const { dir, runStore } = await makeStores();
+    const { dir, runStore, traceBufferStore, cleanup } = await makeStores();
     try {
       const run = makeRun({
         id: 'fenced-happy-path',
@@ -879,7 +884,6 @@ describe('purgeRuns — fenced WAL delete (issue #207 PR-2)', () => {
         sealed_by: { arm: 'complete' },
       });
       await injectRun(dir, run);
-      const traceBufferStore = new JsonTraceBufferStore(dir, runStore);
       await traceBufferStore.append(run.id, 'step-agent', [{ event: 'e' }]);
       const fencedSpy = vi.spyOn(traceBufferStore, 'deleteAllForRunFenced');
       const legacySpy = vi.spyOn(traceBufferStore, 'deleteAllForRun');
@@ -893,12 +897,12 @@ describe('purgeRuns — fenced WAL delete (issue #207 PR-2)', () => {
       expect(legacySpy).not.toHaveBeenCalled();
       expect(await traceBufferStore.read(run.id, 'step-agent')).toHaveLength(0);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('resumed-mid-purge: a run that becomes non-terminal between selection and the fence is refused — bucketed blocked, anchor untouched, WAL intact', async () => {
-    const { dir, runStore } = await makeStores();
+    const { dir, runStore, cleanup } = await makeStores();
     try {
       const run = makeRun({
         id: 'resumed-mid-purge',
@@ -961,16 +965,15 @@ describe('purgeRuns — fenced WAL delete (issue #207 PR-2)', () => {
       // The WAL survives too — the fence refused before deleteIfExists ever ran.
       expect(await traceBufferStore.read(run.id, 'step-agent')).toHaveLength(1);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('a non-declaring artifact store (JsonFileFailedAttemptStore) keeps the plain, unfenced deleteAllForRun call (named residual, D3 §8 residual 4)', async () => {
-    const { dir, runStore } = await makeStores();
+    const { dir, runStore, failedAttemptStore, cleanup } = await makeStores();
     try {
       const run = makeRun({ id: 'sidecar-unfenced', run_phase: 'completed', terminal_state: true });
       await injectRun(dir, run);
-      const failedAttemptStore = new JsonFileFailedAttemptStore(dir);
       await appendSidecarLine(failedAttemptStore, run.id);
 
       const result = await purgeRuns({ runId: 'sidecar-unfenced', dryRun: false }, runStore, [
@@ -980,14 +983,14 @@ describe('purgeRuns — fenced WAL delete (issue #207 PR-2)', () => {
       expect(result.purged).toEqual(['sidecar-unfenced']);
       expect(existsSync(join(dir, `${run.id}.attempts.jsonl`))).toBe(false);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 });
 
 describe('purgeRuns — sealed artifacts (issue #197 PR-2, deliverable 3b: VERIFYING no purge.ts code change was needed)', () => {
   it('purge of a terminal run with a sealed artifact removes it too, alongside the live-WAL/anchor cleanup', async () => {
-    const { dir, runStore } = await makeStores();
+    const { dir, runStore, traceBufferStore, cleanup } = await makeStores();
     try {
       const run = makeRun({
         id: 'sealed-purge-target',
@@ -996,7 +999,6 @@ describe('purgeRuns — sealed artifacts (issue #197 PR-2, deliverable 3b: VERIF
         sealed_by: { arm: 'complete' },
       });
       await injectRun(dir, run);
-      const traceBufferStore = new JsonTraceBufferStore(dir, runStore);
       await traceBufferStore.append(run.id, 'step-agent', [{ event: 'stale' }]);
       const sealResult = await traceBufferStore.sealFenced!(run.id, 'step-agent', {
         kind: 'run_at_version',
@@ -1014,7 +1016,7 @@ describe('purgeRuns — sealed artifacts (issue #197 PR-2, deliverable 3b: VERIF
       expect(existsSync(join(dir, `${run.id}.json`))).toBe(false); // anchor gone
       expect(await traceBufferStore.listSealedForRun!(run.id)).toEqual([]); // sealed artifact gone too
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 });
@@ -1090,7 +1092,7 @@ describe('purge byte figures are store-reported (issue #189)', () => {
       // And the fixture genuinely spans more than one file, so the equality has teeth.
       expect(expected).toBeGreaterThan((await stat(join(s.dir, 'r-189-dry.json'))).size);
     } finally {
-      await rm(s.dir, { recursive: true, force: true });
+      await s.cleanup();
     }
   });
 
@@ -1116,7 +1118,7 @@ describe('purge byte figures are store-reported (issue #189)', () => {
       // identity, observed end-to-end through purge rather than only inside one store's TCK.
       expect(result.selected[0]!.bytes).toBe(expected);
     } finally {
-      await rm(s.dir, { recursive: true, force: true });
+      await s.cleanup();
     }
   });
 
@@ -1187,7 +1189,7 @@ describe('purge report wording and partial-free disclosure (issue #189)', () => 
       expect(rendered).toContain('resumable via');
       expect(rendered).toContain("'realm run resume'");
     } finally {
-      await rm(s.dir, { recursive: true, force: true });
+      await s.cleanup();
     }
   });
 
@@ -1209,7 +1211,7 @@ describe('purge report wording and partial-free disclosure (issue #189)', () => 
       const previewed = { ...emptyResult(), selected: [{ run, bytes: 4096, resumable: false }] };
       expect(render(previewed, true).out).not.toContain('store-reported');
     } finally {
-      await rm(s.dir, { recursive: true, force: true });
+      await s.cleanup();
     }
   });
 
@@ -1294,7 +1296,7 @@ describe('purge report wording and partial-free disclosure (issue #189)', () => 
 // C-3 — the non-terminal refusal renders the DERIVED phase; the DECISION already derived.
 describe('purge — disposal coherence (issue #558 PR-C)', () => {
   it('C-2: an abandoned run with NO failed step is NOT resumable', async () => {
-    const { dir, runStore, artifactStores } = await makeStores();
+    const { dir, runStore, artifactStores, cleanup } = await makeStores();
     try {
       // The G1 fixture: exactly what `realm run abandon` writes on a run that never failed a step.
       const run = makeRun({
@@ -1312,12 +1314,12 @@ describe('purge — disposal coherence (issue #558 PR-C)', () => {
 
       expect(result.selected[0]?.resumable).toBe(false);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('C-2: an abandoned run WITH a failed step still is (the path is real)', async () => {
-    const { dir, runStore, artifactStores } = await makeStores();
+    const { dir, runStore, artifactStores, cleanup } = await makeStores();
     try {
       const run = makeRun({
         id: 'r-abandoned-failed',
@@ -1334,12 +1336,12 @@ describe('purge — disposal coherence (issue #558 PR-C)', () => {
 
       expect(result.selected[0]?.resumable).toBe(true);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it("C213 (#625 PR-2a, round 28 finding 3): a run whose only failed step is a cleanup step is NOT resumable — resume's own rule (core's resumeWay) over the run's workflow; a workflow that cannot be read counts each failed step", async () => {
-    const { dir, runStore, artifactStores } = await makeStores();
+    const { dir, runStore, artifactStores, cleanup } = await makeStores();
     try {
       const abandoned = {
         run_phase: 'abandoned' as const,
@@ -1381,7 +1383,7 @@ describe('purge — disposal coherence (issue #558 PR-C)', () => {
         stepFailedUnread: true,
       });
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
@@ -1471,7 +1473,7 @@ describe('purgeRuns — a run that changed after it was selected (issue #715 (a)
     const { s, run } = await seeded('d2-moved');
     try {
       const anchor = anchorOver(s.runStore, bump(s.runStore));
-      const traceBufferStore = new JsonTraceBufferStore(s.dir, s.runStore);
+      const traceBufferStore = s.traceBufferStore;
       const result = await purgeRuns({ runId: run.id, dryRun: false }, anchor, [traceBufferStore]);
       expect(
         { blocked: result.blocked, purged: result.purged, failed: result.failed },
@@ -1496,7 +1498,7 @@ describe('purgeRuns — a run that changed after it was selected (issue #715 (a)
         logs.mockRestore();
       }
     } finally {
-      await rm(s.dir, { recursive: true, force: true });
+      await s.cleanup();
     }
   });
 
@@ -1512,7 +1514,7 @@ describe('purgeRuns — a run that changed after it was selected (issue #715 (a)
       });
       expect(existsSync(join(s.dir, `${run.id}.json`)), 'the anchor').toBe(true);
     } finally {
-      await rm(s.dir, { recursive: true, force: true });
+      await s.cleanup();
     }
   });
 
@@ -1522,7 +1524,7 @@ describe('purgeRuns — a run that changed after it was selected (issue #715 (a)
     try {
       const order: Order = [];
       const anchor = anchorOver(s.runStore, async () => {}, undefined, order);
-      const traceBufferStore = new JsonTraceBufferStore(s.dir, s.runStore);
+      const traceBufferStore = s.traceBufferStore;
       const fenced = traceBufferStore.deleteAllForRunFenced.bind(traceBufferStore);
       vi.spyOn(traceBufferStore, 'deleteAllForRunFenced').mockImplementation((...args) => {
         order.push('fenced');
@@ -1532,7 +1534,7 @@ describe('purgeRuns — a run that changed after it was selected (issue #715 (a)
       expect(result.purged, 'purged').toEqual([run.id]);
       expect(order, order.join(' → ')).toEqual(['fenced', 'anchor']);
     } finally {
-      await rm(s.dir, { recursive: true, force: true });
+      await s.cleanup();
     }
   });
 
@@ -1575,7 +1577,7 @@ describe('purgeRuns — a run that changed after it was selected (issue #715 (a)
     for (const [branch, anchorFor] of branches) {
       const { s, run } = await seeded(`d5b-${branch}`);
       try {
-        const traceBufferStore = new JsonTraceBufferStore(s.dir, s.runStore);
+        const traceBufferStore = s.traceBufferStore;
         const result = await purgeRuns({ runId: run.id, dryRun: false }, anchorFor(s), [
           traceBufferStore,
         ]);
@@ -1595,7 +1597,7 @@ describe('purgeRuns — a run that changed after it was selected (issue #715 (a)
           logs.mockRestore();
         }
       } finally {
-        await rm(s.dir, { recursive: true, force: true });
+        await s.cleanup();
       }
     }
     expect(outcomes, 'the outcome per branch').toEqual({
@@ -1661,7 +1663,7 @@ describe('purgeRuns — a run that changed after it was selected (issue #715 (a)
     const { s, run } = await seeded('c1a-moved');
     try {
       const anchor = anchorOver(s.runStore, async () => {});
-      const traceBufferStore = new JsonTraceBufferStore(s.dir, s.runStore);
+      const traceBufferStore = s.traceBufferStore;
       const tb = freesThenMoves(traceBufferStore, () => bump(s.runStore)(run.id));
       const result = await purgeRuns({ runId: run.id, dryRun: false }, anchor, [traceBufferStore]);
       const lines = stderrOf(result, run.id);
@@ -1684,7 +1686,7 @@ describe('purgeRuns — a run that changed after it was selected (issue #715 (a)
         `  ⚠ <id>: changed_since_selected (${tb.freed()} B across 1 of its artifact stores were already freed before the refusal)`,
       );
     } finally {
-      await rm(s.dir, { recursive: true, force: true });
+      await s.cleanup();
     }
   });
 
@@ -1700,7 +1702,7 @@ describe('purgeRuns — a run that changed after it was selected (issue #715 (a)
     const { s, run } = await seeded('c1b-resumed');
     try {
       const anchor = anchorOver(s.runStore, async () => {}, resumedAfter(s));
-      const traceBufferStore = new JsonTraceBufferStore(s.dir, s.runStore);
+      const traceBufferStore = s.traceBufferStore;
       const tb = freesThenMoves(traceBufferStore, () => bump(s.runStore)(run.id));
       const result = await purgeRuns({ runId: run.id, dryRun: false }, anchor, [traceBufferStore]);
       const lines = stderrOf(result, run.id);
@@ -1720,7 +1722,7 @@ describe('purgeRuns — a run that changed after it was selected (issue #715 (a)
       });
       expect(existsSync(join(s.dir, `${run.id}.json`)), 'the run file').toBe(true);
     } finally {
-      await rm(s.dir, { recursive: true, force: true });
+      await s.cleanup();
     }
     // D3's shape: no artifact store, so nothing is freed before the anchor refuses the resumed run.
     const nothing = await seeded('c1b-nothing-freed');
@@ -1736,7 +1738,7 @@ describe('purgeRuns — a run that changed after it was selected (issue #715 (a)
         "  ⚠ <id>: run '<id>' is no longer terminal (resumed since selection) — refusing to purge its trace buffer",
       ]);
     } finally {
-      await rm(nothing.s.dir, { recursive: true, force: true });
+      await nothing.s.cleanup();
     }
   });
 
@@ -1755,7 +1757,7 @@ describe('purgeRuns — a run that changed after it was selected (issue #715 (a)
       });
       await injectRun(s.dir, run);
       await s.traceBufferStore.append(run.id, 'step-agent', [{ event: 'e' }]);
-      const traceBufferStore = new JsonTraceBufferStore(s.dir, s.runStore);
+      const traceBufferStore = s.traceBufferStore;
       const result = await purgeRuns({ runId: run.id, dryRun: false }, s.runStore, [
         traceBufferStore,
       ]);
@@ -1774,7 +1776,7 @@ describe('purgeRuns — a run that changed after it was selected (issue #715 (a)
         `  ⚠ <id>: drain_pending (${String(partial?.bytes)} B across 1 of its artifact stores were already freed before the refusal)`,
       ]);
     } finally {
-      await rm(s.dir, { recursive: true, force: true });
+      await s.cleanup();
     }
   });
 
@@ -1849,7 +1851,7 @@ describe('purgeRuns — a run that changed after it was selected (issue #715 (a)
         shown,
       ).toBe(true);
     } finally {
-      await rm(s.dir, { recursive: true, force: true });
+      await s.cleanup();
     }
   });
 
@@ -1892,7 +1894,7 @@ describe('purgeRuns — a run that changed after it was selected (issue #715 (a)
       );
       expect(gone.already_purged, 'gone before the delete').toEqual([run2.id]);
     } finally {
-      await rm(s.dir, { recursive: true, force: true });
+      await s.cleanup();
     }
   });
 });

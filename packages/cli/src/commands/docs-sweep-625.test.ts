@@ -24,6 +24,7 @@ import {
 } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { lagless } from '../test-support/lag.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../../../..');
@@ -53,18 +54,22 @@ describe(
   '#625 PR-2a, C174 — the sweep’s corrected screens and sentences, from the built realm',
   { timeout: 60_000 },
   () => {
+    let h: TempHome & { readonly root: string };
     let home: string;
     let runStore: JsonFileStore;
     let workflowStore: JsonWorkflowStore;
 
-    beforeEach(() => {
-      home = mkdtempSync(join(tmpdir(), 'realm-625-sweep-cli-'));
+    beforeEach(async () => {
+      h = await makeTempHome();
+      home = h.root;
       mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
       mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
-      runStore = new JsonFileStore(join(home, '.realm', 'runs'));
-      workflowStore = new JsonWorkflowStore(join(home, '.realm', 'workflows'));
+      runStore = h.home.runStore;
+      workflowStore = h.home.workflowStore;
     });
-    afterEach(() => rmSync(home, { recursive: true, force: true }));
+    afterEach(async () => {
+      await h.cleanup();
+    });
 
     function realm(
       args: string[],
@@ -850,13 +855,17 @@ describe(
 // handler `h` registered (without it the chain records a capability block, never `cannot_go_on`).
 // What a failing cell prints: the page's sentence, or the run ids and what follows `idle:`.
 describe('issue #729 — operate-runs.md: `--stuck` lists the runs that need someone', () => {
+  let h: TempHome & { readonly root: string };
   let home: string;
-  beforeEach(() => {
-    home = mkdtempSync(join(tmpdir(), 'realm-729-sweep-cli-'));
+  beforeEach(async () => {
+    h = await makeTempHome();
+    home = h.root;
     mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
     mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
   });
-  afterEach(() => rmSync(home, { recursive: true, force: true }));
+  afterEach(async () => {
+    await h.cleanup();
+  });
 
   it(
     'the sentence, and the built realm: a run that cannot go on listed at age 0, a healthy fresh run not',
@@ -891,8 +900,8 @@ describe('issue #729 — operate-runs.md: `--stuck` lists the runs that need som
           '',
         ].join('\n'),
       );
-      const runStore = new JsonFileStore(join(home, '.realm', 'runs'));
-      await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(W2);
+      const runStore = h.home.runStore;
+      await h.home.workflowStore.register(W2);
       const create = async () =>
         (await runStore.create({ workflowId: 'w2-crown', workflowVersion: 1, params: {} })).record
           .id;

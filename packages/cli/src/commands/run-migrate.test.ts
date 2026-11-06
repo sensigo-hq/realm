@@ -7,9 +7,8 @@
 // The corpus is seeded through the sanctioned channel — direct `writeFile` into a scratch runsDir
 // — because these are pre-#367 shapes the store boundary would refuse if they were written through
 // it. That is the point: they are what real legacy records look like.
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp, writeFile, readFile, mkdir, utimes } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { writeFile, readFile, mkdir, utimes } from 'node:fs/promises';
 import { join } from 'node:path';
 import { JsonFileStore } from '@sensigo/realm';
 import type { RunRecord, RunStore, SealArm } from '@sensigo/realm';
@@ -21,14 +20,20 @@ import {
   ORDERING_LINE,
 } from './run-migrate.js';
 import { doubleClock, noSettle } from '../test-support/snapshot-double.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
+let h: TempHome;
 let dir: string;
 let store: JsonFileStore;
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'realm-migrate-'));
+  h = await makeTempHome();
+  dir = h.home.runStore.runsDirPath;
   await mkdir(dir, { recursive: true });
-  store = new JsonFileStore(dir);
+  store = h.home.runStore;
+});
+afterEach(async () => {
+  await h.cleanup();
 });
 
 const AT = '2026-01-01T00:00:00.000Z';

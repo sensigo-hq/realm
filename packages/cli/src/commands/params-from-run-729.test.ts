@@ -7,12 +7,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  CURRENT_WORKFLOW_SCHEMA_VERSION,
-  JsonFileStore,
-  JsonWorkflowStore,
-  type WorkflowDefinition,
-} from '@sensigo/realm';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION, type WorkflowDefinition } from '@sensigo/realm';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const mocks = vi.hoisted(() => ({ question: vi.fn(), close: vi.fn() }));
 vi.mock('node:readline/promises', () => ({
@@ -24,6 +20,7 @@ import { abandonCommand } from './abandon.js';
 
 const SECRET = 'FAKE-PFR-SECRET-0729';
 
+let h: TempHome & { readonly root: string };
 let home: string;
 let dir: string;
 let savedHome: string | undefined;
@@ -31,8 +28,9 @@ let savedTTY: boolean | undefined;
 let logged: string[];
 let warned: string[];
 
-beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), 'realm-pfr-home-'));
+beforeEach(async () => {
+  h = await makeTempHome();
+  home = h.root;
   dir = mkdtempSync(join(tmpdir(), 'realm-pfr-wf-'));
   mkdirSync(join(home, '.realm'), { recursive: true });
   savedHome = process.env['HOME'];
@@ -58,19 +56,19 @@ beforeEach(() => {
   }) as never);
 });
 
-afterEach(() => {
+afterEach(async () => {
   if (savedTTY === undefined) delete (process.stdin as { isTTY?: boolean }).isTTY;
   else process.stdin.isTTY = savedTTY;
   if (savedHome === undefined) delete process.env['HOME'];
   else process.env['HOME'] = savedHome;
-  rmSync(home, { recursive: true, force: true });
+  await h.cleanup();
   rmSync(dir, { recursive: true, force: true });
   mocks.question.mockReset();
   vi.restoreAllMocks();
 });
 
 async function registeredRun(params: Record<string, unknown>): Promise<string> {
-  await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register({
+  await h.home.workflowStore.register({
     id: 'pfr',
     name: 'pfr',
     version: 1,
@@ -78,7 +76,7 @@ async function registeredRun(params: Record<string, unknown>): Promise<string> {
     steps: { a: { description: 'a', execution: 'agent', depends_on: [] } },
     source_dir: dir,
   } as WorkflowDefinition);
-  const { record: run } = await new JsonFileStore(join(home, '.realm', 'runs')).create({
+  const { record: run } = await h.home.runStore.create({
     workflowId: 'pfr',
     workflowVersion: 1,
     params,
@@ -106,9 +104,7 @@ describe('#729 PR-3 — the rerun refers to the run, and runs as printed', () =>
     await runCommand.parseAsync([command![1]!, '--params-from-run', command![2]!], {
       from: 'user',
     });
-    const runs = (await new JsonFileStore(join(home, '.realm', 'runs')).list()).snapshots.map(
-      (s) => s.record,
-    );
+    const runs = (await h.home.runStore.list()).snapshots.map((s) => s.record);
     const fresh = runs.find((r) => r.id !== id)!;
     // (a) red when the flag is ignored or reads a masked copy; (b) prints the new run's params
     //     (fake values).
@@ -117,7 +113,7 @@ describe('#729 PR-3 — the rerun refers to the run, and runs as printed', () =>
 
   it('refuses --params with --params-from-run, and a run of another workflow', async () => {
     const id = await registeredRun({});
-    const other = await new JsonFileStore(join(home, '.realm', 'runs')).create({
+    const other = await h.home.runStore.create({
       workflowId: 'another',
       workflowVersion: 1,
       params: {},
@@ -142,9 +138,7 @@ describe('#729 PR-3 — an answer that sends a marker back (D1 D5)', () => {
   it('realm workflow run records it as sent and warns', async () => {
     mocks.question.mockImplementation(async () => '{"answer":"sent back [REDACTED] here"}');
     await runCommand.parseAsync([dir], { from: 'user' });
-    const [run] = (await new JsonFileStore(join(home, '.realm', 'runs')).list()).snapshots.map(
-      (s) => s.record,
-    );
+    const [run] = (await h.home.runStore.list()).snapshots.map((s) => s.record);
     // (a) red when the warning is dropped or the answer is changed before it is recorded; (b)
     //     prints booleans.
     expect({

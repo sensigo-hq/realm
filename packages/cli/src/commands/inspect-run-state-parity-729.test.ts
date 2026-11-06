@@ -5,21 +5,13 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: step
 // names and booleans.
-import { describe, it, expect } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import {
-  JsonFileStore,
-  JsonWorkflowStore,
-  JsonFileFailedAttemptStore,
-  CURRENT_WORKFLOW_SCHEMA_VERSION,
-  type WorkflowDefinition,
-} from '@sensigo/realm';
-import { createRealmMcpServer, JsonTraceBufferStore } from '@sensigo/realm-mcp';
+import { describe, it, expect, afterEach } from 'vitest';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION, type WorkflowDefinition } from '@sensigo/realm';
+import { createRealmMcpServer } from '@sensigo/realm-mcp';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { inspectRun } from './inspect.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const wf = (id: string, steps: WorkflowDefinition['steps']): WorkflowDefinition => ({
   id,
@@ -76,14 +68,20 @@ function fromRunState(state: Record<string, unknown>): Said {
 }
 
 describe('#729 PR-0 — A-13: inspect and get_run_state say the same next step, each in its words', () => {
+  const homes: TempHome[] = [];
+  afterEach(async () => {
+    for (const t of homes.splice(0)) await t.cleanup();
+  });
+
   it('a ready agent step and an owed engine step; a step that cannot run; a step held elsewhere', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-parity-729-'));
-    const store = new JsonFileStore(join(dir, 'runs'));
-    const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    const h = await makeTempHome();
+    homes.push(h);
+    const store = h.home.runStore;
+    const workflowStore = h.home.workflowStore;
     const server = createRealmMcpServer({
       runStore: store,
-      traceBufferStore: new JsonTraceBufferStore(store.runsDirPath, store),
-      failedAttemptStore: new JsonFileFailedAttemptStore(store.runsDirPath),
+      traceBufferStore: h.home.traceBufferStore,
+      failedAttemptStore: h.home.failedAttemptStore,
       workflowStore,
     });
     const [ct, st] = InMemoryTransport.createLinkedPair();

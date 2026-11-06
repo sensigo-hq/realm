@@ -6,12 +6,13 @@
 // not module load (drain.ts's header has the full account). This file's ordering idiom stays;
 // historicized here only.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, mkdir } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { resumeCommand } from './resume.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 describe('resume wedge e2e (issue #279, increment 1, PR-B, verification item 4)', () => {
+  let h: TempHome & { readonly root: string };
   let home: string;
   let originalHome: string | undefined;
   let logSpy: ReturnType<typeof vi.spyOn>;
@@ -19,7 +20,8 @@ describe('resume wedge e2e (issue #279, increment 1, PR-B, verification item 4)'
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
-    home = await mkdtemp(join(tmpdir(), 'realm-resume-wedge-e2e-'));
+    h = await makeTempHome();
+    home = h.root;
     await mkdir(join(home, '.realm', 'runs'), { recursive: true });
     await mkdir(join(home, '.realm', 'workflows'), { recursive: true });
     originalHome = process.env['HOME'];
@@ -37,14 +39,13 @@ describe('resume wedge e2e (issue #279, increment 1, PR-B, verification item 4)'
     logSpy.mockRestore();
     errSpy.mockRestore();
     exitSpy.mockRestore();
-    await rm(home, { recursive: true, force: true });
+    await h.cleanup();
   });
 
   it('settle-fail → resume (real CLI) → re-claim → settle APPLIES (the R1 wedge is gone on the migrated path)', async () => {
-    const { JsonFileStore, JsonWorkflowStore, executeStep, CURRENT_WORKFLOW_SCHEMA_VERSION } =
-      await import('@sensigo/realm');
-    const runStore = new JsonFileStore();
-    const workflowStore = new JsonWorkflowStore();
+    const { executeStep, CURRENT_WORKFLOW_SCHEMA_VERSION } = await import('@sensigo/realm');
+    const runStore = h.home.runStore;
+    const workflowStore = h.home.workflowStore;
 
     const def = {
       id: 'resume-wedge-wf',
