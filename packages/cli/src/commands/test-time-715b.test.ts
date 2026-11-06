@@ -1,8 +1,9 @@
 // test-time-715b.test.ts — issue #715 (b) 04 §B.3 (D5 §5.3, D6-24, D6-40): the test-time rule. A
-// test file that builds a JSON-file store, takes a store lock, or starts the CLI may not fake the
-// global `Date` — `vi.useFakeTimers()` (which fakes `Date` unless its `toFake` list leaves it out),
-// a `toFake` list naming `Date`, `vi.setSystemTime`, `vi.spyOn(Date, …)` — unless it is named below
-// with its reason. Why: the lock library judges a held lock stale by the lock's mtime against the
+// test file that builds a JSON-file store (directly, through its package's door, or through its
+// test helper), takes a store lock, or starts the CLI may not fake the global `Date` —
+// `vi.useFakeTimers()` (which fakes `Date` unless its `toFake` list leaves it out), a `toFake` list
+// naming `Date`, `vi.setSystemTime`, `vi.spyOn(Date, …)` — unless it is named below with its
+// reason. Why: the lock library judges a held lock stale by the lock's mtime against the
 // wall clock; a process that fakes `Date` writes its lock's mtime from the fake, and another process
 // on the real clock then steals a live lock (measured: `plans/issue-715/reference/dr-phase2/
 // lockprobe.out`). Faking `performance` stays allowed (#573's pins), and so does faking timers alone.
@@ -19,9 +20,18 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 
-/** A file that builds a JSON-file store, takes a lock, or starts the built CLI. */
+/**
+ * A file that builds a JSON-file store, takes a lock, or starts the built CLI. The store's members,
+ * each with what puts a file in the set:
+ * - `new JsonFileStore(` constructs the store, which takes the lock library's locks;
+ * - `openCliHome(` and `openMcpHome(` are the CLI's and the MCP server's doors, which construct the
+ *   run store (a `JsonFileStore`); four CLI test files call `openCliHome(` directly;
+ * - `makeTempHome(` is each package's test helper, which opens its package's door (#616 PR-2b).
+ * The last three last until #616 unit 2c flips the door to SQLite, and leave in that unit: a SQLite
+ * write lock holds against a faked `Date` (MA 3, 2026-11-06).
+ */
 const TAKES_REAL_LOCKS =
-  /new JsonFileStore\(|lockfile\.lock\(|proper-lockfile|dist\/index\.js|spawnSync\(|execFileSync\(/;
+  /new JsonFileStore\(|lockfile\.lock\(|proper-lockfile|dist\/index\.js|spawnSync\(|execFileSync\(|makeTempHome\(|openCliHome\(|openMcpHome\(/;
 
 /** A fake of the global `Date` (timers alone, or `performance`, are not). */
 function fakesDate(text: string): boolean {
@@ -154,6 +164,17 @@ describe('#715 (b) 04 §B.3 — a test that takes real locks never fakes the glo
         path: 'seed/to-fake-date.test.ts',
         text: store + "vi.useFakeTimers({\n  toFake: [\n    'setTimeout',\n    'Date',\n  ],\n});",
       },
+      // The three below: (a) red when `makeTempHome\(`, `openCliHome\(` or `openMcpHome\(` is lost
+      // from `TAKES_REAL_LOCKS`; (b) the list printed lacks that seed's name.
+      { path: 'seed/helper.test.ts', text: 'const h = await makeTempHome();\nvi.useFakeTimers();' },
+      {
+        path: 'seed/cli-door.test.ts',
+        text: 'const h = await openCliHome({ home: dir });\nvi.useFakeTimers();',
+      },
+      {
+        path: 'seed/mcp-door.test.ts',
+        text: 'const h = await openMcpHome({ home: dir });\nvi.useFakeTimers();',
+      },
       {
         path: 'seed/timers-only.test.ts',
         text: store + "vi.useFakeTimers({ toFake: ['setTimeout'] });",
@@ -165,6 +186,9 @@ describe('#715 (b) 04 §B.3 — a test that takes real locks never fakes the glo
       'seed/system-time.test.ts',
       'seed/spy.test.ts',
       'seed/to-fake-date.test.ts',
+      'seed/helper.test.ts',
+      'seed/cli-door.test.ts',
+      'seed/mcp-door.test.ts',
     ]);
   });
 
