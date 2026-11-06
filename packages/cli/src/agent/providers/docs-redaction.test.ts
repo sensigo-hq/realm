@@ -748,11 +748,12 @@ describe(`${TOOLS_PAGE} — what realm agent replaces (GHSA-gxfq)`, () => {
       TOOLS_PAGE,
       'This does not catch everything, so do not rely on it to keep a secret out of a record. It leaves alone:',
     );
-    // Kept bullets, quoted too: the npm variables (pinned in agent-utils.test.ts's #407 cells) and
-    // what the model writes.
+    // Kept bullets, quoted too: the npm variables (pinned in agent-utils.test.ts's #407 cells), the
+    // shell's path variables (pinned in docs-disclosure-729.test.ts's D-14/D-6 cell) and what the
+    // model writes.
     claim(
       TOOLS_PAGE,
-      '- the values of three variables that npm sets: `npm_package_name`, `npm_package_version` and `npm_lifecycle_event`;',
+      '- the values of three variables that npm sets (`npm_package_name`, `npm_package_version` and `npm_lifecycle_event`) and of three the shell sets to paths (`PWD`, `OLDPWD` and `_`);',
     );
     claim(
       TOOLS_PAGE,
