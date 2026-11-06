@@ -14,8 +14,7 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { JsonFileStore, executeStep, expiryCarriedOutLine } from '@sensigo/realm';
@@ -27,6 +26,7 @@ import { scheduleGateExpiryTimer } from './gate-expiry-timer.js';
 import { LlmProvider } from '../providers/llm-provider.js';
 import { lagless } from '../../test-support/lag.js';
 import { slackResponse } from '../test-support/slack-response.js';
+import { makeTempHome, type TempHome } from '../../test-support/temp-home.js';
 
 /** C163: (a) red when gates.md no longer holds the sentence these cells pin, word for word; (b) prints it. */
 // #729 PR-4 (02), re-pinned: the line is printed where `realm agent` runs; the thread gets the person's words.
@@ -84,25 +84,25 @@ function gated(id: string, onExpiry: 'settle_default' | 'abort'): WorkflowDefini
 }
 
 describe('#625 PR-2a, C146 — a late Slack answer that carried out the expiry says so, once, in the thread and the terminal', () => {
-  let dir: string;
+  let h: TempHome;
   let store: JsonFileStore;
   let fetchSpy: ReturnType<typeof vi.fn>;
   let logSpy: ReturnType<typeof vi.spyOn>;
 
-  beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'realm-625-slack-late-'));
-    store = new JsonFileStore(dir);
+  beforeEach(async () => {
+    h = await makeTempHome();
+    store = h.home.runStore;
     fetchSpy = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } }));
     vi.stubGlobal('fetch', fetchSpy);
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.clearAllMocks();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
-    rmSync(dir, { recursive: true, force: true });
+    await h.cleanup();
   });
 
   /** Opens the question, moves its expiry into the past, and returns the gate the notifier gets. */

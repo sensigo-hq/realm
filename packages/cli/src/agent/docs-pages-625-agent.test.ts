@@ -10,9 +10,8 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { InMemoryStore } from '@sensigo/realm-testing';
@@ -37,6 +36,7 @@ import { LlmProvider } from './providers/llm-provider.js';
 import { buildReattachFlags } from '../commands/agent.js';
 import { lagless } from '../test-support/lag.js';
 import type { Snapshot } from '@sensigo/realm';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../../../..');
@@ -921,18 +921,18 @@ describe(
   { timeout: 60_000 },
   () => {
     let home: string;
-    afterEach(() => {
-      if (home !== undefined) rmSync(home, { recursive: true, force: true });
+    let h: TempHome | undefined;
+    afterEach(async () => {
+      if (h !== undefined) await h.cleanup();
     });
 
-    function fresh(): { runStore: JsonFileStore; workflowStore: JsonWorkflowStore } {
-      home = mkdtempSync(join(tmpdir(), 'realm-625-pin-c-'));
+    async function fresh(): Promise<{ runStore: JsonFileStore; workflowStore: JsonWorkflowStore }> {
+      const made = await makeTempHome();
+      h = made;
+      home = made.root;
       mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
       mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
-      return {
-        runStore: new JsonFileStore(join(home, '.realm', 'runs')),
-        workflowStore: new JsonWorkflowStore(join(home, '.realm', 'workflows')),
-      };
+      return { runStore: made.home.runStore, workflowStore: made.home.workflowStore };
     }
 
     function realm(args: string[], env: Record<string, string> = {}) {
@@ -951,7 +951,7 @@ describe(
         AGENT_PAGE,
         'At a gate, `realm agent` waits until the gate is answered, by `realm run respond` from another terminal or by any other means, and then carries on: it runs the guards and `auto` steps the answer leaves owed (each `auto` step as `→ [auto] <step>`), then the next agent step.',
       );
-      const { runStore, workflowStore } = fresh();
+      const { runStore, workflowStore } = await fresh();
       const def = loadWorkflowFromString(
         [
           'id: c174-gate',
@@ -1076,7 +1076,7 @@ describe(
         AGENT_PAGE,
         "any other `blocked` reply prints its own reason (`✗ Precondition failed for step 'ask'.`) and stops the drive with exit code 1.",
       );
-      fresh();
+      await fresh();
       // While the model answers `ask`, the provider module rewrites `first`'s recorded answer, so the
       // engine's own read refuses the step the drive's read let it pick.
       symlinkSync(join(ROOT, 'node_modules'), join(home, 'node_modules'), 'dir');
@@ -1153,7 +1153,7 @@ describe(
         'When it leaves the run with nothing that can run from here, the line adds `cannot_go_on`: each step that cannot run — with, for one that builds no input from an `input_map`, the fact that an operator supplies its input (added after version 0.47.0) — then the way out.',
       );
       const shown = block(LISTEN_PAGE, '"cannot_go_on"').filter((l) => l !== '');
-      const { runStore, workflowStore } = fresh();
+      const { runStore, workflowStore } = await fresh();
       const gated = (id: string, next: string[]) =>
         loadWorkflowFromString(
           [

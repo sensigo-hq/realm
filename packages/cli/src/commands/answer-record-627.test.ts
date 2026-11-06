@@ -8,15 +8,12 @@
 //
 // The record cells run the built `realm` with a fresh HOME. Every assertion carries (a) the change
 // that turns it red and (b) what it prints on failure: lines and record fields — never a token.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   advanceRun,
   answerArrivalOf,
@@ -27,6 +24,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { answererPhrase, renderAnswerLine } from '../lib/holder-render.js';
 import { answererClause } from './respond.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const CLI = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 
@@ -49,12 +47,20 @@ const YAML = (message = true) =>
     '    depends_on: [q]',
   ].join('\n');
 
+/** Every handle `home()` opened, cleaned after each cell. */
+const homes: TempHome[] = [];
+afterEach(async () => {
+  for (const t of homes.splice(0)) await t.cleanup();
+});
+
 /** A fresh HOME with the workflow registered and one run opened at its question. */
 async function home(message = true) {
-  const dir = mkdtempSync(join(tmpdir(), 'realm-rec-627-'));
+  const handle = await makeTempHome();
+  homes.push(handle);
+  const dir = handle.root;
   const def = loadWorkflowFromString(YAML(message));
-  await new JsonWorkflowStore(join(dir, '.realm', 'workflows')).register(def);
-  const store = new JsonFileStore(join(dir, '.realm', 'runs'));
+  await handle.home.workflowStore.register(def);
+  const store = handle.home.runStore;
   const { record: run } = await store.create({
     workflowId: def.id,
     workflowVersion: 1,
@@ -70,7 +76,7 @@ async function home(message = true) {
     });
     return { code: r.status, out: r.stdout, err: r.stderr };
   };
-  return { dir, def, store, runId: run.id, gateId, realm };
+  return { dir, def, store, runId: run.id, gateId, realm, handle };
 }
 
 describe('#627 W — the CLI door records its route (cell 5, CLI half)', () => {
@@ -224,7 +230,7 @@ describe('#627 W — cell 13: inspect’s open-gate block', () => {
     const h = await home();
     // Edit the registered definition's message after the gate opened: inspect must not read it.
     const edited = loadWorkflowFromString(YAML().replace('Ship it?', 'Edited later.'));
-    await new JsonWorkflowStore(join(h.dir, '.realm', 'workflows')).register(edited);
+    await h.handle.home.workflowStore.register(edited);
     const out = h.realm(['run', 'inspect', h.runId]).out.split('\n');
     const at = out.findIndex((l) => l.startsWith('Gate: q'));
     // (a) red when the message is read from the live definition, or the respond line is dropped;
@@ -264,7 +270,7 @@ describe('#627 W — cell 13: inspect’s open-gate block', () => {
         '    trust: human_confirmed\n    prompt: Ship the release to production?\n',
       ),
     );
-    await new JsonWorkflowStore(join(h.dir, '.realm', 'workflows')).register(withPrompt);
+    await h.handle.home.workflowStore.register(withPrompt);
     const line = h
       .realm(['run', 'inspect', h.runId])
       .out.split('\n')
@@ -310,7 +316,7 @@ describe('#627 W — cell 13: inspect’s open-gate block', () => {
         '    execution: agent',
       ].join('\n'),
     );
-    await new JsonWorkflowStore(join(h.dir, '.realm', 'workflows')).register(without);
+    await h.handle.home.workflowStore.register(without);
     const line = h
       .realm(['run', 'inspect', h.runId])
       .out.split('\n')

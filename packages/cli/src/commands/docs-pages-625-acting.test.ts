@@ -20,6 +20,7 @@ import {
 } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { lagless } from '../test-support/lag.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../../../..');
@@ -108,22 +109,25 @@ describe(
   '#625 PR-2a, C174 lane A — realm-run-acting.md, sentence by sentence, from the built realm',
   { timeout: 60_000 },
   () => {
+    let h: TempHome & { readonly root: string };
     let home: string;
     let elsewhere: string;
     let runStore: JsonFileStore;
     let workflowStore: JsonWorkflowStore;
     const folders: string[] = [];
 
-    beforeEach(() => {
-      home = mkdtempSync(join(tmpdir(), 'realm-625-acting-'));
+    beforeEach(async () => {
+      h = await makeTempHome();
+      home = h.root;
       elsewhere = realpathSync(mkdtempSync(join(tmpdir(), 'realm-625-acting-elsewhere-')));
       mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
       mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
-      runStore = new JsonFileStore(join(home, '.realm', 'runs'));
-      workflowStore = new JsonWorkflowStore(join(home, '.realm', 'workflows'));
+      runStore = h.home.runStore;
+      workflowStore = h.home.workflowStore;
     });
-    afterEach(() => {
-      for (const d of [home, elsewhere, ...folders.splice(0)]) {
+    afterEach(async () => {
+      await h.cleanup();
+      for (const d of [elsewhere, ...folders.splice(0)]) {
         rmSync(d, { recursive: true, force: true });
       }
     });

@@ -6,14 +6,12 @@
 // those commands; the MCP pages' in `mcp-server/src/asked-person-729.test.ts`. Every value is a fake.
 // Each assertion names (a) the change that turns it red and (b) what it prints when it fails.
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { mkdtempSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   CUT_SENTENCE,
-  JsonFileStore,
   VIEW_BUDGET,
   buildDisclosureSet,
   composePersonNotice,
@@ -37,6 +35,7 @@ import {
   slackView,
 } from '../agent/gate/slack-gate-notifier.js';
 import { SLACK_CALL_DEADLINE_MS } from '../agent/gate/slack-call.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..', '..', '..');
@@ -87,6 +86,9 @@ const base = (g: PendingGate) => ({
 const setOf = (declared: Record<string, string>): DisclosureSet =>
   buildDisclosureSet({ env: {}, declared, declaredState: 'resolved', audience: 'private' }).set;
 
+/** Every handle `opened` made, cleaned after each cell. */
+const homes: TempHome[] = [];
+
 /** A gate opened by the engine with `message` over the run's `x`, through the host's set. */
 async function opened(
   message: string,
@@ -110,7 +112,9 @@ async function opened(
       },
     },
   } as unknown as WorkflowDefinition;
-  const store = new JsonFileStore(mkdtempSync(join(tmpdir(), 'realm-docs-729-')));
+  const h = await makeTempHome();
+  homes.push(h);
+  const store = h.home.runStore;
   const { record: run } = await store.create({
     workflowId: 'docs729',
     workflowVersion: 1,
@@ -126,10 +130,11 @@ async function opened(
   return (await store.get(run.id)).record.pending_gate!;
 }
 
-afterEach(() => {
+afterEach(async () => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  for (const t of homes.splice(0)) await t.cleanup();
 });
 
 describe(`${SLACK} — the post, the thread, the transport`, () => {

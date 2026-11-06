@@ -17,8 +17,6 @@ import { dump as dumpYaml } from 'js-yaml';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   ExtensionRegistry,
-  JsonFileStore,
-  JsonWorkflowStore,
   createDefaultRegistry,
   buildDisclosureSet,
   compileDisclosure,
@@ -37,7 +35,7 @@ import {
   loadProjectExtensions,
 } from '../../extensions/load-project-extensions.js';
 import { startAnthropicStub } from '../test-support/anthropic-stub.js';
-import { makeJourneyHome } from '../test-support/composed-journey.js';
+import { makeTempHome } from '../../test-support/temp-home.js';
 import { resolveMcpServerEntry } from '../test-support/mcp-server-entry.js';
 import { leakedForms } from '../test-support/redaction-oracle.js';
 
@@ -272,7 +270,7 @@ describe(`${TOOLS_PAGE} — what realm agent replaces (GHSA-gxfq)`, () => {
       "The token is not in the manifest block of the run's record (a value passed as a run's param is kept: see [Give an agent step tools](agent-tools.md#4-read-what-was-recorded)).",
     );
     const SECRET = 'docs-param-fake-secret-31';
-    const home = makeJourneyHome('realm-docs-params-');
+    const h = await makeTempHome();
     const originalKey = process.env['ANTHROPIC_API_KEY'];
     const originalBaseUrl = process.env['ANTHROPIC_BASE_URL'];
     // The model looks up a workflow named by the secret; the tool's polite failure quotes it.
@@ -295,7 +293,7 @@ describe(`${TOOLS_PAGE} — what realm agent replaces (GHSA-gxfq)`, () => {
             transport: 'stdio',
             command: process.execPath,
             args: [resolveMcpServerEntry()],
-            env: { HOME: home },
+            env: { HOME: h.root },
           },
         ],
         steps: {
@@ -313,9 +311,9 @@ describe(`${TOOLS_PAGE} — what realm agent replaces (GHSA-gxfq)`, () => {
           },
         },
       } as unknown as WorkflowDefinition;
-      const runsDir = join(home, '.realm', 'runs');
-      const store = new JsonFileStore(runsDir);
-      const workflowStore = new JsonWorkflowStore(join(home, '.realm', 'workflows'));
+      const runsDir = h.home.runStore.runsDirPath;
+      const store = h.home.runStore;
+      const workflowStore = h.home.workflowStore;
       await workflowStore.register(definition);
       const result = await runAgent(
         {
@@ -337,17 +335,17 @@ describe(`${TOOLS_PAGE} — what realm agent replaces (GHSA-gxfq)`, () => {
         .map((b) => JSON.stringify((b as { content?: unknown }).content ?? ''))
         .join(' ');
       const runFile = JSON.parse(readFileSync(join(runsDir, `${runId}.json`), 'utf8')) as RunRecord;
-      const out = join(home, 'bundle.json');
+      const out = join(h.root, 'bundle.json');
       // #729 PR-3: export masks with what it knows; the value is in its environment here, and the
       // run has no project (so its declared secrets are unknown, which the flag accepts).
       const exported = spawnSync(
         process.execPath,
         [CLI, 'run', 'export', runId, '--out', out, '--accept-partial-disclosure'],
         {
-          cwd: home,
+          cwd: h.root,
           env: {
             PATH: process.env['PATH'] ?? '',
-            HOME: home,
+            HOME: h.root,
             NO_COLOR: '1',
             DOCS_PARAM_ENV: SECRET,
             REALM_NOT_SECRET: 'HOME',
@@ -391,7 +389,7 @@ describe(`${TOOLS_PAGE} — what realm agent replaces (GHSA-gxfq)`, () => {
       else process.env['ANTHROPIC_API_KEY'] = originalKey;
       if (originalBaseUrl === undefined) delete process.env['ANTHROPIC_BASE_URL'];
       else process.env['ANTHROPIC_BASE_URL'] = originalBaseUrl;
-      rmSync(home, { recursive: true, force: true });
+      await h.cleanup();
     }
   }, 30_000);
 
@@ -750,11 +748,12 @@ describe(`${TOOLS_PAGE} — what realm agent replaces (GHSA-gxfq)`, () => {
       TOOLS_PAGE,
       'This does not catch everything, so do not rely on it to keep a secret out of a record. It leaves alone:',
     );
-    // Kept bullets, quoted too: the npm variables (pinned in agent-utils.test.ts's #407 cells) and
-    // what the model writes.
+    // Kept bullets, quoted too: the npm variables (pinned in agent-utils.test.ts's #407 cells), the
+    // shell's path variables (pinned in docs-disclosure-729.test.ts's D-14/D-6 cell) and what the
+    // model writes.
     claim(
       TOOLS_PAGE,
-      '- the values of three variables that npm sets: `npm_package_name`, `npm_package_version` and `npm_lifecycle_event`;',
+      '- the values of three variables that npm sets (`npm_package_name`, `npm_package_version` and `npm_lifecycle_event`) and of three the shell sets to paths (`PWD`, `OLDPWD` and `_`);',
     );
     claim(
       TOOLS_PAGE,

@@ -24,12 +24,11 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
-  JsonFileStore,
-  JsonWorkflowStore,
   type RunRecord,
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { startAnthropicStub } from '../agent/test-support/anthropic-stub.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 const CLOSED_PORT = 'http://127.0.0.1:9';
@@ -98,12 +97,13 @@ const BLOCKED_WF = [
 ].join('\n');
 
 let root: string;
+let h: TempHome & { readonly root: string };
 let home: string;
 
-beforeEach(() => {
+beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'realm-600-cli-'));
-  home = join(root, 'home');
-  mkdirSync(home);
+  h = await makeTempHome();
+  home = h.root;
   for (const [dir, text] of [
     ['wf', AGENT_WF],
     ['auto', NO_AGENT_WF],
@@ -115,7 +115,8 @@ beforeEach(() => {
   }
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await h.cleanup();
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -380,8 +381,8 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
       schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
       steps: { publish: { description: 'Publish.', execution: 'auto', handler: 'publish_answer' } },
     } as unknown as WorkflowDefinition;
-    await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(definition);
-    const store = new JsonFileStore(runsDir());
+    await h.home.workflowStore.register(definition);
+    const store = h.home.runStore;
     const live = (await store.create({ workflowId: definition.id, workflowVersion: 1, params: {} }))
       .record;
     const failed = (
@@ -439,8 +440,8 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
         },
       },
     } as unknown as WorkflowDefinition;
-    await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(definition);
-    const store = new JsonFileStore(runsDir());
+    await h.home.workflowStore.register(definition);
+    const store = h.home.runStore;
     const run = (await store.create({ workflowId: definition.id, workflowVersion: 1, params: {} }))
       .record;
     const file = join(runsDir(), `${run.id}.json`);

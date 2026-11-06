@@ -25,6 +25,7 @@ import { join } from 'node:path';
 import type { RunRecord, PendingView, WorkflowDefinition } from '@sensigo/realm';
 import { describePending, owedList } from '@sensigo/realm';
 import { runCommands, topLevelCommands } from '../commands-registry.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const mocks = vi.hoisted(() => ({ question: vi.fn(), close: vi.fn() }));
 vi.mock('node:readline/promises', () => ({
@@ -353,6 +354,7 @@ describe('renderDetachMap, round 27 — C202: the ways on that fit the run (unit
 });
 
 describe('the cancel path (issue #447)', () => {
+  let h: TempHome & { readonly root: string };
   let home: string;
   let dir: string;
   let savedHome: string | undefined;
@@ -361,8 +363,9 @@ describe('the cancel path (issue #447)', () => {
   let errSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
-  beforeEach(() => {
-    home = mkdtempSync(join(tmpdir(), 'realm-detach-home-'));
+  beforeEach(async () => {
+    h = await makeTempHome();
+    home = h.root;
     dir = mkdtempSync(join(tmpdir(), 'realm-detach-wf-'));
     mkdirSync(join(home, '.realm'), { recursive: true });
     savedHome = process.env['HOME'];
@@ -393,12 +396,12 @@ steps:
     }) as never);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (savedTTY === undefined) delete (process.stdin as { isTTY?: boolean }).isTTY;
     else process.stdin.isTTY = savedTTY;
     if (savedHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = savedHome;
-    rmSync(home, { recursive: true, force: true });
+    await h.cleanup();
     rmSync(dir, { recursive: true, force: true });
     mocks.question.mockReset();
     vi.restoreAllMocks();
@@ -415,8 +418,7 @@ steps:
     // the two coincident, the fallback chain's operands produce identical text and a mutant that
     // never assigns promptStep is invisible.
     mocks.question.mockImplementation(async () => {
-      const { JsonFileStore } = await import('@sensigo/realm');
-      const store = new JsonFileStore();
+      const store = h.home.runStore;
       const files = readdirSync(runsDir()).filter((f) => f.endsWith('.json'));
       const id = files[0]!.replace('.json', '');
       const { record: rec } = await store.get(id);
@@ -538,11 +540,10 @@ steps:
   describe('exit codes that tell the truth (issue #468)', () => {
     const errLines = (): string[] => errSpy.mock.calls.map((c: unknown[]) => shown(c[0]));
     const logged = (): string => logSpy.mock.calls.map((c: unknown[]) => shown(c[0])).join('\n');
-    /** The persisted record, read the way c POSITIVE's mock reads it (the #285 idiom: the store
-     *  is constructed AFTER the scratch HOME is live). */
+    /** The persisted record, read the way c POSITIVE's mock reads it (through the handle on the
+     *  scratch HOME, #616 PR-2b). */
     const readRecord = async (): Promise<RunRecord> => {
-      const { JsonFileStore } = await import('@sensigo/realm');
-      const store = new JsonFileStore();
+      const store = h.home.runStore;
       const files = readdirSync(runsDir()).filter((f) => f.endsWith('.json'));
       return (await store.get(files[0]!.replace('.json', ''))).record;
     };
@@ -817,8 +818,7 @@ steps:
       mocks.question
         .mockImplementationOnce(async () => '{}')
         .mockImplementationOnce(async () => {
-          const { JsonFileStore } = await import('@sensigo/realm');
-          const store = new JsonFileStore();
+          const store = h.home.runStore;
           const files = readdirSync(runsDir()).filter((f) => f.endsWith('.json'));
           const id = files[0]!.replace('.json', '');
           const { record: fresh } = await store.get(id);
@@ -859,11 +859,10 @@ steps:
     const logged = (): string => logSpy.mock.calls.map((c: unknown[]) => shown(c[0])).join('\n');
     const reprompts = (): string[] =>
       errLines().filter((l) => l.includes('Not valid JSON:') || l.includes('Not a JSON object'));
-    /** The persisted record, read the way c POSITIVE's mock reads it (the #285 idiom: the store is
-     *  constructed AFTER the scratch HOME is live). */
+    /** The persisted record, read the way c POSITIVE's mock reads it (through the handle on the
+     *  scratch HOME, #616 PR-2b). */
     const readRecord = async (): Promise<RunRecord> => {
-      const { JsonFileStore } = await import('@sensigo/realm');
-      const store = new JsonFileStore();
+      const store = h.home.runStore;
       const files = readdirSync(runsDir()).filter((f) => f.endsWith('.json'));
       return (await store.get(files[0]!.replace('.json', ''))).record;
     };

@@ -19,10 +19,10 @@
 // directories, and the stub closed in a `finally`. The child's lifecycle belongs to runAgent's own
 // `finally`, which disconnects the client; the test deliberately holds no handle to it.
 import { describe, it, expect } from 'vitest';
-import { rmSync } from 'node:fs';
 import { OpenAIProvider } from './providers/openai-provider.js';
 import { startOpenAiStub } from './test-support/openai-stub.js';
-import { makeJourneyHome, runComposedJourney } from './test-support/composed-journey.js';
+import { runComposedJourney } from './test-support/composed-journey.js';
+import { makeTempHome } from '../test-support/temp-home.js';
 import { resolveMcpServerEntry } from './test-support/mcp-server-entry.js';
 
 // Distinctive on purpose. `sanitizeError` redacts every environment value longer than four
@@ -37,7 +37,7 @@ resolveMcpServerEntry();
 
 describe('composed journey — a politely-failed tool call, all the way to the operator', () => {
   it('runs the real provider against a real MCP child and records, persists and renders the failure', async () => {
-    const tempHome = makeJourneyHome('composed-journey-');
+    const h = await makeTempHome();
     const originalKey = process.env['OPENAI_API_KEY'];
     process.env['OPENAI_API_KEY'] = STUB_API_KEY;
 
@@ -52,7 +52,7 @@ describe('composed journey — a politely-failed tool call, all the way to the o
     });
 
     try {
-      const journey = await runComposedJourney(tempHome, {
+      const journey = await runComposedJourney(h, {
         provider: new OpenAIProvider('gpt-4o', stub.baseUrl),
         probeWorkflowId: PROBE_WORKFLOW_ID,
         finalSummary: 'the tool reported a failure',
@@ -106,7 +106,7 @@ describe('composed journey — a politely-failed tool call, all the way to the o
       await stub.close();
       if (originalKey === undefined) delete process.env['OPENAI_API_KEY'];
       else process.env['OPENAI_API_KEY'] = originalKey;
-      rmSync(tempHome, { recursive: true, force: true });
+      await h.cleanup();
     }
   }, 25_000); // The global 5s default would kill the MCP spawn; heavy cells self-protect exactly this way — a surgical per-it() budget at birth (issue #371's class rule), never a moved global.
 
@@ -116,7 +116,7 @@ describe('composed journey — a politely-failed tool call, all the way to the o
   // no 25s budget — the real HTTP stub over loopback is the only I/O.
   // =================================================================================================
   it('a single-shot step (no tools) reports what its ONE wire request cost, with the right basis', async () => {
-    const tempHome = makeJourneyHome('composed-journey-usage-');
+    const h = await makeTempHome();
     const originalKey = process.env['OPENAI_API_KEY'];
     process.env['OPENAI_API_KEY'] = 'sk-test-composed-journey-usage-0000';
 
@@ -130,7 +130,7 @@ describe('composed journey — a politely-failed tool call, all the way to the o
     });
 
     try {
-      const journey = await runComposedJourney(tempHome, {
+      const journey = await runComposedJourney(h, {
         provider: new OpenAIProvider('gpt-4o', stub.baseUrl),
         probeWorkflowId: PROBE_WORKFLOW_ID,
         finalSummary: 'single-shot answer',
@@ -167,7 +167,7 @@ describe('composed journey — a politely-failed tool call, all the way to the o
       await stub.close();
       if (originalKey === undefined) delete process.env['OPENAI_API_KEY'];
       else process.env['OPENAI_API_KEY'] = originalKey;
-      rmSync(tempHome, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 });

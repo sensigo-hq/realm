@@ -4,14 +4,10 @@
 // store clock, so a composer that judged at the host's clock (years later) would say otherwise.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { describe, expect, it } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, expect, it, afterEach } from 'vitest';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   ExtensionRegistry,
-  JsonWorkflowStore,
   advanceRun,
   describePending,
   writtenSnapshot,
@@ -25,6 +21,7 @@ import { inspectRun } from './inspect.js';
 import { respondToGate } from './respond.js';
 import { resumeRun } from './resume.js';
 import { renderDetachMap } from './run.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const T = Date.parse('2020-01-01T00:00:00.000Z');
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -47,11 +44,18 @@ const ASK: WorkflowDefinition = {
   },
 };
 
+/** Every handle a cell opened, cleaned after it. */
+const homes: TempHome[] = [];
+afterEach(async () => {
+  for (const t of homes.splice(0)) await t.cleanup();
+});
+
 async function atQuestion() {
   const clock = settableClock(new Date(T));
   const store = new InMemoryStore({ clock });
-  const dir = await mkdtemp(join(tmpdir(), 'realm-715b-composers-'));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+  const h = await makeTempHome();
+  homes.push(h);
+  const workflowStore = h.home.workflowStore;
   await workflowStore.register(ASK);
   const { record } = await store.create({ workflowId: ASK.id, workflowVersion: 1, params: {} });
   await advanceRun(store, ASK, { runId: record.id });
@@ -137,8 +141,9 @@ describe('#715 (b) §B.2 — the CLI composers judge at the record’s reading',
     //     and resumed); (b) prints the refusal (or none).
     const clock = settableClock(new Date(T));
     const store = new InMemoryStore({ clock });
-    const dir = await mkdtemp(join(tmpdir(), 'realm-715b-resume-'));
-    const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    const h = await makeTempHome();
+    homes.push(h);
+    const workflowStore = h.home.workflowStore;
     const def: WorkflowDefinition = {
       id: 'resume-715b',
       name: 'resume-715b',
@@ -168,8 +173,9 @@ describe('#715 (b) §B.2 — the CLI composers judge at the record’s reading',
     // (a) red when resume (or its caller) reads the run again after its write; (b) prints the reads.
     const clock = settableClock(new Date(T));
     const store = new InMemoryStore({ clock });
-    const dir = await mkdtemp(join(tmpdir(), 'realm-715b-resume2-'));
-    const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    const h = await makeTempHome();
+    homes.push(h);
+    const workflowStore = h.home.workflowStore;
     const def: WorkflowDefinition = {
       id: 'resume2-715b',
       name: 'resume2-715b',

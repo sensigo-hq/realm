@@ -10,7 +10,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { validateCommand } from './validate.js';
 import { registerCommand } from './register.js';
-import { JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 // The crown fixture: examples/01-code-reviewer/workflow.yaml with an `x-category-enum` anchor
 // host prepended, consumed TWICE (params_schema + the review_changes step's input_schema) — the
@@ -84,6 +85,7 @@ steps:
 
 describe('the `x-` extension namespace — CLI disclosure (issue #559)', () => {
   let dir: string;
+  let h: TempHome & { readonly root: string };
   let home: string;
   let originalHome: string | undefined;
   let logSpy: ReturnType<typeof vi.spyOn>;
@@ -91,9 +93,10 @@ describe('the `x-` extension namespace — CLI disclosure (issue #559)', () => {
   let errSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), 'realm-559-'));
-    home = mkdtempSync(join(tmpdir(), 'realm-559-home-'));
+    h = await makeTempHome();
+    home = h.root;
     mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
@@ -105,11 +108,11 @@ describe('the `x-` extension namespace — CLI disclosure (issue #559)', () => {
     }) as never);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (originalHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = originalHome;
     rmSync(dir, { recursive: true, force: true });
-    rmSync(home, { recursive: true, force: true });
+    await h.cleanup();
     vi.restoreAllMocks();
   });
 
@@ -191,7 +194,7 @@ describe('the `x-` extension namespace — CLI disclosure (issue #559)', () => {
     expect(logs()).toContain(
       'Registered: code-reviewer v1 (3 steps) — 1 extension key carried, never read by realm: x-category-enum',
     );
-    const got = (await new JsonWorkflowStore().get('code-reviewer')) as unknown as Record<
+    const got = (await h.home.workflowStore.get('code-reviewer')) as unknown as Record<
       string,
       unknown
     >;

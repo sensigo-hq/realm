@@ -16,12 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import {
-  JsonFileStore,
-  loadWorkflowFromFile,
-  validateInputSchema,
-  type WorkflowDefinition,
-} from '@sensigo/realm';
+import { loadWorkflowFromFile, validateInputSchema, type WorkflowDefinition } from '@sensigo/realm';
 import {
   loadFixtureFromFile,
   startGitHubMockServer,
@@ -30,6 +25,7 @@ import {
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { printChildrenWhenATestFails } from '../test-support/child-output.js';
+import { makeTempHome } from '../test-support/temp-home.js';
 
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const CLI = process.env['FOLLOWER_CLI_ENTRY'] ?? join(ROOT, 'packages/cli/dist/index.js');
@@ -156,7 +152,8 @@ describe('#625 PR-2a — L4 Follower on examples 01–09 (realm mcp --project, r
 
   for (const c of CASES) {
     it(`${c.dir}: the follower finishes, calling only what next_actions names`, async () => {
-      const home = mkdtempSync(join(tmpdir(), 'realm-follower-ex-home-'));
+      const h = await makeTempHome();
+      const home = h.root;
       const proj = mkdtempSync(join(tmpdir(), 'realm-follower-ex-proj-'));
       try {
         cpSync(join(EXAMPLES, c.dir), proj, { recursive: true });
@@ -207,14 +204,14 @@ describe('#625 PR-2a — L4 Follower on examples 01–09 (realm mcp --project, r
             reply = await call(tool, args);
           }
           expect(reply.next_actions ?? [], JSON.stringify(reply)).toEqual([]);
-          const { record: run } = await new JsonFileStore(join(home, '.realm', 'runs')).get(runId);
+          const { record: run } = await h.home.runStore.get(runId);
           expect(run.run_phase, `${c.dir} calls=${calls.join(',')}`).toBe('completed');
           expect(calls.includes('advance_run'), calls.join(',')).toBe(c.advances === true);
         } finally {
           await client.close();
         }
       } finally {
-        rmSync(home, { recursive: true, force: true });
+        await h.cleanup();
         rmSync(proj, { recursive: true, force: true });
       }
     }, 60000);

@@ -24,8 +24,6 @@ vi.mock('node:readline/promises', () => ({
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   ExtensionRegistry,
-  JsonFileStore,
-  JsonWorkflowStore,
   createDefaultRegistry,
   submitHumanResponse,
   type PendingGate,
@@ -44,6 +42,7 @@ import {
   writerTally,
   writerTestSeams,
 } from '../output/writer.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 const FAKE = 'FAKE-DECLARED-PR4-0729';
@@ -99,13 +98,15 @@ function registryEmitting(output: Record<string, unknown>): ExtensionRegistry {
   return registry;
 }
 
+let h: TempHome & { readonly root: string };
 let home: string;
 let savedHome: string | undefined;
 let savedTTY: boolean | undefined;
 let logSpy: ReturnType<typeof vi.spyOn>;
-beforeEach(() => {
+beforeEach(async () => {
   clearProjectExtensionsCache();
-  home = mkdtempSync(join(tmpdir(), 'realm-asked-729-home-'));
+  h = await makeTempHome();
+  home = h.root;
   mkdirSync(join(home, '.realm'), { recursive: true });
   savedHome = process.env['HOME'];
   process.env['HOME'] = home;
@@ -120,13 +121,13 @@ beforeEach(() => {
   installWriter('default');
   addDeclaredValues({ SECRET_X: FAKE });
 });
-afterEach(() => {
+afterEach(async () => {
   writerTestSeams.reset();
   if (savedTTY === undefined) delete (process.stdin as { isTTY?: boolean }).isTTY;
   else process.stdin.isTTY = savedTTY;
   if (savedHome === undefined) delete process.env['HOME'];
   else process.env['HOME'] = savedHome;
-  rmSync(home, { recursive: true, force: true });
+  await h.cleanup();
   mocks.question.mockReset();
   vi.restoreAllMocks();
 });
@@ -162,7 +163,7 @@ async function workflowRun(
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
-  const runs = new JsonFileStore(join(home, '.realm', 'runs'));
+  const runs = h.home.runStore;
   const id = readdirSync(join(home, '.realm', 'runs'))
     .filter((f) => f.endsWith('.json'))[0]!
     .replace('.json', '');
@@ -175,7 +176,7 @@ async function agentDrive(
   output: Record<string, unknown>,
   opts: { existingRunId?: string; store?: RunStore; params?: Record<string, unknown> } = {},
 ) {
-  const store = opts.store ?? new JsonFileStore(join(home, '.realm', 'runs'));
+  const store = opts.store ?? h.home.runStore;
   const seen: { gate?: PendingGate; tallyAtGate?: ReturnType<typeof writerTally> } = {};
   const tallyBefore = writerTally();
   await runAgent(
@@ -227,8 +228,8 @@ describe('#729 PR-4 — the set reaches the mint through the CLI doors (B2)', ()
 
   it('`realm run advance`: the stored question is masked', async () => {
     const def = definition({ handler: undefined });
-    await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(def);
-    const runs = new JsonFileStore(join(home, '.realm', 'runs'));
+    await h.home.workflowStore.register(def);
+    const runs = h.home.runStore;
     const { record: run } = await runs.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -251,7 +252,7 @@ describe('#729 PR-4 — the set reaches the mint through the CLI doors (B2)', ()
 
   it('`realm agent --run-id`: the stored question is masked', async () => {
     const def = definition();
-    const store = new JsonFileStore(join(home, '.realm', 'runs'));
+    const store = h.home.runStore;
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,

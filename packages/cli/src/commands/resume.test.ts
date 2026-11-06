@@ -1,8 +1,5 @@
 // Tests for the resumeRun function — CLI resume command logic.
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { resumeRun } from './resume.js';
 import {
   JsonFileStore,
@@ -12,6 +9,7 @@ import {
   findEligibleSteps,
 } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 /** Two-step workflow (step-a → step-b) — used to prove skipped_steps re-derivation on resume. */
 const redriveWorkflow: WorkflowDefinition = {
@@ -39,17 +37,18 @@ const testWorkflow: WorkflowDefinition = {
 };
 
 describe('resumeRun', () => {
-  let runDir: string;
-  let workflowDir: string;
+  let h: TempHome;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
 
   beforeEach(async () => {
-    runDir = await mkdtemp(join(tmpdir(), 'realm-resume-run-'));
-    workflowDir = await mkdtemp(join(tmpdir(), 'realm-resume-wf-'));
-    runStore = new JsonFileStore(runDir);
-    workflowStore = new JsonWorkflowStore(workflowDir);
+    h = await makeTempHome();
+    runStore = h.home.runStore;
+    workflowStore = h.home.workflowStore;
     await workflowStore.register(testWorkflow);
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   it('removes the step from failed_steps, re-enabling it for execution', async () => {

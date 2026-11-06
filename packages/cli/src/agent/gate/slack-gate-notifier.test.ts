@@ -17,7 +17,7 @@ import {
   createSlackGateHandler,
 } from './slack-gate-notifier.js';
 import { createServer } from 'node:http';
-import { rm, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import type { BidirectionalGateParams } from './slack-gate-notifier.js';
 import type {
   EvidenceSnapshot,
@@ -27,7 +27,6 @@ import type {
   StepHandler,
 } from '@sensigo/realm';
 import {
-  JsonFileStore,
   ExtensionRegistry,
   executeStep,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
@@ -48,13 +47,11 @@ import {
 function heldAt(gate: PendingGate): Snapshot {
   return writtenSnapshot({ pending_gate: gate } as unknown as RunRecord, new Date());
 }
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 import { renderOutcome } from '@sensigo/realm-mcp';
 import { renderAnswerLine } from '../../lib/holder-render.js';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { LlmProvider } from '../providers/llm-provider.js';
 import { startSlackGateServer } from './slack-gate-server.js';
@@ -63,6 +60,7 @@ import { connectSocketMode } from './slack-socket-client.js';
 import { slackResponse } from '../test-support/slack-response.js';
 import { snap, doubleClock, noSettle } from '../../test-support/snapshot-double.js';
 import { zOf } from '../../test-support/instant.js';
+import { makeTempHome, type TempHome } from '../../test-support/temp-home.js';
 
 // Module-level mocks are hoisted by vitest — slack-gate-notifier.ts will receive these stubs for
 // its internal imports of slack-gate-server and slack-socket-client.
@@ -1103,14 +1101,16 @@ function gateFinalizerDef(): WorkflowDefinition {
 }
 
 describe('handleBidirectionalGate — threads the registry so gate-completed runs fire finalizers', () => {
-  afterEach(() => {
+  let h: TempHome | undefined;
+  afterEach(async () => {
     vi.clearAllMocks();
     vi.unstubAllGlobals();
+    await h?.cleanup();
   });
 
   it('runs the complete finalizer (project handler) via the threaded registry when a Slack reply completes the run', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-slack-fin-'));
-    const store = new JsonFileStore(dir);
+    h = await makeTempHome();
+    const store = h.home.runStore;
     const def = gateFinalizerDef();
     const { record: run } = await store.create({
       workflowId: def.id,
@@ -1170,7 +1170,9 @@ describe('handleBidirectionalGate — threads the registry so gate-completed run
 
 describe('issue #719 — the one-way notifier waits on a run file that cannot be read', () => {
   it('rejects with the file’s message (what realm agent prints), never its text', async () => {
-    const runsDir = await mkdtemp(join(tmpdir(), 'realm-719-notifier-'));
+    const h = await makeTempHome();
+    const runsDir = h.home.runStore.runsDirPath;
+    mkdirSync(runsDir, { recursive: true });
     const server = createServer((_req, res) => {
       res.writeHead(200);
       res.end('ok');
@@ -1181,7 +1183,7 @@ describe('issue #719 — the one-way notifier waits on a run file that cannot be
     try {
       await writeFile(join(runsDir, 'bad.json'), '{"params":{"token": ghp_FAKE719}}');
       const handler = createSlackGateHandler({
-        store: new JsonFileStore(runsDir),
+        store: h.home.runStore,
         definition: {
           id: 'w',
           name: 'w',
@@ -1211,7 +1213,7 @@ describe('issue #719 — the one-way notifier waits on a run file that cannot be
     } finally {
       logs.mockRestore();
       server.close();
-      await rm(runsDir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 });
@@ -1222,7 +1224,9 @@ describe('issue #719 C5 — the two-way notifier’s thread post on a run file t
   });
 
   it('the leak cell (the Slack thread): a fault AT a token never reaches a posted text', async () => {
-    const runsDir = await mkdtemp(join(tmpdir(), 'realm-719-twoway-'));
+    const h = await makeTempHome();
+    const runsDir = h.home.runStore.runsDirPath;
+    mkdirSync(runsDir, { recursive: true });
     const warns = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       await writeFile(join(runsDir, 'run1.json'), '{"params":{"token": ghp_FAKE719}}');
@@ -1233,9 +1237,7 @@ describe('issue #719 C5 — the two-way notifier’s thread post on a run file t
         capturedOnEvent = opts.onEvent;
         return { close: vi.fn() };
       });
-      const promise = handleBidirectionalGate(
-        makeGateParams({ store: new JsonFileStore(runsDir) }),
-      );
+      const promise = handleBidirectionalGate(makeGateParams({ store: h.home.runStore }));
       capturedOnEvent?.({
         event_id: 'E719',
         thread_ts: '1234567890.000',
@@ -1266,7 +1268,7 @@ describe('issue #719 C5 — the two-way notifier’s thread post on a run file t
       });
     } finally {
       warns.mockRestore();
-      await rm(runsDir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 });
@@ -1373,14 +1375,16 @@ const storeReading = (record: RunRecord): RunStore =>
   } as unknown as RunStore);
 
 describe('#729 PR-4 — the asked person in Slack: the opening post', () => {
+  const homes: TempHome[] = [];
   beforeEach(() => {
     vi.stubEnv('REALM_NOT_SECRET', '');
     vi.stubEnv(PR4_ENV_NAME, PR4_ENV_VALUE);
   });
-  afterEach(() => {
+  afterEach(async () => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    for (const t of homes.splice(0)) await t.cleanup();
   });
 
   it('question_opened, bot and webhook: the header, the view at broadcast (the output’s declared fake as its shape), the person’s route — no operator command, no span mark', async () => {
@@ -1600,7 +1604,9 @@ describe('#729 PR-4 — the asked person in Slack: the opening post', () => {
       },
     } as unknown as WorkflowDefinition;
     const minted = async (x: string) => {
-      const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-h4-')));
+      const h = await makeTempHome();
+      homes.push(h);
+      const store = h.home.runStore;
       const { record: run } = await store.create({
         workflowId: 'h4',
         workflowVersion: 1,

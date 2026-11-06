@@ -27,6 +27,7 @@ import { respondCommand } from './respond.js';
 import { inspectRun } from './inspect.js';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
 import { lagless } from '../test-support/lag.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 /** `confirm` (a question, `on_expiry` as given, default `approve`), then `after`, a bare `auto` step. */
 const gateThenAuto = (id: string, onExpiry: 'settle_default' | 'abort'): WorkflowDefinition => ({
@@ -52,6 +53,7 @@ const gateThenAuto = (id: string, onExpiry: 'settle_default' | 'abort'): Workflo
 });
 
 describe('#625 PR-2a, C146/C147 — a late `realm run respond` says which call carried out the expiry; inspect says no answer came in time', () => {
+  let h: TempHome & { readonly root: string };
   let home: string;
   let project: string;
   let savedHome: string | undefined;
@@ -61,15 +63,16 @@ describe('#625 PR-2a, C146/C147 — a late `realm run respond` says which call c
   let errSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     clearProjectExtensionsCache();
-    home = mkdtempSync(join(tmpdir(), 'realm-625-c146-home-'));
+    h = await makeTempHome();
+    home = h.root;
     project = mkdtempSync(join(tmpdir(), 'realm-625-c146-project-'));
     mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
     savedHome = process.env['HOME'];
     process.env['HOME'] = home;
-    runStore = new JsonFileStore();
-    workflowStore = new JsonWorkflowStore();
+    runStore = h.home.runStore;
+    workflowStore = h.home.workflowStore;
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -78,11 +81,11 @@ describe('#625 PR-2a, C146/C147 — a late `realm run respond` says which call c
     }) as never);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (savedHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = savedHome;
     vi.restoreAllMocks();
-    rmSync(home, { recursive: true, force: true });
+    await h.cleanup();
     rmSync(project, { recursive: true, force: true });
   });
 

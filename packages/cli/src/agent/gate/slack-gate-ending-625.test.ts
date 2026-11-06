@@ -15,9 +15,6 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
   JsonFileStore,
   executeStep,
@@ -30,6 +27,7 @@ import { startSlackGateServer } from './slack-gate-server.js';
 import type { SlackGateEvent } from './slack-gate-server.js';
 import { LlmProvider } from '../providers/llm-provider.js';
 import { slackResponse } from '../test-support/slack-response.js';
+import { makeTempHome, type TempHome } from '../../test-support/temp-home.js';
 
 vi.mock('./slack-gate-server.js', () => ({
   startSlackGateServer: vi.fn().mockReturnValue({ close: vi.fn() }),
@@ -72,24 +70,24 @@ function gateThenGuard(id: string, more?: Record<string, StepDefinition>): Workf
 }
 
 describe('issue #625 — the Slack notifier after an answer whose write settled a guard', () => {
-  let dir: string;
+  let h: TempHome;
   let store: JsonFileStore;
   let fetchSpy: ReturnType<typeof vi.fn>;
 
-  beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'realm-625-slack-'));
-    store = new JsonFileStore(dir);
+  beforeEach(async () => {
+    h = await makeTempHome();
+    store = h.home.runStore;
     fetchSpy = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } }));
     vi.stubGlobal('fetch', fetchSpy);
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.clearAllMocks();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
-    rmSync(dir, { recursive: true, force: true });
+    await h.cleanup();
   });
 
   /** Opens the gate through the engine and returns the frozen gate the notifier is handed. */

@@ -10,7 +10,7 @@
 // and `realm serve` (HTTP), the Slack bodies, and `realm agent`'s provider requests and its output
 // in log mode. Every value is fake. A failure prints the door and the leaked canaries' LABELS
 // (tier/field), never a canary.
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
 import {
   mkdirSync,
@@ -28,9 +28,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
-  JsonFileStore,
   ExtensionRegistry,
-  JsonWorkflowStore,
   executeChain,
   executeStep,
   type WorkflowDefinition,
@@ -41,6 +39,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { startAnthropicStub } from './agent/test-support/anthropic-stub.js';
 import { postGateViaApi } from './agent/gate/slack-gate-notifier.js';
 import { addDeclaredDisclosure, installWriter, writerTestSeams } from './output/writer.js';
+import { makeTempHome, type TempHome } from './test-support/temp-home.js';
 
 const CLI_ENTRY = fileURLToPath(new URL('../dist/index.js', import.meta.url));
 const FIELDS = ['PARAMS', 'OUTPUT', 'ERROR', 'PREVIEW', 'PROMPT', 'WEBHOOK'] as const;
@@ -72,6 +71,12 @@ const planted = (f: Field): Record<string, unknown> => ({
 });
 
 let root: string;
+let h: TempHome & { readonly root: string };
+/** The handles a cell opened (the CI cell's HOME), cleaned after it. */
+const cellHomes: TempHome[] = [];
+afterEach(async () => {
+  for (const t of cellHomes.splice(0)) await t.cleanup();
+});
 let home: string;
 let project: string;
 let childEnv: Record<string, string>;
@@ -82,7 +87,8 @@ let definition: WorkflowDefinition;
 
 beforeAll(async () => {
   root = mkdtempSync(join(tmpdir(), 'realm-canary-729-'));
-  home = join(root, 'home');
+  h = await makeTempHome();
+  home = h.root;
   project = join(root, 'project');
   mkdirSync(join(home, '.realm'), { recursive: true });
   mkdirSync(project);
@@ -140,7 +146,7 @@ beforeAll(async () => {
       },
     },
   } as WorkflowDefinition;
-  const workflows = new JsonWorkflowStore(join(home, '.realm', 'workflows'));
+  const workflows = h.home.workflowStore;
   await workflows.register(definition);
   // The agent's run: the same prompt step, and no question after it, so the drive ends by itself.
   await workflows.register({
@@ -148,7 +154,7 @@ beforeAll(async () => {
     id: 'canary-agent',
     steps: { a: definition.steps['a']! },
   } as WorkflowDefinition);
-  const store = new JsonFileStore(join(home, '.realm', 'runs'));
+  const store = h.home.runStore;
   const params = {
     ...planted('PARAMS'),
     q_env: Q_ENV,
@@ -188,7 +194,8 @@ beforeAll(async () => {
     .id;
 }, 60_000);
 
-afterAll(() => {
+afterAll(async () => {
+  await h.cleanup();
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -371,7 +378,7 @@ describe('#729 PR-3 — no canary leaves any door', () => {
         ]),
         undefined,
       );
-      const { record: run } = await new JsonFileStore(join(home, '.realm', 'runs')).get(gateRun);
+      const { record: run } = await h.home.runStore.get(gateRun);
       await postGateViaApi('xoxb-fake', 'C1', run.pending_gate!, gateRun, true);
       // (a) red when the post composes from the raw gate; (b) prints the labels.
       expect({
@@ -436,7 +443,9 @@ describe('#729 PR-3 — no canary leaves any door', () => {
   }, 60_000);
 
   it('SC-F22: under a CI-like environment, a piped inspect and the export show what each audience may', async () => {
-    const ciHome = join(root, 'cihome-0729');
+    const ciH = await makeTempHome();
+    cellHomes.push(ciH);
+    const ciHome = ciH.root;
     const work = join(root, 'work-0729');
     const workspace = join(root, 'ws-0729');
     mkdirSync(join(ciHome, '.realm'), { recursive: true });
@@ -460,8 +469,8 @@ describe('#729 PR-3 — no canary leaves any door', () => {
         ]),
       ),
     } as WorkflowDefinition;
-    await new JsonWorkflowStore(join(ciHome, '.realm', 'workflows')).register(ci);
-    const store = new JsonFileStore(join(ciHome, '.realm', 'runs'));
+    await ciH.home.workflowStore.register(ci);
+    const store = ciH.home.runStore;
     const runId = (await store.create({ workflowId: 'ci-env', workflowVersion: 1, params: {} }))
       .record.id;
     for (const [step, v] of Object.entries(values)) {
@@ -543,7 +552,7 @@ describe('#729 PR-3 — no canary leaves any door', () => {
 
   it("SC-F1: a gate's instructions that interpolate the run's params reach no realm mcp message", async () => {
     const f = 'PARAMS' as const;
-    await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register({
+    await h.home.workflowStore.register({
       ...definition,
       id: 'canary-hint',
       steps: {
@@ -589,8 +598,8 @@ describe('#729 PR-3 — no canary leaves any door', () => {
       id: 'canary-abort',
       steps: { h: { description: 'H.', execution: 'auto', handler: 'aborter', depends_on: [] } },
     } as WorkflowDefinition;
-    await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(abortDef);
-    const store = new JsonFileStore(join(home, '.realm', 'runs'));
+    await h.home.workflowStore.register(abortDef);
+    const store = h.home.runStore;
     const { record: run } = await store.create({
       workflowId: 'canary-abort',
       workflowVersion: 1,
@@ -631,7 +640,7 @@ describe('#729 PR-3 — no canary leaves any door', () => {
     const LOAD_ENV = 'FAKECANENVLOAD0729';
     const LOAD_ANCH = 'FAKECANANCHLOAD0729';
     const LOAD_NAME = 'FAKECANNAMELOAD0729';
-    const store = new JsonFileStore(join(home, '.realm', 'runs'));
+    const store = h.home.runStore;
     const { record: run } = await store.create({
       workflowId: 'canary',
       workflowVersion: 1,
@@ -671,7 +680,7 @@ describe('#729 PR-3 — no canary leaves any door', () => {
 
   it('F10: a log-mode drive counts the Result it shows as its shape on its Disclosure line', async () => {
     const runId = (
-      await new JsonFileStore(join(home, '.realm', 'runs')).create({
+      await h.home.runStore.create({
         workflowId: 'canary-agent',
         workflowVersion: 1,
         params: {},
@@ -712,7 +721,7 @@ describe('#729 PR-3 — no canary leaves any door', () => {
   }, 60_000);
 
   it('C3: a log-mode drive at a gate with a message counts only what it printed, never the preview it left out', async () => {
-    const store = new JsonFileStore(join(home, '.realm', 'runs'));
+    const store = h.home.runStore;
     const runId = (
       await store.create({
         workflowId: 'canary',
@@ -806,8 +815,8 @@ describe('#729 PR-3 — no canary leaves any door', () => {
         },
       },
     } as WorkflowDefinition;
-    await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(displayed);
-    const store = new JsonFileStore(join(home, '.realm', 'runs'));
+    await h.home.workflowStore.register(displayed);
+    const store = h.home.runStore;
     const runId = (
       await store.create({ workflowId: 'canary-display', workflowVersion: 1, params: {} })
     ).record.id;
@@ -916,7 +925,7 @@ describe('#729 PR-3 — no canary leaves any door', () => {
       ].join('\n'),
       'utf8',
     );
-    await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register({
+    await h.home.workflowStore.register({
       ...definition,
       id: 'canary-tools',
       mcp_servers: [
@@ -940,7 +949,7 @@ describe('#729 PR-3 — no canary leaves any door', () => {
       },
     } as WorkflowDefinition);
     const runId = (
-      await new JsonFileStore(join(home, '.realm', 'runs')).create({
+      await h.home.runStore.create({
         workflowId: 'canary-tools',
         workflowVersion: 1,
         params: {},
@@ -1069,7 +1078,7 @@ describe('#729 PR-3 — no canary leaves any door', () => {
       ) {
         await new Promise((r) => setTimeout(r, 200));
       }
-      const stored = (await new JsonFileStore(join(home, '.realm', 'runs')).list()).snapshots
+      const stored = (await h.home.runStore.list()).snapshots
         .map((s) => s.record)
         .find((r) => r.workflow_id === 'canary-listen');
       // (a) red when the drive's result line loses both its walk (the output shown as its shapes,
@@ -1112,7 +1121,10 @@ describe(
     type Placement = 'home-elsewhere' | 'home-above';
     const PLACEMENTS: readonly Placement[] = ['home-elsewhere', 'home-above'];
     const made: string[] = [];
-    afterAll(() => {
+    /** The handles opened on a placement's home (its `.realm`), cleaned before the folders go. */
+    const opened: TempHome[] = [];
+    afterAll(async () => {
+      for (const t of opened.splice(0)) await t.cleanup();
       for (const d of made) rmSync(d, { recursive: true, force: true });
     });
     function project(placement: Placement) {
@@ -1206,7 +1218,9 @@ describe(
         writeFileSync(join(p.cwd, 'realm.yaml'), MANIFEST, 'utf8');
         writeFileSync(join(p.cwd, '.env'), 'SVC_TOKEN=FAKE-F2-TOKEN-0001\n', 'utf8');
         const registered = p.realm(['workflow', 'register', 'wf/workflow.yaml']);
-        const runs = new JsonFileStore(join(p.home, '.realm', 'runs'));
+        const at = await makeTempHome({ home: join(p.home, '.realm') });
+        opened.push(at);
+        const runs = at.home.runStore;
         const { record: run } = await runs.create({
           workflowId: 'wf',
           workflowVersion: 1,
@@ -1241,7 +1255,9 @@ describe(
       const got = [];
       for (const placement of PLACEMENTS) {
         const p = project(placement);
-        const runs = new JsonFileStore(join(p.home, '.realm', 'runs'));
+        const at = await makeTempHome({ home: join(p.home, '.realm') });
+        opened.push(at);
+        const runs = at.home.runStore;
         const { record: run } = await runs.create({
           workflowId: 'not-registered-f2',
           workflowVersion: 1,

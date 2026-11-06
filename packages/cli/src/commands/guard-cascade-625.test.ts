@@ -29,6 +29,7 @@ import { respondCommand, respondToGate } from './respond.js';
 import { runDrainAction, type DrainRuntimeDeps } from './drain.js';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
 import { lagless } from '../test-support/lag.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 /** #625 PR-2a, decision C164: the attending line after the command an answer leaves. */
 const ATTENDING =
@@ -111,6 +112,7 @@ const expiring = (defaultChoice: string): Partial<GateConfig> => ({
 });
 
 describe('issue #625 — what the answer ended, on `realm run respond` and `realm run drain --expired`', () => {
+  let h: TempHome & { readonly root: string };
   let home: string;
   let project: string;
   let savedHome: string | undefined;
@@ -120,16 +122,17 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
   let errSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     clearProjectExtensionsCache();
-    home = mkdtempSync(join(tmpdir(), 'realm-625-home-'));
+    h = await makeTempHome();
+    home = h.root;
     project = mkdtempSync(join(tmpdir(), 'realm-625-project-'));
     mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
     savedHome = process.env['HOME'];
     process.env['HOME'] = home;
-    // Constructed AFTER the scratch HOME is live — both resolve `homedir()` in their constructor.
-    runStore = new JsonFileStore();
-    workflowStore = new JsonWorkflowStore();
+    // The handle's stores: the home the commands open through HOME.
+    runStore = h.home.runStore;
+    workflowStore = h.home.workflowStore;
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -138,11 +141,11 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
     }) as never);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (savedHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = savedHome;
     vi.restoreAllMocks();
-    rmSync(home, { recursive: true, force: true });
+    await h.cleanup();
     rmSync(project, { recursive: true, force: true });
   });
 
@@ -669,8 +672,13 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
       await expireGate(runId);
 
       // An empty registry: the copy cannot be read.
-      const emptyRegistry = new JsonWorkflowStore(join(home, 'no-such-registry'));
-      await runDrainAction(runId, { expired: true }, runStore, emptyRegistry, DRAIN_DEPS);
+      const empty = await makeTempHome();
+      const emptyRegistry = empty.home.workflowStore;
+      try {
+        await runDrainAction(runId, { expired: true }, runStore, emptyRegistry, DRAIN_DEPS);
+      } finally {
+        await empty.cleanup();
+      }
       // (a) red when the dry run crashes or guesses when it cannot read the definition;
       //     (b) prints the line.
       expect(stdout()[0]).toMatch(/— would enact settle_default 'reject' on --force\.$/);

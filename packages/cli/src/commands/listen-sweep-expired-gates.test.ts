@@ -3,7 +3,7 @@
 // orchestration) — no HTTP server needed. #715 (b): the store's clock decides (a settable clock at NOW).
 import { describe, it, expect, vi } from 'vitest';
 import {
-  mkdtempSync,
+  mkdirSync,
   rmSync,
   writeFileSync,
   utimesSync,
@@ -12,11 +12,10 @@ import {
   readFileSync,
 } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { InMemoryStore, settableClock } from '@sensigo/realm-testing';
 import { listing } from '../test-support/snapshot-double.js';
-import { WorkflowError, CURRENT_WORKFLOW_SCHEMA_VERSION, JsonFileStore } from '@sensigo/realm';
+import { WorkflowError, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import type { WorkflowDefinition, PendingGate, WorkflowRegistrar } from '@sensigo/realm';
 import {
   sweepExpiredGates,
@@ -26,6 +25,7 @@ import {
   type SweepSeenFiles,
   type WorkflowEntry,
 } from './listen.js';
+import { makeTempHome } from '../test-support/temp-home.js';
 
 const silentLogger: Logger = { debug() {}, info() {}, warn() {}, error() {} };
 
@@ -261,9 +261,10 @@ describe('issue #719 — the expiry sweeper on a store with a damaged run file (
   }
 
   it('logs the file once across passes, again after it changes, and still enacts the readable run’s gate', async () => {
-    const runsDir = mkdtempSync(join(tmpdir(), 'realm-719-sweep-'));
+    const h = await makeTempHome();
+    const runsDir = h.home.runStore.runsDirPath;
     try {
-      const runStore = new JsonFileStore(runsDir);
+      const runStore = h.home.runStore;
       const def = wf();
       const run = await seedGatedRun(
         runStore,
@@ -309,12 +310,14 @@ describe('issue #719 — the expiry sweeper on a store with a damaged run file (
         debugs: [0, 1, 2, 3].map(() => ['listen: expiry sweeper skipped run files', { count: 1 }]),
       });
     } finally {
-      rmSync(runsDir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 
   it('a file repaired, then damaged again exactly as before, is warned again: the seen-map is pruned on every pass (C6)', async () => {
-    const runsDir = mkdtempSync(join(tmpdir(), 'realm-719-sweep-'));
+    const h = await makeTempHome();
+    const runsDir = h.home.runStore.runsDirPath;
+    mkdirSync(runsDir, { recursive: true });
     try {
       const bad = join(runsDir, 'bad.json');
       const aside = join(runsDir, 'bad.aside');
@@ -324,7 +327,7 @@ describe('issue #719 — the expiry sweeper on a store with a damaged run file (
       const { logger, warns } = capture();
       const sweepSeen: SweepSeenFiles = new Map();
       const deps = {
-        runStore: new JsonFileStore(runsDir),
+        runStore: h.home.runStore,
         workflowStore: makeWorkflowStore([]),
         logger,
         sweepSeen,
@@ -341,12 +344,14 @@ describe('issue #719 — the expiry sweeper on a store with a damaged run file (
       //     size after the clean pass.
       expect({ warned: warns.length, remembered }).toEqual({ warned: 2, remembered: 0 });
     } finally {
-      rmSync(runsDir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 
   it('startListen hands the sweeper ONE seen-map for the server’s life: a damaged file is warned once across ticks (C5)', async () => {
-    const runsDir = mkdtempSync(join(tmpdir(), 'realm-719-sweep-'));
+    const h = await makeTempHome();
+    const runsDir = h.home.runStore.runsDirPath;
+    mkdirSync(runsDir, { recursive: true });
     const { logger, warns, debugs } = capture();
     const tick = vi.spyOn(global, 'setInterval');
     let handle: Awaited<ReturnType<typeof startListen>> | undefined;
@@ -354,7 +359,7 @@ describe('issue #719 — the expiry sweeper on a store with a damaged run file (
       writeFileSync(join(runsDir, 'bad.json'), '{ not json');
       const deps: ListenDeps = {
         workflowStore: makeWorkflowStore([]) as unknown as ListenDeps['workflowStore'],
-        runStore: new JsonFileStore(runsDir),
+        runStore: h.home.runStore,
         dedupStoreFor: () => ({
           check: async () => false,
           record: async () => {},
@@ -391,7 +396,7 @@ describe('issue #719 — the expiry sweeper on a store with a damaged run file (
     } finally {
       tick.mockRestore();
       if (handle !== undefined) await handle.shutdown('test-cleanup');
-      rmSync(runsDir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 
@@ -399,7 +404,9 @@ describe('issue #719 — the expiry sweeper on a store with a damaged run file (
   it.skipIf(asRoot)(
     'a runs folder that cannot be read: `listen: sweeper pass failed`, naming the folder and its way out (the docs row, C2)',
     async () => {
-      const runsDir = mkdtempSync(join(tmpdir(), 'realm-719-sweep-'));
+      const h = await makeTempHome();
+      const runsDir = h.home.runStore.runsDirPath;
+      mkdirSync(runsDir, { recursive: true });
       const errors: Array<{ msg: string; data: unknown }> = [];
       const logger: Logger = {
         ...silentLogger,
@@ -410,7 +417,7 @@ describe('issue #719 — the expiry sweeper on a store with a damaged run file (
       try {
         const deps: ListenDeps = {
           workflowStore: makeWorkflowStore([]) as unknown as ListenDeps['workflowStore'],
-          runStore: new JsonFileStore(runsDir),
+          runStore: h.home.runStore,
           dedupStoreFor: () => ({
             check: async () => false,
             record: async () => {},
@@ -452,18 +459,20 @@ describe('issue #719 — the expiry sweeper on a store with a damaged run file (
         chmodSync(runsDir, 0o700);
         tick.mockRestore();
         if (handle !== undefined) await handle.shutdown('test-cleanup');
-        rmSync(runsDir, { recursive: true, force: true });
+        await h.cleanup();
       }
     },
   );
 
   it('the leak cell (the sweeper’s warn line): a fault AT a token never reaches the log', async () => {
-    const runsDir = mkdtempSync(join(tmpdir(), 'realm-719-sweep-'));
+    const h = await makeTempHome();
+    const runsDir = h.home.runStore.runsDirPath;
+    mkdirSync(runsDir, { recursive: true });
     try {
       writeFileSync(join(runsDir, 'bad.json'), '{"params":{"token": ghp_FAKE719}}');
       const { logger, warns } = capture();
       await sweepExpiredGates({
-        runStore: new JsonFileStore(runsDir),
+        runStore: h.home.runStore,
         workflowStore: makeWorkflowStore([]),
         logger,
         sweepSeen: new Map(),
@@ -472,7 +481,7 @@ describe('issue #719 — the expiry sweeper on a store with a damaged run file (
       // (a) red when the parser's text reaches the log; (b) prints booleans only.
       expect({ warned: warns.length === 1, leaked }).toEqual({ warned: true, leaked: false });
     } finally {
-      rmSync(runsDir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 
@@ -480,9 +489,10 @@ describe('issue #719 — the expiry sweeper on a store with a damaged run file (
   // not log it. Verify-first (reader M-4): once its held file disappears it is a file not seen
   // before, logged once with the rename advice.
   it('a copy of a readable run is not logged; once its run’s own file is gone it is logged once (F5, M-4)', async () => {
-    const runsDir = mkdtempSync(join(tmpdir(), 'realm-719-sweep-'));
+    const h = await makeTempHome();
+    const runsDir = h.home.runStore.runsDirPath;
     try {
-      const runStore = new JsonFileStore(runsDir);
+      const runStore = h.home.runStore;
       const { record: run } = await runStore.create({
         workflowId: 'sweep-wf',
         workflowVersion: 1,
@@ -519,16 +529,17 @@ describe('issue #719 — the expiry sweeper on a store with a damaged run file (
         untouched: hash() === before,
       }).toEqual({ warnedWhileCopy: 0, warned: [copy], rename: [true], untouched: true });
     } finally {
-      rmSync(runsDir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 
   // issue #719 (F6.9): the seen-map keeps each file's way out — a copy logged with "rename this
   // file" whose run's own file then comes back damaged is logged again, once, with its new way out.
   it('a copy logged with the rename advice is logged again once when its run’s own file reappears damaged (F6.9)', async () => {
-    const runsDir = mkdtempSync(join(tmpdir(), 'realm-719-sweep-'));
+    const h = await makeTempHome();
+    const runsDir = h.home.runStore.runsDirPath;
     try {
-      const runStore = new JsonFileStore(runsDir);
+      const runStore = h.home.runStore;
       const { record: run } = await runStore.create({
         workflowId: 'sweep-wf',
         workflowVersion: 1,
@@ -559,7 +570,7 @@ describe('issue #719 — the expiry sweeper on a store with a damaged run file (
         `Move it out of '${runsDir}'.`,
       ]);
     } finally {
-      rmSync(runsDir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 });

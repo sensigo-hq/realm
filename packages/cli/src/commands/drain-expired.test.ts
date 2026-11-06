@@ -4,9 +4,6 @@
 // Issue #625: bare per-run `drain` says the gate has expired and names `--expired` in its "not
 // terminal" line for such a run; it still predicts nothing and writes nothing. finding-only gates are listed but never acted on.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
   JsonFileStore,
   JsonWorkflowStore,
@@ -17,6 +14,7 @@ import {
 } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { classifyGateExpiry, runDrainAction, type DrainRuntimeDeps } from './drain.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const DEPS: DrainRuntimeDeps = { drainFinalizers, captureEvidence, drainLeaseMax: DRAIN_LEASE_MAX };
 
@@ -54,7 +52,7 @@ describe('classifyGateExpiry (issue #291)', () => {
 });
 
 describe('runDrainAction --expired (issue #291, [F5])', () => {
-  let dir: string;
+  let h: TempHome;
   let store: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
   let logSpy: ReturnType<typeof vi.spyOn>;
@@ -62,9 +60,9 @@ describe('runDrainAction --expired (issue #291, [F5])', () => {
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-drain-expired-'));
-    store = new JsonFileStore(dir);
-    workflowStore = new JsonWorkflowStore(join(dir, 'workflows'));
+    h = await makeTempHome();
+    store = h.home.runStore;
+    workflowStore = h.home.workflowStore;
     await workflowStore.register(gatedWf);
     await workflowStore.register(gatedTwoStepWf);
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -77,7 +75,7 @@ describe('runDrainAction --expired (issue #291, [F5])', () => {
     logSpy.mockRestore();
     errSpy.mockRestore();
     exitSpy.mockRestore();
-    await rm(dir, { recursive: true, force: true });
+    await h.cleanup();
   });
 
   async function seedExpiredGateRun(

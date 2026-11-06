@@ -4,7 +4,7 @@
 // error line has already been printed, and nothing here may replace it, hide it, or crash on top
 // of it. Most of these cells are about that discipline rather than about the happy path.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { WorkflowError, JsonFileStore, ExtensionRegistry } from '@sensigo/realm';
+import { WorkflowError, ExtensionRegistry } from '@sensigo/realm';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -23,6 +23,7 @@ import { runAgent, type AgentDeps } from './run-agent.js';
 import { LlmProvider } from './providers/llm-provider.js';
 import { snap } from '../test-support/snapshot-double.js';
 import type { Snapshot } from '@sensigo/realm';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 function makeRun(over: Partial<RunRecord> = {}): RunRecord {
   return {
@@ -462,10 +463,12 @@ describe('W1 — real SDK error objects classify by their CONSTRUCTOR', () => {
 
 describe('issue #719 — the fence names why, when the store refused with a Realm error', () => {
   it('a run file that cannot be read: the one LOST line carries its message, never its text', async () => {
-    const runsDir = mkdtempSync(join(tmpdir(), 'realm-719-drive-'));
+    const h = await makeTempHome();
+    const runsDir = h.home.runStore.runsDirPath;
+    mkdirSync(runsDir, { recursive: true });
     try {
       writeFileSync(join(runsDir, 'bad.json'), '{"params":{"token": ghp_FAKE719}}');
-      await recordDriveFailure(new JsonFileStore(runsDir), 'bad', entry());
+      await recordDriveFailure(h.home.runStore, 'bad', entry());
       const line = errors.join('\n');
       // (a) red when the line swallows why (the store's message), or carries the parser's text;
       //     (b) prints the line count and booleans only.
@@ -476,15 +479,17 @@ describe('issue #719 — the fence names why, when the store refused with a Real
         leaked: line.includes('ghp_FAKE7'),
       }).toEqual({ lines: 1, lost: true, why: true, leaked: false });
     } finally {
-      rmSync(runsDir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 
   it('the failure being recorded IS the store’s refusal (the same file failed both reads): its message said once (C6)', async () => {
-    const runsDir = mkdtempSync(join(tmpdir(), 'realm-719-drive-'));
+    const h = await makeTempHome();
+    const runsDir = h.home.runStore.runsDirPath;
+    mkdirSync(runsDir, { recursive: true });
     try {
       writeFileSync(join(runsDir, 'bad.json'), '{not json');
-      const store = new JsonFileStore(runsDir);
+      const store = h.home.runStore;
       const refusal = await store.get('bad').catch((e: unknown) => e);
       await recordDriveFailure(
         store,
@@ -500,7 +505,7 @@ describe('issue #719 — the fence names why, when the store refused with a Real
         faultTimes: 1,
       });
     } finally {
-      rmSync(runsDir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 
@@ -514,13 +519,17 @@ describe('issue #719 — the fence names why, when the store refused with a Real
     mkdirSync(runsDir, { recursive: true });
     vi.stubEnv('HOME', home);
     vi.stubEnv('USER', user);
+    let h: TempHome | undefined;
     try {
       const id = '5f0c2a3e-7b1d-4c8e-9a6f-0123456789ab';
       writeFileSync(join(runsDir, `${id}.json`), '{not json');
       writeFileSync(join(runsDir, `${id}.attempts.jsonl`), '');
       writeFileSync(join(runsDir, `trace-buffer-${id}-x.jsonl`), '');
       writeFileSync(join(runsDir, `sealed-trace-${id}-x.1.jsonl`), '');
-      const store = new JsonFileStore(runsDir);
+      // The door on the folder that holds USER's value: its run store is `runsDir` (MA 1's ruling,
+      // registry MA1-2B2-17); the helper removes nothing on a given home.
+      h = await makeTempHome({ home: join(home, user) });
+      const store = h.home.runStore;
       const refusal = await store.get(id).catch((e: unknown) => e);
       const message = refusal instanceof Error ? refusal.message : '';
       // The precondition: the message crosses the cap, so the cell cannot pass on a short one.
@@ -544,6 +553,7 @@ describe('issue #719 — the fence names why, when the store refused with a Real
       }).toEqual({ lines: 1, folder: true, lastSentence: true, faultTimes: 1, redacted: false });
     } finally {
       vi.unstubAllEnvs();
+      await h?.cleanup();
       rmSync(home, { recursive: true, force: true });
     }
   });

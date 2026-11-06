@@ -10,8 +10,6 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
-  JsonFileStore,
-  JsonWorkflowStore,
   abandonRun,
   buildDisclosureSet,
   executeChain,
@@ -28,16 +26,20 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { buildExportBundle, exportDisclosureLine, exportDisclosureRefusal } from './export.js';
 import { inspectReceiptLine, type InspectSurfaceReceipt } from './inspect.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 const SECRET = 'FAKE-RECORD-SECRET-0729';
 const ENV_CANARY = 'fake-env-canary-0729';
 
 let root: string;
+/** Every handle a cell opened (its HOME), cleaned before the root goes. */
+const homes: TempHome[] = [];
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'realm-records-729-'));
 });
-afterEach(() => {
+afterEach(async () => {
+  for (const t of homes.splice(0)) await t.cleanup();
   rmSync(root, { recursive: true, force: true });
   vi.unstubAllEnvs();
 });
@@ -192,7 +194,9 @@ describe('#729 PR-3 — export v5', () => {
   });
 
   it('F26: the export walks the bundle with its marks removed first, and the file holds none', async () => {
-    const store = new JsonFileStore(join(root, 'runs'));
+    const h = await makeTempHome();
+    homes.push(h);
+    const store = h.home.runStore;
     const { record: run } = await store.create({
       workflowId: 'records-729',
       workflowVersion: 1,
@@ -224,7 +228,9 @@ describe('#729 PR-3 — export v5', () => {
   });
 
   it('the masked line counts the declared values too short to hide, and says a question was masked at the declared tier only (F14, F16)', async () => {
-    const store = new JsonFileStore(join(root, 'runs'));
+    const h = await makeTempHome();
+    homes.push(h);
+    const store = h.home.runStore;
     const { record: run } = await store.create({
       workflowId: 'records-729',
       workflowVersion: 1,
@@ -258,8 +264,9 @@ describe('#729 PR-3 — export v5', () => {
   });
 
   it('the bundle is version 5, masked by the file audience, carries its receipt; the record stays raw', async () => {
-    const runs = join(root, 'runs');
-    const store = new JsonFileStore(runs);
+    const h = await makeTempHome();
+    homes.push(h);
+    const store = h.home.runStore;
     const { record: run } = await store.create({
       workflowId: 'records-729',
       workflowVersion: 1,
@@ -297,11 +304,13 @@ describe('#729 PR-3 — export v5', () => {
   });
 
   it('the command: refused without --accept-partial-disclosure; with it, written and its header names the state', async () => {
-    const home = join(root, 'home');
+    const h = await makeTempHome();
+    homes.push(h);
+    const home = h.root;
     const runs = join(home, '.realm', 'runs');
     mkdirSync(runs, { recursive: true });
     // A run whose workflow copy cannot be read: the declared secrets are unknown (load_failed).
-    const { record: run } = await new JsonFileStore(runs).create({
+    const { record: run } = await h.home.runStore.create({
       workflowId: 'not-registered',
       workflowVersion: 1,
       params: {},
@@ -372,14 +381,16 @@ describe('#729 PR-3 — inspect prints one receipt line', () => {
   /** A run whose params hold the declared value (inspect does not show them) and whose one step's
    *  output holds it and an environment canary (inspect shows that). */
   async function shownAndUnshown(): Promise<{ home: string; runId: string }> {
-    const home = join(root, 'home');
+    const h = await makeTempHome();
+    homes.push(h);
+    const home = h.root;
     const runs = join(home, '.realm', 'runs');
     mkdirSync(runs, { recursive: true });
     const project = join(root, 'project');
     mkdirSync(project);
     manifest(project, MANIFEST, `SVC_TOKEN=${SECRET}\n`);
-    await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(definitionAt(project));
-    const store = new JsonFileStore(runs);
+    await h.home.workflowStore.register(definitionAt(project));
+    const store = h.home.runStore;
     const { record: run } = await store.create({
       workflowId: 'records-729',
       workflowVersion: 1,
@@ -477,7 +488,9 @@ describe('#729 PR-3 — inspect prints one receipt line', () => {
 
 describe('#729 PR-3 correction 1 (F28) — inspect shows a guard abort', () => {
   it("each condition, whether it passed and its value at the surface's tier, and the run's aborted_at", async () => {
-    const home = join(root, 'home');
+    const h = await makeTempHome();
+    homes.push(h);
+    const home = h.root;
     const runs = join(home, '.realm', 'runs');
     mkdirSync(runs, { recursive: true });
     const def = {
@@ -494,8 +507,8 @@ describe('#729 PR-3 correction 1 (F28) — inspect shows a guard abort', () => {
         },
       },
     } as WorkflowDefinition;
-    await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(def);
-    const store = new JsonFileStore(runs);
+    await h.home.workflowStore.register(def);
+    const store = h.home.runStore;
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -692,17 +705,19 @@ describe("#729 PR-3 correction 1 (F11, D-11) — the CLI's provider reports each
 
 describe('#729 PR-3 correction 2 (G1-b, E-10) — the built realm mcp, fresh, reads its run for the masking', () => {
   it("the first call of a fresh process hides a declared value in a run's stored reason; a failed project's run reads load_failed", async () => {
-    const home = join(root, 'home');
+    const h = await makeTempHome();
+    homes.push(h);
+    const home = h.root;
     const good = join(root, 'good');
     const bad = join(root, 'bad');
-    for (const d of [home, good, bad]) mkdirSync(d);
+    for (const d of [good, bad]) mkdirSync(d);
     manifest(good, MANIFEST, `SVC_TOKEN=${SECRET}\n`);
     // A manifest naming a secret its dotenv file does not hold: its load fails.
     manifest(bad, MANIFEST, '');
-    const workflows = new JsonWorkflowStore(join(home, '.realm', 'workflows'));
+    const workflows = h.home.workflowStore;
     await workflows.register(definitionAt(good, { id: 'good-729' }));
     await workflows.register(definitionAt(bad, { id: 'bad-729' }));
-    const runs = new JsonFileStore(join(home, '.realm', 'runs'));
+    const runs = h.home.runStore;
     const goodRun = (await runs.create({ workflowId: 'good-729', workflowVersion: 1, params: {} }))
       .record.id;
     await abandonRun(runs, goodRun, `stopped: the token ${SECRET} was rejected`);
@@ -795,12 +810,15 @@ function piped(args: string[], env: Record<string, string>, cwd: string = root) 
 }
 
 /** A run of a registered workflow whose stored copy is damaged (not JSON), in `home`'s store. */
-async function damagedCopyRun(home: string): Promise<{ runId: string; file: string }> {
-  const workflows = new JsonWorkflowStore(join(home, '.realm', 'workflows'));
+async function damagedCopyRun(
+  h: TempHome & { readonly root: string },
+): Promise<{ runId: string; file: string }> {
+  const home = h.root;
+  const workflows = h.home.workflowStore;
   await workflows.register(definitionAt(undefined, { id: 'blockedwf' }));
   const file = join(home, '.realm', 'workflows', 'blockedwf.json');
   writeFileSync(file, 'not json');
-  const runs = new JsonFileStore(join(home, '.realm', 'runs'));
+  const runs = h.home.runStore;
   const runId = (await runs.create({ workflowId: 'blockedwf', workflowVersion: 1, params: {} }))
     .record.id;
   return { runId, file };
@@ -824,11 +842,12 @@ describe("#729 PR-3 correction 2 (C1) — realm's own words print whole", () => 
   }, 60_000);
 
   it('piped inspect shows the phase while another variable holds the same word', async () => {
-    const home = join(root, 'home');
-    mkdirSync(home);
-    const workflows = new JsonWorkflowStore(join(home, '.realm', 'workflows'));
+    const h = await makeTempHome();
+    homes.push(h);
+    const home = h.root;
+    const workflows = h.home.workflowStore;
     await workflows.register(definitionAt(undefined));
-    const runs = new JsonFileStore(join(home, '.realm', 'runs'));
+    const runs = h.home.runStore;
     const runId = (await runs.create({ workflowId: 'records-729', workflowVersion: 1, params: {} }))
       .record.id;
     await abandonRun(runs, runId, 'Held.');
@@ -842,9 +861,10 @@ describe("#729 PR-3 correction 2 (C1) — realm's own words print whole", () => 
   }, 60_000);
 
   it('the damaged-copy repair command prints whole on every surface, and runs as copied', async () => {
-    const home = join(root, 'home');
-    mkdirSync(home);
-    const { runId, file } = await damagedCopyRun(home);
+    const h = await makeTempHome();
+    homes.push(h);
+    const home = h.root;
+    const { runId, file } = await damagedCopyRun(h);
     // HOME is not listed in REALM_NOT_SECRET: a path under it is hidden in a log (R31: except
     // inside a printed command).
     const env = { HOME: home };
@@ -875,16 +895,17 @@ describe("#729 PR-3 correction 2 (C1) — realm's own words print whole", () => 
   }, 60_000);
 
   it("G7: the repair's command reaches the CLI as its own field (printed whole in a log); the agent's copy has its path masked", async () => {
-    const home = join(root, 'home');
-    mkdirSync(home);
-    const { runId, file } = await damagedCopyRun(home);
+    const h = await makeTempHome();
+    homes.push(h);
+    const home = h.root;
+    const { runId, file } = await damagedCopyRun(h);
     // Correction 3 (H-7): the run's record names an intact manifest, so its declared values are
     // known and nothing is withheld (a damaged copy whose record names none reads `load_failed`,
     // and the door withholds its reply's diagnostics: the H-11' cell).
     const project = join(root, 'g7-project');
     mkdirSync(project);
     manifest(project, MANIFEST, `SVC_TOKEN=${SECRET}\n`);
-    const runs = new JsonFileStore(join(home, '.realm', 'runs'));
+    const runs = h.home.runStore;
     const { record: recorded } = await runs.get(runId);
     const manifestPath = join(project, 'realm.yaml');
     await runs.update({
@@ -937,11 +958,12 @@ describe("#729 PR-3 correction 2 (C1) — realm's own words print whole", () => 
   }, 60_000);
 
   it('the record table classes `terminal_reason` by its value: a fixed sentence is shown, a templated one is masked', async () => {
-    const home = join(root, 'home');
-    mkdirSync(home);
-    const workflows = new JsonWorkflowStore(join(home, '.realm', 'workflows'));
+    const h = await makeTempHome();
+    homes.push(h);
+    const home = h.root;
+    const workflows = h.home.workflowStore;
     await workflows.register(definitionAt(undefined));
-    const runs = new JsonFileStore(join(home, '.realm', 'runs'));
+    const runs = h.home.runStore;
     // A run that completed: its reason is core's fixed sentence.
     const done = (await runs.create({ workflowId: 'records-729', workflowVersion: 1, params: {} }))
       .record.id;
@@ -981,9 +1003,10 @@ describe("#729 PR-3 correction 2 (C1) — realm's own words print whole", () => 
 
 describe('#729 PR-3 correction 2 (C2) — inspect shows a question as every other surface does', () => {
   it('piped inspect of an open gate shows the question at the declared tier, and its line says so', async () => {
-    const home = join(root, 'home');
+    const h = await makeTempHome();
+    homes.push(h);
+    const home = h.root;
     const project = join(root, 'proj');
-    mkdirSync(home);
     mkdirSync(project);
     manifest(project, MANIFEST, `SVC_TOKEN=${SECRET}\n`);
     const def = definitionAt(project, {
@@ -1001,8 +1024,8 @@ describe('#729 PR-3 correction 2 (C2) — inspect shows a question as every othe
         },
       },
     } as Partial<WorkflowDefinition>);
-    await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(def);
-    const runs = new JsonFileStore(join(home, '.realm', 'runs'));
+    await h.home.workflowStore.register(def);
+    const runs = h.home.runStore;
     const runId = (
       await runs.create({
         workflowId: 'asks-729',
@@ -1071,9 +1094,10 @@ describe('#729 PR-3 correction 2 (C4) — a drive refused at the extension load 
 
 describe('#729 PR-3 correction 2 (C5) — a misspelt name in a manifest’s `disclosure.not_secret` warns', () => {
   it('on validate, inspect, export and agent: four clauses, the manifest named', async () => {
-    const home = join(root, 'home');
+    const h = await makeTempHome();
+    homes.push(h);
+    const home = h.root;
     const project = join(root, 'proj');
-    mkdirSync(home);
     mkdirSync(project);
     manifest(project, 'version: 1\ndisclosure:\n  not_secret: [FAKE_MISSPELT_0729]\n');
     writeFileSync(
@@ -1081,8 +1105,8 @@ describe('#729 PR-3 correction 2 (C5) — a misspelt name in a manifest’s `dis
       'id: c5\nname: c5\nversion: 1\nsteps:\n  a:\n    description: A.\n    execution: agent\n',
     );
     const def = definitionAt(project, { id: 'c5' });
-    await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(def);
-    const runs = new JsonFileStore(join(home, '.realm', 'runs'));
+    await h.home.workflowStore.register(def);
+    const runs = h.home.runStore;
     const runId = (await runs.create({ workflowId: 'c5', workflowVersion: 1, params: {} })).record
       .id;
     await abandonRun(runs, runId, 'Held.');
@@ -1134,14 +1158,16 @@ describe('#729 PR-3 correction 2 (C5) — a misspelt name in a manifest’s `dis
  * declared value.
  */
 async function damagedCopyWithRecordedManifest(): Promise<{ home: string; runId: string }> {
-  const home = join(root, 'home');
+  const h = await makeTempHome();
+  homes.push(h);
+  const home = h.root;
   const project = join(root, 'project');
   mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
   mkdirSync(project);
   manifest(project, MANIFEST, `SVC_TOKEN=${SECRET}\n`);
-  const workflows = new JsonWorkflowStore(join(home, '.realm', 'workflows'));
+  const workflows = h.home.workflowStore;
   await workflows.register(definitionAt(project, { id: 'damaged-729' }));
-  const store = new JsonFileStore(join(home, '.realm', 'runs'));
+  const store = h.home.runStore;
   const { record: run } = await store.create({
     workflowId: 'damaged-729',
     workflowVersion: 1,
@@ -1208,21 +1234,22 @@ describe("#729 PR-3 correction 3 (H-7) — a damaged copy: the manifest the run'
 
 describe("#729 PR-3 correction 3 (H-8'') — realm's fixed words print whole at the six sites", () => {
   /** A registered workflow (one agent step, or one auto step), and the store for its runs. */
-  async function stores(home: string, auto = false) {
+  async function stores(h: TempHome, auto = false) {
     const definition = definitionAt(undefined, {
       steps: { a: { description: 'A.', execution: auto ? 'auto' : 'agent', depends_on: [] } },
     } as Partial<WorkflowDefinition>);
-    await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(definition);
-    const runs = new JsonFileStore(join(home, '.realm', 'runs'));
+    await h.home.workflowStore.register(definition);
+    const runs = h.home.runStore;
     const create = async () =>
       (await runs.create({ workflowId: 'records-729', workflowVersion: 1, params: {} })).record.id;
     return { definition, runs, create };
   }
 
   it("inspect's `Cause:` prints a fixed sentence whole while a variable holds its word", async () => {
-    const home = join(root, 'home');
-    mkdirSync(home);
-    const { definition, runs, create } = await stores(home);
+    const h = await makeTempHome();
+    homes.push(h);
+    const home = h.root;
+    const { definition, runs, create } = await stores(h);
     const done = await create();
     await executeStep(runs, definition, {
       runId: done,
@@ -1246,9 +1273,10 @@ describe("#729 PR-3 correction 3 (H-8'') — realm's fixed words print whole at 
   }, 60_000);
 
   it("abandon's `Reason:` prints the default sentence whole while a variable holds its word", async () => {
-    const home = join(root, 'home');
-    mkdirSync(home);
-    const { create } = await stores(home);
+    const h = await makeTempHome();
+    homes.push(h);
+    const home = h.root;
+    const { create } = await stores(h);
     const runId = await create();
     const r = piped(['run', 'abandon', runId], {
       HOME: home,
@@ -1265,9 +1293,10 @@ describe("#729 PR-3 correction 3 (H-8'') — realm's fixed words print whole at 
   }, 60_000);
 
   it("run list's phase column prints the phase whole while a variable holds it", async () => {
-    const home = join(root, 'home');
-    mkdirSync(home);
-    const { runs, create } = await stores(home);
+    const h = await makeTempHome();
+    homes.push(h);
+    const home = h.root;
+    const { runs, create } = await stores(h);
     const runId = await create();
     await abandonRun(runs, runId, 'Held.');
     const r = piped(['run', 'list'], {
@@ -1282,9 +1311,10 @@ describe("#729 PR-3 correction 3 (H-8'') — realm's fixed words print whole at 
   }, 60_000);
 
   it("advance's last line prints the phase whole while a variable holds it", async () => {
-    const home = join(root, 'home');
-    mkdirSync(home);
-    const { create } = await stores(home, true);
+    const h = await makeTempHome();
+    homes.push(h);
+    const home = h.root;
+    const { create } = await stores(h, true);
     const runId = await create();
     const r = piped(['run', 'advance', runId], {
       HOME: home,
@@ -1317,9 +1347,10 @@ describe("#729 PR-3 correction 3 (H-8'') — realm's fixed words print whole at 
   }, 60_000);
 
   it("`agent --run-id`'s ended-run sentence prints the phase whole while a variable holds it", async () => {
-    const home = join(root, 'home');
-    mkdirSync(home);
-    const { runs, create } = await stores(home);
+    const h = await makeTempHome();
+    homes.push(h);
+    const home = h.root;
+    const { runs, create } = await stores(h);
     const runId = await create();
     await abandonRun(runs, runId, 'Held.');
     const r = piped(['agent', '--run-id', runId, '--model', 'anthropic:fake-model-0729'], {
@@ -1470,11 +1501,13 @@ async function withheldRun(
   state: 'gone' | 'unreadable' | 'no_manifest' | 'intact',
   plainOutputs = false,
   tag = '',
-): Promise<{ home: string; runId: string }> {
+): Promise<{ home: string; runId: string; handle: TempHome }> {
   // Correction 4 (I-9b): `plainOutputs` runs the steps with outputs that hold no declared value, so
   // their hashes print whole where values print whole; `tag` names a second fixture of one state.
   const output = plainOutputs ? 'FAKEplain0729c4' : SECRET;
-  const home = join(root, `home-${state}${plainOutputs ? '-plain' : ''}${tag}`);
+  const h = await makeTempHome();
+  homes.push(h);
+  const home = h.root;
   const project = join(root, `project-${state}${plainOutputs ? '-plain' : ''}${tag}`);
   mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
   mkdirSync(project);
@@ -1492,8 +1525,8 @@ async function withheldRun(
       },
     },
   } as Partial<WorkflowDefinition>);
-  await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(definition);
-  const store = new JsonFileStore(join(home, '.realm', 'runs'));
+  await h.home.workflowStore.register(definition);
+  const store = h.home.runStore;
   const { record: run } = await store.create({
     workflowId: 'held-729',
     workflowVersion: 1,
@@ -1543,13 +1576,12 @@ async function withheldRun(
       else writeFileSync(path, 'version: 1\nnot_a_key: true\n');
     }
   }
-  return { home, runId: run.id };
+  return { home, runId: run.id, handle: h };
 }
 
 /** A failed attempt on `runId` whose problem's message holds the declared value. */
-async function failedAttemptHolding(home: string, runId: string): Promise<void> {
-  const { JsonFileFailedAttemptStore, buildFailedAttemptRecord, serializeFailedAttemptLine } =
-    await import('@sensigo/realm');
+async function failedAttemptHolding(h: TempHome, runId: string): Promise<void> {
+  const { buildFailedAttemptRecord, serializeFailedAttemptLine } = await import('@sensigo/realm');
   const rec = buildFailedAttemptRecord({
     run_id: runId,
     workflow_id: 'held-729',
@@ -1568,10 +1600,7 @@ async function failedAttemptHolding(home: string, runId: string): Promise<void> 
     params: {},
     trace_entry_count: 0,
   });
-  await new JsonFileFailedAttemptStore(join(home, '.realm', 'runs')).append(
-    runId,
-    serializeFailedAttemptLine({ ...rec }).line,
-  );
+  await h.home.failedAttemptStore.append(runId, serializeFailedAttemptLine({ ...rec }).line);
 }
 
 describe("#729 PR-3 correction 3 (H-7'') — the read commands withhold a run's values under a failed or changed manifest", () => {
@@ -1650,8 +1679,8 @@ describe("#729 PR-3 correction 3 (H-7'') — the read commands withhold a run's 
   }, 60_000);
 
   it('attempts reads the manifest as inspect does: withheld under a failed manifest, shown with the flag', async () => {
-    const { home, runId } = await withheldRun('unreadable');
-    await failedAttemptHolding(home, runId);
+    const { home, runId, handle } = await withheldRun('unreadable');
+    await failedAttemptHolding(handle, runId);
     const table = read(home, ['run', 'attempts', runId]);
     const json = read(home, ['run', 'attempts', runId, '--json']);
     const accepted = read(home, ['run', 'attempts', runId, '--accept-partial-disclosure']);
@@ -1752,9 +1781,10 @@ describe("#729 PR-3 correction 3 (H-11') — the door withholds under a failed o
   }, 120_000);
 
   it("a damaged copy whose record names no manifest (`load_failed`): execute_step's diagnostics are withheld, its code and action stay facts", async () => {
-    const home = join(root, 'home');
-    mkdirSync(home);
-    const { runId } = await damagedCopyRun(home);
+    const h = await makeTempHome();
+    homes.push(h);
+    const home = h.root;
+    const { runId } = await damagedCopyRun(h);
     const reply = (await mcpRead(home, async (call) =>
       call('execute_step', { run_id: runId, command: 'a', params: {} }),
     )) as Record<string, unknown>;
@@ -1822,15 +1852,15 @@ async function endedRuns(
   reason: string,
 ): Promise<{ home: string; ended: string; live: string }> {
   endedCount += 1;
-  const home = join(root, `home-ended-${state}-${endedCount}`);
+  const h = await makeTempHome();
+  homes.push(h);
+  const home = h.root;
   const project = join(root, `project-ended-${state}-${endedCount}`);
   mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
   mkdirSync(project);
   manifest(project, MANIFEST, `SVC_TOKEN=${SECRET}\n`);
-  await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(
-    definitionAt(project, { id: 'ended-729' }),
-  );
-  const store = new JsonFileStore(join(home, '.realm', 'runs'));
+  await h.home.workflowStore.register(definitionAt(project, { id: 'ended-729' }));
+  const store = h.home.runStore;
   const path = join(project, 'realm.yaml');
   const create = async (): Promise<string> => {
     const { record: run } = await store.create({
@@ -1880,17 +1910,20 @@ async function endedRuns(
  */
 async function diffRuns3(output: string): Promise<{
   home: string;
+  handle: TempHome;
   ids: { a: string; b: string; c: string };
   hashes: { a: string; b: string; c: string };
 }> {
-  const home = join(root, `home-diff-${output.length}`);
+  const h = await makeTempHome();
+  homes.push(h);
+  const home = h.root;
   const project = join(root, `project-diff-${output.length}`);
   mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
   mkdirSync(project);
   manifest(project, MANIFEST, `SVC_TOKEN=${SECRET}\n`);
   const definition = definitionAt(project, { id: 'diff-729' });
-  await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(definition);
-  const store = new JsonFileStore(join(home, '.realm', 'runs'));
+  await h.home.workflowStore.register(definition);
+  const store = h.home.runStore;
   const real = join(project, 'realm.yaml');
   const run = async (manifestPath: string): Promise<[string, string]> => {
     const { record: created } = await store.create({
@@ -1934,7 +1967,7 @@ async function diffRuns3(output: string): Promise<{
   const [a, ha] = await run(real);
   const [b, hb] = await run(join(root, 'gone-729', 'realm.yaml'));
   const [c, hc] = await run(real);
-  return { home, ids: { a, b, c }, hashes: { a: ha, b: hb, c: hc } };
+  return { home, handle: h, ids: { a, b, c }, hashes: { a: ha, b: hb, c: hc } };
 }
 
 describe('#729 PR-3 correction 4 — the read commands and the two un-read surfaces', () => {
@@ -1948,16 +1981,18 @@ describe('#729 PR-3 correction 4 — the read commands and the two un-read surfa
   const receiptEnd = (stdout: string) => stdout.trim().split('\n').at(-1)?.split('; ').at(-1);
 
   it('I-4: attempts on a run record it cannot read: withheld, the first line names the failed read; the flag prints them (PR3-R4-R-06)', async () => {
-    const home = join(root, 'home-damaged-record');
+    const h = await makeTempHome();
+    homes.push(h);
+    const home = h.root;
     mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
-    const store = new JsonFileStore(join(home, '.realm', 'runs'));
+    const store = h.home.runStore;
     const { record: run } = await store.create({
       workflowId: 'held-729',
       workflowVersion: 1,
       params: {},
     });
     writeFileSync(join(home, '.realm', 'runs', `${run.id}.json`), 'not json');
-    await failedAttemptHolding(home, run.id);
+    await failedAttemptHolding(h, run.id);
     const plain = read(home, ['run', 'attempts', run.id]);
     const accepted = read(home, ['run', 'attempts', run.id, '--accept-partial-disclosure']);
     // (a) red when a record that cannot be read notes no standing (nothing is withheld: the
@@ -1982,10 +2017,12 @@ describe('#729 PR-3 correction 4 — the read commands and the two un-read surfa
   }, 60_000);
 
   it('I-4 control: not found is not a failed read — a sidecar-only run prints at the tier with no line; no sidecar, the no-attempts line', async () => {
-    const home = join(root, 'home-not-found');
+    const h = await makeTempHome();
+    homes.push(h);
+    const home = h.root;
     mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
     const sidecarOnly = randomUUID();
-    await failedAttemptHolding(home, sidecarOnly);
+    await failedAttemptHolding(h, sidecarOnly);
     const missing = randomUUID();
     const withRecord = read(home, ['run', 'attempts', sidecarOnly]);
     const without = read(home, ['run', 'attempts', missing]);
@@ -2017,8 +2054,8 @@ describe('#729 PR-3 correction 4 — the read commands and the two un-read surfa
 
   it('I-6: under --accept-partial-disclosure, where values would be withheld, inspect, attempts and export say they were shown on the flag', async () => {
     const shown = async (state: 'gone' | 'unreadable') => {
-      const { home, runId } = await withheldRun(state);
-      await failedAttemptHolding(home, runId);
+      const { home, runId, handle } = await withheldRun(state);
+      await failedAttemptHolding(handle, runId);
       const inspected = read(home, ['run', 'inspect', runId, '--accept-partial-disclosure']);
       const attempts = read(home, ['run', 'attempts', runId, '--accept-partial-disclosure']);
       const out = join(root, `c4-${state}.json`);
@@ -2114,9 +2151,10 @@ describe('#729 PR-3 correction 4 — the read commands and the two un-read surfa
   }, 60_000);
 
   it("I-8: export's refusal for a run whose copy cannot be read and whose record names no manifest: repair the copy", async () => {
-    const home = join(root, 'home');
-    mkdirSync(home);
-    const { runId } = await damagedCopyRun(home);
+    const h = await makeTempHome();
+    homes.push(h);
+    const home = h.root;
+    const { runId } = await damagedCopyRun(h);
     const copy = read(home, ['run', 'export', runId, '--out', join(root, 'r41.json')]);
     const inspected = read(home, ['run', 'inspect', runId]);
     const invalid = await withheldRun('unreadable');
@@ -2158,12 +2196,10 @@ describe('#729 PR-3 correction 4 — the read commands and the two un-read surfa
     const withheld = read(held.home, ['run', 'inspect', held.runId]);
     const intact = await withheldRun('intact', true);
     const shown = read(intact.home, ['run', 'inspect', intact.runId]);
-    const { record: record } = await new JsonFileStore(join(intact.home, '.realm', 'runs')).get(
-      intact.runId,
-    );
+    const { record: record } = await intact.handle.home.runStore.get(intact.runId);
     // inspect's other site: a step with two execution attempts prints a hash per attempt.
     const multi = await withheldRun('unreadable');
-    const multiStore = new JsonFileStore(join(multi.home, '.realm', 'runs'));
+    const multiStore = multi.handle.home.runStore;
     const { record: stored } = await multiStore.get(multi.runId);
     const firstA = stored.evidence.find((e) => e.step_id === 'a')!;
     await multiStore.update({
@@ -2247,7 +2283,7 @@ describe('#729 PR-3 correction 4 — the read commands and the two un-read surfa
     const hashes = (text: string) => text.match(/hash: (\S+(?: \d+ characters›)?)/g) ?? [];
     // inspect's per-attempt site: a step with two execution attempts, its output's value hidden.
     const multi = await withheldRun('intact', false, 'multi');
-    const multiStore = new JsonFileStore(join(multi.home, '.realm', 'runs'));
+    const multiStore = multi.handle.home.runStore;
     const { record: stored } = await multiStore.get(multi.runId);
     const firstA = stored.evidence.find((e) => e.step_id === 'a')!;
     await multiStore.update({
@@ -2356,13 +2392,12 @@ describe('#729 PR-3 correction 4 — the read commands and the two un-read surfa
 
 describe('#729 PR-3 correction 5 (J-1) — an unclosed quote in a stored reason hides to its line end, never past it', () => {
   it("round 5 W2's shape: `--reason 'password=\" FAKE…'` — piped inspect's `Cause:` hidden on its line, every line after it and the receipt intact", async () => {
-    const home = join(root, 'home');
-    mkdirSync(home);
-    await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(
-      definitionAt(undefined),
-    );
+    const h = await makeTempHome();
+    homes.push(h);
+    const home = h.root;
+    await h.home.workflowStore.register(definitionAt(undefined));
     const runId = (
-      await new JsonFileStore(join(home, '.realm', 'runs')).create({
+      await h.home.runStore.create({
         workflowId: 'records-729',
         workflowVersion: 1,
         params: {},
@@ -2399,12 +2434,12 @@ describe('#729 PR-3 correction 5 (J-1) — an unclosed quote in a stored reason 
 
 describe("#729 PR-3 correction 5 (J-6) — diff's hash columns take the longer of the hex and the shape", () => {
   it('a run whose output the law hid inside beside a clean run: every row and the header start the B hash and Δ ms columns at the same place', async () => {
-    const { home, ids } = await diffRuns3(SECRET);
+    const { home, ids, handle } = await diffRuns3(SECRET);
     // A clean run in the same store: its output holds nothing the law hides.
     const definition = definitionAt(join(root, `project-diff-${SECRET.length}`), {
       id: 'diff-729',
     });
-    const store = new JsonFileStore(join(home, '.realm', 'runs'));
+    const store = handle.home.runStore;
     const { record: dirty } = await store.get(ids.a);
     const { record: created } = await store.create({
       workflowId: 'diff-729',

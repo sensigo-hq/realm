@@ -6,12 +6,7 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   ExtensionRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   advanceRun,
@@ -19,6 +14,7 @@ import {
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { respondToGate } from './respond.js';
+import { makeTempHome } from '../test-support/temp-home.js';
 
 const DEF: WorkflowDefinition = {
   id: 'f11-respond',
@@ -38,10 +34,10 @@ const DEF: WorkflowDefinition = {
 
 describe('#625 PR-2a, F11 — realm run respond on a completed run with a cleanup step pending', () => {
   it('the refusal names the pending cleanup step and its command, once — never "nothing is owed"', async () => {
-    const home = mkdtempSync(join(tmpdir(), 'realm-f11-respond-'));
+    const h = await makeTempHome();
     try {
-      const runs = new JsonFileStore(join(home, 'runs'));
-      const workflows = new JsonWorkflowStore(join(home, 'wf'));
+      const runs = h.home.runStore;
+      const workflows = h.home.workflowStore;
       await workflows.register(DEF);
       const { record: run } = await runs.create({
         workflowId: DEF.id,
@@ -73,7 +69,7 @@ describe('#625 PR-2a, F11 — realm run respond on a completed run with a cleanu
         times: 1,
       });
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 });

@@ -17,12 +17,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  JsonFileStore,
-  JsonWorkflowStore,
-  executeStep,
-  type WorkflowDefinition,
-} from '@sensigo/realm';
+import { executeStep, type WorkflowDefinition } from '@sensigo/realm';
 import {
   projectCodeWhere,
   laterAdvanceCodeWhere,
@@ -34,6 +29,7 @@ import {
 import { respondCommand } from './respond.js';
 import { printChildrenWhenATestFails } from '../test-support/child-output.js';
 import { lagless } from '../test-support/lag.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 if (!existsSync(CLI_ENTRY)) {
@@ -68,16 +64,22 @@ ${onExpiry === 'none' ? '' : `      on_expiry: ${onExpiry}\n`}${onExpiry === 'se
 `;
 
 describe('#625 PR-2a, C98 and C95 — where the code comes from; advance carries out a due expiry', () => {
+  /** The handle `beforeEach` opened, and the handle of the home a cell is on now (F2 moves it). */
+  let base: TempHome & { readonly root: string };
+  let h: TempHome;
   let home: string;
   let proj: string;
   let elsewhere: string;
-  beforeEach(() => {
-    home = mkdtempSync(join(tmpdir(), 'realm-pcw-home-'));
+  beforeEach(async () => {
+    base = await makeTempHome();
+    h = base;
+    home = base.root;
     proj = realpathSync(mkdtempSync(join(tmpdir(), 'realm-pcw-proj-')));
     elsewhere = realpathSync(mkdtempSync(join(tmpdir(), 'realm-pcw-elsewhere-')));
   });
-  afterEach(() => {
-    for (const d of [home, proj, elsewhere]) rmSync(d, { recursive: true, force: true });
+  afterEach(async () => {
+    await base.cleanup();
+    for (const d of [proj, elsewhere]) rmSync(d, { recursive: true, force: true });
   });
 
   function realm(cwd: string, args: string[], env?: Record<string, string>) {
@@ -103,10 +105,8 @@ describe('#625 PR-2a, C98 and C95 — where the code comes from; advance carries
     writeFileSync(join(proj, 'workflows', 'wf', 'workflow.yaml'), YAML(onExpiry), 'utf8');
     const registered = realm(proj, ['workflow', 'register', 'workflows/wf/workflow.yaml']);
     if (registered.status !== 0) throw new Error(`fixture: register failed: ${registered.stderr}`);
-    const definition: WorkflowDefinition = await new JsonWorkflowStore(
-      join(home, '.realm', 'workflows'),
-    ).get(`pcw-${onExpiry}`);
-    const runs = new JsonFileStore(join(home, '.realm', 'runs'));
+    const definition: WorkflowDefinition = await h.home.workflowStore.get(`pcw-${onExpiry}`);
+    const runs = h.home.runStore;
     const { record: run } = await runs.create({
       workflowId: definition.id,
       workflowVersion: 1,
@@ -169,14 +169,16 @@ describe('#625 PR-2a, C98 and C95 — where the code comes from; advance carries
   }, 60_000);
 
   it("F2: under npx (INIT_CWD and npm's prefix = the project), the advance line names the project folder — whole, or only HOME's part when HOME is above it", async () => {
-    const extra: string[] = [];
+    const extra: TempHome[] = [];
     const got: Array<[string, string]> = [];
     try {
       for (const placement of ['home-elsewhere', 'home-above'] as const) {
         if (placement === 'home-above') {
           // The walker's case: the project under the home folder.
-          home = realpathSync(mkdtempSync(join(tmpdir(), 'realm-pcw-f2-home-')));
-          extra.push(home);
+          const f2 = await makeTempHome();
+          extra.push(f2);
+          h = f2;
+          home = realpathSync(f2.root);
           proj = join(home, 'code', 'x');
           mkdirSync(proj, { recursive: true });
         }
@@ -206,7 +208,7 @@ describe('#625 PR-2a, C98 and C95 — where the code comes from; advance carries
         ]);
       }
     } finally {
-      for (const d of extra) rmSync(d, { recursive: true, force: true });
+      for (const t of extra) await t.cleanup();
     }
     // (a) red when INIT_CWD/npm's prefix hide the project folder again (the header reads
     //     `under [REDACTED]`); (b) prints both headers per placement (paths under the temp folder).
@@ -318,11 +320,9 @@ describe('#625 PR-2a, C98 and C95 — where the code comes from; advance carries
       );
       const registered = realm(bare, ['workflow', 'register', 'wf/workflow.yaml']);
       expect(registered.status).toBe(0);
-      const definition = await new JsonWorkflowStore(join(home, '.realm', 'workflows')).get(
-        'pcw-bare',
-      );
+      const definition = await h.home.workflowStore.get('pcw-bare');
       const root = definition.trust_root!;
-      const runs = new JsonFileStore(join(home, '.realm', 'runs'));
+      const runs = h.home.runStore;
       const { record: run } = await runs.create({
         workflowId: 'pcw-bare',
         workflowVersion: 1,
@@ -438,11 +438,9 @@ describe('#625 PR-2a, C98 and C95 — where the code comes from; advance carries
         'utf8',
       );
       expect(realm(bare, ['workflow', 'register', 'wf/workflow.yaml']).status).toBe(0);
-      const definition = await new JsonWorkflowStore(join(home, '.realm', 'workflows')).get(
-        'pcw-bare2',
-      );
+      const definition = await h.home.workflowStore.get('pcw-bare2');
       const root = definition.trust_root!;
-      const runs = new JsonFileStore(join(home, '.realm', 'runs'));
+      const runs = h.home.runStore;
       const { record: run } = await runs.create({
         workflowId: 'pcw-bare2',
         workflowVersion: 1,

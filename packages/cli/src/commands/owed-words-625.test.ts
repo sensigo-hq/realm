@@ -2,8 +2,7 @@
 // that no journey cell reaches: `realm run advance`'s fit words, identity and driver words and every
 // `Stopped:` reason; `inspect`'s refused-step line; listen's sweeper `owed` field.
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -28,6 +27,7 @@ import {
 } from '@sensigo/realm';
 import { FIT_WORDS, fitWords, advanceRunFromShell } from './run-advance.js';
 import { stopReasons } from './ways-renderer.js';
+import { makeTempHome } from '../test-support/temp-home.js';
 
 // #729 PR-0 (A-10, T-14): `stoppedReasons` is replaced by the CLI renderer's `stopReasons`, which reads
 // the run's ways. These cells hand it ways as core composes them (a literal per member).
@@ -62,12 +62,13 @@ const wf = (id: string, steps: WorkflowDefinition['steps']): WorkflowDefinition 
   steps,
 });
 
-function stores() {
-  const home = mkdtempSync(join(tmpdir(), 'realm-owed-words-625-'));
+async function stores() {
+  const h = await makeTempHome();
   return {
-    home,
-    runs: new JsonFileStore(join(home, 'runs')),
-    workflows: new JsonWorkflowStore(join(home, 'wf')),
+    home: h.root,
+    runs: h.home.runStore,
+    workflows: h.home.workflowStore,
+    cleanup: () => h.cleanup(),
   };
 }
 
@@ -158,7 +159,7 @@ describe('#625 PR-2a — realm run advance: the words', () => {
   });
 
   it("advance: a failed engine step is the first Stopped reason, then the view's; exit 1", async () => {
-    const { home, runs, workflows } = stores();
+    const { home, runs, workflows, cleanup } = await stores();
     try {
       const d = wf('failed-wf', {
         x: { description: 'X', execution: 'auto', depends_on: [], handler: 'boom' },
@@ -197,12 +198,12 @@ describe('#625 PR-2a — realm run advance: the words', () => {
         `Run ${run.id}: phase 'running'`,
       ]);
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('C23: a capability block is a step that cannot run here (capability), never "failed"; exit 1 (nothing owed)', async () => {
-    const { home, runs, workflows } = stores();
+    const { home, runs, workflows, cleanup } = await stores();
     try {
       const d = wf('cap-advance-wf', {
         x: { description: 'X', execution: 'auto', depends_on: [], handler: 'missing_h' },
@@ -239,12 +240,12 @@ describe('#625 PR-2a — realm run advance: the words', () => {
       ]);
       expect(lines.join('\n')).not.toContain('failed');
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('C23: the capability-once attempt during an advance is named as a step that cannot run here (capability), never "failed"; exit 1', async () => {
-    const { home, runs, workflows } = stores();
+    const { home, runs, workflows, cleanup } = await stores();
     try {
       const d = wf('cap-attempt-wf', {
         x: { description: 'X', execution: 'auto', depends_on: [], handler: 'missing_h' },
@@ -281,12 +282,12 @@ describe('#625 PR-2a — realm run advance: the words', () => {
       ]);
       expect(lines.join('\n')).not.toContain('failed');
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('C25: a step another process claimed during advance is said with the D6.1 line, never "cannot run here"', async () => {
-    const { home, runs, workflows } = stores();
+    const { home, runs, workflows, cleanup } = await stores();
     try {
       const d = wf('taken-wf', {
         x: { description: 'X', execution: 'auto', depends_on: [] },
@@ -332,12 +333,12 @@ describe('#625 PR-2a — realm run advance: the words', () => {
         `Run ${run.id}: phase 'running'`,
       ]);
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('C21: the driver line counts in the plural, and says nothing when no newer entry lacks a driver', async () => {
-    const { home, runs, workflows } = stores();
+    const { home, runs, workflows, cleanup } = await stores();
     try {
       const d = wf('plural-wf', {
         a: { description: 'A', execution: 'agent', depends_on: [] },
@@ -384,12 +385,12 @@ describe('#625 PR-2a — realm run advance: the words', () => {
         `Last recorded driver: one@host (from the OS user, via agent) at step 'a', ${at}; 2 newer entries record no driver.`,
       );
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('no derivable name, a driver with newer entries that record none: the preview says both', async () => {
-    const { home, runs, workflows } = stores();
+    const { home, runs, workflows, cleanup } = await stores();
     try {
       const d = wf('words-wf', {
         a: { description: 'A', execution: 'agent', depends_on: [] },
@@ -431,14 +432,14 @@ describe('#625 PR-2a — realm run advance: the words', () => {
         `Last recorded driver: one@host (from the OS user, via agent) at step 'a', ${at}; 1 newer entry records no driver.`,
       );
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await cleanup();
     }
   });
 });
 
 describe('#625 PR-2a — inspect names each engine step that cannot run', () => {
   it("`Cannot run '<s>' (<check>): <refusal>`", async () => {
-    const { home, runs, workflows } = stores();
+    const { runs, workflows, cleanup } = await stores();
     try {
       const d = wf('inspect-refused-wf', {
         x: {
@@ -460,14 +461,14 @@ describe('#625 PR-2a — inspect names each engine step that cannot run', () => 
       );
       expect(out).not.toContain('Owed to the engine');
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await cleanup();
     }
   });
 });
 
 describe("#625 PR-2a — listen's sweeper names the owed steps an expiry leaves", () => {
   it('the enacted-expiry log line gains `owed`', async () => {
-    const { home, runs, workflows } = stores();
+    const { runs, workflows, cleanup } = await stores();
     try {
       const d = wf('sweep-owed-wf', {
         confirm: {
@@ -504,11 +505,16 @@ describe("#625 PR-2a — listen's sweeper names the owed steps an expiry leaves"
       };
       // #715 (b): the store's clock decides — the same folder reopened as a test location an hour on.
       await writeTestClockFile(dirname(runs.runsDirPath), new Date(Date.now() + 3_600_000));
-      await sweepExpiredGates({
-        runStore: new JsonFileStore(runs.runsDirPath),
-        workflowStore: workflows,
-        logger,
-      } as never);
+      const reopened = await makeTempHome({ home: dirname(runs.runsDirPath) });
+      try {
+        await sweepExpiredGates({
+          runStore: reopened.home.runStore,
+          workflowStore: workflows,
+          logger,
+        } as never);
+      } finally {
+        await reopened.cleanup();
+      }
       const line = logged.find(([m]) => m === 'listen: sweeper enacted an expired gate');
       expect((line?.[1] as Record<string, unknown>)['owed']).toEqual(['after']);
       expect(
@@ -516,14 +522,14 @@ describe("#625 PR-2a — listen's sweeper names the owed steps an expiry leaves"
           .owed,
       ).toEqual([{ step: 'after' }]);
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await cleanup();
     }
   });
 });
 
 describe('#625 PR-2a, C37 — realm run advance and respond: the words after the walk', () => {
   it('a run the call completes gets no `Stopped:` line — the phase line says it', async () => {
-    const { home, runs, workflows } = stores();
+    const { home, runs, workflows, cleanup } = await stores();
     try {
       const d = wf('completes-wf', {
         a: { description: 'A', execution: 'auto', depends_on: [] },
@@ -552,12 +558,12 @@ describe('#625 PR-2a, C37 — realm run advance and respond: the words after the
       ]);
       expect(lines.some((l) => l.startsWith('Stopped:'))).toBe(false);
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('a step another program holds: the preview says `In flight:`, and the reason replaces "nothing is ready"', async () => {
-    const { home, runs, workflows } = stores();
+    const { home, runs, workflows, cleanup } = await stores();
     try {
       const d = wf('held-wf', { x: { description: 'X', execution: 'auto', depends_on: [] } });
       await workflows.register(d);
@@ -590,12 +596,12 @@ describe('#625 PR-2a, C37 — realm run advance and respond: the words after the
         `The engine can run nothing now: 'x' is in flight in another program — wait for it, or see realm run inspect ${run.id}`,
       ]);
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('a reason that ends with a full stop gets no second one', async () => {
-    const { home, runs, workflows } = stores();
+    const { home, runs, workflows, cleanup } = await stores();
     try {
       const d = wf('stop-wf', {
         a: {
@@ -628,7 +634,7 @@ describe('#625 PR-2a, C37 — realm run advance and respond: the words after the
       ]);
       expect(lines.join('\n')).not.toContain('..');
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
@@ -639,7 +645,7 @@ describe('#625 PR-2a, C37 — realm run advance and respond: the words after the
       [['after'], 'it'],
       [['after', 'also'], 'them'],
     ] as const) {
-      const { home, runs, workflows } = stores();
+      const { runs, workflows, cleanup } = await stores();
       try {
         const steps: WorkflowDefinition['steps'] = {
           confirm: {
@@ -678,7 +684,7 @@ describe('#625 PR-2a, C37 — realm run advance and respond: the words after the
           `Owed to the engine: ${owed.map((n) => `'${n}'`).join(', ')} — realm run advance ${run.id} runs ${them}${them === 'them' ? ' until a step opens a question, fails or ends the run' : ''}, with the project code under the folder it runs in (or its --project), in the environment of the shell it runs in.`,
         );
       } finally {
-        rmSync(home, { recursive: true, force: true });
+        await cleanup();
       }
     }
   });
@@ -705,7 +711,7 @@ describe('#625 PR-2a, C43 and C44 — realm run advance: the opening says whethe
   };
 
   it('C43: nothing owed (the run ended) — `Nothing is owed to the engine: …`, exit 0', async () => {
-    const { home, runs, workflows } = stores();
+    const { home, runs, workflows, cleanup } = await stores();
     try {
       const d = wf('c43-ended', { x: { description: 'X', execution: 'auto', depends_on: [] } });
       await workflows.register(d);
@@ -721,7 +727,7 @@ describe('#625 PR-2a, C43 and C44 — realm run advance: the opening says whethe
         'Nothing is owed to the engine: the run has ended (completed).',
       ]);
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
@@ -754,7 +760,7 @@ describe('#625 PR-2a, C43 and C44 — realm run advance: the opening says whethe
     ],
   ] as const) {
     it(`C43, C44 (${check}): owed but cannot run — \`The engine can run nothing now: …\`, then the one way out; exit 1`, async () => {
-      const { home, runs, workflows } = stores();
+      const { home, runs, workflows, cleanup } = await stores();
       try {
         const d = wf(`c43-${check}`, {
           x: step as unknown as WorkflowDefinition['steps'][string],
@@ -779,13 +785,13 @@ describe('#625 PR-2a, C43 and C44 — realm run advance: the opening says whethe
             : `Run ${run.id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${run.id} — or end it: realm run abandon ${run.id}`,
         );
       } finally {
-        rmSync(home, { recursive: true, force: true });
+        await cleanup();
       }
     });
   }
 
   it('C44 after a call: the run stops on a step refused before its claim with nothing else ready — the way out is the last line, in place of the phase line', async () => {
-    const { home, runs, workflows } = stores();
+    const { home, runs, workflows, cleanup } = await stores();
     try {
       const d = wf('c44-after', {
         a: { description: 'A', execution: 'auto', depends_on: [], trust: 'not_a_level' as never },
@@ -805,12 +811,12 @@ describe('#625 PR-2a, C43 and C44 — realm run advance: the opening says whethe
         `Run ${run.id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${run.id} — or end it: realm run abandon ${run.id}`,
       ]);
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('C44: no way out while something else is ready (an agent step) — the phase line stays', async () => {
-    const { home, runs, workflows } = stores();
+    const { home, runs, workflows, cleanup } = await stores();
     try {
       const d = wf('c44-agent', {
         a: { description: 'A', execution: 'auto', depends_on: [], trust: 'not_a_level' as never },
@@ -830,7 +836,7 @@ describe('#625 PR-2a, C43 and C44 — realm run advance: the opening says whethe
         true,
       ]);
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
@@ -858,7 +864,7 @@ describe('#625 PR-2a, C43 and C44 — realm run advance: the opening says whethe
 
 describe('#625 PR-2a, C46 — inspect reads the record alone', () => {
   it('inspect is unchanged: a run another runner marked keeps its capability_block finding and the past-tense line (no registry is consulted)', async () => {
-    const { home, runs, workflows } = stores();
+    const { runs, workflows, cleanup } = await stores();
     try {
       const d = wf('c46-inspect', {
         x: { description: 'X', execution: 'auto', depends_on: [], handler: 'missing_h' },
@@ -880,7 +886,7 @@ describe('#625 PR-2a, C46 — inspect reads the record alone', () => {
         `Could not run 'x' (capability): handler 'missing_h' was not registered in the runner that last attempted it — from a program that has it: realm run advance ${run.id}`,
       );
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await cleanup();
     }
   });
 });
@@ -933,7 +939,7 @@ describe('#625 PR-2a, round 6 — the count words (C55), the fit words (C56), an
   });
 
   it('C56 on the preview: a fresh run from a program with project code, then a run whose record was taken under other rules', async () => {
-    const { home, runs, workflows } = stores();
+    const { home, runs, workflows, cleanup } = await stores();
     try {
       const d = wf('c56', { ask: { description: 'Ask', execution: 'agent', depends_on: [] } });
       await workflows.register(d);
@@ -953,12 +959,12 @@ describe('#625 PR-2a, round 6 — the count words (C55), the fit words (C56), an
         "This program: no name could be recorded · project code: not comparable with the run's last record.",
       );
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('C55: `drive it` for one ready agent step, `drive them` for two', async () => {
-    const { home, runs, workflows } = stores();
+    const { home, runs, workflows, cleanup } = await stores();
     try {
       const one = wf('c55-one', { a: { description: 'A', execution: 'agent', depends_on: [] } });
       const two = wf('c55-two', {
@@ -976,12 +982,12 @@ describe('#625 PR-2a, round 6 — the count words (C55), the fit words (C56), an
         `Nothing is owed to the engine: agent steps are ready: 'a', 'b' — drive them with realm agent --run-id ${r2.id} --provider <provider> --model <model>`,
       );
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('C49 on inspect: a trust-refused step is named in the read-time voice', async () => {
-    const { home, runs, workflows } = stores();
+    const { runs, workflows, cleanup } = await stores();
     try {
       const d = wf('c49-inspect', {
         x: { description: 'X', execution: 'auto', depends_on: [], trust: 'nope' as never },
@@ -999,14 +1005,14 @@ describe('#625 PR-2a, round 6 — the count words (C55), the fit words (C56), an
       );
       expect(screen).not.toContain('parked');
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await cleanup();
     }
   });
 });
 
 describe('#625 PR-2a, round 24 (the architect, m174a) — the guard line when another program ends the run', () => {
   it('a guard that passed is said as passed when another program ends the run after it (the record names no guard as the ending), never as the run’s ending', async () => {
-    const { home, runs, workflows } = stores();
+    const { home, runs, workflows, cleanup } = await stores();
     try {
       const d = loadWorkflowFromString(
         [
@@ -1080,7 +1086,7 @@ describe('#625 PR-2a, round 24 (the architect, m174a) — the guard line when an
       expect(lines, lines.join('\n')).toContain("Guard step 'g' passed.");
       expect(lines.join('\n')).not.toMatch(/Guard step 'g' (aborted|ended|completed)/);
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await cleanup();
     }
   });
 });
@@ -1119,7 +1125,7 @@ describe('#625 PR-2a, round 25 — C194 (walk c10, W1-2): realm run advance when
    * settle of `process`.
    */
   async function race(kase: Kase, warnFirst = false) {
-    const { home, runs, workflows } = stores();
+    const { home, runs, workflows, cleanup } = await stores();
     const d = loadWorkflowFromString(
       [
         `id: adv-race-${kase}`,
@@ -1228,7 +1234,7 @@ describe('#625 PR-2a, round 25 — C194 (walk c10, W1-2): realm run advance when
         after,
       };
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await cleanup();
     }
   }
 
@@ -1358,7 +1364,7 @@ describe('#625 PR-2a, round 25 — C194 (walk c10, W1-2): realm run advance when
     // `x` (auto) runs in this call; after its write another writer records `a` (ok: false) with a plain
     // update (it settles no guard), so the call meets guard `g` and decides abort; at that settle
     // another call settles `g` first (pass): STATE_STEP_ALREADY_SETTLED with no `stopped_step`.
-    const { home, runs, workflows } = stores();
+    const { home, runs, workflows, cleanup } = await stores();
     try {
       const d = loadWorkflowFromString(
         [
@@ -1466,7 +1472,7 @@ describe('#625 PR-2a, round 25 — C194 (walk c10, W1-2): realm run advance when
         notRecorded: [],
       });
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await cleanup();
     }
   });
 });
@@ -1488,7 +1494,7 @@ describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says
     handlers: Record<string, Handler>,
     wrap: (target: JsonFileStore, ctx: Ctx) => Record<string, unknown> = () => ({}),
   ) {
-    const { home, runs, workflows } = stores();
+    const { home, runs, workflows, cleanup } = await stores();
     try {
       const d = loadWorkflowFromString(yaml.join('\n'));
       await workflows.register(d);
@@ -1532,7 +1538,7 @@ describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says
         phase: after.run_phase,
       };
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await cleanup();
     }
   }
 
@@ -2052,7 +2058,7 @@ describe("#625 PR-2a, round 27 — C202 (walk c12, W1-2): realm run advance give
    * `lines` are every line it printed, the run id put as `<run>`.
    */
   async function setup(yaml: string[]) {
-    const { home, runs, workflows } = stores();
+    const { home, runs, workflows, cleanup } = await stores();
     const d = loadWorkflowFromString(yaml.join('\n'));
     await workflows.register(d);
     const { record: run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
@@ -2079,7 +2085,7 @@ describe("#625 PR-2a, round 27 — C202 (walk c12, W1-2): realm run advance give
       );
       return { code, lines: lines.map((l) => l.split(run.id).join('<run>')) };
     };
-    return { home, runs, workflows, d, id: run.id, breaks, advance };
+    return { home, runs, workflows, d, id: run.id, breaks, advance, cleanup };
   }
   const head = (id: string) => [`id: ${id}`, `name: ${id}`, 'version: 1', 'steps:'];
   const auto = (name: string, handler: string, extra: string[] = []) => [
@@ -2124,7 +2130,7 @@ describe("#625 PR-2a, round 27 — C202 (walk c12, W1-2): realm run advance give
         resumed: ['→ s', '→ done', "Run <run>: phase 'completed'"],
       });
     } finally {
-      rmSync(t.home, { recursive: true, force: true });
+      await t.cleanup();
     }
   });
 
@@ -2155,7 +2161,7 @@ describe("#625 PR-2a, round 27 — C202 (walk c12, W1-2): realm run advance give
         ],
       });
     } finally {
-      rmSync(t.home, { recursive: true, force: true });
+      await t.cleanup();
     }
   });
 
@@ -2222,7 +2228,7 @@ describe("#625 PR-2a, round 27 — C202 (walk c12, W1-2): realm run advance give
         aborted: ['Stopped: the run has ended (aborted)'],
       });
     } finally {
-      for (const t of [fin, abandoned, aborted]) rmSync(t.home, { recursive: true, force: true });
+      for (const t of [fin, abandoned, aborted]) await t.cleanup();
     }
   });
 
@@ -2258,7 +2264,7 @@ describe("#625 PR-2a, round 27 — C202 (walk c12, W1-2): realm run advance give
         done: ['b'],
       });
     } finally {
-      rmSync(t.home, { recursive: true, force: true });
+      await t.cleanup();
     }
   });
 
@@ -2275,7 +2281,7 @@ describe("#625 PR-2a, round 27 — C202 (walk c12, W1-2): realm run advance give
       ACTING,
       "work the engine still owes when the call stops, after a refusal for one (`the engine still owes '<step>' — to run it: realm run advance <id>`, or, for several, `the engine still owes '<a>', '<b>' — to run them until a step opens a question, fails or ends the run: realm run advance <id>`)",
     );
-    const { home, runs, workflows } = stores();
+    const { home, runs, workflows, cleanup } = await stores();
     try {
       const d = loadWorkflowFromString(
         [
@@ -2345,7 +2351,7 @@ describe("#625 PR-2a, round 27 — C202 (walk c12, W1-2): realm run advance give
         failed: ['s'],
       });
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await cleanup();
     }
   });
 });
