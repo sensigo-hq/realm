@@ -2,7 +2,7 @@
 
 <!-- description: Every error code Realm defines: when each one is raised and what it tells the caller to do, and the codes that nothing raises. -->
 
-Every error Realm raises on purpose has a code. This page lists all 108 codes that Realm defines: the 91 it raises, with when each is raised and what it tells the caller to do, and the 17 that nothing raises. The lists were made by a script that read the `ErrorCode` type and every place in Realm's code that raises one. The replies shown came from calls to a running server.
+Every error Realm raises on purpose has a code. This page lists all 108 codes that Realm defines: the 92 it raises, with when each is raised and what it tells the caller to do, and the 16 that nothing raises. The lists were made by a script that read the `ErrorCode` type and every place in Realm's code that raises one. The replies shown came from calls to a running server.
 
 ## Where a code appears
 
@@ -118,6 +118,7 @@ The last two columns are what the error carries where it is raised. Where a code
 | `STATE_RUN_PURGED`               | A write tried to create a run id that was deleted earlier; a purged run is never created again.                                                                                                                                                                                                                                                                                                                                                                    | `report_to_user`                         | No          |
 | `STATE_EVIDENCE_REWRITTEN`       | A write tried to change or remove a run's stored evidence, which is append-only.                                                                                                                                                                                                                                                                                                                                                                                   | `report_to_user`                         | No          |
 | `STATE_WRITE_ONCE_REWRITTEN`     | A write tried to change a field that is written once and then never changes.                                                                                                                                                                                                                                                                                                                                                                                       | `report_to_user`                         | No          |
+| `STATE_STORE_WRITES_FENCED`      | The store could not tell whether its last write was saved and refuses writes until it can.                                                                                                                                                                                                                                                                                                                                                                         | `report_to_user`                         | Yes         |
 | `STATE_STEP_PENDING`             | Used inside the trace buffer: a step's entries cannot be sealed while the step is in progress.                                                                                                                                                                                                                                                                                                                                                                     | `report_to_user`                         | Yes         |
 | `STATE_SEAL_UNSTAMPED`           | A store was asked to end a run without recording how it ended.                                                                                                                                                                                                                                                                                                                                                                                                     | `report_to_user`                         | No          |
 | `STATE_SEAL_ORPHANED`            | A store was asked to reopen a run and keep the record of how it ended.                                                                                                                                                                                                                                                                                                                                                                                             | `report_to_user`                         | No          |
@@ -187,14 +188,14 @@ The last two columns are what the error carries where it is raised. Where a code
 
 ## The codes nothing raises
 
-These 17 are in the `ErrorCode` type, and no code in Realm raises them:
+These 16 are in the `ErrorCode` type, and no code in Realm raises them:
 
 ```text
 NETWORK_TIMEOUT, NETWORK_DNS_FAILED, NETWORK_CONNECTION_RESET, STATE_PRECONDITION_FAILED,
 STATE_RUN_LOCKED, RUN_ABORTING, VALIDATION_HASH_MISMATCH, VALIDATION_QUOTE_NOT_FOUND,
 VALIDATION_FIELD_UNKNOWN, VALIDATION_FIELD_EXCLUDED, STEP_HANDLER_ERROR, ENGINE_GATE_OPEN_FAILED,
 GUARD_RESOLUTION_ERROR, RESOURCE_TOO_LARGE, RESOURCE_NOT_ACCESSIBLE,
-STATE_STORE_WRITES_FENCED, STATE_RUN_TIMESTAMP_INVALID
+STATE_RUN_TIMESTAMP_INVALID
 ```
 
 A handler or an adapter of your own may raise any code in the type, these included.

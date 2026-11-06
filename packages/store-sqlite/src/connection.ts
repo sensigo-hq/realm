@@ -5,9 +5,26 @@
 //   - `snapshot(body)`: a read transaction, `query_only` on for the body;
 //   - `immediate(body, verify)`: a write transaction, `BEGIN IMMEDIATE`.
 // It is built over a connection it is GIVEN, with a `reopen` function for that connection's file;
-// `RealmDb.open` (unit 7b, `open-file.ts`) opens a home and builds one. The COMMIT outcome protocol,
-// which uses `verify` and the in-process lock, is unit 9's: until then a COMMIT error rolls back and
-// throws the mapped error.
+// `RealmDb.open` (unit 7b, `open-file.ts`) opens a home and builds one.
+//
+// The COMMIT outcome protocol (unit 9; design §2). Any error at an `immediate`'s COMMIT is answered
+// here, never by the busy wait's retry, while the call still holds the in-process lock, so no other
+// transaction of the process lands before the answer:
+//   1. the CONNECTION still reports a transaction open: nothing was committed (a pending statement,
+//      or a deferred constraint, 787, which the schema does not declare: a programming error); it is
+//      rolled back → `not_landed`;
+//   2. else the write's own `verify` reads its rows back by content, in a read transaction with no
+//      `user_version` gate (a newer Realm upgrading the file meanwhile must not make a landed write
+//      unanswerable), through the busy wait → `landed`; a read-back that cannot answer (still busy,
+//      or a verify that throws: `VerifyInconclusive` for a newer stored version) → `unknown`;
+//   3. else a resolving commit (`UPDATE store_meta SET commit_epoch = commit_epoch + 1`) through the
+//      busy wait → `not_landed`;
+//   4. else `unknown`: the next call of any form reopens the connection first; until a resolving
+//      commit succeeds, writes are refused with `STATE_STORE_WRITES_FENCED` (each `immediate` tries
+//      one, through the busy wait, before its write); reads and autocommit statements are served.
+// A landed write resolves the call with the body's result; the others reject it, carrying the
+// answer as `commitOutcome` ({@link CommitOutcome}). Each wait of the protocol has a fresh busy
+// budget, counted from its own start. It proves crash behaviour, not power loss.
 //
 // The rules all three forms share:
 //   - a body is synchronous, so a transaction never spans an await: a body whose type returns a
@@ -51,18 +68,71 @@ export const BUSY_SLICE_MS = 20;
 const BUSY_WAIT_MIN_MS = 5;
 const BUSY_WAIT_MAX_MS = 50;
 
-/** The write's own content check, kept for the COMMIT outcome protocol (unit 9). */
+/**
+ * The write's own content check, which the COMMIT outcome protocol runs after an error at COMMIT:
+ * it reads the rows the write made back by their CONTENT, never by position or version alone.
+ * Return true when the write is there. Return false only when you read the rows and the write is
+ * not there; throw {@link VerifyInconclusive} when you cannot tell (a newer version is stored).
+ */
 export type Verify<T> = (db: DatabaseLike, result: T) => boolean;
+
+/**
+ * Thrown by a write's `verify` when it cannot tell whether the write is there: a newer version of
+ * the record is stored, so the write may have landed and been superseded. The outcome is `unknown`.
+ */
+export class VerifyInconclusive extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'VerifyInconclusive';
+  }
+}
+
+/**
+ * How a write whose COMMIT reported an error was answered: `landed` (its rows are in the file),
+ * `not_landed` (they are not) or `unknown` (it cannot be told). `cause` is the typed code the COMMIT
+ * error mapped to (`STATE_STORE_FULL`), when it mapped to one; `errcode` is SQLite's code for it;
+ * `programmingError` marks a deferred constraint (787), which the schema does not declare.
+ */
+export interface CommitOutcome {
+  outcome: 'landed' | 'not_landed' | 'unknown';
+  cause?: string;
+  errcode?: number;
+  programmingError?: boolean;
+}
+
+/** An error that carries the answer for the write whose COMMIT failed (the first caller only). */
+export type WithCommitOutcome = Error & { readonly commitOutcome: CommitOutcome };
+
+/** A COMMIT that failed, carried from the synchronous attempt to the protocol under the lock. */
+class CommitFailed<T> extends Error {
+  constructor(
+    /** The COMMIT error, mapped. */
+    readonly mapped: Error,
+    /** The body's result. */
+    readonly result: T,
+    /** What every answer carries: the mapped code as `cause`, SQLite's code. */
+    readonly base: Omit<CommitOutcome, 'outcome'>,
+    /** The answer, when step 1 decided it synchronously. */
+    readonly decided: CommitOutcome | undefined,
+  ) {
+    super('A COMMIT failed; the COMMIT outcome protocol answers it.');
+  }
+}
+
+/** What the busy wait does around its attempt: take the lock, or run under the caller's. */
+type Locking<T> = { readonly verify?: Verify<T> } | 'held';
 
 /** Anything with a callable `then`: a promise, or any other thenable. */
 type Thenable = { readonly then: (...args: never) => unknown };
 
 /**
- * A body's result: anything but a thenable. A body typed to return a promise (an `async` arrow, a
- * `Promise.resolve`, a union that may be one) does not compile, because the code after its first
- * `await` would run outside the transaction and the lock; every synchronous result keeps its type.
+ * A body's result: anything but a thenable. A body whose inferred result type is a thenable (an
+ * `async` arrow, a `Promise.resolve`, a union that may be one) does not compile, because the code
+ * after its first `await` would run outside the transaction and the lock; every synchronous result
+ * keeps its type. Exported for a generic wrapper over a form, which names it for its body's result;
+ * the package's entry does not export it.
  */
-type SyncResult<T> = T extends Thenable ? never : T;
+export type SyncResult<T> = T extends Thenable ? never : T;
 
 /** What a `RealmDb` is built over, besides its connection. */
 export interface RealmDbOptions {
@@ -177,6 +247,30 @@ function busyError(budgetMs: number): WorkflowError {
       details: { budget_ms: budgetMs },
     },
   );
+}
+
+/**
+ * A write refused while the outcome of an earlier one is unknown, and that earlier write's own
+ * answer. `cause` is the typed code its COMMIT error mapped to, when it mapped to one.
+ */
+function fencedError(cause: string | undefined): WorkflowError {
+  return new WorkflowError(
+    `The store cannot confirm whether its last write was saved${cause === undefined ? '' : ` (${cause})`}, ` +
+      'so it refuses new writes until it can. Read back what you wrote to see what was saved, then ' +
+      'try again.',
+    {
+      code: 'STATE_STORE_WRITES_FENCED',
+      category: 'STATE',
+      agentAction: 'report_to_user',
+      retryable: true,
+      details: cause === undefined ? {} : { cause },
+    },
+  );
+}
+
+/** `err` with the answer for the write whose COMMIT failed. */
+function withCommitOutcome(err: Error, commitOutcome: CommitOutcome): WithCommitOutcome {
+  return Object.assign(err, { commitOutcome });
 }
 
 function nestedCallError(): Error {
@@ -349,6 +443,10 @@ export class RealmDb {
   #txOpen = false;
   /** A call refused because it started inside the open transaction: that transaction fails with it. */
   #nested: Error | undefined;
+  /** Set when a write's outcome was unknown: the next call reopens the connection first. */
+  #reopenOwed = false;
+  /** Set while a write's outcome is unknown: writes are refused until a resolving commit succeeds. */
+  #fence: { readonly cause: string | undefined } | undefined;
 
   /**
    * Opens the Realm home at `home` and returns its store's primitive, ready: the one open
@@ -401,7 +499,7 @@ export class RealmDb {
   /**
    * Runs `body` in a write transaction (`BEGIN IMMEDIATE`, the `user_version` re-read first), with
    * the raw reading taken after the lock. `verify` is the write's own content check: required, and
-   * used by the COMMIT outcome protocol (unit 9).
+   * run by the COMMIT outcome protocol when the COMMIT reports an error (see the module comment).
    */
   immediate<T>(
     body: (db: DatabaseLike, reading: Date) => SyncResult<T>,
@@ -419,11 +517,8 @@ export class RealmDb {
     options?: { takesReading: false },
   ): Promise<T> {
     this.#refuseIfNested();
-    // `verify` is unit 9's: the COMMIT outcome protocol reads the write back with it. Until then a
-    // COMMIT error rolls back and throws the mapped error.
-    void verify;
     const takesReading = options?.takesReading !== false;
-    return this.#withLockAndBusyWait(() => this.#immediateOnce(body, takesReading));
+    return this.#withLockAndBusyWait(() => this.#immediateOnce(body, takesReading), { verify });
   }
 
   /** Closes the connection. */
@@ -440,24 +535,49 @@ export class RealmDb {
   }
 
   /**
-   * Takes the in-process lock (synchronously when it is free) and runs `attempt`, waiting
-   * asynchronously and running it again while the store is busy, up to the budget. The budget
-   * counts from the call, the time queued for the lock included; the first attempt always runs, so
-   * a call whose budget passed in the queue still gets one try.
+   * The one busy wait. Runs `attempt`, waiting asynchronously and running it again while the store
+   * is busy, until the budget has passed; then refuses with `STATE_RUN_BUSY`. The first attempt
+   * always runs.
+   *
+   * A call (`locking` an object) first takes the in-process lock, synchronously when it is free,
+   * and releases it in a `finally`; its budget counts from the call, the time queued for the lock
+   * included. A call that got the lock only after its budget passed yields to the event loop once
+   * before its one attempt. Under the lock, before the first attempt: the reopen an unknown outcome
+   * owes, and, for a write (`verify` given) while writes are fenced, a resolving commit. A failed
+   * COMMIT of a write is answered by the COMMIT outcome protocol, still under the lock.
+   *
+   * A step of the protocol (`'held'`) runs under the lock its call already holds, with a fresh
+   * budget counted from the step's own start.
    */
-  async #withLockAndBusyWait<T>(attempt: () => T): Promise<T> {
+  async #withLockAndBusyWait<T>(attempt: () => T, locking: Locking<T> = {}): Promise<T> {
+    const call = locking === 'held' ? undefined : locking;
     let calledAt: number | undefined;
     let held = false;
+    let queued = false;
+    let prepared = call === undefined;
     try {
       for (;;) {
-        // The one clock read: at the call, then after each busy answer.
+        // The one clock read: at the start, when the lock comes after a queue, and after each busy
+        // answer.
         const now = performance.now();
         if (calledAt === undefined) {
           calledAt = now;
-          held = this.lock.tryTake();
-          if (!held) {
-            await this.lock.take();
-            held = true;
+          if (call !== undefined) {
+            held = this.lock.tryTake();
+            if (!held) {
+              await this.lock.take();
+              held = true;
+              queued = true;
+              continue;
+            }
+          }
+        } else if (queued) {
+          queued = false;
+          // The lock came after the budget passed in the queue: yield to the event loop once
+          // before the one attempt. A release hands the lock on without the loop turning, so a
+          // burst of such calls would otherwise block the program for all their attempts at once.
+          if (now - calledAt >= this.#budgetMs) {
+            await new Promise<void>((resolve) => setImmediate(resolve));
           }
         } else {
           const left = this.#budgetMs - (now - calledAt);
@@ -465,15 +585,168 @@ export class RealmDb {
           const jitter = BUSY_WAIT_MIN_MS + Math.random() * (BUSY_WAIT_MAX_MS - BUSY_WAIT_MIN_MS);
           await new Promise<void>((resolve) => setTimeout(resolve, Math.min(jitter, left)));
         }
+        if (!prepared) {
+          prepared = true;
+          // Awaited only when there is something to do, so an uncontended call stays synchronous.
+          const writes = call?.verify !== undefined;
+          if (this.#reopenOwed || (writes && this.#fence !== undefined)) {
+            await this.#beforeTheCall(writes);
+          }
+        }
         try {
           return attempt();
         } catch (err) {
+          if (err instanceof CommitFailed && call?.verify !== undefined) {
+            return await this.#commitOutcome(err as CommitFailed<T>, call.verify);
+          }
           if (!isBusy(err)) throw mapSqliteError(err, this.#path);
         }
       }
     } finally {
       if (held) this.lock.release();
     }
+  }
+
+  /**
+   * Under the lock, before a call's first attempt: the reopen an unknown outcome owes (a failed
+   * reopen fails this call and stays owed, so the next call opens afresh), then, for a write while
+   * writes are fenced, a resolving commit (the fence lifts when it succeeds; the write is refused
+   * when it does not). Reads and autocommit statements are served fenced or not.
+   */
+  async #beforeTheCall(writes: boolean): Promise<void> {
+    if (this.#reopenOwed) {
+      // A fresh connection first: when it fails, nothing more runs on the old one (the reopen stays
+      // owed), and the store can still be closed.
+      const fresh = this.#reopen();
+      const old = this.#db;
+      this.#db = fresh;
+      this.#reopenOwed = false;
+      try {
+        old.close();
+      } catch {
+        // The old connection is dropped either way; its close has nothing to tell the caller.
+      }
+    }
+    if (writes && this.#fence !== undefined) {
+      const { cause } = this.#fence;
+      try {
+        await this.#withLockAndBusyWait(() => this.#resolvingCommitOnce(), 'held');
+      } catch {
+        throw fencedError(cause);
+      }
+      this.#fence = undefined;
+    }
+  }
+
+  /**
+   * Steps 2 to 4 of the COMMIT outcome protocol (step 1 ran in the attempt, synchronously), under
+   * the call's lock: see the module comment. A landed write returns the body's result; every other
+   * answer is thrown, carrying `commitOutcome`.
+   */
+  async #commitOutcome<T>(failure: CommitFailed<T>, verify: Verify<T>): Promise<T> {
+    if (failure.decided !== undefined) throw withCommitOutcome(failure.mapped, failure.decided);
+    // 2. The write's own check, by content, ungated, through the busy wait.
+    let seen: boolean | undefined;
+    try {
+      seen = await this.#withLockAndBusyWait(() => this.#readBack(verify, failure.result), 'held');
+    } catch {
+      // Still busy after the budget, or the verify cannot tell: the answer is unknown.
+      seen = undefined;
+    }
+    if (seen === true) return failure.result;
+    if (seen === false) {
+      // 3. A resolving commit: once one commits, the failed write cannot land any more.
+      let resolved = true;
+      try {
+        await this.#withLockAndBusyWait(() => this.#resolvingCommitOnce(), 'held');
+      } catch {
+        resolved = false;
+      }
+      if (resolved) {
+        throw withCommitOutcome(failure.mapped, { outcome: 'not_landed', ...failure.base });
+      }
+    }
+    // 4. Unknown: the next call reopens first; writes stay fenced until a resolving commit succeeds.
+    this.#reopenOwed = true;
+    this.#fence = { cause: failure.base.cause };
+    throw withCommitOutcome(fencedError(failure.base.cause), {
+      outcome: 'unknown',
+      ...failure.base,
+    });
+  }
+
+  /**
+   * Step 1, synchronously at the failed COMMIT (no await before it, so the transaction flag is
+   * right for every other caller): when the connection still reports a transaction open, nothing
+   * was committed; it is rolled back, and the rollback's own error never hides the COMMIT's.
+   */
+  #commitFailed<T>(err: unknown, result: T): CommitFailed<T> {
+    const errcode = isSqliteError(err) ? err.errcode : undefined;
+    const mappedErr = mapSqliteError(err, this.#path);
+    const mapped = mappedErr instanceof Error ? mappedErr : new Error(String(mappedErr));
+    const base: Omit<CommitOutcome, 'outcome'> = {
+      ...(mapped instanceof WorkflowError ? { cause: mapped.code } : {}),
+      ...(errcode === undefined ? {} : { errcode }),
+    };
+    let stillOpen: boolean;
+    try {
+      stillOpen = this.#db.isTransaction;
+    } catch {
+      stillOpen = false;
+    }
+    if (!stillOpen) {
+      this.#txOpen = false;
+      return new CommitFailed(mapped, result, base, undefined);
+    }
+    try {
+      this.#db.exec('ROLLBACK');
+    } catch {
+      // The COMMIT's error is the answer; a transaction left open is found by the next BEGIN.
+    }
+    this.#txOpen = false;
+    return new CommitFailed(mapped, result, base, {
+      outcome: 'not_landed',
+      ...base,
+      // A deferred constraint: the schema declares none, so the write itself is wrong.
+      ...(errcode === 787 ? { programmingError: true } : {}),
+    });
+  }
+
+  /**
+   * Step 2's read: the write's `verify` in a read transaction (`query_only` on, reset in a
+   * `finally`), with NO `user_version` gate.
+   */
+  #readBack<T>(verify: Verify<T>, result: T): boolean {
+    this.#begin('BEGIN');
+    const db = this.#db;
+    try {
+      db.exec('PRAGMA query_only = ON');
+      let seen: boolean;
+      try {
+        seen = verify(db, result);
+      } finally {
+        db.exec('PRAGMA query_only = OFF');
+      }
+      this.#commit();
+      return seen;
+    } catch (err) {
+      this.#rollbackQuietly();
+      throw err;
+    }
+  }
+
+  /** A resolving commit: one write transaction that moves the store's commit counter. */
+  #resolvingCommitOnce(): void {
+    this.#begin('BEGIN IMMEDIATE');
+    const db = this.#db;
+    try {
+      this.#refuseNewerSchema(db);
+      db.exec('UPDATE store_meta SET commit_epoch = commit_epoch + 1');
+    } catch (err) {
+      this.#rollbackQuietly();
+      throw err;
+    }
+    this.#commit();
   }
 
   #snapshotOnce<T>(body: (db: DatabaseLike, reading: Date) => T, reading: Date): T {
@@ -518,19 +791,26 @@ export class RealmDb {
     }
     this.#begin('BEGIN IMMEDIATE');
     const db = this.#db;
+    let result: T;
     try {
       this.#refuseNewerSchema(db);
-      const result = takesReading
+      result = takesReading
         ? body(db, takeRawReading(this.clock))
         : (body as (db: DatabaseLike) => T)(db);
       refuseThenable(result);
       this.#failIfNested();
-      this.#commit();
-      return result;
     } catch (err) {
       this.#rollbackQuietly();
       throw err;
     }
+    try {
+      db.exec('COMMIT');
+    } catch (err) {
+      // Any error at COMMIT goes to the COMMIT outcome protocol, never to the busy wait's retry.
+      throw this.#commitFailed(err, result);
+    }
+    this.#txOpen = false;
+    return result;
   }
 
   /**
@@ -568,7 +848,10 @@ export class RealmDb {
     if (this.#nested !== undefined) throw this.#nested;
   }
 
-  /** COMMITs; on an error rolls back and throws it mapped (never waited on: unit 9 decides there). */
+  /**
+   * COMMITs a read transaction or a step of the COMMIT outcome protocol; on an error rolls back and
+   * throws it mapped (never waited on). A write's own COMMIT goes to the protocol instead.
+   */
   #commit(): void {
     try {
       this.#db.exec('COMMIT');
