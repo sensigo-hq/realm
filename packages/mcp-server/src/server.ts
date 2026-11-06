@@ -1,16 +1,10 @@
-#!/usr/bin/env node
-// realm-mcp — MCP server exposing the Realm workflow engine to AI agents.
-import { realpathSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+// realm-mcp — MCP server exposing the Realm workflow engine to AI agents. The library: importing it
+// starts nothing. The `realm-mcp` program is `bin.ts` (#616 PR-2a, unit ii-a).
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
   ExtensionRegistry,
-  JsonWorkflowStore,
-  JsonFileStore,
+  type JsonWorkflowStore,
   withTestClockNotice,
-  setClockErrorSink,
-  JsonFileFailedAttemptStore,
   WorkflowError,
   createDefaultRegistry,
   formWaitInert,
@@ -27,13 +21,12 @@ import {
 import type { PriceSource, WorkflowDefinition } from '@sensigo/realm';
 import { discloseByTable, type DisclosureClass, type DisclosureSet } from '@sensigo/realm';
 import { loadPriceSource, withSourceNote } from './price-source.js';
-import { JsonTraceBufferStore } from './json-trace-buffer-store.js';
 import { VERSION } from './version.js';
-import { composeBinIdentity } from './bin-identity.js';
 import { registerListWorkflows } from './tools/list-workflows.js';
 import { registerGetWorkflowProtocol } from './tools/get-workflow-protocol.js';
 import { registerStartRun } from './tools/start-run.js';
 import type { FailedAttemptStoreLike } from './tools/start-run.js';
+import { STORE_ORDER, joinStoreNames, type StoreName } from './tools/assert-tool-stores.js';
 import { registerAdvanceRun } from './tools/advance-run.js';
 import { registerExecuteStep } from './tools/execute-step.js';
 import { registerSubmitHumanResponse } from './tools/submit-human-response.js';
@@ -42,12 +35,7 @@ import { registerAbandonRun } from './tools/abandon-run.js';
 import { registerCreateWorkflow } from './tools/create-workflow.js';
 import { registerAppendTrace } from './tools/append-trace.js';
 import { registerStartRunBatch } from './tools/start-run-batch.js';
-import {
-  doorDisclosureOf,
-  logMasked,
-  type DoorDisclosure,
-  type OperatorRoute,
-} from './render-reply.js';
+import { doorDisclosureOf, type DoorDisclosure, type OperatorRoute } from './render-reply.js';
 import { registerPresentQuestion } from './tools/present-question.js';
 import { ABANDON_RUN_DESCRIPTION_NO_ANSWER_TOOL } from './tools/abandon-run.js';
 import {
@@ -60,7 +48,6 @@ import {
   judgeFormWait,
   judgeGateAnswers,
 } from './door.js';
-import { gateAnswersStartLine, readBinDoorSettings } from './bin-settings.js';
 import type { ElicitFn } from './form-path.js';
 
 export interface RealmMcpServerOptions {
@@ -79,12 +66,17 @@ export interface RealmMcpServerOptions {
    * only, and every figure says no economics file is configured on this server.
    */
   priceSourceProvider?: (definition: WorkflowDefinition) => Promise<PriceSource>;
-  /** Pre-populated workflow store. When provided, tools use this instead of creating
-   *  a new JsonWorkflowStore() pointing at ~/.realm/workflows/. */
-  workflowStore?: JsonWorkflowStore;
+  /**
+   * #616 PR-2a (ii-b): the four stores are required — the library has no default store. A
+   * JavaScript caller that omits one is refused at construction, before anything is opened
+   * (`VALIDATION_OPTION_INVALID`, naming every missing store). Open them once per process; the
+   * `realm-mcp` command opens `~/.realm` itself.
+   *
+   * The workflow registry (the class: `list_workflows` reads its listing with diagnostics).
+   */
+  workflowStore: JsonWorkflowStore;
   /**
    * Run store. Any `RunStore` implementation (issue #188, PR-1 — was `JsonFileStore`-only).
-   * When omitted, defaults to a new `JsonFileStore()` pointing at `~/.realm/runs/`.
    *
    * **Co-location contract with `traceBufferStore` / `failedAttemptStore` below:** the run store
    * and the trace-buffer / failed-attempt artifact stores MUST share ONE reachability domain.
@@ -92,20 +84,13 @@ export interface RealmMcpServerOptions {
    * failed-attempt sidecar is looked up the same way — if the run store and the artifact stores
    * point at DIFFERENT backing domains (e.g. a cloud run store paired with a locally-derived
    * trace buffer, or vice versa), traces and sidecar entries are silently lost: nothing will ever
-   * look in the same place twice. Two supported configurations:
-   *  - **Local default (unchanged, byte-identical to pre-#188 behavior):** no `traceBufferStore`/
-   *    `failedAttemptStore` injected, and the run store exposes `runsDirPath` (the `JsonFileStore`
-   *    case) → both artifact stores are derived from that path, exactly as before this PR.
-   *  - **Injected / single-domain-blessed (the cloud case):** inject BOTH `traceBufferStore` AND
-   *    `failedAttemptStore` as objects already co-located with the run store's own domain (e.g.
-   *    both backed by the same Postgres database or object-storage bucket the run store uses) —
-   *    the INJECTOR guarantees co-location; `createRealmMcpServer` does not and cannot verify it.
-   *
-   * A run store that does NOT expose `runsDirPath` (cannot derive a local path) AND has NOT had
-   * BOTH artifact stores injected is a misconfiguration: `createRealmMcpServer` throws rather than
-   * silently falling back to an empty or wrong-domain artifact store.
+   * look in the same place twice. The caller passes all four and guarantees the co-location: for the
+   * file stores, the trace buffer and the failed-attempt store on the run store's own folder
+   * (`new JsonTraceBufferStore(runStore.runsDirPath, runStore)`,
+   * `new JsonFileFailedAttemptStore(runStore.runsDirPath)`); for a cloud run store, both backed by
+   * its own database or bucket. `createRealmMcpServer` does not and cannot verify it.
    */
-  runStore?: RunStore;
+  runStore: RunStore;
   /**
    * Trace-buffer WAL store for incremental agent-trace ingestion (B-lite). Object injection, not
    * a path string — a Postgres/object-storage-backed run store has no filesystem directory to
@@ -113,12 +98,12 @@ export interface RealmMcpServerOptions {
    * same runs as `runStore`: the fenced writes are checked against the trace buffer's own reader
    * (issue #616), never against `runStore`.
    */
-  traceBufferStore?: TraceBufferStore;
+  traceBufferStore: TraceBufferStore;
   /**
    * Durable per-run failed-attempt sidecar store (observability P3). Object injection — see the
    * co-location contract on `runStore` above.
    */
-  failedAttemptStore?: FailedAttemptStoreLike;
+  failedAttemptStore: FailedAttemptStoreLike;
   /**
    * Issue #625 (holder slice): the host PROGRAM this server runs as — its name, how that name is
    * known, and its channel (a short word the host chooses). Written as `holder` on the claim of
@@ -243,7 +228,7 @@ export type DisclosedElicit = (
  * ```ts
  * const registry = createDefaultRegistry();
  * registry.register('handler', 'my_handler', myHandler);
- * const server = createRealmMcpServer({ workflowStore, registry });
+ * const server = createRealmMcpServer({ runStore, workflowStore, traceBufferStore, failedAttemptStore, registry });
  * ```
  *
  * When no registry is passed to `createRealmMcpServer`, the engine uses built-in adapters
@@ -262,7 +247,7 @@ export { createDefaultRegistry };
  * adapters — when you do, include `FileSystemAdapter` explicitly if your workflows use it,
  * or start from `createDefaultRegistry()` and add your extensions on top.
  */
-export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer {
+export function createRealmMcpServer(options: RealmMcpServerOptions): McpServer {
   // #627 W (§5.1): the gate-answers value and the form wait, judged before anything is built — a
   // value that is not valid builds no server (W-s4, W-s8; library forms).
   const answersJudged = judgeGateAnswers({
@@ -316,6 +301,57 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
     ...(options?.monotonicNow !== undefined ? { monotonicNow: options.monotonicNow } : {}),
   });
 
+  // issue #620 PR-C: every store a host hands realm must carry this realm's release line — checked
+  // on the raw options. #616 PR-2a (ii-b): a `null` store is "not given" (as core reads one), so it
+  // passes this block and meets the missing-store refusal below, never the release-line sentence.
+  if (options != null) {
+    if (options.workflowStore != null) {
+      assertReleaseLine(options.workflowStore, 'the workflow store handed to createRealmMcpServer');
+    }
+    if (options.runStore != null) {
+      assertReleaseLine(options.runStore, 'the run store handed to createRealmMcpServer');
+    }
+    if (options.traceBufferStore != null) {
+      assertReleaseLine(
+        options.traceBufferStore,
+        'the trace buffer handed to createRealmMcpServer',
+      );
+    }
+    if (options.failedAttemptStore != null) {
+      assertReleaseLine(
+        options.failedAttemptStore,
+        'the failed-attempt store handed to createRealmMcpServer',
+      );
+    }
+    // A static registry is checked here too, like the stores — refused only on proof. A
+    // registryProvider's result is checked per tool call, where it is resolved.
+    assertRegistryLine(
+      options.registry,
+      'the registry handed to createRealmMcpServer',
+      ExtensionRegistry,
+    );
+  }
+
+  // #616 PR-2a (ii-b): the library has no default store. A caller (JavaScript, or TypeScript past a
+  // cast) that gives fewer than the four is refused here — after the door, principal, form-wait and
+  // release-line checks, in their order — naming every missing store, before any store is read or
+  // any server object exists. Option names only: never a value or a path from the environment.
+  const missing: StoreName[] = STORE_ORDER.filter((name) => options?.[name] == null);
+  if (missing.length > 0) {
+    const what =
+      options == null ? 'no options were given' : `no ${joinStoreNames(missing)} was given`;
+    throw new WorkflowError(
+      `createRealmMcpServer: ${what}. The library has no default store, so no server was built and nothing was opened. Pass runStore, workflowStore, traceBufferStore and failedAttemptStore, opened once per process — the file stores are new JsonFileStore(), new JsonWorkflowStore(), new JsonTraceBufferStore(runStore.runsDirPath, runStore) and new JsonFileFailedAttemptStore(runStore.runsDirPath) — or run the realm-mcp command, which opens ~/.realm itself.`,
+      {
+        code: 'VALIDATION_OPTION_INVALID',
+        category: 'VALIDATION',
+        agentAction: 'report_to_user',
+        retryable: false,
+        details: { missing },
+      },
+    );
+  }
+
   const server = new McpServer(
     {
       name: 'realm',
@@ -337,47 +373,12 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
     },
   );
 
-  // issue #620 PR-C: every store a host hands realm must carry this realm's release line — checked
-  // on the raw options, before any defaulting or derivation (the trace buffer derived below is this
-  // package's own and needs no check).
-  if (options !== undefined) {
-    if (options.workflowStore !== undefined) {
-      assertReleaseLine(options.workflowStore, 'the workflow store handed to createRealmMcpServer');
-    }
-    if (options.runStore !== undefined) {
-      assertReleaseLine(options.runStore, 'the run store handed to createRealmMcpServer');
-    }
-    if (options.traceBufferStore !== undefined) {
-      assertReleaseLine(
-        options.traceBufferStore,
-        'the trace buffer handed to createRealmMcpServer',
-      );
-    }
-    if (options.failedAttemptStore !== undefined) {
-      assertReleaseLine(
-        options.failedAttemptStore,
-        'the failed-attempt store handed to createRealmMcpServer',
-      );
-    }
-    // A static registry is checked here too, like the stores — refused only on proof. A
-    // registryProvider's result is checked per tool call, where it is resolved.
-    assertRegistryLine(
-      options.registry,
-      'the registry handed to createRealmMcpServer',
-      ExtensionRegistry,
-    );
-  }
-
   // When no registry is provided, use the default registry that pre-registers built-in
   // adapters. When a registry is provided, the caller is responsible for its contents.
   const effectiveRegistry = options?.registry ?? createDefaultRegistry();
 
-  // Default the workflow store the same way (mirrors effectiveRegistry / effectiveRunStore). This is
-  // what lets get_run_state compute next_actions on the option-less entrypoint path — without it,
-  // get_run_state would silently degrade to 'workflow_unresolved'. Behaviour-preserving for every
-  // other tool: start_run/start_run_batch/etc. already fall back to the same default
-  // (`~/.realm/workflows`) internally, so receiving it explicitly changes nothing for them.
-  const effectiveWorkflowStore = options?.workflowStore ?? new JsonWorkflowStore();
+  // #616 PR-2a (ii-b): the workflow store is the caller's; there is no default.
+  const effectiveWorkflowStore = options.workflowStore;
 
   // #729 PR-3 (M-3): every reply's set comes from one door disclosure, per reply.
   const doorDisclosure: DoorDisclosure = doorDisclosureOf(options);
@@ -395,12 +396,9 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
   // store — the masking's subject (`replySubject`) included, on a fresh process's first call.
   // #715 (b) (02 §C.3, D6-53): a store at a test location says so once per process on stderr (the
   // MCP stdio transport's free channel), at its first read.
-  const effectiveRunStore: RunStore = withTestClockNotice(
-    options?.runStore ?? new JsonFileStore(),
-    (line) => {
-      process.stderr.write(`${line}\n`);
-    },
-  );
+  const effectiveRunStore: RunStore = withTestClockNotice(options.runStore, (line) => {
+    process.stderr.write(`${line}\n`);
+  });
   const effectiveOptions = {
     ...options,
     registry: effectiveRegistry,
@@ -411,43 +409,10 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
     elicit,
   };
 
-  // issue #188, PR-1: the co-location seam. See the doc comment on `runStore` above for the full
-  // contract. Three cases, checked in order:
-  let traceBufferStore: TraceBufferStore;
-  let failedAttemptStore: FailedAttemptStoreLike;
-  if (options?.traceBufferStore !== undefined && options?.failedAttemptStore !== undefined) {
-    // Both injected — the injector guarantees co-location (see the contract doc above); use them
-    // as-is, no derivation.
-    traceBufferStore = options.traceBufferStore;
-    failedAttemptStore = options.failedAttemptStore;
-  } else if ('runsDirPath' in effectiveRunStore) {
-    // The local JsonFileStore case — derive whichever artifact store was NOT already injected
-    // from the run store's own directory. When neither was injected (the ordinary local-default
-    // path), this is byte-identical to pre-#188 behavior. A store the caller DID inject here
-    // (a partial injection) is still respected, never silently overridden.
-    const runsDirPath = (effectiveRunStore as JsonFileStore).runsDirPath;
-    // The run reader is the server's run store: every fence predicate is evaluated against it,
-    // inside the trace buffer's own critical section (issue #616 PR-0).
-    traceBufferStore =
-      options?.traceBufferStore ?? new JsonTraceBufferStore(runsDirPath, effectiveRunStore);
-    failedAttemptStore = options?.failedAttemptStore ?? new JsonFileFailedAttemptStore(runsDirPath);
-  } else {
-    // The run store cannot supply an artifact directory (e.g. a Postgres-backed RunStore) AND no
-    // artifact stores were injected — a misconfiguration. Fail loud rather than silently deriving
-    // an empty or wrong-domain store that would lose every trace/sidecar entry at finalization.
-    throw new WorkflowError(
-      "createRealmMcpServer: the run store does not expose 'runsDirPath' (it is not a local " +
-        'JsonFileStore) and no traceBufferStore/failedAttemptStore were injected. Artifact ' +
-        'stores cannot be derived — inject BOTH traceBufferStore and failedAttemptStore ' +
-        "co-located with the run store's own domain, or use a JsonFileStore run store.",
-      {
-        code: 'ENGINE_INTERNAL',
-        category: 'ENGINE',
-        agentAction: 'stop',
-        retryable: false,
-      },
-    );
-  }
+  // issue #188, PR-1: the co-location seam (the doc comment on `runStore` above). #616 PR-2a (ii-b):
+  // the caller passes both artifact stores, co-located with its run store; nothing is derived.
+  const traceBufferStore: TraceBufferStore = options.traceBufferStore;
+  const failedAttemptStore: FailedAttemptStoreLike = options.failedAttemptStore;
 
   // issue #197 PR-2 (deliverable 2g): validate the store's capability declaration is internally
   // consistent AT CONSTRUCTION — covers BOTH the derived-local default and the injected path
@@ -530,20 +495,6 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
   return server;
 }
 
-// Entry point: start the MCP server on stdio when run directly.
-// argv[1] is realpath-resolved because npm/npx bin shims invoke this file through
-// a symlink (node_modules/.bin/realm-mcp), while import.meta.url holds the resolved
-// target path — a plain string comparison never matches and the process would exit
-// silently without connecting the transport.
-function isRunDirectly(): boolean {
-  if (process.argv[1] === undefined) return false;
-  try {
-    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
 /** Correction 1 (C1): the library refusal of a `principal` option the total reader cannot read. */
 export const INVALID_PRINCIPAL_OPTION =
   "createRealmMcpServer: the principal option is not a principal — expected { kind: 'api_key', id: <a non-empty string> }, { kind: 'shared_token' }, or a typed absence such as { absent: 'door_authenticates_no_principal' }. Refused when the server is built: every answer it records would name it. Fix the option.";
@@ -556,47 +507,3 @@ export const INVALID_PRINCIPAL_OPTION =
  */
 export const REALM_MCP_TAKES_NO_FLAGS =
   "realm-mcp takes no flags: set REALM_MCP_GATE_ANSWERS or REALM_MCP_FORM_WAIT_SECONDS in your MCP client's env block, or run realm mcp with the flag.";
-
-if (isRunDirectly() && process.argv.length > 2) {
-  console.error(REALM_MCP_TAKES_NO_FLAGS);
-  process.exit(1);
-}
-
-if (isRunDirectly()) {
-  // Correction 2 (4.1): the variables judged as `realm mcp` judges its flags — a refusal is one line
-  // naming the variable and exit 1, never a stack trace; then the start line, on stderr (stdout
-  // carries the protocol), before anything is built.
-  const settings = readBinDoorSettings('realm-mcp', {}, process.env);
-  if (!settings.ok) {
-    console.error(settings.line);
-    process.exit(1);
-  }
-  // This program's name, which may itself refuse with one line — then no start line is printed.
-  const driver = composeBinIdentity();
-  console.error(gateAnswersStartLine(settings.answers, false, 'realm-mcp'));
-  // #715 (b) (03 §A.1, D-22): the bin's waiter-error sink — a waiter on the store's clock that fails is
-  // one masked line on stderr (stdout carries the protocol). An embedded server sets none: it is a
-  // library, and core's loud default applies.
-  setClockErrorSink((err: unknown): void => {
-    logMasked(`realm-mcp: ${err instanceof Error ? err.message : String(err)}`);
-  });
-  // #627 W (§5.8): the stdio transport authenticates no one, so this bin's answers name no principal.
-  // #715 (a) correction 1 (C-6): a run store opened on a copy of a test location refuses with one line
-  // on stderr, masked for a log as `realm mcp`'s line is, and exit 1 — never Node's crash dump, and
-  // nothing on stdout. #616 PR-2a (i): an unusable home (`STATE_HOME_UNUSABLE`) the same way. Any
-  // other error escapes as before. Read by its code, never `instanceof`.
-  let server: ReturnType<typeof createRealmMcpServer>;
-  try {
-    server = createRealmMcpServer({
-      ...(driver !== undefined ? { driver } : {}),
-      principal: { absent: 'door_authenticates_no_principal' },
-    });
-  } catch (err) {
-    const code = (err as { code?: unknown } | null)?.code;
-    if (code !== 'STATE_TEST_CLOCK_FOREIGN' && code !== 'STATE_HOME_UNUSABLE') throw err;
-    logMasked(`realm-mcp: ${(err as Error).message}`);
-    process.exit(1);
-  }
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-}

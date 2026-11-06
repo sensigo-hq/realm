@@ -24,6 +24,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
 import { generateProtocol } from '../protocol/generator.js';
+import { withArtifactStores } from '../test-support/temp-home.js';
 
 /** W2: `summarize` (agent), then `publish` — its input built by its map from `summarize`'s answer. */
 const W2: WorkflowDefinition = {
@@ -60,7 +61,7 @@ async function connect() {
     execute: async (i) => ({ data: { got: i.params } }),
   });
   await workflowStore.register(W2);
-  const server = createRealmMcpServer({ runStore, workflowStore, registry });
+  const server = createRealmMcpServer({ ...withArtifactStores(runStore), workflowStore, registry });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 't22-729', version: '0' });
   await Promise.all([server.connect(st), client.connect(ct)]);

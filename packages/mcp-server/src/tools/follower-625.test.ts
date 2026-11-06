@@ -3,7 +3,7 @@
 // finite call budget and without polling — through realm's own MCP server, spawned over stdio.
 //
 // Every server child gets a scratch HOME; nothing here reads or writes the real `~/.realm`.
-// `FOLLOWER_SERVER_ENTRY` points the cells at another build's `dist/server.js` (the red-first run).
+// `FOLLOWER_SERVER_ENTRY` points the cells at another build's `dist/bin.js` (the red-first run).
 import { describe, it, expect } from 'vitest';
 import { mkdtempSync, rmSync, existsSync, writeFileSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -25,7 +25,7 @@ import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
 
 const SERVER_ENTRY =
   process.env['FOLLOWER_SERVER_ENTRY'] ??
-  fileURLToPath(new URL('../../dist/server.js', import.meta.url));
+  fileURLToPath(new URL('../../dist/bin.js', import.meta.url));
 if (!existsSync(SERVER_ENTRY)) {
   throw new Error(`mcp-server dist not built — run the build first (looked for: ${SERVER_ENTRY})`);
 }
@@ -57,11 +57,14 @@ function handlerEntry(home: string): string {
     entry,
     [
       `import { StdioServerTransport } from '${stdio}';`,
-      `import { createRealmMcpServer } from '${mcp}';`,
-      `import { createDefaultRegistry } from '${core}';`,
+      `import { createRealmMcpServer, JsonTraceBufferStore } from '${mcp}';`,
+      `import { createDefaultRegistry, JsonFileStore, JsonWorkflowStore, JsonFileFailedAttemptStore } from '${core}';`,
       `const registry = createDefaultRegistry();`,
       `registry.register('handler', 'stamp', { id: 'stamp', execute: async () => ({ data: { stamped: true } }) });`,
-      `const server = createRealmMcpServer({ registry });`,
+      // #616 PR-2a (ii-b): an embedding host passes the four stores (the library has no default);
+      // here the file stores on this child's HOME, as the README's example opens them.
+      `const runStore = new JsonFileStore();`,
+      `const server = createRealmMcpServer({ registry, runStore, workflowStore: new JsonWorkflowStore(), traceBufferStore: new JsonTraceBufferStore(runStore.runsDirPath, runStore), failedAttemptStore: new JsonFileFailedAttemptStore(runStore.runsDirPath) });`,
       `await server.connect(new StdioServerTransport());`,
     ].join('\n'),
   );

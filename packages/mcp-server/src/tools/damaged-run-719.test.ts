@@ -10,6 +10,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { JsonFileStore, JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { createRealmMcpServer } from '../server.js';
+import { withArtifactStores } from '../test-support/temp-home.js';
 
 const dirs: string[] = [];
 afterEach(async () => {
@@ -32,7 +33,7 @@ async function connect(bad: string, mode?: number) {
     schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
     steps: { a: { description: 'A.', execution: 'agent' } },
   } as WorkflowDefinition);
-  const server = createRealmMcpServer({ runStore, workflowStore });
+  const server = createRealmMcpServer({ ...withArtifactStores(runStore), workflowStore });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'damaged-run-719', version: '0' });
   await Promise.all([server.connect(st), client.connect(ct)]);

@@ -39,6 +39,7 @@ import {
 } from './server.js';
 import { effectiveGateAnswers } from './door.js';
 import { POLL_CAP_MS, renderReply, tokenStrayed, type McpEnvelope } from './render-reply.js';
+import { makeTempHome, withArtifactStores, type ServerExtras } from './test-support/temp-home.js';
 
 type Reply = Record<string, unknown>;
 
@@ -86,7 +87,7 @@ interface Session {
 
 /** One session: a server built with `options`, a client that declares forms or not. */
 async function session(
-  options: Omit<RealmMcpServerOptions, 'runStore' | 'workflowStore'> = {},
+  options: ServerExtras = {},
   client: {
     forms?: boolean;
     onElicit?: () => Promise<{
@@ -94,12 +95,16 @@ async function session(
       content?: Record<string, unknown>;
     }>;
   } = {},
-  stores?: { runStore: RunStore; workflowStore: JsonWorkflowStore },
+  stores?: { runStore: JsonFileStore; workflowStore: JsonWorkflowStore },
 ): Promise<Session> {
   const dir = await mkdtemp(join(tmpdir(), 'realm-door-627-'));
   const runStore = stores?.runStore ?? new JsonFileStore(join(dir, 'runs'));
   const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore(join(dir, 'wf'));
-  const server = createRealmMcpServer({ runStore, workflowStore, ...options });
+  const server = createRealmMcpServer({
+    ...withArtifactStores(runStore),
+    workflowStore,
+    ...options,
+  });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const c = new Client(
     { name: 'door-627', version: '0' },
@@ -427,11 +432,7 @@ describe('#627 W — asked’s fallback: the answer tool asks the app to have th
 // ─── H: the protocol per session (cells 23, 28, 12) and author text (cell 27b) ─────────────────
 
 describe('#627 W — the protocol says what this session’s way means', () => {
-  async function protocolOf(
-    options: Omit<RealmMcpServerOptions, 'runStore' | 'workflowStore'>,
-    forms: boolean,
-    rules?: string,
-  ) {
+  async function protocolOf(options: ServerExtras, forms: boolean, rules?: string) {
     const s = await session(options, { forms });
     const def = await registered(s, rules !== undefined ? { rules } : {});
     return s.call('get_workflow_protocol', { workflow_id: def.id });
@@ -605,10 +606,7 @@ describe('#627 W — the protocol says what this session’s way means', () => {
   });
 
   it('cell 27b — a reply’s gate.agent_hint is labelled as the author’s, under every value', async () => {
-    const hintOf = async (
-      options: Omit<RealmMcpServerOptions, 'runStore' | 'workflowStore'>,
-      forms: boolean,
-    ) => {
+    const hintOf = async (options: ServerExtras, forms: boolean) => {
       const s = await session(
         options,
         forms ? { forms, onElicit: async () => ({ action: 'decline' }) } : {},
@@ -1073,7 +1071,8 @@ describe('#627 W — an embedder: env + option, the most restrictive wins; a bad
     process.env['REALM_MCP_GATE_ANSWERS'] = 'witheld';
     const bad = (() => {
       try {
-        createRealmMcpServer({});
+        // #616 PR-2a (ii-b): no store, on purpose (a refusal that comes first); cast past the four required.
+        createRealmMcpServer({} as never);
       } catch (e) {
         return (e as Error).message;
       }
@@ -1082,7 +1081,8 @@ describe('#627 W — an embedder: env + option, the most restrictive wins; a bad
     delete process.env['REALM_MCP_GATE_ANSWERS'];
     const badWait = (() => {
       try {
-        createRealmMcpServer({ formWaitSeconds: 10 });
+        // #616 PR-2a (ii-b): no store, on purpose (a refusal that comes first); cast past the four required.
+        createRealmMcpServer({ formWaitSeconds: 10 } as never);
       } catch (e) {
         return (e as Error).message;
       }
@@ -1246,7 +1246,7 @@ describe('#627 W correction 1 (E4, E5) — the held-back reply by row, its arms,
 // cells at 5,000 ms): the cell failed for a reason that is not its subject. The budget is set above the child's limit.
 describe('#627 W correction 1 (A4) — the realm-mcp bin takes no flags', { timeout: 30_000 }, () => {
   it('`realm-mcp --gate-answers withheld` refuses the start: one line, exit 1', async () => {
-    const bin = fileURLToPath(new URL('../dist/server.js', import.meta.url));
+    const bin = fileURLToPath(new URL('../dist/bin.js', import.meta.url));
     const home = await mkdtemp(join(tmpdir(), 'realm-door-627-bin-'));
     const r = spawnSync(process.execPath, [bin, '--gate-answers', 'withheld'], {
       env: { PATH: process.env['PATH'] ?? '', HOME: home },
@@ -1272,7 +1272,7 @@ describe(
   '#627 W correction 2 (4.1) — realm-mcp judges its variables as realm mcp judges its flags',
   { timeout: 30_000 },
   () => {
-    const bin = fileURLToPath(new URL('../dist/server.js', import.meta.url));
+    const bin = fileURLToPath(new URL('../dist/bin.js', import.meta.url));
     /** The built bin with only these variables; stdin closed, so a started server exits after its line. */
     const run = async (env: Record<string, string>) => {
       const home = await mkdtemp(join(tmpdir(), 'realm-door-627-bin2-'));
@@ -1329,10 +1329,13 @@ describe(
 );
 
 describe('#627 W correction 2 (4.2, 4.3) — the library refuses an inert form wait and an empty value', () => {
-  it('a form wait under withheld, or on a statelessHttp door, builds no server; an empty gateAnswers is refused', () => {
-    const build = (options: Parameters<typeof createRealmMcpServer>[0]) => {
+  it('a form wait under withheld, or on a statelessHttp door, builds no server; an empty gateAnswers is refused', async () => {
+    // #616 PR-2a (ii-a): the one build that succeeds is on a temp home's four stores.
+    const home = await makeTempHome();
+    const build = (options: ServerExtras) => {
       try {
-        createRealmMcpServer(options);
+        // #616 PR-2a (ii-b): no store, on purpose (a refusal that comes first); cast past the four required.
+        createRealmMcpServer(options as RealmMcpServerOptions);
         return 'built';
       } catch (e) {
         return (e as Error).message.split(' — ')[0];
@@ -1343,7 +1346,7 @@ describe('#627 W correction 2 (4.2, 4.3) — the library refuses an inert form w
     expect({
       withheld: build({ gateAnswers: 'withheld', formWaitSeconds: 60 }),
       stateless: build({ statelessHttp: true, formWaitSeconds: 60 }),
-      asked: build({ gateAnswers: 'asked', formWaitSeconds: 60 }),
+      asked: build({ ...home.stores, gateAnswers: 'asked', formWaitSeconds: 60 }),
       emptyAnswers: build({ gateAnswers: '' as never }),
     }).toEqual({
       withheld:
@@ -1354,14 +1357,18 @@ describe('#627 W correction 2 (4.2, 4.3) — the library refuses an inert form w
       emptyAnswers:
         "createRealmMcpServer: invalid gateAnswers option value '': expected asked, offered or withheld",
     });
+    home.cleanup();
   });
 });
 
 describe('#627 W correction 1 (C1) — the principal option is checked when the server is built', () => {
-  it('a principal the total reader cannot read refuses construction; a valid one builds', () => {
-    const build = (principal: unknown) => {
+  it('a principal the total reader cannot read refuses construction; a valid one builds', async () => {
+    // #616 PR-2a (ii-a): the build that succeeds is on a temp home's four stores.
+    const home = await makeTempHome();
+    const build = (principal: unknown, stores: Partial<typeof home.stores> = {}) => {
       try {
-        createRealmMcpServer({ principal: principal as never });
+        // #616 PR-2a (ii-b): no store, on purpose (a refusal that comes first); cast past the four required.
+        createRealmMcpServer({ ...stores, principal: principal as never } as RealmMcpServerOptions);
         return 'built';
       } catch (e) {
         return (e as Error).message;
@@ -1371,7 +1378,8 @@ describe('#627 W correction 1 (C1) — the principal option is checked when the 
     //     (b) prints what each build did.
     expect({
       bad: build({ kind: 'api_key' }),
-      good: build({ kind: 'api_key', id: 'key-627' }),
+      good: build({ kind: 'api_key', id: 'key-627' }, home.stores),
     }).toEqual({ bad: INVALID_PRINCIPAL_OPTION, good: 'built' });
+    home.cleanup();
   });
 });

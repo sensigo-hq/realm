@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import {
   JsonFileStore,
   JsonWorkflowStore,
+  JsonFileFailedAttemptStore,
   advanceRun,
   answerArrivalOf,
   judgeFormWait,
@@ -23,7 +24,11 @@ import {
   submitHumanResponse,
   FORM_WAIT_SECONDS_DEFAULT,
 } from '@sensigo/realm';
-import { createRealmMcpServer, FORM_ASKS_AFTER_FIRST } from '@sensigo/realm-mcp';
+import {
+  createRealmMcpServer,
+  FORM_ASKS_AFTER_FIRST,
+  JsonTraceBufferStore,
+} from '@sensigo/realm-mcp';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import {
@@ -133,6 +138,8 @@ async function session(gateAnswers?: 'asked' | 'offered' | 'withheld', forms = f
   await workflowStore.register(def);
   const server = createRealmMcpServer({
     runStore,
+    traceBufferStore: new JsonTraceBufferStore(runStore.runsDirPath, runStore),
+    failedAttemptStore: new JsonFileFailedAttemptStore(runStore.runsDirPath),
     workflowStore,
     ...(gateAnswers !== undefined ? { gateAnswers } : {}),
   });
@@ -288,7 +295,8 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
       offered: readBinDoorSettings('mcp', { gateAnswers: 'offered', formWaitSeconds: '60' }, {}).ok,
       stateless: (() => {
         try {
-          createRealmMcpServer({ statelessHttp: true, formWaitSeconds: 60 });
+          // #616 PR-2a (ii-b): no store, on purpose (a refusal that comes first); cast past the four required.
+          createRealmMcpServer({ statelessHttp: true, formWaitSeconds: 60 } as never);
           return true;
         } catch {
           return false;
@@ -593,9 +601,21 @@ describe('#627 W — the other pages W changed', () => {
     );
     // Correction 2 (6.9, 4.1, 4.5): executed by door-627 :: "(A4) — `realm-mcp --gate-answers
     // withheld` refuses the start" and its 4.1 cells (the variables judged; the start line on stderr).
+    // #616 PR-2a (ii-a): "It opens `~/.realm` itself, the same home every `realm` command uses." —
+    // executed by holder-625-journeys.test.ts (the program on a scratch HOME; the run read from
+    // that HOME's `.realm/runs`) and docs-pages-625-guides.test.ts (a workflow `realm workflow
+    // register` put under HOME, started through the program); the new sentence sits inside this
+    // run of the paragraph, so the one claim pins its place too.
     claim(
       'docs/reference/cli/realm-mcp-and-serve.md',
-      'The package `@sensigo/realm-mcp` installs a command `realm-mcp`, which starts the same server. It takes no flags and refuses any; it reads `REALM_MCP_GATE_ANSWERS` and `REALM_MCP_FORM_WAIT_SECONDS`, and prints its start line on stderr.',
+      'The package `@sensigo/realm-mcp` installs a command `realm-mcp`, which starts the same server. It opens `~/.realm` itself, the same home every `realm` command uses. It takes no flags and refuses any; it reads `REALM_MCP_GATE_ANSWERS` and `REALM_MCP_FORM_WAIT_SECONDS`, and prints its start line on stderr.',
+    );
+    // #616 PR-2a (ii-a): the CHANGELOG's line — "its own file" executed by docs-examples-625's cell
+    // (the package's `bin` is the entry the CLI's tests resolve) and every spawn through
+    // `resolveMcpServerEntry()`; "opens `~/.realm` itself" by the two journey cells named above.
+    claim(
+      'CHANGELOG.md',
+      '**The `realm-mcp` command runs from its own file (`dist/bin.js`) and opens `~/.realm` itself; nothing changes for its users (issue #616).**',
     );
     // Correction 2 (6.1): executed by http-door-627 :: "a server built per request — realm serve’s
     // shape …" (no form, the answer tool stays) and door-627's tool list per session.
@@ -871,8 +891,11 @@ describe('#627 W correction 2 (Part 6) — the claims still missing', () => {
         ].join('\n'),
       ),
     );
+    const runStore = new JsonFileStore(join(dir, 'runs'));
     const server = createRealmMcpServer({
-      runStore: new JsonFileStore(join(dir, 'runs')),
+      runStore,
+      traceBufferStore: new JsonTraceBufferStore(runStore.runsDirPath, runStore),
+      failedAttemptStore: new JsonFileFailedAttemptStore(runStore.runsDirPath),
       workflowStore,
       gateAnswers: 'withheld',
     });
@@ -936,7 +959,7 @@ describe('#627 W correction 2 (Part 6) — the claims still missing', () => {
         await client.close();
       }
     };
-    const BIN = fileURLToPath(new URL('../../../mcp-server/dist/server.js', import.meta.url));
+    const BIN = fileURLToPath(new URL('../../../mcp-server/dist/bin.js', import.meta.url));
     const CLI = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
     const bin = await listed(BIN, []);
     const cli = await listed(CLI, ['mcp']);

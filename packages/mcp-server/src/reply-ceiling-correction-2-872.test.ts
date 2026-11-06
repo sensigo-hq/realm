@@ -33,6 +33,7 @@ import {
   type ToolDisclosure,
 } from './render-reply.js';
 import { sseJsonStringify } from './sse-json.js';
+import { withArtifactStores } from './test-support/temp-home.js';
 
 type Reply = Record<string, unknown>;
 type Handed = { reply: unknown; disclosure: ToolDisclosure; plan?: ReplyPlan; text: string };
@@ -93,7 +94,7 @@ async function door(definitions: WorkflowDefinition[], registry?: ExtensionRegis
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
   for (const d of definitions) await workflowStore.register(d);
   const server = createRealmMcpServer({
-    runStore,
+    ...withArtifactStores(runStore),
     workflowStore,
     ...(registry !== undefined ? { registry } : {}),
   });

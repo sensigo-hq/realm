@@ -13,7 +13,6 @@ import {
   describeSchemaFailure,
   SCHEMA_KEY_CONSEQUENCE,
   composeSchemaFailure,
-  JsonWorkflowStore,
   WorkflowError,
   resolvePreExecutionAgentAction,
   findUnknownKeys,
@@ -25,6 +24,7 @@ import {
   type LoaderWarning,
   type RunStore,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
+  type WorkflowRegistrar,
 } from '@sensigo/realm';
 // #729 PR-0 (Amendment 12): the MCP wire's reply type (the core reply is `EngineReply`).
 import {
@@ -606,9 +606,10 @@ function buildWorkflowDefinition(workflowId: string, args: CreateWorkflowArgs): 
  */
 export async function handleCreateWorkflow(
   args: CreateWorkflowArgs,
-  stores?: { workflowStore?: JsonWorkflowStore; runStore?: RunStore },
+  // #616 PR-2a (ii-b): both required — the registry it writes, and the run store it hands start_run.
+  stores: { workflowStore: WorkflowRegistrar; runStore: RunStore },
 ): Promise<McpEnvelope> {
-  assertToolStores(stores, 'handleCreateWorkflow');
+  assertToolStores(stores, 'handleCreateWorkflow', ['runStore', 'workflowStore']);
   const { faults, caveats: structuredOutputCaveats } = validateArgs(args);
   if (faults.length > 0) {
     // #872 (b1): one line per rule — every fault class at once, its size no longer the step count.
@@ -626,7 +627,7 @@ export async function handleCreateWorkflow(
     throw err;
   }
 
-  const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
+  const workflowStore = stores.workflowStore;
   // Build the definition body first (with a placeholder id that is excluded from the hash).
   const definitionBody = buildWorkflowDefinition('__placeholder__', args);
   // Hash all content except the id to derive a stable, deterministic id.
@@ -746,10 +747,7 @@ export async function handleCreateWorkflow(
 
   const result = await handleStartRun(
     { workflow_id: workflowId, params: {} },
-    {
-      workflowStore,
-      ...(stores?.runStore !== undefined ? { runStore: stores.runStore } : {}),
-    },
+    { workflowStore, runStore: stores.runStore },
   );
 
   return {
@@ -773,7 +771,7 @@ export async function handleCreateWorkflow(
 /** Registers the create_workflow MCP tool on the server. */
 export function registerCreateWorkflow(
   server: McpServer,
-  opts?: HandleRunStores & WithDoorDisclosure,
+  opts: HandleRunStores & WithDoorDisclosure,
 ): void {
   const door = disclosureOfTool(opts);
   // issue #419 — this was the repo's FIRST `registerTool` user (#627 W moved every other tool to it,

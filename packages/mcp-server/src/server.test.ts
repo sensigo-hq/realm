@@ -42,6 +42,7 @@ import type {
   SettlementDelta,
   StoreSettlement,
 } from '@sensigo/realm';
+import { withArtifactStores } from './test-support/temp-home.js';
 
 /**
  * Minimal hand-rolled `RunStore` — deliberately does NOT expose `runsDirPath` (no filesystem
@@ -251,7 +252,7 @@ describe('createRealmMcpServer — RunStore injection seam (issue #188, PR-1)', 
         await workflowStore.register(def);
 
         const server = createRealmMcpServer({
-          runStore: new JsonFileStore(runDir),
+          ...withArtifactStores(new JsonFileStore(runDir)),
           workflowStore,
         });
         const callTool = await connectClient(server);
@@ -394,37 +395,6 @@ describe('createRealmMcpServer — RunStore injection seam (issue #188, PR-1)', 
       } finally {
         await rm(workflowDir, { recursive: true, force: true });
       }
-    });
-  });
-
-  describe('co-location fail-loud', () => {
-    it('a run store without runsDirPath and NO injected artifact stores throws a typed misconfiguration error — never a silent empty-trace store', () => {
-      expect(() => createRealmMcpServer({ runStore: new MinimalRunStore() })).toThrow(
-        /runsDirPath/,
-      );
-    });
-
-    it('the thrown error is a typed WorkflowError (ENGINE_INTERNAL, stop, not retryable)', () => {
-      try {
-        createRealmMcpServer({ runStore: new MinimalRunStore() });
-        expect.unreachable('createRealmMcpServer should have thrown');
-      } catch (err) {
-        expect(err).toBeInstanceOf(WorkflowError);
-        expect((err as WorkflowError).code).toBe('ENGINE_INTERNAL');
-        expect((err as WorkflowError).agentAction).toBe('stop');
-        expect((err as WorkflowError).retryable).toBe(false);
-      }
-    });
-
-    it('injecting only ONE of the two artifact stores (with a runsDirPath-less run store) still throws — partial injection is not enough', () => {
-      const runStore = new MinimalRunStore();
-      expect(() =>
-        createRealmMcpServer({
-          runStore,
-          traceBufferStore: new InMemoryTraceBufferStore(runStore),
-          // failedAttemptStore NOT injected.
-        }),
-      ).toThrow(/runsDirPath/);
     });
   });
 });

@@ -19,6 +19,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from './server.js';
 import { BRIEF_STABLE_CHARS, MCP_ENVELOPE_TABLE, toolContentOf } from './render-reply.js';
+import { withArtifactStores } from './test-support/temp-home.js';
 
 const sha256 = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex');
 const setOf = (declared: Record<string, string>, cause?: 'load_failed'): DisclosureSet =>
@@ -173,7 +174,7 @@ async function connect() {
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
   await workflowStore.register(FLOW);
   const server = createRealmMcpServer({
-    runStore: new JsonFileStore(join(dir, 'runs')),
+    ...withArtifactStores(new JsonFileStore(join(dir, 'runs'))),
     workflowStore,
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();

@@ -22,6 +22,7 @@ import {
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from './server.js';
+import { withArtifactStores } from './test-support/temp-home.js';
 
 const FAKE = 'CANARY-declared-mcp-7d31-0123456789';
 const set = buildDisclosureSet({
@@ -55,7 +56,7 @@ async function connect(extra: Record<string, unknown> = {}) {
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
   let asked = 0;
   const server = createRealmMcpServer({
-    runStore,
+    ...withArtifactStores(runStore),
     workflowStore,
     disclosureProvider: async () => {
       asked += 1;

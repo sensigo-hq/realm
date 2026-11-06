@@ -2,7 +2,7 @@
 // through its one door. A source scan, table-driven by package: each row names the only files of that
 // package allowed to construct one of the six store classes. The CLI's row is the door
 // (`lib/home.ts`) and the two commands 2c deletes (`run gc`, `run reconcile`), which keep their own
-// constructions until then; unit (ii) adds the MCP package's row. Before this unit the CLI built its
+// constructions until then; unit (ii-b) added the MCP package's row. Before this unit the CLI built its
 // stores by hand in 60 places in 27 files, so a command could build one of them on a folder its
 // other stores do not read (the #188 mixed-wiring class).
 import { describe, it, expect } from 'vitest';
@@ -13,9 +13,14 @@ import { fileURLToPath } from 'node:url';
 // packages/cli/src/lib → packages/
 const PACKAGES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
-/** Package → the files (relative to its src/) allowed to construct a store. */
+/** Package → the files (relative to its src/) allowed to construct a store. The rule for both
+ *  packages: the package's opener, and (mcp-server) the test helper whose artifact-stores spread
+ *  builds two classes under `src/test-support/`, which the walker reads as non-test source. */
 const ALLOWED: Record<string, string[]> = {
   cli: ['lib/home.ts', 'commands/gc.ts', 'commands/reconcile.ts'],
+  // #616 PR-2a (ii-b): the `realm-mcp` program's opener and the test helper (unit ii-a); the
+  // library and its tools build none.
+  'mcp-server': ['home.ts', 'test-support/temp-home.ts'],
 };
 
 /** A construction of one of the six store classes; the failed-attempt class under both its names
@@ -40,6 +45,14 @@ function sourceFiles(pkg: string): string[] {
   return out;
 }
 
+/** Whether one source line constructs a store. Comment lines are skipped by the caller; string and
+ *  template text on the line is left out first, so a refusal that tells a caller how to build the
+ *  stores (`new JsonFileStore()` in a message, #616 PR-2a (ii-b)) is not a construction. */
+function isConstruction(line: string): boolean {
+  const code = line.replace(/(['"`])(?:\\.|(?!\1)[^\\])*\1/g, '""');
+  return CONSTRUCTION.test(code);
+}
+
 interface Site {
   file: string;
   line: number;
@@ -57,13 +70,31 @@ function constructions(pkg: string): { files: string[]; sites: Site[] } {
       .forEach((text, i) => {
         const trimmed = text.trim();
         if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*')) return;
-        if (CONSTRUCTION.test(text)) sites.push({ file, line: i + 1, text: trimmed });
+        if (isConstruction(text)) sites.push({ file, line: i + 1, text: trimmed });
       });
   }
   return { files, sites };
 }
 
 describe('#616 PR-2a (iii) — every store comes through the one door', () => {
+  it('the matcher: a string that names a construction is not one; a construction after a string is', () => {
+    const inString =
+      '      `createRealmMcpServer: no runStore was given — the file stores are new JsonFileStore(), new JsonWorkflowStore()`,';
+    const afterString =
+      "  const note = 'new JsonFileStore()'; const runStore = new JsonFileStore(dir);";
+    // (1) red when the matcher counts a string's text (the library's refusal would read as a
+    //     construction and the mcp-server row would fail on approved words), or stops seeing a real
+    //     construction on a line that also holds a string (a stray would pass the scan);
+    // (2) prints what the matcher said for each line.
+    expect({
+      inString: isConstruction(inString),
+      afterString: isConstruction(afterString),
+    }).toEqual({
+      inString: false,
+      afterString: true,
+    });
+  });
+
   for (const [pkg, allowed] of Object.entries(ALLOWED)) {
     it(`${pkg}: no file but ${allowed.join(', ')} constructs a store`, () => {
       const { files, sites } = constructions(pkg);

@@ -12,10 +12,11 @@ import { join } from 'node:path';
 import {
   JsonFileStore,
   JsonWorkflowStore,
+  JsonFileFailedAttemptStore,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type WorkflowDefinition,
 } from '@sensigo/realm';
-import { createRealmMcpServer } from '@sensigo/realm-mcp';
+import { createRealmMcpServer, JsonTraceBufferStore } from '@sensigo/realm-mcp';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { inspectRun } from './inspect.js';
@@ -79,7 +80,12 @@ describe('#729 PR-0 — A-13: inspect and get_run_state say the same next step, 
     const dir = await mkdtemp(join(tmpdir(), 'realm-parity-729-'));
     const store = new JsonFileStore(join(dir, 'runs'));
     const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
-    const server = createRealmMcpServer({ runStore: store, workflowStore });
+    const server = createRealmMcpServer({
+      runStore: store,
+      traceBufferStore: new JsonTraceBufferStore(store.runsDirPath, store),
+      failedAttemptStore: new JsonFileFailedAttemptStore(store.runsDirPath),
+      workflowStore,
+    });
     const [ct, st] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: 'parity-729', version: '0' });
     await Promise.all([server.connect(st), client.connect(ct)]);

@@ -14,6 +14,7 @@ import {
 } from '@sensigo/realm';
 import type { ProviderCapabilities } from './providers/llm-provider.js';
 import { ANTHROPIC_CACHE_TIERS } from './providers/anthropic-provider.js';
+import { OPENAI_EXPLICIT_LIFETIME_S } from './providers/openai-provider.js';
 
 /**
  * Commander argParser for `--prompt-cache`, used by `realm agent` and `realm listen` (the
@@ -156,18 +157,32 @@ export function autoFallbackWindowText(): string {
 }
 
 /**
+ * #896 unit B — the lifetime an `auto` fallback asks for, by the provider that answered: OpenAI's one
+ * lifetime (30 minutes) for `openai`, else Anthropic's long one (1 hour; also when none is known).
+ */
+function fallbackLifetimeS(provider: string | undefined): number {
+  return provider === 'openai' ? OPENAI_EXPLICIT_LIFETIME_S : ANTHROPIC_CACHE_TIERS.long.lifetime_s;
+}
+
+/**
  * Issue #898 — where `auto`'s choice took its prices, in words: the start line, `realm run inspect`
  * and every other render. `asked` is the lifetime asked, in seconds, or `'off'`; a fallback's words
- * end by what that ask was. Total: never throws, for any `asked` a stored record can hold.
+ * end by what that ask was, and (#896 unit B) by the window of the provider that answered
+ * (`provider`: 27 minutes for `openai`, else 54). Total: never throws, for any `asked` a stored
+ * record can hold.
  */
-export function autoPricesText(prices: CacheAutoPricesView, asked: number | 'off'): string {
+export function autoPricesText(
+  prices: CacheAutoPricesView,
+  asked: number | 'off',
+  provider?: string,
+): string {
   const short = lifetimeText(ANTHROPIC_CACHE_TIERS.short.lifetime_s);
-  const longS = ANTHROPIC_CACHE_TIERS.long.lifetime_s;
+  const fallbackS = fallbackLifetimeS(provider);
   const tail =
-    asked === longS
-      ? `, so ${autoLongText()} without prices`
+    asked === fallbackS
+      ? `, so ${lifetimeText(fallbackS)} without prices`
       : asked === 'off'
-        ? `, and no gap was under ${autoFallbackWindowText()}, so no caching`
+        ? `, and no gap was under ${lifetimeText(AUTO_LIFETIME_MARGIN * fallbackS)}, so no caching`
         : '';
   switch (prices.from) {
     case 'economics':
@@ -200,9 +215,14 @@ export function autoPricesText(prices: CacheAutoPricesView, asked: number | 'off
 
 /**
  * The reason clause of the start line (`R`): where the setting came from, and what `auto` read —
- * and (#898) where its prices came from, after the evidence. `asked` is what the provider asks.
+ * and (#898) where its prices came from, after the evidence. `asked` is what the provider asks;
+ * `provider` (#896 unit B) names whose fallback window the price words give.
  */
-function reasonText(promptCache: ResolvedPromptCache, asked: number | 'off'): string {
+function reasonText(
+  promptCache: ResolvedPromptCache,
+  asked: number | 'off',
+  provider?: string,
+): string {
   const v = promptCache.value;
   const listen = promptCache.by === 'realm listen';
   if (v !== 'auto') {
@@ -212,7 +232,7 @@ function reasonText(promptCache: ResolvedPromptCache, asked: number | 'off'): st
   const prices = promptCache.auto?.prices;
   const evidence =
     `auto: ${autoEvidence(promptCache.auto ?? { basis: 'no_measurement' })}; ` +
-    (prices !== undefined ? `${autoPricesText(prices, asked)}; ` : '');
+    (prices !== undefined ? `${autoPricesText(prices, asked, provider)}; ` : '');
   if (promptCache.source === 'stated') {
     return (
       evidence + (listen ? 'set by realm listen --prompt-cache auto' : 'set by --prompt-cache auto')
@@ -299,11 +319,18 @@ export function promptCacheStartLine(input: {
 }
 
 /**
- * #896 unit A — the start line of the `openai` provider in the explicit set (GPT-5.6 and later at
- * OpenAI's own address): `off` first, whatever the steps (Anthropic's order); then a workflow with
- * no agent step; a workflow whose every agent step calls tools (those are left to OpenAI's own
- * caching, the key still sent); otherwise the 30-minute ask, with a sentence on tool steps when one
- * calls tools. With no setting given (a host calling `runAgent`), no parenthetical.
+ * #896 — the start line of the `openai` provider in the explicit set (GPT-5.6 and later at OpenAI's
+ * own address). In order:
+ * - a stated `off`: the off line, whatever the steps (unit A's);
+ * - no agent step: the off line when `auto` chose no caching (Anthropic's order), else no step is
+ *   cached;
+ * - every agent step calls tools: those are left to OpenAI's own caching, the key still sent —
+ *   whatever `auto` chose, since a tool step is not part of the choice (unit A's reason);
+ * - `auto` chose no caching: the off line;
+ * - otherwise the 30-minute ask.
+ * The last two add a sentence on tool steps when one calls tools, and give Anthropic's reason
+ * (unit B: `auto`'s evidence and price words, OpenAI's window). With no setting given (a host
+ * calling `runAgent`), no parenthetical.
  */
 function openAiExplicitLine(
   asked: 'off' | { lifetime_s: number },
@@ -311,22 +338,31 @@ function openAiExplicitLine(
   definition: Pick<WorkflowDefinition, 'steps'>,
 ): string {
   const source = promptCache === undefined ? '' : ` (${openAiReasonText(promptCache)})`;
-  if (asked === 'off') return `Caching: off; OpenAI is asked to cache nothing${source}.`;
+  const offLine = 'Caching: off; OpenAI is asked to cache nothing';
+  if (asked === 'off' && promptCache?.value !== 'auto') return `${offLine}${source}.`;
+  const reason =
+    promptCache === undefined
+      ? ''
+      : ` (${reasonText(promptCache, asked === 'off' ? 'off' : asked.lifetime_s, 'openai')})`;
   const counts = cacheableStepCounts(definition);
   if (counts.singleShot + counts.withTools === 0) {
-    return 'Caching: no step is cached; this workflow has no agent step.';
+    return asked === 'off'
+      ? `${offLine}${reason}.`
+      : 'Caching: no step is cached; this workflow has no agent step.';
   }
   const leftToOpenAi = "OpenAI's own caching, which reuses each turn at the next";
   if (counts.singleShot === 0) {
     return `Caching: every agent step calls tools, so each is left to ${leftToOpenAi}; Realm sends a cache key${source}.`;
   }
   const tools = counts.withTools > 0 ? ` A step that calls tools is left to ${leftToOpenAi}.` : '';
-  return `Caching: OpenAI is asked to cache each step's fixed instructions and the stable start of its prompt for ${lifetimeText(asked.lifetime_s)}, the one lifetime Realm can ask OpenAI for${source}.${tools}`;
+  if (asked === 'off') return `${offLine}${reason}.${tools}`;
+  return `Caching: OpenAI is asked to cache each step's fixed instructions and the stable start of its prompt for ${lifetimeText(asked.lifetime_s)}, the one lifetime Realm can ask OpenAI for${reason}.${tools}`;
 }
 
 /**
- * #896 unit A — the reason clause of the OpenAI start line: where the setting came from. `auto`
- * chooses nothing here (unit B adds its priced words), so it names only who set it.
+ * #896 unit A — the reason clause of the OpenAI line on a workflow whose every agent step calls
+ * tools, and of a stated `off`: where the setting came from. Those steps are not part of `auto`'s
+ * choice, so it names only who set it.
  */
 function openAiReasonText(promptCache: ResolvedPromptCache): string {
   const v = promptCache.value;

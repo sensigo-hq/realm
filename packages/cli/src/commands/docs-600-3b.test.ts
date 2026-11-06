@@ -153,11 +153,11 @@ describe('caching 3-B Part D — OpenAI’s cache key (rows 3, 4, 5, 9, 11–15,
     // The key's rule: `openai-cache-key-3b.test.ts` (D2); G18 stays: `prompt-cache-600.test.ts`.
     claim(
       AGENT_REF,
-      `${OPENAI_WORDS("On GPT-5.6 and later at OpenAI's own address, Realm also asks OpenAI to cache the fixed part of each step without tools for 30 minutes, the one lifetime Realm can ask OpenAI for (`short` and `long` alike), and `off` turns OpenAI's caching off")} See [What a run costs](../../guides/realm-agent.md#what-a-run-costs). Refused with \`--provider-module\`, and for a workflow with no agent step.`,
+      `${OPENAI_WORDS("On GPT-5.6 and later at OpenAI's own address, Realm also asks OpenAI to cache the fixed part of each step without tools for 30 minutes, the one lifetime Realm can ask OpenAI for (`short` and `long` alike); on a drive realm listen starts, `auto` chooses between that and no caching, as for Anthropic, and without usable prices asks for 30 minutes when a recent gap is under 27 minutes; `off` turns OpenAI's caching off")} See [What a run costs](../../guides/realm-agent.md#what-a-run-costs). Refused with \`--provider-module\`, and for a workflow with no agent step.`,
     );
     claim(
       LISTEN_REF,
-      `\`off\`. ${OPENAI_WORDS("On GPT-5.6 and later at OpenAI's own address, the agent also asks OpenAI to cache the fixed part of each step without tools for 30 minutes, and `off` turns OpenAI's caching off")} Added after version 0.47.0.`,
+      `\`off\`. ${OPENAI_WORDS("On GPT-5.6 and later at OpenAI's own address, the agent also asks OpenAI to cache the fixed part of each step without tools for 30 minutes (under `auto`, 30 minutes or no caching for each workflow, by the gaps between its recent triggers and the prices in runner.cache.economics; without usable prices, 30 minutes when a recent gap is under 27 minutes), and `off` turns OpenAI's caching off")} Added after version 0.47.0.`,
     );
   });
 

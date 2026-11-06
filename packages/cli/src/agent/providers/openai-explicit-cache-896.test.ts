@@ -13,7 +13,7 @@ import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { RunRecord, UsageRecord } from '@sensigo/realm';
+import type { CacheAuto, RunRecord, UsageRecord } from '@sensigo/realm';
 import { OpenAIProvider } from './openai-provider.js';
 import type { PromptCacheRequest } from './llm-provider.js';
 import type { ToolDefinition } from '../mcp/mcp-extensions.js';
@@ -234,13 +234,14 @@ describe('#896 check 1 — a single-shot step on gpt-5.6-luna, the default setti
       TAIL,
     ]);
     // (a) red when the request records the base's `provider_rules` (no ask); (b) prints the ask.
+    // #896 unit B: `auto` records its basis, as Anthropic's does (no `auto` given: no measurement).
     expect(askOf(r.usage![0]!)).toEqual({
       cache_requested: 'lifetime',
       cache_lifetime_s: 1800,
       cache_ttl_sent: true,
       cache_requested_source: 'runner_default',
       cache_requested_by: 'realm agent',
-      cache_auto: undefined,
+      cache_auto: { basis: 'no_measurement' },
       cache_marked: ['system', 'prompt', 'key'],
     });
     const line = await inspectLine(r.usage!);
@@ -570,17 +571,25 @@ describe('#896 check 10 — the words', () => {
       'Caching: off; OpenAI is asked to cache nothing (set by --prompt-cache off).',
     ]);
   });
+  // #896 unit B: Anthropic's `auto` reason (the evidence, then where the setting came from).
+  const ALONE: CacheAuto = { basis: 'no_measurement' };
+  const FIRST: CacheAuto = { basis: 'listen_trigger_gaps', gaps_s: [] };
+  const lone = 'auto: a drive realm agent starts on its own has no trigger history';
+  const first = 'auto: no earlier trigger of this workflow since realm listen started';
   it.each([
     [
-      setting('auto', 'runner_default'),
-      "auto, realm agent's default; turn it off with --prompt-cache off",
+      { ...setting('auto', 'runner_default'), auto: ALONE },
+      `${lone}; realm agent's default; turn it off with --prompt-cache off`,
     ],
     [
-      setting('auto', 'runner_default', 'realm listen'),
-      "auto, realm listen's default; change it with realm listen --prompt-cache",
+      { ...setting('auto', 'runner_default', 'realm listen'), auto: FIRST },
+      `${first}; realm listen's default; change it with realm listen --prompt-cache`,
     ],
-    [setting('auto'), 'set by --prompt-cache auto'],
-    [setting('auto', 'stated', 'realm listen'), 'set by realm listen --prompt-cache auto'],
+    [{ ...setting('auto'), auto: ALONE }, `${lone}; set by --prompt-cache auto`],
+    [
+      { ...setting('auto', 'stated', 'realm listen'), auto: FIRST },
+      `${first}; set by realm listen --prompt-cache auto`,
+    ],
   ] as const)('the start line, an auto reason: %j', (promptCache, reason) => {
     expect(startLine(promptCache, SINGLE)).toBe(`${ASK} (${reason}).`);
   });
@@ -593,7 +602,8 @@ describe('#896 check 10 — the words', () => {
       listenCachingFacts('openai', undefined, 'default', 'gpt-5.6-luna')['openai'],
     ]).toEqual([
       'off: OpenAI is asked to cache nothing',
-      '30 minutes, the one lifetime Realm can ask OpenAI for, and a cache key',
+      // #896 unit B: `auto` (here listen's default) chooses.
+      'auto: off or 30 minutes for each workflow, by the gaps between its recent triggers and the prices in runner.cache.economics; a cache key, except on a step without tools when off',
     ]);
   });
 

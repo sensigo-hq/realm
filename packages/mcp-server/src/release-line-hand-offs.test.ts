@@ -40,6 +40,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { readFileSync as readDoc625 } from 'node:fs';
 import { join as joinDoc625, dirname as dirDoc625 } from 'node:path';
 import { fileURLToPath as urlDoc625 } from 'node:url';
+import { makeTempHome, withArtifactStores } from './test-support/temp-home.js';
 
 /** C174: (a) red when the page no longer holds the sentence word for word; (b) prints it. */
 function claimDoc625(page: string, sentence: string): void {
@@ -126,13 +127,6 @@ describe('H1 createRealmMcpServer', () => {
       );
     });
   }
-  it('runs before the trace buffer is derived: an undeclared run store is refused, not the runsDirPath error', () => {
-    // Today an undeclared non-JsonFileStore run store reaches the runsDirPath derivation and throws
-    // ENGINE_INTERNAL; the hand-off check refuses it first.
-    expect(codeOf(() => createRealmMcpServer({ runStore: plain() } as never))).toBe(
-      'ENGINE_RELEASE_LINE_UNDECLARED',
-    );
-  });
   it('a static registry of another release: refused at construction, the whole message names createRealmMcpServer', () => {
     const reg = {};
     Object.defineProperty(reg, Symbol.for('@sensigo/realm/ExtensionRegistry'), { value: OTHER });
@@ -151,7 +145,13 @@ describe('H1 createRealmMcpServer', () => {
       calls += 1;
       return reg as never;
     };
-    expect(() => createRealmMcpServer({ registryProvider })).not.toThrow();
+    // #616 PR-2a (ii-a): the server is built on a temp home's four stores, never the real `~/.realm`.
+    const home = await makeTempHome();
+    try {
+      expect(() => createRealmMcpServer({ ...home.stores, registryProvider })).not.toThrow();
+    } finally {
+      home.cleanup();
+    }
     expect(calls).toBe(0);
     const runStore = new JsonFileStore(dir);
     const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
@@ -169,12 +169,18 @@ describe('H1 createRealmMcpServer', () => {
       message: mismatchText('The registry handed to handleStartRun', 'class ExtensionRegistry'),
     });
   });
-  it('a plain-object or unmarked registry is accepted at construction (registries are refused only on proof)', () => {
+  it('a plain-object or unmarked registry is accepted at construction (registries are refused only on proof)', async () => {
     class ExtensionRegistry {}
-    expect(() => createRealmMcpServer({ registry: {} } as never)).not.toThrow();
-    expect(() =>
-      createRealmMcpServer({ registry: new ExtensionRegistry() } as never),
-    ).not.toThrow();
+    // #616 PR-2a (ii-a): the servers are built on a temp home's four stores, never the real `~/.realm`.
+    const home = await makeTempHome();
+    try {
+      expect(() => createRealmMcpServer({ ...home.stores, registry: {} } as never)).not.toThrow();
+      expect(() =>
+        createRealmMcpServer({ ...home.stores, registry: new ExtensionRegistry() } as never),
+      ).not.toThrow();
+    } finally {
+      home.cleanup();
+    }
   });
   it('realm’s own stores and a declared host class are accepted', () => {
     class TenantScopedRunStore {}
@@ -182,12 +188,14 @@ describe('H1 createRealmMcpServer', () => {
     const host = Object.assign(new TenantScopedRunStore(), plain());
     expect(() =>
       createRealmMcpServer({
-        runStore: new JsonFileStore(dir),
+        ...withArtifactStores(new JsonFileStore(dir)),
         workflowStore: new JsonWorkflowStore(join(dir, 'wf')),
       }),
     ).not.toThrow();
+    // #616 PR-2a (ii-b): got past the release-line check — the missing-store refusal, which comes
+    // after it, names the three stores not given (the runsDirPath derivation it reached before is gone).
     expect(codeOf(() => createRealmMcpServer({ runStore: host } as never))).toBe(
-      'ENGINE_INTERNAL', // got past the check; the runsDirPath derivation refuses a non-JsonFileStore
+      'VALIDATION_OPTION_INVALID',
     );
   });
 });
@@ -215,7 +223,7 @@ describe('a registry the server’s registry provider returned is named by the t
       workflowStore,
     } as never)) as { run_id: string };
     const server = createRealmMcpServer({
-      runStore,
+      ...withArtifactStores(runStore),
       workflowStore,
       registryProvider: async () => reg as never,
     });

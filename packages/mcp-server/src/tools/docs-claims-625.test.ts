@@ -30,6 +30,7 @@ import { createRealmMcpServer } from '../server.js';
 import { renderReply } from '../render-reply.js';
 import { zOf } from '../test-support/instant.js';
 import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
+import { withArtifactStores } from '../test-support/temp-home.js';
 
 // #715 (b) 04 §D (B4): no cell here waits on the real clock for a question to expire. The run store a
 // cell opens sits at a TEST LOCATION (`located`), and `passes(ms)` moves the clock of every location
@@ -85,7 +86,7 @@ async function connect(registry?: ExtensionRegistry) {
   const runStore = new JsonFileStore(await located(dir));
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
   const server = createRealmMcpServer({
-    runStore,
+    ...withArtifactStores(runStore),
     workflowStore,
     ...(registry !== undefined ? { registry } : {}),
   });
@@ -826,7 +827,7 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
     );
     const dir = await mkdtemp(join(tmpdir(), 'realm-docs-625-'));
     const server = createRealmMcpServer({
-      runStore: new JsonFileStore(join(dir, 'runs')),
+      ...withArtifactStores(new JsonFileStore(join(dir, 'runs'))),
       workflowStore: new JsonWorkflowStore(join(dir, 'wf')),
     });
     const [ct, st] = InMemoryTransport.createLinkedPair();
@@ -3091,7 +3092,11 @@ describe('#625 PR-2a, round 28 — C205: the replies on the states C202 did not 
     const dir = await mkdtemp(join(tmpdir(), 'realm-docs-625-c205-'));
     const runStore = new JsonFileStore(join(dir, 'runs'));
     const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
-    const server = createRealmMcpServer({ runStore, workflowStore, registry });
+    const server = createRealmMcpServer({
+      ...withArtifactStores(runStore),
+      workflowStore,
+      registry,
+    });
     const [ct, st] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: 'docs-claims-625-c205', version: '0' });
     await Promise.all([server.connect(st), client.connect(ct)]);
@@ -3295,7 +3300,11 @@ describe("#625 PR-2a, round 30 — C211 (the architect's addendum; walk c14 W2-2
     const dir = await mkdtemp(join(tmpdir(), 'realm-docs-625-c211-'));
     const runStore = new JsonFileStore(join(dir, 'runs'));
     const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
-    const server = createRealmMcpServer({ runStore, workflowStore, registry });
+    const server = createRealmMcpServer({
+      ...withArtifactStores(runStore),
+      workflowStore,
+      registry,
+    });
     const [ct, st] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: 'docs-claims-625-c211', version: '0' });
     await Promise.all([server.connect(st), client.connect(ct)]);

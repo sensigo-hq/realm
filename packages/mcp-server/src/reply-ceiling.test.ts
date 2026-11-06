@@ -35,6 +35,7 @@ import {
 import { sseJsonStringify } from './sse-json.js';
 import { RUN_STATE_PLAN, RUN_STATE_SUMMARY_TABLE } from './tools/get-run-state.js';
 import { WORKFLOW_PROTOCOL_TABLE } from './tools/get-workflow-protocol.js';
+import { withArtifactStores } from './test-support/temp-home.js';
 
 const set = compileDisclosure([], {
   declared: 'resolved',
@@ -454,7 +455,7 @@ async function door() {
   const runStore = new JsonFileStore(join(dir, 'runs'));
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
   for (const d of [ROOTS, AFTER_HEAD, AFTER_FIRST]) await workflowStore.register(d);
-  const server = createRealmMcpServer({ runStore, workflowStore });
+  const server = createRealmMcpServer({ ...withArtifactStores(runStore), workflowStore });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'b2-872', version: '0' });
   await Promise.all([server.connect(st), client.connect(ct)]);

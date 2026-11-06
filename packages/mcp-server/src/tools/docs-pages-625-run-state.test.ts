@@ -31,6 +31,7 @@ import { createRealmMcpServer } from '../server.js';
 import { handleGetRunState } from './get-run-state.js';
 import { POLL_CAP_MS } from '../render-reply.js';
 import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
+import { withArtifactStores } from '../test-support/temp-home.js';
 
 // #715 (b) 04 §D (B4): no cell here waits on the real clock for a question to expire. The run store a
 // cell opens sits at a TEST LOCATION (`located`), and `passes(ms)` moves the clock of every location
@@ -87,7 +88,7 @@ async function connect(opts: { registry?: ExtensionRegistry; home?: string } = {
   const runStore = new JsonFileStore(await located(join(runsDir, '..')));
   const workflowStore = new JsonWorkflowStore(wfDir);
   const server = createRealmMcpServer({
-    runStore,
+    ...withArtifactStores(runStore),
     workflowStore,
     ...(opts.registry !== undefined ? { registry: opts.registry } : {}),
   });

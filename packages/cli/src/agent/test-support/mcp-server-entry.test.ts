@@ -25,13 +25,13 @@ describe('resolveMcpServerEntry (issue #398)', () => {
     expect(resolveMcpServerEntry()).toBe(DEFAULT_MCP_SERVER_ENTRY);
   });
 
-  it('DEPTH PIN — the default path really points at packages/mcp-server/dist/server.js', () => {
+  it('DEPTH PIN — the default path really points at packages/mcp-server/dist/bin.js', () => {
     // The off-by-one this catches: four `..` from test-support, three from one level up. Copy the
     // wrong one and the resolver throws "not built" about a path that was never right — a message
     // that sends the reader to rebuild something that is already built. Pinned on the tail rather
     // than the whole path so it holds wherever the repo is checked out.
     expect(
-      DEFAULT_MCP_SERVER_ENTRY.endsWith(join('packages', 'mcp-server', 'dist', 'server.js')),
+      DEFAULT_MCP_SERVER_ENTRY.endsWith(join('packages', 'mcp-server', 'dist', 'bin.js')),
     ).toBe(true);
     expect(
       DEFAULT_MCP_SERVER_ENTRY.startsWith(sep) || /^[A-Za-z]:/.test(DEFAULT_MCP_SERVER_ENTRY),

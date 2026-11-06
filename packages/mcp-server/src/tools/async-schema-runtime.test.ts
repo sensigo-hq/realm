@@ -22,6 +22,7 @@ import {
   type StepDefinition,
 } from '@sensigo/realm';
 import { createRealmMcpServer } from '../server.js';
+import { withArtifactStores } from '../test-support/temp-home.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 type Reply = Record<string, unknown>;
@@ -32,7 +33,7 @@ async function connect() {
   const workflowStore = new JsonWorkflowStore(join(base, 'wf'));
   const registry = createDefaultRegistry();
   registry.register('handler', 'h', { id: 'h', execute: async () => ({ data: { ok: true } }) });
-  const server = createRealmMcpServer({ runStore, workflowStore, registry });
+  const server = createRealmMcpServer({ ...withArtifactStores(runStore), workflowStore, registry });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'async-schema-runtime', version: '0' });
   await Promise.all([server.connect(st), client.connect(ct)]);
