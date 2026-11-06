@@ -776,17 +776,59 @@ describe('#616 unit 8 — the write path', () => {
     });
   });
 
+  it('unit 9 check 9: fifty calls whose budget passed in the queue do not stop the program: each yields to the event loop before its one attempt', async () => {
+    const file = freshFile();
+    const holder = connect(file);
+    holder.exec('BEGIN IMMEDIATE');
+    const { db } = realmDb(file, { budgetMs: 100 });
+    let last = performance.now();
+    let longestGap = 0;
+    const timer = setInterval(() => {
+      const now = performance.now();
+      longestGap = Math.max(longestGap, now - last);
+      last = now;
+    }, 1);
+    const outs = await Promise.all(
+      Array.from({ length: 50 }, (_, i) => settle(db.immediate(insert(i), verified))),
+    );
+    // One more turn, so the gap that ends when the last call settles is measured too.
+    await sleep(5);
+    clearInterval(timer);
+    holder.exec('ROLLBACK');
+    // (1) red when a call that got the lock after its budget passed makes its attempt without
+    //     yielding: the 49 queued attempts then run back to back, each blocking for the busy
+    //     timeout, and the program stops for about a second (measured: 1,041-1,087 ms idle and
+    //     under load; with the yield 22-62 ms; plans/issue-616/ia2-u09/probes/burst-results.md).
+    //     The bound, 300 ms, leaves room for a loaded host. Also red when a call is not refused
+    //     busy, or a row landed. (2) prints the longest gap and the distinct refusals.
+    expect(
+      {
+        longestGapUnder300Ms: longestGap < 300,
+        refusals: [...new Set(outs.map((o) => (o.error as { code?: unknown })?.code))],
+        rows: values(file),
+      },
+      `longest gap ${longestGap.toFixed(0)} ms`,
+    ).toEqual({ longestGapUnder300Ms: true, refusals: ['STATE_RUN_BUSY'], rows: [] });
+  });
+
   it('correction check 3: autocommit waits for a busy store, then refuses it with STATE_RUN_BUSY, nothing written', async () => {
     const file = freshFile();
     const holder = connect(file);
     holder.exec('BEGIN IMMEDIATE');
     const { db } = realmDb(file, { budgetMs: 200 });
+    const started = performance.now();
     const out = await settle(db.autocommit(insert('while busy')));
+    const elapsed = performance.now() - started;
     holder.exec('ROLLBACK');
     // (1) red when autocommit takes no busy wait or no mapping (SQLite's raw "database is locked",
-    //     code ERR_SQLITE_ERROR, errcode 5, leaves), or when a row landed. (2) prints the error and
-    //     the rows.
-    expect({ error: summary(out.error), rows: values(file) }).toEqual({
+    //     code ERR_SQLITE_ERROR, errcode 5, leaves), when it is refused sooner than the budget (no
+    //     wait, the lock and the mapping kept: refused after one attempt), or when a row landed.
+    //     (2) prints the error, the rows and the elapsed time.
+    expect(
+      { error: summary(out.error), notBeforeTheBudget: elapsed >= 200, rows: values(file) },
+      `elapsed ${elapsed.toFixed(0)} ms`,
+    ).toEqual({
+      notBeforeTheBudget: true,
       error: {
         workflowError: true,
         code: 'STATE_RUN_BUSY',
