@@ -251,18 +251,28 @@ function busyError(budgetMs: number): WorkflowError {
 
 /**
  * A write refused while the outcome of an earlier one is unknown, and that earlier write's own
- * answer. `cause` is the typed code its COMMIT error mapped to, when it mapped to one.
+ * answer. `cause` is the typed code its COMMIT error mapped to, when it mapped to one; a full disk
+ * is said in words, with what to do first. `retryable` is false for the write whose own outcome is
+ * unknown (it may have landed: a retry without a read-back could save it twice) and true for a later
+ * write the fence refused (it wrote nothing, and the fence lifts by itself).
  */
-function fencedError(cause: string | undefined): WorkflowError {
+function fencedError(cause: string | undefined, retryable: boolean): WorkflowError {
+  const full = cause === 'STATE_STORE_FULL';
+  const why =
+    cause === undefined
+      ? ''
+      : full
+        ? ` (${cause}: its disk, or the database's size limit, is full)`
+        : ` (${cause})`;
   return new WorkflowError(
-    `The store cannot confirm whether its last write was saved${cause === undefined ? '' : ` (${cause})`}, ` +
-      'so it refuses new writes until it can. Read back what you wrote to see what was saved, then ' +
-      'try again.',
+    `The store cannot confirm whether its last write was saved${why}, so it refuses new writes ` +
+      `until it can. ${full ? 'Free space, read' : 'Read'} back what you wrote to see what was ` +
+      'saved, then try again.',
     {
       code: 'STATE_STORE_WRITES_FENCED',
       category: 'STATE',
       agentAction: 'report_to_user',
-      retryable: true,
+      retryable,
       details: cause === undefined ? {} : { cause },
     },
   );
@@ -632,7 +642,7 @@ export class RealmDb {
       try {
         await this.#withLockAndBusyWait(() => this.#resolvingCommitOnce(), 'held');
       } catch {
-        throw fencedError(cause);
+        throw fencedError(cause, true);
       }
       this.#fence = undefined;
     }
@@ -669,7 +679,7 @@ export class RealmDb {
     // 4. Unknown: the next call reopens first; writes stay fenced until a resolving commit succeeds.
     this.#reopenOwed = true;
     this.#fence = { cause: failure.base.cause };
-    throw withCommitOutcome(fencedError(failure.base.cause), {
+    throw withCommitOutcome(fencedError(failure.base.cause, false), {
       outcome: 'unknown',
       ...failure.base,
     });
