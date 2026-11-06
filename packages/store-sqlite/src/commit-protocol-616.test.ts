@@ -423,13 +423,14 @@ describe('#616 unit 9 — the COMMIT outcome protocol', () => {
       sleep(2_000).then(() => ({ value: 'still waiting after 2 s', error: undefined })),
     ]);
     // (1) red when a failed reopen keeps the lock (the next call waits for ever) or is taken as
-    //     done (the next call runs on the closed connection and fails). (2) prints each call's
-    //     outcome, the lock and the meta row.
+    //     done (the next call runs on the old connection: one open only). (2) prints each call's
+    //     outcome, the lock, the opens and the meta row.
     expect({
       unknown: (summary(unknown.error).commitOutcome as { outcome?: string })?.outcome,
       failed: summary(failed.error),
       freeAfterTheFailure,
       next: next.value,
+      opens: s.files.opened.length,
       meta: meta(s.file),
     }).toEqual({
       unknown: 'unknown',
@@ -442,6 +443,7 @@ describe('#616 unit 9 — the COMMIT outcome protocol', () => {
       },
       freeAfterTheFailure: true,
       next: 9,
+      opens: 2,
       meta: { tombSeq: 9, commitEpoch: 1 },
     });
   });

@@ -615,13 +615,17 @@ export class RealmDb {
    */
   async #beforeTheCall(writes: boolean): Promise<void> {
     if (this.#reopenOwed) {
-      try {
-        this.#db.close();
-      } catch {
-        // The connection is dropped either way (a failed reopen left it closed already).
-      }
-      this.#db = this.#reopen();
+      // A fresh connection first: when it fails, nothing more runs on the old one (the reopen stays
+      // owed), and the store can still be closed.
+      const fresh = this.#reopen();
+      const old = this.#db;
+      this.#db = fresh;
       this.#reopenOwed = false;
+      try {
+        old.close();
+      } catch {
+        // The old connection is dropped either way; its close has nothing to tell the caller.
+      }
     }
     if (writes && this.#fence !== undefined) {
       const { cause } = this.#fence;
