@@ -14,9 +14,9 @@
 // through a function value it cannot resolve.
 //
 // One opener: no module of the package opens a connection on a file through the loader
-// (`openDatabase` with anything but `':memory:'`) except the open, unit 7b's, which adds itself to
-// `OPENERS` below. Until then the list is empty; the schema ladder's in-memory reference database is
-// allowed anywhere.
+// (`openDatabase` with anything but `':memory:'`) except the open (unit 7b's `open-file.ts`), which
+// `OPENERS` below names; the scan also sees the open's own call, so it cannot go blind. The schema
+// ladder's in-memory reference database is allowed anywhere.
 //
 // Each assertion carries (1) the break that turns it red and (2) what it prints when it fails.
 import { readdirSync, statSync } from 'node:fs';
@@ -29,7 +29,10 @@ const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = join(PACKAGE_ROOT, 'src');
 const LOADER = 'src/driver.ts';
 /** The modules that may open a connection on a file through the loader, each with its reason. */
-const OPENERS: Record<string, string> = {};
+const OPENERS: Record<string, string> = {
+  'src/open-file.ts':
+    'the one open (unit 7b): it checks the file before any use and sets up a new one, and its reopen opens the same file again',
+};
 
 function productionFiles(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -212,8 +215,9 @@ describe('#616 unit 7a — the source laws of the open', () => {
     });
   });
 
-  it('one opener: no module but the open (none yet) opens a connection on a file through the loader', () => {
+  it('one opener: no module but the open opens a connection on a file through the loader', () => {
     const opens: string[] = [];
+    const admitted: string[] = [];
     let memory = 0;
     for (const file of files) {
       if (rel(file) === LOADER) continue;
@@ -226,13 +230,19 @@ describe('#616 unit 7a — the source laws of the open', () => {
         const [first] = n.arguments;
         if (first !== undefined && ts.isStringLiteral(first) && first.text === ':memory:')
           memory += 1;
-        else if (!(rel(file) in OPENERS)) opens.push(`${where(n)}: ${n.getText()}`);
+        else if (rel(file) in OPENERS) admitted.push(`${rel(file)}: ${n.getText()}`);
+        else opens.push(`${where(n)}: ${n.getText()}`);
       });
     }
     // (1) red when a module outside the open's list opens a database on a path through the loader
-    //     (a second opener, which would skip the open's checks), or when the scan stops seeing the
-    //     schema ladder's in-memory open (it would then be resolving nothing); (2) prints each
-    //     opener with its file and line, and the count of in-memory opens.
-    expect({ opens, memorySeen: memory > 0 }).toEqual({ opens: [], memorySeen: true });
+    //     (a second opener, which would skip the open's checks), when the open's own call is no
+    //     longer the one the scan sees, or when the scan stops seeing the schema ladder's in-memory
+    //     open (it would then be resolving nothing); (2) prints each opener with its file and line,
+    //     the open's calls, and the count of in-memory opens.
+    expect({ opens, admitted, memorySeen: memory > 0 }).toEqual({
+      opens: [],
+      admitted: ['src/open-file.ts: openDatabase(path)'],
+      memorySeen: true,
+    });
   });
 });
