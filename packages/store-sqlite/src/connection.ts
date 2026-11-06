@@ -4,9 +4,10 @@
 //   - `autocommit(body)`: no transaction (the open's pragmas, checkpoints, a copy of the file);
 //   - `snapshot(body)`: a read transaction, `query_only` on for the body;
 //   - `immediate(body, verify)`: a write transaction, `BEGIN IMMEDIATE`.
-// It is built over a connection it is GIVEN, with a `reopen` function for that connection's file
-// (opening a home is unit 7's; the COMMIT outcome protocol, which uses `verify` and the in-process
-// lock, is unit 9's: until then a COMMIT error rolls back and throws the mapped error).
+// It is built over a connection it is GIVEN, with a `reopen` function for that connection's file;
+// `RealmDb.open` (unit 7b, `open-file.ts`) opens a home and builds one. The COMMIT outcome protocol,
+// which uses `verify` and the in-process lock, is unit 9's: until then a COMMIT error rolls back and
+// throws the mapped error.
 //
 // The rules all three forms share:
 //   - a body is synchronous, so a transaction never spans an await: a body whose type returns a
@@ -35,6 +36,7 @@
 import { REALM_STORE_SCHEMA_VERSION, takeRawReading, WorkflowError } from '@sensigo/realm';
 import type { Clock } from '@sensigo/realm';
 import type { DatabaseLike } from './driver.js';
+import { openRealmDb, type OpenOptions, type OpenSeams } from './open-file.js';
 
 /** How long a call waits for a busy store before it is refused (parity with the JSON store's wait). */
 export const DEFAULT_BUSY_BUDGET_MS = 5_000;
@@ -142,16 +144,23 @@ export function readOnlyError(path: string, reason: string): WorkflowError {
   );
 }
 
-function versionNewerError(file: number): WorkflowError {
+/**
+ * The file was migrated by a newer Realm (unit 8's sentence; the open raises it too, from its first
+ * read). `realm` is the version this Realm writes: core's, unless the open was given another.
+ */
+export function versionNewerError(
+  file: number,
+  realm: number = REALM_STORE_SCHEMA_VERSION,
+): WorkflowError {
   return new WorkflowError(
     `This store was migrated by a newer Realm: its schema is version ${file} and this Realm writes ` +
-      `version ${REALM_STORE_SCHEMA_VERSION}. Upgrade Realm to read or write it.`,
+      `version ${realm}. Upgrade Realm to read or write it.`,
     {
       code: 'STATE_STORE_VERSION_NEWER',
       category: 'STATE',
       agentAction: 'report_to_user',
       retryable: false,
-      details: { file, realm: REALM_STORE_SCHEMA_VERSION },
+      details: { file, realm },
     },
   );
 }
@@ -191,8 +200,85 @@ function refuseThenable(result: unknown): void {
   }
 }
 
+/** One guard of the file's schema whose refusal has a typed code: the code, the sentence, retryable. */
+function guardRefusal(
+  code:
+    | 'STATE_SNAPSHOT_MISMATCH'
+    | 'STATE_RUN_IDENTITY'
+    | 'STATE_RUN_PURGED'
+    | 'STATE_EVIDENCE_REWRITTEN'
+    | 'STATE_WRITE_ONCE_REWRITTEN',
+  message: string,
+  retryable: boolean,
+): () => WorkflowError {
+  return () =>
+    new WorkflowError(message, {
+      code,
+      category: 'STATE',
+      agentAction: 'report_to_user',
+      retryable,
+    });
+}
+
+/**
+ * The guards of the file's schema (units 6 and 6b) whose refusal has a typed code, by the guard's
+ * exact message (final at the first release). Every other guard's refusal leaves as a plain error
+ * with SQLite's text. A message carries no run, so none of these names one (and the purged-id
+ * refusal no purge time).
+ */
+const GUARD_REFUSALS: ReadonlyMap<string, () => WorkflowError> = new Map([
+  [
+    "realm.db: a run's version can only advance by one",
+    guardRefusal(
+      'STATE_SNAPSHOT_MISMATCH',
+      'Version conflict — run was modified by another process',
+      true,
+    ),
+  ],
+  [
+    "realm.db: a run's identity cannot change",
+    guardRefusal(
+      'STATE_RUN_IDENTITY',
+      "The store refused a write that would change a run's id, idempotency key, workflow or creation time.",
+      false,
+    ),
+  ],
+  [
+    'realm.db: a purged run id cannot be created again',
+    guardRefusal(
+      'STATE_RUN_PURGED',
+      'The store refused to create a run whose id was deleted earlier: a purged run id is never ' +
+        'created again.',
+      false,
+    ),
+  ],
+  [
+    'realm.db: evidence rows are append-only',
+    guardRefusal(
+      'STATE_EVIDENCE_REWRITTEN',
+      "The store refused a write that would change or remove a run's stored evidence, which is " +
+        'append-only.',
+      false,
+    ),
+  ],
+  [
+    'realm.db: a write-once field cannot change',
+    guardRefusal(
+      'STATE_WRITE_ONCE_REWRITTEN',
+      'The store refused a write that would change a run field that is written once and then never ' +
+        'changes.',
+      false,
+    ),
+  ],
+]);
+
+/** The guard messages {@link mapSqliteError} maps to a typed code (a source law lists the others). */
+export const MAPPED_GUARD_MESSAGES: readonly string[] = [...GUARD_REFUSALS.keys()];
+
 /**
  * Maps an error to what leaves the package. A SQLite error never leaves raw:
+ *   - a guard of the file's schema with a typed code (units 6 and 6b): a constraint error (19) with
+ *     that guard's exact message → that code ({@link GUARD_REFUSALS});
  *   - a full disk or database size limit (13) → `STATE_STORE_FULL`;
  *   - a file or folder that cannot be written (8, its extended code 1544 for a read-only folder) or
  *     opened (14) → `STATE_STORE_READONLY` naming `path`, the store file, with SQLite's own text
@@ -207,6 +293,8 @@ function refuseThenable(result: unknown): void {
 export function mapSqliteError(err: unknown, path: string): unknown {
   if (!isSqliteError(err)) return err;
   const primary = err.errcode & 0xff;
+  const guard = primary === 19 ? GUARD_REFUSALS.get(err.message) : undefined;
+  if (guard !== undefined) return guard();
   if (primary === 13) return storeFullError();
   if (primary === 8 || primary === 14) return readOnlyError(path, err.errstr ?? err.message);
   return plainSqliteError(err, `${err.message} (SQLite error ${err.errcode})`);
@@ -261,6 +349,15 @@ export class RealmDb {
   #txOpen = false;
   /** A call refused because it started inside the open transaction: that transaction fails with it. */
   #nested: Error | undefined;
+
+  /**
+   * Opens the Realm home at `home` and returns its store's primitive, ready: the one open
+   * (`open-file.ts`), and the only code that opens a connection on `realm.db`. `seams` is for the
+   * package's own tests.
+   */
+  static open(home: string, options: OpenOptions, seams?: OpenSeams): Promise<RealmDb> {
+    return openRealmDb(home, options, seams);
+  }
 
   constructor(connection: DatabaseLike, options: RealmDbOptions) {
     this.#db = connection;
