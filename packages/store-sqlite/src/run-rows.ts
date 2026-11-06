@@ -15,8 +15,11 @@
 // cannot hold (`undefined`, a function) is `null` there, and a field whose value JSON leaves out is
 // left out (no placeholder, no blob).
 //
-// The writer and the reader run inside a transaction the caller holds; neither begins, commits, takes
-// a lock or reads a clock. The limits are checked before the caller's `BEGIN`.
+// The reader runs inside a transaction the caller holds and begins, commits or locks nothing. The
+// writer is all or nothing by its own savepoint: inside the caller's `BEGIN IMMEDIATE` it takes no
+// lock of its own and a failed call leaves none of its rows in that transaction; with no transaction
+// open its savepoint is the transaction, holds the write lock for the call and commits the run whole.
+// Neither reads a clock. The limits are checked before the caller's `BEGIN`.
 import { createHash } from 'node:crypto';
 import {
   deriveRunPhase,
@@ -139,14 +142,24 @@ const INSERT_RUN =
 const INSERT_EVIDENCE =
   'INSERT INTO evidence (run_id, seq, entry, entry_sha256) VALUES (?, ?, ?, ?)';
 const INSERT_BLOB = 'INSERT INTO run_blobs (run_id, name, value) VALUES (?, ?, ?)';
+/** The writer's own savepoint (SEAMS, "unit 10 review (PR #993)", the amendment). */
+const SAVEPOINT = 'realm_insert_run';
 
 /**
  * Writes `record` in its stored form: the `runs` row (the core document, placeholders in place, with
  * the derived phase and the derivation's fingerprint in the index columns, and the key's hash), one
  * `evidence` row per entry with the sha256 of its stored text, and one `run_blobs` row per write-once
- * field. Synchronous and INSERT-only: every stamp is the record's own, it takes no lock (the caller
- * holds `BEGIN IMMEDIATE`) and throws what SQLite and the file's guards throw, unmapped. The caller
- * checks {@link assertRunRecordWithinLimits} before its `BEGIN`.
+ * field. Synchronous; every stamp is the record's own, and it throws what SQLite and the file's
+ * guards throw, unmapped. The caller checks {@link assertRunRecordWithinLimits} before its `BEGIN`.
+ *
+ * All or nothing, by its own savepoint around the INSERTs: a throw leaves nothing of this call behind,
+ * whether the caller then rolls back, swallows the throw or goes on, and the caller's earlier work in
+ * the transaction is as it was. Inside the caller's `BEGIN IMMEDIATE` it takes no lock of its own;
+ * with no transaction open the savepoint is the transaction, holds the write lock for the call and
+ * commits the run whole. When SQLite has rolled the whole transaction back by itself (a full disk, an
+ * I/O error) there is no savepoint left, so the cleanup is skipped and the caller's own `ROLLBACK`
+ * has nothing to do: the caller asks `isTransaction` first, or treats "no transaction is active" as
+ * done, as `RealmDb` does.
  */
 export function insertRunRecord(db: DatabaseLike, record: RunRecord): void {
   const source = record as unknown as JsonObject;
@@ -174,22 +187,36 @@ export function insertRunRecord(db: DatabaseLike, record: RunRecord): void {
   // An imported record with no phase gets the placeholder too (design §3): the read derives it.
   if (!Object.hasOwn(core, 'run_phase')) core['run_phase'] = { [DERIVED]: 'run_phase' };
 
-  db.prepare(INSERT_RUN).run(
-    record.id,
-    JSON.stringify(core),
-    deriveRunPhase(record),
-    runPhaseDerivationFingerprint(),
-    keyHash(record),
-  );
-  const insertEntry = db.prepare(INSERT_EVIDENCE);
-  // By index, not `map`: a hole in the array is an entry too, which JSON holds as null.
-  for (let seq = 0; seq < evidence.length; seq++) {
-    const text = JSON.stringify(evidence[seq]) ?? 'null';
-    insertEntry.run(record.id, seq, text, evidenceEntrySha256(text));
-  }
-  if (blobs.length > 0) {
-    const insertBlob = db.prepare(INSERT_BLOB);
-    for (const blob of blobs) insertBlob.run(record.id, blob.name, blob.value);
+  // SQLite uses the most recent savepoint of a name, so a caller's own of the same name is no clash.
+  db.exec(`SAVEPOINT ${SAVEPOINT}`);
+  try {
+    db.prepare(INSERT_RUN).run(
+      record.id,
+      JSON.stringify(core),
+      deriveRunPhase(record),
+      runPhaseDerivationFingerprint(),
+      keyHash(record),
+    );
+    const insertEntry = db.prepare(INSERT_EVIDENCE);
+    // By index, not `map`: a hole in the array is an entry too, which JSON holds as null.
+    for (let seq = 0; seq < evidence.length; seq++) {
+      const text = JSON.stringify(evidence[seq]) ?? 'null';
+      insertEntry.run(record.id, seq, text, evidenceEntrySha256(text));
+    }
+    if (blobs.length > 0) {
+      const insertBlob = db.prepare(INSERT_BLOB);
+      for (const blob of blobs) insertBlob.run(record.id, blob.name, blob.value);
+    }
+    // Inside the guarded region: with no transaction open this RELEASE is the commit, and a failing
+    // one is cleaned up like any other failure, so the connection is not left in a transaction.
+    db.exec(`RELEASE ${SAVEPOINT}`);
+  } catch (err) {
+    // A transaction SQLite rolled back by itself (a full disk, an I/O error) has no savepoint left.
+    if (db.isTransaction) {
+      db.exec(`ROLLBACK TO ${SAVEPOINT}`);
+      db.exec(`RELEASE ${SAVEPOINT}`);
+    }
+    throw err;
   }
 }
 

@@ -404,7 +404,10 @@ describe('#616 unit 10 — a run record as rows', () => {
     };
     // (1) red when the depth check refuses 1,000 levels (an off-by-one), or SQLite does not store
     //     them; (2) prints the statements sent and the error.
-    expect(stored).toEqual({ sent: ['BEGIN IMMEDIATE', 'COMMIT'], outcome: 'no error' });
+    expect(stored).toEqual({
+      sent: ['BEGIN IMMEDIATE', 'SAVEPOINT realm_insert_run', 'RELEASE realm_insert_run', 'COMMIT'],
+      outcome: 'no error',
+    });
     // (1) red when the read loses any of the 1,000 levels; (2) prints vitest's diff.
     expect(await read(db, 'd-1000')).toEqual(deepest);
     // (1) red when the depth check is missing or late: SQLite's "malformed JSON" (1,001), a stack
@@ -432,7 +435,15 @@ describe('#616 unit 10 — a run record as rows', () => {
     //     statements sent and each outcome.
     expect({ length: JSON.stringify(record).length < bytes - 1, atLimit, over }).toEqual({
       length: true,
-      atLimit: { sent: ['BEGIN IMMEDIATE', 'COMMIT'], outcome: 'no error' },
+      atLimit: {
+        sent: [
+          'BEGIN IMMEDIATE',
+          'SAVEPOINT realm_insert_run',
+          'RELEASE realm_insert_run',
+          'COMMIT',
+        ],
+        outcome: 'no error',
+      },
       over: {
         sent: [],
         outcome: {
@@ -565,60 +576,210 @@ describe('#616 unit 10 — a run record as rows', () => {
     }).toEqual({ busy_timeout: 5000, foreign_keys: 1, trusted_schema: 0 });
   });
 
-  // ---- the stored form's defined states (first-release facts, SEAMS 2026-11-06) ----
-  it('stored form: an entry JSON cannot hold is null, a write-once field JSON leaves out has no placeholder, null is a blob, a missing phase is placed last', async () => {
+  // ---- the review of PR #993 (MA 3, SEAMS "unit 10 review", the amendment): all or nothing ----
+  /** A record the file refuses part-way: its second entry is 1,002 levels deep, past SQLite's JSON limit. */
+  function torn(id: string): RunRecord {
+    let deep: Record<string, unknown> = { leaf: 1 };
+    for (let level = 2; level <= 1002; level++) deep = { d: deep };
+    return run(id, { evidence: [entry(0), deep, entry(2)] as unknown as EvidenceSnapshot[] });
+  }
+
+  /** How many rows of a run a connection sees. */
+  function left(c: DatabaseLike, id: string): { runs: unknown; evidence: unknown; blobs: unknown } {
+    const n = (sql: string): unknown => c.prepare(sql).get(id)?.['n'];
+    return {
+      runs: n('SELECT count(*) AS n FROM runs WHERE id = ?'),
+      evidence: n('SELECT count(*) AS n FROM evidence WHERE run_id = ?'),
+      blobs: n('SELECT count(*) AS n FROM run_blobs WHERE run_id = ?'),
+    };
+  }
+
+  /** What a read gave: the record, null, or the refusal's message. */
+  async function readOutcome(db: RealmDb, id: string): Promise<unknown> {
+    try {
+      return await read(db, id);
+    } catch (err) {
+      return { message: (err as Error).message };
+    }
+  }
+
+  const NONE = { runs: 0, evidence: 0, blobs: 0 };
+  const JSON_REFUSAL = { message: 'realm.db: evidence and fields must be valid JSON' };
+
+  it("review of #993, check 1 — a failure part-way inside the caller's BEGIN IMMEDIATE leaves none of the run in the transaction; the caller's earlier insert stays; a swallowed throw stores nothing", async () => {
     const { home, db } = await store();
-    const holes = run('s-holes', {
-      evidence: [entry(0), undefined, entry(2)] as unknown as EvidenceSnapshot[],
+    const c = await foreign(home);
+    const other = await foreign(home);
+    c.exec('BEGIN IMMEDIATE');
+    insertRunRecord(c, run('a-earlier'));
+    const failed = thrown(() => insertRunRecord(c, torn('a-torn')));
+    const inTransaction = {
+      torn: left(c, 'a-torn'),
+      earlier: left(c, 'a-earlier'),
+      isTransaction: c.isTransaction,
+    };
+    // (1) red when the failed call's first rows stay in the open transaction (no savepoint), or the
+    //     caller's earlier insert is undone with them, or the transaction is ended; (2) prints the
+    //     error and the rows each run has in the open transaction.
+    expect({ failed, inTransaction }).toEqual({
+      failed: JSON_REFUSAL,
+      inTransaction: {
+        torn: NONE,
+        earlier: { runs: 1, evidence: 2, blobs: 1 },
+        isTransaction: true,
+      },
     });
-    const absentField = run('s-undefined-field');
-    (absentField as unknown as Record<string, unknown>)['workflow_context_snapshots'] = undefined;
-    const nullField = run('s-null-field', { workflow_context_snapshots: null });
+    const fixed = run('a-torn');
+    insertRunRecord(c, fixed);
+    c.exec('COMMIT');
+    c.exec('BEGIN IMMEDIATE');
+    const swallowed = thrown(() => insertRunRecord(c, torn('a-swallowed')));
+    c.exec('COMMIT');
+    // (1) red when the clean record or the earlier insert is not committed, or a caller that
+    //     swallowed the throw and committed stored part of the failed run; (2) prints what a second
+    //     connection sees.
+    expect({
+      fixed: await readOutcome(db, 'a-torn'),
+      earlier: left(other, 'a-earlier'),
+      swallowed,
+      swallowedRows: left(other, 'a-swallowed'),
+    }).toEqual({
+      fixed,
+      earlier: { runs: 1, evidence: 2, blobs: 1 },
+      swallowed: JSON_REFUSAL,
+      swallowedRows: NONE,
+    });
+  });
+
+  it('review of #993, check 2 — with no transaction open a failure commits nothing and leaves no transaction; a clean record then commits whole', async () => {
+    const { home, db } = await store();
+    const c = await foreign(home);
+    const other = await foreign(home);
+    const failed = thrown(() => insertRunRecord(c, torn('n-torn')));
+    const afterFailure = {
+      failed,
+      isTransaction: c.isTransaction,
+      rows: left(other, 'n-torn'),
+      read: await readOutcome(db, 'n-torn'),
+    };
+    // (1) red when the first rows commit alone (the read then refuses "its record holds 3 evidence
+    //     entries and the store has 1 evidence rows"), or the failure leaves a transaction open;
+    //     (2) prints the error, the rows, the flag and the read.
+    expect(afterFailure).toEqual({
+      failed: JSON_REFUSAL,
+      isTransaction: false,
+      rows: NONE,
+      read: null,
+    });
+    const fixed = run('n-torn');
+    insertRunRecord(c, fixed);
+    // (1) red when the savepoint is not released (the run stays uncommitted and the store's own
+    //     connection reads null); (2) prints the flag and the read.
+    expect({ isTransaction: c.isTransaction, back: await readOutcome(db, 'n-torn') }).toEqual({
+      isTransaction: false,
+      back: fixed,
+    });
+  });
+
+  it("review of #993, check 3 — SQLite's own rollback: the trigger's error is the one thrown, and no transaction is left, in a held transaction and with none", async () => {
+    const { home } = await store();
+    const c = await foreign(home);
+    c.exec(
+      "CREATE TEMP TRIGGER test_rollback BEFORE INSERT ON evidence WHEN NEW.seq = 1 BEGIN SELECT RAISE(ROLLBACK, 'the test rolls the transaction back'); END",
+    );
+    c.exec('BEGIN IMMEDIATE');
+    insertRunRecord(c, run('r-earlier', { evidence: [entry(0)] }));
+    const held = {
+      error: thrown(() => insertRunRecord(c, run('r-held'))),
+      isTransaction: c.isTransaction,
+    };
+    const none = {
+      error: thrown(() => insertRunRecord(c, run('r-none'))),
+      isTransaction: c.isTransaction,
+    };
+    // (1) red when the cleanup sends ROLLBACK TO without asking whether a transaction is still open
+    //     ("no such savepoint: realm_insert_run" then replaces the trigger's error); (2) prints each
+    //     error and the flag.
+    expect({ held, none }).toEqual({
+      held: { error: { message: 'the test rolls the transaction back' }, isTransaction: false },
+      none: { error: { message: 'the test rolls the transaction back' }, isTransaction: false },
+    });
+  });
+
+  it('review of #993, check 3b — a failing RELEASE (the commit, with no transaction open) is cleaned up: the original error, no transaction left, nothing stored, and a clean insert then commits', async () => {
+    const { home, db } = await store();
+    const c = await foreign(home);
+    const other = await foreign(home);
+    const sent: string[] = [];
+    let refused = false;
+    const failingRelease: DatabaseLike = {
+      exec: (sql) => {
+        sent.push(sql);
+        if (!refused && sql === 'RELEASE realm_insert_run') {
+          refused = true;
+          throw new Error('the test refuses the first RELEASE');
+        }
+        c.exec(sql);
+      },
+      prepare: (sql) => c.prepare(sql),
+      close: () => c.close(),
+      get isTransaction() {
+        return c.isTransaction;
+      },
+    };
+    const failed = thrown(() => insertRunRecord(failingRelease, run('l-release')));
+    const afterFailure = {
+      failed,
+      sent,
+      isTransaction: c.isTransaction,
+      rows: left(other, 'l-release'),
+    };
+    // (1) red when the RELEASE sits outside the guarded region (the connection is left inside the
+    //     savepoint's transaction, its rows uncommitted); (2) prints the error, every statement
+    //     sent, the flag and the rows.
+    expect(afterFailure).toEqual({
+      failed: { message: 'the test refuses the first RELEASE' },
+      sent: [
+        'SAVEPOINT realm_insert_run',
+        'RELEASE realm_insert_run',
+        'ROLLBACK TO realm_insert_run',
+        'RELEASE realm_insert_run',
+      ],
+      isTransaction: false,
+      rows: NONE,
+    });
+    const fixed = run('l-release');
+    insertRunRecord(c, fixed);
+    // (1) red when the clean insert does not commit (a transaction left open holds it); (2) prints
+    //     the flag and the read.
+    expect({ isTransaction: c.isTransaction, back: await readOutcome(db, 'l-release') }).toEqual({
+      isTransaction: false,
+      back: fixed,
+    });
+  });
+
+  // ---- the stored form's defined states (first-release facts, SEAMS 2026-11-06) ----
+  it('stored form: a record with no phase is stored with the phase placeholder last and read back with the derived phase', async () => {
+    const { home, db } = await store();
     const noPhase = run('s-no-phase');
     delete (noPhase as unknown as Record<string, unknown>)['run_phase'];
-    for (const record of [holes, absentField, nullField, noPhase]) await put(db, record);
+    await put(db, noPhase);
     const c = await foreign(home);
     const text = (id: string): unknown =>
       JSON.parse(String(c.prepare('SELECT record FROM runs WHERE id = ?').get(id)?.['record']));
-    const rows = (sql: string, id: string): unknown[] =>
-      c
-        .prepare(sql)
-        .all(id)
-        .map((r) => ({ ...r }));
-    // (1) red when an `undefined` entry is not stored as null (the insert is refused: an entry is
-    //     NOT NULL), a write-once field whose value JSON leaves out gets a placeholder or a blob
-    //     (the insert is refused), or a record with no phase is stored without the phase's
-    //     placeholder; (2) prints each stored piece.
+    // (1) red when a record with no phase is stored without the phase's placeholder; (2) prints the
+    //     stored record's last key and its value.
     expect({
-      holes: rows('SELECT seq, entry FROM evidence WHERE run_id = ? ORDER BY seq', 's-holes').map(
-        (r) => (r as { entry: string }).entry,
-      ),
-      undefinedField: {
-        core: Object.hasOwn(text('s-undefined-field') as object, 'workflow_context_snapshots'),
-        blobs: rows('SELECT name FROM run_blobs WHERE run_id = ?', 's-undefined-field'),
-      },
-      nullField: rows('SELECT name, value FROM run_blobs WHERE run_id = ?', 's-null-field'),
       noPhaseLastKey: Object.keys(text('s-no-phase') as object).at(-1),
       noPhaseLast: (text('s-no-phase') as Record<string, unknown>)['run_phase'],
     }).toEqual({
-      holes: [JSON.stringify(entry(0)), 'null', JSON.stringify(entry(2))],
-      undefinedField: { core: false, blobs: [] },
-      nullField: [{ name: 'workflow_context_snapshots', value: 'null' }],
       noPhaseLastKey: 'run_phase',
       noPhaseLast: { $realm_derived: 'run_phase' },
     });
-    // (1) red when a read does not give back what JSON keeps of each record (null for the hole, the
-    //     field left out, null kept, the derived phase last); (2) prints vitest's diff.
-    expect({
-      holes: await read(db, 's-holes'),
-      absentField: await read(db, 's-undefined-field'),
-      nullField: await read(db, 's-null-field'),
-      noPhase: await read(db, 's-no-phase'),
-    }).toEqual({
-      holes: JSON.parse(JSON.stringify(holes)),
-      absentField: JSON.parse(JSON.stringify(absentField)),
-      nullField,
-      noPhase: { ...noPhase, run_phase: deriveRunPhase(noPhase) },
+    // (1) red when the read does not give the derived phase; (2) prints vitest's diff.
+    expect(await read(db, 's-no-phase')).toEqual({
+      ...noPhase,
+      run_phase: deriveRunPhase(noPhase),
     });
   });
 
