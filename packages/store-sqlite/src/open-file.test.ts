@@ -51,7 +51,7 @@ const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const AS_ROOT = process.getuid?.() === 0;
 if (AS_ROOT) {
   console.warn(
-    '#616 unit 7b: the cell of a file Realm cannot open is skipped: root can open any file.',
+    '#616 unit 7b: the two cells of a store file Realm may not write are skipped: root can write any file.',
   );
 }
 
@@ -114,6 +114,18 @@ function settings(path: string, ...differences: string[]): unknown {
   return {
     code: 'STATE_STORE_SETTINGS_REFUSED',
     message: `The store file ${path} is not a Realm store this Realm can use: ${differences.join('; ')}. Realm does not change or replace a store file by itself.`,
+    details: { path, differences },
+  };
+}
+
+/**
+ * The settings refusal of an empty file that already has pages, as a user reads it: the lead and
+ * the remedy are in the message only, `details` lists the differences alone.
+ */
+function noStoreYet(path: string, ...differences: string[]): unknown {
+  return {
+    code: 'STATE_STORE_SETTINGS_REFUSED',
+    message: `The store file ${path} is not a Realm store this Realm can use: it holds no store yet, but ${differences.join('; ')}. Remove it and Realm makes a new one. Realm does not change or replace a store file by itself.`,
     details: { path, differences },
   };
 }
@@ -188,6 +200,91 @@ function recordingOpens(): { opened: DatabaseLike[]; openFile: (path: string) =>
       return db;
     },
   };
+}
+
+/** A real connection whose statements go through `exec` and `prepare` as given. */
+function wrapping(
+  path: string,
+  exec: (real: DatabaseLike, sql: string) => void,
+  prepare: (real: DatabaseLike, sql: string) => ReturnType<DatabaseLike['prepare']>,
+): DatabaseLike {
+  const real = openDatabase(path);
+  connections.push(real);
+  return {
+    exec: (sql) => exec(real, sql),
+    prepare: (sql) => prepare(real, sql),
+    close: () => real.close(),
+    get isTransaction() {
+      return real.isTransaction;
+    },
+  };
+}
+
+/**
+ * Opens connections on which one statement does nothing: SQLite's answer to a pragma it ignores (as
+ * it does inside a transaction) is no error and no change.
+ */
+function ignoring(statement: string): (path: string) => DatabaseLike {
+  return (path) =>
+    wrapping(
+      path,
+      (real, sql) => (sql === statement ? undefined : real.exec(sql)),
+      (real, sql) => real.prepare(sql),
+    );
+}
+
+/**
+ * Opens connections whose switch to WAL answers `mode`: SQLite's answer when it cannot change the
+ * journal mode is the mode the file keeps (sqlite.org pragma.html#pragma_journal_mode: "If the
+ * journal mode could not be changed, the original journal mode is returned").
+ */
+function walAnswering(mode: string): (path: string) => DatabaseLike {
+  return (path) =>
+    wrapping(
+      path,
+      (real, sql) => real.exec(sql),
+      (real, sql) =>
+        sql === 'PRAGMA journal_mode = WAL'
+          ? {
+              run: () => ({ changes: 0, lastInsertRowid: 0 }),
+              get: () => ({ journal_mode: mode }),
+              all: () => [{ journal_mode: mode }],
+            }
+          : real.prepare(sql),
+    );
+}
+
+/** Counts the connections `openFile` makes and the closes they get. */
+function counting(openFile: (path: string) => DatabaseLike): {
+  count: { made: number; closed: number };
+  openFile: (path: string) => DatabaseLike;
+} {
+  const count = { made: 0, closed: 0 };
+  return {
+    count,
+    openFile: (path) => {
+      const db = openFile(path);
+      count.made += 1;
+      return {
+        exec: (sql) => db.exec(sql),
+        prepare: (sql) => db.prepare(sql),
+        close: () => {
+          count.closed += 1;
+          db.close();
+        },
+        get isTransaction() {
+          return db.isTransaction;
+        },
+      };
+    },
+  };
+}
+
+/** The `realm.db-*` files beside the store file (SQLite's write-ahead log and shared memory). */
+function sideFiles(home: string): string[] {
+  return readdirSync(home)
+    .filter((name) => name.startsWith(`${DATABASE_FILE}-`))
+    .sort();
 }
 
 /** A pragma's value as SQLite reads it back. */
@@ -350,30 +447,8 @@ describe('#616 unit 7b — the first open', () => {
 
   it('a WAL switch SQLite does not make is refused, and the file is not set up', async () => {
     const home = join(tmp(), '.realm');
-    // SQLite's answer when it cannot change the journal mode: the mode the file keeps (sqlite.org
-    // pragma.html#pragma_journal_mode: "If the journal mode could not be changed, the original
-    // journal mode is returned"). The connection is the real one; only that statement's answer is
-    // the file's old mode.
-    const openFile = (path: string): DatabaseLike => {
-      const real = openDatabase(path);
-      connections.push(real);
-      return {
-        exec: (sql) => real.exec(sql),
-        prepare: (sql) =>
-          sql === 'PRAGMA journal_mode = WAL'
-            ? {
-                run: () => ({ changes: 0, lastInsertRowid: 0 }),
-                get: () => ({ journal_mode: 'delete' }),
-                all: () => [{ journal_mode: 'delete' }],
-              }
-            : real.prepare(sql),
-        close: () => real.close(),
-        get isTransaction() {
-          return real.isTransaction;
-        },
-      };
-    };
-    const result = await outcome(home, { openFile });
+    // The connection is the real one; only the switch's answer is the file's old mode.
+    const result = await outcome(home, { openFile: walAnswering('delete') });
     const file = join(home, DATABASE_FILE);
     const db = openDatabase(file);
     connections.push(db);
@@ -383,6 +458,126 @@ describe('#616 unit 7b — the first open', () => {
     expect({ result, applicationId: pragma(db, 'application_id') }).toEqual({
       result: settings(file, 'SQLite left its journal mode at delete when Realm set wal'),
       applicationId: 0,
+    });
+  });
+});
+
+describe('#616 unit 7b — an empty store file that another program already wrote to', () => {
+  // Realm creates `realm.db` empty and sets it up in the same open. Another program that writes to
+  // the empty file in between (or after a first open killed before its setup) gives it pages, and
+  // with them a page size and an `auto_vacuum` that can no longer change once it is in WAL.
+  it.each([
+    [
+      'switched to WAL (4096-byte pages, auto_vacuum 0)',
+      ['PRAGMA journal_mode = WAL'],
+      [
+        'its auto_vacuum is 0, not 2 (incremental)',
+        'its page size is 4096 bytes, not the 16384 Realm needs',
+      ],
+      'wal',
+    ],
+    [
+      'given auto_vacuum 2 and switched to WAL (4096-byte pages)',
+      ['PRAGMA auto_vacuum = 2', 'PRAGMA journal_mode = WAL'],
+      ['its page size is 4096 bytes, not the 16384 Realm needs'],
+      'wal',
+    ],
+    [
+      'given 16384-byte pages and switched to WAL (auto_vacuum 0)',
+      ['PRAGMA page_size = 16384', 'PRAGMA journal_mode = WAL'],
+      ['its auto_vacuum is 0, not 2 (incremental)'],
+      'wal',
+    ],
+    [
+      'given a table and dropped it again, in rollback-journal mode (4096-byte pages, auto_vacuum 0)',
+      ['CREATE TABLE notes (body TEXT)', 'DROP TABLE notes'],
+      [
+        'its auto_vacuum is 0, not 2 (incremental)',
+        'its page size is 4096 bytes, not the 16384 Realm needs',
+      ],
+      'delete',
+    ],
+  ])(
+    'an empty file another program %s is refused before anything is written, every time',
+    async (_, statements, differences, journalMode) => {
+      const { home, file } = homeWith((f) =>
+        foreign(f, (db) => {
+          for (const statement of statements) db.exec(statement);
+        }),
+      );
+      const before = { ...identity(file), size: statSync(file).size };
+      const result = await outcome(home);
+      const again = await outcome(home);
+      const after = { ...identity(file), size: statSync(file).size };
+      let state: unknown;
+      foreign(file, (db) => {
+        state = {
+          applicationId: pragma(db, 'application_id'),
+          journalMode: pragma(db, 'journal_mode'),
+        };
+      });
+      // (1) red when the setup does not check a file that already has pages (the open then stamps
+      //     the file as Realm's and refuses it with the page size "it recorded"), or checks it only
+      //     after its switch to WAL (the rollback-journal file is then written: its journal mode,
+      //     hash and size change), or the sentence loses its remedy; (2) prints both outcomes, the
+      //     file's hash, inode and size before and after, its application id and journal mode.
+      expect({ result, again, after, file: state }).toEqual({
+        result: noStoreYet(file, ...differences),
+        again: noStoreYet(file, ...differences),
+        after: before,
+        file: { applicationId: 0, journalMode },
+      });
+    },
+  );
+
+  it('the remedy the refusal names works: with the file removed, the next open makes a new store', async () => {
+    const { home, file } = homeWith((f) =>
+      foreign(f, (db) => db.exec('PRAGMA journal_mode = WAL')),
+    );
+    const refused = await outcome(home);
+    // What the sentence says, and nothing else: the store file is removed.
+    rmSync(file);
+    const result = await outcome(home);
+    let made: unknown;
+    foreign(file, (db) => {
+      made = {
+        applicationId: pragma(db, 'application_id'),
+        pageSize: pragma(db, 'page_size'),
+        autoVacuum: pragma(db, 'auto_vacuum'),
+      };
+    });
+    // (1) red when the sentence's promise stops being true (an open that refuses a path it once
+    //     refused, or a removed file that is not made again); (2) prints the first outcome's code,
+    //     the second outcome and the new file's application id, page size and auto_vacuum.
+    expect({
+      refused: (refused as { code?: unknown }).code,
+      result,
+      made,
+    }).toEqual({
+      refused: 'STATE_STORE_SETTINGS_REFUSED',
+      result: 'opened',
+      made: { applicationId: REALM_ID, pageSize: 16384, autoVacuum: 2 },
+    });
+  });
+
+  it("an empty file that already has pages with Realm's page size and auto_vacuum is set up", async () => {
+    // What another Realm opener's own switch to WAL leaves; here another program does the same.
+    const { home, file } = homeWith((f) =>
+      foreign(f, (db) =>
+        db.exec('PRAGMA page_size = 16384; PRAGMA auto_vacuum = 2; PRAGMA journal_mode = WAL'),
+      ),
+    );
+    const result = await outcome(home);
+    let made: unknown;
+    foreign(file, (db) => {
+      made = { applicationId: pragma(db, 'application_id'), version: pragma(db, 'user_version') };
+    });
+    // (1) red when the setup refuses a file for having pages alone (a first opener would then refuse
+    //     the file another Realm opener has just switched to WAL); (2) prints the outcome and the
+    //     file's application id and schema version.
+    expect({ result, made }).toEqual({
+      result: 'opened',
+      made: { applicationId: REALM_ID, version: 1 },
     });
   });
 });
@@ -588,6 +783,77 @@ describe('#616 unit 7b — the checks of an existing file', () => {
     });
   });
 
+  it.each([
+    [
+      'its meta table dropped',
+      'DROP TABLE store_meta',
+      {
+        // A table's triggers go with it.
+        missing: [
+          'table store_meta',
+          'trigger store_meta_insert_once',
+          'trigger store_meta_no_delete',
+          'trigger store_meta_immutable',
+          'trigger store_meta_forward',
+          'trigger store_meta_insert_types',
+          'trigger store_meta_update_types',
+        ],
+        extra: [],
+        changed: [],
+      },
+    ],
+    [
+      'its meta table renamed',
+      'ALTER TABLE store_meta RENAME TO sm',
+      {
+        missing: ['table store_meta'],
+        extra: ['table sm'],
+        // SQLite rewrites every trigger that names the table.
+        changed: [
+          'trigger store_meta_insert_once',
+          'trigger store_meta_no_delete',
+          'trigger store_meta_immutable',
+          'trigger store_meta_forward',
+          'trigger store_meta_insert_types',
+          'trigger store_meta_update_types',
+          'trigger purged_runs_insert_own',
+          'trigger purged_runs_delete_below_horizon',
+          'trigger runs_tombstone',
+        ],
+      },
+    ],
+    [
+      "its meta table's page_size column renamed",
+      'ALTER TABLE store_meta RENAME COLUMN page_size TO ps',
+      {
+        missing: [],
+        extra: [],
+        changed: [
+          'table store_meta',
+          'trigger store_meta_immutable',
+          'trigger store_meta_insert_types',
+        ],
+      },
+    ],
+  ])('a store with %s by another program is refused as tampered', async (_, sql, difference) => {
+    const { home, file } = await realmStore();
+    foreign(file, (db) => db.exec(sql));
+    const before = identity(file);
+    const result = await outcome(home);
+    // (1) red when the meta row is read in the same step as the schema's difference, before it is
+    //     judged (the read then fails first and leaves as SQLite's plain "no such table" or "no such
+    //     column"), or the file is changed; (2) prints the outcome with the objects that differ,
+    //     and the file's hash and inode.
+    expect({ result, after: identity(file) }).toEqual({
+      result: {
+        code: 'STATE_STORE_SCHEMA_TAMPERED',
+        message: `The tables in ${file} do not match what this Realm writes for schema version 1. This usually means someone changed the store outside Realm. Realm will not use it; restore a backup made before the change.`,
+        details: { path: file, version: 1, ...difference },
+      },
+      after: before,
+    });
+  });
+
   it('a store whose meta row another program removed is refused', async () => {
     const { home, file } = await realmStore();
     const guard = REALM_STORE_SCHEMA.find((s) =>
@@ -669,17 +935,47 @@ describe('#616 unit 7b — the checks of an existing file', () => {
     locked.push(file);
     const result = await outcome(home);
     chmodSync(file, 0o600);
-    // (1) red when SQLite's "unable to open database file" (14) at the connection's open leaves
-    //     unmapped; (2) prints the outcome and the file's hash and inode.
+    // (1) red when the open does not ask the operating system whether it may write the file (SQLite
+    //     then fails at its own open and the reason is its "unable to open database file"), or the
+    //     file is changed; (2) prints the outcome and the file's hash and inode.
     expect({ result, after: identity(file) }).toEqual({
       result: {
         code: 'STATE_STORE_READONLY',
-        message: `Realm cannot write to ${file}: unable to open database file. The store needs a home that Realm can write to.`,
-        details: { path: file, reason: 'unable to open database file' },
+        message: `Realm cannot write to ${file}: permission denied. The store needs a home that Realm can write to.`,
+        details: { path: file, reason: 'permission denied' },
       },
       after: before,
     });
   });
+
+  it.skipIf(AS_ROOT)(
+    'a store file Realm may read but not write is refused as not writable, and SQLite makes no file beside it',
+    async () => {
+      // A store restored read-only (from a backup, or after `chmod a-w`), closed: no log beside it.
+      const { home, file } = await realmStore();
+      const sideBefore = sideFiles(home);
+      const before = identity(file);
+      chmodSync(file, 0o400);
+      locked.push(file);
+      const result = await outcome(home);
+      const sideAfter = sideFiles(home);
+      chmodSync(file, 0o600);
+      // (1) red when the open does not ask whether it may write the file (SQLite then opens it
+      //     read-only, the open says ready, leaves `-wal` and `-shm` files it made read-only too,
+      //     and the first write fails), or the file is changed; (2) prints the outcome, the files
+      //     beside the store before and after, and the file's hash and inode.
+      expect({ result, sideBefore, sideAfter, after: identity(file) }).toEqual({
+        result: {
+          code: 'STATE_STORE_READONLY',
+          message: `Realm cannot write to ${file}: permission denied. The store needs a home that Realm can write to.`,
+          details: { path: file, reason: 'permission denied' },
+        },
+        sideBefore: [],
+        sideAfter: [],
+        after: before,
+      });
+    },
+  );
 });
 
 describe('#616 unit 7b — the connection pragmas', () => {
@@ -729,21 +1025,8 @@ describe('#616 unit 7b — the connection pragmas', () => {
 
   it('a connection on which a pragma does not take is refused', async () => {
     const { home, file } = await realmStore();
-    // SQLite's answer to a pragma it ignores (as it does inside a transaction): no error, no change.
     // The connection is the real one; only the one statement does nothing.
-    const openFile = (path: string): DatabaseLike => {
-      const real = openDatabase(path);
-      connections.push(real);
-      return {
-        exec: (sql) => (sql === 'PRAGMA secure_delete = FAST' ? undefined : real.exec(sql)),
-        prepare: (sql) => real.prepare(sql),
-        close: () => real.close(),
-        get isTransaction() {
-          return real.isTransaction;
-        },
-      };
-    };
-    const result = await outcome(home, { openFile });
+    const result = await outcome(home, { openFile: ignoring('PRAGMA secure_delete = FAST') });
     // (1) red when a pragma is set and not read back (the open then returns a connection without
     //     it); (2) prints the outcome.
     expect(result).toEqual(
@@ -784,6 +1067,64 @@ describe('#616 unit 7b — the reopen', () => {
         secureDelete: 2,
         journalSizeLimit: JOURNAL_SIZE_LIMIT_BYTES,
       },
+    });
+  });
+});
+
+describe('#616 unit 7b — what the open hands on and what it closes', () => {
+  it("the open's busy budget reaches the store's calls", async () => {
+    // Another program holds the empty store file locked for 1.5 s: longer than the budget given,
+    // shorter than the class's default. It ends with ROLLBACK, which leaves the file empty (a COMMIT
+    // would write a first 4096-byte page, and the open would then refuse that file for it).
+    const { home, file } = homeWith((f) => writeFileSync(f, ''));
+    const holder = openDatabase(file);
+    connections.push(holder);
+    holder.exec('BEGIN EXCLUSIVE');
+    const released = new Promise<void>((resolve) =>
+      setTimeout(() => {
+        holder.exec('ROLLBACK');
+        resolve();
+      }, 1500),
+    );
+    let result: unknown;
+    try {
+      stores.push(await RealmDb.open(home, { clock, budgetMs: 300 }));
+      result = 'opened';
+    } catch (err) {
+      result =
+        err instanceof WorkflowError
+          ? { code: err.code, budget: (err.details as { budget_ms?: unknown }).budget_ms }
+          : { plainError: String(err) };
+    }
+    await released;
+    // (1) red when the open does not pass its budget to the class (the open then waits with the
+    //     default budget, the lock is released, and it opens); (2) prints the outcome: the code and
+    //     the budget the refusal names, or "opened".
+    expect(result).toEqual({ code: 'STATE_RUN_BUSY', budget: 300 });
+  });
+
+  it('a refused open closes every connection it made, at each stage that refuses', async () => {
+    // One refusal from each stage: the file's checks (a text file), the setup (a switch to WAL that
+    // SQLite does not make) and the connection pragmas (one that does not take).
+    const textFile = homeWith((f) => writeFileSync(f, 'notes, not a database\n'.repeat(40)));
+    const atChecks = counting(openDatabase);
+    const checks = await outcome(textFile.home, { openFile: atChecks.openFile });
+    const atSetup = counting(walAnswering('delete'));
+    const setup = await outcome(join(tmp(), '.realm'), { openFile: atSetup.openFile });
+    const atPragmas = counting(ignoring('PRAGMA secure_delete = FAST'));
+    const pragmas = await outcome((await realmStore()).home, { openFile: atPragmas.openFile });
+    const code = (r: unknown): unknown => (r as { code?: unknown }).code;
+    // (1) red when a refused open does not close its connection (each refusal then leaves a file
+    //     descriptor open in the process); (2) prints each refusal's code and its connections
+    //     made and closed.
+    expect({
+      checks: { code: code(checks), ...atChecks.count },
+      setup: { code: code(setup), ...atSetup.count },
+      pragmas: { code: code(pragmas), ...atPragmas.count },
+    }).toEqual({
+      checks: { code: 'STATE_STORE_SETTINGS_REFUSED', made: 1, closed: 1 },
+      setup: { code: 'STATE_STORE_SETTINGS_REFUSED', made: 1, closed: 1 },
+      pragmas: { code: 'STATE_STORE_SETTINGS_REFUSED', made: 1, closed: 1 },
     });
   });
 });
