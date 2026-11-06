@@ -70,6 +70,7 @@ function realmDb(
 ): { db: RealmDb; reopens: () => number } {
   let reopens = 0;
   const db = new RealmDb(options.connection ?? connect(file), {
+    path: file,
     clock: options.clock ?? fixedClock,
     reopen: () => {
       reopens += 1;
@@ -564,8 +565,9 @@ describe('#616 unit 8 — the write path', () => {
     //     mapper passes through), when 517's open transaction is not rolled back before the next
     //     BEGIN (its BEGIN sees an open transaction, and a reopen is spent), when a full disk at
     //     COMMIT is not mapped, when 6 inside a snapshot is not a programming error, when 8 outside
-    //     one or an unknown code loses its code or SQLite's text, or when a body's own error is
-    //     replaced. (2) prints each row's outcome.
+    //     one is not the read-only refusal naming the file (unit 7a), when an unknown code loses its
+    //     code or SQLite's text, or when a body's own error is replaced. (2) prints each row's
+    //     outcome.
     expect({
       busy5: summary(await busy(5)()),
       busy261: summary(await busy(261)()),
@@ -606,11 +608,15 @@ describe('#616 unit 8 — the write path', () => {
           'A write was attempted inside a read transaction: database table is locked (SQLite error ' +
           '6). This is a bug in the caller. Nothing was written.',
       },
+      // Unit 7a: an 8 outside a snapshot is a file or folder Realm cannot write.
       readOnlyOutsideSnapshot: {
-        workflowError: false,
-        code: undefined,
-        errcode: 8,
-        message: 'attempt to write a readonly database (SQLite error 8)',
+        workflowError: true,
+        code: 'STATE_STORE_READONLY',
+        errcode: undefined,
+        message:
+          `Realm cannot write to ${file}: attempt to write a readonly database. The store needs a ` +
+          'home that Realm can write to.',
+        details: { path: file, reason: 'attempt to write a readonly database' },
       },
       unknownCode: {
         workflowError: false,

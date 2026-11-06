@@ -64,6 +64,8 @@ type SyncResult<T> = T extends Thenable ? never : T;
 
 /** What a `RealmDb` is built over, besides its connection. */
 export interface RealmDbOptions {
+  /** The file the connection was opened on (`reopen` reopens the same one); a refusal names it. */
+  readonly path: string;
   /** The clock every reading is taken from. */
   readonly clock: Clock;
   /** Opens a fresh connection to the same file, with its pragmas applied (unit 7 supplies it). */
@@ -123,6 +125,23 @@ function storeFullError(): WorkflowError {
   );
 }
 
+/**
+ * The home, or the store file in it, cannot be created or written (unit 7a). `reason` is the
+ * operating system's text for a filesystem error, or SQLite's own text for a SQLite one.
+ */
+export function readOnlyError(path: string, reason: string): WorkflowError {
+  return new WorkflowError(
+    `Realm cannot write to ${path}: ${reason}. The store needs a home that Realm can write to.`,
+    {
+      code: 'STATE_STORE_READONLY',
+      category: 'STATE',
+      agentAction: 'report_to_user',
+      retryable: false,
+      details: { path, reason },
+    },
+  );
+}
+
 function versionNewerError(file: number): WorkflowError {
   return new WorkflowError(
     `This store was migrated by a newer Realm: its schema is version ${file} and this Realm writes ` +
@@ -175,16 +194,21 @@ function refuseThenable(result: unknown): void {
 /**
  * Maps an error to what leaves the package. A SQLite error never leaves raw:
  *   - a full disk or database size limit (13) → `STATE_STORE_FULL`;
- *   - every other SQLite error (a read-only file or folder, an unknown code) → a plain `Error` with
- *     SQLite's own text and its `errcode`. (A write attempted inside a read transaction is made a
- *     programming error by `RealmDb` before it gets here; a busy store is waited for, then refused
- *     by `RealmDb` with the budget it waited.)
+ *   - a file or folder that cannot be written (8, its extended code 1544 for a read-only folder) or
+ *     opened (14) → `STATE_STORE_READONLY` naming `path`, the store file, with SQLite's own text
+ *     (unit 7a);
+ *   - every other SQLite error (an unknown code) → a plain `Error` with SQLite's own text and its
+ *     `errcode`. (A write attempted inside a read transaction is made a programming error by
+ *     `RealmDb` before it gets here; a busy store is waited for, then refused by `RealmDb` with the
+ *     budget it waited.)
  * Anything that is not a SQLite error (a body's own refusal, an error already mapped) passes
  * through unchanged.
  */
-export function mapSqliteError(err: unknown): unknown {
+export function mapSqliteError(err: unknown, path: string): unknown {
   if (!isSqliteError(err)) return err;
-  if ((err.errcode & 0xff) === 13) return storeFullError();
+  const primary = err.errcode & 0xff;
+  if (primary === 13) return storeFullError();
+  if (primary === 8 || primary === 14) return readOnlyError(path, err.errstr ?? err.message);
   return plainSqliteError(err, `${err.message} (SQLite error ${err.errcode})`);
 }
 
@@ -230,6 +254,7 @@ export class RealmDb {
   /** The in-process lock, shared with the COMMIT outcome protocol (unit 9). */
   readonly lock = new InProcessLock();
   #db: DatabaseLike;
+  readonly #path: string;
   readonly #reopen: () => DatabaseLike;
   readonly #budgetMs: number;
   /** Set when BEGIN returns, cleared after COMMIT or ROLLBACK, with no await in between. */
@@ -239,6 +264,7 @@ export class RealmDb {
 
   constructor(connection: DatabaseLike, options: RealmDbOptions) {
     this.#db = connection;
+    this.#path = options.path;
     this.clock = options.clock;
     this.#reopen = options.reopen;
     this.#budgetMs = options.budgetMs ?? DEFAULT_BUSY_BUDGET_MS;
@@ -345,7 +371,7 @@ export class RealmDb {
         try {
           return attempt();
         } catch (err) {
-          if (!isBusy(err)) throw mapSqliteError(err);
+          if (!isBusy(err)) throw mapSqliteError(err, this.#path);
         }
       }
     } finally {
@@ -451,7 +477,7 @@ export class RealmDb {
       this.#db.exec('COMMIT');
     } catch (err) {
       this.#rollbackQuietly();
-      throw mapSqliteError(err);
+      throw mapSqliteError(err, this.#path);
     }
     this.#txOpen = false;
   }
@@ -461,7 +487,7 @@ export class RealmDb {
     try {
       this.#db.exec('ROLLBACK');
     } catch (err) {
-      if (!isNoActiveTransaction(err)) throw mapSqliteError(err);
+      if (!isNoActiveTransaction(err)) throw mapSqliteError(err, this.#path);
     } finally {
       this.#txOpen = false;
     }
