@@ -13,21 +13,25 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { JsonFileStore, testClockNoticeLine } from '@sensigo/realm';
+import { testClockNoticeLine } from '@sensigo/realm';
 import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const CLI = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 const T = new Date('2033-01-02T03:04:05.000Z');
 
 let scratch = '';
 let location: TestLocation | undefined;
+/** #616 PR-2b: the handle on the location, opened after it; its `root` is the child's HOME. */
+let located: TempHome | undefined;
 let runId = '';
 
 beforeAll(async () => {
   scratch = mkdtempSync(join(tmpdir(), 'realm-notice-715b-'));
   mkdirSync(join(scratch, 'plain'), { recursive: true });
   location = await createTestLocation({ start: T, root: join(scratch, 'at-location', '.realm') });
-  const { record } = await new JsonFileStore(location.runsDir).create({
+  located = await makeTempHome({ home: location.root });
+  const { record } = await located.home.runStore.create({
     workflowId: 'notice-715b',
     workflowVersion: 1,
     params: {},
@@ -36,6 +40,7 @@ beforeAll(async () => {
 }, 30_000);
 
 afterAll(async () => {
+  await located?.cleanup();
   await location?.remove();
   rmSync(scratch, { recursive: true, force: true });
 });
@@ -57,14 +62,12 @@ describe('#715 (b) §C.3 — the test-location notice on the CLI', () => {
   it('realm run list at a test location: the notice once, with the location clock’s instant', () => {
     // (a) red when the command's store is not wrapped with the notice (openRunStore), or the line
     //     carries another instant; (b) prints the notice lines.
-    expect(realm(['run', 'list'], join(scratch, 'at-location')).notices).toEqual([
-      testClockNoticeLine(T),
-    ]);
+    expect(realm(['run', 'list'], located!.root!).notices).toEqual([testClockNoticeLine(T)]);
   }, 30_000);
 
   it('realm run inspect at a test location reads the run more than once and says it once', () => {
     // (a) red when the notice is said per read, not per process; (b) prints the notice lines.
-    expect(realm(['run', 'inspect', runId], join(scratch, 'at-location')).notices).toEqual([
+    expect(realm(['run', 'inspect', runId], located!.root!).notices).toEqual([
       testClockNoticeLine(T),
     ]);
   }, 30_000);

@@ -4,23 +4,18 @@
 // pending view's ONE composed refusal, which now names every problem. A failure prints the three
 // lines: key names and rules only.
 import { describe, it, expect } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   ExtensionRegistry,
-  JsonFileStore,
-  JsonWorkflowStore,
-  JsonFileFailedAttemptStore,
   composeWaysAt,
   libraryCannotRunWords,
   type WorkflowDefinition,
 } from '@sensigo/realm';
-import { createRealmMcpServer, JsonTraceBufferStore } from '@sensigo/realm-mcp';
+import { createRealmMcpServer } from '@sensigo/realm-mcp';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { cannotRunClause } from './ways-renderer.js';
+import { makeTempHome } from '../test-support/temp-home.js';
 
 const refusedHead: WorkflowDefinition = {
   id: 'refused-head-759',
@@ -50,15 +45,15 @@ const REFUSAL =
 
 describe('issue #759 — the cannot-run line is the same three-problem sentence on every door', () => {
   it("library, CLI and MCP print the pending view's one refusal (red: a door composing its own sentence — the first problem only)", async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-759-doors-'));
+    const h = await makeTempHome();
     try {
-      const runStore = new JsonFileStore(join(dir, 'runs'));
-      const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+      const runStore = h.home.runStore;
+      const workflowStore = h.home.workflowStore;
       await workflowStore.register(refusedHead);
       const server = createRealmMcpServer({
         runStore,
-        traceBufferStore: new JsonTraceBufferStore(runStore.runsDirPath, runStore),
-        failedAttemptStore: new JsonFileFailedAttemptStore(runStore.runsDirPath),
+        traceBufferStore: h.home.traceBufferStore,
+        failedAttemptStore: h.home.failedAttemptStore,
         workflowStore,
         registry: new ExtensionRegistry(),
       });
@@ -84,7 +79,7 @@ describe('issue #759 — the cannot-run line is the same three-problem sentence 
         mcp: reply.context_hint.includes(`${line}.`),
       }).toEqual({ library: line, cli: line, mcp: true });
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 });

@@ -13,21 +13,14 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import {
-  JsonFileStore,
-  JsonWorkflowStore,
-  classifyRunHealth,
-  deriveRunPhase,
-  CURRENT_WORKFLOW_SCHEMA_VERSION,
-} from '@sensigo/realm';
+import { classifyRunHealth, deriveRunPhase, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import type { RunRecord, WorkflowDefinition } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { resolveMcpServerEntry } from '../agent/test-support/mcp-server-entry.js';
-import { makeJourneyHome } from '../agent/test-support/composed-journey.js';
+import { makeTempHome } from '../test-support/temp-home.js';
 import { writtenSnapshot } from '@sensigo/realm';
 
 /** The built CLI. THREE `..`: commands → src → cli. */
@@ -71,11 +64,6 @@ function journeyWorkflow(id: string, opts?: { finish?: boolean }): WorkflowDefin
     },
   };
 }
-
-const storesOf = (home: string): { runs: JsonFileStore; workflows: JsonWorkflowStore } => ({
-  runs: new JsonFileStore(join(home, '.realm', 'runs')),
-  workflows: new JsonWorkflowStore(join(home, '.realm', 'workflows')),
-});
 
 type Reply = Record<string, unknown> & {
   status: string;
@@ -143,9 +131,11 @@ const guardSettled = (run: RunRecord): boolean =>
 
 describe('issue #625 crown — gate → guard over real MCP stdio', () => {
   it('approve: ONE submit_human_response returns the guard as passed and the run completes — no call ever names the guard', async () => {
-    const home = makeJourneyHome('realm-625-crown-approve-');
+    const h = await makeTempHome();
+    mkdirSync(h.path, { recursive: true });
+    const home = h.root;
     const def = journeyWorkflow('crown-625-approve');
-    await storesOf(home).workflows.register(def);
+    await h.home.workflowStore.register(def);
     const client = await mcpClient(home, 'crown-625-approve');
     try {
       const { runId, gateId } = await parkAtGate(client, def.id);
@@ -173,7 +163,7 @@ describe('issue #625 crown — gate → guard over real MCP stdio', () => {
         context_hint: "Guard step 'check' passed and completed the run.",
       });
 
-      const { record: run } = await storesOf(home).runs.get(runId);
+      const { record: run } = await h.home.runStore.get(runId);
       // (a) red when the stored run is not complete after the one call; (b) prints the derived
       //     phase and the completed steps.
       expect({
@@ -182,14 +172,16 @@ describe('issue #625 crown — gate → guard over real MCP stdio', () => {
       }).toEqual({ phase: 'completed', completed_steps: ['write', 'confirm', 'check'] });
     } finally {
       await client.close();
-      rmSync(home, { recursive: true, force: true });
+      await h.cleanup();
     }
   }, 60_000);
 
   it('reject: the guard aborts in the same call — ended_by, the abort sentence, status ok, phase aborted', async () => {
-    const home = makeJourneyHome('realm-625-crown-reject-');
+    const h = await makeTempHome();
+    mkdirSync(h.path, { recursive: true });
+    const home = h.root;
     const def = journeyWorkflow('crown-625-reject');
-    await storesOf(home).workflows.register(def);
+    await h.home.workflowStore.register(def);
     const client = await mcpClient(home, 'crown-625-reject');
     try {
       const { runId, gateId } = await parkAtGate(client, def.id);
@@ -217,7 +209,7 @@ describe('issue #625 crown — gate → guard over real MCP stdio', () => {
         context_hint: "Guard step 'check' aborted the run.",
       });
 
-      const { record: run } = await storesOf(home).runs.get(runId);
+      const { record: run } = await h.home.runStore.get(runId);
       // (a) red when the record is not sealed by the guard; (b) prints the derived phase and the
       //     seal.
       expect({ phase: deriveRunPhase(run), sealed_by: run.sealed_by }).toEqual({
@@ -226,7 +218,7 @@ describe('issue #625 crown — gate → guard over real MCP stdio', () => {
       });
     } finally {
       await client.close();
-      rmSync(home, { recursive: true, force: true });
+      await h.cleanup();
     }
   }, 60_000);
 });
@@ -257,9 +249,11 @@ describe('issue #625 kill — no surviving record is "gate answered ∧ a guard 
   }
 
   it(`at least ${MIN_ROUNDS} rounds: the built CLI answers and is SIGKILLed at a varying point`, async () => {
-    const home = makeJourneyHome('realm-625-kill-');
+    const h = await makeTempHome();
+    mkdirSync(h.path, { recursive: true });
+    const home = h.root;
     const def = journeyWorkflow('kill-625', { finish: true });
-    const { runs, workflows } = storesOf(home);
+    const { runStore: runs, workflowStore: workflows } = h.home;
     await workflows.register(def);
     const client = await mcpClient(home, 'kill-625');
     try {
@@ -360,7 +354,7 @@ describe('issue #625 kill — no surviving record is "gate answered ∧ a guard 
       ).toBe(true);
     } finally {
       await client.close();
-      rmSync(home, { recursive: true, force: true });
+      await h.cleanup();
     }
     // Worst case: the calibration, SEARCH_BUDGET_MS of batches, and one last batch (its parking
     // plus at most 1.6 × MAX_SCALE_MS) — this timeout leaves room for all of them, so a search that
@@ -374,9 +368,11 @@ describe('issue #625 kill — no surviving record is "gate answered ∧ a guard 
 
 describe('issue #625 two answerers — one answer, one guard entry, the loser told the true phase', () => {
   it('10 rounds: two MCP server processes answer one gate with different choices', async () => {
-    const home = makeJourneyHome('realm-625-two-');
+    const h = await makeTempHome();
+    mkdirSync(h.path, { recursive: true });
+    const home = h.root;
     const def = journeyWorkflow('two-625', { finish: true });
-    const { runs, workflows } = storesOf(home);
+    const { runStore: runs, workflowStore: workflows } = h.home;
     await workflows.register(def);
     const first = await mcpClient(home, 'two-625-a');
     const second = await mcpClient(home, 'two-625-b');
@@ -431,7 +427,7 @@ describe('issue #625 two answerers — one answer, one guard entry, the loser to
     } finally {
       await first.close();
       await second.close();
-      rmSync(home, { recursive: true, force: true });
+      await h.cleanup();
     }
   }, 120_000);
 });
@@ -465,9 +461,11 @@ describe('issue #625 `realm agent --run-id` on a run an external answer moved pa
     );
 
   it('gate → guard → agent step: the guard is already settled, and the agent reaches the agent step', async () => {
-    const home = makeJourneyHome('realm-625-agent-on-');
+    const h = await makeTempHome();
+    mkdirSync(h.path, { recursive: true });
+    const home = h.root;
     const def = journeyWorkflow('agent-625-on', { finish: true });
-    const { runs, workflows } = storesOf(home);
+    const { runStore: runs, workflowStore: workflows } = h.home;
     await workflows.register(def);
     const client = await mcpClient(home, 'agent-625-on');
     let runId: string;
@@ -495,13 +493,15 @@ describe('issue #625 `realm agent --run-id` on a run an external answer moved pa
     // (a) red when the guard was not settled before the agent attached; (b) prints the record's
     //     completed steps.
     expect((await runs.get(runId)).record.completed_steps).toEqual(['write', 'confirm', 'check']);
-    rmSync(home, { recursive: true, force: true });
+    await h.cleanup();
   }, 120_000);
 
   it('a run the guard ended: the existing terminal-state refusal naming the phase, exit 1 — never "phase: running"', async () => {
-    const home = makeJourneyHome('realm-625-agent-ended-');
+    const h = await makeTempHome();
+    mkdirSync(h.path, { recursive: true });
+    const home = h.root;
     const def = journeyWorkflow('agent-625-ended');
-    const { runs, workflows } = storesOf(home);
+    const { runStore: runs, workflowStore: workflows } = h.home;
     await workflows.register(def);
     const client = await mcpClient(home, 'agent-625-ended');
     let runId: string;
@@ -528,6 +528,6 @@ describe('issue #625 `realm agent --run-id` on a run an external answer moved pa
     expect(screen).toContain(`Run ${runId} has already ended (aborted): guard 'check' ended it.`);
     expect(screen).not.toContain('Run ended in phase: running');
     expect(deriveRunPhase((await runs.get(runId)).record)).toBe('aborted');
-    rmSync(home, { recursive: true, force: true });
+    await h.cleanup();
   }, 120_000);
 });
