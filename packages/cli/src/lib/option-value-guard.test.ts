@@ -19,14 +19,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Command, CommanderError } from 'commander';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import {
-  CURRENT_WORKFLOW_SCHEMA_VERSION,
-  JsonFileStore,
-  JsonWorkflowStore,
-  executeStep,
-} from '@sensigo/realm';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION, JsonFileStore, executeStep } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { attachOptionValueGuard, looksLikeFlag } from './option-value-guard.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DIST_CLI = join(HERE, '..', '..', 'dist', 'index.js');
@@ -44,14 +40,16 @@ function unreleased(): string {
   return text.slice(text.indexOf('## [Unreleased]'), text.indexOf('\n## [0.48.0]'));
 }
 
+let h: TempHome & { readonly root: string };
 let home = '';
 let base = '';
-beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), 'realm-920-home-'));
+beforeEach(async () => {
+  h = await makeTempHome();
+  home = h.root;
   base = mkdtempSync(join(tmpdir(), 'realm-920-'));
 });
-afterEach(() => {
-  rmSync(home, { recursive: true, force: true });
+afterEach(async () => {
+  await h.cleanup();
   rmSync(base, { recursive: true, force: true });
 });
 
@@ -516,7 +514,7 @@ describe('#920 C-2 — the other 20 options, one command family each (the built 
   async function liveRun(): Promise<{ runs: JsonFileStore; id: string }> {
     mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
     mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
-    const runs = new JsonFileStore(join(home, '.realm', 'runs'));
+    const runs = h.home.runStore;
     const def = {
       id: 'live',
       name: 'live',
@@ -524,7 +522,7 @@ describe('#920 C-2 — the other 20 options, one command family each (the built 
       schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
       steps: { a: { description: 'A.', execution: 'agent', depends_on: [] } },
     } as WorkflowDefinition;
-    await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(def);
+    await h.home.workflowStore.register(def);
     const { record: run } = await runs.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -537,7 +535,7 @@ describe('#920 C-2 — the other 20 options, one command family each (the built 
   async function atOpenQuestion(): Promise<{ runs: JsonFileStore; id: string; gate: string }> {
     mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
     mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
-    const runs = new JsonFileStore(join(home, '.realm', 'runs'));
+    const runs = h.home.runStore;
     const def = {
       id: 'asked',
       name: 'asked',
@@ -554,7 +552,7 @@ describe('#920 C-2 — the other 20 options, one command family each (the built 
         after: { description: 'After', execution: 'auto', depends_on: ['confirm'] },
       },
     } as WorkflowDefinition;
-    await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(def);
+    await h.home.workflowStore.register(def);
     const { record: run } = await runs.create({
       workflowId: def.id,
       workflowVersion: 1,

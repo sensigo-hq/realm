@@ -7,16 +7,12 @@
 // judging at the host's clock would print other words.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { describe, expect, it, vi } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { describe, expect, it, vi, afterEach } from 'vitest';
 import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
-  JsonFileStore,
-  JsonWorkflowStore,
   createDefaultRegistry,
   submitHumanResponse,
   stripSpanMarks,
@@ -29,6 +25,7 @@ import { inspectRun } from './inspect.js';
 import { listRuns } from './list.js';
 import { runAgent } from '../agent/run-agent.js';
 import { LlmProvider } from '../agent/providers/llm-provider.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const T = Date.parse('2030-01-01T00:00:00.000Z');
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -115,10 +112,17 @@ describe('#715 (b) 03 §B.2 — inspect and list say each age with its instant, 
 });
 
 describe('#715 (b) 03 §B.2 A13 — reclaim --all’s dry run says how far past its deadline a claim is, beside the stored deadline', () => {
+  const homes: TempHome[] = [];
+  afterEach(async () => {
+    for (const t of homes.splice(0)) await t.cleanup();
+  });
+
   it('a claim past its deadline: `(deadline <stored>, EXPIRED <words> ago (<instant>))` — never `Nm past`', async () => {
     // (a) red when the line keeps the hand-rolled `${ageMin}m past`, or the words lose the instant;
     //     (b) prints the dry run's line.
-    const home = await mkdtemp(join(tmpdir(), 'realm-715b-reclaim-'));
+    const h = await makeTempHome();
+    homes.push(h);
+    const home = h.root;
     const def: WorkflowDefinition = {
       id: 'reclaim-715b',
       name: 'reclaim-715b',
@@ -128,8 +132,8 @@ describe('#715 (b) 03 §B.2 A13 — reclaim --all’s dry run says how far past 
         fetch: { description: 'Fetch.', execution: 'agent', idempotent: true, depends_on: [] },
       },
     };
-    await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(def);
-    const runs = new JsonFileStore(join(home, '.realm', 'runs'));
+    await h.home.workflowStore.register(def);
+    const runs = h.home.runStore;
     const { record } = await runs.create({ workflowId: def.id, workflowVersion: 1, params: {} });
     const deadline = '2020-01-01T00:00:00.123Z';
     await runs.update({

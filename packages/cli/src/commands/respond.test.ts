@@ -19,6 +19,7 @@ import {
 import type { WorkflowDefinition, StepHandler, RunRecord } from '@sensigo/realm';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
 import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 // #715 (b) 04 §D (B4): no cell here waits on the real clock for a question to expire. The run store a
 // cell opens sits at a TEST LOCATION (`located`), and `passes(ms)` moves the clock of every location
@@ -80,17 +81,21 @@ const answererWorkflow: WorkflowDefinition = {
 };
 
 describe('respondToGate', () => {
-  let runDir: string;
-  let workflowDir: string;
+  let h: TempHome;
+  /** The other handles a cell opened, cleaned after it. */
+  const extras: TempHome[] = [];
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
 
   beforeEach(async () => {
-    runDir = await mkdtemp(join(tmpdir(), 'realm-respond-run-'));
-    workflowDir = await mkdtemp(join(tmpdir(), 'realm-respond-wf-'));
-    runStore = new JsonFileStore(runDir);
-    workflowStore = new JsonWorkflowStore(workflowDir);
+    h = await makeTempHome();
+    runStore = h.home.runStore;
+    workflowStore = h.home.workflowStore;
     await workflowStore.register(gateWorkflow);
+  });
+  afterEach(async () => {
+    for (const t of extras.splice(0)) await t.cleanup();
+    await h.cleanup();
   });
 
   it('advances a gate-waiting run to completed on valid choice', async () => {
@@ -127,9 +132,9 @@ describe('respondToGate', () => {
   it('C1 (issue #456) a workflow-absent run carries the remedy — the T-21 words (#729 PR-0; was "most often") and "respond again"', async () => {
     // Direct respondToGate call, bypassing the CLI action entirely — exercises :25's OWN fetch
     // (the direct-caller/test seam; the CLI action's :91 prefetch never runs here).
-    const missingWfStore = new JsonWorkflowStore(
-      await mkdtemp(join(tmpdir(), 'realm-respond-missing-wf-')),
-    );
+    const missing = await makeTempHome();
+    extras.push(missing);
+    const missingWfStore = missing.home.workflowStore;
     const { record: run } = await runStore.create({
       workflowId: 'dev456',
       workflowVersion: 1,
@@ -218,17 +223,18 @@ const gateFinalizerWorkflow: WorkflowDefinition = {
 };
 
 describe('respondToGate — fires finalizers on gate completion (registry threaded)', () => {
-  let runDir: string;
-  let workflowDir: string;
+  let h: TempHome;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
 
   beforeEach(async () => {
-    runDir = await mkdtemp(join(tmpdir(), 'realm-respond-fin-run-'));
-    workflowDir = await mkdtemp(join(tmpdir(), 'realm-respond-fin-wf-'));
-    runStore = new JsonFileStore(runDir);
-    workflowStore = new JsonWorkflowStore(workflowDir);
+    h = await makeTempHome();
+    runStore = h.home.runStore;
+    workflowStore = h.home.workflowStore;
     await workflowStore.register(gateFinalizerWorkflow);
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   async function openGate(): Promise<{ runId: string; gateId: string }> {
@@ -306,15 +312,17 @@ describe('respondToGate — fires finalizers on gate completion (registry thread
 // =================================================================================================
 
 describe('respondCommand — `Error loading extensions:` (issue #466)', () => {
+  let h: TempHome & { readonly root: string };
   let home: string;
   let originalHome: string | undefined;
   let errSpy: ReturnType<typeof vi.spyOn>;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     clearProjectExtensionsCache();
-    home = mkdtempSync(join(tmpdir(), 'realm-respond-ext-home-'));
+    h = await makeTempHome();
+    home = h.root;
     mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
@@ -325,11 +333,11 @@ describe('respondCommand — `Error loading extensions:` (issue #466)', () => {
     }) as never);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (originalHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = originalHome;
     vi.restoreAllMocks();
-    rmSync(home, { recursive: true, force: true });
+    await h.cleanup();
   });
 
   const errored = (): string => errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
@@ -343,11 +351,10 @@ describe('respondCommand — `Error loading extensions:` (issue #466)', () => {
     // extensions — the module never has to exist. source_dir/trust_root are REQUIRED (or the
     // loader throws a DIFFERENT message, load-project-extensions.ts:748-759) — a real project dir
     // stands in for both.
-    const { JsonFileStore, JsonWorkflowStore, executeStep, CURRENT_WORKFLOW_SCHEMA_VERSION } =
-      await import('@sensigo/realm');
+    const { executeStep, CURRENT_WORKFLOW_SCHEMA_VERSION } = await import('@sensigo/realm');
     const proj = mkdtempSync(join(tmpdir(), 'realm-respond-ext-proj-'));
-    const runStore = new JsonFileStore();
-    const workflowStore = new JsonWorkflowStore();
+    const runStore = h.home.runStore;
+    const workflowStore = h.home.workflowStore;
     const gateWorkflow = {
       id: 'p466-respond',
       name: 'P466 Respond',
@@ -408,11 +415,10 @@ describe('respondCommand — `Error loading extensions:` (issue #466)', () => {
     //
     // No red-first exists — green on the PR branch immediately (the option travel already
     // works); its tooth is the mutant.
-    const { JsonFileStore, JsonWorkflowStore, executeStep, CURRENT_WORKFLOW_SCHEMA_VERSION } =
-      await import('@sensigo/realm');
+    const { executeStep, CURRENT_WORKFLOW_SCHEMA_VERSION } = await import('@sensigo/realm');
     const proj = mkdtempSync(join(tmpdir(), 'realm-respond-ext-repair-proj-'));
-    const runStore = new JsonFileStore();
-    const workflowStore = new JsonWorkflowStore();
+    const runStore = h.home.runStore;
+    const workflowStore = h.home.workflowStore;
     const gateWorkflow = {
       id: 'p466-repair-respond',
       name: 'P466 Repair Respond',
@@ -495,8 +501,7 @@ describe('respondCommand — `Error loading extensions:` (issue #466)', () => {
     // BEFORE respondToGate (and its own :25 fetch) is ever called. The action constructs its own
     // default JsonWorkflowStore (under this describe's $HOME override) — nothing registered in
     // it, matching the dev-run scenario exactly.
-    const { JsonFileStore } = await import('@sensigo/realm');
-    const runStore = new JsonFileStore();
+    const runStore = h.home.runStore;
     const { record: run } = await runStore.create({
       workflowId: 'dev456',
       workflowVersion: 1,
@@ -537,7 +542,9 @@ describe('respondCommand — `Error loading extensions:` (issue #466)', () => {
 // the existing pins in inspect-holder-625.test.ts and run-prompt-625.test.ts.
 // -------------------------------------------------------------------------------------------------
 describe('the answerer clause reads the record (#706 walk W8-R1)', () => {
-  let runDir: string;
+  let h: TempHome;
+  /** The other handles (the workflow store's own, bob's), cleaned before `h`. */
+  const extras: TempHome[] = [];
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
   let registry: ExtensionRegistry;
@@ -545,11 +552,11 @@ describe('the answerer clause reads the record (#706 walk W8-R1)', () => {
   let gateId: string;
 
   beforeEach(async () => {
-    runDir = await mkdtemp(join(tmpdir(), 'realm-respond-answerer-run-'));
-    runStore = new JsonFileStore(runDir);
-    workflowStore = new JsonWorkflowStore(
-      await mkdtemp(join(tmpdir(), 'realm-respond-answerer-wf-')),
-    );
+    h = await makeTempHome();
+    runStore = h.home.runStore;
+    const wf = await makeTempHome();
+    extras.push(wf);
+    workflowStore = wf.home.workflowStore;
     await workflowStore.register(answererWorkflow);
     registry = new ExtensionRegistry();
     const { record: run } = await runStore.create({
@@ -566,6 +573,10 @@ describe('the answerer clause reads the record (#706 walk W8-R1)', () => {
     expect(opened.status).toBe('confirm_required');
     runId = run.id;
     gateId = opened.gate!.gate_id;
+  });
+  afterEach(async () => {
+    for (const t of extras.splice(0).reverse()) await t.cleanup();
+    await h.cleanup();
   });
 
   /** `realm run respond <run> --gate <gate> --choice ship [--by <by>]`: its `Responded:` line. */
@@ -661,7 +672,9 @@ describe('the answerer clause reads the record (#706 walk W8-R1)', () => {
     // Bob's own store over the same folder (a delegating wrapper is refused at admission). Its FIRST
     // read returns the record with the question open — after alice's answer, written through the
     // other instance, has landed. Bob's submit then reads the settled question (`already_settled`).
-    const bobStore = new JsonFileStore(runDir);
+    const bobHome = await makeTempHome({ home: h.path });
+    extras.push(bobHome);
+    const bobStore = bobHome.home.runStore;
     const read = bobStore.get.bind(bobStore);
     const reads: RunRecord[] = [];
     let aliceStatus: string | undefined;
@@ -766,14 +779,24 @@ describe('#729 PR-0 correction (C5) — a wrong gate id: the refusal names its w
     },
   } as WorkflowDefinition;
 
+  /** Every handle `stores()` opened, cleaned after each cell. */
+  const homes: TempHome[] = [];
+  afterEach(async () => {
+    for (const t of homes.splice(0)) await t.cleanup();
+  });
+
   async function stores() {
     // #715 (b) B4: the run store at a test location — a question's time runs out by moving its clock.
-    const runStore = new JsonFileStore(
-      await located(await mkdtemp(join(tmpdir(), 'realm-respond-c5-run-'))),
-    );
-    const workflowStore = new JsonWorkflowStore(
-      await mkdtemp(join(tmpdir(), 'realm-respond-c5-wf-')),
-    );
+    // The location first, then the handle on its folder (a store takes its clock when it is built).
+    const dir = await mkdtemp(join(tmpdir(), 'realm-respond-c5-run-'));
+    await located(dir);
+    const at = await makeTempHome({ home: dir });
+    homes.push(at);
+    const runStore = at.home.runStore;
+    // The registry on an empty folder of its own: its own handle.
+    const wf = await makeTempHome();
+    homes.push(wf);
+    const workflowStore = wf.home.workflowStore;
     await workflowStore.register(gateWorkflow);
     await workflowStore.register(dueWorkflow);
     return { runStore, workflowStore };

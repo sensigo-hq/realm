@@ -14,6 +14,7 @@ import { inspectRun } from './inspect.js';
 import { listRuns } from './list.js';
 import type { RunRecord, RunStore, WorkflowRegistrar } from '@sensigo/realm';
 import { snap, listing, doubleClock, noSettle } from '../test-support/snapshot-double.js';
+import { makeTempHome } from '../test-support/temp-home.js';
 
 const workflowStore: WorkflowRegistrar = {
   register: async () => {},
@@ -581,14 +582,10 @@ describe('review correction C2 — an answer the gate’s expiry wrote reads as 
 
 describe('review correction C7 — "Question opened through" only under the attempt that opened the question', () => {
   it('a REAL run: an auto gate step with retry whose handler fails once ⇒ `Taken by:` under attempt 1, `Question opened through:` under attempt 2', async () => {
-    const { mkdtemp, rm } = await import('node:fs/promises');
-    const { tmpdir } = await import('node:os');
-    const { join } = await import('node:path');
-    const { JsonFileStore, ExtensionRegistry, executeStep, WorkflowError } =
-      await import('@sensigo/realm');
-    const dir = await mkdtemp(join(tmpdir(), 'realm-c7-'));
+    const { ExtensionRegistry, executeStep, WorkflowError } = await import('@sensigo/realm');
+    const h = await makeTempHome();
     try {
-      const store = new JsonFileStore(dir);
+      const store = h.home.runStore;
       let calls = 0;
       const registry = new ExtensionRegistry();
       registry.register('handler', 'flaky', {
@@ -651,7 +648,7 @@ describe('review correction C7 — "Question opened through" only under the atte
         '       Question opened through: prog@host (from the OS user, via agent)',
       ]);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 });

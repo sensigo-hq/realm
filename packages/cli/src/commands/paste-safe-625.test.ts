@@ -37,6 +37,7 @@ import { CLI_COMMANDS, NO_DRIVE_FLAGS } from './ways-renderer.js';
 import { buildReattachFlags } from './agent.js';
 import { inFlightLine } from '../lib/holder-render.js';
 import { writtenSnapshot } from '@sensigo/realm';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLI = join(HERE, '../../dist/index.js');
@@ -77,14 +78,16 @@ const CHOICES: Array<[string, (t: string) => string]> = [
 ];
 
 describe('#625 PR-2a, F6 — a printed command is safe to paste', { timeout: 60_000 }, () => {
+  let h: TempHome & { readonly root: string };
   let home: string;
   let T: string;
   let bin: string;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
 
-  beforeEach(() => {
-    home = mkdtempSync(join(tmpdir(), 'realm-paste-625-'));
+  beforeEach(async () => {
+    h = await makeTempHome();
+    home = h.root;
     T = mkdtempSync(join(tmpdir(), 'realm-paste-625-t-'));
     bin = join(home, 'bin');
     mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
@@ -92,11 +95,11 @@ describe('#625 PR-2a, F6 — a printed command is safe to paste', { timeout: 60_
     mkdirSync(bin);
     writeFileSync(join(bin, 'realm'), `#!/bin/sh\nexec "${process.execPath}" "${CLI}" "$@"\n`);
     chmodSync(join(bin, 'realm'), 0o755);
-    runStore = new JsonFileStore(join(home, '.realm', 'runs'));
-    workflowStore = new JsonWorkflowStore(join(home, '.realm', 'workflows'));
+    runStore = h.home.runStore;
+    workflowStore = h.home.workflowStore;
   });
-  afterEach(() => {
-    rmSync(home, { recursive: true, force: true });
+  afterEach(async () => {
+    await h.cleanup();
     rmSync(T, { recursive: true, force: true });
   });
 

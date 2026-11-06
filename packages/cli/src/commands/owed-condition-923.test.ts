@@ -38,6 +38,7 @@ import {
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { printChildrenWhenATestFails } from '../test-support/child-output.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../../../..');
@@ -65,17 +66,21 @@ interface Home {
 }
 
 const folders: string[] = [];
-afterEach(() => {
+/** Every handle a cell opened; a location's handle after the one that made its root. */
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const t of handles.splice(0).reverse()) await t.cleanup();
   for (const f of folders.splice(0)) rmSync(f, { recursive: true, force: true });
 });
 
-function freshHome(): Home {
-  const home = realpathSync(mkdtempSync(join(tmpdir(), 'realm-owed-923-')));
-  folders.push(home);
+async function freshHome(): Promise<Home> {
+  const t = await makeTempHome();
+  handles.push(t);
+  const home = realpathSync(t.root);
   return {
     home,
-    runs: new JsonFileStore(join(home, '.realm', 'runs')),
-    workflows: new JsonWorkflowStore(join(home, '.realm', 'workflows')),
+    runs: t.home.runStore,
+    workflows: t.home.workflowStore,
   };
 }
 
@@ -85,13 +90,17 @@ function freshHome(): Home {
  * spawned `realm` reads instead of waiting on the real one for a question to expire.
  */
 async function locatedHome(): Promise<Home & { clock: TestLocation['clock'] }> {
-  const home = realpathSync(mkdtempSync(join(tmpdir(), 'realm-owed-923-')));
-  folders.push(home);
+  const made = await makeTempHome();
+  handles.push(made);
+  const home = realpathSync(made.root);
   const loc = await createTestLocation({ start: new Date(), root: join(home, '.realm') });
+  // The location's own handle, opened after it: its stores take the location's clock.
+  const t = await makeTempHome({ home: loc.root });
+  handles.push(t);
   return {
     home,
-    runs: new JsonFileStore(join(home, '.realm', 'runs')),
-    workflows: new JsonWorkflowStore(join(home, '.realm', 'workflows')),
+    runs: t.home.runStore,
+    workflows: t.home.workflowStore,
     clock: loc.clock,
   };
 }
@@ -247,7 +256,7 @@ describe('#923 C1 — realm run inspect: the owed line names the code an owed st
   it(
     'C1 (a) an `auto` step whose handler the project does not load, not yet attempted: the condition names it',
     async () => {
-      const h = freshHome();
+      const h = await freshHome();
       const id = await started(h, wf('c1a', { s1: step({ handler: 'h_missing' }) }));
       const r = realm(h, ['run', 'inspect', id]);
       // (a) red when inspect's owed line names no condition (today's line) or the wrong one; (b)
@@ -280,7 +289,7 @@ describe('#923 C1 — realm run inspect: the owed line names the code an owed st
   it(
     'C1 (b) an owed step with no handler or adapter: today’s line, byte for byte',
     async () => {
-      const h = freshHome();
+      const h = await freshHome();
       const id = await started(h, wf('c1b', { s1: step() }));
       const r = realm(h, ['run', 'inspect', id]);
       // (a) red when the condition is printed with no requirement behind it; (b) prints the lines.
@@ -318,7 +327,7 @@ describe('#923 C1 — realm run inspect: the owed line names the code an owed st
   it(
     'C1 (e) three steps, two needing handler `h1` and one adapter `a1`: each requirement once, in the way’s order',
     async () => {
-      const h = freshHome();
+      const h = await freshHome();
       const id = await started(
         h,
         wf(
@@ -343,7 +352,7 @@ describe('#923 C1 — realm run inspect: the owed line names the code an owed st
   it(
     'C1 (f) eleven steps with eleven distinct handlers: ten named, then ` and 1 more`',
     async () => {
-      const h = freshHome();
+      const h = await freshHome();
       const names = Array.from({ length: 11 }, (_, i) => String(i + 1).padStart(2, '0'));
       const id = await started(
         h,
@@ -366,7 +375,7 @@ describe('#923 C1 — realm run inspect: the owed line names the code an owed st
   it(
     'C1 (g) a step whose project HAS the handler: the condition still shows (inspect cannot know), and the project runs it',
     async () => {
-      const h = freshHome();
+      const h = await freshHome();
       const p = await projectWithMark(h, 'c1g', [
         '  s1:',
         '    description: Step.',
@@ -405,7 +414,7 @@ describe('#923 C2 — realm run drain on a live run: the way out names the code'
   it(
     'C2 (a) the dry run on a run whose step needs a handler the project does not load: the condition',
     async () => {
-      const h = freshHome();
+      const h = await freshHome();
       const id = await started(h, wf('c2a', { s1: step({ handler: 'h_missing' }) }));
       const r = realm(h, ['run', 'drain', id]);
       // (a) red when drain's owed line names no condition; (b) prints drain's lines.
@@ -423,7 +432,7 @@ describe('#923 C2 — realm run drain on a live run: the way out names the code'
   it(
     'C2 (b) the dry run, a handler-less step: today’s line',
     async () => {
-      const h = freshHome();
+      const h = await freshHome();
       const id = await started(h, wf('c2b', { s1: step() }));
       const r = realm(h, ['run', 'drain', id]);
       // (a) red when the condition is printed with no requirement behind it; (b) prints the lines.
@@ -438,7 +447,7 @@ describe('#923 C2 — realm run drain on a live run: the way out names the code'
   it(
     'C2 (h) `--force` on that live run: the same line on stderr, exit 1',
     async () => {
-      const h = freshHome();
+      const h = await freshHome();
       const id = await started(h, wf('c2h', { s1: step({ handler: 'h_missing' }) }));
       const r = realm(h, ['run', 'drain', id, '--force']);
       // (a) red when drain's refusal of a live run names no condition; (b) prints the exit code and
@@ -465,7 +474,7 @@ describe('#923 C2 — realm run drain on a live run: the way out names the code'
   it(
     'C2 (g) a run still going, the project HAS the handler: drain shows the condition on its dry run and on `--force`, loads none of the project’s code, and advance runs the step',
     async () => {
-      const h = freshHome();
+      const h = await freshHome();
       const p = await projectWithMark(h, 'c2g', [
         '  s1:',
         '    description: Step.',
@@ -622,7 +631,7 @@ describe('#923 C4 — realm run resume', () => {
   it(
     'C4 (a) a failed step resumed, the project lacks its handler: the condition',
     async () => {
-      const h = freshHome();
+      const h = await freshHome();
       const d = wf('c4a', { a: step({ handler: 'boom' }) });
       const id = await started(h, d);
       await failed(h, d, id, 'a', throwing('boom'));
@@ -648,7 +657,7 @@ describe('#923 C4 — realm run resume', () => {
   it(
     'C4 (g) a failed step resumed, the project HAS its handler: the condition still shows, and the project runs it',
     async () => {
-      const h = freshHome();
+      const h = await freshHome();
       const p = await projectWithMark(h, 'c4g', [
         '  a:',
         '    description: Step.',
@@ -687,7 +696,7 @@ describe('#923 C4 — realm run resume', () => {
   it(
     'C4 (b) a handler-less failed step resumed: today’s line',
     async () => {
-      const h = freshHome();
+      const h = await freshHome();
       const d = wf('c4b', { a: step() });
       const id = await started(h, d);
       await failed(h, d, id, 'a', undefined, async () => {
@@ -707,7 +716,7 @@ describe('#923 C6 — a marked step stays out of the owed list', () => {
   it(
     'C6 a step the engine attempted without its handler: `Could not run …` for it, and only the other step is owed',
     async () => {
-      const h = freshHome();
+      const h = await freshHome();
       const d = wf('c6', {
         s1: step({ handler: 'h_missing' }),
         s2: step({ handler: 'h_missing2' }),
@@ -747,7 +756,7 @@ describe('#923 C7 — a built-in requirement is not code a project must supply',
   it(
     'C7 an owed `auto` step using adapter `filesystem`: no condition on inspect and drain',
     async () => {
-      const h = freshHome();
+      const h = await freshHome();
       const id = await started(
         h,
         wf(
@@ -777,7 +786,7 @@ describe('#923 C7 — a built-in requirement is not code a project must supply',
   it(
     'C7 (b) an owed `auto` step using a catalog adapter, `github`: inspect and drain’s dry run name it',
     async () => {
-      const h = freshHome();
+      const h = await freshHome();
       const id = await started(
         h,
         wf(

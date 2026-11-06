@@ -5,9 +5,8 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -18,6 +17,7 @@ import {
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { zOf } from '../test-support/instant.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../../../..');
@@ -68,18 +68,22 @@ describe(
   '#625 PR-2a, F1 — the CLI says how late, in seconds under a minute',
   { timeout: 60_000 },
   () => {
+    let h: TempHome & { readonly root: string };
     let home: string;
     let runStore: JsonFileStore;
     let workflowStore: JsonWorkflowStore;
 
-    beforeEach(() => {
-      home = mkdtempSync(join(tmpdir(), 'realm-lag-625-'));
+    beforeEach(async () => {
+      h = await makeTempHome();
+      home = h.root;
       mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
       mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
-      runStore = new JsonFileStore(join(home, '.realm', 'runs'));
-      workflowStore = new JsonWorkflowStore(join(home, '.realm', 'workflows'));
+      runStore = h.home.runStore;
+      workflowStore = h.home.workflowStore;
     });
-    afterEach(() => rmSync(home, { recursive: true, force: true }));
+    afterEach(async () => {
+      await h.cleanup();
+    });
 
     /** Runs the built `realm` with this HOME; its exit, its lines and the window it ran in. */
     function realm(...args: string[]) {

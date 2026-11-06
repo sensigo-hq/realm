@@ -7,13 +7,10 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   ExtensionRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   advanceRun,
@@ -22,6 +19,7 @@ import {
 } from '@sensigo/realm';
 import { respondToGate } from './respond.js';
 import { resumeRun } from './resume.js';
+import { makeTempHome } from '../test-support/temp-home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const ACTING = 'docs/reference/cli/realm-run-acting.md';
@@ -69,9 +67,9 @@ const DEF: WorkflowDefinition = {
 describe('#625 PR-2a, F9 — realm run respond names only the cleanup steps its answer’s ending ran', () => {
   /** A fresh run; `failFirst` makes `s` fail once, so the run ends, `tidy` runs, and it is resumed. */
   async function toTheQuestion(failFirst: boolean) {
-    const home = mkdtempSync(join(tmpdir(), 'realm-respond-cleanup-625-'));
-    const runs = new JsonFileStore(join(home, 'runs'));
-    const workflows = new JsonWorkflowStore(join(home, 'wf'));
+    const h = await makeTempHome();
+    const runs = h.home.runStore;
+    const workflows = h.home.workflowStore;
     await workflows.register(DEF);
     let flaky = 0;
     let tidy = 0;
@@ -106,7 +104,15 @@ describe('#625 PR-2a, F9 — realm run respond names only the cleanup steps its 
       await advanceRun(runs, DEF, { runId: run.id, registry });
     }
     const gate = (await runs.get(run.id)).record.pending_gate!.gate_id;
-    return { home, runs, workflows, registry, runId: run.id, gate, tidyRuns: () => tidy };
+    return {
+      cleanup: () => h.cleanup(),
+      runs,
+      workflows,
+      registry,
+      runId: run.id,
+      gate,
+      tidyRuns: () => tidy,
+    };
   }
 
   it('after a resume, the answer that ends the run again: no line for the cleanup step that ran at the first ending', async () => {
@@ -133,7 +139,7 @@ describe('#625 PR-2a, F9 — realm run respond names only the cleanup steps its 
         tidyRuns: 1,
       });
     } finally {
-      rmSync(r.home, { recursive: true, force: true });
+      await r.cleanup();
     }
   });
 
@@ -160,7 +166,7 @@ describe('#625 PR-2a, F9 — realm run respond names only the cleanup steps its 
         tidyRuns: 1,
       });
     } finally {
-      rmSync(r.home, { recursive: true, force: true });
+      await r.cleanup();
     }
   });
 });

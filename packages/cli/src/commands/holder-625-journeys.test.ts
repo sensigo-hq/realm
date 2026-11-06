@@ -19,12 +19,13 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { JsonFileStore, JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
+import { JsonFileStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { resolveMcpServerEntry } from '../agent/test-support/mcp-server-entry.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 /** The built CLI. THREE `..`: commands → src → cli. */
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
@@ -50,16 +51,18 @@ const gateWorkflow: WorkflowDefinition = {
   },
 };
 
+let h: TempHome & { readonly root: string };
 let home: string;
 beforeAll(async () => {
-  home = mkdtempSync(join(tmpdir(), 'realm-holder-journeys-'));
-  await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(gateWorkflow);
+  h = await makeTempHome();
+  home = h.root;
+  await h.home.workflowStore.register(gateWorkflow);
 });
-afterAll(() => {
-  rmSync(home, { recursive: true, force: true });
+afterAll(async () => {
+  await h.cleanup();
 });
 
-const runs = (): JsonFileStore => new JsonFileStore(join(home, '.realm', 'runs'));
+const runs = (): JsonFileStore => h.home.runStore;
 
 type Reply = Record<string, unknown> & {
   status: string;

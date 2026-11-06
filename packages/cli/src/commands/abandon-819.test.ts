@@ -9,12 +9,12 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: run
 // and gate ids, file names, printed lines — never a token or an environment.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, mkdir, writeFile, readFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { abandonCommand, emptyReasonRefusal } from './abandon.js';
 import { respondCommand } from './respond.js';
 import { inspectRun } from './inspect.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 /** An id the registrar's shape test reads as an agent's (`<slug>-<16 hex>`): here a person's. */
 const HEX_ID = 'ops-review-0123456789abcdef';
@@ -28,6 +28,7 @@ const GATE = {
 const AGENT_WORDS = 'created by an agent';
 
 describe('#819 correction 1 (01) — realm run abandon at an open question', () => {
+  let h: TempHome & { readonly root: string };
   let home: string;
   let wfDir: string;
   let runsDir: string;
@@ -37,9 +38,10 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
-    home = await mkdtemp(join(tmpdir(), 'realm-abandon-819c1-'));
-    wfDir = join(home, '.realm', 'workflows');
-    runsDir = join(home, '.realm', 'runs');
+    h = await makeTempHome();
+    home = h.root;
+    wfDir = join(h.path, 'workflows');
+    runsDir = h.home.runStore.runsDirPath;
     await mkdir(runsDir, { recursive: true });
     await mkdir(wfDir, { recursive: true });
     originalHome = process.env['HOME'];
@@ -57,14 +59,13 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
     logSpy.mockRestore();
     errSpy.mockRestore();
     exitSpy.mockRestore();
-    await rm(home, { recursive: true, force: true });
+    await h.cleanup();
   });
 
   /** A run of `workflowId` waiting at gate `g-1`; its registered copy written as `copy`, if given. */
   async function atGate(workflowId: string, copy?: string) {
     if (copy !== undefined) await writeFile(join(wfDir, `${workflowId}.json`), copy);
-    const { JsonFileStore } = await import('@sensigo/realm');
-    const store = new JsonFileStore();
+    const store = h.home.runStore;
     const { record: run } = await store.create({ workflowId, workflowVersion: 1, params: {} });
     await store.update({ ...run, pending_gate: { ...GATE } });
     return { store, id: run.id };
@@ -162,7 +163,6 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
   });
 
   it('B1: a hex-suffixed workflow with no copy, at a live question — no CLI surface says it was created by an agent', async () => {
-    const { JsonFileStore, JsonWorkflowStore } = await import('@sensigo/realm');
     const { id } = await atGate(HEX_ID);
     const refusal = (await abandon(id)).err;
     errSpy.mockClear();
@@ -170,7 +170,7 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
       .parseAsync([id, '--gate', 'g-1', '--choice', 'ship'], { from: 'user' })
       .catch(() => undefined);
     const responded = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
-    const inspected = await inspectRun(id, new JsonFileStore(), new JsonWorkflowStore());
+    const inspected = await inspectRun(id, h.home.runStore, h.home.workflowStore);
     const health = inspected
       .split('\n')
       .filter((l) => l.includes(HEX_ID))
@@ -284,8 +284,7 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
   it('#819 follow-up 2 (R1, the audit’s S5): an empty or blank --reason is refused in respond --by’s words — nothing is recorded, with no claim about the run', async () => {
     const { id } = await atGate('plain-gate', copyOf('plain-gate', { source_dir: home }));
     const { store, id: runningId } = await (async () => {
-      const { JsonFileStore } = await import('@sensigo/realm');
-      const store = new JsonFileStore();
+      const store = h.home.runStore;
       const { record: run } = await store.create({
         workflowId: 'plain-gate',
         workflowVersion: 1,
@@ -294,8 +293,8 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
       return { store, id: run.id };
     })();
     const ended = await (async () => {
-      const { JsonFileStore, abandonRun } = await import('@sensigo/realm');
-      const s = new JsonFileStore();
+      const { abandonRun } = await import('@sensigo/realm');
+      const s = h.home.runStore;
       const { record: run } = await s.create({
         workflowId: 'plain-gate',
         workflowVersion: 1,

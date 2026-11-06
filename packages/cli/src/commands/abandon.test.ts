@@ -4,12 +4,12 @@
 // inside the tests, after beforeEach has pointed $HOME at a temp dir).
 // issue #285 (2026-08-13): fixed at the root — the default dir now resolves at CONSTRUCTION time,
 // not module load (drain.ts's header has the full account). This file's lazy-import idiom stays;
-// historicized here only.
+// historicized here only. #616 PR-2b: the stores come from `makeTempHome()`'s handle (a static
+// import); the lazy imports stay for the other names.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, mkdir } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { mkdir } from 'node:fs/promises';
 import { abandonCommand } from './abandon.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 /** issue #558 PR-C: the ONE core mint, asserted by VALUE here — this cell is the CLI half of
  *  the cross-surface pin (the MCP half lives in `run-recovery.test.ts`). */
@@ -19,6 +19,7 @@ const ADVISORY =
   'there is no operator abort command.';
 
 describe('realm run abandon (CLI command)', () => {
+  let h: TempHome & { readonly root: string };
   let home: string;
   let runsDir: string;
   let originalHome: string | undefined;
@@ -27,8 +28,9 @@ describe('realm run abandon (CLI command)', () => {
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
-    home = await mkdtemp(join(tmpdir(), 'realm-abandon-cli-'));
-    runsDir = join(home, '.realm', 'runs');
+    h = await makeTempHome();
+    home = h.root;
+    runsDir = h.home.runStore.runsDirPath;
     await mkdir(runsDir, { recursive: true });
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
@@ -45,12 +47,11 @@ describe('realm run abandon (CLI command)', () => {
     logSpy.mockRestore();
     errSpy.mockRestore();
     exitSpy.mockRestore();
-    await rm(home, { recursive: true, force: true });
+    await h.cleanup();
   });
 
   it('success: abandons a running run and reports it', async () => {
-    const { JsonFileStore } = await import('@sensigo/realm');
-    const store = new JsonFileStore(); // default dir = $HOME/.realm/runs (temp)
+    const store = h.home.runStore; // default dir = $HOME/.realm/runs (temp)
     const { record: run } = await store.create({
       workflowId: 'wf',
       workflowVersion: 1,
@@ -90,8 +91,7 @@ describe('realm run abandon (CLI command)', () => {
       .join('\n');
 
   it('E1 A1: a reason that ends with a full stop gets no second one', async () => {
-    const { JsonFileStore } = await import('@sensigo/realm');
-    const { record: run } = await new JsonFileStore().create({
+    const { record: run } = await h.home.runStore.create({
       workflowId: 'wf',
       workflowVersion: 1,
       params: {},
@@ -101,8 +101,7 @@ describe('realm run abandon (CLI command)', () => {
   });
 
   it('E1 A2: a reason with no end mark gets one', async () => {
-    const { JsonFileStore } = await import('@sensigo/realm');
-    const { record: run } = await new JsonFileStore().create({
+    const { record: run } = await h.home.runStore.create({
       workflowId: 'wf',
       workflowVersion: 1,
       params: {},
@@ -112,8 +111,8 @@ describe('realm run abandon (CLI command)', () => {
   });
 
   it('E1 A4: a record with no reason prints no Reason clause', async () => {
-    const { JsonFileStore, sealRunLevel } = await import('@sensigo/realm');
-    const store = new JsonFileStore();
+    const { sealRunLevel } = await import('@sensigo/realm');
+    const store = h.home.runStore;
     const { record: run } = await store.create({
       workflowId: 'wf',
       workflowVersion: 1,
@@ -131,9 +130,8 @@ describe('realm run abandon (CLI command)', () => {
     // The blank form above is the honest sentence only when realm holds no path. A registered copy
     // records `source_dir` (since v0.14) and `realm workflow run` takes a directory — so the
     // command is executable from this screen. Read AFTER the seal; the kill never depends on it.
-    const { JsonFileStore, JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } =
-      await import('@sensigo/realm');
-    await new JsonWorkflowStore().register({
+    const { CURRENT_WORKFLOW_SCHEMA_VERSION } = await import('@sensigo/realm');
+    await h.home.workflowStore.register({
       id: 'wf-src',
       name: 'With Source',
       version: 1,
@@ -141,7 +139,7 @@ describe('realm run abandon (CLI command)', () => {
       steps: { one: { description: 'one', execution: 'agent', depends_on: [] } },
       source_dir: '/tmp/prc-src-dir',
     });
-    const store = new JsonFileStore();
+    const store = h.home.runStore;
     const { record: run } = await store.create({
       workflowId: 'wf-src',
       workflowVersion: 1,
@@ -162,8 +160,7 @@ describe('realm run abandon (CLI command)', () => {
   });
 
   it('issue #558 PR-C: the reason names THIS surface, and every claim is released', async () => {
-    const { JsonFileStore } = await import('@sensigo/realm');
-    const store = new JsonFileStore();
+    const store = h.home.runStore;
     const { record: run } = await store.create({
       workflowId: 'wf',
       workflowVersion: 1,
@@ -188,11 +185,10 @@ describe('realm run abandon (CLI command)', () => {
   });
 
   it('issue #558 PR-C: the gate refusal ends in the command a CLI operator can run', async () => {
-    const { JsonFileStore, JsonWorkflowStore, loadWorkflowFromString } =
-      await import('@sensigo/realm');
+    const { loadWorkflowFromString } = await import('@sensigo/realm');
     // #819 (U1): the workflow is registered, so the answer is the way on — with its copy absent the
     // refusal names the copy's repair instead (`abandon-819.test.ts`).
-    await new JsonWorkflowStore().register(
+    await h.home.workflowStore.register(
       loadWorkflowFromString(
         [
           'id: wf',
@@ -208,7 +204,7 @@ describe('realm run abandon (CLI command)', () => {
         ].join('\n'),
       ),
     );
-    const store = new JsonFileStore();
+    const store = h.home.runStore;
     const { record: run } = await store.create({
       workflowId: 'wf',
       workflowVersion: 1,

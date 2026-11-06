@@ -6,14 +6,11 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: the
 // recorded principal — never the token.
-import { describe, it, expect } from 'vitest';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { describe, it, expect, afterEach } from 'vitest';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   JsonFileStore,
-  JsonWorkflowStore,
   advanceRun,
   loadWorkflowFromString,
   presentWayOfGate,
@@ -24,6 +21,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { startHttpMcpServer } from './serve.js';
 import { CLI_COMMANDS, NO_DRIVE_FLAGS } from './ways-renderer.js';
 import { openCliHome } from '../lib/home.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const CLI = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 
@@ -45,10 +43,10 @@ const YAML = [
 ].join('\n');
 
 /** A HOME with the workflow registered and a run opened at its question. */
-async function opened(home: string) {
+async function opened(h: TempHome) {
   const def = loadWorkflowFromString(YAML);
-  await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(def);
-  const store = new JsonFileStore(join(home, '.realm', 'runs'));
+  await h.home.workflowStore.register(def);
+  const store = h.home.runStore;
   const { record: run } = await store.create({
     workflowId: def.id,
     workflowVersion: 1,
@@ -62,9 +60,16 @@ const principalOf = async (store: JsonFileStore, runId: string) =>
   (await store.get(runId)).record.evidence.find((e) => e.kind === 'gate_response')?.principal;
 
 describe('#627 W — cell 25: the principal each door stamps', () => {
+  const homes: TempHome[] = [];
+  afterEach(async () => {
+    for (const t of homes.splice(0)) await t.cleanup();
+  });
+
   it('realm mcp (stdio): door_authenticates_no_principal', async () => {
-    const home = mkdtempSync(join(tmpdir(), 'realm-pr-627-'));
-    const { store, runId, gateId } = await opened(home);
+    const h = await makeTempHome();
+    homes.push(h);
+    const home = h.root;
+    const { store, runId, gateId } = await opened(h);
     const client = new Client({ name: 'pr-627', version: '0' });
     await client.connect(
       new StdioClientTransport({
@@ -92,8 +97,10 @@ describe('#627 W — cell 25: the principal each door stamps', () => {
   ] as const)(
     'realm serve %s',
     async (_label, devMode, expected) => {
-      const home = mkdtempSync(join(tmpdir(), 'realm-pr-627-serve-'));
-      const { store, runId, gateId } = await opened(home);
+      const h = await makeTempHome();
+      homes.push(h);
+      const home = h.root;
+      const { store, runId, gateId } = await opened(h);
       const token = 'test-token-not-a-secret';
       // #616 PR-2a (iii): the starter takes all four stores or none — the four of this HOME's home.
       const realmHome = await openCliHome({ home: join(home, '.realm') });

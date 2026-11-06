@@ -44,6 +44,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { resolveMcpServerEntry } from '../agent/test-support/mcp-server-entry.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /** The exit of a `realm workflow run` whose run ends failed (measured; the page shows no code). */
@@ -239,13 +240,15 @@ describe(
   '#625 PR-2a, C180 — every code example on the pages it changes runs',
   { timeout: 90_000 },
   () => {
+    let h: TempHome & { readonly root: string };
     let home: string;
     let project: string;
     let bin: string;
     let runStore: JsonFileStore;
 
-    beforeEach(() => {
-      home = mkdtempSync(join(tmpdir(), 'realm-examples-625-home-'));
+    beforeEach(async () => {
+      h = await makeTempHome();
+      home = h.root;
       project = mkdtempSync(join(tmpdir(), 'realm-examples-625-proj-'));
       bin = join(home, 'bin');
       mkdirSync(bin);
@@ -257,10 +260,10 @@ describe(
         writeFileSync(join(bin, name), `#!/bin/sh\nexec "${process.execPath}" "${file}" "$@"\n`);
         chmodSync(join(bin, name), 0o755);
       }
-      runStore = new JsonFileStore(join(home, '.realm', 'runs'));
+      runStore = h.home.runStore;
     });
-    afterEach(() => {
-      rmSync(home, { recursive: true, force: true });
+    afterEach(async () => {
+      await h.cleanup();
       rmSync(project, { recursive: true, force: true });
     });
 

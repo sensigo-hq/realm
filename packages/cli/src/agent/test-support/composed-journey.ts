@@ -12,8 +12,8 @@
 //
 // NO ASSERTIONS LIVE HERE. This returns the artifacts; the cells assert. That keeps every
 // expectation vitest-side and visible in the file a reader opens when a journey fails, and it is
-// why this file imports nothing from vitest — it compiles into the published dist (`files:
-// ["dist"]`), unreachable via the exports map, exactly like the sibling stub helpers.
+// why this file imports nothing from vitest. It compiles into dist, but the package's `files` leaves
+// out `dist/**/test-support/**`, so it is not published (like the sibling stub helpers).
 //
 // REDACTION HAZARD, INHERITED BY EVERY CALLER. `sanitizeError` (agent-utils.ts) redacts every
 // `process.env` value longer than four characters as a SUBSTRING, from tool results and from
@@ -21,16 +21,13 @@
 // with no text it later asserts on — otherwise the assertion reads `[REDACTED]` and the failure
 // looks like a product bug. Both shipped cells use distinctive `sk-…-composed-journey-0000`
 // values for this reason.
-import { mkdtempSync, mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { ExtensionRegistry } from '@sensigo/realm';
 import type { RunRecord, ToolCallRecord, WorkflowDefinition } from '@sensigo/realm';
 import type { LlmProvider } from '../providers/llm-provider.js';
 import { runAgent, type AgentRunResult } from '../run-agent.js';
 import { inspectRun } from '../../commands/inspect.js';
 import { resolveMcpServerEntry } from './mcp-server-entry.js';
-import { openCliHome } from '../../lib/home.js';
+import type { TempHome } from '../../test-support/temp-home.js';
 
 export interface ComposedJourneyOptions {
   /** The real provider under test, already pointed at its own stub seam. */
@@ -64,26 +61,19 @@ export interface ComposedJourneyArtifacts {
 }
 
 /**
- * Creates an isolated HOME for one journey run.
- *
- * ONE temp home for BOTH store surfaces, and this is load-bearing rather than tidy: the MCP child
- * inherits HOME and creates `$HOME/.realm/workflows` at STARTUP, before any tool call. Pointing
- * only the parent at a temp directory leaves the child writing into the real `~/.realm` — and a
- * real workflow that happened to share the probe id would turn the tool's polite failure into a
- * success, so the journey would go green having proved nothing.
- */
-export function makeJourneyHome(prefix: string): string {
-  const home = mkdtempSync(join(tmpdir(), prefix));
-  mkdirSync(join(home, '.realm'), { recursive: true });
-  return home;
-}
-
-/**
  * Runs the journey and returns its artifacts, read back from the REAL store rather than from
  * return values.
+ *
+ * @param home The test's home, from `makeTempHome()` (#616 PR-2b). ONE home for BOTH store
+ *   surfaces, and this is load-bearing rather than tidy: the MCP child inherits `HOME = home.root`
+ *   and creates `$HOME/.realm/workflows` at STARTUP, before any tool call, while the parent's
+ *   stores are the same home's (`home.home`). Pointing only the parent at a temp directory leaves
+ *   the child writing into the real `~/.realm` — and a real workflow that happened to share the
+ *   probe id would turn the tool's polite failure into a success, so the journey would go green
+ *   having proved nothing. The caller cleans the home up.
  */
 export async function runComposedJourney(
-  tempHome: string,
+  home: TempHome & { readonly root: string },
   options: ComposedJourneyOptions,
 ): Promise<ComposedJourneyArtifacts> {
   // D10: `tools` omitted (or empty) ⇒ single-shot — no `mcp_servers` at all, so no MCP child is
@@ -108,7 +98,7 @@ export async function runComposedJourney(
               // MERGED over the inherited environment by the SDK, so PATH survives and `node`
               // still resolves — this redirects HOME without isolating the child from everything
               // else.
-              env: { HOME: tempHome },
+              env: { HOME: home.root },
             },
           ],
         }),
@@ -130,10 +120,9 @@ export async function runComposedJourney(
     },
   } as unknown as WorkflowDefinition;
 
-  // #616 PR-2a (iii): the CLI's one door, opened on the temp home.
-  const home = await openCliHome({ home: join(tempHome, '.realm') });
-  const store = home.runStore;
-  const workflowStore = home.workflowStore;
+  // #616 PR-2a (iii): the CLI's one door, opened on the temp home by the caller's handle.
+  const store = home.home.runStore;
+  const workflowStore = home.home.workflowStore;
   await workflowStore.register(definition);
 
   const result = await runAgent(

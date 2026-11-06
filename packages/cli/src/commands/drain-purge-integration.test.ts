@@ -17,39 +17,33 @@
 // longer exists; the default resolves at CONSTRUCTION time (drain.ts's header has the full
 // account). Historicized here only — this file's explicit-store approach is unaffected either way.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, mkdir } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
-import {
-  JsonFileStore,
-  JsonWorkflowStore,
-  drainFinalizers,
-  captureEvidence,
-  DRAIN_LEASE_MAX,
-} from '@sensigo/realm';
+import { drainFinalizers, captureEvidence, DRAIN_LEASE_MAX } from '@sensigo/realm';
 import { runDrainAction, type DrainRuntimeDeps } from './drain.js';
 import { purgeRuns } from './purge.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const DEPS: DrainRuntimeDeps = { drainFinalizers, captureEvidence, drainLeaseMax: DRAIN_LEASE_MAX };
 
 describe('purge ⟷ drain recovery closure (issue #279, increment 1, PR-B, verification item 3)', () => {
-  let dir: string;
+  let h: TempHome;
   let runsDir: string;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-drain-purge-'));
-    runsDir = join(dir, 'runs');
+    h = await makeTempHome();
+    runsDir = h.home.runStore.runsDirPath;
     await mkdir(runsDir, { recursive: true });
   });
 
   afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+    await h.cleanup();
   });
 
   it('purge refuses drain_pending (single-id --force included) → --void (via runDrainAction) → purge proceeds', async () => {
-    const anchorStore = new JsonFileStore(runsDir);
-    const workflowStore = new JsonWorkflowStore(join(dir, 'workflows'));
+    const anchorStore = h.home.runStore;
+    const workflowStore = h.home.workflowStore;
     const { record: run } = await anchorStore.create({
       workflowId: 'drain-purge-wf',
       workflowVersion: 1,

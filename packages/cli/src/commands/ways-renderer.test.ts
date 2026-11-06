@@ -7,11 +7,7 @@
 // change on either side turns it red. Beside each: (a) what turns it red; (b) what it prints on
 // failure — run ids and step names only.
 import { describe, it, expect } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
-  JsonFileStore,
   ExtensionRegistry,
   composeWaysAt,
   type ComposedWays,
@@ -32,18 +28,19 @@ import {
   heldByAnswerWords,
   stopReasons,
 } from './ways-renderer.js';
+import { makeTempHome } from '../test-support/temp-home.js';
 
 async function withRun<T>(fn: (run: RunRecord) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-ways-renderer-'));
+  const h = await makeTempHome();
   try {
-    const { record: run } = await new JsonFileStore(dir).create({
+    const { record: run } = await h.home.runStore.create({
       workflowId: 'c64-wf',
       workflowVersion: 1,
       params: {},
     });
     return await fn(run);
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    await h.cleanup();
   }
 }
 

@@ -20,21 +20,26 @@ import {
 } from '@sensigo/realm';
 import { composeRunCost, type PriceSource, type RunRecord } from '@sensigo/realm';
 import { JsonTraceBufferStore } from '@sensigo/realm-mcp';
+import { makeTempHome } from '../test-support/temp-home.js';
 
 async function makeStores(): Promise<{
   dir: string;
   runStore: JsonFileStore;
   failedAttemptStore: JsonFileFailedAttemptStore;
   traceBufferStore: JsonTraceBufferStore;
+  cleanup: () => Promise<void>;
 }> {
-  const dir = await mkdtemp(join(tmpdir(), 'export-test-'));
-  const runStore = new JsonFileStore(dir);
+  const h = await makeTempHome();
+  const dir = h.home.runStore.runsDirPath;
+  // The cells write records into the runs folder before the store's first write.
+  await mkdir(dir, { recursive: true });
   return {
     dir,
-    runStore,
-    failedAttemptStore: new JsonFileFailedAttemptStore(dir),
+    runStore: h.home.runStore,
+    failedAttemptStore: h.home.failedAttemptStore,
     // issue #616 PR-0: the trace buffer evaluates fences against the run store.
-    traceBufferStore: new JsonTraceBufferStore(dir, runStore),
+    traceBufferStore: h.home.traceBufferStore,
+    cleanup: () => h.cleanup(),
   };
 }
 
@@ -80,7 +85,7 @@ async function appendSidecarLine(store: JsonFileFailedAttemptStore, runId: strin
 
 describe('buildExportBundle', () => {
   it('terminal run, full artifacts: bundle matches run/attempts/WAL exactly, across multiple WAL steps', async () => {
-    const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
+    const { dir, runStore, failedAttemptStore, traceBufferStore, cleanup } = await makeStores();
     try {
       const run = makeRun({
         run_phase: 'abandoned',
@@ -121,13 +126,13 @@ describe('buildExportBundle', () => {
       // The whole bundle is genuinely JSON-serializable (a real export writes JSON.stringify(bundle)).
       expect(() => JSON.stringify(bundle)).not.toThrow();
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   // issue #279 (increment 1, PR-B), design record §6.
   it('a terminal run with a pending finalizer gets the pending-drain warning (mutually exclusive with the non-terminal warning)', async () => {
-    const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
+    const { dir, runStore, failedAttemptStore, traceBufferStore, cleanup } = await makeStores();
     try {
       const run = makeRun({
         run_phase: 'completed',
@@ -151,12 +156,12 @@ describe('buildExportBundle', () => {
       expect(bundle.realm_export_version).toBe(5);
       expect(bundle.run.finalizer_ledger).toEqual(run.finalizer_ledger);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('a terminal run with NO pending finalizers gets no pending-drain warning', async () => {
-    const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
+    const { dir, runStore, failedAttemptStore, traceBufferStore, cleanup } = await makeStores();
     try {
       const run = makeRun({
         run_phase: 'completed',
@@ -174,12 +179,12 @@ describe('buildExportBundle', () => {
 
       expect(warning).toBeUndefined();
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('clean run (no attempts, no WAL): attempts: [], attempts_capped: false, wal: {} — not an error (issue #186: complete: true, absence is not a failure)', async () => {
-    const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
+    const { dir, runStore, failedAttemptStore, traceBufferStore, cleanup } = await makeStores();
     try {
       const run = makeRun({ run_phase: 'completed', terminal_state: true });
       await injectRun(dir, run);
@@ -196,13 +201,13 @@ describe('buildExportBundle', () => {
       expect(bundle.complete).toBe(true); // genuine ENOENT absence, not a read failure
       expect(bundle.artifact_errors).toEqual([]);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   describe('graceful degradation — never all-or-nothing (issue #186)', () => {
     it('unreadable WAL: bundle is still written with the run record, complete: false, artifact_errors names the WAL + code, wal: {}', async () => {
-      const { dir, runStore, failedAttemptStore } = await makeStores();
+      const { dir, runStore, failedAttemptStore, cleanup } = await makeStores();
       try {
         const run = makeRun({ run_phase: 'completed', terminal_state: true });
         await injectRun(dir, run);
@@ -236,12 +241,12 @@ describe('buildExportBundle', () => {
         // still genuinely JSON-serializable — a real export writes this straight to disk.
         expect(() => JSON.stringify(bundle)).not.toThrow();
       } finally {
-        await rm(dir, { recursive: true, force: true });
+        await cleanup();
       }
     });
 
     it('unreadable sidecar: same shape for attempts — complete: false, artifact_errors names the sidecar + code, attempts: []', async () => {
-      const { dir, runStore, traceBufferStore } = await makeStores();
+      const { dir, runStore, traceBufferStore, cleanup } = await makeStores();
       try {
         const run = makeRun({ run_phase: 'completed', terminal_state: true });
         await injectRun(dir, run);
@@ -274,12 +279,12 @@ describe('buildExportBundle', () => {
           },
         ]);
       } finally {
-        await rm(dir, { recursive: true, force: true });
+        await cleanup();
       }
     });
 
     it('BOTH artifacts unreadable: complete: false with two entries in artifact_errors, run record still present', async () => {
-      const { dir, runStore } = await makeStores();
+      const { dir, runStore, cleanup } = await makeStores();
       try {
         const run = makeRun({ run_phase: 'completed', terminal_state: true });
         await injectRun(dir, run);
@@ -309,12 +314,12 @@ describe('buildExportBundle', () => {
           'trace-buffer WAL',
         ]);
       } finally {
-        await rm(dir, { recursive: true, force: true });
+        await cleanup();
       }
     });
 
     it('run record unreadable (a real I/O error, not STATE_RUN_NOT_FOUND): no bundle at all — propagates, never fabricated', async () => {
-      const { dir, failedAttemptStore, traceBufferStore } = await makeStores();
+      const { failedAttemptStore, traceBufferStore, cleanup } = await makeStores();
       try {
         const brokenRunStore = {
           get: async () => {
@@ -335,12 +340,12 @@ describe('buildExportBundle', () => {
           }),
         ).rejects.toMatchObject({ code: 'ENGINE_STORE_FAILED' });
       } finally {
-        await rm(dir, { recursive: true, force: true });
+        await cleanup();
       }
     });
 
     it('attempts_capped and complete are independent: a capped-but-fully-readable run → complete: true, attempts_capped: true', async () => {
-      const { dir, runStore, traceBufferStore } = await makeStores();
+      const { dir, runStore, traceBufferStore, cleanup } = await makeStores();
       try {
         const run = makeRun({ run_phase: 'completed', terminal_state: true });
         await injectRun(dir, run);
@@ -361,14 +366,14 @@ describe('buildExportBundle', () => {
         expect(bundle.attempts_capped).toBe(true);
         expect(bundle.artifact_errors).toEqual([]);
       } finally {
-        await rm(dir, { recursive: true, force: true });
+        await cleanup();
       }
     });
   });
 
   describe('attempts_capped (correction — the truncation signal)', () => {
     it('a capped failed-attempt sidecar sets bundle.attempts_capped = true', async () => {
-      const { dir, runStore, traceBufferStore } = await makeStores();
+      const { dir, runStore, traceBufferStore, cleanup } = await makeStores();
       try {
         const run = makeRun({ run_phase: 'completed', terminal_state: true });
         await injectRun(dir, run);
@@ -399,12 +404,12 @@ describe('buildExportBundle', () => {
         expect(bundle.attempts_capped).toBe(true);
         expect(bundle.attempts).toEqual([cappedRecord]); // attempts array shape is unchanged
       } finally {
-        await rm(dir, { recursive: true, force: true });
+        await cleanup();
       }
     });
 
     it('a non-capped sidecar sets bundle.attempts_capped = false (explicit, not just absence)', async () => {
-      const { dir, runStore, traceBufferStore } = await makeStores();
+      const { dir, runStore, traceBufferStore, cleanup } = await makeStores();
       try {
         const run = makeRun({ run_phase: 'completed', terminal_state: true });
         await injectRun(dir, run);
@@ -421,12 +426,12 @@ describe('buildExportBundle', () => {
 
         expect(bundle.attempts_capped).toBe(false);
       } finally {
-        await rm(dir, { recursive: true, force: true });
+        await cleanup();
       }
     });
 
     it('attempts_capped serializes into the JSON bundle, sitting alongside attempts', async () => {
-      const { dir, runStore, traceBufferStore } = await makeStores();
+      const { dir, runStore, traceBufferStore, cleanup } = await makeStores();
       try {
         const run = makeRun({ run_phase: 'completed', terminal_state: true });
         await injectRun(dir, run);
@@ -446,13 +451,13 @@ describe('buildExportBundle', () => {
         const keys = Object.keys(parsed);
         expect(keys.indexOf('attempts_capped')).toBe(keys.indexOf('attempts') + 1);
       } finally {
-        await rm(dir, { recursive: true, force: true });
+        await cleanup();
       }
     });
   });
 
   it('non-terminal run: emits the best-effort warning signal AND still produces the bundle', async () => {
-    const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
+    const { dir, runStore, failedAttemptStore, traceBufferStore, cleanup } = await makeStores();
     try {
       const run = makeRun({ run_phase: 'running', terminal_state: false });
       await injectRun(dir, run);
@@ -469,12 +474,12 @@ describe('buildExportBundle', () => {
       expect(warning).toMatch(/best-effort snapshot/);
       expect(bundle.run.id).toBe(run.id); // bundle still produced, not blocked
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('gate_waiting (also non-terminal) run: warning emitted too', async () => {
-    const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
+    const { dir, runStore, failedAttemptStore, traceBufferStore, cleanup } = await makeStores();
     try {
       const run = makeRun({ run_phase: 'gate_waiting', terminal_state: false });
       await injectRun(dir, run);
@@ -487,14 +492,14 @@ describe('buildExportBundle', () => {
 
       expect(warning).toMatch(/gate_waiting/);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it.each(['completed', 'failed', 'abandoned', 'aborted'] as const)(
     'terminal phase %s never emits a warning',
     async (phase) => {
-      const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
+      const { dir, runStore, failedAttemptStore, traceBufferStore, cleanup } = await makeStores();
       try {
         const run = makeRun({ run_phase: phase, terminal_state: true });
         await injectRun(dir, run);
@@ -507,24 +512,24 @@ describe('buildExportBundle', () => {
 
         expect(warning).toBeUndefined();
       } finally {
-        await rm(dir, { recursive: true, force: true });
+        await cleanup();
       }
     },
   );
 
   it('nonexistent run: rejects with STATE_RUN_NOT_FOUND, writes nothing', async () => {
-    const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
+    const { runStore, failedAttemptStore, traceBufferStore, cleanup } = await makeStores();
     try {
       await expect(
         buildExportBundle('never-existed', { runStore, failedAttemptStore, traceBufferStore }),
       ).rejects.toMatchObject({ code: 'STATE_RUN_NOT_FOUND' });
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('does NOT include the idempotency-key pointer anywhere in the bundle', async () => {
-    const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
+    const { runStore, failedAttemptStore, traceBufferStore, cleanup } = await makeStores();
     try {
       const { record: run } = await runStore.create({
         workflowId: 'wf-1',
@@ -551,12 +556,12 @@ describe('buildExportBundle', () => {
       // the idempotency KEY itself is still present — via the run record, not a separate pointer.
       expect(bundle.run.idempotency_key).toBe('k1');
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('never writes to runsDir: directory is byte-unchanged after building the bundle', async () => {
-    const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
+    const { dir, runStore, failedAttemptStore, traceBufferStore, cleanup } = await makeStores();
     try {
       const run = makeRun({ run_phase: 'completed', terminal_state: true });
       await injectRun(dir, run);
@@ -570,14 +575,14 @@ describe('buildExportBundle', () => {
       const after = await readdir(dir);
       expect(after.sort()).toEqual(before.sort()); // no new file, no temp, nothing removed
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 });
 
 describe('sealed trace artifacts (issue #197 PR-2)', () => {
   it('sealed is null when the configured traceBufferStore does not declare listSealedForRun (incapability)', async () => {
-    const { dir, runStore, failedAttemptStore } = await makeStores();
+    const { dir, runStore, failedAttemptStore, cleanup } = await makeStores();
     try {
       const run = makeRun({ run_phase: 'completed', terminal_state: true });
       await injectRun(dir, run);
@@ -592,12 +597,12 @@ describe('sealed trace artifacts (issue #197 PR-2)', () => {
 
       expect(bundle.sealed).toBeNull();
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('sealed is {} (not null) when the store declares seal but this run genuinely has no sealed artifacts', async () => {
-    const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
+    const { dir, runStore, failedAttemptStore, traceBufferStore, cleanup } = await makeStores();
     try {
       const run = makeRun({ run_phase: 'completed', terminal_state: true });
       await injectRun(dir, run);
@@ -611,12 +616,12 @@ describe('sealed trace artifacts (issue #197 PR-2)', () => {
       expect(bundle.sealed).toEqual({});
       expect(bundle.sealed).not.toBeNull();
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('sealed is populated, grouped by step_id, when sealed artifacts genuinely exist', async () => {
-    const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
+    const { dir, runStore, failedAttemptStore, traceBufferStore, cleanup } = await makeStores();
     try {
       const run = makeRun({ run_phase: 'completed', terminal_state: true });
       await injectRun(dir, run);
@@ -639,12 +644,12 @@ describe('sealed trace artifacts (issue #197 PR-2)', () => {
         bundle.sealed!['step-a']![0]!.lines.flatMap((l) => l.entries.map((e) => e.event)),
       ).toEqual(['stale']);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('a listSealedForRun failure joins artifact_errors + complete: false (the #186 posture)', async () => {
-    const { dir, runStore, failedAttemptStore } = await makeStores();
+    const { dir, runStore, failedAttemptStore, cleanup } = await makeStores();
     try {
       const run = makeRun({ run_phase: 'completed', terminal_state: true });
       await injectRun(dir, run);
@@ -674,14 +679,14 @@ describe('sealed trace artifacts (issue #197 PR-2)', () => {
         message: expect.stringContaining('sealed-boom'),
       });
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 });
 
 describe('non-disclosure redaction (issue #197 PR-2, design §6)', () => {
   it('non-terminal export redacts nonce values on WAL lines belonging to an in-progress step', async () => {
-    const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
+    const { dir, runStore, failedAttemptStore, traceBufferStore, cleanup } = await makeStores();
     try {
       const run = makeRun({
         run_phase: 'running',
@@ -707,12 +712,12 @@ describe('non-disclosure redaction (issue #197 PR-2, design §6)', () => {
       expect(bareLine).not.toHaveProperty('nonce'); // bare — nothing to redact
       expect(JSON.stringify(bundle)).not.toContain('live-nonce-value');
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('a step NOT in in_progress_steps (already settled) is verbatim even on a non-terminal export', async () => {
-    const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
+    const { dir, runStore, failedAttemptStore, traceBufferStore, cleanup } = await makeStores();
     try {
       const run = makeRun({
         run_phase: 'running',
@@ -733,12 +738,12 @@ describe('non-disclosure redaction (issue #197 PR-2, design §6)', () => {
       const lines = bundle.wal['step-a'] as Array<{ nonce?: string }>;
       expect(lines[0]?.nonce).toBe('settled-nonce-value');
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('terminal export is verbatim — no redaction even for a nonce that WOULD match a (now-irrelevant) in_progress_steps entry', async () => {
-    const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
+    const { dir, runStore, failedAttemptStore, traceBufferStore, cleanup } = await makeStores();
     try {
       const run = makeRun({ run_phase: 'completed', terminal_state: true, in_progress_steps: [] });
       await injectRun(dir, run);
@@ -756,12 +761,12 @@ describe('non-disclosure redaction (issue #197 PR-2, design §6)', () => {
       expect(lines[0]?.nonce).toBe('terminal-nonce-value');
       expect(JSON.stringify(bundle)).toContain('terminal-nonce-value');
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('non-terminal export redacts sealed-artifact nonces for a live step too', async () => {
-    const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
+    const { dir, runStore, failedAttemptStore, traceBufferStore, cleanup } = await makeStores();
     try {
       const run = makeRun({
         run_phase: 'running',
@@ -787,7 +792,7 @@ describe('non-disclosure redaction (issue #197 PR-2, design §6)', () => {
       expect(artifact.lines[0]?.nonce).toBe('[redacted-live-claim]');
       expect(JSON.stringify(bundle)).not.toContain('sealed-live-nonce');
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 });
@@ -889,7 +894,7 @@ describe('resolveExportPath', () => {
 // whole, so this is a round-trip assertion, not a new export-side code path.
 describe('export — rerun_of rides the record (issue #558 PR-C)', () => {
   it('a superseding run exports with rerun_of intact', async () => {
-    const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
+    const { dir, runStore, failedAttemptStore, traceBufferStore, cleanup } = await makeStores();
     try {
       const run = makeRun({
         run_phase: 'abandoned',
@@ -909,7 +914,7 @@ describe('export — rerun_of rides the record (issue #558 PR-C)', () => {
       expect(bundle.run.rerun_of).toBe('11111111-2222-3333-4444-555555555555');
       expect(bundle.run).toEqual(run);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 });
@@ -921,7 +926,7 @@ describe('the export carries no money (issue #600 caching PR P)', () => {
   // (a) red when the bundle carries a composed money figure (a `money` or `run_cost` key);
   // (b) prints the keys found.
   it('a run that prices exports with no money, run_cost or source_totals key', async () => {
-    const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
+    const { dir, runStore, failedAttemptStore, traceBufferStore, cleanup } = await makeStores();
     try {
       const run = makeRun({
         completed_steps: ['step-a'],
@@ -982,7 +987,7 @@ describe('the export carries no money (issue #600 caching PR P)', () => {
       // The same run prices at read: the export's silence is about storage, not an unpriceable run.
       expect([composeRunCost(run, { priceSource: source })?.total.priced, keys]).toEqual([1, []]);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanup();
     }
   });
 });

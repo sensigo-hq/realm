@@ -16,6 +16,7 @@ import { EventEmitter } from 'node:events';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { makeTempHome } from '../test-support/temp-home.js';
 
 const mocks = vi.hoisted(() => ({ question: vi.fn(), close: vi.fn() }));
 vi.mock('node:readline/promises', () => ({
@@ -23,8 +24,6 @@ vi.mock('node:readline/promises', () => ({
 }));
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
-  JsonFileStore,
-  JsonWorkflowStore,
   abandonRun,
   createDefaultRegistry,
   executeStep,
@@ -776,10 +775,10 @@ describe("#729 PR-3 correction 5 (J-2) — `realm listen`'s log lines carry the 
   it("listen.ts — the sweeper's `cannot_go_on`: `stays open (phase '…')` whole (the declared route: `running`)", async () => {
     installWriter('broadcast');
     addDeclaredValues({ C5_PIN: 'running' });
-    const scratch = mkdtempSync(join(tmpdir(), 'realm-c5-sweep-'));
+    const h = await makeTempHome();
     try {
-      const runs = new JsonFileStore(join(scratch, 'runs'));
-      const workflows = new JsonWorkflowStore(join(scratch, 'workflows'));
+      const runs = h.home.runStore;
+      const workflows = h.home.workflowStore;
       const stuck = {
         id: 'c5-sweep',
         name: 'c5-sweep',
@@ -824,11 +823,16 @@ describe("#729 PR-3 correction 5 (J-2) — `realm listen`'s log lines carry the 
       });
       // #715 (b): the store's clock decides — the same folder reopened as a test location an hour on.
       await writeTestClockFile(dirname(runs.runsDirPath), new Date(Date.now() + 3_600_000));
-      await sweepExpiredGates({
-        runStore: new JsonFileStore(runs.runsDirPath),
-        workflowStore: workflows,
-        logger,
-      } as never);
+      const reopened = await makeTempHome({ home: dirname(runs.runsDirPath) });
+      try {
+        await sweepExpiredGates({
+          runStore: reopened.home.runStore,
+          workflowStore: workflows,
+          logger,
+        } as never);
+      } finally {
+        await reopened.cleanup();
+      }
       const lines = fieldsOf('listen: sweeper enacted an expired gate')?.['cannot_go_on'] as
         string[] | undefined;
       const way = lines?.at(-1) ?? '';
@@ -836,7 +840,7 @@ describe("#729 PR-3 correction 5 (J-2) — `realm listen`'s log lines carry the 
       //     way out's head.
       expect(way.slice(0, way.indexOf(': '))).toBe(`Run ${run.id} stays open (phase 'running')`);
     } finally {
-      rmSync(scratch, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 });
