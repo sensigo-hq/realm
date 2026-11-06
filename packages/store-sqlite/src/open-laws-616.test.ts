@@ -2,14 +2,16 @@
 // package's production code (every `.ts` file under `src/` but tests and `src/test-support/**`),
 // read with the TypeScript compiler so that names resolve as the compiler resolves them.
 //
-// L-FS (design §2 step 4): Realm's code touches a `realm.db*` path with the filesystem only by `lstat`
-// and by the ONE exclusive create of an absent `realm.db`. Nothing renames, links, copies, writes,
-// opens or deletes it by `fs`; SQLite alone reads and writes it, through the loader. The scan follows
-// the path: it starts at the name's one constant (`DATABASE_FILE`) and at every result of
-// `prepareHome`, and follows it into every variable set from it and every parameter of a function of
-// the package it is passed to; every `node:fs` call one of those reaches must be an `lstat` or that
-// create, and the create's own descriptor may only be closed. It also finds every string that spells a `realm.db*` file name or path, which must be the
-// constant alone. What it cannot see (said, not hidden): a path built at run time from parts that are
+// L-FS (design §2 step 4): Realm's code touches a `realm.db*` path with the filesystem only by `lstat`,
+// by the ONE exclusive create of an absent `realm.db`, and by the ONE `accessSync` with which the open
+// (unit 7b's correction) asks whether Realm may write the file, named below: it reads nothing and
+// writes nothing. Nothing renames, links, copies, writes, opens or deletes it by `fs`; SQLite alone
+// reads and writes it, through the loader. The scan follows the path: it starts at the name's one
+// constant (`DATABASE_FILE`) and at every result of `prepareHome`, and follows it into every variable
+// set from it and every parameter of a function of the package it is passed to; every `node:fs` call
+// one of those reaches must be an `lstat`, that create or that question, and the create's own
+// descriptor may only be closed. It also finds every string that spells a `realm.db*` file name or
+// path, which must be the constant alone. What it cannot see (said, not hidden): a path built at run time from parts that are
 // not the constant (`'realm' + '.db'`), a path stored in an object's property and read back, a call
 // through a function value it cannot resolve.
 //
@@ -94,7 +96,7 @@ describe('#616 unit 7a — the source laws of the open', () => {
     return ts.isIdentifier(callee) ? callee.text : undefined;
   };
 
-  it('L-FS: a realm.db path reaches no filesystem call but an lstat and the one exclusive create, and only the constant spells the name', () => {
+  it("L-FS: a realm.db path reaches no filesystem call but an lstat, the one exclusive create and the open's one write-permission question, and only the constant spells the name", () => {
     const tracked = new Set<ts.Symbol>();
     /** The descriptors the one create returns: only closing them is allowed. */
     const descriptors = new Set<ts.Symbol>();
@@ -177,6 +179,8 @@ describe('#616 unit 7a — the source laws of the open', () => {
     }
     const findings: string[] = [];
     const creates: string[] = [];
+    /** The write-permission questions on a path: the open's one, by name. */
+    const asks: string[] = [];
     const spellings: string[] = [];
     for (const file of files) {
       walk(file, (n) => {
@@ -189,6 +193,7 @@ describe('#616 unit 7a — the source laws of the open', () => {
           const text = `${name}(${n.arguments.map((a) => a.getText()).join(', ')})`;
           if (isTheCreate(n)) creates.push(`${rel(file)}: ${text}`);
           else if (onPath && (name === 'lstat' || name === 'lstatSync')) return;
+          else if (onPath && name === 'accessSync') asks.push(`${rel(file)}: ${text}`);
           else if (!onPath && name === 'closeSync') return;
           else findings.push(`${where(n)}: ${text}`);
         } else if (
@@ -202,15 +207,18 @@ describe('#616 unit 7a — the source laws of the open', () => {
         }
       });
     }
-    // (1) red when a filesystem call other than an lstat or the one exclusive create takes a
-    //     realm.db path (an unlink, a rename, a write, a second create or a create with another mode),
+    // (1) red when a filesystem call other than an lstat, the one exclusive create or the open's
+    //     write-permission question takes a realm.db path (an unlink, a rename, a write, a second create or a create with another mode),
     //     when the create's descriptor is used for anything but its close (a write, a chmod),
-    //     when a second string spells the file's name or a path to it, or when the scan stops seeing
-    //     the create (it would then be reading nothing); (2) prints each finding with its file and
-    //     line and the call's text, every create and every spelling it found.
-    expect({ findings, creates, spellings }).toEqual({
+    //     when a second string spells the file's name or a path to it, when a write-permission
+    //     question is asked anywhere but the open's one place or in another form, or when the scan
+    //     stops seeing the create or that question (it would then be reading nothing); (2) prints
+    //     each finding with its file and line and the call's text, every create, every question and
+    //     every spelling it found.
+    expect({ findings, creates, asks, spellings }).toEqual({
       findings: [],
       creates: ["src/home.ts: openSync(path, 'wx', 0o600)"],
+      asks: ['src/open-file.ts: accessSync(path, constants.W_OK)'],
       spellings: ["src/home.ts: DATABASE_FILE = 'realm.db'"],
     });
   });

@@ -1,7 +1,6 @@
 // Tests for replayRun, parseOverride, and saveReplay business logic.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { replayRun, parseOverride, saveReplay, replayCommand } from './replay.js';
 import type {
@@ -11,6 +10,7 @@ import type {
   WorkflowDefinition,
   EvidenceSnapshot,
 } from '@sensigo/realm';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 function makeSnapshot(stepId: string, output: Record<string, unknown> = {}): EvidenceSnapshot {
   return {
@@ -432,14 +432,16 @@ describe('saveReplay', () => {
 // =================================================================================================
 
 describe('replayCommand — a workflow-absent run carries the remedy (issue #456)', () => {
+  let h: TempHome & { readonly root: string };
   let home: string;
   let originalHome: string | undefined;
   let errSpy: ReturnType<typeof vi.spyOn>;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
-  beforeEach(() => {
-    home = mkdtempSync(join(tmpdir(), 'realm-replay-remedy-home-'));
+  beforeEach(async () => {
+    h = await makeTempHome();
+    home = h.root;
     mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
@@ -450,11 +452,11 @@ describe('replayCommand — a workflow-absent run carries the remedy (issue #456
     }) as never);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (originalHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = originalHome;
     vi.restoreAllMocks();
-    rmSync(home, { recursive: true, force: true });
+    await h.cleanup();
   });
 
   const errored = (): string => errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
@@ -462,8 +464,7 @@ describe('replayCommand — a workflow-absent run carries the remedy (issue #456
   it('C5 carries the T-21 words (#729 PR-0; was "most often") and "replay again"', async () => {
     // TERMINAL fixture — a non-terminal one adds the partial-replay warn line, which would
     // contaminate this cell's assertions without changing its point.
-    const { JsonFileStore } = await import('@sensigo/realm');
-    const runStore = new JsonFileStore();
+    const runStore = h.home.runStore;
     const { record: run } = await runStore.create({
       workflowId: 'replay-missing-wf',
       workflowVersion: 1,

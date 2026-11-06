@@ -19,10 +19,10 @@
 // port, temp directories, the stub closed in a `finally`, and a per-test timeout rather than a
 // change to the global config.
 import { describe, it, expect } from 'vitest';
-import { rmSync } from 'node:fs';
 import { AnthropicProvider } from './providers/anthropic-provider.js';
 import { startAnthropicStub } from './test-support/anthropic-stub.js';
-import { makeJourneyHome, runComposedJourney } from './test-support/composed-journey.js';
+import { runComposedJourney } from './test-support/composed-journey.js';
+import { makeTempHome } from '../test-support/temp-home.js';
 import { resolveMcpServerEntry } from './test-support/mcp-server-entry.js';
 
 const PROBE_WORKFLOW_ID = 'no-such-workflow-composed-journey';
@@ -40,7 +40,7 @@ resolveMcpServerEntry();
 
 describe('composed journey (Anthropic) — a politely-failed tool call, all the way to the operator', () => {
   it('runs the real provider against a real MCP child and records, persists and renders the failure', async () => {
-    const tempHome = makeJourneyHome('composed-journey-anthropic-');
+    const h = await makeTempHome();
     const originalKey = process.env['ANTHROPIC_API_KEY'];
     const originalBaseUrl = process.env['ANTHROPIC_BASE_URL'];
 
@@ -60,7 +60,7 @@ describe('composed journey (Anthropic) — a politely-failed tool call, all the 
     process.env['ANTHROPIC_BASE_URL'] = stub.baseUrl;
 
     try {
-      const journey = await runComposedJourney(tempHome, {
+      const journey = await runComposedJourney(h, {
         provider: new AnthropicProvider('claude-sonnet-4-5'),
         probeWorkflowId: PROBE_WORKFLOW_ID,
         finalSummary: 'the tool reported a failure',
@@ -111,7 +111,7 @@ describe('composed journey (Anthropic) — a politely-failed tool call, all the 
       else process.env['ANTHROPIC_API_KEY'] = originalKey;
       if (originalBaseUrl === undefined) delete process.env['ANTHROPIC_BASE_URL'];
       else process.env['ANTHROPIC_BASE_URL'] = originalBaseUrl;
-      rmSync(tempHome, { recursive: true, force: true });
+      await h.cleanup();
     }
   }, 25_000);
 
@@ -119,7 +119,7 @@ describe('composed journey (Anthropic) — a politely-failed tool call, all the 
   // issue #600 PR 1a (D10) — the single-shot journey's Anthropic twin. No MCP child, no 25s budget.
   // =================================================================================================
   it('a single-shot step (no tools) reports what its ONE wire request cost, with the right basis', async () => {
-    const tempHome = makeJourneyHome('composed-journey-anthropic-usage-');
+    const h = await makeTempHome();
     const originalKey = process.env['ANTHROPIC_API_KEY'];
     const originalBaseUrl = process.env['ANTHROPIC_BASE_URL'];
     const USAGE_STUB_API_KEY = 'sk-ant-test-composed-journey-usage-0000';
@@ -143,7 +143,7 @@ describe('composed journey (Anthropic) — a politely-failed tool call, all the 
     process.env['ANTHROPIC_BASE_URL'] = stub.baseUrl;
 
     try {
-      const journey = await runComposedJourney(tempHome, {
+      const journey = await runComposedJourney(h, {
         provider: new AnthropicProvider('claude-x'),
         probeWorkflowId: PROBE_WORKFLOW_ID,
         finalSummary: 'single-shot answer',
@@ -180,7 +180,7 @@ describe('composed journey (Anthropic) — a politely-failed tool call, all the 
       else process.env['ANTHROPIC_API_KEY'] = originalKey;
       if (originalBaseUrl === undefined) delete process.env['ANTHROPIC_BASE_URL'];
       else process.env['ANTHROPIC_BASE_URL'] = originalBaseUrl;
-      rmSync(tempHome, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 });

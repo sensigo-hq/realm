@@ -17,6 +17,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { resolveMcpServerEntry } from '../agent/test-support/mcp-server-entry.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../../../..');
@@ -62,17 +63,19 @@ describe(
   '#625 PR-2a, C174 lane E2 — guides and reference pages, from the built realm',
   { timeout: 60_000 },
   () => {
+    let h: TempHome & { readonly root: string };
     let home: string;
     let project: string;
     let runStore: JsonFileStore;
 
-    beforeEach(() => {
-      home = mkdtempSync(join(tmpdir(), 'realm-pages-625-e2-home-'));
+    beforeEach(async () => {
+      h = await makeTempHome();
+      home = h.root;
       project = mkdtempSync(join(tmpdir(), 'realm-pages-625-e2-proj-'));
-      runStore = new JsonFileStore(join(home, '.realm', 'runs'));
+      runStore = h.home.runStore;
     });
-    afterEach(() => {
-      rmSync(home, { recursive: true, force: true });
+    afterEach(async () => {
+      await h.cleanup();
       rmSync(project, { recursive: true, force: true });
     });
 

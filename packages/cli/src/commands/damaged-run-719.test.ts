@@ -4,33 +4,27 @@
 // cell asserts a boolean.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import {
-  mkdtempSync,
-  mkdirSync,
-  rmSync,
-  writeFileSync,
-  existsSync,
-  readFileSync,
-  symlinkSync,
-} from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync, symlinkSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { JsonFileStore, abandonRun, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
+import { abandonRun, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 
+let h: TempHome & { readonly root: string };
 let home: string;
 let runs: string;
-beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), 'realm-719-cli-'));
-  runs = join(home, '.realm', 'runs');
+beforeEach(async () => {
+  h = await makeTempHome();
+  home = h.root;
+  runs = h.home.runStore.runsDirPath;
   mkdirSync(runs, { recursive: true });
 });
-afterEach(() => {
-  rmSync(home, { recursive: true, force: true });
+afterEach(async () => {
+  await h.cleanup();
 });
 
 function realm(args: string[]): { code: number | null; out: string; err: string[] } {
@@ -51,7 +45,7 @@ function realm(args: string[]): { code: number | null; out: string; err: string[
 
 /** One readable run, of workflow `w`. */
 async function readableRun(): Promise<string> {
-  const { record: run } = await new JsonFileStore(runs).create({
+  const { record: run } = await h.home.runStore.create({
     workflowId: 'w',
     workflowVersion: 1,
     params: {},
@@ -177,7 +171,7 @@ describe('issue #719 — the commands that act on runs act on the readable ones 
       'purge --force',
       async () => {
         const id = await readableRun();
-        await abandonRun(new JsonFileStore(runs), id, 'old');
+        await abandonRun(h.home.runStore, id, 'old');
         return id;
       },
       ['run', 'purge', '--older-than', '0m', '--force'],

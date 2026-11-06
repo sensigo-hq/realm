@@ -1,19 +1,18 @@
 // Tests for listRuns business logic.
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { mkdtemp, rm, writeFile, chmod } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, writeFile, chmod } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { listRuns, renderCauseSegment, listCommand } from './list.js';
 import {
-  JsonFileFailedAttemptStore,
   FAILED_ATTEMPT_SIDECAR_MAX_BYTES,
   buildFailedAttemptRecord,
   serializeFailedAttemptLine,
 } from '@sensigo/realm';
 import type { RunStore, RunRecord, FailedAttemptRecord, WorkflowDefinition } from '@sensigo/realm';
 import { snap, listing, doubleClock, noSettle } from '../test-support/snapshot-double.js';
+import { makeTempHome } from '../test-support/temp-home.js';
 
 function makeRun(overrides: Partial<RunRecord> = {}): RunRecord {
   return {
@@ -862,11 +861,13 @@ describe('renderCauseSegment (issue #219, pure helper)', () => {
 
 describe('--stuck cause attribution end-to-end via listRuns (issue #219)', () => {
   it('records present: a --stuck run with a real JsonFileFailedAttemptStore sidecar renders "rejected: N× (...)" appended to its line, using the LATEST record', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'list-cause-present-'));
+    const h = await makeTempHome();
+    const dir = h.home.runStore.runsDirPath;
+    await mkdir(dir, { recursive: true });
     try {
       const runId = 'run-cause-present';
       const run = makeIdleStuckRun({ id: runId });
-      const fas = new JsonFileFailedAttemptStore(dir);
+      const fas = h.home.failedAttemptStore;
       const older = buildFailedAttemptRecord({
         run_id: runId,
         workflow_id: 'test-workflow',
@@ -906,16 +907,18 @@ describe('--stuck cause attribution end-to-end via listRuns (issue #219)', () =>
       // the LATEST record's step/code is shown — never the first attempt's.
       expect(result).not.toContain('first_attempt_step');
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 
   it('capped floor: a sidecar at the byte ceiling renders "≥N×", never a bare "N×"', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'list-cause-capped-'));
+    const h = await makeTempHome();
+    const dir = h.home.runStore.runsDirPath;
+    await mkdir(dir, { recursive: true });
     try {
       const runId = 'run-cause-capped';
       const run = makeIdleStuckRun({ id: runId });
-      const fas = new JsonFileFailedAttemptStore(dir);
+      const fas = h.home.failedAttemptStore;
       const validRec = buildFailedAttemptRecord({
         run_id: runId,
         workflow_id: 'test-workflow',
@@ -940,12 +943,14 @@ describe('--stuck cause attribution end-to-end via listRuns (issue #219)', () =>
       expect(result).toContain('rejected: ≥1× (classify: VALIDATION_OUTPUT_SCHEMA)');
       expect(result).not.toContain('rejected: 1× (');
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 
   it('absence = parked: a --stuck run with NO sidecar renders byte-identically to injecting no failedAttemptStore at all (no cause segment)', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'list-cause-absent-'));
+    const h = await makeTempHome();
+    const dir = h.home.runStore.runsDirPath;
+    await mkdir(dir, { recursive: true });
     try {
       const run = makeIdleStuckRun({ id: 'run-cause-absent' });
       const store = makeStore([run]);
@@ -953,7 +958,7 @@ describe('--stuck cause attribution end-to-end via listRuns (issue #219)', () =>
       // written for this run (the CLI-driven / parked-between-drives case: absence, not an
       // error). Compared against injecting `undefined` (today's pre-#219 shape, what every OTHER
       // test in this file does).
-      const fas = new JsonFileFailedAttemptStore(dir);
+      const fas = h.home.failedAttemptStore;
 
       const [resultWithStore, resultWithoutStore] = await Promise.all([
         listRuns(undefined, store, undefined, true, undefined, fas),
@@ -964,12 +969,14 @@ describe('--stuck cause attribution end-to-end via listRuns (issue #219)', () =>
       expect(resultWithStore).not.toContain('rejected:');
       expect(resultWithStore).not.toContain('cause:');
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 
   it('I/O failure is visible, not silent: an unreadable sidecar renders "cause: unavailable" for ITS run only, never conflated with absence, and the rest of the list still completes', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'list-cause-ioerror-'));
+    const h = await makeTempHome();
+    const dir = h.home.runStore.runsDirPath;
+    await mkdir(dir, { recursive: true });
     const brokenRunId = 'run-cause-ioerror-broken';
     const okRunId = 'run-cause-ioerror-ok';
     const sidecarPath = join(dir, `${brokenRunId}.attempts.jsonl`);
@@ -977,7 +984,7 @@ describe('--stuck cause attribution end-to-end via listRuns (issue #219)', () =>
       const brokenRun = makeIdleStuckRun({ id: brokenRunId });
       const okRun = makeIdleStuckRun({ id: okRunId });
 
-      const fas = new JsonFileFailedAttemptStore(dir);
+      const fas = h.home.failedAttemptStore;
       const rec = buildFailedAttemptRecord({
         run_id: okRunId,
         workflow_id: 'test-workflow',
@@ -1009,7 +1016,7 @@ describe('--stuck cause attribution end-to-end via listRuns (issue #219)', () =>
       expect(okLine).not.toContain('cause: unavailable');
     } finally {
       await chmod(sidecarPath, 0o600).catch(() => {});
-      await rm(dir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 });

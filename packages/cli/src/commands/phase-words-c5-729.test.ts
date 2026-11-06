@@ -15,23 +15,26 @@ import { fileURLToPath } from 'node:url';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   JsonFileStore,
-  JsonWorkflowStore,
   advanceRun,
   executeStep,
   type WorkflowDefinition,
 } from '@sensigo/realm';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 const AT = '2026-01-01T00:00:00.000Z';
 
 let root: string;
+let h: TempHome & { readonly root: string };
 let home: string;
-beforeEach(() => {
+beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'realm-c5-words-'));
-  home = join(root, 'home');
+  h = await makeTempHome();
+  home = h.root;
   mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
 });
-afterEach(() => {
+afterEach(async () => {
+  await h.cleanup();
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -359,7 +362,7 @@ async function registered(steps: Record<string, unknown>): Promise<WorkflowDefin
     schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
     steps,
   } as unknown as WorkflowDefinition;
-  await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(def);
+  await h.home.workflowStore.register(def);
   return def;
 }
 
@@ -462,7 +465,7 @@ describe('#729 PR-3 correction 5 (J-2) — `realm run respond` prints the phase 
         ? { after: { description: 'After.', execution: 'auto', depends_on: ['confirm'] } }
         : {}),
     });
-    const runs = new JsonFileStore(join(home, '.realm', 'runs'));
+    const runs = h.home.runStore;
     const { record: run } = await runs.create({
       workflowId: def.id,
       workflowVersion: 1,

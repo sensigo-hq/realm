@@ -23,7 +23,6 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
-  JsonWorkflowStore,
   createDefaultRegistry,
   type ExtensionIdentityEntry,
   type LoadBearingRunRecordField,
@@ -37,21 +36,25 @@ import { runAgent } from '../agent/run-agent.js';
 import { LlmProvider } from '../agent/providers/llm-provider.js';
 import { EventEmitter } from 'node:events';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 /** The manifest's one declared secret: a fake canary. */
 const DECLARED = 'FAKE-C5-J5-DECLARED-0001';
 
 let root: string;
+let h: TempHome & { readonly root: string };
 let home: string;
 let proj: string;
-beforeEach(() => {
+beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'realm-c5-j5-'));
-  home = join(root, 'home');
+  h = await makeTempHome();
+  home = h.root;
   mkdirSync(join(home, '.realm'), { recursive: true });
   proj = join(root, 'proj');
 });
-afterEach(() => {
+afterEach(async () => {
+  await h.cleanup();
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -374,7 +377,7 @@ describe("#729 PR-3 correction 5 (J-5), correction 6 (C6-1) — R41's marker nev
   }, 120_000);
 
   it('C6-1 (6): a copy that records no deployment root, a start-only run → `resolved (no manifest)` (the proof names the state; the value shown, as correction 4 and 5 showed it)', async () => {
-    const workflows = new JsonWorkflowStore(join(home, '.realm', 'workflows'));
+    const workflows = h.home.workflowStore;
     await workflows.register({
       id: 'c6noroot',
       name: 'c6noroot',
@@ -382,8 +385,7 @@ describe("#729 PR-3 correction 5 (J-5), correction 6 (C6-1) — R41's marker nev
       schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
       steps: { first: { description: 'First.', execution: 'agent', depends_on: [] } },
     } as WorkflowDefinition);
-    const { JsonFileStore } = await import('@sensigo/realm');
-    const runs = new JsonFileStore(join(home, '.realm', 'runs'));
+    const runs = h.home.runStore;
     const { record: run } = await runs.create({
       workflowId: 'c6noroot',
       workflowVersion: 1,
@@ -439,7 +441,7 @@ describe('#729 PR-3 correction 5 (J-5) — the in-process creators', () => {
   it("`realm listen`: a route's run is born with the project's start entry", async () => {
     clearProjectExtensionsCache();
     const id = project({ manifest: true });
-    const registered = await new JsonWorkflowStore(join(home, '.realm', 'workflows')).get(id);
+    const registered = await h.home.workflowStore.get(id);
     const definition = {
       ...registered,
       trigger: {

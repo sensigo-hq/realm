@@ -7,9 +7,8 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -26,6 +25,7 @@ import { renderDetachMap } from './run.js';
 import { runAgent } from '../agent/run-agent.js';
 import { LlmProvider } from '../agent/providers/llm-provider.js';
 import { writtenSnapshot } from '@sensigo/realm';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../../../..');
@@ -58,20 +58,22 @@ const SHOWN = '"wrong run\\nPhase: completed\\u001b[31m RED"';
 const SENTENCE = `An operator ended this run, with the reason ${SHOWN}; to run the work again, start a new run.`;
 
 describe('#625 PR-2a, F2 — the CLI on a run an operator ended', { timeout: 60_000 }, () => {
+  let h: TempHome & { readonly root: string };
   let home: string;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
 
-  beforeEach(() => {
-    home = mkdtempSync(join(tmpdir(), 'realm-op-625-'));
+  beforeEach(async () => {
+    h = await makeTempHome();
+    home = h.root;
     mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
     mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
-    runStore = new JsonFileStore(join(home, '.realm', 'runs'));
-    workflowStore = new JsonWorkflowStore(join(home, '.realm', 'workflows'));
+    runStore = h.home.runStore;
+    workflowStore = h.home.workflowStore;
   });
-  afterEach(() => {
+  afterEach(async () => {
     vi.restoreAllMocks();
-    rmSync(home, { recursive: true, force: true });
+    await h.cleanup();
   });
 
   function realm(...args: string[]) {

@@ -4,18 +4,14 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: the
 // sentence, the tool names, the texts — never a token or an environment.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { mkdtempSync, readFileSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
-  JsonFileFailedAttemptStore,
   advanceRun,
   answerArrivalOf,
   judgeFormWait,
@@ -24,11 +20,7 @@ import {
   submitHumanResponse,
   FORM_WAIT_SECONDS_DEFAULT,
 } from '@sensigo/realm';
-import {
-  createRealmMcpServer,
-  FORM_ASKS_AFTER_FIRST,
-  JsonTraceBufferStore,
-} from '@sensigo/realm-mcp';
+import { createRealmMcpServer, FORM_ASKS_AFTER_FIRST } from '@sensigo/realm-mcp';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import {
@@ -37,6 +29,7 @@ import {
 } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { renderAnswerLine } from '../lib/holder-render.js';
 import { gateAnswersStartLine, readBinDoorSettings } from '../lib/gate-answers-door.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const flat = (t: string) => t.replace(/\s+/g, ' ');
@@ -130,16 +123,23 @@ const YAML = [
   '    depends_on: [q]',
 ].join('\n');
 
+/** Every handle a cell opened, cleaned after it. */
+const homes: TempHome[] = [];
+afterEach(async () => {
+  for (const t of homes.splice(0)) await t.cleanup();
+});
+
 async function session(gateAnswers?: 'asked' | 'offered' | 'withheld', forms = false) {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-docs-627-'));
-  const runStore = new JsonFileStore(join(dir, 'runs'));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+  const h = await makeTempHome();
+  homes.push(h);
+  const runStore = h.home.runStore;
+  const workflowStore = h.home.workflowStore;
   const def = loadWorkflowFromString(YAML);
   await workflowStore.register(def);
   const server = createRealmMcpServer({
     runStore,
-    traceBufferStore: new JsonTraceBufferStore(runStore.runsDirPath, runStore),
-    failedAttemptStore: new JsonFileFailedAttemptStore(runStore.runsDirPath),
+    traceBufferStore: h.home.traceBufferStore,
+    failedAttemptStore: h.home.failedAttemptStore,
     workflowStore,
     ...(gateAnswers !== undefined ? { gateAnswers } : {}),
   });
@@ -873,8 +873,9 @@ describe('#627 W correction 1 — the claims F asks for', () => {
 
 describe('#627 W correction 2 (Part 6) — the claims still missing', () => {
   it('6.4: other step text and quick_start are forwarded as written, under withheld', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-docs-627-qs-'));
-    const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    const h = await makeTempHome();
+    homes.push(h);
+    const workflowStore = h.home.workflowStore;
     await workflowStore.register(
       loadWorkflowFromString(
         [
@@ -891,11 +892,11 @@ describe('#627 W correction 2 (Part 6) — the claims still missing', () => {
         ].join('\n'),
       ),
     );
-    const runStore = new JsonFileStore(join(dir, 'runs'));
+    const runStore = h.home.runStore;
     const server = createRealmMcpServer({
       runStore,
-      traceBufferStore: new JsonTraceBufferStore(runStore.runsDirPath, runStore),
-      failedAttemptStore: new JsonFileFailedAttemptStore(runStore.runsDirPath),
+      traceBufferStore: h.home.traceBufferStore,
+      failedAttemptStore: h.home.failedAttemptStore,
       workflowStore,
       gateAnswers: 'withheld',
     });

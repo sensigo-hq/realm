@@ -22,8 +22,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { JsonFileStore } from '@sensigo/realm';
 import { startAnthropicStub } from '../agent/test-support/anthropic-stub.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 const ANTHROPIC_LIST = 'https://platform.claude.com/docs/en/models/overview';
@@ -62,19 +62,21 @@ const WORKFLOW = [
 ].join('\n');
 
 let root: string;
+let h: TempHome & { readonly root: string };
 let home: string;
 let wfDir: string;
 
-beforeEach(() => {
+beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'realm-676-cli-'));
-  home = join(root, 'home');
+  h = await makeTempHome();
+  home = h.root;
   wfDir = join(root, 'wf');
-  mkdirSync(home);
   mkdirSync(wfDir);
   writeFileSync(join(wfDir, 'workflow.yaml'), WORKFLOW, 'utf8');
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await h.cleanup();
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -254,7 +256,7 @@ describe('realm agent refuses without --model, before any run (issue #676)', () 
   }, 30_000);
 
   it('E2 --run-id of an existing run, no --model → "If run <id> exists, it was not changed.", the run file unchanged', async () => {
-    const store = new JsonFileStore(join(home, '.realm', 'runs'));
+    const store = h.home.runStore;
     const { record: run } = await store.create({
       workflowId: 'no-default-model-676',
       workflowVersion: 1,

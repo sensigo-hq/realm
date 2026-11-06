@@ -3,18 +3,17 @@
 // purge.test.ts / export.test.ts idiom (bypassing store.create/update so the fixture's own
 // run_phase can be deliberately stale — the whole point of a #282 "G" fixture).
 import { describe, it, expect } from 'vitest';
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import { purgeRuns } from './purge.js';
 import { resumeRun } from './resume.js';
 import { buildExportBundle } from './export.js';
 import { listRuns } from './list.js';
-import { JsonFileStore, JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import type { RunRecord, WorkflowDefinition } from '@sensigo/realm';
-import { JsonTraceBufferStore } from '@sensigo/realm-mcp';
+import { makeTempHome } from '../test-support/temp-home.js';
 
 const def: WorkflowDefinition = {
   id: 'wf-282',
@@ -83,10 +82,12 @@ async function injectRun(dir: string, run: RunRecord): Promise<void> {
 
 describe('PURGE_DERIVES_PHASE end-to-end (issue #279, increment 2, PR-C)', () => {
   it('a grandfathered ("G") fixture purges (bucket "purged", not "blocked") — real JsonTraceBufferStore + real JsonFileStore', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-282-purge-'));
+    const h = await makeTempHome();
+    const dir = h.home.runStore.runsDirPath;
+    await mkdir(dir, { recursive: true });
     try {
-      const runStore = new JsonFileStore(dir);
-      const traceBufferStore = new JsonTraceBufferStore(dir, runStore);
+      const runStore = h.home.runStore;
+      const traceBufferStore = h.home.traceBufferStore;
       const run = makeGrandfatheredFixture({});
       await injectRun(dir, run);
 
@@ -98,15 +99,17 @@ describe('PURGE_DERIVES_PHASE end-to-end (issue #279, increment 2, PR-C)', () =>
       expect(result.blocked).toHaveLength(0);
       expect(existsSync(join(dir, `${run.id}.json`))).toBe(false);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 
   it('a second G fixture with an unknown-age claim is skipped in BATCH mode (not force-purged), and reports resumable:true for the fail∧gate shape', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-282-purge-batch-'));
+    const h = await makeTempHome();
+    const dir = h.home.runStore.runsDirPath;
+    await mkdir(dir, { recursive: true });
     try {
-      const runStore = new JsonFileStore(dir);
-      const traceBufferStore = new JsonTraceBufferStore(dir, runStore);
+      const runStore = h.home.runStore;
+      const traceBufferStore = h.home.traceBufferStore;
       const run = makeGrandfatheredFixture({
         id: 'g-unknown-claim',
         completed_steps: [],
@@ -137,17 +140,19 @@ describe('PURGE_DERIVES_PHASE end-to-end (issue #279, increment 2, PR-C)', () =>
       expect(dryRun2.selected[0]?.resumable).toBe(true);
       expect(selected).toBeUndefined(); // the unknown-claim fixture never entered `selected` in batch
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 });
 
 describe('RESUME_STRIPS_ZOMBIE_GATE / RESUME_ADMITS_GRANDFATHERED (issue #279, increment 2, PR-C)', () => {
   it('resume, through the CLI admission gate, ADMITS a grandfathered G fixture and strips its zombie gate — the disclosure is returned for the CLI to print', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-282-resume-'));
+    const h = await makeTempHome();
+    const dir = h.home.runStore.runsDirPath;
+    await mkdir(dir, { recursive: true });
     try {
-      const runStore = new JsonFileStore(dir);
-      const workflowStore = new JsonWorkflowStore(join(dir, 'workflows'));
+      const runStore = h.home.runStore;
+      const workflowStore = h.home.workflowStore;
       await workflowStore.register(def);
       const run = makeGrandfatheredFixture({
         completed_steps: [],
@@ -168,17 +173,17 @@ describe('RESUME_STRIPS_ZOMBIE_GATE / RESUME_ADMITS_GRANDFATHERED (issue #279, i
       expect(resumed.failed_steps).not.toContain('a');
       expect(resumed.terminal_state).toBe(false);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 });
 
 describe('EXPORT_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
   it('exporting a genuinely-terminal honest run (green today) is verbatim, no best-effort-snapshot warning', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-282-export-honest-'));
+    const h = await makeTempHome();
     try {
-      const runStore = new JsonFileStore(dir);
-      const traceBufferStore = new JsonTraceBufferStore(dir, runStore);
+      const runStore = h.home.runStore;
+      const traceBufferStore = h.home.traceBufferStore;
       const { record: run } = await runStore.create({
         workflowId: def.id,
         workflowVersion: 1,
@@ -198,15 +203,17 @@ describe('EXPORT_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
       });
       expect(warning).toBeUndefined();
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 
   it('a synthetic stale-gate ∧ pending-ledger record surfaces the drain-warning (mutually exclusive with the non-terminal warning)', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-282-export-drain-'));
+    const h = await makeTempHome();
+    const dir = h.home.runStore.runsDirPath;
+    await mkdir(dir, { recursive: true });
     try {
-      const runStore = new JsonFileStore(dir);
-      const traceBufferStore = new JsonTraceBufferStore(dir, runStore);
+      const runStore = h.home.runStore;
+      const traceBufferStore = h.home.traceBufferStore;
       const run = makeGrandfatheredFixture({
         finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
       });
@@ -218,16 +225,18 @@ describe('EXPORT_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
       });
       expect(warning).toMatch(/finalizer\(s\) not yet delivered — realm run drain/);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 });
 
 describe('list/inspect render pins (issue #279, increment 2, PR-C)', () => {
   it('list.ts renders the DERIVED phase for a grandfathered G fixture, and shows no live-looking gate line', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-282-list-'));
+    const h = await makeTempHome();
+    const dir = h.home.runStore.runsDirPath;
+    await mkdir(dir, { recursive: true });
     try {
-      const runStore = new JsonFileStore(dir);
+      const runStore = h.home.runStore;
       const run = makeGrandfatheredFixture({});
       await injectRun(dir, run);
 
@@ -236,31 +245,34 @@ describe('list/inspect render pins (issue #279, increment 2, PR-C)', () => {
       expect(output).not.toContain('gate_waiting');
       expect(output).not.toContain('gate:');
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 
   it('list.ts --status completed FINDS a grandfathered G fixture (filter derives, never trusts persisted)', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-282-list-filter-'));
+    const h = await makeTempHome();
+    const dir = h.home.runStore.runsDirPath;
+    await mkdir(dir, { recursive: true });
     try {
-      const runStore = new JsonFileStore(dir);
+      const runStore = h.home.runStore;
       const run = makeGrandfatheredFixture({});
       await injectRun(dir, run);
 
       const output = await listRuns(undefined, runStore, 'completed');
       expect(output).toContain(run.id);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 });
 
 describe('SAVE_DERIVES_ON_IMPORT (issue #279, increment 2, PR-C)', () => {
   it('a G record imported via save() persists the DERIVED phase on get(); pending_gate itself is NOT stripped (a verbatim import, not a resume)', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-282-save-'));
+    const h = await makeTempHome();
+    const dir = h.home.runStore.runsDirPath;
     try {
       await mkdir(dir, { recursive: true });
-      const runStore = new JsonFileStore(dir);
+      const runStore = h.home.runStore;
       const run = makeGrandfatheredFixture({
         completed_steps: [],
         failed_steps: ['a'],
@@ -273,7 +285,7 @@ describe('SAVE_DERIVES_ON_IMPORT (issue #279, increment 2, PR-C)', () => {
       expect(reread.run_phase).toBe('failed');
       expect(reread.pending_gate).toBeDefined(); // NOT stripped — save() is a verbatim import
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 });

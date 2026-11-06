@@ -6,13 +6,9 @@
 // landed (`gate_unanswered` has no code): no selector of it exists, and none is built here.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { describe, expect, it } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, expect, it, afterEach } from 'vitest';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
-  JsonWorkflowStore,
   advanceRun,
   classifyInProgressClaims,
   writtenSnapshot,
@@ -25,6 +21,7 @@ import { classifyGateExpiry } from './drain.js';
 import { sweepExpiredGates } from './listen.js';
 import { isPurgeEligible } from './purge.js';
 import { isAutoReclaimable } from './reclaim.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const T = Date.parse('2031-05-06T07:00:00.000Z');
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -65,6 +62,12 @@ async function fanOutPastItsDeadline() {
   return { clock, store, runId: record.id };
 }
 
+/** Every handle a cell opened, cleaned after it. */
+const homes: TempHome[] = [];
+afterEach(async () => {
+  for (const t of homes.splice(0)) await t.cleanup();
+});
+
 describe('#715 (b) §B.3 — each selector follows its core judge, at the row’s own reading', () => {
   it('drain --expired (classifyGateExpiry): the question is enactable — its deadline passed, though the run was written 20 s ago', async () => {
     // (a) red when the selector judges by the record's updated_at, or at another instant than the
@@ -81,8 +84,9 @@ describe('#715 (b) §B.3 — each selector follows its core judge, at the row’
     // (a) red when the sweep selects by the record's updated_at, or judges at another instant; (b)
     //     prints the sweep's counts and the run's phase.
     const { store, runId } = await fanOutPastItsDeadline();
-    const dir = await mkdtemp(join(tmpdir(), 'realm-715b-selectors-'));
-    const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    const h = await makeTempHome();
+    homes.push(h);
+    const workflowStore = h.home.workflowStore;
     await workflowStore.register(FAN);
     const swept = await sweepExpiredGates({
       runStore: store,

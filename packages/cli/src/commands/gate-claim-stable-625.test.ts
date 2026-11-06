@@ -11,8 +11,7 @@
 // afterwards — token, holder, since, deadline — AND the question is still open. Each carries the
 // change that turns it red and what it prints on failure: synthetic ids only.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   JsonFileStore,
@@ -40,6 +39,7 @@ import { sweepStalePhases } from './gc.js';
 import { migrateStampSeals } from './run-migrate.js';
 import { isAutoReclaimable } from './reclaim.js';
 import { writtenSnapshot } from '@sensigo/realm';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const echo: StepDispatcher = async (_step, input) => ({ ...input });
 const PROGRAM: Attributed = { by: 'alice@host', by_source: 'derived', channel: 'agent' };
@@ -68,6 +68,7 @@ const workflowStore: WorkflowRegistrar = {
   list: async () => [],
 };
 
+let h: TempHome;
 let dir: string;
 let store: JsonFileStore;
 let runId: string;
@@ -75,8 +76,9 @@ let before: ClaimRecord;
 let gateId: string;
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'realm-gate-claim-stable-cli-'));
-  store = new JsonFileStore(dir);
+  h = await makeTempHome();
+  dir = h.home.runStore.runsDirPath;
+  store = h.home.runStore;
   const { record: run } = await store.create({
     workflowId: definition.id,
     workflowVersion: 1,
@@ -98,7 +100,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   vi.restoreAllMocks();
-  await rm(dir, { recursive: true, force: true });
+  await h.cleanup();
 });
 
 /** The claim and the open question must be exactly what the fixture opened. */

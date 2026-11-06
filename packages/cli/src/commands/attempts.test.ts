@@ -6,11 +6,12 @@
 // not module load (drain.ts's header has the full account). This file's lazy-import idiom stays;
 // historicized here only.
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, mkdir, appendFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { attemptsCommand } from './attempts.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
+let h: TempHome & { readonly root: string };
 let home: string;
 let runsDir: string;
 let originalHome: string | undefined;
@@ -22,8 +23,9 @@ describe('realm run attempts (CLI command)', () => {
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
   beforeAll(async () => {
-    home = await mkdtemp(join(tmpdir(), 'attempts-cli-'));
-    runsDir = join(home, '.realm', 'runs');
+    h = await makeTempHome();
+    home = h.root;
+    runsDir = h.home.runStore.runsDirPath;
     await mkdir(runsDir, { recursive: true });
     originalHome = process.env['HOME'];
     process.env['HOME'] = home; // set before the first '@sensigo/realm' import below
@@ -32,7 +34,7 @@ describe('realm run attempts (CLI command)', () => {
   afterAll(async () => {
     if (originalHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = originalHome;
-    await rm(home, { recursive: true, force: true });
+    await h.cleanup();
   });
 
   beforeEach(() => {
@@ -65,8 +67,7 @@ describe('realm run attempts (CLI command)', () => {
       error_code: 'VALIDATION_OUTPUT_SCHEMA',
     },
   ): Promise<void> {
-    const { JsonFileFailedAttemptStore, buildFailedAttemptRecord, serializeFailedAttemptLine } =
-      await import('@sensigo/realm');
+    const { buildFailedAttemptRecord, serializeFailedAttemptLine } = await import('@sensigo/realm');
     const rec = buildFailedAttemptRecord({
       run_id: runId,
       workflow_id: 'wf',
@@ -84,7 +85,7 @@ describe('realm run attempts (CLI command)', () => {
       params: { ticket_body: 'x' },
       trace_entry_count: 0,
     });
-    const store = new JsonFileFailedAttemptStore(runsDir);
+    const store = h.home.failedAttemptStore;
     await store.append(runId, serializeFailedAttemptLine({ ...rec }).line);
   }
 
@@ -148,19 +149,19 @@ describe('realm run attempts (CLI command)', () => {
 // as read (`error_count − entries`), with the count on the row; a record written before #759 shows a
 // FLOOR (`≥N problems`), never an invented remainder. A failure prints the table: key names, rules.
 describe('issue #759 — realm run attempts prints every problem', () => {
+  let h759: TempHome & { readonly root: string };
   let home759: string;
-  let runs759: string;
   let originalHome759: string | undefined;
   let logSpy759: ReturnType<typeof vi.spyOn>;
   let n759 = 0;
 
   beforeAll(async () => {
-    home759 = await mkdtemp(join(tmpdir(), 'attempts-759-'));
-    runs759 = join(home759, '.realm', 'runs');
-    await mkdir(runs759, { recursive: true });
+    h759 = await makeTempHome();
+    home759 = h759.root;
+    await mkdir(h759.home.runStore.runsDirPath, { recursive: true });
   });
   afterAll(async () => {
-    await rm(home759, { recursive: true, force: true });
+    await h759.cleanup();
   });
   beforeEach(() => {
     originalHome759 = process.env['HOME'];
@@ -188,8 +189,7 @@ describe('issue #759 — realm run attempts prints every problem', () => {
     }));
 
   async function seed(id: string, n: number, errorCount?: number): Promise<void> {
-    const { JsonFileFailedAttemptStore, buildFailedAttemptRecord, serializeFailedAttemptLine } =
-      await import('@sensigo/realm');
+    const { buildFailedAttemptRecord, serializeFailedAttemptLine } = await import('@sensigo/realm');
     const rec = buildFailedAttemptRecord({
       run_id: id,
       workflow_id: 'wf',
@@ -201,10 +201,7 @@ describe('issue #759 — realm run attempts prints every problem', () => {
       params: {},
       trace_entry_count: 0,
     });
-    await new JsonFileFailedAttemptStore(runs759).append(
-      id,
-      serializeFailedAttemptLine({ ...rec }).line,
-    );
+    await h759.home.failedAttemptStore.append(id, serializeFailedAttemptLine({ ...rec }).line);
   }
 
   it('13 problems → `13 problems` on the row, ten lines, then `and 3 more` (reds: `(+N more)`; the builder dropping the count)', async () => {

@@ -24,8 +24,6 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
-  JsonFileStore,
-  JsonWorkflowStore,
   type CacheAuto,
   type RunRecord,
   type WorkflowDefinition,
@@ -34,6 +32,7 @@ import { OpenAIProvider } from '../agent/providers/openai-provider.js';
 import type { ToolDefinition } from '../agent/mcp/mcp-extensions.js';
 import { promptCacheStartLine, type ResolvedPromptCache } from '../agent/prompt-cache.js';
 import { listenCachingFacts } from './listen.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const CLI = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 const LUNA_USAGE = {
@@ -90,11 +89,14 @@ const PRICED = row({ cache_read: 0.4, cache_write: 5 });
 const NAMES_PRICES = 'version: 1\nrunner:\n  cache:\n    economics: prices.json\n';
 
 let root: string;
+/** Every deployment's home, cleaned with the root. */
+const homes: TempHome[] = [];
 beforeAll(() => {
   root = mkdtempSync(join(tmpdir(), 'realm-896b-e2e-'));
   writeFileSync(join(root, 'hook.mjs'), HOOK);
 });
-afterAll(() => {
+afterAll(async () => {
+  for (const t of homes.splice(0)) await t.cleanup();
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -106,7 +108,9 @@ async function deployment(
   opts: { realmYaml?: string; prices?: string },
 ): Promise<Deployment> {
   const base = join(root, name);
-  const home = join(base, 'home');
+  const h = await makeTempHome();
+  homes.push(h);
+  const home = h.root;
   const proj = join(base, 'proj');
   const wfDir = join(proj, 'workflows', 'wf');
   mkdirSync(home, { recursive: true });
@@ -130,8 +134,8 @@ async function deployment(
     source_dir: wfDir,
     trust_root: proj,
   } as unknown as WorkflowDefinition;
-  await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(definition);
-  const { record: run } = await new JsonFileStore(join(home, '.realm', 'runs')).create({
+  await h.home.workflowStore.register(definition);
+  const { record: run } = await h.home.runStore.create({
     workflowId: definition.id,
     workflowVersion: 1,
     params: { ticket: TICKET },

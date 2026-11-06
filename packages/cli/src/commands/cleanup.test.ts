@@ -8,6 +8,7 @@ import { JsonFileStore } from '@sensigo/realm';
 import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
 import type { RunRecord } from '@sensigo/realm';
 import { v4 as uuidv4 } from 'uuid';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 /** Write a RunRecord directly to the store dir, bypassing store.create/update timestamps. */
 async function injectRun(dir: string, run: RunRecord): Promise<void> {
@@ -41,13 +42,16 @@ function makeRun(overrides: Partial<RunRecord> & { id?: string }): RunRecord {
 describe('cleanupRuns', () => {
   let dir: string;
   let loc: TestLocation;
+  let h: TempHome;
 
   beforeEach(async () => {
     loc = await createTestLocation({ start: '2024-06-01T12:00:00Z' });
     dir = loc.runsDir;
+    h = await makeTempHome({ home: loc.root });
   });
 
   afterEach(async () => {
+    await h.cleanup();
     await loc.remove();
   });
 
@@ -59,7 +63,7 @@ describe('cleanupRuns', () => {
     const run = makeRun({ updated_at: oldTime });
     await injectRun(dir, run);
 
-    const store = new JsonFileStore(dir);
+    const store = h.home.runStore;
     const { affected } = await cleanupRuns({ olderThan: '1d' }, store);
 
     expect(affected).toHaveLength(1);
@@ -79,7 +83,7 @@ describe('cleanupRuns', () => {
     const run = makeRun({ updated_at: recentTime });
     await injectRun(dir, run);
 
-    const store = new JsonFileStore(dir);
+    const store = h.home.runStore;
     const { affected } = await cleanupRuns({ olderThan: '1h' }, store);
 
     expect(affected).toHaveLength(0);
@@ -96,7 +100,7 @@ describe('cleanupRuns', () => {
     const run = makeRun({ updated_at: oldTime });
     await injectRun(dir, run);
 
-    const store = new JsonFileStore(dir);
+    const store = h.home.runStore;
     const { affected } = await cleanupRuns({ olderThan: '1d', dryRun: true }, store);
 
     expect(affected).toHaveLength(1);
@@ -119,7 +123,7 @@ describe('cleanupRuns', () => {
     });
     await injectRun(dir, terminalRun);
 
-    const store = new JsonFileStore(dir);
+    const store = h.home.runStore;
     const { affected } = await cleanupRuns({ olderThan: '1d' }, store);
 
     expect(affected).toHaveLength(0);
@@ -147,7 +151,7 @@ describe('cleanupRuns', () => {
     });
     await injectRun(dir, gateRun);
 
-    const store = new JsonFileStore(dir);
+    const store = h.home.runStore;
     const { affected } = await cleanupRuns({ olderThan: '1d' }, store);
 
     expect(affected).toHaveLength(0);
@@ -178,7 +182,7 @@ describe('cleanupRuns', () => {
     });
     await injectRun(dir, staleGated);
 
-    const store = new JsonFileStore(dir);
+    const store = h.home.runStore;
     const { affected } = await cleanupRuns({ olderThan: '1d' }, store);
     expect(affected).toHaveLength(0);
 
@@ -196,7 +200,7 @@ describe('cleanupRuns', () => {
     const labelOnly = makeRun({ updated_at: oldTime, run_phase: 'gate_waiting' });
     await injectRun(dir, labelOnly);
 
-    const store = new JsonFileStore(dir);
+    const store = h.home.runStore;
     const { affected } = await cleanupRuns({ olderThan: '1d' }, store);
     expect(affected).toHaveLength(1);
   });
@@ -208,7 +212,7 @@ describe('cleanupRuns', () => {
     const idle = makeRun({ updated_at: oldTime, run_phase: 'running' });
     await injectRun(dir, idle);
 
-    const store = new JsonFileStore(dir);
+    const store = h.home.runStore;
     await cleanupRuns({ olderThan: '1d' }, store);
     const { record: swept } = await store.get(idle.id);
     expect(swept.sealed_by).toEqual({ arm: 'cleanup_sweep' });
@@ -226,7 +230,7 @@ describe('cleanupRuns', () => {
     const run = makeRun({ updated_at: oldTime, run_phase: 'running', failed_steps: ['step_a'] });
     await injectRun(dir, run);
 
-    const store = new JsonFileStore(dir);
+    const store = h.home.runStore;
     const { affected } = await cleanupRuns({ olderThan: '1d' }, store);
     expect(affected).toHaveLength(1);
 
@@ -249,7 +253,7 @@ describe('cleanupRuns', () => {
     });
     await injectRun(dir, run);
 
-    const store = new JsonFileStore(dir);
+    const store = h.home.runStore;
     const { affected } = await cleanupRuns({ olderThan: '1d' }, store);
     expect(affected).toHaveLength(1);
 
@@ -266,7 +270,7 @@ describe('cleanupRuns', () => {
     await loc.clock.set(now);
     const run = makeRun({ updated_at: new Date(now.getTime() - 2 * 86_400_000).toISOString() });
     await injectRun(dir, run);
-    const store = new JsonFileStore(dir);
+    const store = h.home.runStore;
     // Another writer lands between the sweep's read and its seal.
     const moving = new Proxy(store, {
       get(target, prop) {

@@ -9,19 +9,17 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   ExtensionRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type StepDefinition,
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { advanceRunFromShell } from './run-advance.js';
+import { makeTempHome } from '../test-support/temp-home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 
@@ -45,10 +43,11 @@ const wf = (id: string, steps: Record<string, StepDefinition>): WorkflowDefiniti
 
 /** `realm run advance` on a fresh run of `def`; its last line, the run id as `<run>`, and its exit. */
 async function advance(def: WorkflowDefinition, params: Record<string, unknown>) {
-  const home = mkdtempSync(join(tmpdir(), 'realm-f15-cli-'));
+  const h = await makeTempHome();
+  const home = h.root;
   try {
-    const runs = new JsonFileStore(join(home, 'runs'));
-    const workflows = new JsonWorkflowStore(join(home, 'wf'));
+    const runs = h.home.runStore;
+    const workflows = h.home.workflowStore;
     await workflows.register(def);
     const { record: run } = await runs.create({ workflowId: def.id, workflowVersion: 1, params });
     const lines: string[] = [];
@@ -63,7 +62,7 @@ async function advance(def: WorkflowDefinition, params: Record<string, unknown>)
     );
     return { code, last: lines.at(-1)!.split(run.id).join('<run>') };
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    await h.cleanup();
   }
 }
 

@@ -4,12 +4,12 @@
 // (the "fail the run visibly" half of the invariant — the run is never silently stranded).
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { JsonFileStore, JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 // The compiled CLI entry — turbo runs test after build, so dist/ exists.
 const DIST_CLI = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist', 'index.js');
@@ -55,14 +55,16 @@ function spawnAgentChild(
 }
 
 describe('listen child failure path (spawn-based)', () => {
+  let h: TempHome & { readonly root: string };
   let home: string;
 
-  beforeAll(() => {
-    home = mkdtempSync(join(tmpdir(), 'realm-child-ext-'));
+  beforeAll(async () => {
+    h = await makeTempHome();
+    home = h.root;
   });
 
-  afterAll(() => {
-    rmSync(home, { recursive: true, force: true });
+  afterAll(async () => {
+    await h.cleanup();
   });
 
   it('a real agent --run-id child against a broken module exits nonzero and writes extensions_load_failed', async () => {
@@ -89,10 +91,10 @@ describe('listen child failure path (spawn-based)', () => {
       source_dir: workflowDir,
       trust_root: proj,
     };
-    const workflowStore = new JsonWorkflowStore(join(home, '.realm', 'workflows'));
+    const workflowStore = h.home.workflowStore;
     await workflowStore.register(definition);
 
-    const runStore = new JsonFileStore(join(home, '.realm', 'runs'));
+    const runStore = h.home.runStore;
     const { record: run } = await runStore.create({
       workflowId: 'child-ext-wf',
       workflowVersion: 1,

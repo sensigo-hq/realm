@@ -5,16 +5,13 @@
 // every choice). Beside each: (a) the change that turns it red; (b) what it prints on failure — the
 // lines (the names are fake), never a value.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   ExtensionRegistry,
-  JsonFileStore,
-  JsonWorkflowStore,
   advanceRun,
   endsWithCommand,
   oneOf,
@@ -25,6 +22,7 @@ import {
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { CLI_COMMANDS, writerHost } from './ways-renderer.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLI = join(HERE, '../../dist/index.js');
@@ -107,13 +105,17 @@ describe(
   '#872 (b1) correction 1 HC2 (H2) — realm run inspect’s Resumable: line, on the build',
   { timeout: 60_000 },
   () => {
+    let h: TempHome & { readonly root: string };
     let home: string;
-    beforeEach(() => {
-      home = mkdtempSync(join(tmpdir(), 'realm-hc2-872-'));
+    beforeEach(async () => {
+      h = await makeTempHome();
+      home = h.root;
       mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
       mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
     });
-    afterEach(() => rmSync(home, { recursive: true, force: true }));
+    afterEach(async () => {
+      await h.cleanup();
+    });
 
     it('a run with 11 failed steps: the line holds the bounded placeholder and stays one line', async () => {
       const steps = named('f', 11);
@@ -126,8 +128,8 @@ describe(
           steps.map((s) => [s, { description: 'F.', execution: 'auto', handler: 'boom' }]),
         ),
       } as WorkflowDefinition;
-      await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(def);
-      const store = new JsonFileStore(join(home, '.realm', 'runs'));
+      await h.home.workflowStore.register(def);
+      const store = h.home.runStore;
       const registry = new ExtensionRegistry();
       registry.register('handler', 'boom', {
         id: 'boom',

@@ -2,26 +2,23 @@
 // the step is owed to the engine, and resume names the call that runs it without a model.
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   ExtensionRegistry,
   executeChain,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { printChildrenWhenATestFails } from '../test-support/child-output.js';
+import { makeTempHome } from '../test-support/temp-home.js';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 const children = printChildrenWhenATestFails();
 
 describe('#625 PR-2a — resume names the owed call', () => {
   it('`To run the step(s) the engine owes (…) without a model: realm run advance <id>` — the noun by count', async () => {
-    const home = mkdtempSync(join(tmpdir(), 'realm-resume-owed-625-'));
+    const h = await makeTempHome();
+    const home = h.root;
     try {
       const d: WorkflowDefinition = {
         id: 'resume-owed-wf',
@@ -30,8 +27,8 @@ describe('#625 PR-2a — resume names the owed call', () => {
         schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
         steps: { a: { description: 'A', execution: 'auto', depends_on: [], handler: 'boom' } },
       };
-      await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(d);
-      const runs = new JsonFileStore(join(home, '.realm', 'runs'));
+      await h.home.workflowStore.register(d);
+      const runs = h.home.runStore;
       const { record: run } = await runs.create({
         workflowId: d.id,
         workflowVersion: 1,
@@ -64,7 +61,7 @@ describe('#625 PR-2a — resume names the owed call', () => {
         `To run the step the engine owes ('a') without a model, from a program that has handler 'boom': realm run advance ${run.id}`,
       );
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await h.cleanup();
     }
   }, 60000);
 });

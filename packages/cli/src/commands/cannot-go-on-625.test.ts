@@ -8,9 +8,8 @@
 // `--expired --force` leaving one — `realm run resume` and `realm listen`'s sweeper (C64, the census).
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   JsonFileStore,
@@ -27,6 +26,7 @@ import { inspectRun } from './inspect.js';
 import { sweepExpiredGates } from './listen.js';
 import { printChildrenWhenATestFails } from '../test-support/child-output.js';
 import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
+import { makeTempHome } from '../test-support/temp-home.js';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 if (!existsSync(CLI_ENTRY)) {
@@ -97,19 +97,25 @@ async function stores(located = false): Promise<{
   runs: JsonFileStore;
   workflows: JsonWorkflowStore;
   clock?: TestLocation['clock'];
+  cleanup: () => Promise<void>;
 }> {
-  const home = mkdtempSync(join(tmpdir(), 'realm-cannot-go-on-625-'));
+  const made = await makeTempHome();
   // #715 (b) 04 §D (B4): `located` makes `~/.realm` a test location BEFORE the store opens (a store
   // takes its clock when it is built), so a cell moves the clock the spawned `realm` reads instead of
-  // waiting on the real one.
+  // waiting on the real one: the location's own handle, opened after it, holds the stores.
   const loc = located
-    ? await createTestLocation({ start: new Date(), root: join(home, '.realm') })
+    ? await createTestLocation({ start: new Date(), root: made.path })
     : undefined;
+  const h = loc !== undefined ? await makeTempHome({ home: loc.root }) : made;
   return {
-    home,
-    runs: new JsonFileStore(join(home, '.realm', 'runs')),
-    workflows: new JsonWorkflowStore(join(home, '.realm', 'workflows')),
+    home: made.root,
+    runs: h.home.runStore,
+    workflows: h.home.workflowStore,
     ...(loc !== undefined ? { clock: loc.clock } : {}),
+    cleanup: async () => {
+      if (h !== made) await h.cleanup();
+      await made.cleanup();
+    },
   };
 }
 
@@ -128,7 +134,7 @@ async function atGate(runs: JsonFileStore, d: WorkflowDefinition): Promise<[stri
 describe('#625 PR-2a, C62 — realm run respond and realm run inspect in the "cannot go on" state', () => {
   it('respond: after the answer only a refused engine step remains — each step that cannot run, then the way out; the control (an agent step ready) prints neither', async () => {
     const { respondToGate } = await import('./respond.js');
-    const { home, runs, workflows } = await stores();
+    const { runs, workflows, cleanup } = await stores();
     try {
       const stuck = wf('c62-respond', { decide: gate(), compute: needsN(['decide']) });
       const ready = wf('c62-respond-ctl', {
@@ -166,12 +172,12 @@ describe('#625 PR-2a, C62 — realm run respond and realm run inspect in the "ca
           'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.',
       );
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await cleanup();
     }
   });
 
   it('inspect: the way out follows the `Cannot run` line; the control (an agent step ready) names the step and prints no way out', async () => {
-    const { home, runs, workflows } = await stores();
+    const { runs, workflows, cleanup } = await stores();
     try {
       const stuck = wf('c62-inspect', { compute: needsN([]) });
       const ready = wf('c62-inspect-ctl', {
@@ -199,14 +205,14 @@ describe('#625 PR-2a, C62 — realm run respond and realm run inspect in the "ca
       expect(ctl).toContain(`Cannot run 'compute' (input_schema): ${REFUSAL}`);
       expect(ctl.filter((l) => l.includes('stays open'))).toEqual([]);
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await cleanup();
     }
   });
 });
 
 describe('#625 PR-2a, C64 — the census: drain, resume and the sweeper name the stuck step and the way out', () => {
   it('drain on a live run that cannot go on: the step and the way out on its one line; the control (an agent step ready) gets the drive and the way out', async () => {
-    const { home, runs, workflows } = await stores();
+    const { home, runs, workflows, cleanup } = await stores();
     try {
       const stuck = wf('c64-drain', { compute: needsN([]) });
       const ready = wf('c64-drain-ctl', {
@@ -236,12 +242,12 @@ describe('#625 PR-2a, C64 — the census: drain, resume and the sweeper name the
         `Run '${c.id}' is not terminal (phase: 'running') — nothing to drain. An agent step is ready: 'ask' — drive it with realm agent --run-id ${c.id} --provider <provider> --model <model>\nTo end the run instead: realm run abandon ${c.id}`,
       );
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await cleanup();
     }
   }, 60000);
 
   it('drain --expired --force whose expiry leaves the run unable to go on: the step and the way out after its line', async () => {
-    const { home, runs, workflows, clock } = await stores(true);
+    const { home, runs, workflows, clock, cleanup } = await stores(true);
     try {
       const d = wf('c64-expiry', { decide: gate(true), compute: needsN(['decide']) });
       await workflows.register(d);
@@ -253,12 +259,12 @@ describe('#625 PR-2a, C64 — the census: drain, resume and the sweeper name the
         `Run '${id}' is not terminal (phase: 'running') — nothing further to drain.\n${clause}\n${LEVER}\n${inputWayOut(id, true)}\n`,
       );
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await cleanup();
     }
   }, 60000);
 
   it('resume into a run that cannot go on (the workflow registered again with a precondition on the resumed step): the step and the way out', async () => {
-    const { home, runs, workflows } = await stores();
+    const { home, runs, workflows, cleanup } = await stores();
     try {
       const v1 = wf('c64-resume', {
         a: { description: 'A', execution: 'auto', depends_on: [], handler: 'boom' },
@@ -304,12 +310,12 @@ describe('#625 PR-2a, C64 — the census: drain, resume and the sweeper name the
           `'a' cannot run (precondition): Precondition failed for step 'a'. Precondition failed: 'run.params.ok == true'. Resolved value: undefined.\n${wayOut(run.id)}\n`,
       );
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await cleanup();
     }
   }, 60000);
 
   it('CONTROL (C68) — resume into a run with an agent step ready: the drive line as #676 prints it, no stuck lines', async () => {
-    const { home, runs, workflows } = await stores();
+    const { home, runs, workflows, cleanup } = await stores();
     try {
       const v1 = wf('c68-resume-ready', {
         a: { description: 'A', execution: 'auto', depends_on: [], handler: 'boom' },
@@ -354,12 +360,12 @@ describe('#625 PR-2a, C64 — the census: drain, resume and the sweeper name the
           `Add the other flags the run was driven with, such as --extensions-module, --project or --prompt-cache (realm run inspect ${run.id} shows the extension module the run loaded, and, where it recorded them, the model and caching setting of each request).\n`,
       );
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await cleanup();
     }
   }, 60000);
 
   it("listen's sweeper: an expiry that leaves the run unable to go on logs `cannot_go_on` (the step, then the way out); the control (an agent step ready) logs none", async () => {
-    const { home, runs, workflows } = await stores();
+    const { runs, workflows, cleanup } = await stores();
     try {
       const stuck = wf('c64-sweep', { decide: gate(true), compute: needsN(['decide']) });
       const ready = wf('c64-sweep-ctl', {
@@ -379,11 +385,16 @@ describe('#625 PR-2a, C64 — the census: drain, resume and the sweeper name the
       };
       // #715 (b): the store's clock decides — the same folder reopened as a test location an hour on.
       await writeTestClockFile(dirname(runs.runsDirPath), new Date(Date.now() + 3_600_000));
-      await sweepExpiredGates({
-        runStore: new JsonFileStore(runs.runsDirPath),
-        workflowStore: workflows,
-        logger,
-      } as never);
+      const reopened = await makeTempHome({ home: dirname(runs.runsDirPath) });
+      try {
+        await sweepExpiredGates({
+          runStore: reopened.home.runStore,
+          workflowStore: workflows,
+          logger,
+        } as never);
+      } finally {
+        await reopened.cleanup();
+      }
       const fields = (runId: string) =>
         logged.find(
           ([m, f]) => m === 'listen: sweeper enacted an expired gate' && f['run_id'] === runId,
@@ -392,7 +403,7 @@ describe('#625 PR-2a, C64 — the census: drain, resume and the sweeper name the
       expect(fields(cid)).toBeDefined();
       expect(fields(cid)?.['cannot_go_on']).toBeUndefined();
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await cleanup();
     }
   });
 });

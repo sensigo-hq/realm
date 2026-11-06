@@ -15,19 +15,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const mocks = vi.hoisted(() => ({ question: vi.fn(), close: vi.fn() }));
 vi.mock('node:readline/promises', () => ({
   createInterface: vi.fn(() => ({ question: mocks.question, close: mocks.close })),
 }));
 
-import {
-  JsonFileStore,
-  JsonWorkflowStore,
-  ExtensionRegistry,
-  executeStep,
-  submitHumanResponse,
-} from '@sensigo/realm';
+import { ExtensionRegistry, executeStep, submitHumanResponse } from '@sensigo/realm';
 import { runCommand } from './run.js';
 import { respondCommand } from './respond.js';
 import { drainCommand } from './drain.js';
@@ -86,6 +81,7 @@ describe('`realm run respond --by` — the option the operator reads in --help',
 });
 
 describe('issue #625 PR-H — the host rows that run in-process', () => {
+  let h: TempHome & { readonly root: string };
   let home: string;
   let proj: string;
   let savedHome: string | undefined;
@@ -93,9 +89,10 @@ describe('issue #625 PR-H — the host rows that run in-process', () => {
   let savedTTY: boolean | undefined;
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     clearProjectExtensionsCache();
-    home = mkdtempSync(join(tmpdir(), 'realm-holder-rows-home-'));
+    h = await makeTempHome();
+    home = h.root;
     proj = mkdtempSync(join(tmpdir(), 'realm-holder-rows-proj-'));
     mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
     savedHome = process.env['HOME'];
@@ -112,7 +109,7 @@ describe('issue #625 PR-H — the host rows that run in-process', () => {
     }) as never);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (savedTTY === undefined) delete (process.stdin as { isTTY?: boolean }).isTTY;
     else process.stdin.isTTY = savedTTY;
     if (savedHome === undefined) delete process.env['HOME'];
@@ -121,7 +118,7 @@ describe('issue #625 PR-H — the host rows that run in-process', () => {
     else process.env['REALM_OPERATOR'] = savedOperator;
     mocks.question.mockReset();
     vi.restoreAllMocks();
-    rmSync(home, { recursive: true, force: true });
+    await h.cleanup();
     rmSync(proj, { recursive: true, force: true });
   });
 
@@ -144,12 +141,12 @@ describe('issue #625 PR-H — the host rows that run in-process', () => {
     const file = join(proj, 'workflows', 'wf', 'workflow.yaml');
     writeFileSync(file, FINALIZER_YAML, 'utf8');
     const { definition } = await loadWorkflowForAdmission(file, { surface: 'register' });
-    await new JsonWorkflowStore().register(definition);
+    await h.home.workflowStore.register(definition);
     return definition;
   }
 
   async function openGate(definition: Awaited<ReturnType<typeof registerFinalizerWorkflow>>) {
-    const store = new JsonFileStore();
+    const store = h.home.runStore;
     const { record: run } = await store.create({
       workflowId: definition.id,
       workflowVersion: 1,
@@ -181,7 +178,7 @@ describe('issue #625 PR-H — the host rows that run in-process', () => {
     const id = readdirSync(join(home, '.realm', 'runs'))
       .filter((f) => f.endsWith('.json'))[0]!
       .replace('.json', '');
-    const { record: run } = await new JsonFileStore().get(id);
+    const { record: run } = await h.home.runStore.get(id);
     // (a) red when `run.ts` stops passing its identity, or uses another channel; (b) prints it.
     expect(
       run.evidence.find((e) => e.step_id === 'confirm' && e.kind !== 'gate_response')?.driven_by,

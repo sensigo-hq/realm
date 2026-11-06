@@ -21,8 +21,6 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
-  JsonFileStore,
-  JsonWorkflowStore,
   buildDisclosureSet,
   disclose,
   discloseGate,
@@ -44,6 +42,7 @@ import {
   type RunRecord,
   type WorkflowDefinition,
 } from '@sensigo/realm';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const mocks = vi.hoisted(() => ({ question: vi.fn(), close: vi.fn() }));
 vi.mock('node:readline/promises', () => ({
@@ -170,10 +169,10 @@ describe(`${ENV_PAGE} — REALM_NOT_SECRET`, () => {
     });
   });
 
-  it("realm's own settings, and the shell's PWD, OLDPWD and _, are not treated as secrets; REALM_SERVE_TOKEN is (D-14, D-6)", () => {
+  it("realm's own settings, the shell's PWD, OLDPWD and _, and npm's three, are not treated as secrets; REALM_SERVE_TOKEN is (D-14, D-6)", () => {
     claim(
       ENV_PAGE,
-      "Realm's own settings in this table (`REALM_DEV`, `REALM_NO_NUDGE`, `REALM_REQUIRE_WRITER_NONCE`, `REALM_OPERATOR`, `REALM_MCP_GATE_ANSWERS` and `REALM_MCP_FORM_WAIT_SECONDS`) are not treated as secrets, and neither are `PWD`, `OLDPWD` and `_`, which the shell sets to paths; `REALM_SERVE_TOKEN`, a credential, is.",
+      "Realm's own settings in this table (`REALM_DEV`, `REALM_NO_NUDGE`, `REALM_REQUIRE_WRITER_NONCE`, `REALM_OPERATOR`, `REALM_MCP_GATE_ANSWERS` and `REALM_MCP_FORM_WAIT_SECONDS`) are not treated as secrets, and neither are `PWD`, `OLDPWD` and `_`, which the shell sets to paths, nor `npm_package_name`, `npm_package_version` and `npm_lifecycle_event`, which npm sets; `REALM_SERVE_TOKEN`, a credential, is.",
     );
     const env = {
       REALM_OPERATOR: 'fake-operator-0729',
@@ -182,9 +181,12 @@ describe(`${ENV_PAGE} — REALM_NOT_SECRET`, () => {
       PWD: '/srv/fake-work-0729',
       OLDPWD: '/srv/fake-old-0729',
       _: '/usr/bin/fake-cmd-0729',
+      npm_package_name: 'fake-package-0729',
+      npm_package_version: '0.0.0-fake0729',
+      npm_lifecycle_event: 'fake-script-0729',
     };
-    // (a) red when a setting or a shell path is hidden, or the serve token shows; (b) prints the
-    //     variable names that are members (names only).
+    // (a) red when a setting, a shell path or an npm value is hidden, or the serve token shows;
+    //     (b) prints the variable names that are members (names only).
     expect(
       ['log', 'agent'].map((audience) =>
         environmentEntries(env, { audience: audience as DisclosureAudience }).map((e) => e.source),
@@ -205,9 +207,10 @@ describe(`${ENV_PAGE} — REALM_NOT_SECRET`, () => {
       audience: 'log',
     }).set;
     // The home folder rule, executed: a damaged copy under HOME, inspected piped.
-    const home = mkdtempSync(join(tmpdir(), 'realm-docs-c2-home-'));
+    const h = await makeTempHome();
+    const home = h.root;
     try {
-      const workflows = new JsonWorkflowStore(join(home, '.realm', 'workflows'));
+      const workflows = h.home.workflowStore;
       await workflows.register({
         id: 'blockedwf',
         name: 'b',
@@ -217,7 +220,7 @@ describe(`${ENV_PAGE} — REALM_NOT_SECRET`, () => {
       } as WorkflowDefinition);
       const file = join(home, '.realm', 'workflows', 'blockedwf.json');
       writeFileSync(file, 'not json');
-      const runs = new JsonFileStore(join(home, '.realm', 'runs'));
+      const runs = h.home.runStore;
       const runId = (await runs.create({ workflowId: 'blockedwf', workflowVersion: 1, params: {} }))
         .record.id;
       // A path under HOME in the run's reason, printed as text.
@@ -246,7 +249,7 @@ describe(`${ENV_PAGE} — REALM_NOT_SECRET`, () => {
         commandWhole: r.stdout.includes(`rm ${file}`),
       }).toEqual({ shadowHidden: true, homeHidden: true, commandWhole: true });
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await h.cleanup();
     }
   }, 60_000);
 
@@ -338,14 +341,16 @@ describe(`${MANIFEST_PAGE} — the disclosure block`, () => {
 });
 
 describe(`${RECORD_PAGE} — the export file and the guard's conditions`, () => {
-  let dir: string;
-  beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'realm-docs-729-'));
+  let h: TempHome;
+  beforeEach(async () => {
+    h = await makeTempHome();
   });
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(async () => {
+    await h.cleanup();
+  });
 
   async function bundleOf(params: Record<string, unknown>, audience: DisclosureAudience = 'file') {
-    const store = new JsonFileStore(join(dir, 'runs'));
+    const store = h.home.runStore;
     const { record: run } = await store.create({
       workflowId: 'docs-729',
       workflowVersion: 1,
@@ -385,7 +390,7 @@ describe(`${RECORD_PAGE} — the export file and the guard's conditions`, () => 
       prose: 'Bearer of the news',
       auth: 'Bearer FAKEtok9abc',
     });
-    const asking = new JsonFileStore(join(dir, 'runs'));
+    const asking = h.home.runStore;
     const { record: open } = await asking.create({
       workflowId: 'docs-729',
       workflowVersion: 1,
@@ -527,7 +532,7 @@ describe(`${RECORD_PAGE} — the export file and the guard's conditions`, () => 
         },
       },
     } as WorkflowDefinition;
-    const store = new JsonFileStore(join(dir, 'runs'));
+    const store = h.home.runStore;
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -651,11 +656,12 @@ describe(`${READING_PAGE} — export`, () => {
       "1 if the run is not in the store, if the file exists, if Realm does not know all of the run's declared secrets and `--accept-partial-disclosure` was not given,",
     );
     const root = mkdtempSync(join(tmpdir(), 'realm-docs-export-729-'));
+    const h = await makeTempHome();
     try {
-      const home = join(root, 'home');
+      const home = h.root;
       mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
       // A run whose workflow copy cannot be read: its declared secrets are unknown.
-      const { record: run } = await new JsonFileStore(join(home, '.realm', 'runs')).create({
+      const { record: run } = await h.home.runStore.create({
         workflowId: 'not-registered',
         workflowVersion: 1,
         params: {},
@@ -678,12 +684,14 @@ describe(`${READING_PAGE} — export`, () => {
         written: existsSync(join(root, 'x.json')),
       }).toEqual({ code: 1, starts: true, written: false });
     } finally {
+      await h.cleanup();
       rmSync(root, { recursive: true, force: true });
     }
   }, 60_000);
 });
 
 describe(`${ACTING_PAGE} and ${WORKFLOW_PAGE} — the rerun, --params-from-run, the marker warning`, () => {
+  let h: TempHome & { readonly root: string };
   let home: string;
   let dir: string;
   let savedHome: string | undefined;
@@ -692,8 +700,9 @@ describe(`${ACTING_PAGE} and ${WORKFLOW_PAGE} — the rerun, --params-from-run, 
   let warned: string[];
   let errored: string[];
 
-  beforeEach(() => {
-    home = mkdtempSync(join(tmpdir(), 'realm-docs-home-729-'));
+  beforeEach(async () => {
+    h = await makeTempHome();
+    home = h.root;
     dir = mkdtempSync(join(tmpdir(), 'realm-docs-wf-729-'));
     mkdirSync(join(home, '.realm'), { recursive: true });
     savedHome = process.env['HOME'];
@@ -722,19 +731,19 @@ describe(`${ACTING_PAGE} and ${WORKFLOW_PAGE} — the rerun, --params-from-run, 
     }) as never);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (savedTTY === undefined) delete (process.stdin as { isTTY?: boolean }).isTTY;
     else process.stdin.isTTY = savedTTY;
     if (savedHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = savedHome;
-    rmSync(home, { recursive: true, force: true });
+    await h.cleanup();
     rmSync(dir, { recursive: true, force: true });
     mocks.question.mockReset();
     vi.restoreAllMocks();
   });
 
   async function registeredRun(params: Record<string, unknown>): Promise<string> {
-    await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register({
+    await h.home.workflowStore.register({
       id: 'pfr',
       name: 'pfr',
       version: 1,
@@ -742,7 +751,7 @@ describe(`${ACTING_PAGE} and ${WORKFLOW_PAGE} — the rerun, --params-from-run, 
       steps: { a: { description: 'a', execution: 'agent', depends_on: [] } },
       source_dir: dir,
     } as WorkflowDefinition);
-    const { record: run } = await new JsonFileStore(join(home, '.realm', 'runs')).create({
+    const { record: run } = await h.home.runStore.create({
       workflowId: 'pfr',
       workflowVersion: 1,
       params,
@@ -790,7 +799,7 @@ describe(`${ACTING_PAGE} and ${WORKFLOW_PAGE} — the rerun, --params-from-run, 
       `\`--params-from-run\` refuses a run of another workflow (\`${other}\`) and refuses to be given with \`--params\` (\`${both}\`).`,
     );
     const id = await registeredRun({});
-    const another = await new JsonFileStore(join(home, '.realm', 'runs')).create({
+    const another = await h.home.runStore.create({
       workflowId: 'another',
       workflowVersion: 1,
       params: {},
@@ -837,9 +846,7 @@ describe(`${ACTING_PAGE} and ${WORKFLOW_PAGE} — the rerun, --params-from-run, 
     } finally {
       writerTestSeams.reset();
     }
-    const runs = (await new JsonFileStore(join(home, '.realm', 'runs')).list()).snapshots.map(
-      (s) => s.record,
-    );
+    const runs = (await h.home.runStore.list()).snapshots.map((s) => s.record);
     const plainHash = runs
       .flatMap((r) => r.evidence)
       .find((e) => (e.output_summary as Record<string, unknown>)['pin'] === 'open')
@@ -865,9 +872,7 @@ describe(`${ACTING_PAGE} and ${WORKFLOW_PAGE} — the rerun, --params-from-run, 
     );
     mocks.question.mockImplementation(async () => '{"k":"[REDACTED]"}');
     await runCommand.parseAsync([dir], { from: 'user' });
-    const [run] = (await new JsonFileStore(join(home, '.realm', 'runs')).list()).snapshots.map(
-      (s) => s.record,
-    );
+    const [run] = (await h.home.runStore.list()).snapshots.map((s) => s.record);
     // (a) red when the typed answer's warning gains `Warning:`, loses its indent or its words, or
     //     the answer is changed before it is recorded; (b) prints the warning (fixed) and a boolean.
     expect({
@@ -887,9 +892,7 @@ describe(`${ACTING_PAGE} and ${WORKFLOW_PAGE} — the rerun, --params-from-run, 
     );
     mocks.question.mockImplementation(async () => '{}');
     await runCommand.parseAsync([dir, '--params', '{"k":"[REDACTED]"}'], { from: 'user' });
-    const [run] = (await new JsonFileStore(join(home, '.realm', 'runs')).list()).snapshots.map(
-      (s) => s.record,
-    );
+    const [run] = (await h.home.runStore.list()).snapshots.map((s) => s.record);
     // (a) red when the warning's words change or the params are changed before they are recorded;
     //     (b) prints the warning text (fixed) and a boolean.
     expect({
@@ -1058,7 +1061,8 @@ describe(`${OPERATE_PAGE} — what the output hides`, () => {
       'CHANGELOG.md',
       'Hardening: a declared secret or an environment value that a step prints in pieces, or relays from a child program chunk by chunk, is hidden in a log as one value — when the pieces arrive within 200 ms, and unless another hidden value inside it ends before the pieces split.',
     );
-    const home = mkdtempSync(join(tmpdir(), 'realm-docs-729-or-'));
+    const h = await makeTempHome();
+    const home = h.root;
     try {
       // What `realm agent` stores of a tool's error or a drive failure is `sanitizeError`'s text.
       vi.stubEnv('REALM_NOT_SECRET', '');
@@ -1088,7 +1092,7 @@ describe(`${OPERATE_PAGE} — what the output hides`, () => {
         },
       );
       // A piped inspect, with a user name of 8 or more characters and a step's program label.
-      const store = new JsonFileStore(join(home, '.realm', 'runs'));
+      const store = h.home.runStore;
       const { record: run } = await store.create({
         workflowId: 'docs-or',
         workflowVersion: 1,
@@ -1200,7 +1204,7 @@ describe(`${OPERATE_PAGE} — what the output hides`, () => {
         clientPassesIt: false,
       });
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await h.cleanup();
     }
   }, 60_000);
 });
@@ -1294,7 +1298,7 @@ describe(`${READING_PAGE} — inspect's new lines (correction 1)`, () => {
       READING_PAGE,
       '| `Aborted at` | When a guard or a handler aborted the run | The step, and its message in quotes, such as `Aborted at: \'check\': "The ticket is not open."`. A message longer than 500 characters as written reads `‹N characters, not kept›`. Added after version 0.47.1. |',
     );
-    const dir = mkdtempSync(join(tmpdir(), 'realm-docs-729-guard-'));
+    const h = await makeTempHome();
     try {
       const def = {
         id: 'docs-guard',
@@ -1312,7 +1316,7 @@ describe(`${READING_PAGE} — inspect's new lines (correction 1)`, () => {
           },
         },
       } as WorkflowDefinition;
-      const store = new JsonFileStore(join(dir, 'runs'));
+      const store = h.home.runStore;
       const { record: run } = await store.create({
         workflowId: def.id,
         workflowVersion: 1,
@@ -1346,7 +1350,7 @@ describe(`${READING_PAGE} — inspect's new lines (correction 1)`, () => {
         long: long.includes("Aborted at: 'check': ‹602 characters, not kept›"),
       }).toEqual({ guard: true, abortedAt: true, long: true });
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 
@@ -1636,7 +1640,7 @@ describe(`${UPGRADE_PAGE} and the CHANGELOG — the sentences this correction ch
       'CHANGELOG.md',
       'A later step that reads `<guard>.conditions`, in a `when:` for one, finds nothing there.',
     );
-    const dir = mkdtempSync(join(tmpdir(), 'realm-docs-729-f30-'));
+    const h = await makeTempHome();
     try {
       const def = {
         id: 'docs-f30',
@@ -1659,7 +1663,7 @@ describe(`${UPGRADE_PAGE} and the CHANGELOG — the sentences this correction ch
           },
         },
       } as WorkflowDefinition;
-      const store = new JsonFileStore(join(dir, 'runs'));
+      const store = h.home.runStore;
       const { record: run } = await store.create({
         workflowId: def.id,
         workflowVersion: 1,
@@ -1703,7 +1707,7 @@ describe(`${UPGRADE_PAGE} and the CHANGELOG — the sentences this correction ch
         laterStepSkipped: true,
       });
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 });
@@ -1722,7 +1726,7 @@ describe('#729 PR-3 correction 2 — the pages this correction changes', () => {
       KINDS_PAGE,
       "`realm run inspect` shows the guard's step with its `Output:`, and each condition on its `Diagnostics:` line — whether it passed, and the value it was checked against:",
     );
-    const dir = mkdtempSync(join(tmpdir(), 'realm-docs-c2-guard-'));
+    const h = await makeTempHome();
     try {
       const def = {
         id: 'refunds',
@@ -1740,7 +1744,7 @@ describe('#729 PR-3 correction 2 — the pages this correction changes', () => {
           },
         },
       } as WorkflowDefinition;
-      const store = new JsonFileStore(join(dir, 'runs'));
+      const store = h.home.runStore;
       const { record: run } = await store.create({
         workflowId: def.id,
         workflowVersion: 1,
@@ -1764,7 +1768,7 @@ describe('#729 PR-3 correction 2 — the pages this correction changes', () => {
       //     not what inspect prints; (b) prints two booleans.
       expect(lines.map((l) => out.includes(l))).toEqual([true, true]);
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 
@@ -1773,7 +1777,8 @@ describe('#729 PR-3 correction 2 — the pages this correction changes', () => {
       READING_PAGE,
       "When the record shows a gate's question, the line ends `; question: declared tier only`: a question hides only the declared secrets.",
     );
-    const home = mkdtempSync(join(tmpdir(), 'realm-docs-c2-q-'));
+    const h = await makeTempHome();
+    const home = h.root;
     try {
       const def = {
         id: 'asks',
@@ -1790,8 +1795,8 @@ describe('#729 PR-3 correction 2 — the pages this correction changes', () => {
           },
         },
       } as WorkflowDefinition;
-      await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(def);
-      const runs = new JsonFileStore(join(home, '.realm', 'runs'));
+      await h.home.workflowStore.register(def);
+      const runs = h.home.runStore;
       const runId = (
         await runs.create({ workflowId: 'asks', workflowVersion: 1, params: { region: ENV_VALUE } })
       ).record.id;
@@ -1821,7 +1826,7 @@ describe('#729 PR-3 correction 2 — the pages this correction changes', () => {
         questionShown: r.stdout.includes(`Ship to ${ENV_VALUE}?`),
       }).toEqual({ clause: true, questionShown: true });
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await h.cleanup();
     }
   }, 60_000);
 
@@ -1843,9 +1848,10 @@ describe('#729 PR-3 correction 2 — the pages this correction changes', () => {
       "The shell command a repair act names (`rm <path>`, `chmod u+r <path>`), alone, beside the act's words; the error a run's damaged workflow copy raises carries it as `details.repair_command`, and the CLI prints it whole.",
     );
     const { repairActFor, parseFailureError, getWorkflowForRun } = await import('@sensigo/realm');
-    const home = mkdtempSync(join(tmpdir(), 'realm-docs-c2-words-'));
+    const h = await makeTempHome();
+    const home = h.root;
     try {
-      const workflows = new JsonWorkflowStore(join(home, '.realm', 'workflows'));
+      const workflows = h.home.workflowStore;
       await workflows.register({
         id: 'words',
         name: 'w',
@@ -1853,7 +1859,7 @@ describe('#729 PR-3 correction 2 — the pages this correction changes', () => {
         schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
         steps: { a: { description: 'A.', execution: 'agent', depends_on: [] } },
       } as WorkflowDefinition);
-      const runs = new JsonFileStore(join(home, '.realm', 'runs'));
+      const runs = h.home.runStore;
       const done = (await runs.create({ workflowId: 'words', workflowVersion: 1, params: {} }))
         .record;
       // A phase printed while another variable holds the same word.
@@ -1909,7 +1915,7 @@ describe('#729 PR-3 correction 2 — the pages this correction changes', () => {
         carried: `rm ${file}`,
       });
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await h.cleanup();
     }
   }, 60_000);
 });
@@ -1956,15 +1962,19 @@ const C3_MANIFEST =
  * workflow with no project and leaves the copy readable (`no_manifest`).
  */
 let c3Count = 0;
+/** Every handle a correction 3/4/5 cell opened (its HOME), cleaned with its `base`. */
+const homes: TempHome[] = [];
 async function c3Run(
   base: string,
   state: 'intact' | 'invalid' | 'gone' | 'none',
   plainOutputs = false,
-): Promise<{ home: string; runId: string }> {
+): Promise<{ home: string; runId: string; handle: TempHome }> {
   // Correction 4 (I-9b): `plainOutputs` runs the steps with outputs that hold no declared value.
   const output = plainOutputs ? 'FAKEplain0729c4' : DECLARED;
   c3Count += 1;
-  const home = join(base, `home-${state}-${c3Count}`);
+  const handle = await makeTempHome();
+  homes.push(handle);
+  const home = handle.root;
   const project = join(base, `project-${state}-${c3Count}`);
   mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
   mkdirSync(project);
@@ -1987,8 +1997,8 @@ async function c3Run(
       },
     },
   } as WorkflowDefinition;
-  await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(definition);
-  const store = new JsonFileStore(join(home, '.realm', 'runs'));
+  await handle.home.workflowStore.register(definition);
+  const store = handle.home.runStore;
   const { record: run } = await store.create({
     workflowId: 'c3docs',
     workflowVersion: 1,
@@ -2037,14 +2047,13 @@ async function c3Run(
     if (state === 'gone') rmSync(path);
     if (state === 'invalid') writeFileSync(path, 'version: 1\nnot_a_key: true\n');
   }
-  return { home, runId: run.id };
+  return { home, runId: run.id, handle };
 }
 
 /** Correction 4: one recorded failed attempt on `runId` whose problem's message holds the declared
  *  value (the sidecar, independent of the run's file). */
-async function c3Attempt(home: string, runId: string): Promise<void> {
-  const { JsonFileFailedAttemptStore, buildFailedAttemptRecord, serializeFailedAttemptLine } =
-    await import('@sensigo/realm');
+async function c3Attempt(handle: TempHome, runId: string): Promise<void> {
+  const { buildFailedAttemptRecord, serializeFailedAttemptLine } = await import('@sensigo/realm');
   const rec = buildFailedAttemptRecord({
     run_id: runId,
     workflow_id: 'c3docs',
@@ -2063,10 +2072,7 @@ async function c3Attempt(home: string, runId: string): Promise<void> {
     params: {},
     trace_entry_count: 0,
   });
-  await new JsonFileFailedAttemptStore(join(home, '.realm', 'runs')).append(
-    runId,
-    serializeFailedAttemptLine({ ...rec }).line,
-  );
+  await handle.home.failedAttemptStore.append(runId, serializeFailedAttemptLine({ ...rec }).line);
 }
 
 describe('#729 PR-3 correction 3 — the pages this correction changes', () => {
@@ -2074,7 +2080,8 @@ describe('#729 PR-3 correction 3 — the pages this correction changes', () => {
   beforeEach(() => {
     base = mkdtempSync(join(tmpdir(), 'realm-docs-c3-'));
   });
-  afterEach(() => {
+  afterEach(async () => {
+    for (const t of homes.splice(0)) await t.cleanup();
     rmSync(base, { recursive: true, force: true });
   });
 
@@ -2167,7 +2174,7 @@ describe('#729 PR-3 correction 3 — the pages this correction changes', () => {
       "A run whose workflow names no manifest, and a server given no `disclosureProvider`, are not withheld. When a run's workflow copy cannot be read, Realm reads the manifest the run's record names.",
     );
     const inspect = async (state: 'intact' | 'invalid' | 'gone' | 'none', flag = false) => {
-      const { home, runId } = await c3Run(base, state);
+      const { home, runId, handle } = await c3Run(base, state);
       const r = pipedCli(
         ['run', 'inspect', runId, ...(flag ? ['--accept-partial-disclosure'] : [])],
         { HOME: home, REALM_NOT_SECRET: 'HOME' },
@@ -2181,6 +2188,7 @@ describe('#729 PR-3 correction 3 — the pages this correction changes', () => {
       return {
         home,
         runId,
+        handle,
         leaked: r.stdout.includes(DECLARED),
         first: r.stdout.split('\n')[0]?.split(':')[0],
         question: lineOf('Question:'),
@@ -2196,7 +2204,7 @@ describe('#729 PR-3 correction 3 — the pages this correction changes', () => {
     );
     // Correction 4 (I-5; MA 1's ruling): `attempts` says so only with attempts to show, so the run
     // gets one recorded failed attempt first.
-    await c3Attempt(invalid.home, invalid.runId);
+    await c3Attempt(invalid.handle, invalid.runId);
     const attempts = pipedCli(
       ['run', 'attempts', invalid.runId],
       { HOME: invalid.home, REALM_NOT_SECRET: 'HOME' },
@@ -2251,10 +2259,11 @@ describe('#729 PR-3 correction 3 — the pages this correction changes', () => {
       CHANGELOG,
       "That covers `inspect`'s `Cause:`, `abandon`'s `Reason:`, the default reason `abandon_run` writes, `run list`'s phase column, `advance`'s last line, `--check`'s value line and the sentence `realm agent --run-id` prints for a run that has ended.",
     );
-    const home = join(base, 'home');
-    mkdirSync(home);
+    const h = await makeTempHome();
+    homes.push(h);
+    const home = h.root;
     const { abandonRun, executeStep } = await import('@sensigo/realm');
-    const workflows = new JsonWorkflowStore(join(home, '.realm', 'workflows'));
+    const workflows = h.home.workflowStore;
     const def = (id: string, execution: 'agent' | 'auto') =>
       ({
         id,
@@ -2265,7 +2274,7 @@ describe('#729 PR-3 correction 3 — the pages this correction changes', () => {
       }) as WorkflowDefinition;
     await workflows.register(def('words', 'agent'));
     await workflows.register(def('autowords', 'auto'));
-    const runs = new JsonFileStore(join(home, '.realm', 'runs'));
+    const runs = h.home.runStore;
     const create = async (id = 'words') =>
       (await runs.create({ workflowId: id, workflowVersion: 1, params: {} })).record.id;
     const done = await create();
@@ -2373,13 +2382,15 @@ async function c4Ended(
   reason: string,
 ): Promise<{ home: string; ended: string; live: string }> {
   c4Count += 1;
-  const home = join(base, `home-c4-${state}-${c4Count}`);
+  const handle = await makeTempHome();
+  homes.push(handle);
+  const home = handle.root;
   const project = join(base, `project-c4-${state}-${c4Count}`);
   mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
   mkdirSync(project);
   writeFileSync(join(project, 'realm.yaml'), C3_MANIFEST);
   writeFileSync(join(project, '.env'), `SVC_TOKEN=${DECLARED}\n`);
-  await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register({
+  await handle.home.workflowStore.register({
     id: 'c4docs',
     name: 'c4docs',
     version: 1,
@@ -2387,7 +2398,7 @@ async function c4Ended(
     trust_root: project,
     steps: { a: { description: 'A.', execution: 'agent', depends_on: [] } },
   } as WorkflowDefinition);
-  const store = new JsonFileStore(join(home, '.realm', 'runs'));
+  const store = handle.home.runStore;
   const path = join(project, 'realm.yaml');
   const create = async (): Promise<string> => {
     const { record: run } = await store.create({
@@ -2436,7 +2447,8 @@ describe('#729 PR-3 correction 4 — the pages this correction changes', () => {
   beforeEach(() => {
     base = mkdtempSync(join(tmpdir(), 'realm-docs-c4-'));
   });
-  afterEach(() => {
+  afterEach(async () => {
+    for (const t of homes.splice(0)) await t.cleanup();
     rmSync(base, { recursive: true, force: true });
   });
   const cli = (home: string, args: string[]) =>
@@ -2457,11 +2469,11 @@ describe('#729 PR-3 correction 4 — the pages this correction changes', () => {
     const bare = await c3Run(base, 'invalid');
     const none = cli(bare.home, ['run', 'attempts', bare.runId]);
     const held = await c3Run(base, 'invalid');
-    await c3Attempt(held.home, held.runId);
+    await c3Attempt(held.handle, held.runId);
     const withheld = cli(held.home, ['run', 'attempts', held.runId]);
     const accepted = cli(held.home, ['run', 'attempts', held.runId, '--accept-partial-disclosure']);
     const damaged = await c3Run(base, 'intact');
-    await c3Attempt(damaged.home, damaged.runId);
+    await c3Attempt(damaged.handle, damaged.runId);
     writeFileSync(join(damaged.home, '.realm', 'runs', `${damaged.runId}.json`), 'not json');
     const record = cli(damaged.home, ['run', 'attempts', damaged.runId]);
     // (a) red when the line prints with no attempts, a run record that cannot be read withholds
@@ -2746,9 +2758,7 @@ describe('#729 PR-3 correction 4 — the pages this correction changes', () => {
     const withheld = cli(held.home, ['run', 'inspect', held.runId]);
     const intact = await c3Run(base, 'intact', true);
     const shown = cli(intact.home, ['run', 'inspect', intact.runId]);
-    const { record: stored } = await new JsonFileStore(join(intact.home, '.realm', 'runs')).get(
-      intact.runId,
-    );
+    const { record: stored } = await intact.handle.home.runStore.get(intact.runId);
     const masked = await c3Run(base, 'intact');
     const hidInside = cli(masked.home, ['run', 'inspect', masked.runId]);
     const hashLines = (text: string) =>
@@ -2807,9 +2817,7 @@ describe('#729 PR-3 correction 4 — the pages this correction changes', () => {
       "`realm run diff` reads each run's declared secrets the same way and takes the same flag.",
     );
     const held = await c3Run(base, 'invalid');
-    const { record: stored } = await new JsonFileStore(join(held.home, '.realm', 'runs')).get(
-      held.runId,
-    );
+    const { record: stored } = await held.handle.home.runStore.get(held.runId);
     const hex = stored.evidence[0]!.evidence_hash.slice(0, 8);
     const withheld = cli(held.home, ['run', 'diff', held.runId, held.runId]);
     const accepted = cli(held.home, [
@@ -2844,8 +2852,10 @@ describe('#729 PR-3 correction 4 — the pages this correction changes', () => {
       READING_PAGE,
       "For a run whose workflow copy cannot be read and whose record names no manifest, it reads `Repair the run's workflow copy first (realm run inspect <run-id> names the command), or pass --accept-partial-disclosure to write it masked with what is known; the last line it prints then names the state.`",
     );
-    const home = join(base, 'home-copy');
-    await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register({
+    const h = await makeTempHome();
+    homes.push(h);
+    const home = h.root;
+    await h.home.workflowStore.register({
       id: 'c4copy',
       name: 'c4copy',
       version: 1,
@@ -2853,7 +2863,7 @@ describe('#729 PR-3 correction 4 — the pages this correction changes', () => {
       steps: { a: { description: 'A.', execution: 'agent', depends_on: [] } },
     } as WorkflowDefinition);
     writeFileSync(join(home, '.realm', 'workflows', 'c4copy.json'), 'not json');
-    const { record: run } = await new JsonFileStore(join(home, '.realm', 'runs')).create({
+    const { record: run } = await h.home.runStore.create({
       workflowId: 'c4copy',
       workflowVersion: 1,
       params: {},

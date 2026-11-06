@@ -16,14 +16,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   createDefaultRegistry,
   executeChain,
-  JsonFileStore,
-  JsonWorkflowStore,
   loadWorkflowFromString,
   type PendingGate,
   type RunStore,
 } from '@sensigo/realm';
 import { sweepIntervalMs } from './listen.js';
 import { serveStartLine } from './serve.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLI = join(HERE, '..', '..', 'dist', 'index.js');
@@ -46,15 +45,17 @@ const WORKFLOW = [
 ].join('\n');
 
 let root: string;
+let h: TempHome & { readonly root: string };
 let home: string;
-beforeEach(() => {
+beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'realm-944-cli-'));
-  home = join(root, 'home');
-  mkdirSync(home);
+  h = await makeTempHome();
+  home = h.root;
   mkdirSync(join(root, 'wf'));
   writeFileSync(join(root, 'wf', 'workflow.yaml'), WORKFLOW, 'utf8');
 });
-afterEach(() => {
+afterEach(async () => {
+  await h.cleanup();
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -238,8 +239,8 @@ describe('issue #944 — the sweeper waits the seconds it is given', () => {
   it('realm listen --sweep-expired-gates 6: no sweep line in the first 3 s after the start line, one afterwards', async () => {
     mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
     mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
-    const runStore = new JsonFileStore(join(home, '.realm', 'runs'));
-    const workflowStore = new JsonWorkflowStore(join(home, '.realm', 'workflows'));
+    const runStore = h.home.runStore;
+    const workflowStore = h.home.workflowStore;
     const def = loadWorkflowFromString(
       [
         'id: values-944-gated',

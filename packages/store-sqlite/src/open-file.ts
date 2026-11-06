@@ -6,24 +6,31 @@
 //   3. the home's preparation (unit 7a): the folder, the old-store guard, the fences, and an absent
 //      `realm.db` created empty and owner-only. Nothing before this step writes anything;
 //   4. `realm.db` must be a regular file, judged by `lstat` before SQLite opens anything (SQLite
-//      itself creates the target of a dangling link when it opens one);
+//      itself creates the target of a dangling link when it opens one); then the operating system is
+//      asked whether Realm may write it (`access`, which reads and writes nothing): SQLite would open
+//      a file it cannot write read-only, and the first write would fail after the open said ready;
 //   5. the file's checks. Its application id, schema version, schema object count and three
 //      persistent settings are read by ONE statement in autocommit: one statement is one snapshot, so
 //      another first opener's COMMIT cannot fall between two of them, and nothing gated on the
 //      version reads the file before its application id is judged. An uninitialised file
 //      (application id 0, user_version 0, no schema object) is set up (below) and then checked like
 //      any other. Otherwise, in this order: the application id; the version (lower: older, higher:
-//      newer); ONLY at an equal version the stored schema and the meta row, in a read transaction
-//      (so a file one release behind reads as older, never as tampered); then the journal mode,
+//      newer); ONLY at an equal version the stored schema, in a read transaction (so a file one
+//      release behind reads as older, never as tampered), and only when it matches, the meta row (a
+//      dropped or renamed meta table is tampering, not a missing row); then the journal mode,
 //      `auto_vacuum` and the page size the file recorded, every difference named at once. A file
 //      that is not SQLite or is damaged is refused too. A refused file is never changed or replaced;
 //   6. the connection pragmas, each through `autocommit` and read back;
 //   7. the phase derivation's fingerprint, computed once per process by core.
-// The first-open setup: in autocommit, `page_size` and `auto_vacuum` while the file has no page, then
-// `journal_mode = WAL` with its answer checked (inside a transaction SQLite ignores all three); then
-// in `BEGIN IMMEDIATE` the uninitialised test again, the schema, the application id, `user_version`
-// and the store's meta row, its time from the home's clock. A second first opener waits at its
-// `BEGIN IMMEDIATE`, finds the schema and does nothing.
+// The first-open setup: in autocommit, before anything is written, the page count, page size and
+// `auto_vacuum` by one statement. A file with no page gets Realm's `page_size` and `auto_vacuum`. A
+// file that already has pages (another program wrote to the empty file; another Realm opener's own
+// switch to WAL makes one with Realm's values) is refused, with nothing written, when either value
+// is not Realm's: SQLite fixes both once the file has a page, only a VACUUM changes them, and Realm
+// does not change a file by itself. Then `journal_mode = WAL` with its answer checked (inside a
+// transaction SQLite ignores all three); then in `BEGIN IMMEDIATE` the uninitialised test again, the
+// schema, the application id, `user_version` and the store's meta row, its time from the home's
+// clock. A second first opener waits at its `BEGIN IMMEDIATE`, finds the schema and does nothing.
 //
 // The reopen `RealmDb` needs after a poisoned connection opens the same file again and applies the
 // same pragmas, read back. It runs inside a call of the class (the lock is held, the busy wait is
@@ -31,7 +38,8 @@
 //
 // This module and `connection.ts` import each other; neither reads the other's bindings at the top
 // level, so either may be loaded first.
-import { lstatSync } from 'node:fs';
+import { accessSync, constants, lstatSync } from 'node:fs';
+import { getSystemErrorMessage } from 'node:util';
 import {
   REALM_STORE_APPLICATION_ID,
   REALM_STORE_PAGE_SIZE,
@@ -42,7 +50,13 @@ import {
   type Clock,
   type StoreSchemaVersions,
 } from '@sensigo/realm';
-import { BUSY_SLICE_MS, mapSqliteError, RealmDb, versionNewerError } from './connection.js';
+import {
+  BUSY_SLICE_MS,
+  mapSqliteError,
+  readOnlyError,
+  RealmDb,
+  versionNewerError,
+} from './connection.js';
 import { loadSqlite, openDatabase, type DatabaseLike } from './driver.js';
 import { assertLocalFilesystem, SYSTEM_PROBE, type FilesystemProbe } from './filesystem-gate.js';
 import { prepareHome } from './home.js';
@@ -106,11 +120,20 @@ function connectionPragmas(platform: string): readonly ConnectionPragma[] {
   return pragmas;
 }
 
-/** The store file is not one this Realm can use; nothing about it was changed. */
-function settingsRefused(path: string, differences: readonly string[]): WorkflowError {
+/**
+ * The store file is not one this Realm can use; nothing about it was changed. `holdsNoStore`: the
+ * file has no store in it yet (the setup refused it before writing), so removing it is the way on.
+ */
+function settingsRefused(
+  path: string,
+  differences: readonly string[],
+  holdsNoStore = false,
+): WorkflowError {
+  const lead = holdsNoStore ? 'it holds no store yet, but ' : '';
+  const remedy = holdsNoStore ? 'Remove it and Realm makes a new one. ' : '';
   return new WorkflowError(
-    `The store file ${path} is not a Realm store this Realm can use: ${differences.join('; ')}. ` +
-      'Realm does not change or replace a store file by itself.',
+    `The store file ${path} is not a Realm store this Realm can use: ${lead}${differences.join('; ')}. ` +
+      `${remedy}Realm does not change or replace a store file by itself.`,
     {
       code: 'STATE_STORE_SETTINGS_REFUSED',
       category: 'STATE',
@@ -169,6 +192,20 @@ function notAFile(path: string): string | undefined {
     return 'it is a symbolic link; link the home folder instead, never the store file';
   }
   return 'it is not a regular file (a named pipe, a socket or a device)';
+}
+
+/**
+ * Refuses a store file the operating system does not let Realm write, in its own words (unit 7a's
+ * sentence). `access` reads and writes nothing; SQLite would open such a file read-only.
+ */
+function assertWritable(path: string): void {
+  try {
+    accessSync(path, constants.W_OK);
+  } catch (err) {
+    const errno = (err as NodeJS.ErrnoException).errno;
+    if (typeof errno === 'number') throw readOnlyError(path, getSystemErrorMessage(errno));
+    throw err;
+  }
 }
 
 /** SQLite's answer when the file is not a database (26) or is damaged (11), as a refusal. */
@@ -273,14 +310,18 @@ async function checkFile(
     }
     if (header.version < realm) throw versionOlder(header.version, realm);
     if (header.version > realm) throw versionNewerError(header.version, realm);
-    const stored = await db.snapshot((c) => ({
-      difference: storedSchemaDifference(c, schema),
-      recorded: c.prepare('SELECT page_size FROM store_meta WHERE one = 1').get()?.['page_size'],
-    }));
-    const { missing, extra, changed } = stored.difference;
-    if (missing.length + extra.length + changed.length > 0) {
-      throw schemaTampered(path, realm, stored.difference);
-    }
+    // The meta row is read only when the schema matches: a dropped or renamed meta table (or its
+    // `page_size` column) is then reported as the tampering it is, never as SQLite's own error.
+    const stored = await db.snapshot((c) => {
+      const difference = storedSchemaDifference(c, schema);
+      const { missing, extra, changed } = difference;
+      const tampered = missing.length + extra.length + changed.length > 0;
+      const recorded = tampered
+        ? undefined
+        : c.prepare('SELECT page_size FROM store_meta WHERE one = 1').get()?.['page_size'];
+      return { difference, tampered, recorded };
+    });
+    if (stored.tampered) throw schemaTampered(path, realm, stored.difference);
     if (stored.recorded === undefined) throw settingsRefused(path, ['its meta row is missing']);
     const differences = settingsDifferences(header, Number(stored.recorded));
     if (differences.length > 0) throw settingsRefused(path, differences);
@@ -294,6 +335,11 @@ async function checkFile(
 const META_ROW =
   'INSERT INTO store_meta (one, page_size, commit_epoch, created_at, tomb_seq, tombstones_through_seq, tombstones_since) VALUES (1, ?, 0, ?, 0, 0, ?)';
 
+/** What the setup reads of a file before it writes anything, by one statement. */
+const FIRST_PAGES = `SELECT (SELECT page_count FROM pragma_page_count) AS page_count,
+  (SELECT auto_vacuum FROM pragma_auto_vacuum) AS auto_vacuum,
+  (SELECT page_size FROM pragma_page_size) AS page_size`;
+
 /** The first-open setup (see the module comment). */
 async function setUp(
   db: RealmDb,
@@ -302,11 +348,26 @@ async function setUp(
   schema: readonly string[],
 ): Promise<void> {
   await db.autocommit((c) => {
-    // Both only while the file has no page; SQLite would ignore them later anyway.
-    if (Number(pragmaValue(c, 'page_count')) === 0) {
+    const row = c.prepare(FIRST_PAGES).get() ?? {};
+    if (Number(row['page_count']) === 0) {
+      // Both take effect at the first write; SQLite ignores them once the file has a page.
       c.exec(`PRAGMA page_size = ${REALM_STORE_PAGE_SIZE}`);
       c.exec('PRAGMA auto_vacuum = INCREMENTAL');
+      return;
     }
+    // The file already has pages, and no store: refused before anything is written (the switch to
+    // WAL below is itself a write to a file in rollback-journal mode) when either value is not
+    // Realm's. With Realm's two values (another Realm opener's own switch to WAL) the setup goes on.
+    const differences: string[] = [];
+    const autoVacuum = Number(row['auto_vacuum']);
+    if (autoVacuum !== 2) differences.push(`its auto_vacuum is ${autoVacuum}, not 2 (incremental)`);
+    const pageSize = Number(row['page_size']);
+    if (pageSize !== REALM_STORE_PAGE_SIZE) {
+      differences.push(
+        `its page size is ${pageSize} bytes, not the ${REALM_STORE_PAGE_SIZE} Realm needs`,
+      );
+    }
+    if (differences.length > 0) throw settingsRefused(path, differences, true);
   });
   await db.autocommit((c) => {
     const mode = String(c.prepare('PRAGMA journal_mode = WAL').get()?.['journal_mode']);
@@ -360,6 +421,7 @@ export async function openRealmDb(
   const path = prepareHome(home);
   const kind = notAFile(path);
   if (kind !== undefined) throw settingsRefused(path, [kind]);
+  assertWritable(path);
 
   const realm = seams.schemaVersion ?? REALM_STORE_SCHEMA_VERSION;
   const schema = (seams.versions ?? REALM_STORE_VERSIONS).get(realm)?.schema;

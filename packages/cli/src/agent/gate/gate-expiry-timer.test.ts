@@ -1,12 +1,12 @@
 // gate-expiry-timer.test.ts — issue #291, Deliverable 4e: the attending-process enactment timer.
 import { describe, it, expect, vi } from 'vitest';
 import { InMemoryStore, settableClock } from '@sensigo/realm-testing';
-import { JsonFileStore, systemClock, unreadableRunFileError } from '@sensigo/realm';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { systemClock, unreadableRunFileError } from '@sensigo/realm';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { WorkflowDefinition, PendingGate } from '@sensigo/realm';
 import { scheduleGateExpiryTimer } from './gate-expiry-timer.js';
+import { makeTempHome } from '../../test-support/temp-home.js';
 
 const def: WorkflowDefinition = {
   id: 'timer-wf',
@@ -198,7 +198,9 @@ describe('scheduleGateExpiryTimer (issue #291)', () => {
 
 describe('issue #719 — the expiry timer on a run file that cannot be read', () => {
   it('logs the file’s message (its way out) and that no enactment point can read the run, never its text', async () => {
-    const runsDir = mkdtempSync(join(tmpdir(), 'realm-719-timer-'));
+    const h = await makeTempHome();
+    const runsDir = h.home.runStore.runsDirPath;
+    mkdirSync(runsDir, { recursive: true });
     const warns: string[] = [];
     const spy = vi.spyOn(console, 'warn').mockImplementation((m: unknown) => {
       warns.push(String(m));
@@ -210,7 +212,7 @@ describe('issue #719 — the expiry timer on a run file that cannot be read', ()
         on_expiry: 'abort',
       });
       const cancel = scheduleGateExpiryTimer('bad', gate, {
-        store: new JsonFileStore(runsDir),
+        store: h.home.runStore,
         definition: def,
       });
       for (let i = 0; i < 50 && warns.length === 0; i++) {
@@ -239,7 +241,7 @@ describe('issue #719 — the expiry timer on a run file that cannot be read', ()
       });
     } finally {
       spy.mockRestore();
-      rmSync(runsDir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 });

@@ -17,6 +17,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const mocks = vi.hoisted(() => ({ question: vi.fn(), close: vi.fn() }));
 vi.mock('node:readline/promises', () => ({
@@ -99,18 +100,22 @@ describe(
   '#625 PR-2a, C174 lane D — realm-run-reading.md, from the built realm',
   { timeout: 60_000 },
   () => {
+    let h: TempHome & { readonly root: string };
     let home: string;
     let runStore: JsonFileStore;
     let workflowStore: JsonWorkflowStore;
 
-    beforeEach(() => {
-      home = mkdtempSync(join(tmpdir(), 'realm-625-pin-d-'));
+    beforeEach(async () => {
+      h = await makeTempHome();
+      home = h.root;
       mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
       mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
-      runStore = new JsonFileStore(join(home, '.realm', 'runs'));
-      workflowStore = new JsonWorkflowStore(join(home, '.realm', 'workflows'));
+      runStore = h.home.runStore;
+      workflowStore = h.home.workflowStore;
     });
-    afterEach(() => rmSync(home, { recursive: true, force: true }));
+    afterEach(async () => {
+      await h.cleanup();
+    });
 
     async function started(def: WorkflowDefinition, params: Record<string, unknown> = {}) {
       await workflowStore.register(def);
@@ -508,6 +513,7 @@ describe(
   '#625 PR-2a, C174 lane D — realm-workflow.md, from the real command',
   { timeout: 60_000 },
   () => {
+    let h: TempHome & { readonly root: string };
     let home: string;
     let dir: string;
     let savedHome: string | undefined;
@@ -516,9 +522,10 @@ describe(
     let errSpy: ReturnType<typeof vi.spyOn>;
     let exitSpy: ReturnType<typeof vi.spyOn>;
 
-    beforeEach(() => {
+    beforeEach(async () => {
       clearProjectExtensionsCache();
-      home = mkdtempSync(join(tmpdir(), 'realm-625-pin-d-home-'));
+      h = await makeTempHome();
+      home = h.root;
       dir = mkdtempSync(join(tmpdir(), 'realm-625-pin-d-wf-'));
       mkdirSync(join(home, '.realm'), { recursive: true });
       savedHome = process.env['HOME'];
@@ -534,12 +541,12 @@ describe(
       }) as never);
     });
 
-    afterEach(() => {
+    afterEach(async () => {
       if (savedTTY === undefined) delete (process.stdin as { isTTY?: boolean }).isTTY;
       else process.stdin.isTTY = savedTTY;
       if (savedHome === undefined) delete process.env['HOME'];
       else process.env['HOME'] = savedHome;
-      rmSync(home, { recursive: true, force: true });
+      await h.cleanup();
       rmSync(dir, { recursive: true, force: true });
       mocks.question.mockReset();
       vi.restoreAllMocks();
@@ -558,7 +565,7 @@ describe(
       }
     };
     async function readRecord(id: string) {
-      return (await new JsonFileStore(join(home, '.realm', 'runs')).get(id)).record;
+      return (await h.home.runStore.get(id)).record;
     }
 
     /** Runs `realm workflow run <file>`; returns the exit code (0 for a natural return). */
@@ -1389,7 +1396,7 @@ describe(
           ].join('\n'),
         );
         mocks.question.mockImplementation(async () => {
-          const store = new JsonFileStore(join(home, '.realm', 'runs'));
+          const store = h.home.runStore;
           await store.claimStep(runIds()[0]!, 'g', def, {
             by: 'other-b',
             by_source: 'ambient',
@@ -1447,7 +1454,7 @@ describe(
         });
         mocks.question.mockImplementation(async () => {
           // Another program runs what the engine owes: `g`, then `s`, which fails and ends the run.
-          const store = new JsonFileStore(join(home, '.realm', 'runs'));
+          const store = h.home.runStore;
           await advanceRun(store, def, {
             runId: runIds()[0]!,
             caller: 'advance',
@@ -1516,13 +1523,17 @@ describe(
 // driven to stuck through the library). What a failing cell prints: the page's line and the built
 // line, ids and the local time put in place.
 describe('issue #729 — realm-run-reading.md, `--stuck` names a run that cannot go on', () => {
+  let h: TempHome & { readonly root: string };
   let home: string;
-  beforeEach(() => {
-    home = mkdtempSync(join(tmpdir(), 'realm-729-pin-rd-'));
+  beforeEach(async () => {
+    h = await makeTempHome();
+    home = h.root;
     mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
     mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
   });
-  afterEach(() => rmSync(home, { recursive: true, force: true }));
+  afterEach(async () => {
+    await h.cleanup();
+  });
 
   it('the --older-than row and the idle-line sentence: the limit applies to the idle finding alone', () => {
     claim(
@@ -1561,8 +1572,8 @@ describe('issue #729 — realm-run-reading.md, `--stuck` names a run that cannot
         '      properties:',
         '        text: { type: string }',
       ]);
-      const runStore = new JsonFileStore(join(home, '.realm', 'runs'));
-      await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(W2);
+      const runStore = h.home.runStore;
+      await h.home.workflowStore.register(W2);
       const { record: run } = await runStore.create({
         workflowId: 'w2-crown',
         workflowVersion: 1,

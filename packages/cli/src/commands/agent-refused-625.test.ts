@@ -31,6 +31,7 @@ import { clearProjectExtensionsCache } from '../extensions/load-project-extensio
 import { readFileSync as readDoc625 } from 'node:fs';
 import { join as joinDoc625, dirname as dirDoc625 } from 'node:path';
 import { fileURLToPath as urlDoc625 } from 'node:url';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 /** C174: (a) red when the page no longer holds the sentence word for word; (b) prints it. */
 function claimDoc625(page: string, sentence: string): void {
@@ -65,13 +66,14 @@ const ADVANCE_CHAINED = (id: string): string[] => [
   wayOut(id),
 ];
 
-function stores(): { home: string; runs: JsonFileStore; workflows: JsonWorkflowStore } {
-  const home = mkdtempSync(join(tmpdir(), 'realm-c82-cmd-'));
-  return {
-    home,
-    runs: new JsonFileStore(join(home, '.realm', 'runs')),
-    workflows: new JsonWorkflowStore(join(home, '.realm', 'workflows')),
-  };
+async function stores(): Promise<{
+  h: TempHome;
+  home: string;
+  runs: JsonFileStore;
+  workflows: JsonWorkflowStore;
+}> {
+  const h = await makeTempHome();
+  return { h, home: h.root, runs: h.home.runStore, workflows: h.home.workflowStore };
 }
 
 describe('#625 PR-2a, C82 — realm run inspect and realm run advance name a refused agent step', () => {
@@ -80,7 +82,7 @@ describe('#625 PR-2a, C82 — realm run inspect and realm run advance name a ref
       'docs/reference/cli/realm-run-reading.md',
       '| `Cannot run`, `Could not run` | When an owed `auto` step, or an agent step, is refused before its claim | The step, the check that refused it, and why. Added after version 0.46.0. |',
     );
-    const { home, runs, workflows } = stores();
+    const { h, runs, workflows } = await stores();
     try {
       const stuck = wf('c82-inspect', { ask: agent(PRE) });
       const ready = wf('c82-inspect-ctl', { ask: agent(PRE), ok: agent() });
@@ -107,12 +109,12 @@ describe('#625 PR-2a, C82 — realm run inspect and realm run advance name a ref
       expect(ctl).toContain(`Cannot run 'ask' (precondition): ${PRE_REFUSAL}`);
       expect(ctl.filter((l) => l.includes('stays open'))).toEqual([]);
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 
   it('advance: the refused agent step is a Stopped reason, then the way out; exit 1. CONTROL: a passing agent step — drive it, exit 0', async () => {
-    const { home, runs, workflows } = stores();
+    const { h, home, runs, workflows } = await stores();
     try {
       const stuck = wf('c82-advance', { ask: agent(PRE) });
       const ready = wf('c82-advance-ctl', { ask: agent() });
@@ -159,14 +161,14 @@ describe('#625 PR-2a, C82 — realm run inspect and realm run advance name a ref
         expect({ code, lines: lines.slice(3) }).toEqual(expected(run.id));
       }
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 });
 
 describe('#625 PR-2a, C82 — realm run advance after a call that ran a step', () => {
   it('the engine runs the step before, then stops on the refused agent step after it: a Stopped reason, the way out, exit 1', async () => {
-    const { home, runs, workflows } = stores();
+    const { h, home, runs, workflows } = await stores();
     try {
       // `prep` records the run's params ({}), so `prep.ok == true` fails for `ask`.
       const d = wf('c82-advance-chained', {
@@ -192,7 +194,7 @@ describe('#625 PR-2a, C82 — realm run advance after a call that ran a step', (
       // (a) red when the exit after a call reads the engine steps only (exit 0); (b) prints both.
       expect({ code, lines: lines.slice(3) }).toEqual({ code: 1, lines: ADVANCE_CHAINED(run.id) });
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 });

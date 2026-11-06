@@ -13,13 +13,13 @@ import { mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const mocks = vi.hoisted(() => ({ question: vi.fn(), close: vi.fn() }));
 vi.mock('node:readline/promises', () => ({
   createInterface: vi.fn(() => ({ question: mocks.question, close: mocks.close })),
 }));
 
-import { JsonFileStore } from '@sensigo/realm';
 import { runCommand } from './run.js';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
 
@@ -64,6 +64,7 @@ describe(
   '#729 E1 (j) — the cancel path when the record cannot be re-read (run.ts)',
   { timeout: 60_000 },
   () => {
+    let h: TempHome & { readonly root: string };
     let home: string;
     let dir: string;
     let savedHome: string | undefined;
@@ -71,9 +72,10 @@ describe(
     let errSpy: ReturnType<typeof vi.spyOn>;
     let exitSpy: ReturnType<typeof vi.spyOn>;
 
-    beforeEach(() => {
+    beforeEach(async () => {
       clearProjectExtensionsCache();
-      home = mkdtempSync(join(tmpdir(), 'realm-729-e1j-home-'));
+      h = await makeTempHome();
+      home = h.root;
       dir = mkdtempSync(join(tmpdir(), 'realm-729-e1j-wf-'));
       mkdirSync(join(home, '.realm'), { recursive: true });
       savedHome = process.env['HOME'];
@@ -89,12 +91,12 @@ describe(
       }) as never);
     });
 
-    afterEach(() => {
+    afterEach(async () => {
       if (savedTTY === undefined) delete (process.stdin as { isTTY?: boolean }).isTTY;
       else process.stdin.isTTY = savedTTY;
       if (savedHome === undefined) delete process.env['HOME'];
       else process.env['HOME'] = savedHome;
-      rmSync(home, { recursive: true, force: true });
+      await h.cleanup();
       rmSync(dir, { recursive: true, force: true });
       mocks.question.mockReset();
       vi.restoreAllMocks();
@@ -159,7 +161,7 @@ describe(
         id = runIds()[0];
         rmSync(join(runsDir(), `${id}.json`), { force: true });
         // The text the store itself gives for the vanished record — the line must carry it as is.
-        storeMessage = await new JsonFileStore(runsDir())
+        storeMessage = await h.home.runStore
           .get(id!)
           .then(() => 'fixture: the record was still readable')
           .catch((e: unknown) => (e instanceof Error ? e.message : String(e)));
@@ -189,7 +191,7 @@ describe(
         }
         id = runIds()[0];
         rmSync(join(runsDir(), `${id}.json`), { force: true });
-        storeMessage = await new JsonFileStore(runsDir())
+        storeMessage = await h.home.runStore
           .get(id!)
           .then(() => 'fixture: the record was still readable')
           .catch((e: unknown) => (e instanceof Error ? e.message : String(e)));

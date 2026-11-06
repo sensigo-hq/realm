@@ -6,14 +6,11 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   ExtensionRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   executeStep,
@@ -24,6 +21,7 @@ import { advanceRunFromShell } from './run-advance.js';
 import { respondToGate } from './respond.js';
 import { runAgent } from '../agent/run-agent.js';
 import { LlmProvider } from '../agent/providers/llm-provider.js';
+import { makeTempHome } from '../test-support/temp-home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 
@@ -120,10 +118,10 @@ describe('#625 PR-2a, F17 — the CHANGELOG and step-kinds.md quote what the CLI
       'CHANGELOG.md',
       `When no step is refused before its claim, the last of those lines is \`${line}\` (a step this program lacks the handler or adapter for names its own way out).`,
     );
-    const home = mkdtempSync(join(tmpdir(), 'realm-f17-cli-'));
+    const h = await makeTempHome();
     try {
-      const runs = new JsonFileStore(join(home, 'runs'));
-      const workflows = new JsonWorkflowStore(join(home, 'wf'));
+      const runs = h.home.runStore;
+      const workflows = h.home.workflowStore;
       const def = wf('f17-capgate', {
         decide: {
           description: 'Decide.',
@@ -166,7 +164,7 @@ describe('#625 PR-2a, F17 — the CHANGELOG and step-kinds.md quote what the CLI
         line.replace('<id>', run.id),
       ]);
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 
@@ -177,10 +175,11 @@ describe('#625 PR-2a, F17 — the CHANGELOG and step-kinds.md quote what the CLI
         'docs/concepts/step-kinds.md',
         "Correcting the workflow and registering it again is the fix: the run picks up the corrected definition, and `realm run advance` then runs the step when it is an `auto` step; for an agent step it names the drive (`Nothing is owed to the engine: an agent step is ready: '<step>' — drive it with realm agent --run-id <id> --provider <provider> --model <model>`).",
       );
-      const home = mkdtempSync(join(tmpdir(), 'realm-f17-cli-'));
+      const h = await makeTempHome();
+      const home = h.root;
       try {
-        const runs = new JsonFileStore(join(home, 'runs'));
-        const workflows = new JsonWorkflowStore(join(home, 'wf'));
+        const runs = h.home.runStore;
+        const workflows = h.home.workflowStore;
         const step = (pre: boolean): StepDefinition =>
           ({
             description: 'Ask.',
@@ -239,7 +238,7 @@ describe('#625 PR-2a, F17 — the CHANGELOG and step-kinds.md quote what the CLI
               },
         );
       } finally {
-        rmSync(home, { recursive: true, force: true });
+        await h.cleanup();
       }
     },
   );

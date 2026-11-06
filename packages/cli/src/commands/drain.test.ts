@@ -14,7 +14,7 @@
 // store and `drainCommand`'s internal store both resolved to the same frozen-wrong default, so the
 // tests still "passed" while polluting real user data. `runDrainAction` (drain.ts) now takes
 // `runStore`/`workflowStore`/its three `@sensigo/realm` runtime values as EXPLICIT parameters —
-// tests below construct `new JsonFileStore(tmpDir)` with an EXPLICIT directory and inject
+// tests below open their stores through `makeTempHome()` (an EXPLICIT temp folder, #616 PR-2b) and inject
 // `drainFinalizers`/`captureEvidence`/`DRAIN_LEASE_MAX` directly, never relying on `$HOME` or any
 // default at all. A static top-level import of `@sensigo/realm` is therefore safe here (no
 // `$HOME`-timing dependency exists to defeat).
@@ -23,8 +23,7 @@
 // account). Historicized here only — this file's explicit-directory approach is unaffected either
 // way.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   JsonFileStore,
@@ -44,6 +43,7 @@ import {
   type DrainRuntimeDeps,
 } from './drain.js';
 import { zOf } from '../test-support/instant.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const NOW = new Date('2026-07-08T12:00:00.000Z');
 const past = new Date(NOW.getTime() - 60_000).toISOString();
@@ -169,7 +169,7 @@ describe('isBatchActionable', () => {
 });
 
 describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store injection, no $HOME reliance', () => {
-  let dir: string;
+  let h: TempHome;
   let store: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
   let logSpy: ReturnType<typeof vi.spyOn>;
@@ -177,9 +177,9 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-drain-cli-'));
-    store = new JsonFileStore(dir);
-    workflowStore = new JsonWorkflowStore(join(dir, 'workflows'));
+    h = await makeTempHome();
+    store = h.home.runStore;
+    workflowStore = h.home.workflowStore;
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     exitSpy = vi.spyOn(process, 'exit').mockImplementation(((): never => {
@@ -191,7 +191,7 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
     logSpy.mockRestore();
     errSpy.mockRestore();
     exitSpy.mockRestore();
-    await rm(dir, { recursive: true, force: true });
+    await h.cleanup();
   });
 
   // issue #558 PR-C (walk 2 fold X1): this fixture carried no `schema_version`, so PR-T's registrar
@@ -706,6 +706,7 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
 // C-5 — a pass that left a finalizer pending names the void command PER finalizer and exits 1;
 //       a pass that leased nothing and had nothing to lease says so instead of `Drained run`.
 describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
+  let h: TempHome;
   let dir: string;
   let store: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
@@ -714,9 +715,10 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-drain-558c-'));
-    store = new JsonFileStore(dir);
-    workflowStore = new JsonWorkflowStore(join(dir, 'workflows'));
+    h = await makeTempHome();
+    dir = h.home.runStore.runsDirPath;
+    store = h.home.runStore;
+    workflowStore = h.home.workflowStore;
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     // The house idiom throws on ANY exit — which cannot tell exit(1) from exit(0). This PR CHANGES
@@ -733,7 +735,7 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
     logSpy.mockRestore();
     errSpy.mockRestore();
     exitSpy.mockRestore();
-    await rm(dir, { recursive: true, force: true });
+    await h.cleanup();
   });
 
   const wf: WorkflowDefinition = {

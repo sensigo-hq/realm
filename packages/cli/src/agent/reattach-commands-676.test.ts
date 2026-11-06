@@ -5,17 +5,9 @@
 //   `--provider <provider> --model <model>` for the operator to fill in.
 // - A drive blocked by a missing handler knows how it was started: its re-attach command repeats
 //   the drive's own model flags (`AgentDeps.reattachFlags`, built by `buildReattachFlags`).
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { InMemoryStore } from '@sensigo/realm-testing';
-import {
-  CURRENT_WORKFLOW_SCHEMA_VERSION,
-  ExtensionRegistry,
-  JsonFileStore,
-  JsonWorkflowStore,
-} from '@sensigo/realm';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION, ExtensionRegistry } from '@sensigo/realm';
 import type { PendingView, RunRecord, WorkflowDefinition } from '@sensigo/realm';
 import { runAgent } from './run-agent.js';
 import type { AgentDeps } from './run-agent.js';
@@ -23,6 +15,7 @@ import { LlmProvider } from './providers/llm-provider.js';
 import { renderDetachMap } from '../commands/run.js';
 import { resumeCommand } from '../commands/resume.js';
 import { buildReattachFlags } from '../commands/agent.js';
+import { makeTempHome } from '../test-support/temp-home.js';
 
 const PLACEHOLDER = '--provider <provider> --model <model>';
 
@@ -33,8 +26,8 @@ afterEach(() => {
 describe('realm run resume prints the model flags to fill in (issue #676)', () => {
   it('the whole "Drive it with:" line', async () => {
     const savedHome = process.env['HOME'];
-    const home = mkdtempSync(join(tmpdir(), 'realm-676-resume-'));
-    process.env['HOME'] = home;
+    const h = await makeTempHome();
+    process.env['HOME'] = h.root;
     try {
       const workflow: WorkflowDefinition = {
         id: 'resume-676-wf',
@@ -44,9 +37,9 @@ describe('realm run resume prints the model flags to fill in (issue #676)', () =
         // decision C205: an agent step — `Drive it with:` is printed only when one is ready.
         steps: { 'step-one': { description: 'First step', execution: 'agent' } },
       };
-      // Built AFTER HOME is set: both stores resolve their folder at construction.
-      const runStore = new JsonFileStore();
-      await new JsonWorkflowStore().register(workflow);
+      // The handle's stores: the home the command opens through HOME.
+      const runStore = h.home.runStore;
+      await h.home.workflowStore.register(workflow);
       const { record: run } = await runStore.create({
         workflowId: workflow.id,
         workflowVersion: 1,
@@ -87,7 +80,7 @@ describe('realm run resume prints the model flags to fill in (issue #676)', () =
     } finally {
       if (savedHome === undefined) delete process.env['HOME'];
       else process.env['HOME'] = savedHome;
-      rmSync(home, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 });

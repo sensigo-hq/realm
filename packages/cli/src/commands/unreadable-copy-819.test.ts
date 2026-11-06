@@ -6,19 +6,21 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: file
 // names, printed lines — never a token or an environment.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { inspectRun } from './inspect.js';
 import { workflowListCommand } from './workflow-list.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 describe('#819 U2 — a copy with no steps, on the CLI', () => {
+  let h: TempHome & { readonly root: string };
   let home: string;
   let wfDir: string;
   let originalHome: string | undefined;
 
   beforeEach(async () => {
-    home = await mkdtemp(join(tmpdir(), 'realm-copy-819-'));
+    h = await makeTempHome();
+    home = h.root;
     wfDir = join(home, '.realm', 'workflows');
     await mkdir(join(home, '.realm', 'runs'), { recursive: true });
     await mkdir(wfDir, { recursive: true });
@@ -35,12 +37,11 @@ describe('#819 U2 — a copy with no steps, on the CLI', () => {
     vi.restoreAllMocks();
     if (originalHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = originalHome;
-    await rm(home, { recursive: true, force: true });
+    await h.cleanup();
   });
 
   it('realm run inspect names the copy and its repair, with no internal error', async () => {
-    const { JsonFileStore, JsonWorkflowStore } = await import('@sensigo/realm');
-    const store = new JsonFileStore();
+    const store = h.home.runStore;
     const { record: run } = await store.create({
       workflowId: 'plain-gate',
       workflowVersion: 1,
@@ -56,7 +57,7 @@ describe('#819 U2 — a copy with no steps, on the CLI', () => {
         opened_at: '2026-01-01T00:00:00.000Z',
       },
     });
-    const text = await inspectRun(run.id, store, new JsonWorkflowStore());
+    const text = await inspectRun(run.id, store, h.home.workflowStore);
     // (a) red when the copy passes the copy check (inspect then reads `steps` of undefined), or the
     //     repair is not named; (b) prints whether each part is there.
     expect({
