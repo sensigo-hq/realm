@@ -4,13 +4,10 @@
 // `realm run resume`. Whole-message pins.
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
+  type JsonFileStore,
   executeStep,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type WorkflowDefinition,
@@ -18,6 +15,7 @@ import {
 } from '@sensigo/realm';
 import { printChildrenWhenATestFails } from '../test-support/child-output.js';
 import { createTestLocation } from '@sensigo/realm-testing';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 if (!existsSync(CLI_ENTRY)) {
@@ -58,10 +56,12 @@ async function setup(): Promise<{
   runs: JsonFileStore;
   run: RunRecord;
   gateId: string;
+  h: TempHome;
 }> {
-  const home = mkdtempSync(join(tmpdir(), 'realm-owed-cli-625-'));
-  const runs = new JsonFileStore(join(home, '.realm', 'runs'));
-  await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(gateThenAuto);
+  const h = await makeTempHome();
+  const home = h.root;
+  const runs = h.home.runStore;
+  await h.home.workflowStore.register(gateThenAuto);
   const { record: run } = await runs.create({
     workflowId: gateThenAuto.id,
     workflowVersion: 1,
@@ -74,12 +74,12 @@ async function setup(): Promise<{
     dispatcher: async () => ({}),
   });
   const gateId = (await runs.get(run.id)).record.pending_gate!.gate_id;
-  return { home, runs, run, gateId };
+  return { home, runs, run, gateId, h };
 }
 
 describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
   it('respond: derived phase, the stated answerer, and the owed line; then advance runs it', async () => {
-    const { home, run, gateId } = await setup();
+    const { home, run, gateId, h } = await setup();
     try {
       const responded = realm(home, [
         'run',
@@ -146,12 +146,13 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
         'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.',
       ]);
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await h.cleanup();
     }
   }, 60000);
 
   it('advance: a refused step stops it with exit 1 and names the check', async () => {
-    const home = mkdtempSync(join(tmpdir(), 'realm-owed-cli-625-'));
+    const h = await makeTempHome();
+    const home = h.root;
     try {
       const d: WorkflowDefinition = {
         id: 'cli-refused-wf',
@@ -168,8 +169,8 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
           b: { description: 'B.', execution: 'auto', depends_on: [] },
         },
       };
-      await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(d);
-      const runs = new JsonFileStore(join(home, '.realm', 'runs'));
+      await h.home.workflowStore.register(d);
+      const runs = h.home.runStore;
       const { record: run } = await runs.create({
         workflowId: d.id,
         workflowVersion: 1,
@@ -182,12 +183,12 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
         "Stopped: 'a' cannot run (precondition): Precondition failed for step 'a'. Precondition failed: 'nothing.ok == true'. Resolved value: undefined.",
       );
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await h.cleanup();
     }
   }, 60000);
 
   it('advance: a malformed REALM_OPERATOR prints one line and exits 1 before any work', async () => {
-    const { home, run } = await setup();
+    const { home, run, h } = await setup();
     try {
       const r = spawnSync(process.execPath, [CLI_ENTRY, 'run', 'advance', run.id], {
         env: { ...process.env, HOME: home, REALM_OPERATOR: 'bad\u0007name' },
@@ -200,12 +201,14 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
       expect(r.stderr.trim().split('\n')).toHaveLength(1);
       expect(r.stderr).toContain('REALM_OPERATOR');
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await h.cleanup();
     }
   }, 60000);
 
   it('drain --expired --force that leaves the run open names the owed call after its line', async () => {
-    const home = mkdtempSync(join(tmpdir(), 'realm-owed-cli-625-'));
+    const h = await makeTempHome();
+    const home = h.root;
+    let located: TempHome | undefined;
     try {
       const d: WorkflowDefinition = {
         id: 'cli-expiry-owed-wf',
@@ -229,12 +232,13 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
           finish: { description: 'Finish.', execution: 'agent', depends_on: ['after'] },
         },
       };
-      await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(d);
+      await h.home.workflowStore.register(d);
       // #715 (b) 04 §D (B4): `~/.realm` is a test location, made BEFORE the store opens (a store takes
       // its clock when it is built); the cell moves the clock the spawned `realm` reads instead of
-      // waiting on the real one.
-      const loc = await createTestLocation({ start: new Date(), root: join(home, '.realm') });
-      const runs = new JsonFileStore(join(home, '.realm', 'runs'));
+      // waiting on the real one. #616 PR-2b: a second handle on the location, opened after it.
+      const loc = await createTestLocation({ start: new Date(), root: h.path });
+      located = await makeTempHome({ home: h.path });
+      const runs = located.home.runStore;
       const { record: run } = await runs.create({
         workflowId: d.id,
         workflowVersion: 1,
@@ -254,7 +258,8 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
           `To run the step the engine owes ('after'): realm run advance ${run.id}`,
       );
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      await located?.cleanup();
+      await h.cleanup();
     }
   }, 60000);
 });

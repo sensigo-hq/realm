@@ -22,7 +22,7 @@ import { connect as netConnect, type AddressInfo } from 'node:net';
 import { Worker } from 'node:worker_threads';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { InMemoryStore } from '@sensigo/realm-testing';
-import { CURRENT_WORKFLOW_SCHEMA_VERSION, abandonRun, JsonFileStore } from '@sensigo/realm';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION, abandonRun } from '@sensigo/realm';
 import type { WorkflowDefinition, WebhookTrigger, WorkflowRegistrar } from '@sensigo/realm';
 import { tmpdir, constants as osConstants } from 'node:os';
 import {
@@ -55,6 +55,7 @@ import {
 } from './listen.js';
 import { InMemoryDedupStore } from '../lib/dedup-store.js';
 import { purgeRuns } from './purge.js';
+import { makeTempHome } from '../test-support/temp-home.js';
 import type { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 
 /**
@@ -987,10 +988,11 @@ describe('makeListenHandler — request pipeline', () => {
   it('#735 cell 9 (preservation): a seal landing between the create and the pid write — the write fails on the version check; the run stays sealed with no agent_pid', async () => {
     // A JsonFileStore: the in-memory store's create returns the object it keeps, so agent_pid would
     // appear on it before the write (a shared-object artefact).
-    const dir = mkdtempSync(join(tmpdir(), 'listen-735-'));
+    const h = await makeTempHome();
+    const second = await makeTempHome({ home: h.path });
     try {
-      const inner = new JsonFileStore(dir);
-      const store = new JsonFileStore(dir);
+      const inner = h.home.runStore;
+      const store = second.home.runStore;
       const realUpdate = store.update.bind(store);
       store.update = async (record) => {
         if (record.agent_pid !== undefined) await abandonRun(inner, record.id);
@@ -1029,16 +1031,17 @@ describe('makeListenHandler — request pipeline', () => {
         logged: [['webhook: failed to record agent pid', true]],
       });
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      await second.cleanup();
+      await h.cleanup();
     }
   });
 
   it('#735: after a failed start, purging the run and delivering again starts a new run at once', async () => {
     // A JsonFileStore over a temp folder: `realm run purge <id> --force` calls `purgeRuns` with
     // the run store as its anchor, which needs the store's folder (the in-memory store has none).
-    const dir = mkdtempSync(join(tmpdir(), 'listen-735-purge-'));
+    const h = await makeTempHome();
     try {
-      const store = new JsonFileStore(dir);
+      const store = h.home.runStore;
       let attempt = 0;
       const deps = makeDeps({
         runStore: store,
@@ -1075,7 +1078,7 @@ describe('makeListenHandler — request pipeline', () => {
         spawns: 2,
       });
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 });
@@ -3633,8 +3636,11 @@ describe('E2 — early replies reach the sender', () => {
 
 describe('issue #719 — listen’s keyed create on a store with a run file that might hold the key', () => {
   it('500 store_error; the log line carries the file’s message and none of its text (the leak cell, listen log)', async () => {
-    const runsDir = mkdtempSync(join(tmpdir(), 'realm-719-listen-'));
+    const h = await makeTempHome();
+    const runsDir = h.home.runStore.runsDirPath;
     try {
+      // #616 PR-2b: the door creates no folder at the open; the file is written before any store write.
+      mkdirSync(runsDir, { recursive: true });
       // A run file whose key cannot be known, its fault AT a token (F719-AU-4).
       writeFileSync(join(runsDir, 'bad.json'), '{"params":{"token": ghp_FAKE719}}');
       const errors: Array<{ msg: string; data: unknown }> = [];
@@ -3643,7 +3649,7 @@ describe('issue #719 — listen’s keyed create on a store with a run file that
         error: (msg: string, data?: unknown) => errors.push({ msg, data }),
       };
       const trigger: WebhookTrigger = { ...SHARED_SECRET_TRIGGER, dedup: { id_from: 'body.id' } };
-      const deps = makeDeps({ runStore: new JsonFileStore(runsDir) as never, logger });
+      const deps = makeDeps({ runStore: h.home.runStore as never, logger });
       const handler = makeListenHandler(routesFor(wf(trigger)), deps);
       const { status, body } = await invoke(handler, {
         url: '/wf',
@@ -3673,7 +3679,7 @@ describe('issue #719 — listen’s keyed create on a store with a run file that
         spawned: 0,
       });
     } finally {
-      rmSync(runsDir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 });
