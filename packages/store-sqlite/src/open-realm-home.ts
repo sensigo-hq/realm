@@ -17,9 +17,16 @@
 // checks), which pass through unchanged.
 import { realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
-import { realmHomePath, resolveRootClock, type Clock } from '@sensigo/realm';
+import {
+  realmHomePath,
+  resolveRootClock,
+  type Clock,
+  type PerRunArtifactStore,
+  type TraceBufferStore,
+} from '@sensigo/realm';
 import { RealmDb } from './connection.js';
 import type { OpenSeams } from './open-file.js';
+import { SqliteTraceBufferStore } from './trace-buffer-store.js';
 
 /** What `openRealmHome` takes. */
 export interface OpenRealmHomeOptions {
@@ -33,8 +40,13 @@ export interface OpenRealmHomeOptions {
   readonly clock?: Clock;
 }
 
-/** An open Realm home. Later units add its stores. */
+/** An open Realm home. Later units add its other stores. */
 export interface RealmHome {
+  /**
+   * The home's trace buffer, on the home's one connection: an agent's progress lines per step, read
+   * in the order they were written. After `close()`, its calls reject.
+   */
+  readonly traceBufferStore: TraceBufferStore & PerRunArtifactStore;
   /**
    * Closes the home's connection; a later `openRealmHome` opens the home afresh. Every caller in this
    * process that opened the home shares this handle, so a `close()` by any of them ends it for all.
@@ -109,6 +121,7 @@ export async function openHome(
     const db = await RealmDb.open(home, { clock }, seams);
     let closed = false;
     return {
+      traceBufferStore: new SqliteTraceBufferStore(db),
       close(): void {
         if (closed) return;
         closed = true;

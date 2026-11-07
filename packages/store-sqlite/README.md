@@ -15,6 +15,8 @@ Text of a deleted run may stay readable in `realm.db`'s free pages and in `realm
 
 One exception to Realm stamping every time itself: a run deleted by SQL outside Realm is stamped with SQLite's own clock.
 
+The trace buffer keeps one row per line, in append order, and a step's read waits for a write in flight.
+
 ## Where it runs
 
 Realm refuses a home on a network drive or on a filesystem it does not recognise, including WSL's `/mnt/c`, because SQLite's write-ahead log does not work there. Set `REALM_STORE_FS=local` to use such a folder anyway.

@@ -44,7 +44,8 @@ export const REALM_STORE_PAGE_SIZE = 16384;
  * for every field a read filters on), `evidence` (append-only rows), `run_blobs` (the write-once
  * fields); `store_meta` (the store's one meta row: its tombstone counter and horizon), `write_clock`
  * (the instant of the deleting write), and the tombstones a deleted run leaves: `purged_ids` (its id,
- * kept forever) and `purged_runs` (its detail, compactable below the horizon).
+ * kept forever) and `purged_runs` (its detail, compactable below the horizon); `trace_buffer` (a
+ * step's buffered trace lines) and `trace_sealed` (a step's sealed lines).
  */
 export const REALM_STORE_SCHEMA: readonly string[] = [
   // ---- runs: the core document; the generated columns read it, never the reverse ----
@@ -321,4 +322,30 @@ BEGIN
   INSERT INTO purged_runs (seq, id, purged_at, workflow_id, key_hash, sealed_by_arm, run_phase, phase_version)
   VALUES ((SELECT tomb_seq FROM store_meta), old.id, COALESCE((SELECT at FROM write_clock WHERE one = 1), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), old.workflow_id, old.key_hash, old.sealed_by_arm, old.run_phase, old.phase_version);
 END`,
+
+  // ---- trace_buffer and trace_sealed: the trace buffer (PR-1b B4) ----
+  // Operational rows behind the trace buffer's interface, with no guards (design §3 gives them none),
+  // so no row-number guard either: a REPLACE aimed at a row's number removes a row exactly as the
+  // plain DELETE they allow. Ordinary rowid tables: a line's entries, and a sealed step's lines, can
+  // be large. A line's nonce is NULL when it was written without one; `line_seq` orders a step's lines
+  // in the order they were written (its `ts` is display only).
+  `CREATE TABLE trace_buffer (
+  run_id TEXT NOT NULL,
+  step_id TEXT NOT NULL,
+  line_seq INTEGER NOT NULL,
+  ts INTEGER NOT NULL,
+  nonce TEXT,
+  entries TEXT NOT NULL CHECK (json_valid(entries)),
+  entry_count INTEGER NOT NULL,
+  bytes INTEGER NOT NULL,
+  PRIMARY KEY (run_id, step_id, line_seq)
+)`,
+  `CREATE TABLE trace_sealed (
+  run_id TEXT NOT NULL,
+  step_id TEXT NOT NULL,
+  seal_seq INTEGER NOT NULL,
+  lines TEXT NOT NULL CHECK (json_valid(lines)),
+  bytes INTEGER NOT NULL,
+  PRIMARY KEY (run_id, step_id, seal_seq)
+)`,
 ];
