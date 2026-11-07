@@ -192,7 +192,7 @@ function notEligibleError(runId: string, stepName: string, eligible: string[]): 
 }
 
 /**
- * Core's run store on a SQLite home: create (unkeyed), get, list, update and claimStep (see the module
+ * Core's run store on a SQLite home: create (keyed or not), get, list, update and claimStep (see the module
  * comment). It declares no `implements RunStore` yet: the interface requires `settleStep` (unit 13),
  * and the engine's admission refuses a store without it until then.
  */
