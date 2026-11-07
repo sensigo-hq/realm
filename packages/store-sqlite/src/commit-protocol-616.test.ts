@@ -171,6 +171,19 @@ const FULL_SENTENCE =
   "The Realm store could not be written: its disk, or the database's size limit, is full. " +
   'Nothing was written. Free space, then try again.';
 
+// The fenced sentences a user reads, written out (not built the way the code builds them): with a
+// full disk as the cause, with another cause, and with none.
+const FENCED_FULL_SENTENCE =
+  'The store cannot confirm whether its last write was saved (STATE_STORE_FULL: its disk, or the ' +
+  "database's size limit, is full), so it refuses new writes until it can. Free space, read back " +
+  'what you wrote to see what was saved, then try again.';
+const FENCED_READONLY_SENTENCE =
+  'The store cannot confirm whether its last write was saved (STATE_STORE_READONLY), so it refuses ' +
+  'new writes until it can. Read back what you wrote to see what was saved, then try again.';
+const FENCED_SENTENCE =
+  'The store cannot confirm whether its last write was saved, so it refuses new writes until it ' +
+  'can. Read back what you wrote to see what was saved, then try again.';
+
 describe('#616 unit 9 — the COMMIT outcome protocol', () => {
   it('check 1: a COMMIT that fails with a statement pending answers not_landed, and nothing was written', async () => {
     const s = await store();
@@ -367,9 +380,10 @@ describe('#616 unit 9 — the COMMIT outcome protocol', () => {
     holder.exec('ROLLBACK');
     const landed = await settle(write(s, 9));
     // (1) red when an unknown outcome does not fence (the second write waits for the holder and is
-    //     refused busy instead), the cause is lost, a read is refused while fenced, the connection
-    //     is not reopened before the next call (one connection only), or the store never writes
-    //     again. (2) prints every call's outcome, the opens and the meta row.
+    //     refused busy instead), the cause is lost, the full disk is not said in words (in either
+    //     error), a read is refused while fenced, the connection is not reopened before the next
+    //     call (one connection only), or the store never writes again. (2) prints every call's
+    //     outcome, the opens and the meta row.
     expect({
       unknown: summary(unknown.error),
       refused: summary(refused.error),
@@ -378,12 +392,20 @@ describe('#616 unit 9 — the COMMIT outcome protocol', () => {
       landed: landed.value,
       meta: meta(s.file),
     }).toEqual({
-      unknown: fenced('STATE_STORE_FULL', {
-        outcome: 'unknown',
-        cause: 'STATE_STORE_FULL',
-        errcode: 13,
-      }),
-      refused: fenced('STATE_STORE_FULL', undefined),
+      unknown: {
+        workflowError: true,
+        code: 'STATE_STORE_WRITES_FENCED',
+        message: FENCED_FULL_SENTENCE,
+        details: { cause: 'STATE_STORE_FULL' },
+        commitOutcome: { outcome: 'unknown', cause: 'STATE_STORE_FULL', errcode: 13 },
+      },
+      refused: {
+        workflowError: true,
+        code: 'STATE_STORE_WRITES_FENCED',
+        message: FENCED_FULL_SENTENCE,
+        details: { cause: 'STATE_STORE_FULL' },
+        commitOutcome: undefined,
+      },
       read: 0,
       opensWhileFenced: 2,
       landed: 9,
@@ -503,6 +525,136 @@ describe('#616 unit 9 — the COMMIT outcome protocol', () => {
       afterFreeing: true,
       next: 8,
       meta: { tombSeq: 8, commitEpoch: 1 },
+    });
+  });
+
+  it('correction 1: a COMMIT error after the data landed, while another connection holds the write lock, still answers landed', async () => {
+    const s = await store(300);
+    const holder = other(s.file);
+    // Driver seam: the COMMIT runs, then the error. Real: at that moment another connection takes
+    // the write lock, and lets go only at 1.5 s, well after the store's 300 ms budget; the
+    // read-back, a deferred read transaction, which reads while another connection writes.
+    failCommit(s, 'run', SQLITE.ioError, () => {
+      holder.exec('BEGIN IMMEDIATE');
+      timers.push(setTimeout(() => holder.exec('ROLLBACK'), 1_500));
+    });
+    const out = await settle(write(s, 7));
+    // (1) red when the read-back takes the write lock (`BEGIN IMMEDIATE`: it waits out its budget
+    //     behind the holder, and the landed write is answered unknown and fenced). (2) prints the
+    //     call's value or error, and the meta row.
+    expect({ value: out.value, error: summary(out.error), meta: meta(s.file) }).toEqual({
+      value: 7,
+      error: { none: true },
+      meta: { tombSeq: 7, commitEpoch: 0 },
+    });
+  });
+
+  it('correction 2: a fenced write waits for another connection that holds the lock for less than the budget, then goes through', async () => {
+    const s = await store(2_000);
+    // Driver seam: SQLite rolled the write back, then the error, and every resolving commit on that
+    // connection fails: unknown, fenced. Real: the reopen (its connection has no fault), another
+    // connection's write lock for 400 ms, the fenced write's resolving commit through the busy wait.
+    failCommit(s, 'rollback', SQLITE.ioError);
+    failResolvingCommits(s);
+    const unknown = await settle(write(s, 7));
+    const holder = other(s.file);
+    holder.exec('BEGIN IMMEDIATE');
+    timers.push(setTimeout(() => holder.exec('ROLLBACK'), 400));
+    const fencedWrite = await settle(write(s, 8));
+    const after = await settle(write(s, 9));
+    // (1) red when the fenced write's resolving commit is one attempt (it is refused
+    //     STATE_STORE_WRITES_FENCED at once, behind the holder), or the fence stays after it
+    //     succeeds (a second resolving commit: commit_epoch 2). (2) prints each call's outcome and
+    //     the meta row.
+    expect({
+      unknown: (summary(unknown.error).commitOutcome as { outcome?: string } | undefined)?.outcome,
+      fencedWrite: { value: fencedWrite.value, error: summary(fencedWrite.error) },
+      after: { value: after.value, error: summary(after.error) },
+      meta: meta(s.file),
+    }).toEqual({
+      unknown: 'unknown',
+      fencedWrite: { value: 8, error: { none: true } },
+      after: { value: 9, error: { none: true } },
+      meta: { tombSeq: 9, commitEpoch: 1 },
+    });
+  });
+
+  it('correction 3: the write whose outcome is unknown is not retryable; a later write the fence refuses is', async () => {
+    const s = await store(300);
+    // Driver seam: SQLite rolled the write back, then an I/O error (no typed cause), and every
+    // resolving commit on that connection fails. Real: the reopen, another connection's lock (the
+    // later write's resolving commit waits out its budget behind it).
+    failCommit(s, 'rollback', SQLITE.ioError);
+    failResolvingCommits(s);
+    const first = await settle(write(s, 7));
+    const holder = other(s.file);
+    holder.exec('BEGIN IMMEDIATE');
+    const later = await settle(write(s, 8));
+    const flags = (err: unknown): Record<string, unknown> => {
+      const e = err as Partial<WorkflowError> & { commitOutcome?: unknown };
+      return {
+        workflowError: err instanceof WorkflowError,
+        code: e.code,
+        agentAction: e.agentAction,
+        retryable: e.retryable,
+        message: e.message,
+        details: e.details,
+        commitOutcome: e.commitOutcome,
+      };
+    };
+    // (1) red when the first caller's error says retryable (a retry without a read-back could save
+    //     its write twice), a later refusal does not, the two differ in code or agentAction, or a
+    //     sentence with no cause carries a parenthesis. (2) prints both errors' fields.
+    expect({ first: flags(first.error), later: flags(later.error) }).toEqual({
+      first: {
+        workflowError: true,
+        code: 'STATE_STORE_WRITES_FENCED',
+        agentAction: 'report_to_user',
+        retryable: false,
+        message: FENCED_SENTENCE,
+        details: {},
+        commitOutcome: { outcome: 'unknown', errcode: 10 },
+      },
+      later: {
+        workflowError: true,
+        code: 'STATE_STORE_WRITES_FENCED',
+        agentAction: 'report_to_user',
+        retryable: true,
+        message: FENCED_SENTENCE,
+        details: {},
+        commitOutcome: undefined,
+      },
+    });
+  });
+
+  it('correction 4: an unknown outcome with another cause keeps the sentence as built, the cause in brackets', async () => {
+    const s = await store(300);
+    // Driver seam: the file cannot be written at COMMIT (14, mapped to STATE_STORE_READONLY) after
+    // SQLite rolled back, and every resolving commit on that connection fails. Real: the reopen,
+    // another connection's lock (the later write's resolving commit waits out its budget behind it).
+    failCommit(s, 'rollback', SQLITE.cantOpen);
+    failResolvingCommits(s);
+    const unknown = await settle(write(s, 7));
+    const holder = other(s.file);
+    holder.exec('BEGIN IMMEDIATE');
+    const refused = await settle(write(s, 8));
+    // (1) red when the full disk's words are given to every cause (in either error). (2) prints
+    //     both errors.
+    expect({ unknown: summary(unknown.error), refused: summary(refused.error) }).toEqual({
+      unknown: {
+        workflowError: true,
+        code: 'STATE_STORE_WRITES_FENCED',
+        message: FENCED_READONLY_SENTENCE,
+        details: { cause: 'STATE_STORE_READONLY' },
+        commitOutcome: { outcome: 'unknown', cause: 'STATE_STORE_READONLY', errcode: 14 },
+      },
+      refused: {
+        workflowError: true,
+        code: 'STATE_STORE_WRITES_FENCED',
+        message: FENCED_READONLY_SENTENCE,
+        details: { cause: 'STATE_STORE_READONLY' },
+        commitOutcome: undefined,
+      },
     });
   });
 

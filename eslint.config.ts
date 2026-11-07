@@ -193,6 +193,16 @@ const TEST_CLOCK_RESTRICTIONS = [
 ];
 
 /**
+ * #616 PR-1a unit 11: the list above for the SQLite home's open (`open-realm-home.ts`), the one
+ * production module that reads a root's clock file: it calls `resolveRootClock` for its home. Every
+ * other name stays refused there.
+ */
+const HOME_OPEN_CLOCK_RESTRICTIONS = TEST_CLOCK_RESTRICTIONS.map((restriction) => ({
+  ...restriction,
+  importNames: restriction.importNames.filter((name) => name !== 'resolveRootClock'),
+}));
+
+/**
  * #715 (b) (04 §B, D5 §5.3): the clock rule. A run store's time comes from its clock; the host's
  * clock is read only where the clock census names the site `outside`, with its reason
  * (`packages/cli/src/commands/clock-census-715b.test.ts`). Its own rule id, so the later
@@ -381,6 +391,20 @@ export default tseslint.config(
     files: ['packages/testing/**/*.ts', '**/*.test.ts'],
     rules: {
       'no-restricted-imports': ['error', ZOD_V3_RESTRICTIONS],
+    },
+  },
+  // #616 PR-1a unit 11: the SQLite home's open may import `resolveRootClock` and nothing else of the
+  // list. This block REPLACES the list above for that one file, so it re-states the rest.
+  {
+    files: ['packages/store-sqlite/src/open-realm-home.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [...ZOD_V3_RESTRICTIONS.paths, ...HOME_OPEN_CLOCK_RESTRICTIONS],
+          patterns: ZOD_V3_RESTRICTIONS.patterns,
+        },
+      ],
     },
   },
   // #715 (b) (04 §B): the clock rule, its own rule id — production sources only (tests set time as
