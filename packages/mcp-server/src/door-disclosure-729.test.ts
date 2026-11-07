@@ -2,13 +2,10 @@
 // names (a) the change that turns it red and (b) what it prints on failure — booleans, counts,
 // receipt fields and key lists, never a canary.
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
-  JsonFileStore,
-  JsonWorkflowStore,
   compileDisclosure,
   type DisclosureEntry,
   type FactProducers,
@@ -33,7 +30,7 @@ import {
 } from './render-reply.js';
 import type { START_RUN_TABLE, StartRunReply } from './tools/start-run.js';
 import { handleExecuteStepTool } from './tools/execute-step.js';
-import { withArtifactStores, type ServerExtras } from './test-support/temp-home.js';
+import { makeTempHome, type ServerExtras, type TempHome } from './test-support/temp-home.js';
 
 const CANARY_NAME = 'FAKE_DOOR_CANARY_729';
 const CANARY = 'FAKE-DOOR-CANARY-VALUE-0729';
@@ -49,18 +46,20 @@ const FLOW: WorkflowDefinition = {
   },
 };
 
-afterEach(() => {
+const handles: TempHome[] = [];
+afterEach(async () => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
 });
 
 async function connect(extra: ServerExtras = {}, more: WorkflowDefinition[] = []) {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-door-729-'));
-  const runStore = new JsonFileStore(join(dir, 'runs'));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+  const h = await makeTempHome();
+  handles.push(h);
+  const { runStore, workflowStore } = h.stores;
   await workflowStore.register(FLOW);
   for (const definition of more) await workflowStore.register(definition);
-  const server = createRealmMcpServer({ ...withArtifactStores(runStore), workflowStore, ...extra });
+  const server = createRealmMcpServer({ ...h.stores, ...extra });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   // Every byte the server sends, captured at its transport.
   const sent: string[] = [];
@@ -508,10 +507,14 @@ describe('#729 PR-3 correction 1 (F34) — when a tool cannot compose its reply'
     });
   const replyOf = async (name: string, args: Record<string, unknown>) => {
     vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-    const dir = await mkdtemp(join(tmpdir(), 'realm-door-f34-'));
+    const h = await makeTempHome();
+    handles.push(h);
     const server = createRealmMcpServer({
-      ...withArtifactStores(poisoned(new JsonFileStore(join(dir, 'r')))),
-      workflowStore: poisoned(new JsonWorkflowStore(join(dir, 'w'))),
+      ...h.stores,
+      runStore: poisoned(h.stores.runStore),
+      workflowStore: poisoned(h.stores.workflowStore),
+      traceBufferStore: poisoned(h.stores.traceBufferStore),
+      failedAttemptStore: poisoned(h.stores.failedAttemptStore),
     });
     const [ct, st] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: 'door-f34', version: '0' });
@@ -554,9 +557,9 @@ describe('#729 PR-3 correction 1 (F34) — when a tool cannot compose its reply'
     //     raw message); (b) prints whether it resolved and the reply's status and code.
     // #616 PR-2a (ii-b): with the registry the handler needs, so the store check that answers is the
     // run store's release line (the cell's subject), not the missing-store refusal.
-    const workflowStore = new JsonWorkflowStore(
-      await mkdtemp(join(tmpdir(), 'realm-door-729-st-')),
-    );
+    const h = await makeTempHome();
+    handles.push(h);
+    const workflowStore = h.stores.workflowStore;
     const outcome = await handleExecuteStepTool(
       { run_id: 'r', command: 'a', params: {} },
       { runStore: undeclared, workflowStore },
@@ -597,13 +600,14 @@ async function connectNoRunStore(
   extra: ServerExtras,
   forms: { capture?: (params: { message?: string }) => void } | undefined,
 ) {
-  const home = await mkdtemp(join(tmpdir(), 'realm-door-c2-home-'));
+  const h = await makeTempHome();
+  handles.push(h);
+  const home = h.root;
   vi.stubEnv('HOME', home);
-  const workflowStore = new JsonWorkflowStore(join(home, 'wf'));
+  const workflowStore = h.stores.workflowStore;
   for (const definition of [FLOW, GATED, PRE]) await workflowStore.register(definition);
   const server = createRealmMcpServer({
-    ...withArtifactStores(new JsonFileStore(join(home, '.realm', 'runs'))),
-    workflowStore,
+    ...h.stores,
     ...extra,
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();
@@ -729,12 +733,12 @@ describe('#729 PR-3 correction 2 — the door', () => {
     } as WorkflowDefinition;
     const spy = providerSpy([{ value: DECLARED, source: 'declared:F' }]);
     const messages: string[] = [];
-    const home = await mkdtemp(join(tmpdir(), 'realm-door-c2-form-'));
-    const workflowStore = new JsonWorkflowStore(join(home, 'wf'));
+    const h = await makeTempHome();
+    handles.push(h);
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register(ASKING);
     const server = createRealmMcpServer({
-      workflowStore,
-      ...withArtifactStores(new JsonFileStore(join(home, 'runs'))),
+      ...h.stores,
       disclosureProvider: spy.disclosureProvider,
       gateAnswers: 'asked',
     });
@@ -822,14 +826,14 @@ describe('#729 PR-3 correction 2 — the door', () => {
         union.push({ value: DECLARED, source: 'declared:G5' });
       return set();
     };
-    const dir = await mkdtemp(join(tmpdir(), 'realm-door-c2-g5-'));
-    const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    const h = await makeTempHome();
+    handles.push(h);
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register(FLOW);
     // A registered copy that is not JSON: its reason (a diagnostic copy) names its id.
-    await writeFile(join(dir, 'wf', `${DECLARED}.json`), 'not json');
+    await writeFile(join(h.path, 'workflows', `${DECLARED}.json`), 'not json');
     const server = createRealmMcpServer({
-      workflowStore,
-      ...withArtifactStores(new JsonFileStore(join(dir, 'runs'))),
+      ...h.stores,
       disclosureProvider,
     });
     const [ct, st] = InMemoryTransport.createLinkedPair();

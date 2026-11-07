@@ -4,14 +4,9 @@
 // lists it acts on later, `next_actions`, then `params`). Synthetic replies through the real walk,
 // unless the cell says a real handler. Beside each: (a) what turns it red; (b) what it prints on
 // failure — keys, counts and sizes, never a value.
-import { describe, it, expect, vi } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
-  JsonFileStore,
-  JsonWorkflowStore,
   compileDisclosure,
   discloseReply,
   type ClassTable,
@@ -35,7 +30,7 @@ import {
 import { sseJsonStringify } from './sse-json.js';
 import { RUN_STATE_PLAN, RUN_STATE_SUMMARY_TABLE } from './tools/get-run-state.js';
 import { WORKFLOW_PROTOCOL_TABLE } from './tools/get-workflow-protocol.js';
-import { withArtifactStores } from './test-support/temp-home.js';
+import { makeTempHome, type TempHome } from './test-support/temp-home.js';
 
 const set = compileDisclosure([], {
   declared: 'resolved',
@@ -450,12 +445,17 @@ const AFTER_FIRST = wf('b2-first', {
   ...agents(40, ['first']),
 });
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 async function door() {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-b2-872-'));
-  const runStore = new JsonFileStore(join(dir, 'runs'));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+  const h = await makeTempHome();
+  handles.push(h);
+  const { runStore, workflowStore } = h.stores;
   for (const d of [ROOTS, AFTER_HEAD, AFTER_FIRST]) await workflowStore.register(d);
-  const server = createRealmMcpServer({ ...withArtifactStores(runStore), workflowStore });
+  const server = createRealmMcpServer({ ...h.stores });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'b2-872', version: '0' });
   await Promise.all([server.connect(st), client.connect(ct)]);

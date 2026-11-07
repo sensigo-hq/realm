@@ -12,8 +12,6 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   ExtensionRegistry,
   createDefaultRegistry,
   loadWorkflowFromString,
@@ -23,7 +21,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
 import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
-import { withArtifactStores } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 // #715 (b) 04 §D (B4): no cell here waits on the real clock for a question to expire. The run store a
 // cell opens sits at a TEST LOCATION (`located`), and `passes(ms)` moves the clock of every location
@@ -67,13 +65,19 @@ function block(page: string, marker: string): string[] {
 
 type Reply = Record<string, unknown>;
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 async function connect(registry?: ExtensionRegistry) {
   const dir = await mkdtemp(join(tmpdir(), 'realm-sweep-625-'));
-  const runStore = new JsonFileStore(await located(dir));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+  await located(dir);
+  const h = await makeTempHome({ home: dir });
+  handles.push(h);
+  const { runStore, workflowStore } = h.stores;
   const server = createRealmMcpServer({
-    ...withArtifactStores(runStore),
-    workflowStore,
+    ...h.stores,
     ...(registry !== undefined ? { registry } : {}),
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();

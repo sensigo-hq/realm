@@ -8,10 +8,7 @@
 // with the step's own way out. Whole-message pins.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   JsonFileStore,
   JsonWorkflowStore,
@@ -20,6 +17,7 @@ import {
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { handleExecuteStep } from './execute-step.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const WAY_OUT =
   'Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.';
@@ -54,12 +52,16 @@ const INPUT: Partial<StepDefinition> = {
 };
 
 describe('#625 PR-2a, C66 — execute_step by name on a step refused before its claim', () => {
+  let h: TempHome;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
   beforeEach(async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-by-name-625-'));
-    runStore = new JsonFileStore(join(dir, 'runs'));
-    workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    h = await makeTempHome();
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   async function callCompute(d: WorkflowDefinition, params?: Record<string, unknown>) {

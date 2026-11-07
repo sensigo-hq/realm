@@ -6,7 +6,6 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   JsonFileStore,
-  JsonWorkflowStore,
   REALM_BRAND,
   RELEASE_LINE_KEY,
   createRealmBrand,
@@ -40,7 +39,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { readFileSync as readDoc625 } from 'node:fs';
 import { join as joinDoc625, dirname as dirDoc625 } from 'node:path';
 import { fileURLToPath as urlDoc625 } from 'node:url';
-import { makeTempHome, withArtifactStores } from './test-support/temp-home.js';
+import { makeTempHome, type TempHome } from './test-support/temp-home.js';
 
 /** C174: (a) red when the page no longer holds the sentence word for word; (b) prints it. */
 function claimDoc625(page: string, sentence: string): void {
@@ -62,10 +61,13 @@ function nounOf(role: string): string {
 }
 
 let dir: string;
+let h: TempHome;
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'realm-h1-'));
+  h = await makeTempHome();
 });
 afterEach(async () => {
+  await h.cleanup();
   await rm(dir, { recursive: true, force: true });
 });
 
@@ -153,8 +155,8 @@ describe('H1 createRealmMcpServer', () => {
       await home.cleanup();
     }
     expect(calls).toBe(0);
-    const runStore = new JsonFileStore(dir);
-    const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    const runStore = h.stores.runStore;
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register({
       id: 'w',
       name: 'w',
@@ -188,8 +190,7 @@ describe('H1 createRealmMcpServer', () => {
     const host = Object.assign(new TenantScopedRunStore(), plain());
     expect(() =>
       createRealmMcpServer({
-        ...withArtifactStores(new JsonFileStore(dir)),
-        workflowStore: new JsonWorkflowStore(join(dir, 'wf')),
+        ...h.stores,
       }),
     ).not.toThrow();
     // #616 PR-2a (ii-b): got past the release-line check — the missing-store refusal, which comes
@@ -208,8 +209,8 @@ describe('a registry the server’s registry provider returned is named by the t
     );
     const reg = {};
     Object.defineProperty(reg, Symbol.for('@sensigo/realm/ExtensionRegistry'), { value: OTHER });
-    const runStore = new JsonFileStore(dir);
-    const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    const runStore = h.stores.runStore;
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register({
       id: 'w',
       name: 'w',
@@ -223,8 +224,7 @@ describe('a registry the server’s registry provider returned is named by the t
       workflowStore,
     } as never)) as { run_id: string };
     const server = createRealmMcpServer({
-      ...withArtifactStores(runStore),
-      workflowStore,
+      ...h.stores,
       registryProvider: async () => reg as never,
     });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -264,8 +264,8 @@ describe('a registry the server’s registry provider returned is named by the t
   it('each published registerX alone on a server of the host’s: its tool’s reply names the tool and the provider', async () => {
     const reg = {};
     Object.defineProperty(reg, Symbol.for('@sensigo/realm/ExtensionRegistry'), { value: OTHER });
-    const runStore = new JsonFileStore(dir);
-    const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    const runStore = h.stores.runStore;
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register({
       id: 'w',
       name: 'w',
@@ -311,8 +311,8 @@ describe('a registry the server’s registry provider returned is named by the t
   it('a provider handed to a published handler directly keeps the handler’s name', async () => {
     const reg = {};
     Object.defineProperty(reg, Symbol.for('@sensigo/realm/ExtensionRegistry'), { value: OTHER });
-    const runStore = new JsonFileStore(dir);
-    const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    const runStore = h.stores.runStore;
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register({
       id: 'w',
       name: 'w',
@@ -342,8 +342,8 @@ describe('H3 JsonTraceBufferStore', () => {
 
 describe('the registry rule at the six handlers that resolve a registry, the whole messages', () => {
   it('handleStartRun, handleStartRunBatch, handleExecuteStep, handleSubmitHumanResponse', async () => {
-    const runStore = new JsonFileStore(dir);
-    const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    const runStore = h.stores.runStore;
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register({
       id: 'w',
       name: 'w',
@@ -399,7 +399,7 @@ describe('tool entries (called directly, without the server)', () => {
   it('handleGetRunState: an undeclared workflow store is refused at entry', async () => {
     await expect(
       handleGetRunState({ run_id: 'r' }, {
-        runStore: new JsonFileStore(dir),
+        runStore: h.stores.runStore,
         workflowStore: plain(),
       } as never),
     ).rejects.toMatchObject({ code: 'ENGINE_RELEASE_LINE_UNDECLARED' });
@@ -417,8 +417,8 @@ describe('tool entries (called directly, without the server)', () => {
     });
   });
   it('handleStartRun: another release’s registry is refused before any run is created', async () => {
-    const runStore = new JsonFileStore(dir);
-    const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    const runStore = h.stores.runStore;
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register({
       id: 'w',
       name: 'w',
@@ -550,7 +550,7 @@ describe('get_run_state: both catches around getWorkflowForRun rethrow a release
     return s;
   }
   async function makeRunIn(terminal: boolean): Promise<{ runStore: JsonFileStore; id: string }> {
-    const runStore = new JsonFileStore(dir);
+    const runStore = h.stores.runStore;
     const { record: run } = await runStore.create({
       workflowId: 'w',
       workflowVersion: 1,

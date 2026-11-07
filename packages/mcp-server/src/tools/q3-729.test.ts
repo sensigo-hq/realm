@@ -7,15 +7,11 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: codes,
 // step names, field names and booleans — never a token or a value a caller supplied.
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   ExtensionRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   executeStep,
@@ -24,7 +20,7 @@ import {
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
-import { withArtifactStores } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 type Reply = Record<string, unknown>;
 const AGENT_PARAMS = { p: 'AGENT-PARAMS' };
@@ -149,14 +145,18 @@ function registry(): ExtensionRegistry {
   return r;
 }
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 async function connect() {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-q3-mcp-'));
-  const runStore = new JsonFileStore(join(dir, 'runs'));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+  const h = await makeTempHome();
+  handles.push(h);
+  const { runStore, workflowStore } = h.stores;
   for (const d of [W3, WK, WK2, W3H, W2, WA, ...F1_WORKFLOWS]) await workflowStore.register(d);
   const server = createRealmMcpServer({
-    ...withArtifactStores(runStore),
-    workflowStore,
+    ...h.stores,
     registry: registry(),
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();
@@ -168,7 +168,7 @@ async function connect() {
     };
     return JSON.parse(raw.content[0]!.text) as Reply;
   };
-  return { call, runStore, runsDir: join(dir, 'runs') };
+  return { call, runStore, runsDir: runStore.runsDirPath };
 }
 
 /** A run of `d` with `first` answered through the library (no chain): its engine steps wait, eligible. */

@@ -17,14 +17,13 @@ import { fileURLToPath } from 'node:url';
 // packages/cli/src/lib → packages/
 const PACKAGES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
-/** Package → the files (relative to its src/) allowed to construct a store. The rule for both
- *  packages: the package's opener, and (mcp-server) the test helper whose artifact-stores spread
- *  builds two classes under `src/test-support/`, which the walker reads as non-test source. */
+/** Package → the files (relative to its src/) allowed to construct a store: the package's opener
+ *  (and, for the CLI, the two commands 2c deletes). The test helpers under `src/test-support/`, which
+ *  the walker reads as non-test source, build none (#616 PR-2b, b3). */
 const ALLOWED: Record<string, string[]> = {
   cli: ['lib/home.ts', 'commands/gc.ts', 'commands/reconcile.ts'],
-  // #616 PR-2a (ii-b): the `realm-mcp` program's opener and the test helper (unit ii-a); the
-  // library and its tools build none.
-  'mcp-server': ['home.ts', 'test-support/temp-home.ts'],
+  // #616 PR-2a (ii-b): the `realm-mcp` program's opener; the library and its tools build none.
+  'mcp-server': ['home.ts'],
 };
 
 /** Test files allowed to construct a store, each with how many constructions it holds and its

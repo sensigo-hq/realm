@@ -1,14 +1,12 @@
 // Part B pre-flight capability warning (issue #134): run creation WARNS — never refuses — when the
 // effective registry can't satisfy the workflow's auto-step handlers/adapters. The `?? createDefaultRegistry()`
 // fallback is the HARD invariant: a filesystem-only workflow with NO supplied registry must NOT false-warn.
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { JsonFileStore, JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { handleStartRun } from './start-run.js';
 import { handleStartRunBatch } from './start-run-batch.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 function filesystemDef(): WorkflowDefinition {
   return {
@@ -36,16 +34,17 @@ function handlerDef(): WorkflowDefinition {
 }
 
 describe('#134 pre-flight capability warning', () => {
-  let runDir: string;
-  let workflowDir: string;
+  let h: TempHome;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
 
   beforeEach(async () => {
-    runDir = await mkdtemp(join(tmpdir(), 'realm-cap-runs-'));
-    workflowDir = await mkdtemp(join(tmpdir(), 'realm-cap-wf-'));
-    runStore = new JsonFileStore(runDir);
-    workflowStore = new JsonWorkflowStore(workflowDir);
+    h = await makeTempHome();
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   // Test 6 — no-false-warn on a filesystem-only workflow with NO registry supplied.

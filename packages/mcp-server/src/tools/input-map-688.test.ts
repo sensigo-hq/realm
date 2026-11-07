@@ -5,23 +5,15 @@
 //
 // Beside each assertion: (a) what turns it red; (b) what it prints on failure (the reply's hint,
 // action and offered tools, the handler's input) — never an environment.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  JsonFileStore,
-  JsonWorkflowStore,
-  ExtensionRegistry,
-  executeStep,
-  loadWorkflowFromString,
-} from '@sensigo/realm';
+import { ExtensionRegistry, executeStep, loadWorkflowFromString } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
-import { withArtifactStores } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 type Reply = Record<string, unknown>;
 
@@ -36,6 +28,11 @@ function claim(page: string, sentence: string): void {
   ).toBe(true);
 }
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 /** A server whose registry has the handler `h`, which records the input it receives. */
 async function connect() {
   const seen: unknown[] = [];
@@ -47,10 +44,10 @@ async function connect() {
       return { data: { got: input.params } };
     },
   } as never);
-  const dir = await mkdtemp(join(tmpdir(), 'realm-688-mcp-'));
-  const runStore = new JsonFileStore(join(dir, 'runs'));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
-  const server = createRealmMcpServer({ ...withArtifactStores(runStore), workflowStore, registry });
+  const h = await makeTempHome();
+  handles.push(h);
+  const { runStore, workflowStore } = h.stores;
+  const server = createRealmMcpServer({ ...h.stores, registry });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'input-map-688', version: '0' });
   await Promise.all([server.connect(st), client.connect(ct)]);

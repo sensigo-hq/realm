@@ -3,16 +3,15 @@
 // temp folder, never the library's defaults on the developer's real `~/.realm` and never the store
 // classes constructed by hand. The opener is the one place this package builds its stores, so unit 2c
 // swaps its body (SQLite) and every test that uses this helper follows without an edit. Not
-// published: the package's `files` leaves out `dist/**/test-support/**`.
+// published: the package's `files` leaves out `dist/**/test-support/**`. It constructs no store
+// itself, so the source scan (`packages/cli/src/lib/store-door-616.test.ts`), which reads this folder
+// as source, allows it no construction.
 //
 // - `makeTempHome()`: a fresh temp folder `root` of its own, and the opener on `<root>/.realm`. A child
 //   process given `HOME: root` opens the same home (core's `realmHomePath`), so a test seeds a run
 //   through the handle and drives a program that reads it.
 // - `makeTempHome({ home })`: the opener on the given folder as it is — a test location, or a second,
 //   independent handle on a folder a handle opened earlier. It removes nothing.
-// - `withArtifactStores(runStore)`: for a test that builds its own run store and registry, that run
-//   store and the two artifact stores on its own folder, exactly what the library derived (the run
-//   store as the trace buffer's reader). Unit b3 routes its last users and deletes it.
 //
 // Unlike the CLI's door, this opener builds the registry at the open, and the registry's constructor
 // creates `<path>/workflows`; nothing else is created at the open (the run store reads the folder's
@@ -21,14 +20,10 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import {
-  JsonFileFailedAttemptStore,
-  type JsonFileStore,
-  type JsonWorkflowStore,
-} from '@sensigo/realm';
+import type { JsonFileFailedAttemptStore, JsonFileStore, JsonWorkflowStore } from '@sensigo/realm';
 import { openMcpHome } from '../home.js';
 import type { RealmMcpServerOptions } from '../server.js';
-import { JsonTraceBufferStore } from '../json-trace-buffer-store.js';
+import type { JsonTraceBufferStore } from '../json-trace-buffer-store.js';
 
 type StoreKey = 'runStore' | 'workflowStore' | 'traceBufferStore' | 'failedAttemptStore';
 
@@ -89,20 +84,5 @@ export async function makeTempHome(options?: { home: string }): Promise<TempHome
         rmSync(owned, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
       }
     },
-  };
-}
-
-/** A file run store with the two artifact stores on its own folder, as the library derives them. */
-export function withArtifactStores<S extends JsonFileStore>(
-  runStore: S,
-): {
-  runStore: S;
-  traceBufferStore: JsonTraceBufferStore;
-  failedAttemptStore: JsonFileFailedAttemptStore;
-} {
-  return {
-    runStore,
-    traceBufferStore: new JsonTraceBufferStore(runStore.runsDirPath, runStore),
-    failedAttemptStore: new JsonFileFailedAttemptStore(runStore.runsDirPath),
   };
 }
