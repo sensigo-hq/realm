@@ -19,7 +19,9 @@
 //     record's `updated_at` (a settle's also with its delta's event instants) before any check, so a
 //     refused update, claim or settle has spent it;
 //   - `stampSeal`: none, on every branch: it carries `updated_at` through unchanged (stamping is not
-//     activity), so it has nothing to stamp.
+//     activity), so it has nothing to stamp;
+//   - `scan` (unit c3): one per page, the reading that page's `snapshot` takes; `tombstonesSince` and
+//     `resolveKey`: the one their `snapshot` takes.
 // A list is ONE read transaction (n8n's way: a consistent snapshot without the write lock), so it never
 // tears across a concurrent write. An update, a claim or a settle reads the run and writes it in ONE
 // write transaction, so two of them never both act on one version: of two claims of one step, exactly
@@ -46,10 +48,14 @@ import {
   type Clock,
   type CreateResult,
   type CreateRunOptions,
+  type KeyAnswer,
   type Listing,
   type LoadBearingRunRecordField,
   type RunRecord,
   type RunStore,
+  type ScanFilter,
+  type ScanOptions,
+  type ScanPage,
   type SealedBy,
   type SealRunDelta,
   type SettlementDelta,
@@ -71,6 +77,7 @@ import {
   writeRunUpdate,
   type CoreDocument,
 } from './run-rows.js';
+import { assertScanArguments, readHorizon, readKeyAnswer, readScanPage } from './run-scan.js';
 
 /** A run id's length (a version 4 uuid): the provisional record's id takes as many bytes. */
 const PROVISIONAL_ID = '00000000-0000-0000-0000-000000000000';
@@ -222,7 +229,8 @@ function notEligibleError(runId: string, stepName: string, eligible: string[]): 
 /**
  * Core's run store on a SQLite home: create (keyed or not), get, list, update, claimStep and
  * settleStep and stampSeal (see the module comment). It implements core's `RunStore`, its optional
- * `stampSeal` included.
+ * `stampSeal` included. It also pages its runs (`scan`) and answers who holds a key (`resolveKey`),
+ * which core's interface gains in unit c4.
  */
 export class SqliteRunStore implements RunStore {
   /** Claims round-trip: the stored record is the record written, `claims` included. */
@@ -296,6 +304,65 @@ export class SqliteRunStore implements RunStore {
       const snapshots = rows.map((row) => readSnapshot(db, String(row['id']), reading));
       return { snapshots, read_at: reading, consistent_snapshot: true };
     });
+  }
+
+  /**
+   * Reads the store's runs in pages, by id (unit c3; design §6): an async iterator whose every page is
+   * its own read transaction, taken at that page's one reading (`read_at`), so every run present for
+   * the whole scan is returned exactly once. `filter` narrows it (`run-scan.ts` names the index each
+   * filter walks); `options.pageSize` is required, a whole number from 1 to `SCAN_MAX_PAGE_SIZE`;
+   * `options.after` starts after that id. In the `'record'` projection (the default) each run is as
+   * `get()` returns it, judged at the page's reading floored by its own `updated_at`; in the `'row'`
+   * projection it is its facts row, read without reassembling the record. With `include_purged` the
+   * matching tombstones come beside the runs, in id order, and count toward the page. The iterator
+   * ends after a page that is not full. A page size out of range, or a `key` with no `workflow`, is
+   * refused before any read: the first `next()` rejects with a plain error.
+   */
+  scan(
+    filter: ScanFilter,
+    options: ScanOptions & { projection: 'row' },
+  ): AsyncGenerator<ScanPage<'row'>, void, undefined>;
+  scan(
+    filter: ScanFilter,
+    options: ScanOptions & { projection?: 'record' },
+  ): AsyncGenerator<ScanPage<'record'>, void, undefined>;
+  scan(
+    filter: ScanFilter,
+    options: ScanOptions,
+  ): AsyncGenerator<ScanPage<'record'> | ScanPage<'row'>, void, undefined>;
+  async *scan(
+    filter: ScanFilter,
+    options: ScanOptions,
+  ): AsyncGenerator<ScanPage<'record' | 'row'>, void, undefined> {
+    assertScanArguments(filter, options);
+    // The caller's objects are copied, so a change to them mid-scan does not change the walks.
+    const scanned: ScanFilter = { ...filter };
+    const { pageSize } = options;
+    const projection = options.projection === 'row' ? 'row' : 'record';
+    let after = options.after ?? '';
+    for (;;) {
+      const request = { pageSize, projection, after } as const;
+      const page = await this.#db.snapshot((db, reading) =>
+        readScanPage(db, reading, scanned, request, (runId) => readSnapshot(db, runId, reading)),
+      );
+      yield page;
+      if (page.next_after === undefined) return;
+      after = page.next_after;
+    }
+  }
+
+  /** The tombstone horizon, `store_meta.tombstones_since` (unit c3): one read. */
+  async tombstonesSince(): Promise<string> {
+    return this.#db.snapshot((db) => readHorizon(db));
+  }
+
+  /**
+   * Who holds `workflowId`'s idempotency key `key` (unit c3; design §3, axis 7), in ONE snapshot: the
+   * holder `findKeyHolder` derives → `held`; else the key's tombstones → `purged`, listing each run's
+   * id and `purged_at`, with the horizon; else `unseen`, with the horizon. Never another run's record.
+   */
+  async resolveKey(workflowId: string, key: string): Promise<KeyAnswer> {
+    return this.#db.snapshot((db) => readKeyAnswer(db, workflowId, key));
   }
 
   /**
