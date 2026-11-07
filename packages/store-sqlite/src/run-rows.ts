@@ -190,7 +190,8 @@ function keyHashOfRecord(record: RunRecord): string | null {
   return keyHashOf(record.workflow_id, key as string);
 }
 
-const KEY_ROWS =
+/** A key's rows, over `runs_by_key` (exported so the read-cold cells plan it, unit c3). */
+export const KEY_ROWS =
   'SELECT id, terminal_state, created_at, rerun_of FROM runs WHERE workflow_id = ? AND key_hash = ?';
 
 /**
