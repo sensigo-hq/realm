@@ -44,7 +44,8 @@ export const REALM_STORE_PAGE_SIZE = 16384;
  * for every field a read filters on), `evidence` (append-only rows), `run_blobs` (the write-once
  * fields); `store_meta` (the store's one meta row: its tombstone counter and horizon), `write_clock`
  * (the instant of the deleting write), and the tombstones a deleted run leaves: `purged_ids` (its id,
- * kept forever) and `purged_runs` (its detail, compactable below the horizon).
+ * kept forever) and `purged_runs` (its detail, compactable below the horizon). PR-1b appends the other
+ * stores' tables: `webhook_dedup` (B8, the duplicate-webhook memory).
  */
 export const REALM_STORE_SCHEMA: readonly string[] = [
   // ---- runs: the core document; the generated columns read it, never the reverse ----
@@ -321,4 +322,18 @@ BEGIN
   INSERT INTO purged_runs (seq, id, purged_at, workflow_id, key_hash, sealed_by_arm, run_phase, phase_version)
   VALUES ((SELECT tomb_seq FROM store_meta), old.id, COALESCE((SELECT at FROM write_clock WHERE one = 1), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), old.workflow_id, old.key_hash, old.sealed_by_arm, old.run_phase, old.phase_version);
 END`,
+
+  // ---- webhook_dedup (#616 PR-1b B8): the webhook ids `realm listen` has seen, one row per id per
+  // scope (the workflow id): the id's hash, never the raw id, and the instants of the write that
+  // recorded it, in the store's one text shape, so text order is time order. Its rows are tiny:
+  // WITHOUT ROWID. No guard of its own: a row removed by a writer outside Realm only shortens a
+  // best-effort window, which the run's idempotency key stands behind ----
+  `CREATE TABLE webhook_dedup (
+  scope TEXT NOT NULL,
+  key_hash TEXT NOT NULL,
+  recorded_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  PRIMARY KEY (scope, key_hash)
+) WITHOUT ROWID`,
+  `CREATE INDEX webhook_dedup_by_expiry ON webhook_dedup (scope, expires_at)`,
 ];
