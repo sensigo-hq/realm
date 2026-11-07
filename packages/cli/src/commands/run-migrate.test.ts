@@ -17,7 +17,6 @@ import {
   migrateExitCode,
   renderMigrateReport,
   runMigrateCommand,
-  ORDERING_LINE,
 } from './run-migrate.js';
 import { doubleClock, noSettle } from '../test-support/snapshot-double.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
@@ -235,7 +234,7 @@ describe('#367 part 3 — the migration vehicle stamps every classifiable shape'
 
   it('`run_phase` MATERIALISES on remap rows and is retained on agreeing rows', async () => {
     // The startup deaths sat on disk as `abandoned` and derive `failed` since the substrate. This
-    // is the clock-preserving materialisation `--heal` cannot do: the phase moves, the clock does
+    // is the clock-preserving materialisation `--heal` could not do: the phase moves, the clock does
     // not.
     await seedCorpus();
     await migrateStampSeals(store, { force: true });
@@ -346,27 +345,25 @@ describe('#367 part 3 — the migration vehicle stamps every classifiable shape'
 });
 
 describe('#367 part 3 — the report says no more than the branch it is printed in', () => {
-  it('dry-run WITH candidates: counts, per-id lines, the ordering footer, and how to execute', async () => {
+  it('dry-run WITH candidates: counts, per-id lines, and how to execute', async () => {
     await seedCorpus();
     const lines = renderMigrateReport(await migrateStampSeals(store), {});
     const text = lines.join('\n');
     expect(text).toContain('WOULD be stamped');
     expect(text).toContain('• spawn: spawn_failure (phase abandoned → failed)');
     expect(text).toContain('Re-run with --force to actually stamp.');
-    expect(text).toContain(ORDERING_LINE);
   });
 
-  it('--force: stamped lines, no "would", and the footer still prints', async () => {
+  it('--force: stamped lines, no "would"', async () => {
     await seedCorpus();
     const buckets = await migrateStampSeals(store, { force: true });
     const text = renderMigrateReport(buckets, { force: true }).join('\n');
     expect(text).toContain('Stamped 11 run(s) with their seal arm.');
     expect(text).not.toContain('WOULD be stamped');
     expect(text).not.toContain('Re-run with --force');
-    expect(text).toContain(ORDERING_LINE);
   });
 
-  it('--force with ZERO candidates: the force wording, and the footer still prints', async () => {
+  it('--force with ZERO candidates: the force wording', async () => {
     await seed('done', {
       terminal_reason: 'Workflow completed.',
       run_phase: 'completed',
@@ -377,13 +374,11 @@ describe('#367 part 3 — the report says no more than the branch it is printed 
     }).join('\n');
     expect(text).toContain('Nothing to stamp');
     expect(text).not.toContain('Nothing would be stamped');
-    expect(text).toContain(ORDERING_LINE);
   });
 
-  it('EMPTY dry run: the empty text, and the footer still prints', async () => {
+  it('EMPTY dry run: the empty text', async () => {
     const text = renderMigrateReport(await migrateStampSeals(store), {}).join('\n');
     expect(text).toContain('No terminal runs found to migrate.');
-    expect(text).toContain(ORDERING_LINE);
   });
 
   it('unclassifiable: ids, WHY, and exit 1', async () => {

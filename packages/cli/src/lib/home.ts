@@ -3,9 +3,8 @@
 // with every per-request server. The file stores live behind this one function, so unit 2c swaps
 // one body (SQLite) instead of a construction in every command. Private to the CLI: it is exported
 // from no published entry, and it is not core's `openRealmHome` (the design's name for 2c's opener).
-// `realm run gc` and `realm run reconcile` keep their own constructions until 2c deletes them; a
-// source scan (store-door-616.test.ts) keeps every other construction of the six store classes out
-// of the CLI's source.
+// A source scan (store-door-616.test.ts) keeps every other construction of the six store classes
+// out of the CLI's source.
 import { join } from 'node:path';
 import {
   JsonFileFailedAttemptStore,

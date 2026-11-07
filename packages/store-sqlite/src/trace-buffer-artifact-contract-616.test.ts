@@ -44,7 +44,9 @@ async function makeAdapter(): Promise<{
   const runId = randomUUID();
   const seed = async (): Promise<void> => {
     await store.append(runId, 'tck-sealed-step', [{ event: 'tck-to-be-sealed' }]);
-    const sealed = await store.sealFenced(runId, 'tck-sealed-step', { kind: 'run_absent' });
+    const sealed = await store.sealFenced(runId, 'tck-sealed-step', {
+      kind: 'run_absent_or_terminal',
+    });
     if (!sealed.sealed) {
       throw new Error(`the fixture has no sealed artifact: ${JSON.stringify(sealed)}`);
     }

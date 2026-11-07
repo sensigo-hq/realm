@@ -189,8 +189,8 @@ function logDedup(fields: Record<string, unknown>): void {
  * class has a private `runsDir` field, so a plain object literal implementing these methods could
  * never be assignable to the class type itself (issue #188, PR-1: the co-location injection seam).
  * Used anywhere a `JsonFileFailedAttemptStore`-like store is threaded through as an injectable
- * option. #616 PR-2a (ii-b): no longer `listOrphans` — nothing the library or its tools run calls it
- * (only `realm run gc` does, on the class itself), and a store without it (SQLite's) can be handed.
+ * option. #616 PR-2a (ii-b): no longer `listOrphans` — nothing the library or its tools run calls
+ * it, and a store without it (SQLite's) can be handed.
  */
 export type FailedAttemptStoreLike = Pick<
   JsonFileFailedAttemptStore,
