@@ -824,17 +824,17 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     ]);
   });
 
-  it('error-codes.md: 107 codes defined — 91 raised, 16 that nothing raises', () => {
+  it('error-codes.md: 107 codes defined — 92 raised, 15 that nothing raises', () => {
     claim(
       'docs/reference/error-codes.md',
-      'This page lists all 107 codes that Realm defines: the 91 it raises, with when each is raised and what it tells the caller to do, and the 16 that nothing raises.',
+      'This page lists all 107 codes that Realm defines: the 92 it raises, with when each is raised and what it tells the caller to do, and the 15 that nothing raises.',
     );
     // #616 unit 3: the "nothing raises" block's own header, whose count the units that first raise
     // these codes change (the list's length is checked below, as `unraised`). (1) red when the
     // header's count is not the list's; (2) prints the sentence.
     claim(
       'docs/reference/error-codes.md',
-      'These 16 are in the `ErrorCode` type, and no code in Realm raises them:',
+      'These 15 are in the `ErrorCode` type, and no code in Realm raises them:',
     );
     const types = readFileSync(join(ROOT, 'packages/core/src/types/workflow-error.ts'), 'utf8');
     const lines = types.slice(types.indexOf('export type ErrorCode')).split('\n');
@@ -887,12 +887,56 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       raisedNowhere: listedRaised.filter((c) => !written(c)),
     }).toEqual({
       defined: 107,
-      raised: 91,
-      unraised: 16,
+      raised: 92,
+      unraised: 15,
       cover: [...defined].sort(),
       unraisedWritten: [],
       raisedNowhere: [],
     });
+  });
+
+  // #616 unit 13c: the rows the SQLite store's import (`save`) adds a clause to, or first raises.
+  // Each names the cells that execute its claims.
+  it('error-codes.md: STATE_RUN_DIVERGED', () => {
+    // Executed: store-sqlite's run-store-save-616.test.ts checks 4 (another version), 5 (the same
+    // version with other content) and 8 (a key a live run holds); core's json-file-store.test.ts
+    // (`save`: another version, a key owned by a live run). (1) red when the row no longer says it;
+    // (2) prints the row.
+    claim(
+      'docs/reference/error-codes.md',
+      '| `STATE_RUN_DIVERGED` | An imported run conflicts with a stored one: another version of the same run, the same version of it with other content, or an idempotency key owned by another open run. | `report_to_user` | No |',
+    );
+  });
+
+  it('error-codes.md: STATE_RUN_PURGED', () => {
+    // Executed: store-sqlite's open-file.test.ts (the schema's guard refuses a purged id) and
+    // run-store-save-616.test.ts check 6 (an import names when the id was deleted). (1) red when
+    // the row no longer says it; (2) prints the row.
+    claim(
+      'docs/reference/error-codes.md',
+      '| `STATE_RUN_PURGED` | A write tried to create a run id that was deleted earlier; a purged run is never created again. An import of such a run is refused with a message that names when it was deleted. | `report_to_user` | No |',
+    );
+  });
+
+  it('error-codes.md: STATE_RUN_TIMESTAMP_INVALID', () => {
+    // Executed: store-sqlite's run-store-save-616.test.ts check 7 (five malformed instants in each
+    // of the two fields, each naming its field). (1) red when the row no longer says it; (2) prints
+    // the row.
+    claim(
+      'docs/reference/error-codes.md',
+      "| `STATE_RUN_TIMESTAMP_INVALID` | An imported run's `created_at` or `updated_at` is not a timestamp of the form `2026-11-05T12:00:00.000Z`. The message names the field; nothing is imported. | `report_to_user` | No |",
+    );
+  });
+
+  it('error-codes.md: STATE_LEGACY_FORMAT, an import', () => {
+    // Executed: store-sqlite's run-store-save-616.test.ts check 7 (a record with no run_phase, and
+    // one in the old `state` shape: the message names no file). The row's earlier sentences are
+    // executed by core's run-file and json-file-store tests. (1) red when the row no longer says it;
+    // (2) prints the clause.
+    claim(
+      'docs/reference/error-codes.md',
+      'An import of something that is not a run record in the current format is refused with it too; that message names no file. | `report_to_user` | No |',
+    );
   });
 
   it('error-codes.md: VALIDATION_CALLER_INVALID — each of the five functions given a caller not its own; nothing read or written', async () => {

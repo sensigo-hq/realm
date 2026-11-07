@@ -7,14 +7,13 @@
 // a COMMIT that fails after or before its rows reached the file, or after another writer moved on; a
 // record whose text is made under the write lock; and a caller that goes on after the writer failed.
 //
-// These cells stand in for the update and claim ground of core's shared store laws until unit 16
-// wires the contract (`packages/testing/src/store/store-clock-contract.ts`,
-// `run-store-fidelity-contract.ts` and `settlement-contract.ts`): `WRITE_ONE_READING` (its update
-// and claim rows), `MONOTONE_CAPPED`, `SNAPSHOT_AT_SOUND`, `CLAIM_SINGLE_OWNER`, `CLAIM_NAMES_HOLDER`
-// (on the system clock, as the law needs), the fidelity family's key order, the seal cells
-// (`SEAL_FRESH_WRITE_REFUSED`, `SEAL_ORPHAN_REFUSED`, `SEAL_ERASE_REFUSED`, `SEAL_REWRITE_REFUSED`,
-// `SEAL_UNKNOWN_ARM_REFUSED`) and `PHASE_IS_GENERATED`'s claim leg; the design's `L-MP-CAS` (its
-// update and claim legs) and `L-SER`.
+// Since unit 16 the shared laws that cover the update and claim ground also run against this store
+// (`contract-clock-616.test.ts`: `WRITE_ONE_READING` (its update and claim rows), `MONOTONE_CAPPED`
+// and `SNAPSHOT_AT_SOUND`; `contract-fidelity-616.test.ts`: `CLAIM_SINGLE_OWNER` and
+// `CLAIM_NAMES_HOLDER`; `contract-settlement-616.test.ts`: the `SEAL_*` refusals and
+// `PHASE_IS_GENERATED`'s claim leg). The design's `L-MP-CAS` (its update and claim legs) and
+// `L-SER` are this package's own. These cells stay for what no shared law sees: the rows and text a
+// write leaves, the exact refusals and their words, and the COMMIT protocol.
 //
 // Each assertion carries (1) the break that turns it red and (2) what it prints when it fails.
 import { spawn } from 'node:child_process';

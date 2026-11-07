@@ -48,8 +48,9 @@
 // The reading: each call takes ONE raw reading of the clock it is given (`takeRawReading`), and the
 // body floors it itself with core's pure functions. `snapshot` takes it BEFORE its BEGIN and before
 // the in-process lock (so a clock whose `now()` writes to the store lands that write before the
-// snapshot starts); `immediate` takes it right after `BEGIN IMMEDIATE` and the `user_version` re-read,
-// unless the call opted out with `{ takesReading: false }`.
+// snapshot starts); `immediate` takes it right after `BEGIN IMMEDIATE` and the `user_version` re-read.
+// Either form takes none when the call opted out with `{ takesReading: false }` (`immediate`: a write
+// that takes its own reading, or none; `snapshot`: a read that judges nothing by time, unit 14).
 import { REALM_STORE_SCHEMA_VERSION, takeRawReading, WorkflowError } from '@sensigo/realm';
 import type { Clock } from '@sensigo/realm';
 import type { DatabaseLike } from './driver.js';
@@ -500,15 +501,28 @@ export class RealmDb {
    * Runs `body` in a read transaction (deferred BEGIN, `query_only` on for the body), with the raw
    * reading taken before the BEGIN and before the in-process lock.
    */
-  snapshot<T>(body: (db: DatabaseLike, reading: Date) => SyncResult<T>): Promise<T> {
+  snapshot<T>(body: (db: DatabaseLike, reading: Date) => SyncResult<T>): Promise<T>;
+  /** The same, but no reading is taken and the body receives none (a read that judges nothing by time). */
+  snapshot<T>(
+    body: (db: DatabaseLike) => SyncResult<T>,
+    options: { takesReading: false },
+  ): Promise<T>;
+  snapshot<T>(
+    body: (db: DatabaseLike, reading: Date) => T,
+    options?: { takesReading: false },
+  ): Promise<T> {
     this.#refuseIfNested();
+    if (options?.takesReading === false) {
+      const read = body as (db: DatabaseLike) => T;
+      return this.#withLockAndBusyWait(() => this.#snapshotOnce(read));
+    }
     let reading: Date;
     try {
       reading = takeRawReading(this.clock);
     } catch (err) {
       return Promise.reject(err);
     }
-    return this.#withLockAndBusyWait(() => this.#snapshotOnce(body, reading));
+    return this.#withLockAndBusyWait(() => this.#snapshotOnce((db) => body(db, reading)));
   }
 
   /**
@@ -764,7 +778,7 @@ export class RealmDb {
     this.#commit();
   }
 
-  #snapshotOnce<T>(body: (db: DatabaseLike, reading: Date) => T, reading: Date): T {
+  #snapshotOnce<T>(body: (db: DatabaseLike) => T): T {
     this.#begin('BEGIN');
     const db = this.#db;
     try {
@@ -772,7 +786,7 @@ export class RealmDb {
       db.exec('PRAGMA query_only = ON');
       let result: T;
       try {
-        result = body(db, reading);
+        result = body(db);
       } catch (err) {
         // 6 and 8 inside a read transaction: a write was attempted where none may be.
         if (isSqliteError(err) && [6, 8].includes(err.errcode & 0xff)) {

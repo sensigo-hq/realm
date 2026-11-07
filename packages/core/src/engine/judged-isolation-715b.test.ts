@@ -5,20 +5,11 @@
 // one after another, on three different runs.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { JsonFileStore } from '../store/json-file-store.js';
-import { writeTestClockFile } from '../store/test-clock-file.js';
+import { describe, expect, it } from 'vitest';
+import { InMemoryStore, settableClock } from '@sensigo/realm-testing';
 import { advanceRun, submitHumanResponse } from './execution-loop.js';
 import { judgedSnapshotOf } from './snapshot.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
-
-const roots: string[] = [];
-afterEach(async () => {
-  for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
-});
 
 /** A question that aborts the run when its 60 s are up. */
 const ASK: WorkflowDefinition = {
@@ -43,10 +34,8 @@ describe('#715 (b) Amendment 8 (1) — each reply hands back its own record’s 
     // (a) red when core keys a snapshot on an object two replies share (a module-level constant:
     //     the no-run reply then resolves to the aborted run's record); (b) prints, per call, the
     //     reply's status and the id of the record its snapshot holds.
-    const root = await mkdtemp(join(tmpdir(), 'realm-715b-isolation-'));
-    roots.push(root);
-    await writeTestClockFile(root, T0);
-    const store = new JsonFileStore(join(root, 'runs'));
+    const clock = settableClock(T0);
+    const store = new InMemoryStore({ clock });
     const opened = async () => {
       const { record } = await store.create({ workflowId: ASK.id, workflowVersion: 1, params: {} });
       await advanceRun(store, ASK, { runId: record.id });
@@ -57,7 +46,7 @@ describe('#715 (b) Amendment 8 (1) — each reply hands back its own record’s 
     const b = await opened();
     const answered = await submitHumanResponse(store, ASK, { ...a, choice: 'approve' });
     // Two minutes later on the store's clock: b's question expired, and its answer finds it so.
-    await writeTestClockFile(root, new Date(T0.getTime() + 120_000));
+    await clock.set(new Date(T0.getTime() + 120_000));
     const aborted = await submitHumanResponse(store, ASK, { ...b, choice: 'approve' });
     const unread = await submitHumanResponse(store, ASK, {
       runId: 'no-such-run',

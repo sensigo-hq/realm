@@ -2,6 +2,7 @@
 // reclaim/detection are testable on the testing default store.
 import { describe, it, expect } from 'vitest';
 import { InMemoryStore } from './in-memory-store.js';
+import { countingClock, settableClock } from '../clock/settable-clock.js';
 import {
   runStoreFidelityContract,
   RUN_STORE_FIDELITY_LAWS,
@@ -241,7 +242,10 @@ describe('FieldDroppingFakeStore — the TCK catches a dishonest store (issue #1
  * `old-shape` resolves the result before #715, `{ run, created }`; `reuse-no-record` and
  * `rerun-no-record` are right on a fresh create and leave `record` out on that one branch;
  * `resolves-nothing` resolves `undefined`; `numeric-id` gives its runs a number for an id (a SQL
- * store's integer key).
+ * store's integer key). `link-wrong` and `link-wrong-on-get` (the review of the correction, MA 3)
+ * have a link that is present but WRONG: a rerun whose `rerun_of` names the new run itself, in the
+ * create's result (`link-wrong`) or only in what `get` returns (`link-wrong-on-get`), the slip of
+ * writing the new run's id into the column meant for the replaced run's.
  */
 type CreatedMode =
   | 'unkeyed-false'
@@ -253,6 +257,8 @@ type CreatedMode =
   | 'reuse-omits'
   | 'omits-everywhere'
   | 'link-not-stored'
+  | 'link-wrong'
+  | 'link-wrong-on-get'
   | 'self-rerun'
   | 'old-shape'
   | 'reuse-no-record'
@@ -269,7 +275,11 @@ class CreatedMisreportingStore extends InMemoryStore {
 
   override async get(runId: string): Promise<Snapshot> {
     const snapshot = await super.get(runId);
-    if (this.mode !== 'link-not-stored' || snapshot.record.rerun_of === undefined) return snapshot;
+    if (snapshot.record.rerun_of === undefined) return snapshot;
+    if (this.mode === 'link-wrong-on-get') {
+      return { ...snapshot, record: { ...snapshot.record, rerun_of: snapshot.record.id } };
+    }
+    if (this.mode !== 'link-not-stored') return snapshot;
     const { rerun_of: _link, ...record } = snapshot.record;
     return { ...snapshot, record };
   }
@@ -322,7 +332,12 @@ class CreatedMisreportingStore extends InMemoryStore {
         return branch === 'reuse' ? omitted() : result;
       case 'omits-everywhere':
         return omitted();
+      case 'link-wrong':
+        return branch === 'supersede'
+          ? { ...result, record: { ...result.record, rerun_of: result.record.id } }
+          : result;
       case 'link-not-stored':
+      case 'link-wrong-on-get':
       case 'self-rerun':
         return result;
       case 'old-shape':
@@ -372,7 +387,9 @@ const escaped = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 describe('#616 PR-1a unit 16a — CREATE_REPORTS_CREATED fails the store that misreports created, on that branch alone', () => {
   // Each row: (1) can it fail — the break is deleting the case (its message becomes `passed`), or,
   // for c2, d2, d3 and d4, deleting that conjunct of the case (the reuse's id check; the returned
-  // rerun_of check; the read-back by `get`; the rerun's new-id check); (2) it prints the four
+  // rerun_of check; the read-back by `get`; the rerun's new-id check), and for d5 and d6 weakening
+  // the returned-link check, or the read-back's, from `!== first.id` to `=== undefined` (a link that
+  // is present but names the wrong run then passes, and so does the message's second branch); (2) it prints the four
   // outcomes, each `passed` or the law's message (the branch, `created` as the store reported it,
   // and run ids — no value from the environment).
   const rows: ReadonlyArray<[CreatedMode, string, Array<string | RegExp>]> = [
@@ -442,6 +459,30 @@ describe('#616 PR-1a unit 16a — CREATE_REPORTS_CREATED fails the store that mi
         'passed',
         new RegExp(
           `^${escaped(RERUN)}a create that replaces a run must make a new run; the store returned the id of the run it replaces \\(${ID}\\)$`,
+        ),
+      ],
+    ],
+    [
+      'link-wrong',
+      '(d5)',
+      [
+        'passed',
+        'passed',
+        'passed',
+        new RegExp(
+          `^${escaped(RERUN)}the new run's rerun_of must name the run it replaces \\(${ID}\\); the store returned rerun_of ${ID}$`,
+        ),
+      ],
+    ],
+    [
+      'link-wrong-on-get',
+      '(d6)',
+      [
+        'passed',
+        'passed',
+        'passed',
+        new RegExp(
+          `^${escaped(RERUN)}the new run's rerun_of, read back by get, must name the run it replaces \\(${ID}\\); get returned rerun_of ${ID}$`,
         ),
       ],
     ],
@@ -573,5 +614,84 @@ describe('InMemoryStore — rerun_of, the supersede link (issue #558 PR-C)', () 
 
     expect(second.created).toBe(true);
     expect(second.record.rerun_of).toBeUndefined();
+  });
+});
+
+// issue #616 PR-2c, c1a: the fixture core's engine tests plant a run past the store boundary with,
+// where a raw run-file write did it on the JSON store — abandon-run's run labelled `gate_waiting`
+// with no `pending_gate`, sealed-by-substrate's twelve records the seal guard would refuse.
+describe('#616 PR-2c c1a — InMemoryStore.seed plants a run record as given, replacing any stored run of its id', () => {
+  const open = async (store: InMemoryStore): Promise<RunRecord> =>
+    (await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} })).record;
+
+  it('a seeded record reads back through get() as given: its version, its run_phase, its updated_at and its fields', async () => {
+    // (1) red when `seed` writes through update's tail (it derives run_phase → 'running', bumps the
+    //     version → 1 and stamps updated_at): the planted label differs from its derivation on
+    //     purpose; (2) prints the id, version, run_phase, updated_at and the planted fields read back.
+    const store = new InMemoryStore();
+    const run = await open(store);
+    const planted: RunRecord = {
+      ...run,
+      run_phase: 'gate_waiting',
+      in_progress_steps: ['analyze'],
+      claims: { analyze: { deadline: null } },
+      updated_at: '2020-01-01T00:00:00.000Z',
+    };
+    store.seed(planted);
+    const { record: back } = await store.get(run.id);
+    expect({
+      id: back.id,
+      version: back.version,
+      run_phase: back.run_phase,
+      updated_at: back.updated_at,
+      in_progress_steps: back.in_progress_steps,
+      claims: back.claims,
+    }).toEqual({
+      id: run.id,
+      version: 0,
+      run_phase: 'gate_waiting',
+      updated_at: '2020-01-01T00:00:00.000Z',
+      in_progress_steps: ['analyze'],
+      claims: { analyze: { deadline: null } },
+    });
+  });
+
+  it('a second seed of the same id replaces the first', async () => {
+    // (1) red when `seed` is create-if-absent (the first seed reads back); (2) prints the
+    //     terminal_reason read back.
+    const store = new InMemoryStore();
+    const run = await open(store);
+    store.seed({ ...run, id: 'seeded-run', terminal_reason: 'the first seed' });
+    store.seed({ ...run, id: 'seeded-run', terminal_reason: 'the second seed' });
+    expect((await store.get('seeded-run')).record.terminal_reason).toBe('the second seed');
+  });
+
+  it('a seeded record with an idempotency key is the run a keyed create on that key finds', async () => {
+    // (1) red when `seed` leaves the key's pointer alone (the keyed create mints a fresh run:
+    //     created true, another id); (2) prints `created` and the id the create returned.
+    const store = new InMemoryStore();
+    const run = await open(store);
+    store.seed({ ...run, id: 'seeded-keyed', idempotency_key: 'k-1' });
+    const again = await store.create({
+      workflowId: 'wf',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k-1',
+    });
+    expect({ created: again.created, id: again.record.id }).toEqual({
+      created: false,
+      id: 'seeded-keyed',
+    });
+  });
+
+  it('a seed spends no reading of the store’s clock', async () => {
+    // (1) red when `seed` takes a reading (a `takeReading(this.clock)` copied from `update`'s tail);
+    //     (2) prints the number of readings the seed spent.
+    const clock = countingClock(settableClock('2026-11-07T12:00:00.000Z'));
+    const store = new InMemoryStore({ clock });
+    const run = await open(store);
+    const before = clock.reads;
+    store.seed({ ...run, terminal_reason: 'planted' });
+    expect(clock.reads - before).toBe(0);
   });
 });
