@@ -1,13 +1,13 @@
 // run-store.ts — issue #616 PR-1a units 12a and 12b (design d4-frozen-r3 §2, §3; the census of core's
 // run store, `plans/issue-616/u12/census-u12.md`): `SqliteRunStore`, core's run store on a SQLite
-// home, for creating runs, reading one, listing them, updating one and claiming a step of one. A
-// keyed create is unit 15a's; settling, sealing and saving are unit 13's. `openRealmHome` builds the
-// one store of a handle; the package's entry exports the class as a type only, so nothing outside the
-// package constructs one.
+// home, for creating runs, reading one, listing them, updating one, claiming a step of one and
+// stamping a seal onto an old finished run (unit 13b). A keyed create is unit 15a's; settling and
+// saving are unit 13's. `openRealmHome` builds the one store of a handle; the package's entry exports
+// the class as a type only, so nothing outside the package constructs one.
 //
 // Every write goes through `RealmDb.immediate` with a `verify` that reads the run back by its content;
-// every read goes through `snapshot`. Each call spends exactly ONE reading of the home's clock (core's
-// clock laws, #715):
+// every read goes through `snapshot`. Each call but a stamp spends exactly ONE reading of the home's
+// clock (core's clock laws, #715):
 //   - `create`: the reading `immediate` takes right after `BEGIN IMMEDIATE`; the run's id is minted
 //     after it. An unkeyed create, or a keyed one whose key no run holds, is stamped with it
 //     unfloored; a keyed create that finds the key's holder floors it by that run (unit 15a);
@@ -16,7 +16,9 @@
 //     own `updated_at`;
 //   - `update` and `claimStep`: the raw reading their write takes itself, under the write lock, once
 //     it has found the run (a missing run spends none), folded with the STORED record's `updated_at`
-//     before any check, so a refused update or claim has spent it.
+//     before any check, so a refused update or claim has spent it;
+//   - `stampSeal`: none, on every branch: it carries `updated_at` through unchanged (stamping is not
+//     activity), so it has nothing to stamp.
 // A list is ONE read transaction (n8n's way: a consistent snapshot without the write lock), so it never
 // tears across a concurrent write. An update or a claim reads the run and writes it in ONE write
 // transaction, so two of them never both act on one version: of two claims of one step, exactly one
@@ -45,7 +47,9 @@ import {
   type Listing,
   type LoadBearingRunRecordField,
   type RunRecord,
+  type SealedBy,
   type Snapshot,
+  type StampSealResult,
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { REALM_STORE_SQLITE_BRAND } from './brand.js';
@@ -147,23 +151,34 @@ interface Written {
 }
 
 /**
- * An update's or a claim's own check after an error at its COMMIT (unit 9's protocol), by content:
- * true when the stored core document is the text written; a stored version above the written one
+ * A write's own check after an error at its COMMIT (unit 9's protocol), by content: true when the
+ * stored core document of run `runId` is `text`; a stored version above `version` (the written one)
  * throws {@link VerifyInconclusive} (the write may have landed and been superseded); otherwise false
  * (another writer's text at the same or a lower version, or no run at all).
  */
-function verifyWritten(db: DatabaseLike, runId: string, written: Written): boolean {
+function verifyStoredText(db: DatabaseLike, runId: string, text: string, version: number): boolean {
   const row = db.prepare('SELECT record, version FROM runs WHERE id = ?').get(runId);
   // A run deleted between the failed COMMIT and this read: the write is not there (MA 3, 2026-11-07).
   if (row === undefined) return false;
-  if (String(row['record']) === written.text) return true;
-  if (Number(row['version']) > written.snapshot.record.version) {
+  if (String(row['record']) === text) return true;
+  if (Number(row['version']) > version) {
     throw new VerifyInconclusive(
       `Run ${runId} is stored at version ${String(row['version'])}, above the written ` +
-        `${written.snapshot.record.version}: the write may have landed and been superseded.`,
+        `${version}: the write may have landed and been superseded.`,
     );
   }
   return false;
+}
+
+/** An update's or a claim's own check after an error at its COMMIT: {@link verifyStoredText}. */
+function verifyWritten(db: DatabaseLike, runId: string, written: Written): boolean {
+  return verifyStoredText(db, runId, written.text, written.snapshot.record.version);
+}
+
+/** What a stamp did: its answer, and, when it wrote, the core document's text as stored. */
+interface Stamping {
+  readonly result: StampSealResult;
+  readonly text?: string;
 }
 
 /** A claim of a step that is already in flight or settled (the JSON store's words). */
@@ -192,8 +207,8 @@ function notEligibleError(runId: string, stepName: string, eligible: string[]): 
 }
 
 /**
- * Core's run store on a SQLite home: create (unkeyed), get, list, update and claimStep (see the module
- * comment). It declares no `implements RunStore` yet: the interface requires `settleStep` (unit 13),
+ * Core's run store on a SQLite home: create, get, list, update, claimStep and stampSeal (see the
+ * module comment). It declares no `implements RunStore` yet: the interface requires `settleStep` (unit 13),
  * and the engine's admission refuses a store without it until then.
  */
 export class SqliteRunStore {
@@ -414,6 +429,73 @@ export class SqliteRunStore {
       },
       (db, result) => (result.created ? verifyCreated(db, result.record) : true),
     );
+  }
+
+  /**
+   * Stamps `sealedBy` onto run `runId`, a run that finished before runs carried a seal (#367; the one
+   * write of `realm run migrate --stamp-seals`), as the JSON store does. ONE write transaction reads
+   * the run, then four checks, in this order:
+   *   1. a stored version that is not `expectedVersion` THROWS core's `STATE_SNAPSHOT_MISMATCH`;
+   *   2. a run that already holds a seal RETURNS `already_stamped`;
+   *   3. a run that is not finished RETURNS `not_terminal`; both refusals carry the run as it stands;
+   *   4. otherwise core's seal boundary judges the stamp (`assertSealIntegrity`, which throws), and
+   *      the run is written with `sealed_by` appended last, the version moved by one and `updated_at`
+   *      kept byte for byte: stamping is not activity, so retention's clock does not move, and a
+   *      writer holding the run read before the stamp fails its version check instead of wiping it.
+   * The write patches the stored core document, as a claim does (MA 3, 2026-11-07): no evidence entry
+   * or write-once value is made into text or hashed, and the writer re-stamps the phase columns from
+   * it. A run that does not exist is core's `STATE_RUN_NOT_FOUND`. No branch reads the clock.
+   */
+  async stampSeal(
+    runId: string,
+    sealedBy: SealedBy,
+    expectedVersion: number,
+  ): Promise<StampSealResult> {
+    const stamping = await this.#db.immediate(
+      (db): Stamping => {
+        const stored = readStoredCore(db, runId);
+        const fresh = stored === undefined ? null : readRunInTransaction(db, runId);
+        if (stored === undefined || fresh === null) throw runNotFoundError(runId);
+        if (fresh.version !== expectedVersion) {
+          throw versionConflictError(runId, expectedVersion, fresh.version);
+        }
+        if (fresh.sealed_by !== undefined) {
+          return { result: { stamped: false, reason: 'already_stamped', run: fresh } };
+        }
+        if (fresh.terminal_state !== true) {
+          return { result: { stamped: false, reason: 'not_terminal', run: fresh } };
+        }
+        const stamped: RunRecord = { ...fresh, sealed_by: sealedBy };
+        assertSealIntegrity(fresh, stamped);
+        const version = fresh.version + 1;
+        // The stored document with its placeholders in place: `sealed_by` appended last, as in
+        // `stamped`, the version replaced in place and `updated_at` the stored text.
+        const text = writeRunUpdate(
+          db,
+          runId,
+          {
+            ...stored,
+            sealed_by: sealedBy,
+            version,
+            updated_at: stored.updated_at,
+          } as unknown as CoreDocument,
+          { unchanged: true },
+        );
+        const run: RunRecord = {
+          ...stamped,
+          run_phase: deriveRunPhase(stamped),
+          version,
+          updated_at: fresh.updated_at,
+        };
+        return { result: { stamped: true, run }, text };
+      },
+      // A refusal wrote nothing, so there is nothing to look for (SEAMS, the unit 13 rulings, Q3).
+      (db, stamping) =>
+        stamping.text === undefined ||
+        verifyStoredText(db, runId, stamping.text, stamping.result.run.version),
+      { takesReading: false },
+    );
+    return stamping.result;
   }
 }
 
