@@ -104,7 +104,7 @@ const CALLS: Array<[string, (store: never) => Promise<unknown>, string]> = [
   ],
   [
     'readRunForFence',
-    (s) => readRunForFence(s, 'r', { kind: 'run_absent' } as never),
+    (s) => readRunForFence(s, 'r', { kind: 'run_absent_or_terminal' } as never),
     'The run reader handed to readRunForFence',
   ],
   [
