@@ -1,5 +1,5 @@
 // Interface for run record persistence — implemented by JsonFileStore (local) and future Postgres store.
-import type { RunRecord, SealedBy } from '../types/run-record.js';
+import type { RunPhase, RunRecord, SealedBy } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { SealRunDelta, SettlementDelta, SettlementResult } from '../types/settlement.js';
 import type { Attributed } from '../engine/holder.js';
@@ -352,3 +352,106 @@ export interface RunStore {
 export type StampSealResult =
   | { stamped: true; run: RunRecord }
   | { stamped: false; reason: 'already_stamped' | 'not_terminal'; run: RunRecord };
+
+/**
+ * The most runs one page of a store's scan may hold (#616 PR-2c c3; DELTAS 33). A page size above it,
+ * below 1 or not a whole number is refused: a listing is never silently unlimited (R12). One page of
+ * 1,000 reassembled records costs a synchronous driver about 80–140 ms (PRB-2C-10).
+ */
+export const SCAN_MAX_PAGE_SIZE = 1000;
+
+/**
+ * The filters of a store's scan (design §6, spelled as §6's filter list spells them; §6 writes
+ * `includePurged` once for the same filter). Every filter given must hold. `key` needs `workflow`: a
+ * key is a key of one workflow. `created_since` and `updated_since` are stamps in the store's one
+ * shape (`YYYY-MM-DDTHH:MM:SS.sssZ`), compared as text and inclusive.
+ */
+export interface ScanFilter {
+  workflow?: string;
+  phase?: RunPhase;
+  terminal?: boolean;
+  key?: string;
+  created_since?: string;
+  updated_since?: string;
+  include_purged?: boolean;
+}
+
+/**
+ * How a scan pages: `pageSize` is required, a whole number from 1 to {@link SCAN_MAX_PAGE_SIZE};
+ * `projection` is `'record'` (the default: each run as `get()` returns it) or `'row'` (each run as a
+ * {@link RunRow}); `after` starts the scan after that id (the last id of the page before, §6's
+ * `--after` cursor).
+ */
+export interface ScanOptions {
+  pageSize: number;
+  projection?: 'record' | 'row';
+  after?: string;
+}
+
+/**
+ * One run as a scan's `'row'` projection gives it (design §6's facts row): the record's own fields, but
+ * `run_phase` is the derived phase, `terminal_state` is the column's 0/1 as a boolean, `run_version` is
+ * the record's `version` (M6's name) and `pending_gate` is the gate's id or `null`. No params, no
+ * evidence.
+ */
+export interface RunRow {
+  id: string;
+  workflow_id: string;
+  run_phase: RunPhase;
+  terminal_state: boolean;
+  sealed_by_arm: string | null;
+  created_at: string;
+  updated_at: string;
+  idempotency_key: string | null;
+  rerun_of: string | null;
+  run_version: number;
+  pending_gate: string | null;
+  completed_steps: string[];
+  in_progress_steps: string[];
+  failed_steps: string[];
+}
+
+/**
+ * A deleted run's tombstone as a scan with `include_purged` gives it (design §6): its id, its workflow,
+ * when it was purged, its seal's arm, and the phase and derivation stamp it had when purged (its
+ * record is gone, so its phase cannot be derived again).
+ */
+export interface PurgedItem {
+  kind: 'purged';
+  run_id: string;
+  workflow_id: string | null;
+  purged_at: string;
+  sealed_by_arm: string | null;
+  run_phase: RunPhase;
+  phase_version: string;
+}
+
+/** One item of a scan's page: a run in the scan's projection, or a tombstone. */
+export type ScanItem<P extends 'record' | 'row'> =
+  { kind: 'run'; run: P extends 'record' ? Snapshot : RunRow } | PurgedItem;
+
+/**
+ * One page of a store's scan: its items in id order, the page's one reading (`read_at`), the flag
+ * that the page was read in ONE read transaction (`consistent_snapshot`: one transaction per page
+ * under WAL), how many rows read for the page carried a phase stamped by another derivation
+ * (`derived_at_read`: each was derived at read; 0 when none), and, when the page is full, the cursor
+ * the next page starts after (`next_after`, the page's last id).
+ */
+export interface ScanPage<P extends 'record' | 'row'> {
+  items: ScanItem<P>[];
+  read_at: Date;
+  consistent_snapshot: true;
+  derived_at_read: number;
+  next_after?: string;
+}
+
+/**
+ * Who holds an idempotency key, read in one snapshot (design §3, axis 7): `held` names the run that
+ * holds it; `purged` lists the deleted runs that carried it, when no run does; `unseen` says no run
+ * carries it and no kept tombstone records one. `since` is the tombstone horizon: a run purged at or
+ * before it may have left no tombstone.
+ */
+export type KeyAnswer =
+  | { state: 'held'; run_id: string }
+  | { state: 'purged'; runs: Array<{ run_id: string; purged_at: string }>; since: string }
+  | { state: 'unseen'; since: string };
