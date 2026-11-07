@@ -829,32 +829,45 @@ describe('#616 unit 8 — the write path', () => {
       },
     };
     const { db } = realmDb(file, { budgetMs: 100, connection: stamped });
-    const outs = await Promise.all(
-      Array.from({ length: 50 }, (_, i) => settle(db.immediate(insert(i), verified))),
-    );
+    // The in-process lock is held for longer than the budget, as the COMMIT outcome protocol holds
+    // it: all 50 calls queue behind it and every one has passed its budget when it is handed the
+    // lock. (A call queued behind a call that ends within its own budget is another case: it
+    // attempts at once and waits on a timer afterwards. With a fresh start of 50 calls the first few
+    // are of that kind, which is why the first version of this cell failed on the macOS runner.)
+    expect(db.lock.tryTake()).toBe(true);
+    const pending = Array.from({ length: 50 }, (_, i) => settle(db.immediate(insert(i), verified)));
+    await sleep(150);
+    db.lock.release();
+    const outs = await Promise.all(pending);
     spinning = false;
     holder.exec('ROLLBACK');
-    // The first call waits out its budget in several attempts; each of the other 49 gets the lock
-    // after its budget has passed and makes exactly one attempt, so those are the last 49 BEGINs.
-    const queued = turnsAtBegin.slice(-49);
-    const distinct = new Set(queued).size;
+    const distinct = new Set(turnsAtBegin).size;
     // (1) red when a call that got the lock after its budget passed makes its attempt without
-    //     yielding: the lock is handed on without the loop turning, so the 49 attempts run back to
+    //     yielding: the lock is handed on without the loop turning, so the 50 attempts run back to
     //     back, each blocking for the busy timeout, and the program stops for about a second
     //     (measured: 1,041-1,087 ms idle and under load; with the yield 22-62 ms;
-    //     plans/issue-616/ia2-u09/probes/burst-results.md); they then share one turn count. It counts
-    //     loop turns, not milliseconds: the check this replaced bounded the longest gap at 300 ms
-    //     and failed on the macOS runner at 646 and 459 ms (CI run 42321890910 and its re-run) with
-    //     the yield in place. Also red when a call is not refused busy, or a row landed. (2) prints
-    //     how many of the 49 attempts began in a turn of their own.
+    //     plans/issue-616/ia2-u09/probes/burst-results.md); they then share one turn count (1 of 50
+    //     in the break). A healthy store gives 50 of 50 here; the floor is 45, five of slack for the
+    //     order two immediates run in on another platform, far from the break's 1. It counts loop
+    //     turns, not milliseconds: the first version of this cell bounded the longest gap at 300 ms
+    //     and failed on the macOS runner (CI run 42321890910 and its re-run) with the yield in
+    //     place. Also red when a call makes more or fewer than one attempt, is not refused busy, or a
+    //     row landed. (2) prints how many attempts began in a turn of their own, and how many were
+    //     made.
     expect(
       {
-        everyAttemptInATurnOfItsOwn: distinct === 49,
+        attempts: turnsAtBegin.length,
+        mostAttemptsInATurnOfTheirOwn: distinct >= 45,
         refusals: [...new Set(outs.map((o) => (o.error as { code?: unknown })?.code))],
         rows: values(file),
       },
-      `${distinct} of 49 queued attempts began in a turn of their own`,
-    ).toEqual({ everyAttemptInATurnOfItsOwn: true, refusals: ['STATE_RUN_BUSY'], rows: [] });
+      `${distinct} of ${turnsAtBegin.length} attempts began in a turn of their own`,
+    ).toEqual({
+      attempts: 50,
+      mostAttemptsInATurnOfTheirOwn: true,
+      refusals: ['STATE_RUN_BUSY'],
+      rows: [],
+    });
   });
 
   it('correction check 3: autocommit waits for a busy store, then refuses it with STATE_RUN_BUSY, nothing written', async () => {
