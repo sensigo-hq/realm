@@ -47,9 +47,10 @@ export const REALM_STORE_PAGE_SIZE = 16384;
  * kept forever) and `purged_runs` (its detail, compactable below the horizon). PR-1b appends the other
  * stores' tables: `webhook_dedup` (B8, the duplicate-webhook memory); the workflow registry (B3):
  * `workflow_versions` (each distinct definition text once, by its hash), `workflow_registrations` (every
- * move of a workflow's pointer, in order) and `workflows` (the pointer); and `failed_attempts` (B7, a
+ * move of a workflow's pointer, in order) and `workflows` (the pointer); `failed_attempts` (B7, a
  * run's failed agent attempts, one caller-serialized line per row, in `seq` order) and `replays` (B7, a
- * saved replay's record, by its id, with its `created_at`).
+ * saved replay's record, by its id, with its `created_at`); and `trace_buffer` (B4, a step's buffered
+ * trace lines) and `trace_sealed` (B4, a step's sealed lines).
  */
 export const REALM_STORE_SCHEMA: readonly string[] = [
   // ---- runs: the core document; the generated columns read it, never the reverse ----
@@ -456,5 +457,31 @@ BEGIN SELECT RAISE(ABORT, 'realm.db: a registered workflow cannot be deleted'); 
   record TEXT NOT NULL CHECK (json_valid(record)),
   created_at TEXT NOT NULL,
   CHECK (json_extract(record, '$.id') IS id AND json_extract(record, '$.created_at') IS created_at)
+)`,
+
+  // ---- trace_buffer and trace_sealed: the trace buffer (PR-1b B4) ----
+  // Operational rows behind the trace buffer's interface, with no guards (design §3 gives them none),
+  // so no row-number guard either: a REPLACE aimed at a row's number removes a row exactly as the
+  // plain DELETE they allow. Ordinary rowid tables: a line's entries, and a sealed step's lines, can
+  // be large. A line's nonce is NULL when it was written without one; `line_seq` orders a step's lines
+  // in the order they were written (its `ts` is display only).
+  `CREATE TABLE trace_buffer (
+  run_id TEXT NOT NULL,
+  step_id TEXT NOT NULL,
+  line_seq INTEGER NOT NULL,
+  ts INTEGER NOT NULL,
+  nonce TEXT,
+  entries TEXT NOT NULL CHECK (json_valid(entries)),
+  entry_count INTEGER NOT NULL,
+  bytes INTEGER NOT NULL,
+  PRIMARY KEY (run_id, step_id, line_seq)
+)`,
+  `CREATE TABLE trace_sealed (
+  run_id TEXT NOT NULL,
+  step_id TEXT NOT NULL,
+  seal_seq INTEGER NOT NULL,
+  lines TEXT NOT NULL CHECK (json_valid(lines)),
+  bytes INTEGER NOT NULL,
+  PRIMARY KEY (run_id, step_id, seal_seq)
 )`,
 ];

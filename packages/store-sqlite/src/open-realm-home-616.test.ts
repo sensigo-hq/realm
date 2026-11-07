@@ -201,7 +201,7 @@ const says = (sentence: string): boolean => README.includes(sentence);
 /** The README's sentences, each with the cell below that pins its behaviour. */
 const SENTENCES = {
   opens:
-    '`openRealmHome({ home, clock })` opens a Realm home and resolves to a handle with `runStore`, `dedupStoreFor`, `workflowStore`, `failedAttemptStore`, `replayStore` and `close()`.',
+    '`openRealmHome({ home, clock })` opens a Realm home and resolves to a handle with `runStore`, `dedupStoreFor`, `workflowStore`, `failedAttemptStore`, `replayStore`, `traceBufferStore` and `close()`.',
   shared:
     'Callers in one process that open the same home share one handle and one connection, so a `close()` by any of them ends it for all.',
   file: 'Realm keeps run records in one SQLite file, `realm.db`, in the Realm home. Never delete, move or replace `realm.db` or its side files `realm.db-wal` and `realm.db-shm` while a Realm process is running.',
@@ -591,6 +591,7 @@ describe('#616 unit 11 — the README sentences, each tied to its behaviour', ()
         'failedAttemptStore',
         'replayStore',
         'runStore',
+        'traceBufferStore',
         'workflowStore',
       ],
       one: true,

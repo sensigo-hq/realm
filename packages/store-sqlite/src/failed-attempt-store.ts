@@ -16,15 +16,14 @@
 // on the awaited path of a step's failure. Under contention it waits up to the busy budget (5 s) and
 // then gives up silently, as a failure to record does today.
 import {
-  artifactDeleteFailedError,
   brandClass,
   FAILED_ATTEMPT_SIDECAR_MAX_BYTES,
-  WorkflowError,
   type ArtifactDeletionReport,
   type FailedAttemptReadResult,
   type FailedAttemptRecord,
   type FailedAttemptStore,
 } from '@sensigo/realm';
+import { deleteFailure, isOwnStatementFailure } from './artifact-delete-failure.js';
 import { REALM_STORE_SQLITE_BRAND } from './brand.js';
 import type { RealmDb } from './connection.js';
 import type { DatabaseLike } from './driver.js';
@@ -32,49 +31,6 @@ import type { DatabaseLike } from './driver.js';
 /** The store's name in a delete failure, and the artifact it names. */
 const STORE = 'SqliteFailedAttemptStore';
 const ARTIFACT = 'failed_attempts';
-
-/**
- * The refusals the primitive makes itself, which `deleteAllForRun` passes through unchanged: a busy
- * store after the busy budget (purge files it as blocked), writes fenced after a write of unknown
- * outcome, and a file a newer Realm migrated.
- */
-const PRIMITIVE_REFUSALS: ReadonlySet<string> = new Set([
-  'STATE_RUN_BUSY',
-  'STATE_STORE_WRITES_FENCED',
-  'STATE_STORE_VERSION_NEWER',
-]);
-
-/** SQLite's primary result codes by number (`errcode & 0xff`), the names SQLite gives them. */
-const PRIMARY_RESULT_CODES: Readonly<Record<number, string>> = {
-  1: 'SQLITE_ERROR',
-  2: 'SQLITE_INTERNAL',
-  3: 'SQLITE_PERM',
-  4: 'SQLITE_ABORT',
-  5: 'SQLITE_BUSY',
-  6: 'SQLITE_LOCKED',
-  7: 'SQLITE_NOMEM',
-  8: 'SQLITE_READONLY',
-  9: 'SQLITE_INTERRUPT',
-  10: 'SQLITE_IOERR',
-  11: 'SQLITE_CORRUPT',
-  12: 'SQLITE_NOTFOUND',
-  13: 'SQLITE_FULL',
-  14: 'SQLITE_CANTOPEN',
-  15: 'SQLITE_PROTOCOL',
-  16: 'SQLITE_EMPTY',
-  17: 'SQLITE_SCHEMA',
-  18: 'SQLITE_TOOBIG',
-  19: 'SQLITE_CONSTRAINT',
-  20: 'SQLITE_MISMATCH',
-  21: 'SQLITE_MISUSE',
-  22: 'SQLITE_NOLFS',
-  23: 'SQLITE_AUTH',
-  24: 'SQLITE_FORMAT',
-  25: 'SQLITE_RANGE',
-  26: 'SQLITE_NOTADB',
-  27: 'SQLITE_NOTICE',
-  28: 'SQLITE_WARNING',
-};
 
 /** A run's stored size: each line's UTF-8 length plus one, summed (0 for a run with no rows). */
 function storedSize(db: DatabaseLike, runId: string): number {
@@ -104,30 +60,6 @@ function holds(db: DatabaseLike, runId: string, row: Row): boolean {
     .prepare('SELECT line FROM failed_attempts WHERE run_id = ? AND seq = ?')
     .get(runId, row.seq);
   return stored !== undefined && stored['line'] === row.line;
-}
-
-/**
- * The code a delete failure names: the mapped error's code when it is a `WorkflowError`, else the
- * name of SQLite's primary result code for the error's `errcode` (or its COMMIT outcome's).
- */
-function failureCode(err: unknown): string {
-  if (err instanceof WorkflowError) return err.code;
-  const carried = err as { errcode?: unknown; commitOutcome?: { errcode?: unknown } } | null;
-  const errcode = carried?.errcode ?? carried?.commitOutcome?.errcode;
-  if (typeof errcode !== 'number') return 'UNKNOWN';
-  return PRIMARY_RESULT_CODES[errcode & 0xff] ?? `SQLITE_${String(errcode & 0xff)}`;
-}
-
-/** SQLite's busy family (5 and its extended codes), as the primitive judges it. */
-function isBusy(err: unknown): boolean {
-  const errcode = (err as { errcode?: unknown } | null)?.errcode;
-  return typeof errcode === 'number' && (errcode & 0xff) === 5;
-}
-
-/** A COMMIT that failed and did not land: the mapped error carries its answer, `not_landed`. */
-function isCommitNotLanded(err: unknown): boolean {
-  const outcome = (err as { commitOutcome?: { outcome?: unknown } } | null)?.commitOutcome;
-  return outcome?.outcome === 'not_landed';
 }
 
 /**
@@ -227,7 +159,7 @@ export class SqliteFailedAttemptStore implements FailedAttemptStore {
             return { rows, bytes };
           } catch (err) {
             // A busy answer is the primitive's to wait for and retry, not this delete's failure.
-            ownStatementFailed = !isBusy(err);
+            ownStatementFailed = isOwnStatementFailure(err);
             throw err;
           }
         },
@@ -236,15 +168,7 @@ export class SqliteFailedAttemptStore implements FailedAttemptStore {
       );
       return { bytes_deleted: deleted.bytes };
     } catch (err) {
-      if (err instanceof WorkflowError && PRIMITIVE_REFUSALS.has(err.code)) throw err;
-      if (!ownStatementFailed && !isCommitNotLanded(err)) throw err;
-      const message = err instanceof Error ? err.message : String(err);
-      throw artifactDeleteFailedError(
-        runId,
-        STORE,
-        [],
-        [{ artifact: ARTIFACT, code: failureCode(err), message }],
-      );
+      throw deleteFailure(err, ownStatementFailed, { runId, store: STORE, artifact: ARTIFACT });
     }
   }
 
