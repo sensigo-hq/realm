@@ -72,8 +72,9 @@ export const REALM_STORE_SCHEMA: readonly string[] = [
   // The phase index: the stored phase and the fingerprint of the derivation that computed it.
   `CREATE INDEX runs_by_phase ON runs (phase_version, run_phase, id)`,
   `CREATE INDEX runs_by_phase_version ON runs (phase_version, id)`,
-  // Every column the choice of a key's holder reads.
-  `CREATE INDEX runs_by_key ON runs (workflow_id, key_hash, terminal_state, created_at, id)`,
+  // Every column the choice of a key's holder reads (`rerun_of`: a finished run another run of its key
+  // superseded does not hold the key, unit 15a).
+  `CREATE INDEX runs_by_key ON runs (workflow_id, key_hash, terminal_state, created_at, id, rerun_of)`,
   // An update of the record moves its version by exactly one. Scoped to the record, so the re-stamp of
   // the phase index (which sets only run_phase and phase_version) needs no bump.
   `CREATE TRIGGER runs_version_fence BEFORE UPDATE OF record ON runs

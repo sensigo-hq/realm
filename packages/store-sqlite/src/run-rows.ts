@@ -20,12 +20,18 @@
 // lock of its own and a failed call leaves none of its rows in that transaction; with no transaction
 // open its savepoint is the transaction, holds the write lock for the call and commits the run whole.
 // Neither reads a clock. The limits are checked before the caller's `BEGIN`.
+//
+// A key's holder (unit 15a): `keyHashOf` is the one function that hashes an idempotency key, for the
+// insert and the lookup alike, and `findKeyHolder` derives which of a key's runs holds it from the
+// runs' own rows, in the caller's transaction (no key table, no pointer).
 import { createHash } from 'node:crypto';
 import {
   deriveRunPhase,
+  pickCanonical,
   runPhaseDerivationFingerprint,
   WorkflowError,
   WRITE_ONCE_RUN_FIELDS,
+  type KeyHolderFields,
   type RunRecord,
 } from '@sensigo/realm';
 import type { DatabaseLike } from './driver.js';
@@ -123,18 +129,70 @@ export function assertRunRecordWithinLimits(
 }
 
 /**
- * The key's hash the `runs` row carries: the sha256, in lowercase hex, of the workflow id, one zero
- * byte and the idempotency key, as UTF-8; NULL when the record has no key (absent or null). An empty
- * key is a key.
+ * The key's hash a `runs` row carries, and the one a key's holder is looked up by: the sha256, in
+ * lowercase hex, of the workflow id, one zero byte and the idempotency key, as UTF-8. An empty key is
+ * a key. Unit 13's `save` calls it too: its name and signature are fixed.
  */
-function keyHash(record: RunRecord): string | null {
+export function keyHashOf(workflowId: string, key: string): string {
+  return createHash('sha256')
+    .update(workflowId, 'utf8')
+    .update('\0', 'utf8')
+    .update(key, 'utf8')
+    .digest('hex');
+}
+
+/** The key hash `record`'s row carries: NULL when the record has no key (absent or null). */
+function keyHashOfRecord(record: RunRecord): string | null {
   const key: unknown = record.idempotency_key;
   if (key === undefined || key === null) return null;
-  return createHash('sha256')
-    .update(record.workflow_id, 'utf8')
-    .update('\0', 'utf8')
-    .update(key as string, 'utf8')
-    .digest('hex');
+  return keyHashOf(record.workflow_id, key as string);
+}
+
+const KEY_ROWS =
+  'SELECT id, terminal_state, created_at, rerun_of FROM runs WHERE workflow_id = ? AND key_hash = ?';
+
+/**
+ * The run that holds `workflowId`'s idempotency key `key`, or `undefined` when no run carries it,
+ * read in the caller's transaction (a call with none open is refused with a plain error): ONE select
+ * of the key's rows over the `runs_by_key` index, which holds every column it reads, so no record is
+ * read. Then the candidates:
+ *   - a FINISHED run that another run of the key names in `rerun_of` does not hold the key: it was
+ *     superseded (a live run is never dropped, DELTAS row 27). A rerun stamped before its holder (the
+ *     clock more than five seconds behind the holder's stamp) would otherwise give the key back to
+ *     the replaced run once the rerun finishes;
+ *   - a run naming itself in `rerun_of` drops nothing;
+ *   - when that would drop every run, every run is a candidate: a key with rows always has a holder.
+ * Then core's `pickCanonical` decides (one live run → it; several → the newest live; none → the
+ * newest). Unit 13's `save` calls it too: its name and signature are fixed.
+ */
+export function findKeyHolder(
+  db: DatabaseLike,
+  workflowId: string,
+  key: string,
+): KeyHolderFields | undefined {
+  if (!db.isTransaction) {
+    throw new Error(
+      "findKeyHolder reads a key's runs in one snapshot, so it needs a transaction open on its connection, and none is open.",
+    );
+  }
+  const rows = db.prepare(KEY_ROWS).all(workflowId, keyHashOf(workflowId, key));
+  if (rows.length === 0) return undefined;
+  const runs: KeyHolderFields[] = [];
+  /** The runs the key's runs name in `rerun_of`, other than themselves. */
+  const supersedes = new Set<string>();
+  for (const row of rows) {
+    const id = String(row['id']);
+    const rerunOf: unknown = row['rerun_of'];
+    if (typeof rerunOf === 'string' && rerunOf !== id) supersedes.add(rerunOf);
+    // eslint-disable-next-line no-restricted-syntax -- a read of the stored column for the key holder; reaches no store
+    runs.push({
+      id,
+      created_at: String(row['created_at']),
+      terminal_state: row['terminal_state'] === 1,
+    });
+  }
+  const held = runs.filter((run) => !(run.terminal_state && supersedes.has(run.id)));
+  return pickCanonical(held.length > 0 ? held : runs).canonical;
 }
 
 const INSERT_RUN =
@@ -195,7 +253,7 @@ export function insertRunRecord(db: DatabaseLike, record: RunRecord): void {
       JSON.stringify(core),
       deriveRunPhase(record),
       runPhaseDerivationFingerprint(),
-      keyHash(record),
+      keyHashOfRecord(record),
     );
     const insertEntry = db.prepare(INSERT_EVIDENCE);
     // By index, not `map`: a hole in the array is an entry too, which JSON holds as null.

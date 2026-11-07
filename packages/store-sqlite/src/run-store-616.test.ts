@@ -3,8 +3,8 @@
 // `openRealmHome`. The real cases: the engine creating a run and reading it back, `realm run list`
 // over many runs and one workflow, a test that counts its clock's readings, a record stamped ahead of a
 // clock that then stepped back, params too deep for the store, a COMMIT that fails after or before its
-// rows reached the file, a caller passing an idempotency key before unit 15, and the engine's
-// release-line check of a store and its errors.
+// rows reached the file, and the engine's release-line check of a store and its errors. A keyed
+// create is unit 15a's (`run-store-keyed-616.test.ts`).
 //
 // These cells stand in for the create, get and list ground of core's shared store laws until unit 16
 // wires the contract (`packages/testing/src/store/store-clock-contract.ts` and
@@ -374,27 +374,6 @@ describe('#616 unit 12a — create, get and list', () => {
       runs: 0,
       fired: 1,
     });
-  });
-
-  it('check 6: a keyed create (an empty key too) is refused until unit 15, writing nothing and reading no clock', async () => {
-    const t = testClock(T);
-    const { runStore } = await open(t.clock);
-    const keyed = async (idempotencyKey: string): Promise<[number, string]> => {
-      const before = t.reads();
-      const outcome = await runStore
-        .create({ ...BARE, idempotencyKey })
-        .then(() => 'created', describeError);
-      return [t.reads() - before, outcome];
-    };
-    const refused =
-      'Error: A keyed create arrives with the key holder, unit 15 of the SQLite store; this store creates unkeyed runs only.';
-    // (1) red when a keyed create is let through (a run is written, a reading spent), or an empty
-    //     key is read as no key; (2) prints each create's readings and outcome, and the runs stored.
-    expect({
-      key: await keyed('ticket-42'),
-      emptyKey: await keyed(''),
-      runs: (await runStore.list()).snapshots.length,
-    }).toEqual({ key: [0, refused], emptyKey: [0, refused], runs: 0 });
   });
 
   it('check 7: the store declares the package’s release line, its not-found refusal comes from the same line, and core’s check admits it', async () => {
