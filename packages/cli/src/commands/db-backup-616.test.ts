@@ -86,7 +86,9 @@ function holds(folder: string): Record<string, string> {
   return out;
 }
 
-describe('#616 PR-2c c6 — realm db backup, on the built CLI', () => {
+// Each cell starts the built CLI (a cold start each time; the refusals' cell five times), so the
+// describe carries its own budget (spawn-budget-guard.test.ts).
+describe('#616 PR-2c c6 — realm db backup, on the built CLI', { timeout: 120_000 }, () => {
   it('a backup prints one line naming the store, its version, the bytes and the copy', async () => {
     await makeStore();
     const copy = join(base, 'copy.db');
