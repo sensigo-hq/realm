@@ -23,7 +23,9 @@
 // refuses before its first write. None reads a clock. The limits are checked before the caller's
 // `BEGIN`, and so is the split of an update's record (`splitRunRecord`): ONE function makes every
 // stored piece, for the insert and the update alike, so an entry's stored text and hash cannot differ
-// between the two.
+// between the two. A settle (unit 13a) writes through the same writer: `prepareSettlementWrite` makes
+// its core document with that split's own code, and appends its new entries without reading the
+// stored ones when the transform kept every stored piece as the very object it was given.
 //
 // A key's holder (unit 15a): `keyHashOf` is the one function that hashes an idempotency key, for the
 // insert and the lookup alike, and `findKeyHolder` derives which of a key's runs holds it from the
@@ -37,6 +39,7 @@ import {
   WRITE_ONCE_RUN_FIELDS,
   type KeyHolderFields,
   type RunRecord,
+  type SettlementDelta,
 } from '@sensigo/realm';
 import { guardRefusalError } from './connection.js';
 import type { DatabaseLike } from './driver.js';
@@ -140,10 +143,12 @@ function limitExceeded(limit: string, max: number, actual: number, shown: string
  * deeper than the limit. The walk stops at the first level over the limit, so a depth refusal's
  * `actual` is that level (1,001): the depth is at least this. The SQL layer alone cannot name the
  * limit: a record too deep reaches the caller as SQLite's "malformed JSON" from a generated column.
- * Pure: it reads nothing but the record.
+ * A settle measures its delta the same way (unit 13a): the settled record exists only after the
+ * transform, inside the write lock, so the delta that grows it is what is measured before `BEGIN`.
+ * Pure: it reads nothing but the value it is given.
  */
 export function assertRunRecordWithinLimits(
-  record: RunRecord,
+  record: RunRecord | SettlementDelta,
   maxBytes: number = RUN_RECORD_MAX_BYTES,
 ): void {
   const depth = nestingDepth(record, RUN_RECORD_MAX_DEPTH + 1);
@@ -246,6 +251,20 @@ const SAVEPOINT = 'realm_insert_run';
  * not an array is refused with a plain error naming the run. Pure: it reads nothing but the record.
  */
 export function splitRunRecord(record: RunRecord): SplitRunRecord {
+  const { core, fields, evidence } = splitCore(record);
+  return { core, entries: storedEntries(evidence, 0), fields };
+}
+
+/**
+ * {@link splitRunRecord} without the entries: the core document, the write-once fields, and the
+ * record's evidence array as it is. The one code that makes a core document, for the insert, the
+ * update and the settle alike.
+ */
+function splitCore(record: RunRecord): {
+  core: CoreDocument;
+  fields: StoredField[];
+  evidence: readonly unknown[];
+} {
   const source = record as unknown as JsonObject;
   const evidence: unknown = source['evidence'];
   if (!Array.isArray(evidence)) {
@@ -270,13 +289,21 @@ export function splitRunRecord(record: RunRecord): SplitRunRecord {
   }
   // An imported record with no phase gets the placeholder too (design §3): the read derives it.
   if (!Object.hasOwn(core, 'run_phase')) core['run_phase'] = { [DERIVED]: 'run_phase' };
+  return { core, fields, evidence };
+}
+
+/**
+ * The stored text and its sha256 of every entry of `evidence` from index `from` on: the ONE text rule
+ * (an entry JSON cannot hold is `null`) and the package's one evidence hash. By index, not `map`: a
+ * hole in the array is an entry too, which JSON holds as null.
+ */
+function storedEntries(evidence: readonly unknown[], from: number): StoredEntry[] {
   const entries: StoredEntry[] = [];
-  // By index, not `map`: a hole in the array is an entry too, which JSON holds as null.
-  for (let seq = 0; seq < evidence.length; seq++) {
+  for (let seq = from; seq < evidence.length; seq++) {
     const text = JSON.stringify(evidence[seq]) ?? 'null';
     entries.push({ text, sha256: evidenceEntrySha256(text) });
   }
-  return { core, entries, fields };
+  return entries;
 }
 
 /**
@@ -333,10 +360,59 @@ export function insertRunRecord(db: DatabaseLike, record: RunRecord): void {
  *   - `unchanged`: none of it; the core document carries the stored placeholders as they are (a
  *     claim, which changes only the core document);
  *   - `prepared`: the pieces of the incoming record, made by {@link splitRunRecord} before `BEGIN`
- *     (an update): compared with the stored ones, and the new ones written.
+ *     (an update): compared with the stored ones, and the new ones written;
+ *   - `appended`: only the entries from index `from` on, `from` being the stored count, and nothing
+ *     of the stored ones or of the write-once fields (a settle whose transform kept them all:
+ *     {@link prepareSettlementWrite}): the new entries are written and nothing stored is read.
  */
 export type EvidenceWrite =
-  { readonly unchanged: true } | { readonly prepared: Pick<SplitRunRecord, 'entries' | 'fields'> };
+  | { readonly unchanged: true }
+  | { readonly prepared: Pick<SplitRunRecord, 'entries' | 'fields'> }
+  | { readonly appended: { readonly from: number; readonly entries: readonly StoredEntry[] } };
+
+/** What a settle writes: the settled record's core document, and its evidence write. */
+export interface SettlementWrite {
+  readonly core: CoreDocument;
+  readonly evidence: EvidenceWrite;
+}
+
+/**
+ * A settle's write (unit 13a), made inside its write lock from `fresh`, the run as the settle read it
+ * in that transaction, and `updated`, the record core's transform made of it. The core document is
+ * {@link splitRunRecord}'s own (the transform's key order). The evidence write is `appended` when all
+ * three hold, by reference:
+ *   (i) every entry `fresh` and `updated` both hold is the very object it was;
+ *   (ii) `updated` holds at least as many entries as `fresh` (none was dropped);
+ *   (iii) every `WRITE_ONCE_RUN_FIELDS` member of `updated` is the very value of `fresh`'s (or absent
+ *       from both).
+ * So the stored entries and the write-once values are the ones read, and only the entries beyond the
+ * stored count are made: their texts and hashes by the same rule as the split's. When any of the
+ * three fails it is the content path, `prepared`, the whole split of `updated`: the writer then
+ * refuses a changed or dropped entry and a changed or removed write-once value, and writes a
+ * content-equal rebuild as the identical rows. Reference identity cannot see an entry changed in
+ * place; core's transforms never change their input (none of 1,351 applied outcomes in core's suites,
+ * AUDIT-13A §3), and unit 16's `TRANSFORM_FIDELITY` would show it. Pure: it reads nothing but the two
+ * records.
+ */
+export function prepareSettlementWrite(fresh: RunRecord, updated: RunRecord): SettlementWrite {
+  const { core, fields, evidence } = splitCore(updated);
+  const stored: readonly unknown[] = fresh.evidence;
+  const shared = Math.min(stored.length, evidence.length);
+  let kept = evidence.length >= stored.length; // (ii)
+  for (let seq = 0; kept && seq < shared; seq++) kept = evidence[seq] === stored[seq]; // (i)
+  const before = fresh as unknown as JsonObject;
+  const after = updated as unknown as JsonObject;
+  for (const name of WRITE_ONCE_RUN_FIELDS) kept &&= after[name] === before[name]; // (iii)
+  if (kept) {
+    return {
+      core,
+      evidence: {
+        appended: { from: stored.length, entries: storedEntries(evidence, stored.length) },
+      },
+    };
+  }
+  return { core, evidence: { prepared: { entries: storedEntries(evidence, 0), fields } } };
+}
 
 const UPDATE_RUN = 'UPDATE runs SET record = ?, run_phase = ?, phase_version = ? WHERE id = ?';
 /** The update writer's own savepoint (MA 3, 2026-11-07: every multi-row writer is atomic itself). */
@@ -353,12 +429,13 @@ const UPDATE_SAVEPOINT = 'realm_update_run';
  * entries than stored, or an entry whose hash differs from the stored one at its position, is
  * `STATE_EVIDENCE_REWRITTEN`; a stored write-once field the incoming record changes or leaves out is
  * `STATE_WRITE_ONCE_REWRITTEN` (with the guards' own sentences: the file's guards stay the backstop
- * for a writer outside Realm). For `unchanged` it reads nothing.
+ * for a writer outside Realm). For `unchanged` and `appended` it reads nothing.
  *
  * Then, all or nothing by its own savepoint (as {@link insertRunRecord}): it `UPDATE`s the `runs` row
  * (the core document, and the phase index re-stamped: {@link deriveRunPhase} of `nextCore`, whose
  * every input is a key of the core document, and the derivation's fingerprint), and for `prepared`
- * inserts the entries beyond the stored count and every write-once field not yet stored. Returns the
+ * inserts the entries beyond the stored count and every write-once field not yet stored; for
+ * `appended`, the entries it carries, from its `from` on. Returns the
  * core document's text as it wrote it: the write's own check compares the stored text with it.
  * Synchronous; reads no clock; throws what SQLite and the file's guards throw, unmapped.
  */
@@ -395,6 +472,9 @@ export function writeRunUpdate(
     newEntries = entries.slice(stored.length);
     firstNewSeq = stored.length;
     newFields = fields.filter((field) => !storedNames.has(field.name));
+  } else if ('appended' in evidence) {
+    newEntries = evidence.appended.entries;
+    firstNewSeq = evidence.appended.from;
   }
   const text = JSON.stringify(nextCore);
 
