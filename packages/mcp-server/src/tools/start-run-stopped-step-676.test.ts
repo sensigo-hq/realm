@@ -4,10 +4,7 @@
 // reads, after the tool's own relabelling.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -20,13 +17,19 @@ import {
 import type { WorkflowDefinition } from '@sensigo/realm';
 import type { McpEnvelope } from '../render-reply.js';
 import { registerStartRun } from './start-run.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
+let h: TempHome;
 let runStore: JsonFileStore;
 let workflowStore: JsonWorkflowStore;
 
 beforeEach(async () => {
-  runStore = new JsonFileStore(await mkdtemp(join(tmpdir(), 'sr676-run-')));
-  workflowStore = new JsonWorkflowStore(await mkdtemp(join(tmpdir(), 'sr676-wf-')));
+  h = await makeTempHome();
+  runStore = h.stores.runStore;
+  workflowStore = h.stores.workflowStore;
+});
+afterEach(async () => {
+  await h.cleanup();
 });
 
 function workflow(id: string, steps: WorkflowDefinition['steps']): WorkflowDefinition {

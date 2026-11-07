@@ -5,20 +5,17 @@
 // run's workflow — reads `workflow_unresolved`, as `gates.md` says.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   advanceRun,
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { handleGetRunState } from './get-run-state.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 
@@ -54,12 +51,17 @@ const GATED: WorkflowDefinition = {
   },
 };
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 describe('#625 PR-2a, F14 — get_run_state never says claim_unknown_age with no claim in flight', () => {
   /** A run whose question is open, then its time made up (its `expires_at` a minute ago). */
   async function expired(register: boolean) {
-    const dir = await mkdtemp(join(tmpdir(), 'f14-'));
-    const runStore = new JsonFileStore(join(dir, 'runs'));
-    const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    const h = await makeTempHome();
+    handles.push(h);
+    const { runStore, workflowStore } = h.stores;
     if (register) await workflowStore.register(GATED);
     const { record: run } = await runStore.create({
       workflowId: GATED.id,

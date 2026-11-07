@@ -38,7 +38,7 @@ import {
 } from './form-path.js';
 import { McpDoor } from './door.js';
 import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
-import { withArtifactStores, type ServerExtras } from './test-support/temp-home.js';
+import { makeTempHome, type ServerExtras, type TempHome } from './test-support/temp-home.js';
 
 // #715 (b) 04 §D (B4): no cell here waits on the real clock for a question to expire. The run store a
 // cell opens sits at a TEST LOCATION (`located`), and `passes(ms)` moves the clock of every location
@@ -105,6 +105,11 @@ interface Session {
   workflowId: string;
 }
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 async function session(
   options: ServerExtras = {},
   handler: Handler = async () => ({ action: 'decline' }),
@@ -112,16 +117,19 @@ async function session(
   // Correction 1: a workflow of the cell's own, and a store of its own (B5's failing settle).
   own: { yaml?: string; runStore?: (dir: string) => JsonFileStore; located?: true } = {},
 ): Promise<Session> {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-form-627-'));
-  const runStore =
-    own.runStore?.(dir) ??
-    new JsonFileStore(own.located === true ? await located(dir) : join(dir, 'runs'));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+  // With `located`, the location first and the handle on it; else a home of the session's own. A
+  // cell's own run store (a subclass) is built on the handle's home and passed after the spread.
+  const dir = own.located === true ? await mkdtemp(join(tmpdir(), 'realm-form-627-')) : undefined;
+  if (dir !== undefined) await located(dir);
+  const h = dir !== undefined ? await makeTempHome({ home: dir }) : await makeTempHome();
+  handles.push(h);
+  const runStore = own.runStore?.(h.path) ?? h.stores.runStore;
+  const workflowStore = h.stores.workflowStore;
   const def = loadWorkflowFromString(own.yaml ?? WORKFLOW(timeout));
   await workflowStore.register(def);
   const server = createRealmMcpServer({
-    ...withArtifactStores(runStore),
-    workflowStore,
+    ...h.stores,
+    runStore,
     ...options,
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();
@@ -666,7 +674,10 @@ describe('#627 W — after the wait: a fresh read, four branches', () => {
 async function direct(timeout?: number) {
   const dir = await mkdtemp(join(tmpdir(), 'realm-form-627-direct-'));
   // #715 (b) B4: at a test location, so a due question is reached by moving its clock.
-  const runStore = new JsonFileStore(await located(dir));
+  await located(dir);
+  const h = await makeTempHome({ home: dir });
+  handles.push(h);
+  const runStore = h.stores.runStore;
   const definition = loadWorkflowFromString(WORKFLOW(timeout));
   const { record: run } = await runStore.create({
     workflowId: definition.id,

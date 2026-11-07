@@ -8,21 +8,17 @@
 //   - `start_run_batch` with the same key: the item's hint.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { describe, it, expect } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, afterEach } from 'vitest';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
-  JsonFileFailedAttemptStore,
   InMemoryTraceBufferStore,
-  JsonWorkflowStore,
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { InMemoryStore, settableClock } from '@sensigo/realm-testing';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from './server.js';
+import { makeTempHome, type TempHome } from './test-support/temp-home.js';
 
 const LEASE = '2020-01-01T00:00:01.000Z';
 const HELD = `held by another drainer's lease until ${LEASE}`;
@@ -37,17 +33,23 @@ const DEF: WorkflowDefinition = {
 
 type Reply = Record<string, unknown>;
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 async function server() {
   const clock = settableClock(new Date(Date.parse(LEASE) - 1_000));
   const runStore = new InMemoryStore({ clock });
-  const dir = await mkdtemp(join(tmpdir(), 'realm-715b-composers-mcp-'));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+  const h = await makeTempHome();
+  handles.push(h);
+  const workflowStore = h.stores.workflowStore;
   await workflowStore.register(DEF);
   const s = createRealmMcpServer({
     runStore,
     workflowStore,
     traceBufferStore: new InMemoryTraceBufferStore(runStore),
-    failedAttemptStore: new JsonFileFailedAttemptStore(join(dir, 'attempts')),
+    failedAttemptStore: h.stores.failedAttemptStore,
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'composers-mcp-715b', version: '0' });
@@ -136,14 +138,15 @@ describe('#715 (b) §B.2 — the MCP composers judge at the record’s reading',
         return typeof v === 'function' ? (v as (...x: unknown[]) => unknown).bind(target) : v;
       },
     }) as unknown as InMemoryStore;
-    const dir = await mkdtemp(join(tmpdir(), 'realm-715b-answer-ends-'));
-    const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    const h = await makeTempHome();
+    handles.push(h);
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register(ONE_Q);
     const s2 = createRealmMcpServer({
       runStore: counting,
       workflowStore,
       traceBufferStore: new InMemoryTraceBufferStore(counting),
-      failedAttemptStore: new JsonFileFailedAttemptStore(join(dir, 'attempts')),
+      failedAttemptStore: h.stores.failedAttemptStore,
     });
     const [ct, st] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: 'answer-ends-715b', version: '0' });

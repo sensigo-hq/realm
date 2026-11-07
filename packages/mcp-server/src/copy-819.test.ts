@@ -7,26 +7,29 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: codes,
 // texts — never a token.
-import { describe, it, expect } from 'vitest';
-import { mkdtemp, writeFile, mkdir } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { describe, it, expect, afterEach } from 'vitest';
+import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { JsonFileStore, JsonWorkflowStore } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from './server.js';
-import { withArtifactStores } from './test-support/temp-home.js';
+import { makeTempHome, type TempHome } from './test-support/temp-home.js';
 
 type Reply = Record<string, unknown>;
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 /** One session on a server over a fresh run store and workflow store, and a run at gate `g-1`. */
 async function atGate(workflowId: string, copy?: unknown) {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-copy-819-'));
-  const wfDir = join(dir, 'wf');
+  const h = await makeTempHome();
+  handles.push(h);
+  const wfDir = join(h.path, 'workflows');
   await mkdir(wfDir, { recursive: true });
   if (copy !== undefined) await writeFile(join(wfDir, `${workflowId}.json`), JSON.stringify(copy));
-  const runStore = new JsonFileStore(join(dir, 'runs'));
-  const workflowStore = new JsonWorkflowStore(wfDir);
+  const { runStore } = h.stores;
   const { record: run } = await runStore.create({ workflowId, workflowVersion: 1, params: {} });
   await runStore.update({
     ...run,
@@ -38,7 +41,7 @@ async function atGate(workflowId: string, copy?: unknown) {
       opened_at: '2026-01-01T00:00:00.000Z',
     },
   });
-  const server = createRealmMcpServer({ ...withArtifactStores(runStore), workflowStore });
+  const server = createRealmMcpServer({ ...h.stores });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'copy-819', version: '0' });
   await Promise.all([server.connect(st), client.connect(ct)]);

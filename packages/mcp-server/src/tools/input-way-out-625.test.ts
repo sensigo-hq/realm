@@ -8,15 +8,11 @@
 // input (owner, 2026-10-11).
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   ExtensionRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type StepDefinition,
@@ -26,6 +22,7 @@ import { handleAdvanceRun } from './advance-run.js';
 import { handleExecuteStep } from './execute-step.js';
 import { handleStartRun } from './start-run.js';
 import { handleStartRunBatch } from './start-run-batch.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 
@@ -51,11 +48,16 @@ const RUN_WAY = 'then, after a fix, call advance_run; or end the run with abando
 const RUN_WAY_NEW_RUN =
   'this run stays open — after a fix, call advance_run on it; or end it with abandon_run.';
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 /** `advance_run` on a fresh run of `def` with `params`; the reply's hint after its refusal lines. */
 async function advance(def: WorkflowDefinition, params: Record<string, unknown>) {
-  const dir = await mkdtemp(join(tmpdir(), 'f15-mcp-'));
-  const runStore = new JsonFileStore(join(dir, 'runs'));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+  const h = await makeTempHome();
+  handles.push(h);
+  const { runStore, workflowStore } = h.stores;
   await workflowStore.register(def);
   const { record: run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params });
   const reply = await handleAdvanceRun({ run_id: run.id }, { runStore, workflowStore });
@@ -200,11 +202,12 @@ describe('the way out never names execute_step for an engine step refused for it
   });
 
   async function stores(def: WorkflowDefinition) {
-    const dir = await mkdtemp(join(tmpdir(), 'f706-input-'));
-    const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    const h = await makeTempHome();
+    handles.push(h);
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register(def);
     return {
-      runStore: new JsonFileStore(join(dir, 'runs')),
+      runStore: h.stores.runStore,
       workflowStore,
       registry: new ExtensionRegistry(),
     };

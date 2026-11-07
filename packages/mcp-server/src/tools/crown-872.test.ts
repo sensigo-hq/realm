@@ -3,33 +3,32 @@
 // fan-out takes at most two calls — the asked steps are cut last. AC5 (C5): (a)'s pointer stays true
 // when the ceiling cuts `engine_runnable`. Beside each: (a) the change that turns it red; (b) what it
 // prints on failure — counts, sizes and the pointer's words, never a value.
-import { describe, it, expect } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, afterEach } from 'vitest';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   ExtensionRegistry,
-  JsonFileStore,
-  JsonWorkflowStore,
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
 import { REPLY_CEILING_CHARS } from '../render-reply.js';
-import { withArtifactStores } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 type Reply = Record<string, unknown>;
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 async function door(definition: WorkflowDefinition, registry?: ExtensionRegistry) {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-crown-872-'));
-  const runStore = new JsonFileStore(join(dir, 'runs'));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+  const h = await makeTempHome();
+  handles.push(h);
+  const { workflowStore } = h.stores;
   await workflowStore.register(definition);
   const server = createRealmMcpServer({
-    ...withArtifactStores(runStore),
-    workflowStore,
+    ...h.stores,
     ...(registry !== undefined ? { registry } : {}),
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();

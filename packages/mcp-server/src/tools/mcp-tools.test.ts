@@ -1,10 +1,10 @@
 // Integration tests for MCP tool business logic — tests handle* functions directly.
 import { declared } from '../test-support/declared.js';
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdirSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { JsonFileStore, JsonWorkflowStore, WorkflowError, ExtensionRegistry } from '@sensigo/realm';
+import { JsonFileStore, WorkflowError, ExtensionRegistry } from '@sensigo/realm';
 import type { WorkflowDefinition, ServiceAdapter } from '@sensigo/realm';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import { handleListWorkflows } from './list-workflows.js';
@@ -15,7 +15,7 @@ import { handleSubmitHumanResponse, registerSubmitHumanResponse } from './submit
 import { handleGetRunState } from './get-run-state.js';
 import { handleAdvanceRun } from './advance-run.js';
 import { createDefaultRegistry } from '../server.js';
-import { makeTempHome } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Client } from '@modelcontextprotocol/sdk/client';
@@ -78,17 +78,25 @@ function makeGateDef(): WorkflowDefinition {
   };
 }
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 describe('mcp tool handlers', () => {
+  let h: TempHome;
   let runDir: string;
-  let workflowDir: string;
 
   beforeEach(async () => {
-    runDir = await mkdtemp(join(tmpdir(), 'realm-mcp-runs-'));
-    workflowDir = await mkdtemp(join(tmpdir(), 'realm-mcp-wf-'));
+    h = await makeTempHome();
+    runDir = h.stores.runStore.runsDirPath;
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   it('handleListWorkflows returns registered workflows', async () => {
-    const workflowStore = new JsonWorkflowStore(workflowDir);
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register(makeSimpleDef());
 
     const result = await handleListWorkflows({ workflowStore });
@@ -99,7 +107,7 @@ describe('mcp tool handlers', () => {
   });
 
   it('handleGetWorkflowProtocol returns protocol for known workflow', async () => {
-    const workflowStore = new JsonWorkflowStore(workflowDir);
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register(makeSimpleDef());
 
     const result = await handleGetWorkflowProtocol({ workflow_id: 'simple-wf' }, { workflowStore });
@@ -110,7 +118,7 @@ describe('mcp tool handlers', () => {
 
   // issue #279 (increment 1, PR-B): the appended concurrent-settlement protocol rule.
   it('handleGetWorkflowProtocol appends the concurrent-settlement rule (STATE_STEP_ALREADY_SETTLED guidance)', async () => {
-    const workflowStore = new JsonWorkflowStore(workflowDir);
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register(makeSimpleDef());
 
     const result = await handleGetWorkflowProtocol({ workflow_id: 'simple-wf' }, { workflowStore });
@@ -123,9 +131,9 @@ describe('mcp tool handlers', () => {
   });
 
   it('handleStartRun creates a run and chains auto steps', async () => {
-    const workflowStore = new JsonWorkflowStore(workflowDir);
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register(makeSimpleDef());
-    const runStore = new JsonFileStore(runDir);
+    const runStore = h.stores.runStore;
 
     const result = await handleStartRun(
       { workflow_id: 'simple-wf', params: {} },
@@ -144,9 +152,9 @@ describe('mcp tool handlers', () => {
   });
 
   it('handleExecuteStep advances an agent step', async () => {
-    const workflowStore = new JsonWorkflowStore(workflowDir);
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register(makeAgentDef());
-    const runStore = new JsonFileStore(runDir);
+    const runStore = h.stores.runStore;
 
     // Start run: chains through the auto step, stops at agent step.
     const startResult = await handleStartRun(
@@ -173,9 +181,9 @@ describe('mcp tool handlers', () => {
   });
 
   it('C9 (issue #456) handleExecuteStepTool: a workflow-absent run carries the remedy + preserved error_code', async () => {
-    const workflowStore = new JsonWorkflowStore(workflowDir);
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register(makeAgentDef());
-    const runStore = new JsonFileStore(runDir);
+    const runStore = h.stores.runStore;
     const started = await handleStartRun(
       { workflow_id: 'agent-wf', params: {} },
       { runStore, workflowStore },
@@ -183,8 +191,9 @@ describe('mcp tool handlers', () => {
 
     // A DIFFERENT, empty registry — simulating the dev-run scenario: the run exists, the
     // workflow this process's registry knows about does not.
-    const emptyWorkflowDir = await mkdtemp(join(tmpdir(), 'realm-mcp-wf-empty-'));
-    const emptyWorkflowStore = new JsonWorkflowStore(emptyWorkflowDir);
+    const h2 = await makeTempHome();
+    handles.push(h2);
+    const emptyWorkflowStore = h2.stores.workflowStore;
 
     const result = await handleExecuteStepTool(
       { run_id: started.run_id, command: 'step-agent', params: { result: 'done' } },
@@ -203,9 +212,9 @@ describe('mcp tool handlers', () => {
   });
 
   it('handleExecuteStep accepts a top-level trace and persists it in evidence', async () => {
-    const workflowStore = new JsonWorkflowStore(workflowDir);
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register(makeAgentDef());
-    const runStore = new JsonFileStore(runDir);
+    const runStore = h.stores.runStore;
 
     const startResult = await handleStartRun(
       { workflow_id: 'agent-wf', params: {} },
@@ -234,9 +243,9 @@ describe('mcp tool handlers', () => {
   });
 
   it('trace is not merged into params — trace content does not appear in output_summary', async () => {
-    const workflowStore = new JsonWorkflowStore(workflowDir);
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register(makeAgentDef());
-    const runStore = new JsonFileStore(runDir);
+    const runStore = h.stores.runStore;
 
     const startResult = await handleStartRun(
       { workflow_id: 'agent-wf', params: {} },
@@ -262,9 +271,9 @@ describe('mcp tool handlers', () => {
   });
 
   it('handleSubmitHumanResponse advances a gate-waiting run', async () => {
-    const workflowStore = new JsonWorkflowStore(workflowDir);
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register(makeGateDef());
-    const runStore = new JsonFileStore(runDir);
+    const runStore = h.stores.runStore;
 
     // Start run — chains into the gate step, which opens the gate.
     const startResult = await handleStartRun(
@@ -290,9 +299,9 @@ describe('mcp tool handlers', () => {
   });
 
   it('handleExecuteStepTool strips data from the MCP response', async () => {
-    const workflowStore = new JsonWorkflowStore(workflowDir);
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register(makeAgentDef());
-    const runStore = new JsonFileStore(runDir);
+    const runStore = h.stores.runStore;
 
     // Start run: chains through the auto step, stops at agent step.
     const startResult = await handleStartRun(
@@ -329,7 +338,7 @@ describe('mcp tool handlers', () => {
         list: async () => [],
       } as unknown as JsonFileStore),
       // #616 PR-2a (ii-b): the registry the handler needs (it built one on the real home before).
-      workflowStore: new JsonWorkflowStore(workflowDir),
+      workflowStore: h.stores.workflowStore,
     };
 
     const result = await handleExecuteStepTool(
@@ -371,7 +380,7 @@ describe('mcp tool handlers', () => {
         list: async () => [],
       } as unknown as JsonFileStore),
       // #616 PR-2a (ii-b): the registry the handler needs (it built one on the real home before).
-      workflowStore: new JsonWorkflowStore(workflowDir),
+      workflowStore: h.stores.workflowStore,
     };
 
     const result = await handleExecuteStepTool(
@@ -387,9 +396,9 @@ describe('mcp tool handlers', () => {
   });
 
   it('handleGetRunState returns run summary', async () => {
-    const workflowStore = new JsonWorkflowStore(workflowDir);
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register(makeSimpleDef());
-    const runStore = new JsonFileStore(runDir);
+    const runStore = h.stores.runStore;
 
     const startResult = await handleStartRun(
       { workflow_id: 'simple-wf' },
@@ -425,9 +434,9 @@ describe('mcp tool handlers', () => {
         },
       },
     };
-    const workflowStore = new JsonWorkflowStore(workflowDir);
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register(gateTransitionDef);
-    const runStore = new JsonFileStore(runDir);
+    const runStore = h.stores.runStore;
 
     // Start run — chains into gate step
     const startResult = await handleStartRun(
@@ -460,6 +469,7 @@ describe('mcp tool handlers', () => {
   it('handleStartRun resolves a filesystem auto step using the default built-in registry', async () => {
     // Write a temp file to read.
     const tempFilePath = join(runDir, 'test-input.txt');
+    mkdirSync(runDir, { recursive: true });
     await writeFile(tempFilePath, 'hello from filesystem adapter');
 
     const filesystemDef: WorkflowDefinition = {
@@ -481,9 +491,9 @@ describe('mcp tool handlers', () => {
       },
     };
 
-    const workflowStore = new JsonWorkflowStore(workflowDir);
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register(filesystemDef);
-    const runStore = new JsonFileStore(runDir);
+    const runStore = h.stores.runStore;
 
     // createDefaultRegistry() is what createRealmMcpServer() uses when no registry is provided.
     // Passing it here verifies that the default registry has FileSystemAdapter available.
@@ -580,9 +590,9 @@ describe('mcp tool handlers', () => {
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock_throwing', makeThrowingAdapter(adapterErr));
 
-    const workflowStore = new JsonWorkflowStore(workflowDir);
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register(makeSingleServiceDef());
-    const runStore = new JsonFileStore(runDir);
+    const runStore = h.stores.runStore;
     const { record: run } = await runStore.create({
       workflowId: 'single-service-wf',
       workflowVersion: 1,
@@ -612,9 +622,9 @@ describe('mcp tool handlers', () => {
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock_throwing', makeThrowingAdapter(adapterErr));
 
-    const workflowStore = new JsonWorkflowStore(workflowDir);
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register(makeTwoStepServiceDef());
-    const runStore = new JsonFileStore(runDir);
+    const runStore = h.stores.runStore;
     const { record: run } = await runStore.create({
       workflowId: 'two-step-service-wf',
       workflowVersion: 1,
@@ -645,9 +655,9 @@ describe('mcp tool handlers', () => {
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock_throwing', makeThrowingAdapter(adapterErr));
 
-    const workflowStore = new JsonWorkflowStore(workflowDir);
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register(makeTwoStepServiceDef());
-    const runStore = new JsonFileStore(runDir);
+    const runStore = h.stores.runStore;
     const { record: run } = await runStore.create({
       workflowId: 'two-step-service-wf',
       workflowVersion: 1,
@@ -676,9 +686,9 @@ describe('mcp tool handlers', () => {
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock_throwing', makeThrowingAdapter(adapterErr));
 
-    const workflowStore = new JsonWorkflowStore(workflowDir);
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register(makeTwoStepServiceDef());
-    const runStore = new JsonFileStore(runDir);
+    const runStore = h.stores.runStore;
     const { record: run } = await runStore.create({
       workflowId: 'two-step-service-wf',
       workflowVersion: 1,
@@ -724,7 +734,7 @@ describe('registerStartRun — ResponseEnvelope error shape', () => {
     // so it must never carry the remedy.
     expect((envelope['errors'] as string[])[0]).not.toContain('most often');
     await client.close();
-    home.cleanup();
+    await home.cleanup();
   });
 });
 
@@ -751,17 +761,18 @@ describe('registerSubmitHumanResponse — ResponseEnvelope error shape', () => {
     expect(envelope['run_version']).toBe(0);
     expect(Array.isArray(envelope['next_actions'])).toBe(true);
     await client.close();
-    home.cleanup();
+    await home.cleanup();
   });
 });
 
 describe('handleGetRunState — abort_context', () => {
-  let runDir: string;
-  let workflowDir: string;
+  let h: TempHome;
 
   beforeEach(async () => {
-    runDir = await mkdtemp(join(tmpdir(), 'realm-abort-runs-'));
-    workflowDir = await mkdtemp(join(tmpdir(), 'realm-abort-wf-'));
+    h = await makeTempHome();
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   it('abort_context is included when run is aborted by a guard step', async () => {
@@ -782,9 +793,9 @@ describe('handleGetRunState — abort_context', () => {
       },
     };
 
-    const workflowStore = new JsonWorkflowStore(workflowDir);
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register(guardWfDef);
-    const runStore = new JsonFileStore(runDir);
+    const runStore = h.stores.runStore;
 
     const startResult = await handleStartRun(
       { workflow_id: 'guard-abort-wf', params: {} },
@@ -811,7 +822,7 @@ describe('handleGetRunState — abort_context', () => {
   });
 
   it('abort_context is absent on a non-aborted terminal run', async () => {
-    const workflowStore = new JsonWorkflowStore(workflowDir);
+    const workflowStore = h.stores.workflowStore;
     const simpleWf: WorkflowDefinition = {
       id: 'simple-complete-wf',
       name: 'Simple Complete Workflow',
@@ -822,7 +833,7 @@ describe('handleGetRunState — abort_context', () => {
       },
     };
     await workflowStore.register(simpleWf);
-    const runStore = new JsonFileStore(runDir);
+    const runStore = h.stores.runStore;
 
     const startResult = await handleStartRun(
       { workflow_id: 'simple-complete-wf', params: {} },

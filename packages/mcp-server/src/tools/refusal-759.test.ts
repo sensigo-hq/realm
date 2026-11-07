@@ -3,9 +3,6 @@
 // Amendment 11) — and the failed-attempt sidecar, written from the CORE reply through core's one
 // reader, keeps the same ten and the same total. A failure prints codes and counts only.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
   JsonFileStore,
   JsonWorkflowStore,
@@ -18,7 +15,7 @@ import { handleExecuteStepTool } from './execute-step.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
-import { withArtifactStores } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const fields = Array.from({ length: 13 }, (_, i) => `f${String(i + 1).padStart(2, '0')}`);
 const wf: WorkflowDefinition = {
@@ -41,22 +38,24 @@ const wf: WorkflowDefinition = {
 };
 
 describe('issue #759 — the wire and the sidecar carry the same ten and the total', () => {
+  let h: TempHome;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
   let failedAttemptStore: JsonFileFailedAttemptStore;
   let errSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
-    const runsDir = await mkdtemp(join(tmpdir(), 'r759-run-'));
-    runStore = new JsonFileStore(runsDir);
-    workflowStore = new JsonWorkflowStore(await mkdtemp(join(tmpdir(), 'r759-wf-')));
-    failedAttemptStore = new JsonFileFailedAttemptStore(runsDir);
+    h = await makeTempHome();
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
+    failedAttemptStore = h.stores.failedAttemptStore;
     await workflowStore.register(wf);
     errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     errSpy.mockRestore();
+    await h.cleanup();
   });
 
   async function submit(runId: string): Promise<Record<string, unknown>> {
@@ -142,7 +141,7 @@ describe('issue #759 — the wire and the sidecar carry the same ten and the tot
       steps: { first: { description: 'First.', execution: 'agent', depends_on: [] } },
     } as WorkflowDefinition;
     await workflowStore.register(withParams);
-    const server = createRealmMcpServer({ ...withArtifactStores(runStore), workflowStore });
+    const server = createRealmMcpServer({ ...h.stores });
     const [ct, st] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: 'refusal-759', version: '0' });
     await Promise.all([server.connect(st), client.connect(ct)]);

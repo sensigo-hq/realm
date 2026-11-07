@@ -17,21 +17,20 @@ import { fileURLToPath } from 'node:url';
 // packages/cli/src/lib → packages/
 const PACKAGES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
-/** Package → the files (relative to its src/) allowed to construct a store. The rule for both
- *  packages: the package's opener, and (mcp-server) the test helper whose artifact-stores spread
- *  builds two classes under `src/test-support/`, which the walker reads as non-test source. */
+/** Package → the files (relative to its src/) allowed to construct a store: the package's opener
+ *  (and, for the CLI, the two commands 2c deletes). The test helpers under `src/test-support/`, which
+ *  the walker reads as non-test source, build none (#616 PR-2b, b3). */
 const ALLOWED: Record<string, string[]> = {
   cli: ['lib/home.ts', 'commands/gc.ts', 'commands/reconcile.ts'],
-  // #616 PR-2a (ii-b): the `realm-mcp` program's opener and the test helper (unit ii-a); the
-  // library and its tools build none.
-  'mcp-server': ['home.ts', 'test-support/temp-home.ts'],
+  // #616 PR-2a (ii-b): the `realm-mcp` program's opener; the library and its tools build none.
+  'mcp-server': ['home.ts'],
 };
 
 /** Test files allowed to construct a store, each with how many constructions it holds and its
  *  subject. Every other test file opens its stores through the package's test helper
  *  (`makeTempHome`, #616 PR-2b). The count keeps the list exact: a routed file that constructs again
  *  is a stray, a listed file that grows one is red. 2c deletes gc's rows with the command; PR-3 the
- *  rest with the classes. The mcp-server row is b3's. */
+ *  rest with the classes, the mcp-server rows (b3) among them. */
 const ALLOWED_TESTS: Record<string, Array<{ file: string; sites: number; subject: string }>> = {
   cli: [
     {
@@ -96,6 +95,32 @@ const ALLOWED_TESTS: Record<string, Array<{ file: string; sites: number; subject
       file: 'store/replay-store.test.ts',
       sites: 1,
       subject: "`JsonFileReplayStore`'s own test; PR-3",
+    },
+  ],
+  'mcp-server': [
+    {
+      file: 'json-trace-buffer-store.test.ts',
+      sites: 6,
+      subject:
+        "`JsonTraceBufferStore`'s own cells: a stub reader, a refused non-reader, a missing folder, a broken folder; PR-3 deletes the class",
+    },
+    {
+      file: 'release-line-hand-offs.test.ts',
+      sites: 2,
+      subject:
+        "H3: the class refuses a run reader with no release line or another release's, the whole messages; PR-3",
+    },
+    {
+      file: 'server.test.ts',
+      sites: 1,
+      subject:
+        'the #188 seam: a fresh trace buffer on the same runs folder with a throwing reader proves the WAL was consumed; PR-3',
+    },
+    {
+      file: 'tools/failed-attempt-telemetry.test.ts',
+      sites: 1,
+      subject:
+        'one cell: a sidecar store on a folder that does not exist (best-effort independence); PR-3',
     },
   ],
 };

@@ -4,22 +4,13 @@
 // disclosed head only when the agent receives exactly `disclose`'s text. Each cell names (a) the change
 // that turns it red and (b) what it prints: lengths, booleans and fake prompts, never a set.
 import { createHash } from 'node:crypto';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { describe, it, expect } from 'vitest';
-import {
-  JsonFileStore,
-  JsonWorkflowStore,
-  buildDisclosureSet,
-  loadWorkflowFromString,
-  type DisclosureSet,
-} from '@sensigo/realm';
+import { describe, it, expect, afterEach } from 'vitest';
+import { buildDisclosureSet, loadWorkflowFromString, type DisclosureSet } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from './server.js';
 import { BRIEF_STABLE_CHARS, MCP_ENVELOPE_TABLE, toolContentOf } from './render-reply.js';
-import { withArtifactStores } from './test-support/temp-home.js';
+import { makeTempHome, type TempHome } from './test-support/temp-home.js';
 
 const sha256 = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex');
 const setOf = (declared: Record<string, string>, cause?: 'load_failed'): DisclosureSet =>
@@ -169,13 +160,18 @@ const FLOW = loadWorkflowFromString(
 // would cut elsewhere, and (g) would see it.
 const HEAD = 'Classify the ticket below into one queue. Send it with Bearer [REDACTED]\nTicket: ';
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 async function connect() {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-3b-door-'));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+  const h = await makeTempHome();
+  handles.push(h);
+  const workflowStore = h.stores.workflowStore;
   await workflowStore.register(FLOW);
   const server = createRealmMcpServer({
-    ...withArtifactStores(new JsonFileStore(join(dir, 'runs'))),
-    workflowStore,
+    ...h.stores,
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'stable-prefix-3b', version: '0' });

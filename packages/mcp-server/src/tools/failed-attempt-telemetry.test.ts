@@ -1,8 +1,6 @@
 // P2 observability: the MCP execute_step handler emits a metadata-only `agent_step_attempt_failed`
 // stderr line on a pre-claim validation rejection (and nothing on success / blocked / other codes).
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   JsonFileStore,
@@ -13,6 +11,7 @@ import {
 } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { handleExecuteStep, handleExecuteStepTool } from './execute-step.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 // First step is an agent step with an output_schema → a missing-field submission fails
 // VALIDATION_OUTPUT_SCHEMA on the write-free pre-claim path.
@@ -36,19 +35,22 @@ const wf: WorkflowDefinition = {
 };
 
 describe('execute_step failed-attempt telemetry', () => {
+  let h: TempHome;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
   let errSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
-    runStore = new JsonFileStore(await mkdtemp(join(tmpdir(), 'fat-run-')));
-    workflowStore = new JsonWorkflowStore(await mkdtemp(join(tmpdir(), 'fat-wf-')));
+    h = await makeTempHome();
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
     await workflowStore.register(wf);
     errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     errSpy.mockRestore();
+    await h.cleanup();
   });
 
   /** Lines emitted by the telemetry hook (filtered by event). */
@@ -149,22 +151,24 @@ describe('execute_step failed-attempt telemetry', () => {
 });
 
 describe('execute_step failed-attempt sidecar (P3 durable sink)', () => {
+  let h: TempHome;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
   let failedAttemptStore: JsonFileFailedAttemptStore;
   let errSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
-    const runsDir = await mkdtemp(join(tmpdir(), 'fat3-run-'));
-    runStore = new JsonFileStore(runsDir);
-    workflowStore = new JsonWorkflowStore(await mkdtemp(join(tmpdir(), 'fat3-wf-')));
-    failedAttemptStore = new JsonFileFailedAttemptStore(runsDir);
+    h = await makeTempHome();
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
+    failedAttemptStore = h.stores.failedAttemptStore;
     await workflowStore.register(wf);
     errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     errSpy.mockRestore();
+    await h.cleanup();
   });
 
   it('appends a metadata-only record to the sidecar (no event tag) and is a pure side-channel', async () => {
@@ -241,22 +245,24 @@ describe('execute_step failed-attempt sidecar (P3 durable sink)', () => {
 });
 
 describe('execute_step failed-attempt telemetry — VALIDATION_EXHAUSTED (issue #220, pin (t))', () => {
+  let h: TempHome;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
   let failedAttemptStore: JsonFileFailedAttemptStore;
   let errSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
-    const runsDir = await mkdtemp(join(tmpdir(), 'fat4-run-'));
-    runStore = new JsonFileStore(runsDir);
-    workflowStore = new JsonWorkflowStore(await mkdtemp(join(tmpdir(), 'fat4-wf-')));
-    failedAttemptStore = new JsonFileFailedAttemptStore(runsDir);
+    h = await makeTempHome();
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
+    failedAttemptStore = h.stores.failedAttemptStore;
     await workflowStore.register(wf);
     errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     errSpy.mockRestore();
+    await h.cleanup();
   });
 
   it('the terminalizing call reaches the failed-attempt sidecar with ajv_errors sourced from last_ajv_errors', async () => {
@@ -322,22 +328,24 @@ describe('execute_step failed-attempt records: a chained step refused after the 
       },
     },
   };
+  let h: TempHome;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
   let failedAttemptStore: JsonFileFailedAttemptStore;
   let errSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
-    const runsDir = await mkdtemp(join(tmpdir(), 'fat676-run-'));
-    runStore = new JsonFileStore(runsDir);
-    workflowStore = new JsonWorkflowStore(await mkdtemp(join(tmpdir(), 'fat676-wf-')));
-    failedAttemptStore = new JsonFileFailedAttemptStore(runsDir);
+    h = await makeTempHome();
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
+    failedAttemptStore = h.stores.failedAttemptStore;
     await workflowStore.register(chained);
     errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     errSpy.mockRestore();
+    await h.cleanup();
   });
 
   const failedAttemptLines = (): string[] =>

@@ -1,10 +1,7 @@
 // Tests for handleSubmitHumanResponse — the submit_human_response MCP tool.
 // Focus: a gate resolution that COMPLETES the run must fire the run's finalizers using the
 // project registry threaded via stores.registry / stores.registryProvider (mirrors execute_step).
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import {
   JsonFileStore,
   JsonWorkflowStore,
@@ -14,6 +11,7 @@ import {
 import type { WorkflowDefinition, StepHandler } from '@sensigo/realm';
 import { handleStartRun } from './start-run.js';
 import { handleSubmitHumanResponse } from './submit-human-response.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 // A gated workflow whose on_outcome: complete finalizer uses a PROJECT handler — never in the
 // default filesystem-only registry.
@@ -53,17 +51,18 @@ function recordingHandler(): { handler: StepHandler; ran: () => number } {
 }
 
 describe('handleSubmitHumanResponse — fires finalizers on gate completion', () => {
-  let runDir: string;
-  let workflowDir: string;
+  let h: TempHome;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
 
   beforeEach(async () => {
-    runDir = await mkdtemp(join(tmpdir(), 'realm-mcp-shr-run-'));
-    workflowDir = await mkdtemp(join(tmpdir(), 'realm-mcp-shr-wf-'));
-    runStore = new JsonFileStore(runDir);
-    workflowStore = new JsonWorkflowStore(workflowDir);
+    h = await makeTempHome();
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
     await workflowStore.register(gateFinalizerDef());
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   async function startAndOpenGate(
@@ -158,12 +157,17 @@ describe('handleSubmitHumanResponse — fires finalizers on gate completion', ()
   });
 });
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 describe('handleSubmitHumanResponse — a workflow-absent run carries the remedy (issue #456)', () => {
   it('C8 rejects with the T-21 words (#729 PR-0; was "most often") and "retry" (the workflow fetch at :26 precedes gate logic)', async () => {
-    const runDir = await mkdtemp(join(tmpdir(), 'realm-mcp-shr-missing-run-'));
-    const workflowDir = await mkdtemp(join(tmpdir(), 'realm-mcp-shr-missing-wf-'));
-    const runStore = new JsonFileStore(runDir);
-    const workflowStore = new JsonWorkflowStore(workflowDir);
+    const h = await makeTempHome();
+    handles.push(h);
+    const runStore = h.stores.runStore;
+    const workflowStore = h.stores.workflowStore;
     // Nothing registered in workflowStore — a dev-run whose workflow was never persisted.
     const { record: run } = await runStore.create({
       workflowId: 'dev456',

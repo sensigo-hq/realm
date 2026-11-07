@@ -3,16 +3,11 @@
 import { declared } from './test-support/declared.js';
 import { declareReleaseLine } from '@sensigo/realm';
 import { describe, it, expect } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Client } from '@modelcontextprotocol/sdk/client';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   InMemoryTraceBufferStore,
   WorkflowError,
   findEligibleSteps,
@@ -42,7 +37,7 @@ import type {
   SettlementDelta,
   StoreSettlement,
 } from '@sensigo/realm';
-import { withArtifactStores } from './test-support/temp-home.js';
+import { makeTempHome } from './test-support/temp-home.js';
 
 /**
  * Minimal hand-rolled `RunStore` — deliberately does NOT expose `runsDirPath` (no filesystem
@@ -244,16 +239,14 @@ async function connectClient(
 describe('createRealmMcpServer — RunStore injection seam (issue #188, PR-1)', () => {
   describe('local default — byte-identical to pre-#188 behavior', () => {
     it('a JsonFileStore run store (no artifact stores injected) derives co-located artifact stores from runsDirPath — append_trace → execute_step round-trips a WAL', async () => {
-      const runDir = await mkdtemp(join(tmpdir(), 'realm-seam-runs-'));
-      const workflowDir = await mkdtemp(join(tmpdir(), 'realm-seam-wf-'));
+      const h = await makeTempHome();
       try {
-        const workflowStore = new JsonWorkflowStore(workflowDir);
+        const workflowStore = h.stores.workflowStore;
         const def = agentWorkflowDef('seam-local-wf');
         await workflowStore.register(def);
 
         const server = createRealmMcpServer({
-          ...withArtifactStores(new JsonFileStore(runDir)),
-          workflowStore,
+          ...h.stores,
         });
         const callTool = await connectClient(server);
 
@@ -285,21 +278,23 @@ describe('createRealmMcpServer — RunStore injection seam (issue #188, PR-1)', 
             throw new Error('fence unexpectedly evaluated');
           },
         });
-        const verifyTraceBufferStore = new JsonTraceBufferStore(runDir, neverRead);
+        const verifyTraceBufferStore = new JsonTraceBufferStore(
+          h.stores.runStore.runsDirPath,
+          neverRead,
+        );
         const remaining = await verifyTraceBufferStore.read(runId, 'step-agent');
         expect(remaining).toHaveLength(0);
       } finally {
-        await rm(runDir, { recursive: true, force: true });
-        await rm(workflowDir, { recursive: true, force: true });
+        await h.cleanup();
       }
     });
   });
 
   describe('injected artifact stores are used', () => {
     it('an injected traceBufferStore is the one execute_step actually reads from (not a derived default)', async () => {
-      const workflowDir = await mkdtemp(join(tmpdir(), 'realm-seam-inject-wf-'));
+      const h = await makeTempHome();
       try {
-        const workflowStore = new JsonWorkflowStore(workflowDir);
+        const workflowStore = h.stores.workflowStore;
         const def = agentWorkflowDef('seam-inject-wf');
         await workflowStore.register(def);
 
@@ -342,14 +337,14 @@ describe('createRealmMcpServer — RunStore injection seam (issue #188, PR-1)', 
         const remaining = await injectedTraceBufferStore.read(runId, 'step-agent');
         expect(remaining).toHaveLength(0);
       } finally {
-        await rm(workflowDir, { recursive: true, force: true });
+        await h.cleanup();
       }
     });
 
     it('an injected failedAttemptStore receives a record on a validation-rejected execute_step', async () => {
-      const workflowDir = await mkdtemp(join(tmpdir(), 'realm-seam-inject-fa-wf-'));
+      const h = await makeTempHome();
       try {
-        const workflowStore = new JsonWorkflowStore(workflowDir);
+        const workflowStore = h.stores.workflowStore;
         const def: WorkflowDefinition = {
           id: 'seam-inject-fa-wf',
           name: 'Seam Inject FA WF',
@@ -393,7 +388,7 @@ describe('createRealmMcpServer — RunStore injection seam (issue #188, PR-1)', 
         expect(injectedFailedAttemptStore.appended.length).toBe(1);
         expect(injectedFailedAttemptStore.appended[0]?.runId).toBe(runId);
       } finally {
-        await rm(workflowDir, { recursive: true, force: true });
+        await h.cleanup();
       }
     });
   });

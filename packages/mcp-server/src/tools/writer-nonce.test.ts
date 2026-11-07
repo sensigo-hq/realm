@@ -5,8 +5,7 @@
 // values), and the #208 capacityWarning re-home onto the whole-file scope.
 import { declared } from '../test-support/declared.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   JsonFileStore,
@@ -18,6 +17,7 @@ import type { WorkflowDefinition, TraceBufferStore } from '@sensigo/realm';
 import { handleAppendTrace } from './append-trace.js';
 import { handleExecuteStep } from './execute-step.js';
 import { handleGetRunState } from './get-run-state.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 function makeWorkflowDef(): WorkflowDefinition {
   return {
@@ -33,25 +33,26 @@ function makeWorkflowDef(): WorkflowDefinition {
 }
 
 describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
-  let runDir: string;
+  let h: TempHome;
   let workflowDir: string;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
   let traceBufferStore: InMemoryTraceBufferStore;
 
   beforeEach(async () => {
-    runDir = await mkdtemp(join(tmpdir(), 'realm-writer-nonce-runs-'));
-    workflowDir = await mkdtemp(join(tmpdir(), 'realm-writer-nonce-wf-'));
-    runStore = new JsonFileStore(runDir);
-    workflowStore = new JsonWorkflowStore(workflowDir);
+    h = await makeTempHome();
+    workflowDir = join(h.path, 'workflows');
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
     traceBufferStore = new InMemoryTraceBufferStore(runStore);
 
     const def = makeWorkflowDef();
     await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     delete process.env['REALM_REQUIRE_WRITER_NONCE'];
+    await h.cleanup();
   });
 
   describe('shape validation (both tools)', () => {
