@@ -3,8 +3,8 @@
 // `openRealmHome`. The real cases: the engine creating a run and reading it back, `realm run list`
 // over many runs and one workflow, a test that counts its clock's readings, a record stamped ahead of a
 // clock that then stepped back, params too deep for the store, a COMMIT that fails after or before its
-// rows reached the file, a caller passing an idempotency key before unit 15, and the engine's
-// release-line check of a store and its errors.
+// rows reached the file, and the engine's release-line check of a store and its errors. A keyed
+// create is unit 15a's (`run-store-keyed-616.test.ts`).
 //
 // These cells stand in for the create, get and list ground of core's shared store laws until unit 16
 // wires the contract (`packages/testing/src/store/store-clock-contract.ts` and
@@ -22,6 +22,7 @@ import {
   WorkflowError,
   type Clock,
   type CreateRunOptions,
+  type EvidenceSnapshot,
   type ExtensionIdentityEntry,
   type Snapshot,
 } from '@sensigo/realm';
@@ -31,7 +32,9 @@ import { openDatabase, type DatabaseLike } from './driver.js';
 import { openRealmHome } from './index.js';
 import type { OpenSeams } from './open-file.js';
 import { openHome, type RealmHome } from './open-realm-home.js';
+import { insertRunRecord } from './run-rows.js';
 import { faultyFiles, SQLITE } from './test-support/commit-faults.js';
+import { openForeignConnection } from './test-support/foreign-connection.js';
 import { VERSION } from './version.js';
 
 /** The instant the cells' clocks start at. */
@@ -373,27 +376,6 @@ describe('#616 unit 12a — create, get and list', () => {
     });
   });
 
-  it('check 6: a keyed create (an empty key too) is refused until unit 15, writing nothing and reading no clock', async () => {
-    const t = testClock(T);
-    const { runStore } = await open(t.clock);
-    const keyed = async (idempotencyKey: string): Promise<[number, string]> => {
-      const before = t.reads();
-      const outcome = await runStore
-        .create({ ...BARE, idempotencyKey })
-        .then(() => 'created', describeError);
-      return [t.reads() - before, outcome];
-    };
-    const refused =
-      'Error: A keyed create arrives with the key holder, unit 15 of the SQLite store; this store creates unkeyed runs only.';
-    // (1) red when a keyed create is let through (a run is written, a reading spent), or an empty
-    //     key is read as no key; (2) prints each create's readings and outcome, and the runs stored.
-    expect({
-      key: await keyed('ticket-42'),
-      emptyKey: await keyed(''),
-      runs: (await runStore.list()).snapshots.length,
-    }).toEqual({ key: [0, refused], emptyKey: [0, refused], runs: 0 });
-  });
-
   it('check 7: the store declares the package’s release line, its not-found refusal comes from the same line, and core’s check admits it', async () => {
     const { runStore } = await open(testClock(T).clock);
     const refusal = await runStore.get('store-release-line-missing-run').then(
@@ -412,6 +394,123 @@ describe('#616 unit 12a — create, get and list', () => {
       store: ['@sensigo/realm-store-sqlite', VERSION],
       sameLine: true,
       admitted: 'no error',
+    });
+  });
+  // ---- the review of #1003 (MA 3, 2026-11-07): two cells the unit's own cells left unpinned ----
+  it('review of #1003 — list reads every run in ONE snapshot: a write that lands between two of its run reads shows in none of them', async () => {
+    const home = join(tmp(), '.realm');
+    let runReads = 0;
+    let strike: (() => void) | undefined;
+    // Passes everything on; on the third read of a run row it first runs `strike`.
+    const striking = (real: DatabaseLike): DatabaseLike => ({
+      exec: (sql) => real.exec(sql),
+      prepare: (sql) => {
+        const statement = real.prepare(sql);
+        if (sql !== 'SELECT record FROM runs WHERE id = ?') return statement;
+        return {
+          run: (...p) => statement.run(...p),
+          all: (...p) => statement.all(...p),
+          get: (...p) => {
+            runReads += 1;
+            if (runReads === 3) strike?.();
+            return statement.get(...p);
+          },
+        };
+      },
+      close: () => real.close(),
+      get isTransaction() {
+        return real.isTransaction;
+      },
+    });
+    const handle = await openHome(
+      { home, clock: testClock(T).clock },
+      { openFile: (path) => striking(openDatabase(path)) },
+    );
+    handles.push(handle);
+    const { runStore } = handle;
+    const ids: string[] = [];
+    for (let i = 0; i < 6; i++) ids.push((await runStore.create(BARE)).record.id);
+    const hostile = await openForeignConnection(home);
+    strike = () => {
+      // A whole-store write on another connection: every run's version goes up by one.
+      hostile.exec(
+        "UPDATE runs SET record = json_set(record, '$.version', json_extract(record, '$.version') + 1)",
+      );
+    };
+    runReads = 0;
+    const listed = await runStore.list();
+    strike = undefined;
+    const versions = (snapshots: readonly Snapshot[]): number[] =>
+      snapshots.map((s) => s.record.version);
+    const after = await Promise.all(ids.map((id) => runStore.get(id)));
+    hostile.close();
+    // (1) red when the list reads each run in a snapshot of its own (the last runs then show the
+    //     write): the flag `consistent_snapshot` is a literal, so only the versions show it; also
+    //     red when the foreign write did not land (`after` stays 0), so the cell cannot pass by
+    //     striking nothing; (2) prints the versions the list saw and the versions read afterwards.
+    expect({
+      listed: versions(listed.snapshots),
+      after: versions(after),
+      consistent: listed.consistent_snapshot,
+    }).toEqual({
+      listed: [0, 0, 0, 0, 0, 0],
+      after: [1, 1, 1, 1, 1, 1],
+      consistent: true,
+    });
+  });
+
+  it('review of #1003 — a stored run that cannot be read back makes get and list throw, naming it; no run is skipped, and the other workflows still list', async () => {
+    const home = join(tmp(), '.realm');
+    const handle = await openRealmHome({ home, clock: testClock(T).clock });
+    handles.push(handle);
+    const { runStore } = handle;
+    const good = await runStore.create(BARE);
+    const other = await runStore.create({ ...BARE, workflowId: 'other' });
+    // A third run with three evidence entries, put by a foreign connection, then one entry row
+    // deleted behind the store's back (its guard dropped first), as the unit 10 cell does.
+    const hostile = await openForeignConnection(home);
+    const broken = {
+      ...good.record,
+      id: 'broken-run',
+      evidence: [0, 1, 2].map((n): EvidenceSnapshot => ({
+        step_id: `step_${n}`,
+        started_at: '2030-05-06T07:08:09.000Z',
+        completed_at: '2030-05-06T07:08:10.000Z',
+        duration_ms: 1000,
+        input_summary: { n },
+        output_summary: {},
+        status: 'success',
+        evidence_hash: 'ab'.repeat(32),
+        diagnostics: { input_token_estimate: 1, precondition_trace: [] },
+        resolved_params: {},
+        effective_timeout_seconds: 300,
+        attempt: 1,
+      })),
+    };
+    hostile.exec('BEGIN IMMEDIATE');
+    insertRunRecord(hostile, broken);
+    hostile.exec('COMMIT');
+    hostile.exec('DROP TRIGGER evidence_delete_after_run');
+    hostile.prepare('DELETE FROM evidence WHERE run_id = ? AND seq = 2').run('broken-run');
+    hostile.close();
+    const message = (err: unknown): string => (err as Error).message;
+    const failure = (call: () => Promise<unknown>): Promise<string> =>
+      call().then(() => 'no error', message);
+    // (1) red when `list` leaves out a run it cannot read (it then resolves, with the other runs)
+    //     or `get` returns a record short of an entry; (2) prints each call's outcome.
+    expect({
+      get: await failure(() => runStore.get('broken-run')),
+      list: await failure(() => runStore.list()),
+      sameWorkflow: await failure(() => runStore.list('triage')),
+      otherWorkflow: (await runStore.list('other')).snapshots.map((s) => s.record.id),
+      healthy: (await runStore.get(good.record.id)).record.id === good.record.id,
+    }).toEqual({
+      get: 'The stored run broken-run cannot be read back: its record holds 3 evidence entries and the store has 2 evidence rows.',
+      list: 'The stored run broken-run cannot be read back: its record holds 3 evidence entries and the store has 2 evidence rows.',
+      sameWorkflow:
+        'The stored run broken-run cannot be read back: its record holds 3 evidence entries and the store has 2 evidence rows.',
+      otherWorkflow: [other.record.id],
+      healthy: true,
     });
   });
 });

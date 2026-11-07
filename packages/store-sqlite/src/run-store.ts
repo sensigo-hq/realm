@@ -1,15 +1,16 @@
 // run-store.ts — issue #616 PR-1a units 12a and 12b (design d4-frozen-r3 §2, §3; the census of core's
 // run store, `plans/issue-616/u12/census-u12.md`): `SqliteRunStore`, core's run store on a SQLite
-// home, for creating runs (unkeyed), reading one, listing them, updating one and claiming a step of
-// one. A keyed create is unit 15's; settling, sealing and saving are unit 13's. `openRealmHome` builds
-// the one store of a handle; the package's entry exports the class as a type only, so nothing outside
-// the package constructs one.
+// home, for creating runs, reading one, listing them, updating one and claiming a step of one. A
+// keyed create is unit 15a's; settling, sealing and saving are unit 13's. `openRealmHome` builds the
+// one store of a handle; the package's entry exports the class as a type only, so nothing outside the
+// package constructs one.
 //
 // Every write goes through `RealmDb.immediate` with a `verify` that reads the run back by its content;
 // every read goes through `snapshot`. Each call spends exactly ONE reading of the home's clock (core's
 // clock laws, #715):
-//   - `create`: the reading `immediate` takes right after `BEGIN IMMEDIATE`, unfloored (an unkeyed
-//     create has no holder to floor by); the run's id is minted after it;
+//   - `create`: the reading `immediate` takes right after `BEGIN IMMEDIATE`; the run's id is minted
+//     after it. An unkeyed create, or a keyed one whose key no run holds, is stamped with it
+//     unfloored; a keyed create that finds the key's holder floors it by that run (unit 15a);
 //   - `get` and `list`: the reading `snapshot` takes BEFORE its transaction begins, so a missing run
 //     and an empty store have spent theirs too; each record is judged at that reading floored by its
 //     own `updated_at`;
@@ -25,8 +26,10 @@ import {
   assertSealIntegrity,
   brandClass,
   computeClaimDeadline,
+  decideIdempotencyPolicy,
   deriveRunPhase,
   findEligibleSteps,
+  floorAtHolder,
   floorAtRecord,
   foldReading,
   isStepSettledOrInFlight,
@@ -50,6 +53,7 @@ import { VerifyInconclusive, type RealmDb } from './connection.js';
 import type { DatabaseLike } from './driver.js';
 import {
   assertRunRecordWithinLimits,
+  findKeyHolder,
   insertRunRecord,
   readRunInTransaction,
   splitRunRecord,
@@ -63,21 +67,25 @@ const PROVISIONAL_ID = '00000000-0000-0000-0000-000000000000';
 /** A stamp's length (`toISOString()`): the provisional record's stamps take as many bytes. */
 const PROVISIONAL_STAMP = '0000-00-00T00:00:00.000Z';
 
-/** The refusal of a keyed create until unit 15 brings the key holder. */
-const KEYED_CREATE_REFUSED =
-  'A keyed create arrives with the key holder, unit 15 of the SQLite store; this store creates unkeyed runs only.';
-
 /**
  * A new run's record, in the shape and key order of the JSON store's (`json-file-store.ts`,
- * `writeFreshRun`): `parent_run_id` only when given, `extension_identity` only when given and not
- * empty; `params` by reference. Pure: the id and the stamp are the caller's.
+ * `writeFreshRun`): `parent_run_id` only when given, then `idempotency_key` when the create has one
+ * and `rerun_of` when it supersedes a run, `extension_identity` only when given and not empty;
+ * `params` by reference. Pure: the id, the stamp and the run superseded are the caller's.
  */
-function freshRecord(options: CreateRunOptions, id: string, now: string): RunRecord {
+function freshRecord(
+  options: CreateRunOptions,
+  id: string,
+  now: string,
+  rerunOf?: string,
+): RunRecord {
   return {
     id,
     workflow_id: options.workflowId,
     workflow_version: options.workflowVersion,
     ...(options.parentRunId !== undefined ? { parent_run_id: options.parentRunId } : {}),
+    ...(options.idempotencyKey !== undefined ? { idempotency_key: options.idempotencyKey } : {}),
+    ...(rerunOf !== undefined ? { rerun_of: rerunOf } : {}),
     ...(options.extensionIdentity !== undefined && options.extensionIdentity.length > 0
       ? { extension_identity: options.extensionIdentity }
       : {}),
@@ -220,10 +228,11 @@ export class SqliteRunStore {
    * call's one reading and returns it with `created: true`. Its limits are checked before `BEGIN`, on
    * a provisional record with the real one's bytes and depth (a 36-character id, 24-character
    * stamps), so a record too large is refused with `STATE_STORE_LIMIT_EXCEEDED` before the write lock
-   * is taken. A keyed create (an empty key is a key) is refused until unit 15.
+   * is taken. A keyed create (an empty key is a key) is {@link #createKeyed}.
    */
   async create(options: CreateRunOptions): Promise<CreateResult> {
-    if (options.idempotencyKey !== undefined) return this.#createKeyed(options);
+    if (options.idempotencyKey !== undefined)
+      return this.#createKeyed(options, options.idempotencyKey);
     assertRunRecordWithinLimits(freshRecord(options, PROVISIONAL_ID, PROVISIONAL_STAMP));
     const written = await this.#db.immediate(
       (db, reading) => {
@@ -362,9 +371,49 @@ export class SqliteRunStore {
     return written.snapshot;
   }
 
-  /** A keyed create: refused, writing nothing and reading no clock. Unit 15 replaces this method. */
-  #createKeyed(_options: CreateRunOptions): Promise<CreateResult> {
-    return Promise.reject(new Error(KEYED_CREATE_REFUSED));
+  /**
+   * A keyed create (unit 15a; the JSON store's keyed create, with the holder derived from the runs'
+   * rows instead of a pointer): ONE write transaction finds the key's holder ({@link findKeyHolder})
+   * after the call's one reading, and core's policy decides:
+   *   - no holder: a fresh run with the key, stamped with the reading, `created: true`;
+   *   - `reuse`: the holder, judged at the reading floored by its own stamp, `created: false`;
+   *     nothing is written;
+   *   - `supersede`: a new run with the key and `rerun_of` naming the holder, stamped with the reading
+   *     floored by the holder's `created_at`, `created: true`; the holder is never written;
+   *   - a refusal (`STATE_RUN_ALREADY_ACTIVE`, `STATE_IDEMPOTENCY_KEY_USED`) is thrown in the body:
+   *     the transaction rolls back and nothing is written.
+   * Every outcome spends the one reading; a busy store is refused before it. The limits are checked
+   * before `BEGIN` on the largest record the call can write: the key, and a 36-character `rerun_of`.
+   * After an error at COMMIT, a new run is looked for by its content; a reuse wrote nothing, so it
+   * is there.
+   */
+  async #createKeyed(options: CreateRunOptions, key: string): Promise<CreateResult> {
+    assertRunRecordWithinLimits(
+      freshRecord(options, PROVISIONAL_ID, PROVISIONAL_STAMP, PROVISIONAL_ID),
+    );
+    return this.#db.immediate(
+      (db, reading): CreateResult => {
+        const holder = findKeyHolder(db, options.workflowId, key);
+        if (holder === undefined) {
+          const record = freshRecord(options, randomUUID(), reading.toISOString());
+          insertRunRecord(db, record);
+          return { ...writtenSnapshot(record, reading), created: true };
+        }
+        const held = readRunInTransaction(db, holder.id);
+        // The holder's row was read in this transaction, so its run is there.
+        if (held === null) throw new Error(`The run ${holder.id} holds a key and cannot be read.`);
+        if (
+          decideIdempotencyPolicy({ ...held, run_phase: deriveRunPhase(held) }, options) === 'reuse'
+        ) {
+          return { ...writtenSnapshot(held, floorAtRecord(reading, held)), created: false };
+        }
+        const at = floorAtHolder(reading, held.created_at);
+        const record = freshRecord(options, randomUUID(), at.toISOString(), held.id);
+        insertRunRecord(db, record);
+        return { ...writtenSnapshot(record, at), created: true };
+      },
+      (db, result) => (result.created ? verifyCreated(db, result.record) : true),
+    );
   }
 }
 
