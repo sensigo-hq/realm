@@ -17,9 +17,15 @@
 // checks), which pass through unchanged.
 import { realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
-import { realmHomePath, resolveRootClock, type Clock } from '@sensigo/realm';
+import {
+  realmHomePath,
+  resolveRootClock,
+  type Clock,
+  type WorkflowRegistrar,
+} from '@sensigo/realm';
 import { RealmDb } from './connection.js';
 import type { OpenSeams } from './open-file.js';
+import { SqliteWorkflowStore } from './workflow-store.js';
 
 /** What `openRealmHome` takes. */
 export interface OpenRealmHomeOptions {
@@ -33,8 +39,13 @@ export interface OpenRealmHomeOptions {
   readonly clock?: Clock;
 }
 
-/** An open Realm home. Later units add its stores. */
+/** An open Realm home and its stores, all on the home's one connection. Later units add stores. */
 export interface RealmHome {
+  /**
+   * The workflow registry (PR-1b B3): each distinct definition text once, a pointer per workflow to
+   * its current text, and every move of that pointer. After `close()`, its calls reject.
+   */
+  readonly workflowStore: WorkflowRegistrar;
   /**
    * Closes the home's connection; a later `openRealmHome` opens the home afresh. Every caller in this
    * process that opened the home shares this handle, so a `close()` by any of them ends it for all.
@@ -109,6 +120,7 @@ export async function openHome(
     const db = await RealmDb.open(home, { clock }, seams);
     let closed = false;
     return {
+      workflowStore: new SqliteWorkflowStore(db),
       close(): void {
         if (closed) return;
         closed = true;
