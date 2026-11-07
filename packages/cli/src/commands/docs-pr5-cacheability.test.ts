@@ -54,6 +54,13 @@ const DIAGNOSTICS_PAGE = 'docs/reference/workflow/loader-diagnostics.md';
 const FIELDS_PAGE = 'docs/reference/workflow/top-level-fields.md';
 const CHANGELOG = 'CHANGELOG.md';
 
+// The two describes below hold the cells that start the built CLI many times in a row, so their
+// budget is at least ten times the slowest cell's work (#371's class rule). Measured alone on
+// 2026-11-07 (load about 4 on 12 cores), two runs each: I-2/I-3/I-9a 15.9 s (17 starts), C-6.1 / F-1
+// 11.8 s, every example line 10.2 s, no verdict 9.4 s, C-1 7.4 s. At 60 s the first had 3.8 times
+// its work, and it ran out twice in full runs under a load of 15 to 29.
+const SPAWN_HEAVY = 160_000;
+
 let home: string;
 let base: string;
 beforeEach(() => {
@@ -134,7 +141,7 @@ const ELIGIBLE_SCHEMA =
 
 describe(
   'realm-workflow.md, "The cache lines": the examples are what the commands print',
-  { timeout: 60_000 },
+  { timeout: SPAWN_HEAVY },
   () => {
     // Each example line on the page, produced by the command the page says it came from. Break: one
     // word of an example changed on the page. (a) red when a page line differs from realm's — since
@@ -421,7 +428,7 @@ describe(
   },
 );
 
-describe('realm-workflow.md, "The cache lines": the sentences', { timeout: 60_000 }, () => {
+describe('realm-workflow.md, "The cache lines": the sentences', { timeout: SPAWN_HEAVY }, () => {
   // The estimate's constants, the band, and text outside ASCII. Break: a constant or the band changed
   // in the code (or its number on the page). (a) red when the page's numbers part from the code's,
   // or a Chinese profile reads below at 512; (b) prints the numbers and the line.

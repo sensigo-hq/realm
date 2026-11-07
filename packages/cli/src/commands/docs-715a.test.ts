@@ -248,10 +248,13 @@ describe('#715 (a) — the docs sentences', () => {
       TESTING,
       "`{ kind: 'clock', makeStore({ clock }) }` for a store built with a clock it is given, such as `InMemoryStore`; `{ kind: 'location', makeStore({ location }) }` for a store opened on a test location, such as `JsonFileStore` on `location.runsDir`.",
     );
-    // C17, one row per law.
+    // C17, one row per law. #616 PR-1a unit 16a corrects WRITE_ONE_READING's "refused or not" to
+    // what the law checks: store-clock-contract.ts's WRITE_ONE_READING counts (a refusal after the
+    // lock: C17's `refuses-unread` cell; a missing run: C16), and the adapter has no field that
+    // holds a lock (docs-715b's derived adapter-table cell).
     claim(
       TESTING,
-      "a `create`, `update` or `claimStep` records a time other than the clock's, or (on the `clock` route) reads the clock more or less than once, refused or not",
+      "a `create`, `update` or `claimStep` records a time other than the clock's, or (on the `clock` route) reads the clock other than once when it is applied or refused after it takes its lock, or reads it for a run that does not exist. A call refused before it can take its lock, such as one a busy store refuses, is outside this law: the adapter has no way to hold a lock",
     );
     claim(
       TESTING,
@@ -268,14 +271,24 @@ describe('#715 (a) — the docs sentences', () => {
       'At a step back of exactly 5 seconds the 5-second cap wins: that run is stamped equal to the run it replaces, not after it',
     );
     claim(TESTING, "that run's time is lifted more than 5 seconds");
+    // #616 PR-1a unit 16a: store-clock-in-memory.test.ts, "READS_ONE_READING counts the delete on its
+    // own" (a) to (f), and C16.
     claim(
       TESTING,
-      '`get`, `list` or `listWithDiagnostics` reads the clock other than once, or `stampSeal`, `listRunIds`, `statAllForRun` or `deleteAllForRun` reads it (on the `clock` route only)',
+      '`get`, `list` or `listWithDiagnostics` reads the clock other than once; `stampSeal`, `listRunIds` or `statAllForRun` reads it; `deleteAllForRun` fails, or reads the clock other than once when the adapter sets `recordsDeletionTime`, or at all when it does not (on the `clock` route only)',
     );
     // Correction 1 (C-4): store-clock-in-memory.test.ts (C16 with the hook; the wiring cell without it).
     claim(
       TESTING,
       "| `seedLegacyTerminal` | If the store has `stampSeal`: writes an ended run that has no record of how it ended into the store the route built for the case, past the store's own checks, and returns it; without it, the `READS_ONE_READING` case fails, saying that the hook is missing. |",
+    );
+    // #616 PR-1a unit 16a: store-clock-in-memory.test.ts, "READS_ONE_READING counts the delete on its
+    // own": (a) true and one reading passes, (b) false or absent and one reading fails, (c) true and
+    // none fails, (d) true with no deleteAllForRun fails saying so; the location route never reads
+    // it (the law stops at its route check first: the location wiring's NOT_RUN).
+    claim(
+      TESTING,
+      "| `recordsDeletionTime` | `true` if the store's `deleteAllForRun` stamps the time of the deletion, and so reads the clock once. `READS_ONE_READING` then counts that one reading; it counts readings, and cannot see the time the store records. Leave it out, or set it to `false`, for a store whose delete reads no clock. It is read on the `clock` route only. Set for a store with no `deleteAllForRun`, the `READS_ONE_READING` case fails, saying that the store has no delete. Added after version 0.48.0. |",
     );
     // C17; the location adapter's NOT_RUN (store-clock.contract.test.ts).
     claim(
@@ -291,6 +304,21 @@ describe('#715 (a) — the docs sentences', () => {
       CODES,
       "A run store was opened on a folder whose test clock file was made for another folder, as when a test location is copied. A store there would run on another location's test clock. The message names both folders and the three ways out: delete the folder's clock file to use it as an ordinary store, open the store at the folder the file names, or make a new test location with `createTestLocation` on a folder that has none. Added after version 0.48.0.",
     );
+  });
+
+  it('#616 PR-1a unit 16a: the CHANGELOG entry, sentence by sentence', () => {
+    // in-memory-store.test.ts's 16a cells (the four cases; a store that leaves created out fails
+    // them) and store-clock-in-memory.test.ts's 16a cells (the delete's own count, the wiring
+    // failure).
+    for (const sentence of [
+      "**`runStoreFidelityContract` gains the law `CREATE_REPORTS_CREATED`, and `storeClockContract`'s adapter gains `recordsDeletionTime` (issue #616).**",
+      "The law's four cases check that a create says whether it made a new run: `created: true` for a create with no idempotency key, for a key no run holds, and for a keyed create with `onTerminalMatch: 'rerun'` over an ended run, which makes a new run, with a different id, whose `rerun_of` names the run it replaces, in the result and when `get` reads it back; `created: false`, returning the live run, for a second create with the same key while the first run is live.",
+      'A store whose `create` leaves `created` out now fails the law.',
+      "A create resolves `{ record, at, created }`: a store that resolves another shape fails the case in the law's own words.",
+      '`READS_ONE_READING` counts `deleteAllForRun` on its own, on the `clock` route: one reading when the adapter sets `recordsDeletionTime`, none when it does not.',
+      'A store whose delete stamps the time of the deletion sets the field; set for a store with no `deleteAllForRun`, the `READS_ONE_READING` case fails.',
+    ])
+      claimChangelog(sentence);
   });
 
   it('the CHANGELOG entries, sentence by sentence', () => {

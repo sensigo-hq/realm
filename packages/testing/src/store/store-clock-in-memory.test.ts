@@ -4,6 +4,7 @@
 // that violates it, naming the law. Prints on failure: the law name and instants only.
 import { describe, expect, it } from 'vitest';
 import type {
+  ArtifactDeletionReport,
   Attributed,
   Clock,
   CreateRunOptions,
@@ -236,7 +237,7 @@ describe('#715 (a) C17 — each law fails on the store that breaks it, naming th
     );
   });
 
-  it('READS_SPEND_NO_READING fails with the adapter-wiring message when a stampSeal store’s adapter has no seedLegacyTerminal (correction 1, C-4)', async () => {
+  it('READS_ONE_READING fails with the adapter-wiring message when a stampSeal store’s adapter has no seedLegacyTerminal (correction 1, C-4)', async () => {
     // (a) red when the clause is skipped for an adapter without the hook (the law passes);
     // (b) prints the failure message.
     const cases = storeClockContract({
@@ -251,5 +252,140 @@ describe('#715 (a) C17 — each law fails on the store that breaks it, naming th
         message = err.message;
       });
     expect(message, message).toMatch(/^READS_ONE_READING: ADAPTER_WIRING: /);
+  });
+});
+
+type DeletionMode =
+  | 'delete-reads'
+  | 'delete-unread'
+  | 'delete-rejects'
+  | 'stamp-reads'
+  | 'list-ids-reads'
+  | 'stat-reads';
+
+/**
+ * #616 PR-1a unit 16a: InMemoryStore with the delete verbs a store that deletes has
+ * (`deleteAllForRun`, `statAllForRun`, `listRunIds`, in their interface's shapes). Its delete stamps
+ * the time of the deletion — one reading — except in `delete-unread` (it reads none) and
+ * `delete-rejects` (it throws, as a store that cannot reach a run's artifacts must). The last three
+ * modes each add one reading to one verb that must spend none.
+ */
+class DeletingClockStore extends InMemoryStore {
+  constructor(
+    clock: Clock,
+    private readonly mode: DeletionMode,
+  ) {
+    super({ clock });
+  }
+
+  private get runMap(): Map<string, RunRecord> {
+    return (this as unknown as { runs: Map<string, RunRecord> }).runs;
+  }
+
+  async deleteAllForRun(runId: string): Promise<ArtifactDeletionReport> {
+    if (this.mode === 'delete-rejects') {
+      throw new Error(`EACCES: the artifacts of run ${runId} cannot be reached`);
+    }
+    if (this.mode !== 'delete-unread') this.clock.now(); // the time of the deletion
+    this.runMap.delete(runId);
+    return { bytes_deleted: 0 };
+  }
+
+  async statAllForRun(_runId: string): Promise<{ bytes: number }> {
+    if (this.mode === 'stat-reads') this.clock.now();
+    return { bytes: 0 };
+  }
+
+  async listRunIds(): Promise<ReadonlySet<string>> {
+    if (this.mode === 'list-ids-reads') this.clock.now();
+    return new Set(this.runMap.keys());
+  }
+
+  override stampSeal(
+    runId: string,
+    sealedBy: SealedBy,
+    expectedVersion: number,
+  ): Promise<StampSealResult> {
+    if (this.mode === 'stamp-reads') this.clock.now();
+    return super.stampSeal(runId, sealedBy, expectedVersion);
+  }
+}
+
+/** READS_ONE_READING run once on the store `make` builds: `passed`, or its failure message. */
+async function readsOutcome(
+  make: (clock: Clock) => InMemoryStore,
+  recordsDeletionTime: boolean | undefined,
+): Promise<string> {
+  let built: InMemoryStore | undefined;
+  const cases = storeClockContract({
+    storeName: 'S',
+    route: { kind: 'clock', makeStore: ({ clock }) => (built = make(clock)) },
+    seedLegacyTerminal: (id) => seedUnsealedInto(built!, id),
+    ...(recordsDeletionTime !== undefined ? { recordsDeletionTime } : {}),
+  });
+  return cases
+    .find((c) => c.law === 'READS_ONE_READING')!
+    .run()
+    .then(
+      () => 'passed',
+      (err: Error) => err.message,
+    );
+}
+
+const deleting =
+  (mode: DeletionMode) =>
+  (clock: Clock): InMemoryStore =>
+    new DeletingClockStore(clock, mode);
+
+describe('#616 PR-1a unit 16a — READS_ONE_READING counts the delete on its own, by the adapter’s recordsDeletionTime', () => {
+  it('(a) a store whose delete stamps its time passes with recordsDeletionTime: true', async () => {
+    // (1) red when the delete stays in the span that must spend none (it then spent 1); (2) prints
+    //     the law's message.
+    expect(await readsOutcome(deleting('delete-reads'), true)).toBe('passed');
+  });
+
+  it.each([false, undefined])(
+    '(b) the same store with recordsDeletionTime %s fails, saying the delete spent a reading',
+    async (flag) => {
+      // (1) red when the law reads the flag as true by default, or ignores it and allows the
+      //     reading; (2) prints the law's message.
+      expect(await readsOutcome(deleting('delete-reads'), flag)).toBe(
+        'READS_ONE_READING: deleteAllForRun spent 1 readings, not 0: the adapter does not set recordsDeletionTime; a store whose delete reads the clock, to stamp the time of the deletion, sets it',
+      );
+    },
+  );
+
+  it('(c) a store whose delete reads no clock fails with recordsDeletionTime: true', async () => {
+    // (1) red when the law ignores the flag and allows none; (2) prints the law's message.
+    expect(await readsOutcome(deleting('delete-unread'), true)).toBe(
+      'READS_ONE_READING: deleteAllForRun spent 0 readings, not 1: the adapter sets recordsDeletionTime, so the store stamps the time of the deletion, and that time is one reading',
+    );
+  });
+
+  it('(d) recordsDeletionTime: true for a store with no deleteAllForRun is an adapter-wiring failure', async () => {
+    // (1) red when the flag is read only where the store deletes (the case then passes); (2) prints
+    //     the law's message.
+    expect(await readsOutcome((clock) => new InMemoryStore({ clock }), true)).toBe(
+      'READS_ONE_READING: ADAPTER_WIRING: the adapter sets recordsDeletionTime, but this store has no deleteAllForRun, so no deletion can take the reading the flag claims. Remove the flag, or wire the store that deletes.',
+    );
+  });
+
+  it.each(['stamp-reads', 'list-ids-reads', 'stat-reads'] as const)(
+    '(e) the %s store fails the span that must spend none, though its delete is flagged',
+    async (mode) => {
+      // (1) red when that verb leaves the span, or the delete's reading is counted in it (it then
+      //     spent 2); (2) prints the law's message.
+      expect(await readsOutcome(deleting(mode), true)).toBe(
+        'READS_ONE_READING: stampSeal, listRunIds and statAllForRun spent 1 readings, not 0',
+      );
+    },
+  );
+
+  it('(f) a delete that rejects fails the law, naming the delete and its error', async () => {
+    // (1) red when the delete's rejection is not checked (the law then counts 0 readings of 1);
+    //     (2) prints the law's message, which carries the store's own error.
+    expect(await readsOutcome(deleting('delete-rejects'), true)).toMatch(
+      /^READS_ONE_READING: deleteAllForRun failed: Error: EACCES: the artifacts of run [0-9a-f-]{36} cannot be reached$/,
+    );
   });
 });
