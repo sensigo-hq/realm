@@ -1,13 +1,9 @@
 // Tests for abandonRun — the shared run-abandonment primitive (#92 follow-up / 0.10.0).
 import { declared } from '../test-support/declared.js';
 import { doubleClock, snap } from '../test-support/snapshot-double.js';
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { InMemoryStore, settableClock } from '@sensigo/realm-testing';
 import { ABANDON_KILL_ADVISORY, abandonRun } from './abandon-run.js';
-import { JsonFileStore } from '../store/json-file-store.js';
-import { writeTestClockFile } from '../store/test-clock-file.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { RunStore } from '../store/store-interface.js';
 import type { RunRecord } from '../types/run-record.js';
@@ -43,17 +39,11 @@ function snapshotMismatch(): WorkflowError {
   });
 }
 
-describe('abandonRun (JsonFileStore)', () => {
-  let store: JsonFileStore;
-  let dir: string;
+describe('abandonRun (InMemoryStore)', () => {
+  let store: InMemoryStore;
 
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-abandon-'));
-    store = new JsonFileStore(dir);
-  });
-
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+  beforeEach(() => {
+    store = new InMemoryStore();
   });
 
   async function freshRunning(): Promise<RunRecord> {
@@ -169,21 +159,14 @@ describe('abandonRun (JsonFileStore)', () => {
     const run = await freshRunning();
     // The divergent record CANNOT be produced through `store.update()` — every write tail
     // re-derives `run_phase` (PHASE_IS_GENERATED), so a planted 'gate_waiting' is erased on the
-    // way in. It exists only as raw bytes from a legacy/foreign writer, so that is how it is
-    // planted here (file-level, bypassing the store's own derivation).
-    await writeFile(
-      join(dir, `${run.id}.json`),
-      JSON.stringify(
-        {
-          ...run,
-          run_phase: 'gate_waiting',
-          in_progress_steps: ['analyze'],
-          claims: { analyze: { deadline: null } },
-        },
-        null,
-        2,
-      ),
-    );
+    // way in. It exists only as a record a legacy/foreign writer left, so it is planted here with
+    // the store's `seed` fixture, which keeps it as given (past the store's own derivation).
+    store.seed({
+      ...run,
+      run_phase: 'gate_waiting',
+      in_progress_steps: ['analyze'],
+      claims: { analyze: { deadline: null } },
+    });
     // walk 3: refusing this record stranded the operator — `inspect` shows no gate, `respond`
     // has nothing to answer, and the refusal's own "answer it" could never be obeyed. The gate
     // refusal keys on `pending_gate`; the label alone is not a gate.
@@ -332,16 +315,9 @@ describe('abandonRun — CAS concurrency branch (deterministic stub store)', () 
 
 // #715 (b) A.8 (ii) (D-21): abandon seals through the `seal_run` delta on a REAL store — the store's
 // transform refuses a moved run (`moved`) and the store throws it exactly as `update()` threw.
-describe('#715 (b) D-21 — abandon’s seal_run on a JSON store', () => {
-  const sealRoots: string[] = [];
-  afterEach(async () => {
-    for (const root of sealRoots.splice(0)) await rm(root, { recursive: true, force: true });
-  });
-  async function storeAt(t: Date): Promise<JsonFileStore> {
-    const root = await mkdtemp(join(tmpdir(), 'realm-715b-abandon-'));
-    sealRoots.push(root);
-    await writeTestClockFile(root, t);
-    return new JsonFileStore(join(root, 'runs'));
+describe('#715 (b) D-21 — abandon’s seal_run on an in-memory store', () => {
+  async function storeAt(t: Date): Promise<InMemoryStore> {
+    return new InMemoryStore({ clock: settableClock(t) });
   }
 
   it('a run that moves between abandon’s read and its seal: abandon reloads once and loses with the STATE_SNAPSHOT_MISMATCH update() threw; the run stays live', async () => {
@@ -357,7 +333,7 @@ describe('#715 (b) D-21 — abandon’s seal_run on a JSON store', () => {
     const moving = new Proxy(store, {
       get(target, prop) {
         if (prop === 'settleStep') {
-          return async (...a: Parameters<JsonFileStore['settleStep']>) => {
+          return async (...a: Parameters<InMemoryStore['settleStep']>) => {
             const { record } = await target.get(run.id);
             await target.update(record);
             return target.settleStep(...a);
