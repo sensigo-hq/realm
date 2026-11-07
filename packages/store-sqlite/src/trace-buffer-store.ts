@@ -519,9 +519,10 @@ export class SqliteTraceBufferStore implements TraceBufferStore, PerRunArtifactS
   }
 
   /**
-   * The per-run delete. A failure of its own delete statements, or a COMMIT that did not land, rejects
-   * with `artifactDeleteFailedError`; everything else passes through unchanged: a fence refusal of
-   * either class, a failure of the run read, and the primitive's own refusals.
+   * The per-run delete. A failure of its own statements (the reads of the rows it deletes, and the
+   * deletes), or a COMMIT that did not land, rejects with `artifactDeleteFailedError`; everything else
+   * passes through unchanged: a fence refusal of either class, a failure of the fence's run read, and
+   * the primitive's own refusals.
    */
   async #deleteRun(
     runId: string,
@@ -535,9 +536,12 @@ export class SqliteTraceBufferStore implements TraceBufferStore, PerRunArtifactS
           seen = { lines: [], seals: [] };
           statementFailed = false;
           if (fence !== undefined) evaluateFence(fence, readRunInTransaction(db, runId), runId);
-          const lines = db.prepare(RUN_LINES).all(runId).map(lineRow);
-          const seals = db.prepare(RUN_SEALS).all(runId).map(sealRow);
+          let lines: LineRow[];
+          let seals: SealRow[];
           try {
+            // The reads of the rows it deletes are the delete's own statements too (MA 4, 2026-11-07).
+            lines = db.prepare(RUN_LINES).all(runId).map(lineRow);
+            seals = db.prepare(RUN_SEALS).all(runId).map(sealRow);
             db.prepare(DELETE_RUN_LINES).run(runId);
             db.prepare(DELETE_RUN_SEALS).run(runId);
           } catch (err) {

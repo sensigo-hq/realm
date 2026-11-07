@@ -805,6 +805,43 @@ describe('#616 B4 — a per-run delete that fails', () => {
     });
   });
 
+  it('a per-run delete whose read of the rows to delete fails is a delete failure, and nothing is deleted (MA 4, 2026-11-07)', async () => {
+    const o = await open();
+    const f = await foreign(o.home);
+    await o.store.append(RUN, 'classify', [{ event: 'to seal' }]);
+    await o.store.sealFenced(RUN, 'classify', { kind: 'run_absent' });
+    await o.store.append(RUN, 'draft', [{ event: 'progress' }]);
+    // Driver-seam fault: the read of the run's lines (an unreadable page is met there first) fails with
+    // SQLite's I/O error and does not run.
+    faults(o).arm({
+      at: (sql) =>
+        sql.startsWith('SELECT step_id, line_seq') && sql.includes('WHERE run_id = ? ORDER BY'),
+      times: 1,
+      first: 'nothing',
+      error: SQLITE.ioError,
+    });
+    const err = (await refusal(() => o.store.deleteAllForRun(RUN))) as WorkflowError;
+    // (1) red when the reads sit outside the delete's own statements: a plain error reaches purge, not
+    //     the contract's typed rejection; (2) prints the rejection's code and failures, and the rows.
+    expect({
+      code: err.code,
+      failures: (err.details as { failures?: unknown } | undefined)?.failures,
+      live: rows(f, 'trace_buffer'),
+      sealed: rows(f, 'trace_sealed'),
+    }).toEqual({
+      code: 'ENGINE_ARTIFACT_DELETE_FAILED',
+      failures: [
+        {
+          artifact: 'trace_buffer',
+          code: 'SQLITE_IOERR',
+          message: 'disk I/O error (SQLite error 10)',
+        },
+      ],
+      live: 1,
+      sealed: 1,
+    });
+  });
+
   it('a per-run delete whose COMMIT did not land is a delete failure, with the COMMIT’s typed code', async () => {
     const o = await open();
     const f = await foreign(o.home);
