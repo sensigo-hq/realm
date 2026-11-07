@@ -15,11 +15,16 @@
 // Every refusal is a rejected promise, never a synchronous throw: the resolver's, the clock file's,
 // this module's own, and the open's (the loader, the filesystem gate, the old-store guard, the file's
 // checks), which pass through unchanged.
+//
+// The handle carries the home's failed-attempt store and replay store (PR-1b B7), each built once over
+// the home's one primitive, and `close()`.
 import { realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { realmHomePath, resolveRootClock, type Clock } from '@sensigo/realm';
 import { RealmDb } from './connection.js';
+import { SqliteFailedAttemptStore } from './failed-attempt-store.js';
 import type { OpenSeams } from './open-file.js';
+import { SqliteReplayStore } from './replay-store.js';
 
 /** What `openRealmHome` takes. */
 export interface OpenRealmHomeOptions {
@@ -33,8 +38,12 @@ export interface OpenRealmHomeOptions {
   readonly clock?: Clock;
 }
 
-/** An open Realm home. Later units add its stores. */
+/** An open Realm home: its stores and `close()`. Later units add its other stores. */
 export interface RealmHome {
+  /** The home's failed agent attempts, kept per run (PR-1b B7). */
+  readonly failedAttemptStore: SqliteFailedAttemptStore;
+  /** The home's saved replays, by id (PR-1b B7). */
+  readonly replayStore: SqliteReplayStore;
   /**
    * Closes the home's connection; a later `openRealmHome` opens the home afresh. Every caller in this
    * process that opened the home shares this handle, so a `close()` by any of them ends it for all.
@@ -109,6 +118,8 @@ export async function openHome(
     const db = await RealmDb.open(home, { clock }, seams);
     let closed = false;
     return {
+      failedAttemptStore: new SqliteFailedAttemptStore(db),
+      replayStore: new SqliteReplayStore(db),
       close(): void {
         if (closed) return;
         closed = true;

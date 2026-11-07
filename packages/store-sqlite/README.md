@@ -15,6 +15,11 @@ Text of a deleted run may stay readable in `realm.db`'s free pages and in `realm
 
 One exception to Realm stamping every time itself: a run deleted by SQL outside Realm is stamped with SQLite's own clock.
 
+## Failed attempts and replays
+
+Failed attempts are kept per run in append order; recording stops once a run's records reach 256 KiB, and recording one never fails the step.
+Replays are saved and read by id; a store failure is reported as itself, never as "not found".
+
 ## Where it runs
 
 Realm refuses a home on a network drive or on a filesystem it does not recognise, including WSL's `/mnt/c`, because SQLite's write-ahead log does not work there. Set `REALM_STORE_FS=local` to use such a folder anyway.

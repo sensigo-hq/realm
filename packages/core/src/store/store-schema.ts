@@ -44,7 +44,9 @@ export const REALM_STORE_PAGE_SIZE = 16384;
  * for every field a read filters on), `evidence` (append-only rows), `run_blobs` (the write-once
  * fields); `store_meta` (the store's one meta row: its tombstone counter and horizon), `write_clock`
  * (the instant of the deleting write), and the tombstones a deleted run leaves: `purged_ids` (its id,
- * kept forever) and `purged_runs` (its detail, compactable below the horizon).
+ * kept forever) and `purged_runs` (its detail, compactable below the horizon). PR-1b B7 appends
+ * `failed_attempts` (a run's failed agent attempts, one caller-serialized line per row, in `seq` order)
+ * and `replays` (a saved replay's record, by its id, with its `created_at`).
  */
 export const REALM_STORE_SCHEMA: readonly string[] = [
   // ---- runs: the core document; the generated columns read it, never the reverse ----
@@ -321,4 +323,22 @@ BEGIN
   INSERT INTO purged_runs (seq, id, purged_at, workflow_id, key_hash, sealed_by_arm, run_phase, phase_version)
   VALUES ((SELECT tomb_seq FROM store_meta), old.id, COALESCE((SELECT at FROM write_clock WHERE one = 1), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), old.workflow_id, old.key_hash, old.sealed_by_arm, old.run_phase, old.phase_version);
 END`,
+
+  // ---- PR-1b B7: failed agent attempts and saved replays. Operational rows behind core's two
+  // interfaces, with no guard of their own and so no triggers (SEAMS, "Scope of the PR-1b rule
+  // above"): a write that is not Realm's removes a row exactly as the plain DELETE it already may.
+  // Both are ordinary rowid tables, by row size (a line runs up to about 4 KB; a replay lists every
+  // step's result). ----
+  `CREATE TABLE failed_attempts (
+  run_id TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  line TEXT NOT NULL,
+  PRIMARY KEY (run_id, seq)
+)`,
+  `CREATE TABLE replays (
+  id TEXT PRIMARY KEY NOT NULL,
+  record TEXT NOT NULL CHECK (json_valid(record)),
+  created_at TEXT NOT NULL,
+  CHECK (json_extract(record, '$.id') IS id AND json_extract(record, '$.created_at') IS created_at)
+)`,
 ];
