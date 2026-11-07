@@ -1,9 +1,9 @@
-// run-store.ts — issue #616 PR-1a units 12a and 12b (design d4-frozen-r3 §2, §3; the census of core's
-// run store, `plans/issue-616/u12/census-u12.md`): `SqliteRunStore`, core's run store on a SQLite
-// home, for creating runs, reading one, listing them, updating one and claiming a step of one. A
-// keyed create is unit 15a's; settling, sealing and saving are unit 13's. `openRealmHome` builds the
-// one store of a handle; the package's entry exports the class as a type only, so nothing outside the
-// package constructs one.
+// run-store.ts — issue #616 PR-1a units 12a, 12b and 13a (design d4-frozen-r3 §2, §3; the censuses
+// `plans/issue-616/u12/census-u12.md` and `u13/census-u13.md`): `SqliteRunStore`, core's run store on
+// a SQLite home, for creating runs, reading one, listing them, updating one, claiming a step of one
+// and settling one. A keyed create is unit 15a's; sealing and saving are 13b's and 13c's.
+// `openRealmHome` builds the one store of a handle; the package's entry exports the class as a type
+// only, so nothing outside the package constructs one.
 //
 // Every write goes through `RealmDb.immediate` with a `verify` that reads the run back by its content;
 // every read goes through `snapshot`. Each call spends exactly ONE reading of the home's clock (core's
@@ -14,15 +14,17 @@
 //   - `get` and `list`: the reading `snapshot` takes BEFORE its transaction begins, so a missing run
 //     and an empty store have spent theirs too; each record is judged at that reading floored by its
 //     own `updated_at`;
-//   - `update` and `claimStep`: the raw reading their write takes itself, under the write lock, once
-//     it has found the run (a missing run spends none), folded with the STORED record's `updated_at`
-//     before any check, so a refused update or claim has spent it.
+//   - `update`, `claimStep` and `settleStep`: the raw reading their write takes itself, under the
+//     write lock, once it has found the run (a missing run spends none), folded with the STORED
+//     record's `updated_at` (a settle's also with its delta's event instants) before any check, so a
+//     refused update, claim or settle has spent it.
 // A list is ONE read transaction (n8n's way: a consistent snapshot without the write lock), so it never
-// tears across a concurrent write. An update or a claim reads the run and writes it in ONE write
-// transaction, so two of them never both act on one version: of two claims of one step, exactly one
-// wins and the other is refused as already claimed.
+// tears across a concurrent write. An update, a claim or a settle reads the run and writes it in ONE
+// write transaction, so two of them never both act on one version: of two claims of one step, exactly
+// one wins and the other is refused as already claimed.
 import { randomUUID } from 'node:crypto';
 import {
+  applySettlement,
   assertSealIntegrity,
   brandClass,
   computeClaimDeadline,
@@ -45,7 +47,11 @@ import {
   type Listing,
   type LoadBearingRunRecordField,
   type RunRecord,
+  type RunStore,
+  type SealRunDelta,
+  type SettlementDelta,
   type Snapshot,
+  type StoreSettlement,
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { REALM_STORE_SQLITE_BRAND } from './brand.js';
@@ -55,6 +61,7 @@ import {
   assertRunRecordWithinLimits,
   findKeyHolder,
   insertRunRecord,
+  prepareSettlementWrite,
   readRunInTransaction,
   splitRunRecord,
   writeRunUpdate,
@@ -147,20 +154,31 @@ interface Written {
 }
 
 /**
- * An update's or a claim's own check after an error at its COMMIT (unit 9's protocol), by content:
- * true when the stored core document is the text written; a stored version above the written one
- * throws {@link VerifyInconclusive} (the write may have landed and been superseded); otherwise false
- * (another writer's text at the same or a lower version, or no run at all).
+ * What a settle returns, and what it wrote: the core document's text and the version written, or
+ * `undefined` when it wrote nothing (a refusal or a noop, returned).
  */
-function verifyWritten(db: DatabaseLike, runId: string, written: Written): boolean {
+interface Settled {
+  readonly result: StoreSettlement;
+  readonly written: { readonly text: string; readonly version: number } | undefined;
+}
+
+/**
+ * An update's, a claim's or a settle's own check after an error at its COMMIT (unit 9's protocol), by
+ * content: true when the stored core document is the text written; a stored version above the
+ * written `version` throws {@link VerifyInconclusive} (the write may have landed and been
+ * superseded); otherwise false (another writer's text at the same or a lower version, or no run at
+ * all). The evidence rows and the core document are one transaction, so the text landing is the
+ * whole record landing.
+ */
+function verifyWritten(db: DatabaseLike, runId: string, text: string, version: number): boolean {
   const row = db.prepare('SELECT record, version FROM runs WHERE id = ?').get(runId);
   // A run deleted between the failed COMMIT and this read: the write is not there (MA 3, 2026-11-07).
   if (row === undefined) return false;
-  if (String(row['record']) === written.text) return true;
-  if (Number(row['version']) > written.snapshot.record.version) {
+  if (String(row['record']) === text) return true;
+  if (Number(row['version']) > version) {
     throw new VerifyInconclusive(
       `Run ${runId} is stored at version ${String(row['version'])}, above the written ` +
-        `${written.snapshot.record.version}: the write may have landed and been superseded.`,
+        `${version}: the write may have landed and been superseded.`,
     );
   }
   return false;
@@ -192,11 +210,10 @@ function notEligibleError(runId: string, stepName: string, eligible: string[]): 
 }
 
 /**
- * Core's run store on a SQLite home: create (unkeyed), get, list, update and claimStep (see the module
- * comment). It declares no `implements RunStore` yet: the interface requires `settleStep` (unit 13),
- * and the engine's admission refuses a store without it until then.
+ * Core's run store on a SQLite home: create, get, list, update, claimStep and settleStep (see the
+ * module comment). It implements core's `RunStore`; the optional `stampSeal` is unit 13b's.
  */
-export class SqliteRunStore {
+export class SqliteRunStore implements RunStore {
   /** Claims round-trip: the stored record is the record written, `claims` included. */
   readonly persistsClaims = true;
 
@@ -312,7 +329,7 @@ export class SqliteRunStore {
         };
         return { snapshot: writtenSnapshot(updated, at), text };
       },
-      (db, written) => verifyWritten(db, record.id, written),
+      (db, written) => verifyWritten(db, record.id, written.text, written.snapshot.record.version),
       { takesReading: false },
     );
     return written.snapshot;
@@ -365,10 +382,78 @@ export class SqliteRunStore {
         });
         return { snapshot: writtenSnapshot(claimed(run), at), text };
       },
-      (db, written) => verifyWritten(db, runId, written),
+      (db, written) => verifyWritten(db, runId, written.text, written.snapshot.record.version),
       { takesReading: false },
     );
     return written.snapshot;
+  }
+
+  /**
+   * Settles one change of run `runId` (core's {@link SettlementDelta}, all nine kinds), as the JSON
+   * store does, in ONE write transaction: the step's settlement, every guard it makes eligible
+   * (`cascadeGuards: true`, #616 comment 5954803518), its evidence and its phase. `seal_run` takes no
+   * definition; every other kind takes one.
+   *
+   * Before `BEGIN`: the delta is held to the store's limits ({@link assertRunRecordWithinLimits}), so
+   * a delta too large is refused with `STATE_STORE_LIMIT_EXCEEDED` before the write lock is taken. In
+   * the lock: the run is read (a missing run is core's `STATE_RUN_NOT_FOUND`, no reading spent); then
+   * the call's ONE reading, floored by the run's `updated_at` with the delta's event instants folded in
+   * (core's `foldReading`); then core's `applySettlement`, which mints every instant of its output from
+   * it. Not applied: `moved` (a stale `seal_run`) is thrown as core's version conflict; every other
+   * refusal or noop is returned with the run as read and the reading, and nothing is written. Applied:
+   * the seal boundary (`assertSealIntegrity`), then the transform's record with its phase derived and
+   * the version moved by one is written ({@link prepareSettlementWrite}, {@link writeRunUpdate}) and
+   * returned as the transform made it, with the reading. No `await` comes before the write.
+   */
+  settleStep(runId: string, delta: SealRunDelta): Promise<StoreSettlement>;
+  settleStep(
+    runId: string,
+    delta: Exclude<SettlementDelta, SealRunDelta>,
+    definition: WorkflowDefinition,
+  ): Promise<StoreSettlement>;
+  async settleStep(
+    runId: string,
+    delta: SettlementDelta,
+    definition?: WorkflowDefinition,
+  ): Promise<StoreSettlement> {
+    assertRunRecordWithinLimits(delta);
+    const settled = await this.#db.immediate(
+      (db): Settled => {
+        const fresh = readRunInTransaction(db, runId);
+        if (fresh === null) throw runNotFoundError(runId);
+        const at = foldReading(takeRawReading(this.clock), fresh, delta);
+        const outcome = applySettlement(fresh, delta, definition, {
+          at,
+          cascadeGuards: true,
+          storeKeepsClaims: this.persistsClaims,
+        });
+        if (!outcome.applied) {
+          if (outcome.reason === 'moved') {
+            throw versionConflictError(runId, outcome.expected!, outcome.stored!);
+          }
+          return { result: { ...outcome, at }, written: undefined };
+        }
+        assertSealIntegrity(fresh, outcome.run);
+        // The store does not set `updated_at`: the transform did, from `at`.
+        const updated: RunRecord = {
+          ...outcome.run,
+          run_phase: deriveRunPhase(outcome.run),
+          version: fresh.version + 1,
+        };
+        const { core, evidence } = prepareSettlementWrite(fresh, updated);
+        const text = writeRunUpdate(db, runId, core, evidence);
+        return {
+          result: { ...outcome, run: updated, at },
+          written: { text, version: updated.version },
+        };
+      },
+      // A settle that wrote nothing has nothing to land.
+      (db, settled) =>
+        settled.written === undefined ||
+        verifyWritten(db, runId, settled.written.text, settled.written.version),
+      { takesReading: false },
+    );
+    return settled.result;
   }
 
   /**
