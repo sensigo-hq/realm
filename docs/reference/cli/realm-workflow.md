@@ -2,18 +2,17 @@
 
 <!-- description: Reference for the realm workflow subcommands, which work on workflow files and registered workflows: their arguments, flags, output and exit codes. -->
 
-`realm workflow` has eight subcommands that work on workflow files and on the workflows registered in `~/.realm/workflows/`. This page gives the arguments, flags, output and exit code of each. Every output shown came from a run of the command.
+`realm workflow` has seven subcommands that work on workflow files and on the workflows registered in `~/.realm/workflows/`. This page gives the arguments, flags, output and exit code of each. Every output shown came from a run of the command.
 
-| Subcommand              | What it does                                                |
-| ----------------------- | ----------------------------------------------------------- |
-| [`init`](#init)         | Creates a folder with a starting workflow.                  |
-| [`validate`](#validate) | Checks a workflow file, or a registered copy.               |
-| [`register`](#register) | Checks a workflow file and stores it.                       |
-| [`watch`](#watch)       | Registers a workflow again each time its file changes.      |
-| [`list`](#list)         | Lists the registered workflows.                             |
-| [`run`](#run)           | Runs a workflow by hand in a terminal.                      |
-| [`test`](#test)         | Runs a workflow's fixture tests.                            |
-| [`migrate`](#migrate)   | Updates registered copies written by old versions of Realm. |
+| Subcommand              | What it does                                           |
+| ----------------------- | ------------------------------------------------------ |
+| [`init`](#init)         | Creates a folder with a starting workflow.             |
+| [`validate`](#validate) | Checks a workflow file, or a registered copy.          |
+| [`register`](#register) | Checks a workflow file and stores it.                  |
+| [`watch`](#watch)       | Registers a workflow again each time its file changes. |
+| [`list`](#list)         | Lists the registered workflows.                        |
+| [`run`](#run)           | Runs a workflow by hand in a terminal.                 |
+| [`test`](#test)         | Runs a workflow's fixture tests.                       |
 
 Wherever a subcommand takes a `<path>`, it is the folder that holds `workflow.yaml`, or the file itself.
 
@@ -472,20 +471,6 @@ Added after version 0.46.0, which prints the second and later lines at the start
 See [Test a workflow](../../guides/test-a-workflow.md).
 
 **Exit code:** 0 if every fixture passed; 1 if one failed, or if the folder does not exist: `Error: fixtures directory does not exist: invoice-check/fixtures`.
-
-## `migrate`
-
-```text
-realm workflow migrate
-```
-
-Adds the `origin` field to registered copies that were stored by a version of Realm older than the field. It prints what it did:
-
-```text
-Done. 0 migrated, 1 already up to date.
-```
-
-**Exit code:** 0.
 
 ## `--extensions-module`
 

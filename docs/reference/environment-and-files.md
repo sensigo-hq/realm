@@ -85,11 +85,11 @@ Two more kinds of entry exist only while a file is being written:
 | `runs/<file>.lock`               | A folder that marks the file as being written. It is removed when the write ends. |
 | `runs/<file>.<pid>.<random>.tmp` | The new contents of a file, before it replaces the old one.                       |
 
-A temp file left behind under `runs/` by a process that was killed is removed by [`realm run gc`](cli/realm-run-acting.md#gc). A `.lock` folder left behind is not removed by gc; the next write to that file takes it over once the folder is older than 10 seconds.
+A temp file or a `.lock` folder left behind under `runs/` by a process that was killed is not removed by Realm; the next write to that file takes the lock over once the folder is older than 10 seconds.
 
 On version 0.45.0 the temp file's name has a counter where the random part is: `runs/<file>.<pid>.<n>.tmp`.
 
-A workflow is registered the same way: while `workflows/<workflow-id>.json` is being written, `workflows/<workflow-id>.json.<pid>.<random>.tmp` holds the new contents. One left behind by a process that was killed is not removed by gc; delete it by hand when no `realm` command is running.
+A workflow is registered the same way: while `workflows/<workflow-id>.json` is being written, `workflows/<workflow-id>.json.<pid>.<random>.tmp` holds the new contents. One left behind by a process that was killed is not removed by Realm; delete it by hand when no `realm` command is running.
 
 ### The clock a run's times come from
 
@@ -101,10 +101,9 @@ The `realm` command and the `realm-mcp` server say once, on standard error, that
 
 ### Which commands remove files
 
-| Command           | Removes                                                                      |
-| ----------------- | ---------------------------------------------------------------------------- |
-| `realm run purge` | An ended run's record, refused answers, trace files and key file.            |
-| `realm run gc`    | Leftover `.tmp` files, and refused-answer and trace files whose run is gone. |
+| Command           | Removes                                                           |
+| ----------------- | ----------------------------------------------------------------- |
+| `realm run purge` | An ended run's record, refused answers, trace files and key file. |
 
 `realm listen` removes a `dedup` hour folder once it is older than the workflow's `ttl_minutes`. Nothing removes a registered workflow or a saved replay. Realm keeps runs until `realm run purge` removes them.
 
@@ -138,5 +137,5 @@ The paths under `~/.realm/runs` are those of the file store, which every `realm`
 
 - [Deployment manifest](deployment-manifest.md) covers `realm.yaml` and secrets.
 - [`realm mcp` and `realm serve`](cli/realm-mcp-and-serve.md), [`realm agent`](cli/realm-agent.md), [`realm listen`](cli/realm-listen.md)
-- [`realm run`: commands that act](cli/realm-run-acting.md) covers `purge` and `gc`.
+- [`realm run`: commands that act](cli/realm-run-acting.md) covers `purge`.
 - [Run record and export bundle format](run-record-and-export.md)

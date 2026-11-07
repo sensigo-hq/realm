@@ -2,21 +2,19 @@
 
 <!-- description: Reference for the realm run subcommands that change a run or the store: their arguments, flags, output and exit codes. -->
 
-`realm run` has seventeen subcommands. This page covers the eleven that change a run or the store. The six that only read are in [`realm run`: commands that read](realm-run-reading.md). Every output shown came from a run of the command.
+`realm run` has fifteen subcommands. This page covers the nine that change a run or the store. The six that only read are in [`realm run`: commands that read](realm-run-reading.md). Every output shown came from a run of the command.
 
-| Subcommand                | What it does                                                  | Acts when                   |
-| ------------------------- | ------------------------------------------------------------- | --------------------------- |
-| [`respond`](#respond)     | Answers a gate.                                               | Always                      |
-| [`advance`](#advance)     | Runs what a run owes the engine, with no model.               | Always                      |
-| [`resume`](#resume)       | Makes a failed step runnable again.                           | Always                      |
-| [`abandon`](#abandon)     | Ends an open run.                                             | Always                      |
-| [`cleanup`](#cleanup)     | Abandons every open run that has been idle for a given time.  | Unless `--dry-run` is given |
-| [`reclaim`](#reclaim)     | Frees a step that was started and never finished.             | Only with `--force`         |
-| [`drain`](#drain)         | Runs the cleanup steps a finished run still owes.             | Only with `--force`         |
-| [`purge`](#purge)         | Deletes finished runs.                                        | Only with `--force`         |
-| [`gc`](#gc)               | Deletes files that a crash left in the store.                 | Only with `--force`         |
-| [`reconcile`](#reconcile) | Rebuilds the index of idempotency keys.                       | Unless `--dry-run` is given |
-| [`migrate`](#migrate)     | Records the ending of runs that were written by old versions. | Only with `--force`         |
+| Subcommand            | What it does                                                  | Acts when                   |
+| --------------------- | ------------------------------------------------------------- | --------------------------- |
+| [`respond`](#respond) | Answers a gate.                                               | Always                      |
+| [`advance`](#advance) | Runs what a run owes the engine, with no model.               | Always                      |
+| [`resume`](#resume)   | Makes a failed step runnable again.                           | Always                      |
+| [`abandon`](#abandon) | Ends an open run.                                             | Always                      |
+| [`cleanup`](#cleanup) | Abandons every open run that has been idle for a given time.  | Unless `--dry-run` is given |
+| [`reclaim`](#reclaim) | Frees a step that was started and never finished.             | Only with `--force`         |
+| [`drain`](#drain)     | Runs the cleanup steps a finished run still owes.             | Only with `--force`         |
+| [`purge`](#purge)     | Deletes finished runs.                                        | Only with `--force`         |
+| [`migrate`](#migrate) | Records the ending of runs that were written by old versions. | Only with `--force`         |
 
 A duration is a whole number followed by `d`, `h` or `m`: `30d`, `6h`, `10m`. A run ID that is not in the store gets `Run not found: <id>` and exit code 1. A run ID whose file cannot be read as a run (empty, not JSON, not a run record, holding another run, in the format of an earlier Realm, or not readable) gets a message naming the file, what is wrong with it and the way out, and exit code 1 (added after version 0.47.0); `purge <id> --force` then deletes nothing, as before.
 
@@ -671,100 +669,6 @@ Provide a <run-id> to purge, or use --older-than for batch mode.
 Cannot combine a <run-id> with --older-than. Use one or the other.
 Refusing to purge 'f78b61ba-3464-4802-8bc0-03fcaaeebb8d': not terminal (phase: 'gate_waiting').
 ```
-
-## `gc`
-
-```text
-realm run gc --older-than <duration> [--heal] [--force]
-realm run gc --heal [--force]
-```
-
-Removes two kinds of file that a crash can leave in `~/.realm/runs/`: temporary files from a write that was cut off, and trace entries whose run no longer exists. With `--heal`, it also corrects run records whose stored phase differs from the phase their contents give.
-
-| Flag                      | What it does                                                                                                      |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `--older-than <duration>` | Only files at least this old. The least it accepts is `1h`. Required unless `--heal` is the only thing asked for. |
-| `--force`                 | Deletes and rewrites. Without it, `gc` lists what it would do.                                                    |
-| `--heal`                  | Also corrects stored phases. No age limit applies to this part.                                                   |
-
-```bash
-realm run gc --older-than 1d
-```
-
-```text
-1 orphaned .tmp file(s) WOULD be reaped (2.4 KB to free):
-  • ~/.realm/runs/08c61d5d-8db8-4556-87e4-0ba4cc76dc6c.json.4242.9f3c2a1b.tmp
-
-Re-run with --force to actually delete.
-
-1 run-less orphaned artifact(s) WOULD be reaped:
-  • ~/.realm/runs/trace-buffer-fbe2f08b-b5e2-435b-ac41-77b0be623b33-d29yaw.jsonl  (run fbe2f08b-b5e2-435b-ac41-77b0be623b33)
-Re-run with --force to actually delete.
-
-gc does NOT yet reap orphaned .lock dirs (deferred — issue #164). Their presence in runsDir is expected and not a sign gc is broken.
-```
-
-On version 0.45.0 the part after the process id is a counter instead of 8 random characters: `….json.4242.1.tmp`. gc removes both forms.
-
-With `--force`:
-
-```text
-Reaped 1 orphaned .tmp file(s) (2.4 KB freed). 0 already gone, 0 failed.
-
-Reaped 1 run-less orphaned artifact(s). 0 already gone, 0 failed.
-  • ~/.realm/runs/trace-buffer-fbe2f08b-b5e2-435b-ac41-77b0be623b33-d29yaw.jsonl  (run fbe2f08b-b5e2-435b-ac41-77b0be623b33)
-```
-
-Both forms end with the same note about lock folders. On a store with nothing to remove:
-
-```text
-No orphaned .tmp files found to reap.
-
-No run-less orphaned WAL/sidecar artifacts found to reap.
-
-gc does NOT yet reap orphaned .lock dirs (deferred — issue #164). Their presence in runsDir is expected and not a sign gc is broken.
-```
-
-With `--heal`, on a store with nothing to correct:
-
-```text
-No stale-phase records found to heal.
-```
-
-Correcting a record sets its time of last change to now. `realm run purge --older-than` and `realm run cleanup --older-than` read that time.
-
-**Exit code:** 0. 1 if a file could not be read or deleted (with `--heal`, a run file that cannot be read as a run, except a copy of a run whose own file reads: one error names every such file and what is wrong with it, nothing is healed, and it says to run the same command, flags included, again; added after version 0.47.0, which failed on a file that was not JSON with the parser's message, naming no file, and on a file it could not read with the system's error, which named the file), or for:
-
-```text
---older-than must be at least 1h (got '30m'). gc refuses to reap crash residue younger than that, even with --force.
-```
-
-## `reconcile`
-
-```text
-realm run reconcile [--workflow <id>] [--dry-run]
-```
-
-Realm keeps one small file for each idempotency key, in `~/.realm/runs/keys/`, that names the run holding the key. `reconcile` writes any of these files that is missing or out of date, from the runs themselves.
-
-| Flag              | What it does                                      |
-| ----------------- | ------------------------------------------------- |
-| `--workflow <id>` | Only runs of this workflow.                       |
-| `--dry-run`       | Reports what would be written and writes nothing. |
-
-`--workflow` refuses a value that starts with `-`, except a lone `-`; write `--option=value` for one.
-
-```bash
-realm run reconcile --dry-run
-```
-
-```text
-Would write 1 pointer(s) across 1 key group(s); 0 already current.
-```
-
-Without `--dry-run`, the line starts with `Wrote`. Run again, it prints `Wrote 0 pointer(s) across 1 key group(s); 1 already current.` A key group is one key of one workflow. See [Idempotency and batches](../../guides/idempotency-and-batches.md) for a store where two runs hold one key.
-
-**Exit code:** 0. 1 when a run file cannot be read as a run, except a copy of a run whose own file reads (one error names every such file, or with `--workflow` every such file that can concern that workflow, and what is wrong with it, and says to run the same command, flags included, again; nothing is written; added after version 0.47.0), or when the store fails. Up to version 0.47.0 this page said 0 for every case; a failure exited 1 then too.
 
 ## `migrate`
 
