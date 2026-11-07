@@ -22,6 +22,7 @@ import {
   WorkflowError,
   type Clock,
   type CreateRunOptions,
+  type EvidenceSnapshot,
   type ExtensionIdentityEntry,
   type Snapshot,
 } from '@sensigo/realm';
@@ -492,7 +493,20 @@ describe('#616 unit 12a — create, get and list', () => {
     const broken = {
       ...good.record,
       id: 'broken-run',
-      evidence: [0, 1, 2].map((n) => ({ step: 's', n })),
+      evidence: [0, 1, 2].map((n): EvidenceSnapshot => ({
+        step_id: `step_${n}`,
+        started_at: '2030-05-06T07:08:09.000Z',
+        completed_at: '2030-05-06T07:08:10.000Z',
+        duration_ms: 1000,
+        input_summary: { n },
+        output_summary: {},
+        status: 'success',
+        evidence_hash: 'ab'.repeat(32),
+        diagnostics: { input_token_estimate: 1, precondition_trace: [] },
+        resolved_params: {},
+        effective_timeout_seconds: 300,
+        attempt: 1,
+      })),
     };
     hostile.exec('BEGIN IMMEDIATE');
     insertRunRecord(hostile, broken);
