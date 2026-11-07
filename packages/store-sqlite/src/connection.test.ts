@@ -686,6 +686,29 @@ describe('#616 unit 8 — the write path', () => {
     expect(typeof calls).toBe('function');
   });
 
+  it("check 10 (#616 unit 14): snapshot's `{ takesReading: false }` form passes its body no reading and keeps the body's result type", () => {
+    const calls = (db: RealmDb): void => {
+      // (1) red as a compile error in typecheck:tests (an unused @ts-expect-error) when the form
+      //     that takes no reading passes its body one again, or accepts a promise. (2) the
+      //     compiler prints the file and line.
+      // @ts-expect-error — a body that takes a reading, in the form that takes none
+      void db.snapshot((_d, r: Date) => r.toISOString(), { takesReading: false });
+      // @ts-expect-error — an async body in snapshot, opted out of the reading
+      void db.snapshot(async (d) => d.prepare('SELECT x FROM t').get(), { takesReading: false });
+
+      // (1) red as a compile error when the form does not compile (no such overload) or its result
+      //     type is not its body's. (2) the compiler prints the file, the line and both types.
+      resultOf(
+        db.snapshot((d) => d.prepare('SELECT x FROM t').all().length, { takesReading: false }),
+      ).is<Promise<number>>(true);
+      resultOf(db.snapshot(() => ({ bytes: 0 }), { takesReading: false })).is<
+        Promise<{ bytes: number }>
+      >(true);
+    };
+    // The run-time part only shows the function compiled into the suite.
+    expect(typeof calls).toBe('function');
+  });
+
   it('correction check 2: five calls queued behind an outside writer are all refused when the budget runs out, in call order, each after the first with one attempt, nothing written', async () => {
     const file = freshFile();
     const holder = connect(file);

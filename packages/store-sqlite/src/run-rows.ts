@@ -28,6 +28,11 @@
 // A key's holder (unit 15a): `keyHashOf` is the one function that hashes an idempotency key, for the
 // insert and the lookup alike, and `findKeyHolder` derives which of a key's runs holds it from the
 // runs' own rows, in the caller's transaction (no key table, no pointer).
+//
+// A run's deletion (unit 14): `storedBytesOfRun` measures what the store keeps of a run, for the
+// stat and the delete alike, and `deleteRunRows` deletes a run's rows in the caller's `BEGIN
+// IMMEDIATE`, stamped with the caller's instant through `write_clock`, which the schema's tombstone
+// trigger reads.
 import { createHash } from 'node:crypto';
 import {
   deriveRunPhase,
@@ -504,4 +509,46 @@ export function readRunInTransaction(db: DatabaseLike, runId: string): RunRecord
   const run = core as unknown as RunRecord;
   run.run_phase = deriveRunPhase(run);
   return run;
+}
+
+const STORED_BYTES = `SELECT
+  (SELECT COALESCE(SUM(octet_length(record)), 0) FROM runs WHERE id = ?)
+  + (SELECT COALESCE(SUM(octet_length(entry)), 0) FROM evidence WHERE run_id = ?)
+  + (SELECT COALESCE(SUM(octet_length(value)), 0) FROM run_blobs WHERE run_id = ?) AS bytes`;
+
+/**
+ * What the store keeps of run `runId`, in bytes (unit 14; MA 2's D2): the UTF-8 bytes (`octet_length`)
+ * of its `runs` record, of each of its `evidence` entries and of each of its `run_blobs` values, in ONE
+ * SQL expression, in the caller's transaction; `0` for an id with no rows. Hashes, names and index
+ * bytes are not counted: core's `PerRunArtifactStore` lets the store define the figure, and it is a
+ * floor. The stat and the delete both call it, so the preview equals the receipt (the interface's L6).
+ */
+export function storedBytesOfRun(db: DatabaseLike, runId: string): number {
+  const row = db.prepare(STORED_BYTES).get(runId, runId, runId);
+  return Number(row?.['bytes'] ?? 0);
+}
+
+const SET_WRITE_CLOCK =
+  'INSERT INTO write_clock (one, at) VALUES (1, ?) ON CONFLICT(one) DO UPDATE SET at = excluded.at';
+const DELETE_RUN = 'DELETE FROM runs WHERE id = ?';
+const DELETE_EVIDENCE = 'DELETE FROM evidence WHERE run_id = ?';
+const DELETE_BLOBS = 'DELETE FROM run_blobs WHERE run_id = ?';
+const CLEAR_WRITE_CLOCK = 'UPDATE write_clock SET at = NULL';
+
+/**
+ * Deletes the stored run `runId` inside the caller's `BEGIN IMMEDIATE`, stamped `at` (the caller's
+ * one reading, as ISO text): `write_clock` is set to `at`; the `runs` row is deleted, so the schema's
+ * tombstone trigger writes `purged_ids` and `purged_runs` stamped from `write_clock`; then its
+ * `evidence` and `run_blobs` rows (their guards refuse while the run row exists, so the run row goes
+ * first); then `write_clock` is set back to NULL, so no later write by another connection is stamped
+ * `at`. Only these four tables: the other stores' rows of the run are their own stores' to delete. The
+ * caller has read the run and judged it deletable. Synchronous; reads no clock; throws what SQLite and
+ * the file's guards throw, unmapped.
+ */
+export function deleteRunRows(db: DatabaseLike, runId: string, at: string): void {
+  db.prepare(SET_WRITE_CLOCK).run(at);
+  db.prepare(DELETE_RUN).run(runId);
+  db.prepare(DELETE_EVIDENCE).run(runId);
+  db.prepare(DELETE_BLOBS).run(runId);
+  db.prepare(CLEAR_WRITE_CLOCK).run();
 }

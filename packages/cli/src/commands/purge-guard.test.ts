@@ -95,9 +95,10 @@ const WIRED_ORDER = ['JsonTraceBufferStore', 'JsonFileFailedAttemptStore'];
 const ANCHOR = 'JsonFileStore';
 const EXCLUDED: Record<string, string> = {
   InMemoryTraceBufferStore: 'test-only in-memory store — never purged (no on-disk artifacts)',
-  // issue #616 PR-1b B7 and B4 (SEAMS point 8): the SQLite stores' per-run deletes exist before
-  // purge uses them.
+  // issue #616 PR-1b B7 and B4, and PR-1a unit 14 (SEAMS point 8): the SQLite stores' per-run
+  // deletes exist before purge uses them.
   SqliteFailedAttemptStore: 'not wired into purge until PR-2c',
+  SqliteRunStore: 'not wired into purge until PR-2c',
   SqliteTraceBufferStore: 'not wired into purge until PR-2c',
 };
 
