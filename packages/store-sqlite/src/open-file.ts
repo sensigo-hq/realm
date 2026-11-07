@@ -16,7 +16,9 @@
 //      (application id 0, user_version 0, no schema object) is set up (below) and then checked like
 //      any other. Otherwise, in this order: the application id; the version (lower: older, higher:
 //      newer); ONLY at an equal version the stored schema, in a read transaction (so a file one
-//      release behind reads as older, never as tampered), and only when it matches, the meta row (a
+//      release behind reads as older, never as tampered) — or, for the maintenance entry's older
+//      file (`acceptOlderSchema`, unit c6), against that older version's own schema when this Realm
+//      holds it — and only when it matches, the meta row (a
 //      dropped or renamed meta table is tampering, not a missing row); then the journal mode,
 //      `auto_vacuum` and the page size the file recorded, every difference named at once. A file
 //      that is not SQLite or is damaged is refused too. A refused file is never changed or replaced;
@@ -67,6 +69,13 @@ export interface OpenOptions {
   readonly clock: Clock;
   /** How long a call waits for a busy store, in milliseconds; the class's default if left out. */
   readonly budgetMs?: number;
+  /**
+   * The maintenance entry's parameter (`maintenance.ts`; DELTAS 41 (2)): a file at a schema version
+   * BELOW this Realm's passes the version rule when this Realm holds that version's schema, and its
+   * stored schema is compared with that version's. A version below the oldest held, and a newer one,
+   * stay refused. Every other open leaves it out and refuses an older file.
+   */
+  readonly acceptOlderSchema?: true;
 }
 
 /**
@@ -299,6 +308,8 @@ async function checkFile(
   path: string,
   realm: number,
   schema: readonly string[],
+  versions: StoreSchemaVersions,
+  acceptOlderSchema: boolean,
 ): Promise<'uninitialised' | 'ready'> {
   try {
     const header = await db.autocommit((c) => readHeader(c));
@@ -308,12 +319,22 @@ async function checkFile(
         `its application id is ${header.applicationId}, not Realm's ${REALM_STORE_APPLICATION_ID}`,
       ]);
     }
-    if (header.version < realm) throw versionOlder(header.version, realm);
+    // The version whose schema the file is held to: this Realm's, or, for the maintenance entry
+    // (DELTAS 41 (2)), an older file's own, when this Realm holds that version's schema.
+    let version = realm;
+    let expected = schema;
+    if (header.version < realm) {
+      const older = acceptOlderSchema ? versions.get(header.version)?.schema : undefined;
+      if (older === undefined) throw versionOlder(header.version, realm);
+      version = header.version;
+      expected = older;
+    }
     if (header.version > realm) throw versionNewerError(header.version, realm);
     // The meta row is read only when the schema matches: a dropped or renamed meta table (or its
-    // `page_size` column) is then reported as the tampering it is, never as SQLite's own error.
+    // `page_size` column) is then reported as the tampering it is, never as SQLite's own error. Every
+    // version's schema holds version 1's, so the meta row and the settings are judged alike for each.
     const stored = await db.snapshot((c) => {
-      const difference = storedSchemaDifference(c, schema);
+      const difference = storedSchemaDifference(c, expected);
       const { missing, extra, changed } = difference;
       const tampered = missing.length + extra.length + changed.length > 0;
       const recorded = tampered
@@ -321,7 +342,7 @@ async function checkFile(
         : c.prepare('SELECT page_size FROM store_meta WHERE one = 1').get()?.['page_size'];
       return { difference, tampered, recorded };
     });
-    if (stored.tampered) throw schemaTampered(path, realm, stored.difference);
+    if (stored.tampered) throw schemaTampered(path, version, stored.difference);
     if (stored.recorded === undefined) throw settingsRefused(path, ['its meta row is missing']);
     const differences = settingsDifferences(header, Number(stored.recorded));
     if (differences.length > 0) throw settingsRefused(path, differences);
@@ -424,7 +445,9 @@ export async function openRealmDb(
   assertWritable(path);
 
   const realm = seams.schemaVersion ?? REALM_STORE_SCHEMA_VERSION;
-  const schema = (seams.versions ?? REALM_STORE_VERSIONS).get(realm)?.schema;
+  const versions = seams.versions ?? REALM_STORE_VERSIONS;
+  const schema = versions.get(realm)?.schema;
+  const older = options.acceptOlderSchema === true;
   if (schema === undefined) {
     throw new Error(
       `Schema version ${realm} is not one this Realm knows: the open has no schema for it.`,
@@ -449,9 +472,9 @@ export async function openRealmDb(
     ...(options.budgetMs === undefined ? {} : { budgetMs: options.budgetMs }),
   });
   try {
-    if ((await checkFile(db, path, realm, schema)) === 'uninitialised') {
+    if ((await checkFile(db, path, realm, schema, versions, older)) === 'uninitialised') {
       await setUp(db, path, realm, schema);
-      if ((await checkFile(db, path, realm, schema)) !== 'ready') {
+      if ((await checkFile(db, path, realm, schema, versions, older)) !== 'ready') {
         throw new Error(
           `The store file ${path} is still uninitialised after its setup. This is a bug in the store.`,
         );

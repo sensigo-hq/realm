@@ -109,6 +109,11 @@ export type ErrorCode =
   | 'STATE_STORE_READONLY'
   | 'STATE_STORE_WRITES_FENCED'
   | 'STATE_STORE_LIMIT_EXCEEDED'
+  // issue #616 PR-2c c6: `realm db backup` refused (a target inside the home or where anything
+  // exists, or one that cannot be created; a home with no store file, or an empty one), and a copy
+  // that fails SQLite's quick check (the copy kept, the source named as possibly damaged).
+  | 'STATE_STORE_BACKUP_REFUSED'
+  | 'STATE_STORE_BACKUP_UNVERIFIED'
   | 'STATE_HOME_HOLDS_LEGACY_STORE'
   | 'STATE_RUN_PURGED'
   | 'STATE_RUN_TIMESTAMP_INVALID'
