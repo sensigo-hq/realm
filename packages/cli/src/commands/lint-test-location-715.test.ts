@@ -136,6 +136,11 @@ const ALLOWED: ReadonlyArray<readonly [string | RegExp, string]> = [
     "the notice that a test location's clock is read",
   ],
   [/^packages\/testing\/src\//, 'the testing package: it makes test locations'],
+  // #616 PR-1a unit 11: the one call site of `resolveRootClock` outside core.
+  [
+    'packages/store-sqlite/src/open-realm-home.ts',
+    "the SQLite home's open reads its home's clock file through `resolveRootClock`",
+  ],
 ];
 
 const isAllowed = (path: string): boolean =>
@@ -270,5 +275,34 @@ describe('#616 PR-1a unit 2 — the root clock-file reader is kept out of produc
     //     removed from NEEDLES), or when the allowed set loses the file that defines it.
     // (2) Prints: the names of the files it found (never their text).
     expect(violations(seeded)).toEqual(['packages/store-sqlite/src/zz-seed-root-clock.ts']);
+  });
+
+  it("#616 unit 11: the SQLite home's open may import resolveRootClock and no other test-clock helper; the package's other files may not", async () => {
+    const OPEN = 'packages/store-sqlite/src/open-realm-home.ts';
+    const OTHER = 'packages/store-sqlite/src/zz-lint-probe.ts';
+    const rootClock =
+      "import { resolveRootClock } from '@sensigo/realm';\nexport const f = resolveRootClock;\n";
+    const count = async (path: string, code: string): Promise<number> =>
+      (await hits(path, code)).filter((m) => m.includes('#715, D6-52')).length;
+    const at = {
+      openRootClock: await count(OPEN, rootClock),
+      openFileClock: await count(OPEN, SOURCES.fileClock),
+      openMarks: await count(OPEN, SOURCES.markTestClock),
+      openZod: (await hits(OPEN, ZOD)).filter((m) => m.includes('GHSA-mrhx-c7xc-m3w5')).length,
+      otherRootClock: await count(OTHER, rootClock),
+    };
+    // (1) Can it fail: red when the exception is widened (the block's `files` set to the package's
+    //     whole `src`: otherRootClock 0), when it lets the open import every test-clock helper (the
+    //     block re-stating ZOD_V3_RESTRICTIONS alone, as the testing package's does: openFileClock and
+    //     openMarks 0), or when it drops the zod restriction (openZod 0); and when the exception is
+    //     missing (openRootClock 1).
+    // (2) Prints: the hit counts per import and path (the rule's message only, never a file).
+    expect(at).toEqual({
+      openRootClock: 0,
+      openFileClock: 1,
+      openMarks: 1,
+      openZod: 1,
+      otherRootClock: 1,
+    });
   });
 });

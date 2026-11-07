@@ -96,3 +96,65 @@ jobs:
       - run: npm ci
       # `npm run test` builds the four packages first (turbo.json), so no separate build step.
       - run: npm run test
+
+  # issue #616 PR-1a unit 11 — the SQLite store's floors, each in a job of its own (not a matrix entry
+  # of `ci`, whose name the main branch's rules require). None of these jobs is a required check:
+  # read them on every pull request that touches the store.
+  #
+  # Node 24.15.0 is the first Node 24 that bundles SQLite 3.51.3, the release that fixes SQLite's
+  # WAL-reset bug, and so the store's floor on the 24 line. The whole suite runs on it, as `node22`
+  # runs it on 22.22.3, the floor on the 22 line.
+  node24-floor:
+    runs-on: ubuntu-latest
+    env:
+      TURBO_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.15.0'
+          cache: 'npm'
+      - run: npm ci
+      # `npm run test` builds the five packages first (turbo.json), so no separate build step.
+      - run: npm run test
+
+  # Below the floor: Node 22.22.2 and 24.14.1, the releases just before each floor, bundle SQLite
+  # 3.51.2, which has the WAL-reset bug. The store must refuse to open there. The check asserts that
+  # this Node reports a SQLite below 3.51.3, and that `openRealmHome` refuses with
+  # STATE_STORE_DRIVER_UNAVAILABLE, naming that version, without making the home
+  # (packages/store-sqlite/ci/below-floor.mjs).
+  sqlite-below-floor:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['22.22.2', '24.14.1']
+    env:
+      TURBO_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+      - run: npm ci
+      # The store package and core, which it imports.
+      - run: npx turbo run build --filter=@sensigo/realm-store-sqlite
+      - run: node packages/store-sqlite/ci/below-floor.mjs
+
+  # macOS: only the store package's tests, on a real runner (its mount table, `fullfsync`, the
+  # filesystem gate), on Node 24.15.0, the Node the owner's Mac runs. The wider suite has never run
+  # on macOS; this job does not take it on.
+  store-sqlite-macos:
+    runs-on: macos-latest
+    env:
+      TURBO_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.15.0'
+          cache: 'npm'
+      - run: npm ci
+      # The test task builds the five packages first (turbo.json), then runs this package's tests.
+      - run: npx turbo run test --filter=@sensigo/realm-store-sqlite

@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { JsonFileStore } from './json-file-store.js';
 import {
   TEST_CLOCK_FILE_NAME,
+  resolveRootClock,
   resolveStoreClock,
   testClockFilePath,
   writeTestClockFile,
@@ -204,4 +205,47 @@ describe('#715 (a) correction 1 (C-10) — a folder or a clock file this user ca
       }
     },
   );
+});
+
+// #616 PR-1a unit 11 (MA 3's ruling on IA 5's third question, SEAMS "unit 11"): a root that is a
+// regular file, or a folder under one, holds no clock file. Reading `<file>/.realm-test-clock` fails
+// `ENOTDIR`; the reader answers "absent", so the store's own open refuses that root with its own typed
+// line, not with the clock file's two remedies (which would both be false). A clock file that exists
+// but cannot be read is still refused with them.
+describe('#616 unit 11 — a path through a regular file holds no clock file', () => {
+  it('a root that is a regular file, and a root under one, resolve to the system clock', async () => {
+    const { root } = await freshRoot();
+    const file = join(root, 'realm-home-file');
+    await writeFile(file, 'not a folder\n');
+    const outcome = (at: string): string => {
+      try {
+        return resolveRootClock(at) === systemClock ? 'the system clock' : 'another clock';
+      } catch (err) {
+        return String((err as Error).message).replaceAll(root, '<dir>');
+      }
+    };
+    // (a) red when only ENOENT counts as absent (each answers "cannot be read (ENOTDIR)" with its
+    //     two remedies); (b) prints each root's outcome, paths shown under <dir>.
+    expect({ isAFile: outcome(file), underAFile: outcome(join(file, '.realm')) }).toEqual({
+      isAFile: 'the system clock',
+      underAFile: 'the system clock',
+    });
+  });
+
+  it('a clock file that is a folder is still refused, naming the two ways out', async () => {
+    const { root } = await freshRoot();
+    await mkdir(join(root, TEST_CLOCK_FILE_NAME));
+    let message = 'the system clock';
+    try {
+      resolveRootClock(root);
+    } catch (err) {
+      message = String((err as Error).message).replaceAll(root, '<dir>');
+    }
+    // (a) red when the reader treats every read error as absent, or more than a path through a
+    //     file (EISDIR too): the root then opens on the system clock; (b) prints the refusal, paths
+    //     shown under <dir>.
+    expect(message).toBe(
+      'The test clock file <dir>/.realm-test-clock cannot be read (EISDIR). To use this folder as an ordinary store, delete its clock file (<dir>/.realm-test-clock); to keep it as a test location, give this user read access to the file.',
+    );
+  });
 });
