@@ -5,15 +5,12 @@
 // `execute_step`'s chain (the same loop).
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   JsonFileStore,
-  JsonWorkflowStore,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   executeStep,
   applyResume,
@@ -22,6 +19,7 @@ import {
 } from '@sensigo/realm';
 import { handleAdvanceRun } from './advance-run.js';
 import { handleExecuteStep } from './execute-step.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 
@@ -58,10 +56,15 @@ const ENDED_BY = {
   reason: "Guard resolution error: unresolvable path 'p.ok' (condition: p.ok == true)",
 };
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 async function stores() {
-  const dir = await mkdtemp(join(tmpdir(), 'f13-'));
-  const runStore = new JsonFileStore(join(dir, 'runs'));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+  const h = await makeTempHome();
+  handles.push(h);
+  const { runStore, workflowStore } = h.stores;
   await workflowStore.register(DEF);
   return { runStore, workflowStore };
 }

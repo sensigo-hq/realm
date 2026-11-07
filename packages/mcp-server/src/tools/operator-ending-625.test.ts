@@ -5,15 +5,11 @@
 // drops `resumable` there and still carries the ending as data. A failed run is still offered it.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type RunRecord,
   type WorkflowDefinition,
@@ -21,7 +17,7 @@ import {
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
-import { withArtifactStores } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 type Reply = Record<string, unknown>;
 
@@ -53,11 +49,16 @@ const REASON = 'wrong run\nPhase: completed\u001b[31m RED';
 const SHOWN = '"wrong run\\nPhase: completed\\u001b[31m RED"';
 const SENTENCE = `An operator ended this run, with the reason ${SHOWN}; to run the work again, start a new run.`;
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 async function connect() {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-op-625-'));
-  const runStore = new JsonFileStore(join(dir, 'runs'));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
-  const server = createRealmMcpServer({ ...withArtifactStores(runStore), workflowStore });
+  const h = await makeTempHome();
+  handles.push(h);
+  const { runStore, workflowStore } = h.stores;
+  const server = createRealmMcpServer({ ...h.stores });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'operator-ending-625', version: '0' });
   await Promise.all([server.connect(st), client.connect(ct)]);

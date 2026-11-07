@@ -13,8 +13,6 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   ExtensionRegistry,
   advanceRun,
@@ -30,7 +28,7 @@ import { createRealmMcpServer } from '../server.js';
 import { renderReply } from '../render-reply.js';
 import { zOf } from '../test-support/instant.js';
 import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
-import { withArtifactStores } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 // #715 (b) 04 §D (B4): no cell here waits on the real clock for a question to expire. The run store a
 // cell opens sits at a TEST LOCATION (`located`), and `passes(ms)` moves the clock of every location
@@ -81,13 +79,19 @@ function claim(
 
 type Reply = Record<string, unknown> & { _isError?: boolean; _text?: string };
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 async function connect(registry?: ExtensionRegistry) {
   const dir = await mkdtemp(join(tmpdir(), 'realm-docs-625-'));
-  const runStore = new JsonFileStore(await located(dir));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+  await located(dir);
+  const h = await makeTempHome({ home: dir });
+  handles.push(h);
+  const { runStore, workflowStore } = h.stores;
   const server = createRealmMcpServer({
-    ...withArtifactStores(runStore),
-    workflowStore,
+    ...h.stores,
     ...(registry !== undefined ? { registry } : {}),
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();
@@ -825,11 +829,9 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
       'core-library.md',
       '`createRealmMcpServer` returns the MCP server that `realm mcp` runs, with 11 tools, 10 under `withheld`',
     );
-    const dir = await mkdtemp(join(tmpdir(), 'realm-docs-625-'));
-    const server = createRealmMcpServer({
-      ...withArtifactStores(new JsonFileStore(join(dir, 'runs'))),
-      workflowStore: new JsonWorkflowStore(join(dir, 'wf')),
-    });
+    const h = await makeTempHome();
+    handles.push(h);
+    const server = createRealmMcpServer({ ...h.stores });
     const [ct, st] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: 'docs-claims-625', version: '0' });
     await Promise.all([server.connect(st), client.connect(ct)]);
@@ -928,8 +930,8 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
     const protocol = await call('get_workflow_protocol', { workflow_id: 'nope' });
     expect([protocol._text, protocol._isError]).toEqual(['Error: Workflow not found: nope', true]);
     // The registry directory itself cannot be read: here it is a file.
-    rmSync(join(dir, 'wf'), { recursive: true, force: true });
-    writeFileSync(join(dir, 'wf'), 'not a directory');
+    rmSync(join(dir, 'workflows'), { recursive: true, force: true });
+    writeFileSync(join(dir, 'workflows'), 'not a directory');
     const listed = await call('list_workflows', {});
     // (a) red when list_workflows' refusal gains or loses a field; (b) prints its keys.
     expect(listed['status']).toBe('error');
@@ -989,14 +991,14 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
       'mcp/tools.md',
       'An answer the tool refuses before the engine reads the run says `submit_human_response`: a run ID that does not exist (`STATE_RUN_NOT_FOUND`), or a run or workflow that cannot be read.',
     );
-    const { call, dir, runStore } = await connect();
+    const { call, runStore } = await connect();
     const missing = await call('submit_human_response', {
       run_id: 'nope',
       gate_id: 'g',
       choice: 'x',
     });
-    mkdirSync(join(dir, 'runs'), { recursive: true });
-    writeFileSync(join(dir, 'runs', 'broken.json'), '{not json');
+    mkdirSync(runStore.runsDirPath, { recursive: true });
+    writeFileSync(join(runStore.runsDirPath, 'broken.json'), '{not json');
     const unreadable = await call('submit_human_response', {
       run_id: 'broken',
       gate_id: 'g',
@@ -2524,9 +2526,9 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
         'The message names the file and its way out, and never quotes the file.',
       );
       claim('mcp/tools.md', UNTYPED_MCP);
-      const { call, dir, runStore } = await connect();
-      mkdirSync(join(dir, 'runs'), { recursive: true });
-      writeFileSync(join(dir, 'runs', 'broken.json'), '{not json');
+      const { call, runStore } = await connect();
+      mkdirSync(runStore.runsDirPath, { recursive: true });
+      writeFileSync(join(runStore.runsDirPath, 'broken.json'), '{not json');
       const r = await call(tool, { run_id: 'broken', ...args });
       // (a) red when the tool answers ENGINE_INTERNAL or the parser's text again, or drops the
       //     file; (b) prints it.
@@ -2559,9 +2561,9 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
         'mcp/tools.md',
         '`append_trace` refuses it with `ENGINE_INTERNAL`, and `abandon_run` with no code',
       );
-      const { call, dir, runStore } = await connect();
-      mkdirSync(join(dir, 'runs'), { recursive: true });
-      writeFileSync(join(dir, 'runs', 'broken.json'), '{not json');
+      const { call, runStore } = await connect();
+      mkdirSync(runStore.runsDirPath, { recursive: true });
+      writeFileSync(join(runStore.runsDirPath, 'broken.json'), '{not json');
       const r = await call(tool, { run_id: 'broken', ...args });
       // (a) red when the damaged file loses its code, or the untyped failure gains one; (b)
       //     prints the replies.
@@ -2947,7 +2949,9 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
     });
     // When the store gave no token: the opening reply's answer way carries no proof, and the one
     // renderer leaves out both the field and the sentence.
-    const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-docs-c2-')));
+    const h = await makeTempHome();
+    handles.push(h);
+    const store = h.stores.runStore;
     const def = loadWorkflowFromString(TRIAGE);
     const { record: run } = await store.create({
       workflowId: 'triage',
@@ -3089,12 +3093,11 @@ describe('#625 PR-2a, round 28 — C205: the replies on the states C202 did not 
     return registry;
   };
   async function connectWith(registry: ExtensionRegistry) {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-docs-625-c205-'));
-    const runStore = new JsonFileStore(join(dir, 'runs'));
-    const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    const h = await makeTempHome();
+    handles.push(h);
+    const { runStore, workflowStore } = h.stores;
     const server = createRealmMcpServer({
-      ...withArtifactStores(runStore),
-      workflowStore,
+      ...h.stores,
       registry,
     });
     const [ct, st] = InMemoryTransport.createLinkedPair();
@@ -3297,12 +3300,11 @@ describe("#625 PR-2a, round 30 — C211 (the architect's addendum; walk c14 W2-2
       },
     });
     registry.register('handler', 'quick', { id: 'quick', execute: async () => ({ data: {} }) });
-    const dir = await mkdtemp(join(tmpdir(), 'realm-docs-625-c211-'));
-    const runStore = new JsonFileStore(join(dir, 'runs'));
-    const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    const h = await makeTempHome();
+    handles.push(h);
+    const { runStore, workflowStore } = h.stores;
     const server = createRealmMcpServer({
-      ...withArtifactStores(runStore),
-      workflowStore,
+      ...h.stores,
       registry,
     });
     const [ct, st] = InMemoryTransport.createLinkedPair();

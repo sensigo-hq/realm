@@ -4,22 +4,18 @@
 // plain-text refusal carries none. Every value is fake. Each assertion names (a) the change that
 // turns it red and (b) what it prints: tool names, key names and booleans.
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
-  JsonFileStore,
-  JsonWorkflowStore,
   buildDisclosureSet,
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from './server.js';
-import { withArtifactStores, type ServerExtras } from './test-support/temp-home.js';
+import { makeTempHome, type ServerExtras, type TempHome } from './test-support/temp-home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const TOOLS_PAGE = 'docs/reference/mcp/tools.md';
@@ -43,13 +39,18 @@ const FLOW: WorkflowDefinition = {
   steps: { a: { description: 'A.', execution: 'agent', depends_on: [] } },
 };
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 async function connect(extra: ServerExtras = {}) {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-docs-mcp-729-'));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+  const h = await makeTempHome();
+  handles.push(h);
+  const workflowStore = h.stores.workflowStore;
   await workflowStore.register(FLOW);
   const server = createRealmMcpServer({
-    ...withArtifactStores(new JsonFileStore(join(dir, 'runs'))),
-    workflowStore,
+    ...h.stores,
     ...extra,
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();
@@ -258,13 +259,13 @@ describe('#729 PR-3 correction 1 — whose standing a reply reports (F11, D-11),
       "A function given the workflow a reply is about (or `undefined`) and, when the call names a run, that run; it returns the set the reply is masked with: `buildDisclosureSet` from `@sensigo/realm`, with your declared secrets and `audience: 'agent'`. The reply reports that set's `declared` and `declared_cause`; a reply about several workflows (`list_workflows`) reports the weakest of theirs.",
     );
     const asked: Array<[string | null, string | null]> = [];
-    const dir = await mkdtemp(join(tmpdir(), 'realm-docs-mcp-c1-'));
-    const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    const h = await makeTempHome();
+    handles.push(h);
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register(FLOW);
     await workflowStore.register(GATED);
     const server = createRealmMcpServer({
-      ...withArtifactStores(new JsonFileStore(join(dir, 'runs'))),
-      workflowStore,
+      ...h.stores,
       // FLOW's project failed to load; GATED's resolved.
       disclosureProvider: async (definition, run) => {
         asked.push([definition?.id ?? null, run?.id ?? null]);
@@ -335,11 +336,12 @@ describe('#729 PR-3 correction 2 (G1) — the pages hold on the first call of a 
     );
     // The run store on the default folder of a HOME of this cell's own — explicit since #616 PR-2a
     // (ii-a): the one the run below is created through, and the server's.
-    const home = await mkdtemp(join(tmpdir(), 'realm-docs-mcp-c2-'));
-    vi.stubEnv('HOME', home);
-    const workflowStore = new JsonWorkflowStore(join(home, 'wf'));
+    const h = await makeTempHome();
+    handles.push(h);
+    vi.stubEnv('HOME', h.root);
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register(FLOW);
-    const runStore = new JsonFileStore(join(home, '.realm', 'runs'));
+    const runStore = h.stores.runStore;
     const runId = (
       await runStore.create({
         workflowId: FLOW.id,
@@ -349,8 +351,7 @@ describe('#729 PR-3 correction 2 (G1) — the pages hold on the first call of a 
     ).record.id;
     const asked: Array<string | null> = [];
     const server = createRealmMcpServer({
-      ...withArtifactStores(runStore),
-      workflowStore,
+      ...h.stores,
       // FLOW's project failed to load.
       disclosureProvider: async (definition, run) => {
         asked.push(run?.id ?? null);
@@ -418,12 +419,12 @@ describe("#729 PR-3 correction 3 (H-11') — a reply under a failed or changed m
       },
     } as WorkflowDefinition;
     const replyFor = async (cause: 'manifest_changed' | 'load_failed') => {
-      const dir = await mkdtemp(join(tmpdir(), 'realm-docs-mcp-c3-'));
-      const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+      const h = await makeTempHome();
+      handles.push(h);
+      const workflowStore = h.stores.workflowStore;
       await workflowStore.register(ASKED);
       const server = createRealmMcpServer({
-        ...withArtifactStores(new JsonFileStore(join(dir, 'runs'))),
-        workflowStore,
+        ...h.stores,
         disclosureProvider: async () =>
           buildDisclosureSet({
             env: {},

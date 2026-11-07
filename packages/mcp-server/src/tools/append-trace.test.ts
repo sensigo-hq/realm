@@ -1,7 +1,6 @@
 // Tests for the append_trace MCP tool business logic.
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   JsonFileStore,
@@ -15,6 +14,7 @@ import { handleAppendTrace, registerAppendTrace } from './append-trace.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Client } from '@modelcontextprotocol/sdk/client';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 function makeWorkflowDef(): WorkflowDefinition {
   return {
@@ -38,21 +38,24 @@ function makeWorkflowDef(): WorkflowDefinition {
 }
 
 describe('handleAppendTrace', () => {
-  let runDir: string;
+  let h: TempHome;
   let workflowDir: string;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
   let traceBufferStore: InMemoryTraceBufferStore;
 
   beforeEach(async () => {
-    runDir = await mkdtemp(join(tmpdir(), 'realm-append-trace-runs-'));
-    workflowDir = await mkdtemp(join(tmpdir(), 'realm-append-trace-wf-'));
-    runStore = new JsonFileStore(runDir);
-    workflowStore = new JsonWorkflowStore(workflowDir);
+    h = await makeTempHome();
+    workflowDir = join(h.path, 'workflows');
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
     traceBufferStore = new InMemoryTraceBufferStore(runStore);
 
     const def = makeWorkflowDef();
     await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   it('throws STATE_RUN_NOT_FOUND when run_id is unknown', async () => {
@@ -308,21 +311,24 @@ describe('handleAppendTrace', () => {
 });
 
 describe('append_trace terminal-run guard (issue #187)', () => {
-  let runDir: string;
+  let h: TempHome;
   let workflowDir: string;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
   let traceBufferStore: InMemoryTraceBufferStore;
 
   beforeEach(async () => {
-    runDir = await mkdtemp(join(tmpdir(), 'realm-append-trace-terminal-runs-'));
-    workflowDir = await mkdtemp(join(tmpdir(), 'realm-append-trace-terminal-wf-'));
-    runStore = new JsonFileStore(runDir);
-    workflowStore = new JsonWorkflowStore(workflowDir);
+    h = await makeTempHome();
+    workflowDir = join(h.path, 'workflows');
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
     traceBufferStore = new InMemoryTraceBufferStore(runStore);
 
     const def = makeWorkflowDef();
     await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   /** Drives a fresh run to exactly the requested terminal `run_phase` via deriveRunPhase's own
@@ -407,7 +413,7 @@ describe('append_trace terminal-run guard (issue #187)', () => {
 });
 
 describe('registerAppendTrace — ResponseEnvelope error shape', () => {
-  let runDir: string;
+  let h: TempHome;
   let workflowDir: string;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
@@ -415,10 +421,10 @@ describe('registerAppendTrace — ResponseEnvelope error shape', () => {
   let client: Client;
 
   beforeEach(async () => {
-    runDir = await mkdtemp(join(tmpdir(), 'realm-append-reg-runs-'));
-    workflowDir = await mkdtemp(join(tmpdir(), 'realm-append-reg-wf-'));
-    runStore = new JsonFileStore(runDir);
-    workflowStore = new JsonWorkflowStore(workflowDir);
+    h = await makeTempHome();
+    workflowDir = join(h.path, 'workflows');
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
     traceBufferStore = new InMemoryTraceBufferStore(runStore);
 
     const def = makeWorkflowDef();
@@ -429,6 +435,9 @@ describe('registerAppendTrace — ResponseEnvelope error shape', () => {
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     client = new Client({ name: 'test-client', version: '0.0.0' });
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   async function callAppendTrace(args: {

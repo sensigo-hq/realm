@@ -1,25 +1,24 @@
 // Integration tests for the create_workflow tool business logic.
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { JsonFileStore, JsonWorkflowStore } from '@sensigo/realm';
 import { handleCreateWorkflow, type CreateWorkflowArgs } from './create-workflow.js';
 import { handleExecuteStep } from './execute-step.js';
 import { generateProtocol } from '../protocol/generator.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 describe('handleCreateWorkflow', () => {
-  let runDir: string;
-  let workflowDir: string;
+  let h: TempHome;
   let stores: { runStore: JsonFileStore; workflowStore: JsonWorkflowStore };
 
   beforeEach(async () => {
-    runDir = await mkdtemp(join(tmpdir(), 'realm-cw-run-'));
-    workflowDir = await mkdtemp(join(tmpdir(), 'realm-cw-wf-'));
+    h = await makeTempHome();
     stores = {
-      runStore: new JsonFileStore(runDir),
-      workflowStore: new JsonWorkflowStore(workflowDir),
+      runStore: h.stores.runStore,
+      workflowStore: h.stores.workflowStore,
     };
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   it('happy path — single step: returns ok and next_action pointing at the step', async () => {
@@ -387,17 +386,18 @@ describe('handleCreateWorkflow', () => {
 });
 
 describe('end-to-end — create_workflow + execute_step walk to completion', () => {
-  let runDir: string;
-  let workflowDir: string;
+  let h: TempHome;
   let stores: { runStore: JsonFileStore; workflowStore: JsonWorkflowStore };
 
   beforeEach(async () => {
-    runDir = await mkdtemp(join(tmpdir(), 'realm-e2e-run-'));
-    workflowDir = await mkdtemp(join(tmpdir(), 'realm-e2e-wf-'));
+    h = await makeTempHome();
     stores = {
-      runStore: new JsonFileStore(runDir),
-      workflowStore: new JsonWorkflowStore(workflowDir),
+      runStore: h.stores.runStore,
+      workflowStore: h.stores.workflowStore,
     };
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   it('two-step plan: create_workflow → execute step 1 → execute step 2 → completed', async () => {

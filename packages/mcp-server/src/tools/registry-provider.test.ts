@@ -2,10 +2,9 @@
 // `extensions` rejection. The provider must be awaited BEFORE runStore.create in
 // start_run / start_run_batch (throwing provider → no run created) and before execution
 // in execute_step; it wins over the construction-time registry when both are supplied.
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { mkdtemp, readdir } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { mkdirSync } from 'node:fs';
+import { readdir } from 'node:fs/promises';
 import {
   JsonFileStore,
   JsonWorkflowStore,
@@ -18,6 +17,7 @@ import { handleStartRun } from './start-run.js';
 import { handleStartRunBatch } from './start-run-batch.js';
 import { handleExecuteStep } from './execute-step.js';
 import { handleCreateWorkflow, type CreateWorkflowArgs } from './create-workflow.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 function makeAdapterDef(): WorkflowDefinition {
   return {
@@ -45,17 +45,22 @@ function makeRecordingAdapter(calls: string[]): ServiceAdapter {
 }
 
 describe('registryProvider', () => {
+  let h: TempHome;
   let runDir: string;
-  let workflowDir: string;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
 
   beforeEach(async () => {
-    runDir = await mkdtemp(join(tmpdir(), 'realm-rp-runs-'));
-    workflowDir = await mkdtemp(join(tmpdir(), 'realm-rp-wf-'));
-    runStore = new JsonFileStore(runDir);
-    workflowStore = new JsonWorkflowStore(workflowDir);
+    h = await makeTempHome();
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
+    // The cells count the run files, before any run is written too.
+    runDir = runStore.runsDirPath;
+    mkdirSync(runDir, { recursive: true });
     await workflowStore.register(makeAdapterDef());
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   async function runFileCount(): Promise<number> {
@@ -127,17 +132,18 @@ describe('registryProvider', () => {
 });
 
 describe('create_workflow extensions rejection', () => {
-  let runDir: string;
-  let workflowDir: string;
+  let h: TempHome;
   let stores: { runStore: JsonFileStore; workflowStore: JsonWorkflowStore };
 
   beforeEach(async () => {
-    runDir = await mkdtemp(join(tmpdir(), 'realm-cwext-run-'));
-    workflowDir = await mkdtemp(join(tmpdir(), 'realm-cwext-wf-'));
+    h = await makeTempHome();
     stores = {
-      runStore: new JsonFileStore(runDir),
-      workflowStore: new JsonWorkflowStore(workflowDir),
+      runStore: h.stores.runStore,
+      workflowStore: h.stores.workflowStore,
     };
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   it('rejects a top-level extensions key with the register-time/operator-only error', async () => {

@@ -4,9 +4,6 @@
 // pinned them in core (`pending-625.test.ts` and its siblings) are kept here, on the same fixtures,
 // read through the renderer — the words unchanged unless a §Table row of the prompt says otherwise.
 import { describe, it, expect, vi } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
   JsonFileStore,
   ExtensionRegistry,
@@ -31,15 +28,16 @@ import {
   renderReply,
   renderWaysOf,
 } from './render-reply.js';
+import { makeTempHome } from './test-support/temp-home.js';
 
 const echo: StepDispatcher = async (_name, input) => ({ ...input });
 
 async function withStore<T>(fn: (store: JsonFileStore) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-render-reply-'));
+  const h = await makeTempHome();
   try {
-    return await fn(new JsonFileStore(dir));
+    return await fn(h.stores.runStore);
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    await h.cleanup();
   }
 }
 

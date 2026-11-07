@@ -1,9 +1,6 @@
 // #92 PR 1: the idempotency re-encounter signal on start_run / start_run_batch
 // (deduped, run_phase, accurate context_hint, observational warnings) and run_phase on the envelope.
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   JsonFileStore,
   JsonWorkflowStore,
@@ -14,6 +11,7 @@ import {
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { handleStartRun } from './start-run.js';
 import { handleStartRunBatch } from './start-run-batch.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 // Agent-first workflow: a fresh run's only eligible step is an agent step, so start_run takes the
 // NON-chained return path (no auto step to chain into) — exercising the deduped hint/warnings.
@@ -39,14 +37,19 @@ const autoFirst: WorkflowDefinition = {
 };
 
 describe('start_run idempotency signal', () => {
+  let h: TempHome;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
 
   beforeEach(async () => {
-    runStore = new JsonFileStore(await mkdtemp(join(tmpdir(), 'sig-run-')));
-    workflowStore = new JsonWorkflowStore(await mkdtemp(join(tmpdir(), 'sig-wf-')));
+    h = await makeTempHome();
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
     await workflowStore.register(agentFirst);
     await workflowStore.register(autoFirst);
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   it('fresh run → deduped:false, run_phase running, created hint', async () => {
@@ -128,13 +131,18 @@ describe('start_run idempotency signal', () => {
 });
 
 describe('start_run_batch idempotency signal (per-item)', () => {
+  let h: TempHome;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
 
   beforeEach(async () => {
-    runStore = new JsonFileStore(await mkdtemp(join(tmpdir(), 'sigb-run-')));
-    workflowStore = new JsonWorkflowStore(await mkdtemp(join(tmpdir(), 'sigb-wf-')));
+    h = await makeTempHome();
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
     await workflowStore.register(agentFirst);
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   it('each started item carries deduped, run_phase, terminal_reason, warnings', async () => {
@@ -193,13 +201,18 @@ describe('run_phase on the envelope', () => {
 });
 
 describe('start_run / start_run_batch re-encounter policy (#92 PR 2)', () => {
+  let h: TempHome;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
 
   beforeEach(async () => {
-    runStore = new JsonFileStore(await mkdtemp(join(tmpdir(), 'pol-run-')));
-    workflowStore = new JsonWorkflowStore(await mkdtemp(join(tmpdir(), 'pol-wf-')));
+    h = await makeTempHome();
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
     await workflowStore.register(agentFirst);
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   async function seedCompleted(key: string): Promise<string> {

@@ -2,13 +2,11 @@
 // carrying undelivered (pending) finalizers gets ONE extra advisory warning pointing at the
 // recovery verb — disclosure only, never a policy input (decideIdempotencyPolicy's own domain is
 // unchanged; this warning is added by the CALLER after the policy already decided 'reuse').
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { JsonFileStore, JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { handleStartRun } from './start-run.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const workflow: WorkflowDefinition = {
   id: 'pending-drain-advisory-wf',
@@ -23,15 +21,18 @@ const workflow: WorkflowDefinition = {
 const IDEMPOTENCY_KEY = 'pending-drain-advisory-key';
 
 describe('start_run — pending-drain advisory on idempotent reuse (issue #279, increment 1, PR-B)', () => {
+  let h: TempHome;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
 
   beforeEach(async () => {
-    const runDir = await mkdtemp(join(tmpdir(), 'pending-drain-run-'));
-    const wfDir = await mkdtemp(join(tmpdir(), 'pending-drain-wf-'));
-    runStore = new JsonFileStore(runDir);
-    workflowStore = new JsonWorkflowStore(wfDir);
+    h = await makeTempHome();
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
     await workflowStore.register(workflow);
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   it('a terminal run with a pending finalizer gets the "completion recorded; N finalizer(s) not yet delivered" advisory on reuse', async () => {

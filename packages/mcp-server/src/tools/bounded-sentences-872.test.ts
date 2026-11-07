@@ -5,17 +5,13 @@
 // `run_health_more`, evidence lists bounded. HC7 (H7): `resumable.steps` and a failed drive's
 // `usage`. Beside each: (a) the change that turns it red; (b) what it prints on failure — sentences
 // (the names are fake), counts and keys, never a value.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { mkdtemp as mkdtempAsync } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   ExtensionRegistry,
-  JsonFileStore,
-  JsonWorkflowStore,
   compileDisclosure,
   type RunRecord,
   type WorkflowDefinition,
@@ -25,7 +21,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
 import { toolContentOf } from '../render-reply.js';
 import { handleGetRunState, RUN_STATE_SUMMARY_TABLE } from './get-run-state.js';
-import { withArtifactStores } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 type Reply = Record<string, unknown>;
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
@@ -37,14 +33,18 @@ function claim(page: string, sentence: string): void {
   ).toContain(flat(sentence));
 }
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 async function door(definitions: WorkflowDefinition[], registry?: ExtensionRegistry) {
-  const dir = await mkdtempAsync(join(tmpdir(), 'realm-hb-872-'));
-  const runStore = new JsonFileStore(join(dir, 'runs'));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+  const h = await makeTempHome();
+  handles.push(h);
+  const { runStore, workflowStore } = h.stores;
   for (const d of definitions) await workflowStore.register(d);
   const server = createRealmMcpServer({
-    ...withArtifactStores(runStore),
-    workflowStore,
+    ...h.stores,
     ...(registry !== undefined ? { registry } : {}),
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();
