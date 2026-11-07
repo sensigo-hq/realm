@@ -93,21 +93,6 @@ export const CENSUS: Record<string, Entry> = {
     'outside',
     "the export bundle's own stamp (a parameter default kept: an outside instant)",
   ],
-  'cli/src/commands/gc.ts#<module>#new Date()': [
-    1,
-    'outside',
-    "the orphan sweep judges files by the kernel's mtimes, on the host's clock",
-  ],
-  'cli/src/commands/gc.ts#sweepOrphanArtifacts#new Date()': [
-    1,
-    'outside',
-    "the orphan sweep judges files by the kernel's mtimes, on the host's clock",
-  ],
-  'cli/src/commands/gc.ts#sweepOrphans#new Date()': [
-    1,
-    'outside',
-    "the orphan sweep judges files by the kernel's mtimes, on the host's clock",
-  ],
   'cli/src/commands/listen.ts#handle#clock.now()': [
     1,
     'event',

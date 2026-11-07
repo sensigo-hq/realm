@@ -212,24 +212,6 @@ Purged 6/6 run(s) (21.3 KB freed, store-reported). 0 already gone, 0 blocked, 0 
 
 Purge never touches a run that is still open. To purge one run, give its ID in place of `--older-than`.
 
-### Remove leftovers
-
-`realm run gc` removes files that a crash can leave behind. Like purge, it only reports unless you add `--force`:
-
-```bash
-realm run gc --older-than 1d
-```
-
-It prints, on a clean store:
-
-```text
-No orphaned .tmp files found to reap.
-
-No run-less orphaned WAL/sidecar artifacts found to reap.
-
-gc does NOT yet reap orphaned .lock dirs (deferred — issue #164). Their presence in runsDir is expected and not a sign gc is broken.
-```
-
 ## What the output hides
 
 A run's file keeps every value as it was given, except what `realm agent` records of what it sent the model (its drive failures and its tools' errors), which is kept as the model saw it, and the error of a project that failed to load, which is masked where it is caught. A message about the text of your own deployment manifest, such as a malformed `${secret:…}` reference, is masked wherever it is printed, so on your own terminal it shows as you typed it. What Realm prints hides secrets, depending on who reads it (added after version 0.47.1):

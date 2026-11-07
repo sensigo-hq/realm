@@ -164,7 +164,7 @@ describe('cleanupRuns', () => {
     // The defect this closes: the waiting-skip keyed on the PERSISTED `run_phase`, so a record
     // whose label had gone stale while a human was genuinely mid-gate got swept — sealed
     // `cleanup_sweep` with `pending_gate` still on the terminal record, freshly minting the very
-    // zombie shape #282 closed. The stale-phase population is exactly what `gc --heal` exists for,
+    // zombie shape #282 closed. The stale-phase population is exactly what `gc --heal` existed for,
     // so cleanup-before-heal is an ordinary ordering, not an exotic one.
     const now = new Date('2024-06-01T12:00:00Z');
     await loc.clock.set(now);

@@ -120,9 +120,9 @@ describe('#616 PR-2a (iii) — the docs', () => {
     expect(text, `${page} no longer says: ${sentence}`).toContain(sentence);
   });
 
-  it('the CHANGELOG entry', () => {
-    // Executed: "through one place, once per command" — store-door-616.test.ts (no file but the door,
-    // gc.ts and reconcile.ts builds a store) and home.test.ts (every store under the one home);
+  it('the CHANGELOG entries: the one door, and the removal of the commands that kept their own', () => {
+    // Executed: "through one place, once per command" — store-door-616.test.ts (no file but the door
+    // builds a store) and home.test.ts (every store under the one home);
     // "`realm serve` shares that one home" — this file's A1 cell; "nothing … changes" — the
     // suite as it stood; the exception — foreign-test-clock-715.test.ts's `realm workflow list` cell
     // on a copied test location. #871's form: `[Unreleased]` until a release renames it, then the
@@ -136,9 +136,16 @@ describe('#616 PR-2a (iii) — the docs', () => {
       : text.indexOf('\n## [') + 1;
     const section = text.slice(start, text.indexOf('\n## [0.48.0]')).replace(/\s+/g, ' ');
     const sentence =
-      '**Every `realm` command opens its stores through one place, once per command (`run gc` and `run reconcile` keep their own until they leave); `realm serve` shares that one home across every request it serves (issue #616).** Nothing a command prints, creates or refuses changes, with one exception: on a copy of a test location, the commands that only read workflows or replays (`realm workflow list`, `realm workflow register`, `realm workflow watch`, `realm workflow validate --registered`, and `realm run diff` of two replays) now stop with the same clock refusal the run commands always gave there, because every command opens its home through the one door.';
+      '**Every `realm` command opens its stores through one place, once per command; `realm serve` shares that one home across every request it serves (issue #616).** Nothing a command prints, creates or refuses changes, with one exception: on a copy of a test location, the commands that only read workflows or replays (`realm workflow list`, `realm workflow register`, `realm workflow watch`, `realm workflow validate --registered`, and `realm run diff` of two replays) now stop with the same clock refusal the run commands always gave there, because every command opens its home through the one door.';
     // (1) red when the [Unreleased] section no longer holds the entry word for word; (2) prints the
     //     sentence.
     expect(section, `the CHANGELOG no longer says: ${sentence}`).toContain(sentence);
+    // #616 PR-2c (c2): the removal of the two commands that kept their own stores, and of
+    // `realm workflow migrate`, is stated under `### Removed`. Executed: removed-commands-616.test.ts.
+    const removal =
+      '**BREAKING: `realm run gc`, `realm run reconcile` and `realm workflow migrate` are removed (#616).**';
+    // (1) red when the [Unreleased] section no longer holds the removal's first sentence word for
+    //     word; (2) prints the sentence.
+    expect(section, `the CHANGELOG no longer says: ${removal}`).toContain(removal);
   });
 });

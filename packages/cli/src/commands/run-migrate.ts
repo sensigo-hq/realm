@@ -1,9 +1,9 @@
 // run-migrate.ts — `realm run migrate --stamp-seals` (issue #367, part 3).
 //
-// The vehicle the shipped `gc --heal` note promises operators. It walks every terminal run and
-// gives each one the seal arm it has always meant, WITHOUT touching the retention clock — which is
-// the whole reason it exists rather than letting `--heal` rewrite the same population and reset
-// `updated_at` on all of it.
+// The vehicle the `gc --heal` note promised operators (gc left in #616 PR-2c). It walks every
+// terminal run and gives each one the seal arm it has always meant, WITHOUT touching the retention
+// clock — which is the whole reason it exists rather than letting `--heal` rewrite the same
+// population and reset `updated_at` on all of it.
 //
 // The sweep is TWO-ARMED, and that is load-bearing. An unstamped-only filter would leave the
 // `incoherent` bucket with no population at all: the records it exists to surface are precisely
@@ -99,8 +99,8 @@ function whyUnclassifiable(run: RunRecord): string {
 }
 
 /**
- * The exit taxonomy, aligned with the house rule every other sweep command follows (`gc`'s own,
- * gc.ts): **exit 1 means THIS COMMAND failed to do its job.** A write that errored is that. A
+ * The exit taxonomy, aligned with the house rule `gc` followed until #616 PR-2c removed it:
+ * **exit 1 means THIS COMMAND failed to do its job.** A write that errored is that. A
  * record nobody can classify is not — the command did exactly what it should, and said so loudly.
  *
  * That distinction matters more here than usual, because residue is CHRONIC: an unclassifiable
@@ -248,12 +248,6 @@ function phaseLabel(phase: string | undefined): string {
     : `phase ${writerCtx().word(phase, RUN_PHASE_WORDS)}`;
 }
 
-/** The ordering instruction, live since the vehicle exists. */
-export const ORDERING_LINE =
-  'Run `realm run migrate --stamp-seals` BEFORE `realm run gc --heal` after upgrading across ' +
-  '#367 if retention clocks matter: heal rewrites the same records and resets updated_at, which ' +
-  'this command deliberately preserves.';
-
 /** Renders the report. Returned as lines so the output cells can read it without capturing stdout. */
 export function renderMigrateReport(
   buckets: MigrateBuckets,
@@ -395,7 +389,6 @@ export function renderMigrateReport(
   lines.push(
     `Residue: ${residue} terminal run(s) still without a recorded seal arm${unread}.${skipped}`,
   );
-  lines.push(ORDERING_LINE);
   return lines;
 }
 
