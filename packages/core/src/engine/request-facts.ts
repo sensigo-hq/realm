@@ -9,12 +9,17 @@
 // Caching 3-B (A6): the split's facts are each normalised to their one shape or dropped — a digest is
 // 64 lowercase hex characters, a count a non-negative integer, a word one of its closed set — so a
 // provider module's record cannot put its own text under a `fact` row.
+//
+// Caching 3-M (piece A-1): a request's `reference`, the copy of its predecessor, is kept only in its
+// one shape, and each field inside it obeys the rule that field obeys on the request itself.
 import { readStoredName } from './holder.js';
 import { normalizeCacheAuto } from '../economics/cache-lifetime.js';
 import {
   CACHE_CONTROL_FIELDS,
   CACHE_MARKED_PARTS,
+  CACHE_REFERENCE_SOURCES,
   type CacheControlsRejected,
+  type CacheReference,
   type PrefixParts,
 } from '../types/run-record.js';
 
@@ -35,7 +40,11 @@ const NAME_FIELDS = [
  * `{ basis }`, `{ basis, gaps_s }` or (#898) `{ basis, gaps_s, prices }` with `prices` in one of its
  * five shapes, other keys gone) or deleted when that is `undefined`. Caching 3-B: each split fact
  * (`prefix_sha256`, `prefix_chars`, `prefix_parts`, `cache_marked`, `request_strict_sent`,
- * `cache_controls_rejected`, `cache_key_sent`) is kept in its one shape or deleted.
+ * `cache_controls_rejected`, `cache_key_sent`) is kept in its one shape or deleted. Caching 3-M
+ * (piece A-1): `reference` is kept only when its `from` is a word of `CACHE_REFERENCE_SOURCES` and
+ * its `request_start` a string, or deleted whole; inside it, each copied field passes the rule it
+ * passes here and is dropped alone when it fails, and any other key (a `reference`, a
+ * `request_index`) is dropped.
  * Every other field, and every entry that is not an object (a `null`, a number), passes through
  * unchanged. Total: it never throws, because it runs inside `recordDriveFailure`'s fence, where a
  * throw loses the record. It returns new objects; the input is not changed.
@@ -43,26 +52,30 @@ const NAME_FIELDS = [
 export function boundRequestFacts(requests: readonly unknown[]): unknown[] {
   return requests.map((entry) => {
     if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return entry;
-    const out: Record<string, unknown> = { ...(entry as Record<string, unknown>) };
-    for (const field of NAME_FIELDS) {
-      if (!Object.hasOwn(out, field)) continue;
-      const read = readStoredName(out[field]);
-      if (read === undefined) delete out[field];
-      else out[field] = read;
-    }
-    if (Object.hasOwn(out, 'cache_auto')) {
-      const auto = normalizeCacheAuto(out['cache_auto']);
-      if (auto === undefined) delete out['cache_auto'];
-      else out['cache_auto'] = auto;
-    }
-    for (const [field, normalize] of SPLIT_FACT_NORMALIZERS) {
-      if (!Object.hasOwn(out, field)) continue;
-      const kept = normalize(out[field]);
-      if (kept === undefined) delete out[field];
-      else out[field] = kept;
-    }
-    return out;
+    return boundFields({ ...(entry as Record<string, unknown>) });
   });
+}
+
+/** Applies each field's rule to `out`, in place: a field its rule refuses is deleted. */
+function boundFields(out: Record<string, unknown>): Record<string, unknown> {
+  for (const field of NAME_FIELDS) {
+    if (!Object.hasOwn(out, field)) continue;
+    const read = readStoredName(out[field]);
+    if (read === undefined) delete out[field];
+    else out[field] = read;
+  }
+  if (Object.hasOwn(out, 'cache_auto')) {
+    const auto = normalizeCacheAuto(out['cache_auto']);
+    if (auto === undefined) delete out['cache_auto'];
+    else out['cache_auto'] = auto;
+  }
+  for (const [field, normalize] of SPLIT_FACT_NORMALIZERS) {
+    if (!Object.hasOwn(out, field)) continue;
+    const kept = normalize(out[field]);
+    if (kept === undefined) delete out[field];
+    else out[field] = kept;
+  }
+  return out;
 }
 
 /** A SHA-256 as Realm writes it: 64 lowercase hex characters, no prefix. */
@@ -120,7 +133,46 @@ function normalizeCacheControlsRejected(value: unknown): CacheControlsRejected |
   };
 }
 
-/** Caching 3-B (A6): each split fact and the one shape it is kept in (or `undefined`: dropped). */
+/** The keys a `reference` keeps: compile-forced to be exactly `CacheReference`'s. */
+const REFERENCE_KEYS = {
+  from: true,
+  request_start: true,
+  request_id: true,
+  provider: true,
+  model: true,
+  endpoint: true,
+  cache_read_input_tokens: true,
+  cache_creation_input_tokens: true,
+  cache_write_tokens: true,
+  cache_creation: true,
+  cache_lifetime_s: true,
+  cache_ttl_sent: true,
+  cache_auto: true,
+  prefix_chars: true,
+  prefix_parts: true,
+  cache_marked: true,
+  request_strict_sent: true,
+} as const satisfies Record<keyof CacheReference, true>;
+
+/**
+ * Caching 3-M (piece A-1): `reference` in its one shape — a plain object whose `from` is a word of
+ * `CACHE_REFERENCE_SOURCES` and whose `request_start` is a string — or `undefined` (dropped whole).
+ * Its other keys of `CacheReference` each pass the rule they pass on a request (`boundFields`), and
+ * one that fails is dropped alone; every other key is dropped. Key order is kept.
+ */
+function normalizeReference(value: unknown): CacheReference | undefined {
+  if (!plainObject(value)) return undefined;
+  if (!(CACHE_REFERENCE_SOURCES as readonly unknown[]).includes(value['from'])) return undefined;
+  if (typeof value['request_start'] !== 'string') return undefined;
+  const kept: Record<string, unknown> = {};
+  for (const key of Object.keys(value)) {
+    if (Object.hasOwn(REFERENCE_KEYS, key)) kept[key] = value[key];
+  }
+  return boundFields(kept) as CacheReference;
+}
+
+/** Caching 3-B (A6): each split fact and the one shape it is kept in (or `undefined`: dropped).
+ *  Caching 3-M (piece A-1): and the request's `reference`. */
 const SPLIT_FACT_NORMALIZERS: readonly [string, (value: unknown) => unknown][] = [
   ['prefix_sha256', (v) => (isSha256Hex(v) ? v : undefined)],
   [
@@ -132,4 +184,5 @@ const SPLIT_FACT_NORMALIZERS: readonly [string, (value: unknown) => unknown][] =
   ['request_strict_sent', (v) => (typeof v === 'boolean' ? v : undefined)],
   ['cache_controls_rejected', normalizeCacheControlsRejected],
   ['cache_key_sent', (v) => (v === true ? true : undefined)],
+  ['reference', normalizeReference],
 ];

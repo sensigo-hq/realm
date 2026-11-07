@@ -24,6 +24,7 @@ import {
   type RunStore,
   type RunRecord,
   type LoadBearingRunRecordField,
+  type CacheReference,
   type UsageRecord,
   type WorkflowDefinition,
 } from '@sensigo/realm';
@@ -101,12 +102,49 @@ export interface RunStoreFidelityContractAdapter {
 }
 
 /**
+ * Caching 3-M (piece A-1) — the copied predecessor `USAGE_RECORD_ROUNDTRIP` writes on its request:
+ * every field of `CacheReference` (`satisfies Required<…>`, so a field left off fails the compile),
+ * each a value no store default could produce, `prefix_parts` with its four parts and `cache_auto` in
+ * its shape with the most keys (as on the request), so a store that drops a key inside it fails the
+ * law.
+ */
+const TCK_REFERENCE = {
+  from: 'run',
+  request_start: '2025-12-31T23:59:58.000Z',
+  request_id: '3a1a0000-0000-4000-8000-0000000003a1',
+  provider: 'tck-reference-provider',
+  model: 'tck-reference-model-2025-12-31',
+  endpoint: 'custom',
+  cache_read_input_tokens: 1234,
+  cache_creation_input_tokens: 567,
+  cache_write_tokens: 89,
+  cache_creation: { ephemeral_5m_input_tokens: 500, ephemeral_1h_input_tokens: 67 },
+  cache_lifetime_s: 300,
+  cache_ttl_sent: true,
+  cache_auto: {
+    basis: 'listen_trigger_gaps',
+    gaps_s: [62, 3598],
+    prices: { from: 'economics', excluded: ['long'], missing: ['cache_write_1h'] },
+  },
+  prefix_chars: 1234,
+  prefix_parts: {
+    tools: '5555555555555555555555555555555555555555555555555555555555555555',
+    system: '6666666666666666666666666666666666666666666666666666666666666666',
+    prompt: '7777777777777777777777777777777777777777777777777777777777777777',
+    format: '8888888888888888888888888888888888888888888888888888888888888888',
+  },
+  cache_marked: ['system', 'prompt', 'key'],
+  request_strict_sent: true,
+} satisfies Required<CacheReference>;
+
+/**
  * Issue #600 PR 2 — the request facts `USAGE_RECORD_ROUNDTRIP` writes, every one with a value no store
  * default could produce (`true` for the booleans, words other than `off` and `default`). The law
  * checks each field on this list; a field left off it is a field no store is held to. Issue #715 (R)
  * adds the request's identity, `request_id`: a fixed UUID no store default could produce. Caching
  * 3-B adds the split's seven facts: digests, a count, closed words and booleans, the objects in the
- * shape with the most keys.
+ * shape with the most keys. Caching 3-M (piece A-1) adds `reference`, the copy of a request's
+ * predecessor: `TCK_REFERENCE`, every one of its fields.
  */
 const TCK_REQUEST_FACTS: Required<
   Pick<
@@ -129,6 +167,7 @@ const TCK_REQUEST_FACTS: Required<
     | 'request_strict_sent'
     | 'cache_controls_rejected'
     | 'cache_key_sent'
+    | 'reference'
   >
 > = {
   model: 'tck-model-2026-01-01',
@@ -167,6 +206,7 @@ const TCK_REQUEST_FACTS: Required<
     fields: ['cache_control', 'prompt_cache_key'],
   },
   cache_key_sent: true,
+  reference: TCK_REFERENCE,
 };
 
 /** The program the holder laws name — a synthetic label, never a real host or user. */

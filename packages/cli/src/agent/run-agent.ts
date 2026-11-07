@@ -74,6 +74,7 @@ import {
   safeErrorText,
   safeExplainFailure,
   appendRequests,
+  attachRecordedReference,
   mintRequestIds,
   type LlmClock,
 } from './providers/agent-utils.js';
@@ -160,6 +161,74 @@ function validationWedgeEntry(
  */
 function sidecarStamp(): string {
   return new Date().toISOString();
+}
+
+/** The last element of a stored list of requests, when it is a plain object with a string
+ *  `request_start`; otherwise `undefined`. */
+function lastRequestIn(requests: unknown): UsageRecord | undefined {
+  if (!Array.isArray(requests) || requests.length === 0) return undefined;
+  const last: unknown = requests[requests.length - 1];
+  return last !== null &&
+    typeof last === 'object' &&
+    !Array.isArray(last) &&
+    typeof (last as { request_start?: unknown }).request_start === 'string'
+    ? (last as UsageRecord)
+    : undefined;
+}
+
+const isRecordObject = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value);
+
+/**
+ * Caching 3-M (piece A-1) — `step`'s last request on the run's record, read from the record as the
+ * drive holds it (no store read): the predecessor of the step's first request in a drive
+ * (`attachRecordedReference`). Two candidates: the last request of the step's latest evidence entry
+ * whose `diagnostics.cache.requests` is non-empty and ends in a plain object with a string
+ * `request_start` (index `e` in `evidence`), and the same for the step's latest drive-failure entry
+ * and its `usage`. They are ordered by the record's own order, never by clocks: the failure is the
+ * later one when its `evidence_count` (the run's evidence count, read in the write that appended it)
+ * is greater than `e`. A drive-failure entry without `evidence_count` (written before #715 (b)) is not
+ * a candidate. Entries that are not plain objects are skipped; it never throws.
+ */
+function lastRecordedRequest(run: RunRecord | undefined, step: string): UsageRecord | undefined {
+  if (!isRecordObject(run)) return undefined;
+  let fromEvidence: UsageRecord | undefined;
+  let evidenceIndex = -1;
+  const evidence: unknown = run.evidence;
+  if (Array.isArray(evidence)) {
+    for (let i = evidence.length - 1; i >= 0; i -= 1) {
+      const entry: unknown = evidence[i];
+      if (!isRecordObject(entry) || entry['step_id'] !== step) continue;
+      const diagnostics = entry['diagnostics'];
+      const cache = isRecordObject(diagnostics) ? diagnostics['cache'] : undefined;
+      const last = lastRequestIn(isRecordObject(cache) ? cache['requests'] : undefined);
+      if (last === undefined) continue;
+      fromEvidence = last;
+      evidenceIndex = i;
+      break;
+    }
+  }
+  let fromFailure: UsageRecord | undefined;
+  let failureCount = -1;
+  const failures: unknown = isRecordObject(run.drive_failures)
+    ? run.drive_failures.entries
+    : undefined;
+  if (Array.isArray(failures)) {
+    for (let i = failures.length - 1; i >= 0; i -= 1) {
+      const entry: unknown = failures[i];
+      if (!isRecordObject(entry) || entry['step'] !== step) continue;
+      const count = entry['evidence_count'];
+      if (typeof count !== 'number') continue;
+      const last = lastRequestIn(entry['usage']);
+      if (last === undefined) continue;
+      fromFailure = last;
+      failureCount = count;
+      break;
+    }
+  }
+  if (fromFailure === undefined) return fromEvidence;
+  if (fromEvidence === undefined) return fromFailure;
+  return failureCount > evidenceIndex ? fromFailure : fromEvidence;
 }
 
 export interface AgentDeps {
@@ -628,6 +697,14 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
       () => false,
     );
   };
+  // Caching 3-M (piece A-1): the predecessor of the driven step's first request in this drive — the
+  // step's last request on the run's record, read from `currentRun` as held at that moment (no store
+  // read; at a step's first call it is the snapshot the engine judged its last reply on) — consulted
+  // only while the step holds no request of this drive (`usageForStep` empty).
+  const recordedBefore = (step: string): UsageRecord | undefined =>
+    usageForStep === undefined || usageForStep.length === 0
+      ? lastRecordedRequest(currentRun, step)
+      : undefined;
   // decision C205: a drive that stops on a run that ended with a failed step `realm run resume`
   // takes gives the way back in — the line `realm workflow run` gives (`  Resume:    …`).
   // decision C211 (walk c14 W3-4's class): and cleanup steps the ending left pending — the command
@@ -1640,6 +1717,15 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   attemptStartedAt,
                   deps.store.clock.now(),
                 );
+                // Caching 3-M (piece A-1): the throwing call's first request, when it is the step's
+                // first in the drive, takes the copy of its predecessor on the run's record.
+                if (Array.isArray(entry.usage)) {
+                  entry.usage = attachRecordedReference(
+                    usageForStep,
+                    entry.usage,
+                    recordedBefore(stepName),
+                  );
+                }
                 if (usageForStep !== undefined && usageForStep.length > 0) {
                   entry.usage = appendRequests(usageForStep, entry.usage);
                 }
@@ -1652,7 +1738,16 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               // reports nothing (a third-party module) would otherwise leave `cache` absent. Each
               // #217 repair pass appends its requests, so a repaired step records every call it
               // paid for, in wire order.
-              usageForStep = appendRequests(usageForStep, mintRequestIds(toolsResult.usage ?? []));
+              // Caching 3-M (piece A-1): after the mint, the step's first request in the drive takes
+              // the copy of its predecessor when that is on the run's record.
+              usageForStep = appendRequests(
+                usageForStep,
+                attachRecordedReference(
+                  usageForStep,
+                  mintRequestIds(toolsResult.usage ?? []),
+                  recordedBefore(stepName),
+                ),
+              );
               toolCallsForMeta = toolsResult.toolCalls;
               // issue #332 item 6: the tools path never consumes structuredOutputPlan (there is no
               // grammar-constrained OUTPUT call here — the tools path's strict is #311's per-tool
@@ -1745,7 +1840,15 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   // also produces; see StepDiagnostics.cache.
                   // Repair calls now accumulate: each #217 repair pass appends its requests, so a
                   // repaired step records every call it paid for, in wire order.
-                  usageForStep = appendRequests(usageForStep, mintRequestIds(usage ?? []));
+                  // Caching 3-M (piece A-1): the first request's predecessor, as at S1.
+                  usageForStep = appendRequests(
+                    usageForStep,
+                    attachRecordedReference(
+                      usageForStep,
+                      mintRequestIds(usage ?? []),
+                      recordedBefore(stepName),
+                    ),
+                  );
                   if (structuredOutputPlan.ineligibleMeta !== undefined) {
                     // Gate-ineligible or sticky — strict was never attempted this call at all.
                     structuredOutputMetaForStep = structuredOutputPlan.ineligibleMeta;
@@ -1801,7 +1904,15 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   // also produces; see StepDiagnostics.cache.
                   // Repair calls now accumulate: each #217 repair pass appends its requests, so a
                   // repaired step records every call it paid for, in wire order.
-                  usageForStep = appendRequests(usageForStep, mintRequestIds(usage ?? []));
+                  // Caching 3-M (piece A-1): the first request's predecessor, as at S1.
+                  usageForStep = appendRequests(
+                    usageForStep,
+                    attachRecordedReference(
+                      usageForStep,
+                      mintRequestIds(usage ?? []),
+                      recordedBefore(stepName),
+                    ),
+                  );
                 }
               } catch (err) {
                 // The catch-side sticky-arming block that used to live here is DELETED as dead
@@ -1822,6 +1933,15 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   attemptStartedAt,
                   deps.store.clock.now(),
                 );
+                // Caching 3-M (piece A-1): the throwing call's first request, when it is the step's
+                // first in the drive, takes the copy of its predecessor on the run's record.
+                if (Array.isArray(entry.usage)) {
+                  entry.usage = attachRecordedReference(
+                    usageForStep,
+                    entry.usage,
+                    recordedBefore(stepName),
+                  );
+                }
                 if (usageForStep !== undefined && usageForStep.length > 0) {
                   entry.usage = appendRequests(usageForStep, entry.usage);
                 }

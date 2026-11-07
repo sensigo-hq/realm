@@ -241,6 +241,78 @@ describe('issue #600 PR 2 — request names are bounded on the stored record (A3
     ]);
   });
 
+  // Caching 3-M (piece A-1), check 6: a request's `reference` from another writer (a provider
+  // module's usage, an older Realm's record) through the engine's write normaliser, read on the
+  // stored record. (a) red when `reference` is not in the normaliser (the four malformed ones are
+  // then stored as written), or when a copied field's rule drops a well-formed value; (b) prints
+  // each stored request's `reference` (test values only).
+  it('reference on the stored record: a well-formed one is kept byte-equal; a bad source drops it whole, a bad field drops alone, a nested reference and an index are dropped, `{}` is no reference', async () => {
+    const storedReference = async (reference: unknown) => {
+      const { record: run } = await store.create({
+        workflowId: DEF.id,
+        workflowVersion: 1,
+        params: {},
+      });
+      const usage = {
+        request_index: 0,
+        request_start: '2026-11-08T00:00:01.000Z',
+        prompt_tokens: 10,
+        reference,
+      } as unknown as UsageRecord;
+      await executeStep(store, DEF, {
+        runId: run.id,
+        command: 'work',
+        input: {},
+        dispatcher: echo,
+        stepMeta: { usage: [usage] },
+      });
+      const request = (await store.get(run.id)).record.evidence[0]!.diagnostics!.cache!
+        .requests[0]!;
+      return {
+        has: Object.hasOwn(request, 'reference'),
+        json: JSON.stringify(request.reference),
+        prompt_tokens: request.prompt_tokens,
+      };
+    };
+    const HASH = (c: string) => c.repeat(64);
+    const wellFormed = {
+      from: 'run',
+      request_start: '2026-11-08T00:00:00.000Z',
+      request_id: '3a100000-0000-4000-8000-00000000a1a1',
+      provider: 'anthropic',
+      model: 'claude-x-20260101',
+      endpoint: 'default',
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 1200,
+      cache_write_tokens: 1200,
+      cache_creation: { ephemeral_5m_input_tokens: 1200, ephemeral_1h_input_tokens: 0 },
+      cache_lifetime_s: 300,
+      cache_ttl_sent: false,
+      cache_auto: { basis: 'no_measurement' },
+      prefix_chars: 4000,
+      prefix_parts: { system: HASH('a'), tools: HASH('b'), prompt: HASH('c'), format: HASH('d') },
+      cache_marked: ['system', 'prompt'],
+      request_strict_sent: true,
+    };
+    const { prefix_parts: _parts, ...withoutParts } = wellFormed;
+    expect([
+      await storedReference(wellFormed),
+      await storedReference({ ...wellFormed, from: 'bogus' }),
+      await storedReference({
+        ...wellFormed,
+        prefix_parts: { ...wellFormed.prefix_parts, prompt: 'not-a-digest' },
+      }),
+      await storedReference({ ...wellFormed, reference: { ...wellFormed }, request_index: 3 }),
+      await storedReference({}),
+    ]).toEqual([
+      { has: true, json: JSON.stringify(wellFormed), prompt_tokens: 10 },
+      { has: false, json: undefined, prompt_tokens: 10 },
+      { has: true, json: JSON.stringify(withoutParts), prompt_tokens: 10 },
+      { has: true, json: JSON.stringify(wellFormed), prompt_tokens: 10 },
+      { has: false, json: undefined, prompt_tokens: 10 },
+    ]);
+  });
+
   // Cell 2, called directly. (a) red when the function changes its input's `cache_auto` in place;
   // (b) prints the returned array and the input.
   it('cache_auto, called directly: normalised in a new entry; the input is not changed', () => {
