@@ -8,9 +8,12 @@
 // them: through a second connection on the home's file (`openForeignConnection`) and the store's own
 // row writer, in that connection's own transaction (`runs` has no seal trigger on insert).
 //
-// These cells stand in for the keyed rows of core's shared clock laws until unit 16 wires the
-// contract (`packages/testing/src/store/store-clock-contract.ts`): `KEYED_FIRST_CREATE_ONE_READING`,
-// `WRITE_ONE_READING`'s keyed rows, `KEYED_CREATE_ORDERS_AFTER_HOLDER` and `KEYED_CREATE_FLOOR_CAPPED`.
+// Since unit 16 the shared clock laws that cover the keyed rows also run against this store
+// (`contract-clock-616.test.ts`: `KEYED_FIRST_CREATE_ONE_READING`, `WRITE_ONE_READING`'s keyed
+// rows, `KEYED_CREATE_ORDERS_AFTER_HOLDER` and `KEYED_CREATE_FLOOR_CAPPED`;
+// `contract-fidelity-616.test.ts`: `CREATE_REPORTS_CREATED`). These cells stay for what no shared
+// law sees: the rows and text a write leaves, the exact refusals and their words, and the COMMIT
+// protocol.
 //
 // Each assertion carries (1) the break that turns it red and (2) what it prints when it fails.
 import { spawn } from 'node:child_process';

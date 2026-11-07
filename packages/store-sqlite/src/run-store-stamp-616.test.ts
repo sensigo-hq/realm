@@ -10,12 +10,14 @@
 // (`STATE_SEAL_UNSTAMPED`): a foreign connection writes it with `insertRunRecord` inside its own
 // `BEGIN IMMEDIATE`, as a JSON store migrated before #367 would hold it.
 //
-// These cells stand in for the stamp laws of core's shared settlement contract until unit 16 wires it
-// (`packages/testing/src/store/settlement-contract.ts`: `STAMP_PRESERVES_UPDATED_AT`,
-// `STAMP_BUMPS_VERSION_ONCE`, `STAMP_CLASSIFIED_ROUNDTRIP`, `STAMP_RETURNS_NOT_THROWS_PREDICATES`,
-// `STAMP_REFUSES_ON_VERSION_MOVE`, `STAMP_IDEMPOTENT`; and the stamp clause of
-// `store-clock-contract.ts`'s `READS_ONE_READING`). This package cannot import their fixtures, and
-// their seed hook `seedLegacyTerminal` is unit 16's.
+// Since unit 16 the stamp laws of core's shared settlement contract also run against this store
+// (`contract-settlement-616.test.ts`: `STAMP_PRESERVES_UPDATED_AT`, `STAMP_BUMPS_VERSION_ONCE`,
+// `STAMP_CLASSIFIED_ROUNDTRIP`, `STAMP_RETURNS_NOT_THROWS_PREDICATES`,
+// `STAMP_REFUSES_ON_VERSION_MOVE` and `STAMP_IDEMPOTENT`, with the seed hook `seedLegacyTerminal`
+// written the way this file's seed is; `contract-clock-616.test.ts`: the stamp clause of
+// `READS_ONE_READING`). Those laws judge what a stamp STORES; they do not compare the run a stamp
+// returns with the stored one (issue #897). These cells stay for what no shared law sees: the rows
+// and text a write leaves, the exact refusals and their words, and the COMMIT protocol.
 //
 // Each assertion carries (1) the break that turns it red and (2) what it prints when it fails.
 import { spawn } from 'node:child_process';
