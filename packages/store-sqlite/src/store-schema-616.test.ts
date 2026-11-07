@@ -15,6 +15,7 @@ import {
 } from '@sensigo/realm';
 import { afterEach, describe, expect, it } from 'vitest';
 import { openDatabase, type DatabaseLike } from './driver.js';
+import { findKeyHolder, keyHashOf } from './run-rows.js';
 
 /** The guards' messages, written out here so a typo in the schema is a red cell (prompt's table). */
 const MSG = {
@@ -297,6 +298,96 @@ describe("#616 unit 6 — a run's identity cannot change", () => {
       expect(results).toEqual([MSG.identity, MSG.identity]);
     });
   }
+});
+
+describe("#616 unit 15c — a run's identity cannot change: its rerun_of link", () => {
+  // Since unit 15a a finished run that another run of its key names in `rerun_of` does not hold the
+  // key, so the link is part of the run's identity: a foreign writer that rewrites it would move the
+  // key to another run. Each cell changes ONLY the link, with the version moved by one, so only the
+  // link's clause stands between the statement and the file.
+  const UPDATE = 'UPDATE runs SET record = ? WHERE id = ?';
+  const keyed = (over: Record<string, unknown> = {}) => doc({ idempotency_key: 'key-1', ...over });
+  /** How the link differs: the run as created, and the record the foreign writer puts in its place. */
+  const cases: Array<[string, Record<string, unknown>, Record<string, unknown>]> = [
+    ['set on a run that had none', keyed(), keyed({ rerun_of: 'run-0', version: 2 })],
+    [
+      'changed from one run to another',
+      keyed({ rerun_of: 'run-0' }),
+      keyed({ rerun_of: 'run-9', version: 2 }),
+    ],
+    ['removed from a run that had one', keyed({ rerun_of: 'run-0' }), keyed({ version: 2 })],
+  ];
+
+  for (const [how, seed, next] of cases) {
+    it(`a link ${how} is refused, also with CHECKs off`, () => {
+      const results: string[] = [];
+      for (const checksOff of [0, 1] as const) {
+        const db = fresh();
+        addRun(db, seed, 'hash-1');
+        pragma(db, 'ignore_check_constraints', checksOff);
+        results.push(outcome(db, UPDATE, JSON.stringify(next), 'run-1'));
+      }
+      // (1) red when the link's clause is removed from the identity guard (the change lands, with
+      //     CHECKs on and off), or written NULL-unsafe with `!=` (a link set where there was none, or
+      //     removed, compares with NULL and lands); (2) prints the outcome with CHECKs on, then off.
+      expect(results).toEqual([MSG.identity, MSG.identity]);
+    });
+  }
+
+  it('a record that keeps its link still updates', () => {
+    const db = fresh();
+    addRun(db, keyed({ rerun_of: 'run-0' }), 'hash-1');
+    const kept = outcome(
+      db,
+      UPDATE,
+      JSON.stringify(keyed({ rerun_of: 'run-0', version: 2 })),
+      'run-1',
+    );
+    // (1) red when the clause refuses an equal link (written `IS` for `IS NOT`), so every later write
+    //     of a rerun's record is refused; (2) prints the update's outcome.
+    expect(kept).toBe('landed');
+  });
+
+  it("a rewrite of rerun_of cannot move the key's holder: a rerun stamped before the run it replaced keeps the key", () => {
+    const db = fresh();
+    const hash = keyHashOf('wf', 'key-1');
+    // Run A was replaced by its rerun B; both are finished. B's clock was behind A's, so B sorts before
+    // A by its stamp (DELTAS row 28b) and only the link makes B the holder.
+    addRun(
+      db,
+      keyed({ id: 'run-a', created_at: '2026-11-05T10:00:10.000Z', terminal_state: true }),
+      hash,
+    );
+    const b = keyed({
+      id: 'run-b',
+      created_at: '2026-11-05T10:00:00.000Z',
+      terminal_state: true,
+      rerun_of: 'run-a',
+    });
+    addRun(db, b, hash);
+    /** The key's holder, read in a transaction as the store reads it. */
+    const holder = () => {
+      db.exec('BEGIN');
+      try {
+        return findKeyHolder(db, 'wf', 'key-1')?.id;
+      } finally {
+        db.exec('COMMIT');
+      }
+    };
+    const before = holder();
+    const unlinked: Record<string, unknown> = { ...b, version: 2 };
+    delete unlinked['rerun_of'];
+    const attempt = outcome(db, UPDATE, JSON.stringify(unlinked), 'run-b');
+    const after = holder();
+    // (1) red when the link's clause is removed from the identity guard: the rewrite lands and the key
+    //     goes to run-a, the newest finished run; (2) prints the holder before, the rewrite's outcome
+    //     and the holder after.
+    expect({ before, attempt, after }).toEqual({
+      before: 'run-b',
+      attempt: MSG.identity,
+      after: 'run-b',
+    });
+  });
 });
 
 describe('#616 unit 6 — a run is created once, from a record that carries its own identity', () => {

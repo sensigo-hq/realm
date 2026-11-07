@@ -207,9 +207,9 @@ function notEligibleError(runId: string, stepName: string, eligible: string[]): 
 }
 
 /**
- * Core's run store on a SQLite home: create, get, list, update, claimStep and stampSeal (see the
- * module comment). It declares no `implements RunStore` yet: the interface requires `settleStep` (unit 13),
- * and the engine's admission refuses a store without it until then.
+ * Core's run store on a SQLite home: create (keyed or not), get, list, update, claimStep and
+ * stampSeal (see the module comment). It declares no `implements RunStore` yet: the interface requires
+ * `settleStep` (unit 13), and the engine's admission refuses a store without it until then.
  */
 export class SqliteRunStore {
   /** Claims round-trip: the stored record is the record written, `claims` included. */
