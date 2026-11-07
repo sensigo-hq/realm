@@ -5,18 +5,12 @@
 // schema, the acceptance controls (Z6), no input value in any text (axis 14), and the docs sentences
 // that state them (Z8). Every value is a fake. Each assertion names (a) the change that turns it red
 // and (b) what it prints: texts, code points, counts and booleans, never an environment or a key.
-import { describe, it, expect } from 'vitest';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { describe, it, expect, afterEach } from 'vitest';
+import { readFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  BUFFER_LIMIT_COUNT,
-  FINAL_LIMIT_ENTRIES,
-  JsonFileStore,
-  JsonWorkflowStore,
-} from '@sensigo/realm';
+import { BUFFER_LIMIT_COUNT, FINAL_LIMIT_ENTRIES } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer, MAX_TOOL_INPUT_ELEMENTS } from '../server.js';
@@ -32,7 +26,7 @@ import { submitHumanResponseArgsSchema } from './submit-human-response.js';
 import { traceEntrySchema } from './execute-step.js';
 import { presentQuestionArgsShape } from './present-question.js';
 import { MAX_BATCH_ITEMS } from './start-run-batch.js';
-import { withArtifactStores } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const flat = (t: string) => t.replace(/\s+/g, ' ');
@@ -46,19 +40,25 @@ function claim(page: string, sentence: string): void {
 
 type Reply = Record<string, unknown>;
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 /** A door with temp stores; `forms` opens a second session under `asked` whose client shows forms
  *  (the one session where `present_question` is listed). */
 async function connect() {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-zod4-'));
-  const runStore = new JsonFileStore(join(dir, 'runs'));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
-  const server = createRealmMcpServer({ ...withArtifactStores(runStore), workflowStore });
+  const h = await makeTempHome();
+  handles.push(h);
+  const { runStore, workflowStore } = h.stores;
+  const server = createRealmMcpServer({ ...h.stores });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'zod4', version: '0' });
   await Promise.all([server.connect(st), client.connect(ct)]);
+  const h2 = await makeTempHome();
+  handles.push(h2);
   const forms = createRealmMcpServer({
-    ...withArtifactStores(new JsonFileStore(join(dir, 'runs2'))),
-    workflowStore: new JsonWorkflowStore(join(dir, 'wf2')),
+    ...h2.stores,
     gateAnswers: 'asked',
   });
   const [ct2, st2] = InMemoryTransport.createLinkedPair();

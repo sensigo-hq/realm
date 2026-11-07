@@ -28,14 +28,12 @@
 // the recorded step is a settle-order artifact, and this surface's consumers are agents — the
 // readers most likely to take a named step as THE culprit, which is the misreading #373 exists to
 // prevent. The discriminating cell below pins the absence.
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { JsonFileStore, JsonWorkflowStore } from '@sensigo/realm';
 import type { RunRecord, SealedBy, WorkflowDefinition } from '@sensigo/realm';
 import { handleGetRunState } from './get-run-state.js';
 import type { RunStateSummary } from './get-run-state.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 type DisclosureRoute =
   | { surface: 'rendered'; probe: (summary: RunStateSummary) => void }
@@ -77,14 +75,18 @@ const definition = {
   steps: { g: { description: 'Guard', execution: 'guard', abort_unless: ['$.x == true'] } },
 } as unknown as WorkflowDefinition;
 
+let h: TempHome;
 let runStore: JsonFileStore;
 let workflowStore: JsonWorkflowStore;
 
 beforeEach(async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-parity-mcp-'));
-  runStore = new JsonFileStore(dir);
-  workflowStore = new JsonWorkflowStore(join(dir, 'workflows'));
+  h = await makeTempHome();
+  runStore = h.stores.runStore;
+  workflowStore = h.stores.workflowStore;
   await workflowStore.register(definition);
+});
+afterEach(async () => {
+  await h.cleanup();
 });
 
 /**

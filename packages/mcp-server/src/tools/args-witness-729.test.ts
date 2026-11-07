@@ -6,15 +6,12 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: tool,
 // field and type names only.
-import { describe, it, expect } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { ARGS, JsonFileStore, JsonWorkflowStore, type ArgSpec } from '@sensigo/realm';
+import { describe, it, expect, afterEach } from 'vitest';
+import { ARGS, type ArgSpec } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
-import { withArtifactStores } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 /** The tool that enacts each verb on this door, and the door's own fields with why. */
 const DOOR: Record<string, { tool: string; extras: Record<string, string> }> = {
@@ -41,13 +38,16 @@ const DOOR: Record<string, { tool: string; extras: Record<string, string> }> = {
 
 type JsonSchema = { properties?: Record<string, { type?: string }>; required?: string[] };
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 describe('#729 PR-0 — P-5: each MCP tool takes its verb’s ARGS', () => {
   it('the five tools that enact a verb: the same arguments, types and requiredness; register is no tool here (A-10)', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-args-729-'));
-    const server = createRealmMcpServer({
-      ...withArtifactStores(new JsonFileStore(join(dir, 'runs'))),
-      workflowStore: new JsonWorkflowStore(join(dir, 'wf')),
-    });
+    const h = await makeTempHome();
+    handles.push(h);
+    const server = createRealmMcpServer({ ...h.stores });
     const [ct, st] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: 'args-witness-729', version: '0' });
     await Promise.all([server.connect(st), client.connect(ct)]);

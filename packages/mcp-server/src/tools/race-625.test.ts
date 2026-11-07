@@ -5,10 +5,8 @@
 // question another program opened gets its answer; never `resolve_precondition` with nothing to do.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -25,6 +23,7 @@ import {
 } from '@sensigo/realm';
 import { handleAdvanceRun } from './advance-run.js';
 import { handleExecuteStep } from './execute-step.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const RACER: Attributed = { by: 'racer-b', by_source: 'stated', channel: 'test' };
@@ -64,14 +63,18 @@ const DEF_NO_X: WorkflowDefinition = {
 };
 
 describe('#625 PR-2a, F7 — MCP advance_run and execute_step reply from the record after a race', () => {
+  let h: TempHome;
   let store: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
   beforeEach(async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'race-mcp-625-'));
-    store = new JsonFileStore(join(dir, 'runs'));
-    workflowStore = new JsonWorkflowStore(join(dir, 'workflows'));
+    h = await makeTempHome();
+    store = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
     await workflowStore.register(DEF);
     await workflowStore.register(DEF_NO_X);
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   /**

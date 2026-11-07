@@ -98,7 +98,7 @@ function pragma(db: DatabaseLike, name: string, value: 0 | 1) {
 }
 
 describe('#616 unit 6 — the schema constant', () => {
-  it('a database created from the constant stores exactly its text, and holds its ten tables, five indexes and forty-eight triggers', () => {
+  it('a database created from the constant stores exactly its text, and holds its eleven tables, six indexes and forty-eight triggers', () => {
     const db = fresh();
     const rows = db
       .prepare('SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY rowid')
@@ -160,6 +160,8 @@ describe('#616 unit 6 — the schema constant', () => {
         'trigger purged_runs_no_update',
         'trigger purged_runs_delete_below_horizon',
         'trigger runs_tombstone',
+        'table webhook_dedup',
+        'index webhook_dedup_by_expiry',
         // PR-1b B3: the workflow registry.
         'table workflow_versions',
         'index workflow_versions_by_id',

@@ -9,14 +9,11 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure —
 // booleans, counts, key lists and texts with the value cut out, never the value itself.
-import { describe, it, expect } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { describe, it, expect, afterEach } from 'vitest';
 import { join } from 'node:path';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   JsonFileStore,
-  JsonWorkflowStore,
   advanceRun,
   compileDisclosure,
   executeStep,
@@ -32,7 +29,7 @@ import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { createRealmMcpServer } from './server.js';
 import { renderReply } from './render-reply.js';
 import { mcpHostOf } from './tools/start-run.js';
-import { withArtifactStores, type ServerExtras } from './test-support/temp-home.js';
+import { makeTempHome, type ServerExtras, type TempHome } from './test-support/temp-home.js';
 
 /** A unique value put in the run's `params` — a record field no engine reply carries. */
 const SENTINEL = 'SENTINEL-715B-MCP-6c1d';
@@ -70,18 +67,24 @@ class CountingStore extends JsonFileStore {
 
 type Reply = Record<string, unknown>;
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 async function connect(
   definitions: WorkflowDefinition[],
   options: ServerExtras = {},
   elicit?: () => Promise<{ action: 'accept' | 'decline'; content?: Record<string, unknown> }>,
 ) {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-judged-715b-mcp-'));
-  const runStore = new CountingStore(join(dir, 'runs'));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+  const h = await makeTempHome();
+  handles.push(h);
+  const runStore = new CountingStore(join(h.path, 'runs'));
+  const workflowStore = h.stores.workflowStore;
   for (const d of definitions) await workflowStore.register(d);
   const server = createRealmMcpServer({
-    ...withArtifactStores(runStore),
-    workflowStore,
+    ...h.stores,
+    runStore,
     ...options,
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();
@@ -111,8 +114,9 @@ describe('#715 (b) Amendment 4 (ii) — the judged snapshot is on no wire', () =
   it('a value in a record field no reply carries (`params`) is in the judged snapshot, and absent from JSON.stringify(reply) and from renderReply(reply)', async () => {
     // (a) red when the snapshot rides the reply as a key (an enumerable `judged` field: JSON and the
     //     rendered envelope then hold the record's params); (b) prints booleans and key membership.
-    const dir = await mkdtemp(join(tmpdir(), 'realm-judged-715b-ii-'));
-    const runStore = new JsonFileStore(join(dir, 'runs'));
+    const h = await makeTempHome();
+    handles.push(h);
+    const runStore = h.stores.runStore;
     const { record } = await runStore.create({
       workflowId: TWO.id,
       workflowVersion: 1,

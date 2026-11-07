@@ -8,14 +8,11 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   ExtensionRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   composeWaysAt,
@@ -30,7 +27,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { createRealmMcpServer } from '../server.js';
 import { renderWaysOf } from '../render-reply.js';
 import { writtenSnapshot } from '@sensigo/realm';
-import { withArtifactStores } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const CLI = join(ROOT, 'packages/cli/dist/index.js');
@@ -62,9 +59,9 @@ const fill = (template: string, values: Record<string, string>) =>
   Object.entries(values).reduce((t, [k, v]) => t.replaceAll(`<${k}>`, v), template);
 
 type Reply = Record<string, unknown>;
-const homes: string[] = [];
-afterEach(() => {
-  for (const h of homes.splice(0)) rmSync(h, { recursive: true, force: true });
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
 });
 
 /**
@@ -72,11 +69,12 @@ afterEach(() => {
  * (`p.mjs`) for `realm agent` that answers every agent step with `{ ok: true }` and logs the first
  * line of each prompt it is asked (the step's description) to `calls`.
  */
-function home(): string {
-  const h = mkdtempSync(join(tmpdir(), 'realm-pages-625-'));
-  homes.push(h);
-  mkdirSync(join(h, '.realm', 'workflows'), { recursive: true });
-  mkdirSync(join(h, '.realm', 'runs'), { recursive: true });
+async function home(): Promise<string> {
+  const t = await makeTempHome();
+  handles.push(t);
+  const h = t.root;
+  mkdirSync(join(t.path, 'workflows'), { recursive: true });
+  mkdirSync(t.stores.runStore.runsDirPath, { recursive: true });
   writeFileSync(
     join(h, 'p.mjs'),
     [
@@ -96,11 +94,12 @@ function home(): string {
 }
 
 async function connect(h: string, registry?: ExtensionRegistry) {
-  const runStore = new JsonFileStore(join(h, '.realm', 'runs'));
-  const workflowStore = new JsonWorkflowStore(join(h, '.realm', 'workflows'));
+  // Each server opens its own handle on the HOME's realm folder, as each built its own stores.
+  const t = await makeTempHome({ home: join(h, '.realm') });
+  handles.push(t);
+  const { runStore, workflowStore } = t.stores;
   const server = createRealmMcpServer({
-    ...withArtifactStores(runStore),
-    workflowStore,
+    ...t.stores,
     ...(registry !== undefined ? { registry } : {}),
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();
@@ -171,7 +170,7 @@ describe(
         KINDS,
         "A step with neither records an output it did not compute: when the engine runs it, the recorded output of its one `depends_on` step (with no `depends_on`, the run's params; with several, `{}`); when a caller names it, what the caller's dispatcher returned. Its evidence says which (`output_source`).",
       );
-      const h = home();
+      const h = await home();
       const { call, workflowStore, runStore } = await connect(h);
       await workflowStore.register(
         wf([
@@ -258,7 +257,7 @@ describe(
         /`(for '<step>', start a run with params that fit, or correct its input_schema and register the workflow again)` for an input refused with no `depends_on`/.exec(
           page,
         )![1]!;
-      const h = home();
+      const h = await home();
       const { call, workflowStore, runStore } = await connect(h);
       // The loader refuses an invalid trust, so the stored definition is written as an object: a
       // workflow registered before the value was refused, as a run meets it.
@@ -409,7 +408,7 @@ describe(
 
     it('step-kinds.md: the advance_run act stops naming a refused auto step', async () => {
       claim(KINDS, 'The `advance_run` act stops naming it.');
-      const h = home();
+      const h = await home();
       const { call, workflowStore } = await connect(h);
       await workflowStore.register(
         wf([
@@ -454,7 +453,7 @@ describe(
         KINDS,
         "A refused agent step is never offered: `get_run_state` lists it under `agent_refused`, every reply that says what comes next names it with the same `'<step>' cannot run (<check>): <why>.` words instead of `Ready for the agent`, `realm run inspect` prints `Cannot run '<step>' (<check>): <why>`, and `realm agent` names it once and never calls the model for it.",
       );
-      const h = home();
+      const h = await home();
       const { call, workflowStore } = await connect(h);
       await workflowStore.register({
         id: 'agents',
@@ -553,7 +552,7 @@ describe(
         KINDS,
         "Correcting the workflow and registering it again is the fix: the run picks up the corrected definition, and `realm run advance` then runs the step when it is an `auto` step; for an agent step it names the drive (`Nothing is owed to the engine: an agent step is ready: '<step>' — drive it with realm agent --run-id <id> --provider <provider> --model <model>`). An input its schema rejects is also recorded as a drive failure, so `realm run list --stuck` names the step.",
       );
-      const h = home();
+      const h = await home();
       const yaml = (field: string) =>
         [
           'id: sch',
@@ -618,7 +617,7 @@ describe(
         "Only a caller that passes no extensions at all — a program that embeds the engine, or `realm run inspect` — judges by the run's record, in the past tense: `could not run (capability): handler '<name>' was not registered in the runner that last attempted it` (`Could not run '<step>' (capability): … — from a program that has it: realm run advance <id>` on `inspect`).",
       );
       claim(KINDS, 'With neither, the step is `unknown`, and the act still names it.');
-      const h = home();
+      const h = await home();
       const { call, workflowStore, runStore } = await connect(h);
       await workflowStore.register(
         wf([
@@ -755,7 +754,7 @@ describe(
         MOVES,
         'Not every call does step 2. An answer to a gate (`submit_human_response`, or `realm run respond`) decides only the `guard` steps the answer makes ready. `start_run_batch`, and a `start_run` that matches an existing run by its idempotency key, run no step. After a step that fails, or a step you called that is refused, nothing more runs in that call; a step the engine refuses before its claim is skipped, and the rest run. What such a call leaves owed, `advance_run` runs (see below).',
       );
-      const h = home();
+      const h = await home();
       const registry = new ExtensionRegistry();
       registry.register('handler', 'boom', {
         async execute() {
@@ -919,7 +918,7 @@ describe(
       const answerShown = arrow("Gate 'confirm_review' resolved");
       const orderShown = block(WHAT, 'its dependencies are not settled')[0]!;
       const gateShown = block(WHAT, 'it waits on the question on step')[0]!;
-      const h = home();
+      const h = await home();
       // The example calls GitHub; a stand-in adapter answers here.
       const registry = new ExtensionRegistry();
       registry.register('adapter', 'github', {
@@ -995,7 +994,7 @@ describe(
         MOVES,
         '`realm agent` makes that call for you; a client that drives the run itself calls `advance_run`; from a shell, `realm run advance <run-id>` runs the owed steps without a model.',
       );
-      const h = home();
+      const h = await home();
       const { call, workflowStore, runStore } = await connect(h);
       await workflowStore.register(
         wf([

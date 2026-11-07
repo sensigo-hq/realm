@@ -1,13 +1,11 @@
 // Surface test for the #134 blocked_on_capability status + capability_blocks advisory in get_run_state.
 // Detection is DEFINITION-FREE (via findCapabilityBlockedSteps), so it must fire on the workflow_unresolved
 // path and behind a healthy in-progress sibling — the exact places a definition-keyed check would go silent.
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { JsonFileStore, JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import type { WorkflowDefinition, RunRecord } from '@sensigo/realm';
 import { handleGetRunState } from './get-run-state.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const twoStep: WorkflowDefinition = {
   id: 'twoflow',
@@ -34,13 +32,18 @@ const HANDLER_BLOCK: NonNullable<RunRecord['capability_blocks']> = {
 };
 
 describe('get_run_state — blocked_on_capability (#134)', () => {
+  let h: TempHome;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
 
   beforeEach(async () => {
-    runStore = new JsonFileStore(await mkdtemp(join(tmpdir(), 'cap-surf-run-')));
-    workflowStore = new JsonWorkflowStore(await mkdtemp(join(tmpdir(), 'cap-surf-wf-')));
+    h = await makeTempHome();
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
     await workflowStore.register(twoStep);
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   async function blockedRun(over: Partial<RunRecord>): Promise<string> {

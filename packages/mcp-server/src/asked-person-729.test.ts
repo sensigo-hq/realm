@@ -4,16 +4,12 @@
 // the SAME set (the provider asked once); a question cut when it opened carries the way to the whole
 // output only in the block addressed to the person. Every value is a fake. Each assertion names (a) the
 // change that turns it red and (b) what it prints: stored questions (fakes), counts, booleans.
-import { describe, it, expect } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
+import { describe, it, expect, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
-  JsonFileStore,
-  JsonWorkflowStore,
   buildDisclosureSet,
   endsWithCutSentence,
   VIEW_BUDGET,
@@ -22,7 +18,7 @@ import {
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from './server.js';
-import { withArtifactStores } from './test-support/temp-home.js';
+import { makeTempHome, type TempHome } from './test-support/temp-home.js';
 
 const FAKE = 'CANARY-declared-mcp-7d31-0123456789';
 const set = buildDisclosureSet({
@@ -50,14 +46,18 @@ const autoGate = (message: string) => ({
   },
 });
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 async function connect(extra: Record<string, unknown> = {}) {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-asked-729-'));
-  const runStore = new JsonFileStore(join(dir, 'runs'));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+  const h = await makeTempHome();
+  handles.push(h);
+  const { runStore, workflowStore } = h.stores;
   let asked = 0;
   const server = createRealmMcpServer({
-    ...withArtifactStores(runStore),
-    workflowStore,
+    ...h.stores,
     disclosureProvider: async () => {
       asked += 1;
       return set;

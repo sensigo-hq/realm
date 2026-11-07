@@ -3,10 +3,7 @@
 // LoaderWarning in the new envelope.diagnostics field (the agent-native value — a framework can
 // self-correct on code/key/did_you_mean instead of parsing text). The workflow is still created
 // either way; create_workflow never rejects on an unknown step key.
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { JsonFileStore, JsonWorkflowStore, DEFAULT_POLICY } from '@sensigo/realm';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -19,19 +16,21 @@ import {
   createWorkflowArgsSchema,
   type CreateWorkflowArgs,
 } from './create-workflow.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 describe('create_workflow — structured diagnostics (issue #169)', () => {
-  let runDir: string;
-  let workflowDir: string;
+  let h: TempHome;
   let stores: { runStore: JsonFileStore; workflowStore: JsonWorkflowStore };
 
   beforeEach(async () => {
-    runDir = await mkdtemp(join(tmpdir(), 'realm-cw-diag-run-'));
-    workflowDir = await mkdtemp(join(tmpdir(), 'realm-cw-diag-wf-'));
+    h = await makeTempHome();
     stores = {
-      runStore: new JsonFileStore(runDir),
-      workflowStore: new JsonWorkflowStore(workflowDir),
+      runStore: h.stores.runStore,
+      workflowStore: h.stores.workflowStore,
     };
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   it('an unknown step key is created anyway, and appears in both warnings and diagnostics', async () => {
@@ -167,17 +166,18 @@ describe('create_workflow — structured diagnostics (issue #169)', () => {
 // an agent step's model request (#401), so it takes its place.
 // =================================================================================================
 describe('create_workflow — timeout keys (issue #412)', () => {
-  let runDir: string;
-  let workflowDir: string;
+  let h: TempHome;
   let stores: { runStore: JsonFileStore; workflowStore: JsonWorkflowStore };
 
   beforeEach(async () => {
-    runDir = await mkdtemp(join(tmpdir(), 'realm-cw-412-run-'));
-    workflowDir = await mkdtemp(join(tmpdir(), 'realm-cw-412-wf-'));
+    h = await makeTempHome();
     stores = {
-      runStore: new JsonFileStore(runDir),
-      workflowStore: new JsonWorkflowStore(workflowDir),
+      runStore: h.stores.runStore,
+      workflowStore: h.stores.workflowStore,
     };
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   it('timeout_seconds is dropped with a TARGETED warning — never an error', async () => {
@@ -304,17 +304,18 @@ describe('create_workflow — timeout keys (issue #412)', () => {
 // surfaces now warn and drop.
 // =================================================================================================
 describe('create_workflow — top-level and metadata unknown keys (issue #419)', () => {
-  let runDir: string;
-  let workflowDir: string;
+  let h: TempHome;
   let stores: { runStore: JsonFileStore; workflowStore: JsonWorkflowStore };
 
   beforeEach(async () => {
-    runDir = await mkdtemp(join(tmpdir(), 'realm-cw-419-run-'));
-    workflowDir = await mkdtemp(join(tmpdir(), 'realm-cw-419-wf-'));
+    h = await makeTempHome();
     stores = {
-      runStore: new JsonFileStore(runDir),
-      workflowStore: new JsonWorkflowStore(workflowDir),
+      runStore: h.stores.runStore,
+      workflowStore: h.stores.workflowStore,
     };
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   it('the walk trap: workflow_id gets a TARGETED warning, and never reaches the definition', async () => {
@@ -462,16 +463,15 @@ describe('create_workflow — top-level and metadata unknown keys (issue #419)',
 // pair — the only place the schema's `.passthrough()` is actually exercised.
 describe('create_workflow — the registration carries unknown keys to the handler (issue #419)', () => {
   it('a wire call with a top-level AND a metadata unknown key warns about both', async () => {
-    const runDir = await mkdtemp(join(tmpdir(), 'realm-cw-419-wire-run-'));
-    const workflowDir = await mkdtemp(join(tmpdir(), 'realm-cw-419-wire-wf-'));
+    const h = await makeTempHome();
     const server = new McpServer({ name: 'test', version: '0' });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     // Both stores scratch-rooted: unlike the read-only register-over-transport cells elsewhere in
     // this package, create_workflow REGISTERS a definition and STARTS a run, so a default-store
     // call would write into the real ~/.realm (the #285 class).
     registerCreateWorkflow(server, {
-      runStore: new JsonFileStore(runDir),
-      workflowStore: new JsonWorkflowStore(workflowDir),
+      runStore: h.stores.runStore,
+      workflowStore: h.stores.workflowStore,
     });
     await server.connect(serverTransport);
     const client = new Client({ name: 'test-client', version: '0' });
@@ -523,6 +523,7 @@ describe('create_workflow — the registration carries unknown keys to the handl
       for (const field of declared) expect(description).toContain(field);
     } finally {
       await client.close();
+      await h.cleanup();
     }
   });
 });

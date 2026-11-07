@@ -14,12 +14,11 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: field
 // names and booleans.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  JsonFileStore,
   executeStep,
   submitHumanResponse,
   writeTestClockFile,
@@ -27,6 +26,7 @@ import {
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { renderReply, MCP_ENVELOPE_ROWS, type ReplyRoute } from './render-reply.js';
+import { makeTempHome, type TempHome } from './test-support/temp-home.js';
 
 /** The reply's keys at 358d3c83 (`ResponseEnvelope`), before PR-0. */
 type Before =
@@ -120,12 +120,19 @@ const GATED: WorkflowDefinition = {
   },
 } as WorkflowDefinition;
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 /** Replies that carry every added field between them. */
 async function replies(): Promise<EngineReply[]> {
   // #715 (b) (01 §C.4): a test location — the store's clock (its clock file) makes the answer late.
   const root = await mkdtemp(join(tmpdir(), 'realm-registry-729-'));
   await writeTestClockFile(root, new Date());
-  const store = new JsonFileStore(join(root, 'runs'));
+  const h = await makeTempHome({ home: root });
+  handles.push(h);
+  const store = h.stores.runStore;
   const { record: run } = await store.create({
     workflowId: AGENT.id,
     workflowVersion: 1,

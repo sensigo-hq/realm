@@ -16,8 +16,6 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   ExtensionRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   createDefaultRegistry,
@@ -31,7 +29,7 @@ import { createRealmMcpServer } from '../server.js';
 import { handleGetRunState } from './get-run-state.js';
 import { POLL_CAP_MS } from '../render-reply.js';
 import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
-import { withArtifactStores } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 // #715 (b) 04 §D (B4): no cell here waits on the real clock for a question to expire. The run store a
 // cell opens sits at a TEST LOCATION (`located`), and `passes(ms)` moves the clock of every location
@@ -78,18 +76,26 @@ function block(page: string, marker: string): string[] {
 
 type Reply = Record<string, unknown>;
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 /** A server over a real client. `home` puts its stores where the `realm` CLI reads them. */
 async function connect(opts: { registry?: ExtensionRegistry; home?: string } = {}) {
   const base = opts.home ?? (await mkdtemp(join(tmpdir(), 'realm-pin-b-625-')));
-  const runsDir = opts.home !== undefined ? join(base, '.realm', 'runs') : join(base, 'runs');
-  const wfDir = opts.home !== undefined ? join(base, '.realm', 'workflows') : join(base, 'wf');
+  // The location first, then the handle on it (a second server on the same home shares both).
+  const root = opts.home !== undefined ? join(base, '.realm') : base;
+  await located(root);
+  const h = await makeTempHome({ home: root });
+  handles.push(h);
+  const { runStore, workflowStore } = h.stores;
+  const runsDir = runStore.runsDirPath;
+  const wfDir = join(h.path, 'workflows');
   mkdirSync(runsDir, { recursive: true });
   mkdirSync(wfDir, { recursive: true });
-  const runStore = new JsonFileStore(await located(join(runsDir, '..')));
-  const workflowStore = new JsonWorkflowStore(wfDir);
   const server = createRealmMcpServer({
-    ...withArtifactStores(runStore),
-    workflowStore,
+    ...h.stores,
     ...(opts.registry !== undefined ? { registry: opts.registry } : {}),
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();

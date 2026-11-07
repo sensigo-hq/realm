@@ -3,12 +3,12 @@
 // (a live run, a terminal run) that reach the view through different definition sources.
 import { declared } from '../test-support/declared.js';
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { JsonFileStore, WorkflowError } from '@sensigo/realm';
+import { WorkflowError } from '@sensigo/realm';
 import type {
   RunRecord,
   RunStore,
@@ -20,7 +20,7 @@ import { handleGetRunState } from './get-run-state.js';
 import { loadPriceSource } from '../price-source.js';
 import { createRealmMcpServer } from '../server.js';
 import { snap, doubleClock, noSettle } from '../test-support/snapshot-double.js';
-import { withArtifactStores } from '../test-support/temp-home.js';
+import { makeTempHome } from '../test-support/temp-home.js';
 
 function makeStore(run: RunRecord): RunStore {
   return declared({
@@ -411,11 +411,13 @@ describe('#600 caching PR P (G12) — get_run_state money', () => {
   // no note; (b) prints the reply's sources. The installed list (a devDependency here) prices
   // claude-sonnet-5-5.
   it("createRealmMcpServer with no provider: the installed list only, every figure saying 'no economics file is configured on this server'", async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'realm-g12-server-'));
+    const h = await makeTempHome();
+    const dir = h.stores.runStore.runsDirPath;
+    mkdirSync(dir, { recursive: true });
     const record = run('claude-sonnet-5-5', { provider: 'anthropic' });
     writeFileSync(join(dir, `${record.id}.json`), JSON.stringify(record), 'utf8');
     const server = createRealmMcpServer({
-      ...withArtifactStores(new JsonFileStore(dir)),
+      ...h.stores,
       workflowStore: workflowStore(),
     });
     const [ct, st] = InMemoryTransport.createLinkedPair();
@@ -460,7 +462,7 @@ describe('#600 caching PR P (G12) — get_run_state money', () => {
       ]);
     } finally {
       await client.close();
-      rmSync(dir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 });

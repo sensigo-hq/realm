@@ -17,7 +17,6 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   ARGS,
-  JsonFileStore,
   JsonWorkflowStore,
   advanceRun,
   formatInstantWords,
@@ -39,7 +38,7 @@ import {
 } from './server.js';
 import { effectiveGateAnswers } from './door.js';
 import { POLL_CAP_MS, renderReply, tokenStrayed, type McpEnvelope } from './render-reply.js';
-import { makeTempHome, withArtifactStores, type ServerExtras } from './test-support/temp-home.js';
+import { makeTempHome, type ServerExtras, type TempHome } from './test-support/temp-home.js';
 
 type Reply = Record<string, unknown>;
 
@@ -85,6 +84,11 @@ interface Session {
   elicited: () => number;
 }
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 /** One session: a server built with `options`, a client that declares forms or not. */
 async function session(
   options: ServerExtras = {},
@@ -95,14 +99,14 @@ async function session(
       content?: Record<string, unknown>;
     }>;
   } = {},
-  stores?: { runStore: JsonFileStore; workflowStore: JsonWorkflowStore },
+  stores?: TempHome['stores'],
 ): Promise<Session> {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-door-627-'));
-  const runStore = stores?.runStore ?? new JsonFileStore(join(dir, 'runs'));
-  const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore(join(dir, 'wf'));
+  // A cell's own stores (cell 10 restarts on one home), else a home of this session's own.
+  const own = stores === undefined ? await makeTempHome() : undefined;
+  if (own !== undefined) handles.push(own);
+  const { runStore, workflowStore } = stores ?? own!.stores;
   const server = createRealmMcpServer({
-    ...withArtifactStores(runStore),
-    workflowStore,
+    ...(stores ?? own!.stores),
     ...options,
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();
@@ -242,11 +246,9 @@ describe('#627 W — which answer tool a session lists', () => {
   });
 
   it('cell 10 — restarting on one store flips asked → withheld → offered → asked; the store keeps no value', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-door-627-flip-'));
-    const stores = {
-      runStore: new JsonFileStore(join(dir, 'runs')),
-      workflowStore: new JsonWorkflowStore(join(dir, 'wf')),
-    };
+    const h = await makeTempHome();
+    handles.push(h);
+    const stores = h.stores;
     const answerToolOf = async (gateAnswers?: 'withheld' | 'offered') =>
       (
         await (await session(gateAnswers !== undefined ? { gateAnswers } : {}, {}, stores)).tools()
@@ -1357,7 +1359,7 @@ describe('#627 W correction 2 (4.2, 4.3) — the library refuses an inert form w
       emptyAnswers:
         "createRealmMcpServer: invalid gateAnswers option value '': expected asked, offered or withheld",
     });
-    home.cleanup();
+    await home.cleanup();
   });
 });
 
@@ -1380,6 +1382,6 @@ describe('#627 W correction 1 (C1) — the principal option is checked when the 
       bad: build({ kind: 'api_key' }),
       good: build({ kind: 'api_key', id: 'key-627' }, home.stores),
     }).toEqual({ bad: INVALID_PRINCIPAL_OPTION, good: 'built' });
-    home.cleanup();
+    await home.cleanup();
   });
 });

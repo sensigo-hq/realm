@@ -3,12 +3,10 @@
 // get-run-state-run-health.test.ts precedent — only `.get()` (and, for the fenced case, a
 // call-counted variant) is ever exercised.
 import { declared } from '../test-support/declared.js';
-import { describe, it, expect } from 'vitest';
-import { mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { describe, it, expect, afterEach } from 'vitest';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  JsonWorkflowStore,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   InMemoryTraceBufferStore,
   WorkflowError,
@@ -19,6 +17,7 @@ import { handleGetRunState } from './get-run-state.js';
 import { handleStartRun } from './start-run.js';
 import { handleStartRunBatch } from './start-run-batch.js';
 import { snap, listing, doubleClock, noSettle } from '../test-support/snapshot-double.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const def: WorkflowDefinition = {
   id: 'wf-282-mcp',
@@ -113,11 +112,18 @@ function makeStaticStore(run: RunRecord): RunStore {
   });
 }
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 describe('APPEND_TRACE_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
   it("a G record (terminal, stale persisted phase) is refused at the pre-CS check — keyed on terminal_state, not run_phase, on a VIRGIN step ('c') so stepStateOf cannot mask a reverted check", async () => {
-    const workflowDir = await mkdtemp(join(tmpdir(), 'realm-282-append-trace-wf-'));
+    const h = await makeTempHome();
+    handles.push(h);
+    const workflowDir = join(h.path, 'workflows');
     await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
-    const workflowStore = new JsonWorkflowStore(workflowDir);
+    const workflowStore = h.stores.workflowStore;
     const runStore = makeStaticStore(makeGrandfathered());
     const traceBufferStore = new InMemoryTraceBufferStore(runStore);
 
@@ -140,9 +146,11 @@ describe('APPEND_TRACE_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
   });
 
   it("a two-phase store (LIVE at the pre-CS get, G at the fence's own re-check) is ALSO refused — proving the fence's own keying, not just the pre-CS one", async () => {
-    const workflowDir = await mkdtemp(join(tmpdir(), 'realm-282-append-trace-wf-2-'));
+    const h = await makeTempHome();
+    handles.push(h);
+    const workflowDir = join(h.path, 'workflows');
     await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
-    const workflowStore = new JsonWorkflowStore(workflowDir);
+    const workflowStore = h.stores.workflowStore;
 
     const live = makeGrandfathered({
       terminal_state: false,
@@ -215,9 +223,11 @@ describe('APPEND_TRACE_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
   // version from, so the refusal reports the version the pre-CS read saw (the fence's
   // `run_version`, set by handleAppendTrace from that read).
   it("a run that vanishes between the pre-CS read and the fence's re-check is refused run_not_found, reporting the version the pre-CS read saw", async () => {
-    const workflowDir = await mkdtemp(join(tmpdir(), 'realm-282-append-trace-wf-3-'));
+    const h = await makeTempHome();
+    handles.push(h);
+    const workflowDir = join(h.path, 'workflows');
     await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
-    const workflowStore = new JsonWorkflowStore(workflowDir);
+    const workflowStore = h.stores.workflowStore;
 
     const live = makeGrandfathered({
       terminal_state: false,
@@ -284,9 +294,11 @@ describe('get_run_state suppression (issue #279, increment 2, PR-C)', () => {
 
 describe('start_run / start_run_batch — reuse-envelope pins (issue #279, increment 2, PR-C)', () => {
   it('start_run, deduped onto a G record, reports "completed" — never "gate_waiting" — in both the envelope and the context_hint', async () => {
-    const workflowDir = await mkdtemp(join(tmpdir(), 'realm-282-start-run-wf-'));
+    const h = await makeTempHome();
+    handles.push(h);
+    const workflowDir = join(h.path, 'workflows');
     await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
-    const workflowStore = new JsonWorkflowStore(workflowDir);
+    const workflowStore = h.stores.workflowStore;
     const g = makeGrandfathered();
     const runStore: RunStore = declared({
       clock: doubleClock,
@@ -319,9 +331,11 @@ describe('start_run / start_run_batch — reuse-envelope pins (issue #279, incre
   });
 
   it('start_run_batch, deduped onto a G record, reports "completed" in the item\'s run_phase — never "gate_waiting"', async () => {
-    const workflowDir = await mkdtemp(join(tmpdir(), 'realm-282-start-run-batch-wf-'));
+    const h = await makeTempHome();
+    handles.push(h);
+    const workflowDir = join(h.path, 'workflows');
     await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
-    const workflowStore = new JsonWorkflowStore(workflowDir);
+    const workflowStore = h.stores.workflowStore;
     const g = makeGrandfathered();
     const runStore: RunStore = declared({
       clock: doubleClock,

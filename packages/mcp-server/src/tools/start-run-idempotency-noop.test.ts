@@ -1,13 +1,11 @@
 // Issue-2 headline regression: re-encountering a TERMINAL aborted run through a permanent
 // idempotency key must be a clean no-op — start_run / start_run_batch must NOT re-drive or un-abort it.
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { JsonFileStore, JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import type { WorkflowDefinition, RunRecord } from '@sensigo/realm';
 import { handleStartRun } from './start-run.js';
 import { handleStartRunBatch } from './start-run-batch.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 // guard_step aborts → its downstream `process` (auto, none_failed) has only a *skipped* dependency,
 // so pre-fix start_run found it eligible and re-executed it on the terminal run.
@@ -30,15 +28,18 @@ const workflow: WorkflowDefinition = {
 const IDEMPOTENCY_KEY = 'cs1-live-12345';
 
 describe('start_run / start_run_batch on a terminal aborted run (idempotency no-op)', () => {
+  let h: TempHome;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
 
   beforeEach(async () => {
-    const runDir = await mkdtemp(join(tmpdir(), 'cs1-run-'));
-    const wfDir = await mkdtemp(join(tmpdir(), 'cs1-wf-'));
-    runStore = new JsonFileStore(runDir);
-    workflowStore = new JsonWorkflowStore(wfDir);
+    h = await makeTempHome();
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
     await workflowStore.register(workflow);
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   /** Seeds a terminal aborted run carrying the permanent idempotency key. */
