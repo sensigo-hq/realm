@@ -396,8 +396,8 @@ export interface SettlementWrite {
  * refuses a changed or dropped entry and a changed or removed write-once value, and writes a
  * content-equal rebuild as the identical rows. Reference identity cannot see an entry changed in
  * place; core's transforms never change their input (none of 1,351 applied outcomes in core's suites,
- * AUDIT-13A §3), and unit 16's `TRANSFORM_FIDELITY` would show it. Pure: it reads nothing but the two
- * records.
+ * AUDIT-13A §3), and `TRANSFORM_FIDELITY`, which `contract-settlement-616.test.ts` runs against this
+ * store, would show it. Pure: it reads nothing but the two records.
  */
 export function prepareSettlementWrite(fresh: RunRecord, updated: RunRecord): SettlementWrite {
   const { core, fields, evidence } = splitCore(updated);
