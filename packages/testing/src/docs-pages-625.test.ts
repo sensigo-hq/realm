@@ -15,10 +15,21 @@ import { fileURLToPath } from 'node:url';
 import {
   createDefaultRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
+  type CreateResult,
+  type CreateRunOptions,
+  type LoadBearingRunRecordField,
+  type RunRecord,
+  type RunStore,
+  type Snapshot,
   type StepHandler,
   type WorkflowDefinition,
 } from '@sensigo/realm';
-import { runFixtureTests } from './index.js';
+import {
+  InMemoryStore,
+  RUN_STORE_FIDELITY_LAWS,
+  runFixtureTests,
+  runStoreFidelityContract,
+} from './index.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../..');
 const CLI = join(ROOT, 'packages/cli/dist/index.js');
@@ -378,6 +389,68 @@ describe(
   },
 );
 
+const CORE_PAGE = 'docs/reference/core-library.md';
+const FIDELITY_DEFINITION: WorkflowDefinition = {
+  id: 'w',
+  name: 'w',
+  version: 1,
+  steps: { work: { description: 'W.', execution: 'agent', depends_on: [] } },
+};
+
+/** #616 PR-1a unit 16a — the copies core-library.md's "Check a store" table runs the fidelity
+ *  contract on: InMemoryStore with ONE thing changed. This one keeps InMemoryStore's declaration,
+ *  which lists `capability_blocks`, and drops that field on `update`: the lie the table shows. */
+class DropsCapabilityBlocks extends InMemoryStore {
+  override async update(record: RunRecord): Promise<Snapshot> {
+    const { capability_blocks: _dropped, ...rest } = record;
+    return super.update(rest);
+  }
+}
+/** Lists no fields, and still keeps the identity entry a run is created with. */
+class ListsNoFields extends InMemoryStore {
+  override readonly persistedRunRecordFields: ReadonlySet<LoadBearingRunRecordField> = new Set();
+}
+/** Lists no fields and keeps none of them: its `create` leaves the identity entry out. */
+class ListsNoFieldsKeepsNone extends ListsNoFields {
+  override async create(options: CreateRunOptions): Promise<CreateResult> {
+    const { extensionIdentity: _entry, ...rest } = options;
+    return super.create(rest);
+  }
+}
+/** Every case of the fidelity contract, each on a fresh store `make` builds (as the testing page
+ *  says to): how many there are, and each failure's law and message. */
+async function fidelityRun(
+  make: () => RunStore,
+): Promise<{ cases: number; failures: Array<{ law: string; message: string }> }> {
+  const all = () =>
+    runStoreFidelityContract({ store: make(), definition: FIDELITY_DEFINITION, stepName: 'work' });
+  const cases = all().length;
+  const failures: Array<{ law: string; message: string }> = [];
+  for (let i = 0; i < cases; i++) {
+    const c = all()[i]!;
+    await c.run().catch((err: unknown) => {
+      failures.push({ law: c.law, message: err instanceof Error ? err.message : String(err) });
+    });
+  }
+  return { cases, failures };
+}
+/** In `page`'s section `heading` (to the next heading of its level), the cells after the first of
+ *  the table row whose first cell is `first`. */
+function cellsAfter(page: string, heading: string, first: string): string[] | undefined {
+  const text = readFileSync(join(ROOT, page), 'utf8');
+  const start = text.indexOf(`\n${heading}\n`);
+  const level = /^#+/.exec(heading)![0];
+  const rest = start < 0 ? '' : text.slice(start + heading.length + 2);
+  const next = rest.search(new RegExp(`\\n#{1,${level.length}} `));
+  const line = (next < 0 ? rest : rest.slice(0, next))
+    .split('\n')
+    .find((l) => l.startsWith('|') && l.split('|')[1]?.trim() === first);
+  return line
+    ?.split('|')
+    .slice(2, -1)
+    .map((c) => c.trim());
+}
+
 describe('#872 (b1) B11 — testing-package.md: the fidelity laws', () => {
   it('the law table names EVIDENCE_WRITE_ORDER, and (ride-along) SUPPLIER_ROUND_TRIPS and EVIDENCE_KEEPS_ANSWER_FACTS', async () => {
     for (const row of [
@@ -397,9 +470,7 @@ describe('#872 (b1) B11 — testing-package.md: the fidelity laws', () => {
     );
   });
 
-  it('#872 (b1) correction 1 (AC6): the contracts table’s runStoreFidelityContract row — its laws and cases DERIVED by running the contract against InMemoryStore', async () => {
-    const { RUN_STORE_FIDELITY_LAWS, runStoreFidelityContract, InMemoryStore } =
-      await import('./index.js');
+  it('#872 (b1) correction 1 (AC6): the contracts table’s runStoreFidelityContract row — its laws and cases DERIVED by running the contract against InMemoryStore; #616 PR-1a unit 16a: and core-library.md’s three runs, each store’s cases and failures and the failure it shows', async () => {
     const row = readFileSync(join(ROOT, PAGE), 'utf8')
       .split('\n')
       .find((line) => /^\| `runStoreFidelityContract` +\|/.test(line));
@@ -420,5 +491,87 @@ describe('#872 (b1) B11 — testing-package.md: the fidelity laws', () => {
       laws: String(RUN_STORE_FIDELITY_LAWS.length),
       cases: `${cases.length}, with \`InMemoryStore\``,
     });
+    // #616 PR-1a unit 16a: core-library.md's table, run. (a) red when a row's cases or failures
+    // differ from the run of its store (the 9 / 9 / 1 this unit found stale), or the failure shown is
+    // not the dishonest copy's one failure; (b) prints the page's cells beside the run's counts, and
+    // the block beside the failure.
+    const runs = {
+      '`InMemoryStore`': await fidelityRun(() => new InMemoryStore()),
+      'A copy that lists `capability_blocks` and drops it on `update`': await fidelityRun(
+        () => new DropsCapabilityBlocks(),
+      ),
+      'A copy that lists no fields and does not keep the identity entry': await fidelityRun(
+        () => new ListsNoFieldsKeepsNone(),
+      ),
+    };
+    const page = Object.fromEntries(
+      Object.keys(runs).map((label) => [label, cellsAfter(CORE_PAGE, '## Check a store', label)]),
+    );
+    const run = Object.fromEntries(
+      Object.entries(runs).map(([label, r]) => [
+        label,
+        [String(r.cases), String(r.failures.length)],
+      ]),
+    );
+    expect(page).toEqual(run);
+    claim(CORE_PAGE, '`runStoreFidelityContract` was run on 3 stores:');
+    const [failure] =
+      runs['A copy that lists `capability_blocks` and drops it on `update`'].failures;
+    expect(block(CORE_PAGE, 'DISHONEST').filter((l) => l !== '')).toEqual([
+      `${failure?.law} — ${failure?.message.slice(0, failure.message.indexOf(' wrote:'))} …`,
+    ]);
+  });
+});
+
+describe('#616 PR-1a unit 16a — testing-package.md: the fidelity contract', () => {
+  it('the law table names CREATE_REPORTS_CREATED, with its four cases', () => {
+    // The behaviour: in-memory-store.test.ts, "#616 PR-1a unit 16a — CREATE_REPORTS_CREATED fails
+    // the store that misreports created" (each branch, each conjunct), and every wiring's
+    // `conforms to CREATE_REPORTS_CREATED` (InMemoryStore; JsonFileStore in the cli).
+    claim(
+      PAGE,
+      "| `CREATE_REPORTS_CREATED` | A create says whether it made a new run. One with no idempotency key, one with a key no run holds, and one with `onTerminalMatch: 'rerun'` over an ended run report `created: true`; the last one's `rerun_of` names the run it replaces. A second create with the same key while the first run is live reports `created: false` and returns that run. One case for each of the four. Added after version 0.48.0. |",
+    );
+    // (a) red when the law has another number of cases than the four the row says; (b) prints the
+    //     count.
+    const cases = runStoreFidelityContract({
+      store: new InMemoryStore(),
+      definition: FIDELITY_DEFINITION,
+      stepName: 'work',
+    }).filter((c) => c.law === 'CREATE_REPORTS_CREATED');
+    expect(cases.length).toBe(4);
+  });
+
+  it('a store that lists no fields gets one FIDELITY_HONESTY case: the identity entry it was created with — DERIVED from the run', async () => {
+    // (a) red when a store that lists no fields gets another number of FIDELITY_HONESTY cases than
+    //     the one the sentence says, or that case does not fail a store that keeps the entry, or
+    //     fails one that keeps none; (b) prints the count and each store's failures.
+    const honesty = runStoreFidelityContract({
+      store: new ListsNoFields(),
+      definition: FIDELITY_DEFINITION,
+      stepName: 'work',
+    }).filter((c) => c.law === 'FIDELITY_HONESTY');
+    const keepsEntry = await fidelityRun(() => new ListsNoFields());
+    const keepsNone = await fidelityRun(() => new ListsNoFieldsKeepsNone());
+    expect({
+      honestyCases: honesty.length,
+      keepsEntry: keepsEntry.failures,
+      keepsNone: keepsNone.failures,
+    }).toEqual({
+      honestyCases: 1,
+      keepsEntry: [
+        {
+          law: 'FIDELITY_HONESTY',
+          message: expect.stringMatching(
+            /^store does not declare persistedRunRecordFields includes 'extension_identity', but create's start entry read back as /,
+          ),
+        },
+      ],
+      keepsNone: [],
+    });
+    claim(
+      PAGE,
+      'A store that lists no fields gets one `FIDELITY_HONESTY` case: an identity entry a run is created with (`extension_identity`) must not come back, since the store does not list that field.',
+    );
   });
 });
