@@ -118,6 +118,7 @@ All notable changes to this project are documented here.
   when the adapter sets `recordsDeletionTime`, none when it does not. A store whose delete stamps
   the time of the deletion sets the field; set for a store with no `deleteAllForRun`, the
   `READS_ONE_READING` case fails.
+- `InMemoryStore` (in `@sensigo/realm-testing`) gains `seed(record)`: a test plants a run record as given, replacing any stored run of its id — a fixture channel, never an import (#616).
 
 ### Changed
 

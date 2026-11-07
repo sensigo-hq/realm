@@ -4,7 +4,8 @@
 // run it supersedes on every create path that has one; `compareCanonical` compares by value.
 //
 // The controllable clock is a TEST LOCATION's clock file, written by core's own helper beside a temp
-// `runs/` folder (core cannot import the testing package); readings are COUNTED with
+// `runs/` folder (the clock this store reads; core's tests can import the testing package
+// undeclared, as `reliability.test.ts` does); readings are COUNTED with
 // `vi.spyOn(store.clock, 'now')`. Every location lives in its own `mkdtemp` root: a clock file is
 // never written directly under the system temp folder, where it would sit beside every other test's
 // bare temp runs folder.

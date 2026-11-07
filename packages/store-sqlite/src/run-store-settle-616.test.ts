@@ -8,12 +8,14 @@
 // that fails after or before its rows reached the file, or after another writer moved on; five
 // processes settling one step at once; the engine admitting the store.
 //
-// These cells stand in for the settle ground of core's shared store laws until unit 16 wires the
-// contract (the package cannot import its fixtures: `packages/testing/src/store/settlement-contract.ts`
-// and `store-clock-contract.ts`): `SETTLE_ONE_READING`, `OPEN_GATE_MINTS_AT_AT`,
-// `LATE_ANSWER_ONE_WRITE`, `SEAL_RUN_ONE_WRITE`, `GUARD_CASCADE_ONE_WRITE`, `GUARD_CASCADE_TOTAL`,
-// `TRANSFORM_FIDELITY`, `PHASE_IS_GENERATED`'s settle leg, `REFUSAL_SWEEP`, the gate, guard, release
-// and finalizer families, and `SEAL_RUN_NEEDS_NO_DEFINITION`. This file builds no copy of their cases.
+// Since unit 16 the shared laws that cover the settle ground also run against this store
+// (`contract-settlement-616.test.ts`: every law of the settlement contract, among them
+// `GUARD_CASCADE_ONE_WRITE`, `GUARD_CASCADE_TOTAL`, `TRANSFORM_FIDELITY`, `PHASE_IS_GENERATED`,
+// `REFUSAL_SWEEP`, the gate, guard, release and finalizer families and
+// `SEAL_RUN_NEEDS_NO_DEFINITION`; `contract-clock-616.test.ts`: `SETTLE_ONE_READING`,
+// `OPEN_GATE_MINTS_AT_AT`, `LATE_ANSWER_ONE_WRITE` and `SEAL_RUN_ONE_WRITE`). This file builds no
+// copy of their cases. These cells stay for what no shared law sees: the rows and text a write
+// leaves, the exact refusals and their words, and the COMMIT protocol.
 //
 // Each assertion carries (1) the break that turns it red and (2) what it prints when it fails.
 import { spawn } from 'node:child_process';
