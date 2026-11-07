@@ -17,8 +17,9 @@
 // checks), which pass through unchanged.
 import { realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
-import { realmHomePath, resolveRootClock, type Clock } from '@sensigo/realm';
+import { realmHomePath, resolveRootClock, type Clock, type DedupStore } from '@sensigo/realm';
 import { RealmDb } from './connection.js';
+import { SqliteDedupStore } from './dedup-store.js';
 import type { OpenSeams } from './open-file.js';
 
 /** What `openRealmHome` takes. */
@@ -33,8 +34,13 @@ export interface OpenRealmHomeOptions {
   readonly clock?: Clock;
 }
 
-/** An open Realm home. Later units add its stores. */
+/** An open Realm home. Later units add its other stores. */
 export interface RealmHome {
+  /**
+   * The duplicate-webhook memory of one workflow (`realm listen`'s): one instance per workflow id, on
+   * the home's one connection. After `close()`, its calls reject.
+   */
+  dedupStoreFor(workflowId: string): DedupStore;
   /**
    * Closes the home's connection; a later `openRealmHome` opens the home afresh. Every caller in this
    * process that opened the home shares this handle, so a `close()` by any of them ends it for all.
@@ -108,7 +114,16 @@ export async function openHome(
     const clock = options.clock ?? resolveRootClock(home);
     const db = await RealmDb.open(home, { clock }, seams);
     let closed = false;
+    const dedupStores = new Map<string, DedupStore>();
     return {
+      dedupStoreFor(workflowId: string): DedupStore {
+        let store = dedupStores.get(workflowId);
+        if (store === undefined) {
+          store = new SqliteDedupStore(db, workflowId);
+          dedupStores.set(workflowId, store);
+        }
+        return store;
+      },
       close(): void {
         if (closed) return;
         closed = true;

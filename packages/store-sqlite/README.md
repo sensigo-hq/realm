@@ -15,6 +15,8 @@ Text of a deleted run may stay readable in `realm.db`'s free pages and in `realm
 
 One exception to Realm stamping every time itself: a run deleted by SQL outside Realm is stamped with SQLite's own clock.
 
+Duplicate webhooks: each id is remembered, as a hash, for its window, measured on the store's clock and fixed when it is recorded; each record also clears up to 100 expired ids.
+
 ## Where it runs
 
 Realm refuses a home on a network drive or on a filesystem it does not recognise, including WSL's `/mnt/c`, because SQLite's write-ahead log does not work there. Set `REALM_STORE_FS=local` to use such a folder anyway.
