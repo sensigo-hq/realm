@@ -12,7 +12,6 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   JsonFileStore,
-  JsonWorkflowStore,
   applyResume,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type WorkflowDefinition,
@@ -22,6 +21,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { printChildrenWhenATestFails } from '../test-support/child-output.js';
 import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
+import { makeTempHome } from '../test-support/temp-home.js';
 
 const SERVER_ENTRY =
   process.env['FOLLOWER_SERVER_ENTRY'] ??
@@ -73,17 +73,21 @@ function handlerEntry(home: string): string {
 
 async function withServer<T>(
   defs: WorkflowDefinition[],
-  fn: (client: Client, home: string, clock?: TestLocation['clock']) => Promise<T>,
+  fn: (client: Client, runs: JsonFileStore, clock?: TestLocation['clock']) => Promise<T>,
   opts: { withHandler?: boolean; located?: true } = {},
 ): Promise<T> {
-  const home = mkdtempSync(join(tmpdir(), 'realm-follower-625-'));
+  // #616 PR-2b (b3): the stores come from the helper — a home of its own, whose root is the child's
+  // HOME; with `located`, a handle on the location, opened after it so the run store reads its clock.
+  const own = opts.located === true ? undefined : await makeTempHome();
+  const home = own?.root ?? mkdtempSync(join(tmpdir(), 'realm-follower-625-'));
   // #715 (b) 04 §D (B4): with `located`, `~/.realm` is a test location before the server starts, so a
   // cell moves the clock the spawned server reads instead of waiting on the real one.
   const loc =
     opts.located === true
       ? await createTestLocation({ start: new Date(), root: join(home, '.realm') })
       : undefined;
-  const workflows = new JsonWorkflowStore(join(home, '.realm', 'workflows'));
+  const h = own ?? (await makeTempHome({ home: join(home, '.realm') }));
+  const workflows = h.stores.workflowStore;
   for (const d of defs) await workflows.register(d);
   const client = new Client({ name: 'follower', version: '0' });
   await client.connect(
@@ -98,9 +102,10 @@ async function withServer<T>(
     ),
   );
   try {
-    return await fn(client, home, loc?.clock);
+    return await fn(client, h.stores.runStore, loc?.clock);
   } finally {
     await client.close();
+    await h.cleanup();
     rmSync(home, { recursive: true, force: true });
   }
 }
@@ -155,8 +160,8 @@ const gate = (depends_on: string[], choices = ['approve', 'reject']): StepDefini
   gate: { choices },
 });
 
-async function phaseOf(home: string, runId: string): Promise<string> {
-  return (await new JsonFileStore(join(home, '.realm', 'runs')).get(runId)).record.run_phase;
+async function phaseOf(runs: JsonFileStore, runId: string): Promise<string> {
+  return (await runs.get(runId)).record.run_phase;
 }
 
 describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
@@ -167,12 +172,12 @@ describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
       after: { description: 'After.', execution: 'auto', depends_on: ['confirm'] },
       finish: { description: 'Finish.', execution: 'agent', depends_on: ['after'] },
     });
-    await withServer([d], async (client, home) => {
+    await withServer([d], async (client, runs) => {
       const started = await call(client, 'start_run', { workflow_id: d.id, params: {} });
       const { calls, last } = await follow(client, started);
       expect(calls).toContain('advance_run');
       expect(last.next_actions).toEqual([]);
-      expect(await phaseOf(home, started.run_id!)).toBe('completed');
+      expect(await phaseOf(runs, started.run_id!)).toBe('completed');
     });
   }, 30000);
 
@@ -192,13 +197,13 @@ describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
       ...d.steps,
       confirm: gate(['write'], ['reject', 'approve']),
     });
-    await withServer([d, rejectFirst], async (client, home) => {
+    await withServer([d, rejectFirst], async (client, runs) => {
       const a = await call(client, 'start_run', { workflow_id: d.id, params: {} });
       await follow(client, a);
-      expect(await phaseOf(home, a.run_id!)).toBe('completed');
+      expect(await phaseOf(runs, a.run_id!)).toBe('completed');
       const r = await call(client, 'start_run', { workflow_id: rejectFirst.id, params: {} });
       await follow(client, r);
-      expect(await phaseOf(home, r.run_id!)).toBe('aborted');
+      expect(await phaseOf(runs, r.run_id!)).toBe('aborted');
     });
   }, 30000);
 
@@ -214,10 +219,10 @@ describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
       },
       second: gate(['check']),
     });
-    await withServer([d], async (client, home) => {
+    await withServer([d], async (client, runs) => {
       const s = await call(client, 'start_run', { workflow_id: d.id, params: {} });
       await follow(client, s);
-      expect(await phaseOf(home, s.run_id!)).toBe('completed');
+      expect(await phaseOf(runs, s.run_id!)).toBe('completed');
     });
   }, 30000);
 
@@ -236,13 +241,13 @@ describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
         trigger_rule: 'one_failed',
       },
     });
-    await withServer([d], async (client, home) => {
+    await withServer([d], async (client, runs) => {
       const s = await call(client, 'start_run', { workflow_id: d.id, params: {} });
       const { calls } = await follow(client, s);
       // The follower keeps sending {} — refused each time until the rejection budget is spent and
       // `work` FAILS; the recovery step behind it (`one_failed`) is then owed and reached.
       expect(calls.filter((c) => c === 'execute_step').length).toBeGreaterThan(1);
-      const { record: run } = await new JsonFileStore(join(home, '.realm', 'runs')).get(s.run_id!);
+      const { record: run } = await runs.get(s.run_id!);
       expect(run.failed_steps).toEqual(['work']);
       expect(run.completed_steps).toContain('recover');
     });
@@ -253,7 +258,7 @@ describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
       head: { description: 'Head.', execution: 'auto', depends_on: [] },
       finish: { description: 'Finish.', execution: 'agent', depends_on: ['head'] },
     });
-    await withServer([d], async (client, home) => {
+    await withServer([d], async (client, runs) => {
       const batch = await call(client, 'start_run_batch', {
         workflow_id: d.id,
         items: [{ params: {} }],
@@ -261,7 +266,7 @@ describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
       const entry = batch.started![0]!;
       expect(entry.next_actions?.map((a) => a?.instruction?.tool)).toEqual(['advance_run']);
       await follow(client, { status: 'ok', next_actions: entry.next_actions ?? [] });
-      expect(await phaseOf(home, entry.run_id)).toBe('completed');
+      expect(await phaseOf(runs, entry.run_id)).toBe('completed');
     });
   }, 30000);
 
@@ -317,10 +322,10 @@ describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
       },
       after: { description: 'After.', execution: 'agent', depends_on: ['g'] },
     });
-    await withServer([d], async (client, home) => {
+    await withServer([d], async (client, runs) => {
       const s = await call(client, 'start_run', { workflow_id: d.id, params: {} });
       await follow(client, s);
-      expect(await phaseOf(home, s.run_id!)).toBe('failed');
+      expect(await phaseOf(runs, s.run_id!)).toBe('failed');
     });
   }, 30000);
 
@@ -343,7 +348,7 @@ describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
     });
     await withServer(
       [d],
-      async (client, home, clock) => {
+      async (client, runs, clock) => {
         const started = await call(client, 'start_run', { workflow_id: d.id, params: {} });
         const opened = await call(client, 'execute_step', {
           run_id: started.run_id!,
@@ -356,12 +361,10 @@ describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
         await clock!.advance(1300);
         const { calls } = await follow(client, opened);
         expect(calls).toContain('advance_run');
-        expect(await phaseOf(home, started.run_id!)).toBe('completed');
+        expect(await phaseOf(runs, started.run_id!)).toBe('completed');
         // #715 (b) commit 4: the question was settled by its expiry (the default), not by the
         // follower's answer — without this the cell passes whether or not the time ran out.
-        const { record } = await new JsonFileStore(join(home, '.realm', 'runs')).get(
-          started.run_id!,
-        );
+        const { record } = await runs.get(started.run_id!);
         expect(record.settled?.['confirm']?.resolved_by).toBe('timeout');
       },
       { located: true },
@@ -381,14 +384,12 @@ describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
     });
     await withServer(
       [d],
-      async (client, home) => {
+      async (client, runs) => {
         const started = await call(client, 'start_run', { workflow_id: d.id, params: {} });
         const { calls } = await follow(client, started);
         expect(calls).toEqual(['execute_step', 'submit_human_response', 'advance_run']);
         expect(calls).not.toContain('stamp');
-        const { record: run } = await new JsonFileStore(join(home, '.realm', 'runs')).get(
-          started.run_id!,
-        );
+        const { record: run } = await runs.get(started.run_id!);
         expect(run.run_phase).toBe('completed');
         expect(run.completed_steps).toContain('stamp_it');
       },
@@ -406,10 +407,9 @@ describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
       },
       after: { description: 'After.', execution: 'agent', depends_on: ['g'] },
     });
-    await withServer([d], async (client, home) => {
+    await withServer([d], async (client, runs) => {
       const s = await call(client, 'start_run', { workflow_id: d.id, params: {} });
       await follow(client, s);
-      const runs = new JsonFileStore(join(home, '.realm', 'runs'));
       const { record: failed } = await runs.get(s.run_id!);
       expect(failed.failed_steps).toEqual(['g']);
       // What `realm run resume --from g` writes (the core transform, then one update).
@@ -419,7 +419,7 @@ describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
       const { calls, last } = await follow(client, state);
       expect(calls).toEqual(['advance_run']);
       expect(last.chained_auto_steps).toEqual([expect.objectContaining({ step: 'g' })]);
-      expect(await phaseOf(home, s.run_id!)).toBe('failed');
+      expect(await phaseOf(runs, s.run_id!)).toBe('failed');
     });
   }, 30000);
 
@@ -428,14 +428,14 @@ describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
       write: { description: 'Write.', execution: 'agent', depends_on: [] },
       x: { description: 'X.', execution: 'auto', depends_on: ['write'], handler: 'missing_h' },
     });
-    await withServer([d], async (client, home) => {
+    await withServer([d], async (client, runs) => {
       const s = await call(client, 'start_run', { workflow_id: d.id, params: {} });
       const { calls, last } = await follow(client, s);
       // decision C24: the attempt's reply is rebuilt with the server's registry, so it offers no act
       // for the step that just failed to dispatch — the follower spends no call to learn it.
       expect(calls).toEqual(['execute_step']);
       expect(last.next_actions).toEqual([]);
-      const { record: run } = await new JsonFileStore(join(home, '.realm', 'runs')).get(s.run_id!);
+      const { record: run } = await runs.get(s.run_id!);
       expect(run.capability_blocks?.['x']).toBeDefined();
       const state = await call(client, 'get_run_state', { run_id: s.run_id! });
       expect(state['engine_runnable']).toEqual([

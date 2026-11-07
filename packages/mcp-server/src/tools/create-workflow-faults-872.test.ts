@@ -3,31 +3,35 @@
 // sentinel id — never by rule alone; the 8,000-character cap and the one closing line. The cells call
 // `handleCreateWorkflow` directly and measure the reply the door sends. Beside each: (a) the change
 // that turns it red; (b) what it prints on failure — lines, step names, counts and sizes.
-import { describe, it, expect } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { JsonFileStore, JsonWorkflowStore, compileDisclosure } from '@sensigo/realm';
+import { describe, it, expect, afterEach } from 'vitest';
+import { compileDisclosure } from '@sensigo/realm';
 import {
   FAULT_LINES_CAP,
   handleCreateWorkflow,
   type CreateWorkflowArgs,
 } from './create-workflow.js';
 import { MCP_ENVELOPE_TABLE, toolContentOf } from '../render-reply.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const set = compileDisclosure([], {
   declared: 'resolved',
   audience: 'agent',
   environment: 'swept',
 }).set;
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 /** The refusal: its lines, its status, and the size of the reply an agent reads. */
 async function refuse(
   args: CreateWorkflowArgs,
 ): Promise<{ errors: string[]; status: unknown; size: number }> {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-ac4-872-'));
+  const h = await makeTempHome();
+  handles.push(h);
   const reply = await handleCreateWorkflow(args, {
-    workflowStore: new JsonWorkflowStore(join(dir, 'wf')),
-    runStore: new JsonFileStore(join(dir, 'runs')),
+    workflowStore: h.stores.workflowStore,
+    runStore: h.stores.runStore,
   });
   const text = toolContentOf({ ...reply }, { set, audience: 'agent', table: MCP_ENVELOPE_TABLE })
     .content[0]!.text;

@@ -23,10 +23,7 @@
 //   of the library function names the function.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   JsonFileStore,
   JsonWorkflowStore,
@@ -45,6 +42,7 @@ import { handleSubmitHumanResponse } from './submit-human-response.js';
 import { handleGetRunState } from './get-run-state.js';
 import { handleStartRun } from './start-run.js';
 import { zOf } from '../test-support/instant.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 /**
  * The answer as the MCP door renders it on a reply that did not open the question (#729 PR-0, Table
@@ -126,12 +124,16 @@ function routing(reply: McpEnvelope) {
 }
 
 describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
+  let h: TempHome;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
   beforeEach(async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-rae-625-'));
-    runStore = new JsonFileStore(join(dir, 'runs'));
-    workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    h = await makeTempHome();
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   it('C94, J9-R1: execute_step on `a` (agent, precondition) and on `blk` (auto, precondition) beside the ready `b`', async () => {

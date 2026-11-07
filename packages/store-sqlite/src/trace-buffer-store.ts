@@ -18,7 +18,6 @@
 //
 // No clock: a line's `ts` is the write's one reading, which the primitive takes (`immediate`).
 import {
-  artifactDeleteFailedError,
   assertFencePredicate,
   brandClass,
   bufferFullError,
@@ -33,7 +32,6 @@ import {
   FINAL_LIMIT_BYTES,
   FINAL_LIMIT_ENTRIES,
   SEALED_ARTIFACTS_LIMIT_PER_STEP,
-  WorkflowError,
   type AgentTraceEntry,
   type AppendOptions,
   type AppendResult,
@@ -48,8 +46,9 @@ import {
   type TraceBufferStore,
   type TraceCapability,
 } from '@sensigo/realm';
+import { deleteFailure, isOwnStatementFailure } from './artifact-delete-failure.js';
 import { REALM_STORE_SQLITE_BRAND } from './brand.js';
-import type { CommitOutcome, RealmDb } from './connection.js';
+import type { RealmDb } from './connection.js';
 import type { DatabaseLike } from './driver.js';
 import { readRunInTransaction } from './run-rows.js';
 
@@ -58,41 +57,6 @@ const STORE_NAME = 'SqliteTraceBufferStore';
 
 /** The artifact a per-run delete failure names. */
 const ARTIFACT = 'trace_buffer';
-
-/**
- * SQLite's primary result codes by number (sqlite.org/rescode.html), for a delete failure whose
- * mapped error has no typed code: it is named by its primary code (`errcode & 0xff`).
- */
-const SQLITE_PRIMARY_CODES: ReadonlyMap<number, string> = new Map([
-  [1, 'SQLITE_ERROR'],
-  [2, 'SQLITE_INTERNAL'],
-  [3, 'SQLITE_PERM'],
-  [4, 'SQLITE_ABORT'],
-  [5, 'SQLITE_BUSY'],
-  [6, 'SQLITE_LOCKED'],
-  [7, 'SQLITE_NOMEM'],
-  [8, 'SQLITE_READONLY'],
-  [9, 'SQLITE_INTERRUPT'],
-  [10, 'SQLITE_IOERR'],
-  [11, 'SQLITE_CORRUPT'],
-  [12, 'SQLITE_NOTFOUND'],
-  [13, 'SQLITE_FULL'],
-  [14, 'SQLITE_CANTOPEN'],
-  [15, 'SQLITE_PROTOCOL'],
-  [16, 'SQLITE_EMPTY'],
-  [17, 'SQLITE_SCHEMA'],
-  [18, 'SQLITE_TOOBIG'],
-  [19, 'SQLITE_CONSTRAINT'],
-  [20, 'SQLITE_MISMATCH'],
-  [21, 'SQLITE_MISUSE'],
-  [22, 'SQLITE_NOLFS'],
-  [23, 'SQLITE_AUTH'],
-  [24, 'SQLITE_FORMAT'],
-  [25, 'SQLITE_RANGE'],
-  [26, 'SQLITE_NOTADB'],
-  [27, 'SQLITE_NOTICE'],
-  [28, 'SQLITE_WARNING'],
-]);
 
 const STEP_FIGURES = `SELECT
   COALESCE(SUM(entry_count), 0) AS file_count,
@@ -212,32 +176,6 @@ function noneRemain(db: DatabaseLike, runId: string, seen: SeenRows): boolean {
     !seen.lines.some((row) => lineStillThere(db, runId, row)) &&
     !seen.seals.some((row) => sealStillThere(db, runId, row))
   );
-}
-
-/** Whether `err` is SQLite's busy answer (5 and its extended codes), which the primitive waits out. */
-function isBusy(err: unknown): boolean {
-  const errcode = (err as { errcode?: unknown } | null)?.errcode;
-  return typeof errcode === 'number' && (errcode & 0xff) === 5;
-}
-
-/** The rejection a per-run delete answers with when its own COMMIT did not land. */
-function commitNotLanded(err: unknown): CommitOutcome | undefined {
-  const outcome = (err as { commitOutcome?: CommitOutcome } | null)?.commitOutcome;
-  return outcome?.outcome === 'not_landed' ? outcome : undefined;
-}
-
-/**
- * The per-run delete's failure, as the artifact contract's typed-rejection law reads it: `code` is the
- * mapped error's code when it is a `WorkflowError`, else the name of SQLite's primary result code;
- * `message` is the mapped message.
- */
-function deleteFailed(runId: string, err: unknown, outcome?: CommitOutcome): WorkflowError {
-  const errcode = (err as { errcode?: unknown } | null)?.errcode ?? outcome?.errcode;
-  const primary =
-    typeof errcode === 'number' ? SQLITE_PRIMARY_CODES.get(errcode & 0xff) : undefined;
-  const code = err instanceof WorkflowError ? err.code : (primary ?? 'UNKNOWN');
-  const message = err instanceof Error ? err.message : String(err);
-  return artifactDeleteFailedError(runId, STORE_NAME, [], [{ artifact: ARTIFACT, code, message }]);
 }
 
 /**
@@ -546,7 +484,7 @@ export class SqliteTraceBufferStore implements TraceBufferStore, PerRunArtifactS
             db.prepare(DELETE_RUN_SEALS).run(runId);
           } catch (err) {
             // A busy answer is the primitive's to wait out, not a failed delete.
-            statementFailed = !isBusy(err);
+            statementFailed = isOwnStatementFailure(err);
             throw err;
           }
           seen = { lines, seals };
@@ -557,9 +495,7 @@ export class SqliteTraceBufferStore implements TraceBufferStore, PerRunArtifactS
         { takesReading: false },
       );
     } catch (err) {
-      const notLanded = commitNotLanded(err);
-      if (statementFailed || notLanded !== undefined) throw deleteFailed(runId, err, notLanded);
-      throw err;
+      throw deleteFailure(err, statementFailed, { runId, store: STORE_NAME, artifact: ARTIFACT });
     }
   }
 }

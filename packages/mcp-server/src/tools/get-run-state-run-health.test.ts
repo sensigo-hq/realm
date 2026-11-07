@@ -4,9 +4,8 @@
 // double only needs to implement that faithfully; every other method throws if reached, proving
 // it never is (mirrors get-run-state-fidelity-gate.test.ts's own double).
 import { declared } from '../test-support/declared.js';
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp, chmod } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { chmod } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   JsonWorkflowStore,
@@ -16,6 +15,7 @@ import {
 import type { RunRecord, RunStore, WorkflowDefinition } from '@sensigo/realm';
 import { handleGetRunState } from './get-run-state.js';
 import { snap, doubleClock, noSettle } from '../test-support/snapshot-double.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 function makeRun(over: Partial<RunRecord> = {}): RunRecord {
   return {
@@ -78,11 +78,16 @@ const basicDef: WorkflowDefinition = {
 };
 
 describe('get_run_state — run_health (issue #221)', () => {
+  let h: TempHome;
   let workflowStore: JsonWorkflowStore;
 
   beforeEach(async () => {
-    workflowStore = new JsonWorkflowStore(await mkdtemp(join(tmpdir(), 'get-run-state-rh-')));
+    h = await makeTempHome();
+    workflowStore = h.stores.workflowStore;
     await workflowStore.register(basicDef);
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   it("wedged fixture (idle, claimless, resolvable-workflow-with-an-eligible-agent-step) ⇒ next_actions_status STAYS 'ok' (status-invariant probe target), run_health present, ONE warning", async () => {
@@ -258,8 +263,9 @@ describe('get_run_state — run_health (issue #221)', () => {
 
 describe('get_run_state — definition_unresolvable carries the composed sentence (issue #558 PR-T, R12)', () => {
   it('M4 an unreadable copy: the finding reason names the consequence, the way out and the repair — through the one composer, as every other surface (it carried the bare store sentence)', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'get-run-state-r12-'));
-    const ws = new JsonWorkflowStore(dir);
+    const h = await makeTempHome();
+    const dir = join(h.path, 'workflows');
+    const ws = h.stores.workflowStore;
     await ws.register(basicDef);
     const file = join(dir, `${basicDef.id}.json`);
     await chmod(file, 0o000);
@@ -277,6 +283,7 @@ describe('get_run_state — definition_unresolvable carries the composed sentenc
       expect(f?.reason).not.toContain('cannot be read (STATE_');
     } finally {
       await chmod(file, 0o644);
+      await h.cleanup();
     }
   });
 });

@@ -11,9 +11,8 @@
 // (no randomness, no timing dependence: the same entry-generator always crosses at the same
 // iteration) while avoiding brittle hand-arithmetic over JSON.stringify's exact byte overhead.
 import { declareReleaseLine } from '@sensigo/realm';
-import { describe, it, expect } from 'vitest';
-import { mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { describe, it, expect, afterEach } from 'vitest';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   JsonFileStore,
@@ -30,6 +29,7 @@ import type {
   TraceBufferStore,
 } from '@sensigo/realm';
 import { handleAppendTrace } from './append-trace.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 function makeWorkflowDef(): WorkflowDefinition {
   return {
@@ -108,17 +108,22 @@ class LegacyOnlyTraceBufferStore {
   }
 }
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 describe('append_trace capacity early-warning (issue #208)', () => {
-  let runDir: string;
   let workflowDir: string;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
 
   async function setup(): Promise<{ runId: string }> {
-    runDir = await mkdtemp(join(tmpdir(), 'realm-capacity-warn-runs-'));
-    workflowDir = await mkdtemp(join(tmpdir(), 'realm-capacity-warn-wf-'));
-    runStore = new JsonFileStore(runDir);
-    workflowStore = new JsonWorkflowStore(workflowDir);
+    const h = await makeTempHome();
+    handles.push(h);
+    workflowDir = join(h.path, 'workflows');
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
     const def = makeWorkflowDef();
     await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
     const { record: run } = await runStore.create({

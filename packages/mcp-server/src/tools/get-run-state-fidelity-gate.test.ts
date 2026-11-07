@@ -4,14 +4,11 @@
 // double only needs to implement that faithfully; every other method throws if reached (proving
 // it never is).
 import { declared } from '../test-support/declared.js';
-import { describe, it, expect } from 'vitest';
-import { JsonFileStore } from '@sensigo/realm';
+import { describe, it, expect, afterEach } from 'vitest';
 import type { RunRecord, RunStore, LoadBearingRunRecordField } from '@sensigo/realm';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { handleGetRunState } from './get-run-state.js';
 import { snap, doubleClock, noSettle } from '../test-support/snapshot-double.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 function makeRun(over: Partial<RunRecord> = {}): RunRecord {
   return {
@@ -64,6 +61,11 @@ function makeGetOnlyStore(
   });
 }
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 describe('get_run_state — capability_blocks field-fidelity gate (issue #188)', () => {
   it('fires an honest warning when the store does NOT declare it persists capability_blocks', async () => {
     const store = makeGetOnlyStore(makeRun(), []); // declares an EMPTY set — persists nothing
@@ -92,8 +94,9 @@ describe('get_run_state — capability_blocks field-fidelity gate (issue #188)',
   });
 
   it('a real JsonFileStore (declares the full set) never surfaces the gate — local behavior unaffected', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'get-run-state-fidelity-'));
-    const runStore = new JsonFileStore(dir);
+    const h = await makeTempHome();
+    handles.push(h);
+    const runStore = h.stores.runStore;
     const { record: run } = await runStore.create({
       workflowId: 'wf',
       workflowVersion: 1,

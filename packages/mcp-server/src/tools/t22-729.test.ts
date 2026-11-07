@@ -9,13 +9,8 @@
 // Red-first by ONE break: D-8 row 2 restored to `none` (agentActionOf's T-22 tail removed).
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: tool
 // names, statuses, action words and booleans — never a value a run holds.
-import { describe, it, expect } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, afterEach } from 'vitest';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   ExtensionRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type WorkflowDefinition,
@@ -24,7 +19,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
 import { generateProtocol } from '../protocol/generator.js';
-import { withArtifactStores } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 /** W2: `summarize` (agent), then `publish` — its input built by its map from `summarize`'s answer. */
 const W2: WorkflowDefinition = {
@@ -51,17 +46,22 @@ const W2: WorkflowDefinition = {
 
 type Reply = Record<string, unknown>;
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 async function connect() {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-t22-729-'));
-  const runStore = new JsonFileStore(join(dir, 'runs'));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+  const h = await makeTempHome();
+  handles.push(h);
+  const { runStore, workflowStore } = h.stores;
   const registry = new ExtensionRegistry();
   registry.register('handler', 'h', {
     id: 'h',
     execute: async (i) => ({ data: { got: i.params } }),
   });
   await workflowStore.register(W2);
-  const server = createRealmMcpServer({ ...withArtifactStores(runStore), workflowStore, registry });
+  const server = createRealmMcpServer({ ...h.stores, registry });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 't22-729', version: '0' });
   await Promise.all([server.connect(st), client.connect(ct)]);

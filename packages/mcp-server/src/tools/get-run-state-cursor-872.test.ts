@@ -4,13 +4,9 @@
 // The runs' evidence is written straight to the store (as the store contract does): a step's place
 // is its first entry's place. Beside each: (a) what turns it red; (b) what it prints on failure —
 // step names, counts, codes and sizes, never a value.
-import { describe, it, expect } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, afterEach } from 'vitest';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
-  JsonFileStore,
   JsonWorkflowStore,
   type EvidenceSnapshot,
   type WorkflowDefinition,
@@ -23,7 +19,7 @@ import { handleGetRunState } from './get-run-state.js';
 import { doubleClock, noSettle, snap } from '../test-support/snapshot-double.js';
 import { declared } from '../test-support/declared.js';
 import type { RunRecord, RunStore } from '@sensigo/realm';
-import { withArtifactStores } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 type Reply = Record<string, unknown>;
 
@@ -53,10 +49,15 @@ const entry = (step_id: string): EvidenceSnapshot => ({
   evidence_hash: `h-${step_id}`,
 });
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 async function setup(n: number) {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-cursor-872-'));
-  const runStore = new JsonFileStore(join(dir, 'runs'));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+  const h = await makeTempHome();
+  handles.push(h);
+  const { runStore, workflowStore } = h.stores;
   const def = fan(n);
   await workflowStore.register(def);
   const { record: run } = await runStore.create({
@@ -78,7 +79,7 @@ async function setup(n: number) {
       { run_id: run.id, ...args },
       { runStore, workflowStore },
     )) as unknown as Reply;
-  const server = createRealmMcpServer({ ...withArtifactStores(runStore), workflowStore });
+  const server = createRealmMcpServer({ ...h.stores });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'cursor-872', version: '0' });
   await Promise.all([server.connect(st), client.connect(ct)]);

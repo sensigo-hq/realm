@@ -8,17 +8,13 @@
 // M (the uncut walked reply's size) is measured on the reply each tool hands the composer: the
 // composer is wrapped below to record what it was given and what it returned, and is otherwise the
 // real one.
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   ExtensionRegistry,
-  JsonFileStore,
-  JsonWorkflowStore,
   discloseReply,
   type WorkflowDefinition,
 } from '@sensigo/realm';
@@ -33,7 +29,7 @@ import {
   type ToolDisclosure,
 } from './render-reply.js';
 import { sseJsonStringify } from './sse-json.js';
-import { withArtifactStores } from './test-support/temp-home.js';
+import { makeTempHome, type TempHome } from './test-support/temp-home.js';
 
 type Reply = Record<string, unknown>;
 type Handed = { reply: unknown; disclosure: ToolDisclosure; plan?: ReplyPlan; text: string };
@@ -88,14 +84,18 @@ const countOf = (list: unknown): number | undefined =>
       ? Object.keys(list).length
       : undefined;
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 async function door(definitions: WorkflowDefinition[], registry?: ExtensionRegistry) {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-c2-872-'));
-  const runStore = new JsonFileStore(join(dir, 'runs'));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+  const h = await makeTempHome();
+  handles.push(h);
+  const { workflowStore } = h.stores;
   for (const d of definitions) await workflowStore.register(d);
   const server = createRealmMcpServer({
-    ...withArtifactStores(runStore),
-    workflowStore,
+    ...h.stores,
     ...(registry !== undefined ? { registry } : {}),
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();

@@ -3,22 +3,15 @@
 // step's attempts and their cost, not its evidence entries — and its page says so.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  JsonFileStore,
-  JsonWorkflowStore,
-  CURRENT_WORKFLOW_SCHEMA_VERSION,
-  type WorkflowDefinition,
-} from '@sensigo/realm';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION, type WorkflowDefinition } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
-import { withArtifactStores } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const PAGE = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -33,6 +26,11 @@ const WF = {
   steps: { fromParams: { description: 'From the params.', execution: 'auto', depends_on: [] } },
 } as WorkflowDefinition;
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 describe('#625 PR-2a, F4 — get_run_state shows no output_source, and its page says why', () => {
   it('include_steps: the step view holds attempts and their cost, not the entry’s output_source; the record has it', async () => {
     const flat = (t: string) => t.replace(/\s+/g, ' ');
@@ -42,11 +40,11 @@ describe('#625 PR-2a, F4 — get_run_state shows no output_source, and its page 
     expect(flat(readFileSync(PAGE, 'utf8')), `the page no longer says: ${sentence}`).toContain(
       sentence,
     );
-    const dir = await mkdtemp(join(tmpdir(), 'realm-os-mcp-625-'));
-    const runStore = new JsonFileStore(join(dir, 'runs'));
-    const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    const h = await makeTempHome();
+    handles.push(h);
+    const { runStore, workflowStore } = h.stores;
     await workflowStore.register(WF);
-    const server = createRealmMcpServer({ ...withArtifactStores(runStore), workflowStore });
+    const server = createRealmMcpServer({ ...h.stores });
     const [ct, st] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: 'os-mcp-625', version: '0' });
     await Promise.all([server.connect(st), client.connect(ct)]);
