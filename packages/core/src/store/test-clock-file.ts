@@ -63,7 +63,9 @@ function searchable(dir: string): boolean {
 /**
  * Reads a clock file (synchronously). Absent ⇒ `undefined`, and so is a file in a folder this user
  * cannot search (#715 (a) correction 1, C-10: as before this unit, a store there opens on the system
- * clock, and its first use refuses the unreadable runs folder with its typed line and remedy). A file
+ * clock, and its first use refuses the unreadable runs folder with its typed line and remedy), and a
+ * path through a regular file (#616 PR-1a unit 11, `ENOTDIR`: a root that is a file, or under one,
+ * holds no clock file; the store's own open then refuses that root with its own typed line). A file
  * that exists but cannot be read throws a plain `Error` naming the file and the two ways out; one that
  * is not this format throws naming the file — never its content. For `@sensigo/realm-testing`, not
  * for hosts.
@@ -74,7 +76,7 @@ export function readTestClockFile(path: string): TestClockFile | undefined {
     text = readFileSync(path, 'utf8');
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT') return undefined;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return undefined;
     if ((code === 'EACCES' || code === 'EPERM') && !searchable(dirname(path))) return undefined;
     throw new Error(
       `The test clock file ${path} cannot be read (${code ?? 'no error code'}). To use this folder as an ordinary store, delete its clock file (${path}); to keep it as a test location, give this user read access to the file.`,
