@@ -162,7 +162,7 @@ function isSqliteError(err: unknown): err is SqliteError {
 }
 
 /** The busy family: 5 and its extended codes (261 recovery, 517 snapshot, 773 timeout). */
-function isBusy(err: unknown): boolean {
+export function isBusy(err: unknown): boolean {
   return isSqliteError(err) && (err.errcode & 0xff) === 5;
 }
 
@@ -325,56 +325,61 @@ function guardRefusal(
 }
 
 /**
- * The guards of the file's schema (units 6 and 6b) whose refusal has a typed code, by the guard's
- * exact message (final at the first release). Every other guard's refusal leaves as a plain error
- * with SQLite's text. A message carries no run, so none of these names one (and the purged-id
- * refusal no purge time).
+ * The typed refusals of the file's guards (units 6 and 6b), by code (final at the first release). A
+ * message carries no run, so none of these names one (and the purged-id refusal no purge time).
+ */
+const GUARD_ERRORS = {
+  STATE_SNAPSHOT_MISMATCH: guardRefusal(
+    'STATE_SNAPSHOT_MISMATCH',
+    'Version conflict — run was modified by another process',
+    true,
+  ),
+  STATE_RUN_IDENTITY: guardRefusal(
+    'STATE_RUN_IDENTITY',
+    "The store refused a write that would change a run's id, idempotency key, workflow or creation time.",
+    false,
+  ),
+  STATE_RUN_PURGED: guardRefusal(
+    'STATE_RUN_PURGED',
+    'The store refused to create a run whose id was deleted earlier: a purged run id is never ' +
+      'created again.',
+    false,
+  ),
+  STATE_EVIDENCE_REWRITTEN: guardRefusal(
+    'STATE_EVIDENCE_REWRITTEN',
+    "The store refused a write that would change or remove a run's stored evidence, which is " +
+      'append-only.',
+    false,
+  ),
+  STATE_WRITE_ONCE_REWRITTEN: guardRefusal(
+    'STATE_WRITE_ONCE_REWRITTEN',
+    'The store refused a write that would change a run field that is written once and then never ' +
+      'changes.',
+    false,
+  ),
+} as const;
+
+/**
+ * The guards of the file's schema whose refusal has a typed code, by the guard's exact message (final
+ * at the first release). Every other guard's refusal leaves as a plain error with SQLite's text.
  */
 const GUARD_REFUSALS: ReadonlyMap<string, () => WorkflowError> = new Map([
-  [
-    "realm.db: a run's version can only advance by one",
-    guardRefusal(
-      'STATE_SNAPSHOT_MISMATCH',
-      'Version conflict — run was modified by another process',
-      true,
-    ),
-  ],
-  [
-    "realm.db: a run's identity cannot change",
-    guardRefusal(
-      'STATE_RUN_IDENTITY',
-      "The store refused a write that would change a run's id, idempotency key, workflow or creation time.",
-      false,
-    ),
-  ],
-  [
-    'realm.db: a purged run id cannot be created again',
-    guardRefusal(
-      'STATE_RUN_PURGED',
-      'The store refused to create a run whose id was deleted earlier: a purged run id is never ' +
-        'created again.',
-      false,
-    ),
-  ],
-  [
-    'realm.db: evidence rows are append-only',
-    guardRefusal(
-      'STATE_EVIDENCE_REWRITTEN',
-      "The store refused a write that would change or remove a run's stored evidence, which is " +
-        'append-only.',
-      false,
-    ),
-  ],
-  [
-    'realm.db: a write-once field cannot change',
-    guardRefusal(
-      'STATE_WRITE_ONCE_REWRITTEN',
-      'The store refused a write that would change a run field that is written once and then never ' +
-        'changes.',
-      false,
-    ),
-  ],
+  ["realm.db: a run's version can only advance by one", GUARD_ERRORS.STATE_SNAPSHOT_MISMATCH],
+  ["realm.db: a run's identity cannot change", GUARD_ERRORS.STATE_RUN_IDENTITY],
+  ['realm.db: a purged run id cannot be created again', GUARD_ERRORS.STATE_RUN_PURGED],
+  ['realm.db: evidence rows are append-only', GUARD_ERRORS.STATE_EVIDENCE_REWRITTEN],
+  ['realm.db: a write-once field cannot change', GUARD_ERRORS.STATE_WRITE_ONCE_REWRITTEN],
 ]);
+
+/**
+ * The typed refusal a guard of the file raises, by its code, with the guard's own sentence (the one
+ * {@link mapSqliteError} gives): for a store that refuses a write itself before the guard would see it,
+ * so the refusal reads the same whichever of the two refuses (#616 unit 12b: an update that would
+ * change or remove stored evidence, or change or remove a write-once field).
+ */
+export function guardRefusalError(code: keyof typeof GUARD_ERRORS): WorkflowError {
+  return GUARD_ERRORS[code]();
+}
 
 /** The guard messages {@link mapSqliteError} maps to a typed code (a source law lists the others). */
 export const MAPPED_GUARD_MESSAGES: readonly string[] = [...GUARD_REFUSALS.keys()];
