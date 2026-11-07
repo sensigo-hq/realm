@@ -16,14 +16,15 @@
 // this module's own, and the open's (the loader, the filesystem gate, the old-store guard, the file's
 // checks), which pass through unchanged.
 //
-// The handle carries the home's run store (unit 12a) and `close()`. A caller that shares an open home
-// checks, once the open has resolved, that the cache still holds it: a `close()` while the caller
-// waited (MA 2, #998) removed it and closed the connection, so the caller looks the home up once more
-// and opens it afresh instead of receiving a closed handle.
+// The handle carries the home's run store (unit 12a), its duplicate-webhook memory (B8) and `close()`.
+// A caller that shares an open home checks, once the open has resolved, that the cache still holds it:
+// a `close()` while the caller waited (MA 2, #998) removed it and closed the connection, so the caller
+// looks the home up once more and opens it afresh instead of receiving a closed handle.
 import { realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
-import { realmHomePath, resolveRootClock, type Clock } from '@sensigo/realm';
+import { realmHomePath, resolveRootClock, type Clock, type DedupStore } from '@sensigo/realm';
 import { RealmDb } from './connection.js';
+import { SqliteDedupStore } from './dedup-store.js';
 import type { OpenSeams } from './open-file.js';
 import { SqliteRunStore } from './run-store.js';
 
@@ -39,10 +40,18 @@ export interface OpenRealmHomeOptions {
   readonly clock?: Clock;
 }
 
-/** An open Realm home: its run store and `close()`. Later units add its other stores. */
+/**
+ * An open Realm home: its run store, its duplicate-webhook memory and `close()`. Later units add its
+ * other stores.
+ */
 export interface RealmHome {
   /** The home's run store: creates, reads and lists its runs. */
   readonly runStore: SqliteRunStore;
+  /**
+   * The duplicate-webhook memory of one workflow (`realm listen`'s): one instance per workflow id, on
+   * the home's one connection. After `close()`, its calls reject.
+   */
+  dedupStoreFor(workflowId: string): DedupStore;
   /**
    * Closes the home's connection; a later `openRealmHome` opens the home afresh. Every caller in this
    * process that opened the home shares this handle, so a `close()` by any of them ends it for all.
@@ -129,8 +138,17 @@ async function lookUp(
     const clock = options.clock ?? resolveRootClock(home);
     const db = await RealmDb.open(home, { clock }, seams);
     let closed = false;
+    const dedupStores = new Map<string, DedupStore>();
     return {
       runStore: new SqliteRunStore(db),
+      dedupStoreFor(workflowId: string): DedupStore {
+        let store = dedupStores.get(workflowId);
+        if (store === undefined) {
+          store = new SqliteDedupStore(db, workflowId);
+          dedupStores.set(workflowId, store);
+        }
+        return store;
+      },
       close(): void {
         if (closed) return;
         closed = true;
