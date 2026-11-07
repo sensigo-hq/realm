@@ -2,6 +2,7 @@
 // reclaim/detection are testable on the testing default store.
 import { describe, it, expect } from 'vitest';
 import { InMemoryStore } from './in-memory-store.js';
+import { countingClock, settableClock } from '../clock/settable-clock.js';
 import {
   runStoreFidelityContract,
   RUN_STORE_FIDELITY_LAWS,
@@ -613,5 +614,84 @@ describe('InMemoryStore — rerun_of, the supersede link (issue #558 PR-C)', () 
 
     expect(second.created).toBe(true);
     expect(second.record.rerun_of).toBeUndefined();
+  });
+});
+
+// issue #616 PR-2c, c1a: the fixture core's engine tests plant a run past the store boundary with,
+// where a raw run-file write did it on the JSON store — abandon-run's run labelled `gate_waiting`
+// with no `pending_gate`, sealed-by-substrate's twelve records the seal guard would refuse.
+describe('#616 PR-2c c1a — InMemoryStore.seed plants a run record as given, replacing any stored run of its id', () => {
+  const open = async (store: InMemoryStore): Promise<RunRecord> =>
+    (await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} })).record;
+
+  it('a seeded record reads back through get() as given: its version, its run_phase, its updated_at and its fields', async () => {
+    // (1) red when `seed` writes through update's tail (it derives run_phase → 'running', bumps the
+    //     version → 1 and stamps updated_at): the planted label differs from its derivation on
+    //     purpose; (2) prints the id, version, run_phase, updated_at and the planted fields read back.
+    const store = new InMemoryStore();
+    const run = await open(store);
+    const planted: RunRecord = {
+      ...run,
+      run_phase: 'gate_waiting',
+      in_progress_steps: ['analyze'],
+      claims: { analyze: { deadline: null } },
+      updated_at: '2020-01-01T00:00:00.000Z',
+    };
+    store.seed(planted);
+    const { record: back } = await store.get(run.id);
+    expect({
+      id: back.id,
+      version: back.version,
+      run_phase: back.run_phase,
+      updated_at: back.updated_at,
+      in_progress_steps: back.in_progress_steps,
+      claims: back.claims,
+    }).toEqual({
+      id: run.id,
+      version: 0,
+      run_phase: 'gate_waiting',
+      updated_at: '2020-01-01T00:00:00.000Z',
+      in_progress_steps: ['analyze'],
+      claims: { analyze: { deadline: null } },
+    });
+  });
+
+  it('a second seed of the same id replaces the first', async () => {
+    // (1) red when `seed` is create-if-absent (the first seed reads back); (2) prints the
+    //     terminal_reason read back.
+    const store = new InMemoryStore();
+    const run = await open(store);
+    store.seed({ ...run, id: 'seeded-run', terminal_reason: 'the first seed' });
+    store.seed({ ...run, id: 'seeded-run', terminal_reason: 'the second seed' });
+    expect((await store.get('seeded-run')).record.terminal_reason).toBe('the second seed');
+  });
+
+  it('a seeded record with an idempotency key is the run a keyed create on that key finds', async () => {
+    // (1) red when `seed` leaves the key's pointer alone (the keyed create mints a fresh run:
+    //     created true, another id); (2) prints `created` and the id the create returned.
+    const store = new InMemoryStore();
+    const run = await open(store);
+    store.seed({ ...run, id: 'seeded-keyed', idempotency_key: 'k-1' });
+    const again = await store.create({
+      workflowId: 'wf',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k-1',
+    });
+    expect({ created: again.created, id: again.record.id }).toEqual({
+      created: false,
+      id: 'seeded-keyed',
+    });
+  });
+
+  it('a seed spends no reading of the store’s clock', async () => {
+    // (1) red when `seed` takes a reading (a `takeReading(this.clock)` copied from `update`'s tail);
+    //     (2) prints the number of readings the seed spent.
+    const clock = countingClock(settableClock('2026-11-07T12:00:00.000Z'));
+    const store = new InMemoryStore({ clock });
+    const run = await open(store);
+    const before = clock.reads;
+    store.seed({ ...run, terminal_reason: 'planted' });
+    expect(clock.reads - before).toBe(0);
   });
 });

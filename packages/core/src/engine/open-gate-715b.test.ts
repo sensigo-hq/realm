@@ -20,7 +20,8 @@ afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
 
-/** A JSON store on a test location whose clock says `t` (core cannot import the testing package). */
+/** A JSON store on a test location whose clock says `t` (core's tests can import the testing
+ *  package undeclared, as `reliability.test.ts` does: turbo builds it before every test task). */
 async function location(t: Date): Promise<JsonFileStore> {
   const root = await mkdtemp(join(tmpdir(), 'realm-715b-open-'));
   roots.push(root);

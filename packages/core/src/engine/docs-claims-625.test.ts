@@ -38,6 +38,7 @@ import {
 } from './execution-loop.js';
 import { describePending } from './pending.js';
 import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore, settableClock, type SettableClock } from '@sensigo/realm-testing';
 import { unreadableRunFileError } from '../store/run-file.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
@@ -49,9 +50,9 @@ import { writeTestClockFile } from '../store/test-clock-file.js';
 import { writtenSnapshot } from './snapshot.js';
 import { zOf } from '../test-support/instant.js';
 
-/** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
- *  runs folder sits beside the location's clock file (first set to the host's reading), which
- *  `setClockOf` rewrites. */
+/** The three cells about a run FILE that is not JSON (C156, its class, C169) keep a JSON store of
+ *  their own: on a test location, its runs folder beside the location's clock file (set to the
+ *  host's reading). The engine's other cells run on an in-memory store on a settable clock. */
 async function testLocationRuns(prefix: string): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), prefix));
   await writeTestClockFile(root, new Date());
@@ -61,11 +62,6 @@ async function testLocationRuns(prefix: string): Promise<string> {
 }
 async function clockedJsonStore(prefix: string): Promise<JsonFileStore> {
   return new JsonFileStore(await testLocationRuns(prefix));
-}
-async function setClockOf(store: object, t: Date): Promise<void> {
-  const runsDir = (store as { runsDirPath?: string }).runsDirPath;
-  if (runsDir === undefined) throw new Error('setClockOf: this store is not a JSON store');
-  await writeTestClockFile(dirname(runsDir), t);
 }
 
 const PAGE = join(
@@ -120,16 +116,18 @@ const LATER = () => new Date(Date.now() + 120_000);
 const EARLIER = () => new Date(Date.now() - 120_000);
 
 describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through the library', () => {
-  let store: JsonFileStore;
-  let dir: string;
-  beforeEach(async () => {
-    dir = await testLocationRuns('realm-dc-625-');
-    store = new JsonFileStore(dir);
+  // #715 (b) (01 §C.4): the store's clock decides what is due — an in-memory store on a settable
+  // clock, first set to the host's reading, which a cell moves.
+  let clock: SettableClock;
+  let store: InMemoryStore;
+  beforeEach(() => {
+    clock = settableClock(new Date());
+    store = new InMemoryStore({ clock });
   });
 
   async function atQuestion(d: WorkflowDefinition = gated()) {
     // #715 (b): each question opens at the host's time (a cell may have moved the store's clock).
-    await setClockOf(store, new Date());
+    await clock.set(new Date());
     const { record: run } = await store.create({
       workflowId: d.id,
       workflowVersion: 1,
@@ -152,28 +150,28 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     [
       'advanceRun',
       async (d: WorkflowDefinition, runId: string) => {
-        await setClockOf(store, LATER());
+        await clock.set(LATER());
         return advanceRun(store, d, { runId });
       },
     ],
     [
       'executeStep',
       async (d: WorkflowDefinition, runId: string) => {
-        await setClockOf(store, LATER());
+        await clock.set(LATER());
         return executeStep(store, d, { runId, command: 'after', input: {}, dispatcher });
       },
     ],
     [
       'executeChain',
       async (d: WorkflowDefinition, runId: string) => {
-        await setClockOf(store, LATER());
+        await clock.set(LATER());
         return executeChain(store, d, { runId, command: 'after', input: {}, dispatcher });
       },
     ],
     [
       'executeEngineStep',
       async (d: WorkflowDefinition, runId: string) => {
-        await setClockOf(store, LATER());
+        await clock.set(LATER());
         return executeEngineStep(store, d, {
           runId,
           step: 'after',
@@ -214,7 +212,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     );
     const d = gated();
     const { runId, gateId } = await atQuestion(d);
-    await setClockOf(store, LATER());
+    await clock.set(LATER());
     const reply = await submitHumanResponse(store, d, {
       runId,
       gateId,
@@ -323,10 +321,10 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     );
     const d = gated();
     const a = await atQuestion(d);
-    await setClockOf(store, LATER());
+    await clock.set(LATER());
     const named = await advanceRun(store, d, { runId: a.runId, caller: 'advance' });
     const b = await atQuestion(d);
-    await setClockOf(store, LATER());
+    await clock.set(LATER());
     const labelled = await advanceRun(store, d, {
       runId: b.runId,
       caller: 'advance',
@@ -416,7 +414,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     const d = gated();
     const { runId } = await atQuestion(d);
     const seen: string[] = [];
-    await setClockOf(store, LATER());
+    await clock.set(LATER());
     const r = await advanceRun(store, d, {
       runId,
       onExpiry: (line) => seen.push(`expiry: ${line.slice(0, 20)}`),
@@ -457,7 +455,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     };
     const { runId } = await atQuestion(d);
     const seen: string[] = [];
-    await setClockOf(store, LATER());
+    await clock.set(LATER());
     const r = await advanceRun(store, d, {
       runId,
       onExpiry: () => seen.push('expiry'),
@@ -584,7 +582,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       },
     };
     const { runId } = await atQuestion(d);
-    await setClockOf(store, LATER());
+    await clock.set(LATER());
     const r = await advanceRun(store, d, { runId });
     // (a) red when the hint says "no step ran" beside the guards that ran, names one of two, or
     //     the singular for two; (b) prints the hint.
@@ -686,10 +684,13 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
   it('C156: advanceRun on a run file that is not JSON — RESOURCE_FORMAT_INVALID naming the file; a WorkflowError the store throws keeps its code; any other is ENGINE_STORE_FAILED naming its cause', async () => {
     claim(CANNOT_READ);
     const d = gated();
-    await writeFile(join(dir, 'broken.json'), '{not json');
-    const broken = await advanceRun(store, d, { runId: 'broken' });
+    // A run FILE that is not JSON: this cell's own JSON store (the docs sentence names one).
+    const json = await clockedJsonStore('realm-dc-625-file-');
+    const jsonDir = json.runsDirPath;
+    await writeFile(join(jsonDir, 'broken.json'), '{not json');
+    const broken = await advanceRun(json, d, { runId: 'broken' });
     const lost = await advanceRun(untyped(), d, { runId: 'r' });
-    const typed = Object.create(store) as RunStore;
+    const typed = Object.create(json) as RunStore;
     Object.assign(typed, {
       get: async () => {
         throw new WorkflowError('the store is offline', {
@@ -765,7 +766,10 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       claim(STEP_CANNOT_READ);
       claim(NO_PHASE);
       const d = gated();
-      await writeFile(join(dir, 'broken.json'), '{not json');
+      // A run FILE that is not JSON: this cell's own JSON store (the docs sentence names one).
+      const json = await clockedJsonStore('realm-dc-625-file-');
+      const jsonDir = json.runsDirPath;
+      await writeFile(join(jsonDir, 'broken.json'), '{not json');
       const call = (s: RunStore, runId: string) =>
         fn === 'executeStep'
           ? executeStep(s, d, { runId, command: 'after', input: {}, dispatcher })
@@ -773,9 +777,9 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
             ? executeChain(s, d, { runId, command: 'after', input: {}, dispatcher })
             : submitHumanResponse(s, d, { runId, gateId: 'g', choice: 'approve' });
       const replies = [
-        await call(store, 'nope'),
+        await call(json, 'nope'),
         await call(offline(), 'r'),
-        await call(store, 'broken'),
+        await call(json, 'broken'),
         await call(untyped(), 'r'),
       ];
       const command = fn === 'submitHumanResponse' ? 'submit_gate' : 'after';
@@ -804,7 +808,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       claim(NOW_ROW);
       const d = gated();
       const call = async (runId: string, now: Date) => {
-        await setClockOf(store, now);
+        await clock.set(now);
         return fn === 'executeStep'
           ? executeStep(store, d, { runId, command: 'after', input: {}, dispatcher })
           : executeChain(store, d, { runId, command: 'after', input: {}, dispatcher });
@@ -878,15 +882,31 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       "`run` is required, and must be a run record (each of the record's required fields, with its type): otherwise the call rejects with `VALIDATION_OPTION_INVALID` before anything is read or written, naming, when `run` is an object, each field that is missing or of the wrong type.",
     );
     const d = gated();
-    const { runId } = await atQuestion(d);
-    const { record: record } = await store.get(runId);
-    await writeFile(join(dir, 'broken.json'), '{not json');
-    const missing = await executeEngineStep(store, d, {
+    // A run FILE that is not JSON: this cell's own JSON store (the docs sentence names one); the
+    // run at its question opened on it as `atQuestion` opens one.
+    const json = await clockedJsonStore('realm-dc-625-file-');
+    const jsonDir = json.runsDirPath;
+    const { record: asked } = await json.create({
+      workflowId: d.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const opened = await executeStep(json, d, {
+      runId: asked.id,
+      command: 'q',
+      input: {},
+      dispatcher,
+    });
+    if (opened.status !== 'confirm_required') throw new Error(`fixture: ${opened.status}`);
+    const runId = asked.id;
+    const { record: record } = await json.get(runId);
+    await writeFile(join(jsonDir, 'broken.json'), '{not json');
+    const missing = await executeEngineStep(json, d, {
       runId: 'nope',
       step: 'after',
       run: record,
     });
-    const broken = await executeEngineStep(store, d, {
+    const broken = await executeEngineStep(json, d, {
       runId: 'broken',
       step: 'after',
       run: record,
@@ -898,16 +918,16 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       'RESOURCE_FORMAT_INVALID',
     ]);
     expect(broken.errors[0]).toMatch(/^The run file '.*broken\.json' is not JSON\. Restore /);
-    const before = JSON.stringify((await store.get(runId)).record);
+    const before = JSON.stringify((await json.get(runId)).record);
     // (a) red when a call runs without a run record, or throws anything else; (b) prints the rejection.
     await expect(
-      executeEngineStep(store, d, { runId, step: 'after' } as never),
+      executeEngineStep(json, d, { runId, step: 'after' } as never),
     ).rejects.toMatchObject({
       code: 'VALIDATION_OPTION_INVALID',
       details: { invalid: [{ option: 'options.run', given_type: 'undefined' }] },
     });
     await expect(
-      executeEngineStep(store, d, { runId, step: 'after', run: { id: runId } } as never),
+      executeEngineStep(json, d, { runId, step: 'after', run: { id: runId } } as never),
     ).rejects.toMatchObject({
       code: 'VALIDATION_OPTION_INVALID',
       message: expect.stringContaining(
@@ -915,7 +935,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       ),
     });
     // issue #719 (C2): the fields are named only when `run` is an object — a `null` run, none.
-    const nullRun = (await executeEngineStep(store, d, {
+    const nullRun = (await executeEngineStep(json, d, {
       runId,
       step: 'after',
       run: null,
@@ -928,7 +948,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       fieldsNamed: false,
     });
     // issue #719 (C5): a boolean — a failure prints whether the record is unchanged, never it.
-    expect(JSON.stringify((await store.get(runId)).record) === before).toBe(true);
+    expect(JSON.stringify((await json.get(runId)).record) === before).toBe(true);
     // C174: a step with no `depends_on` — the same refusal, before any read.
     const lone: WorkflowDefinition = {
       id: 'dc-lone',
@@ -936,13 +956,13 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       version: 1,
       steps: { only: { description: 'Only.', execution: 'auto', depends_on: [] } },
     };
-    const { record: loneRun } = await store.create({
+    const { record: loneRun } = await json.create({
       workflowId: lone.id,
       workflowVersion: 1,
       params: {},
     });
     await expect(
-      executeEngineStep(store, lone, { runId: loneRun.id, step: 'only' } as never),
+      executeEngineStep(json, lone, { runId: loneRun.id, step: 'only' } as never),
     ).rejects.toMatchObject({ code: 'VALIDATION_OPTION_INVALID' });
   });
 
@@ -1162,7 +1182,8 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
 describe('#625 PR-2a, C174 — the sweep’s corrected sentences about the library', () => {
   const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
   const page = (p: string) => readFileSync(join(ROOT, p), 'utf8').replace(/\s+/g, ' ');
-  let store: JsonFileStore;
+  let clock: SettableClock;
+  let store: InMemoryStore;
 
   it('handlers.md (#729 PR-0, Amendment 12): the agentAction row lists exactly the AgentAction type’s members', () => {
     const types = readFileSync(join(ROOT, 'packages/core/src/types/workflow-error.ts'), 'utf8');
@@ -1180,12 +1201,13 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about the libra
     expect(members).toEqual(expect.arrayContaining(['await', 'wait_for_service']));
     expect(members).toHaveLength(7);
   });
-  beforeEach(async () => {
-    store = await clockedJsonStore('realm-dc-sweep-625-');
+  beforeEach(() => {
+    clock = settableClock(new Date());
+    store = new InMemoryStore({ clock });
   });
   async function atQuestion(d: WorkflowDefinition) {
     // #715 (b): each question opens at the host's time (a cell may have moved the store's clock).
-    await setClockOf(store, new Date());
+    await clock.set(new Date());
     const { record: run } = await store.create({
       workflowId: d.id,
       workflowVersion: 1,
@@ -1254,7 +1276,7 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about the libra
       },
     };
     const { runId } = await atQuestion(d);
-    await setClockOf(store, LATER());
+    await clock.set(LATER());
     const reply = await advanceRun(store, d, { runId });
     // (a) red when advanceRun does not carry out the expired question first, or leaves the guard or
     //     the auto step it made owed; (b) prints the reply's fields.
@@ -1358,7 +1380,7 @@ describe('#760 — handlers.md: check_quotes and locateQuote', () => {
         },
       },
     } as unknown as WorkflowDefinition;
-    const store = await clockedJsonStore('realm-dc-760-old-');
+    const store = new InMemoryStore({ clock: settableClock(new Date()) });
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -1543,7 +1565,7 @@ describe('#760 — handlers.md: check_quotes and locateQuote', () => {
       "A whole workflow: the document's text comes in the run's params, the agent extracts the values, the check reads both, and the guard stops the run:",
     );
     const def = loadWorkflowFromString(block(HANDLERS, 'handler: check_quotes'));
-    const store = await clockedJsonStore('realm-dc-760-');
+    const store = new InMemoryStore({ clock: settableClock(new Date()) });
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -1767,7 +1789,7 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
     const shown = block(HANDLERS, 'handler: check_quotes');
     const without = shown.replace('    depends_on: [fetch_document, extract_fields]\n', '');
     const def = loadWorkflowFromString(without);
-    const store = await clockedJsonStore('realm-dc-760-w4-');
+    const store = new InMemoryStore({ clock: settableClock(new Date()) });
     const { record: created } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
