@@ -37,18 +37,19 @@ export interface ParkedRead {
 }
 
 /**
- * What every fenced-trace-buffer-contract adapter supplies, regardless of how its store reads the
- * run it fences against (issue #616 PR-0, D3).
+ * What a fenced-trace-buffer-contract adapter supplies to control the runs its store's fences are
+ * evaluated against (issue #616 PR-0, D3): all of it for an `'injected-reader'` adapter; `put` and
+ * `remove` only for an `'in-transaction'` one (issue #616 PR-1b B5).
  */
 export interface FenceRunControl {
   /** Makes `run` the record every later read of `run.id` returns (create or replace). */
   put: (run: RunRecord) => void;
   /** Makes `runId` absent for every later read. */
   remove: (runId: string) => void;
-  /** How many times a fence evaluation has read `runId`'s run — for an injected-reader store, its
-   *  reader's `get(runId)` calls; for an in-transaction store (#616 PR-1), its own in-transaction
-   *  run reads. Not a count of `get` calls specifically: whatever the store's own fence-evaluation
-   *  mechanism reads, once per evaluation. */
+  /** How many times the store has read `runId`'s run through this source's `reader` (its
+   *  `get(runId)` calls). It counts reads through `reader` only: an in-transaction store reads its
+   *  runs inside its own transaction, so its adapter's `fenceRuns` has no `readCount` (issue #616
+   *  PR-1b B5). */
   readCount: (runId: string) => number;
 }
 
