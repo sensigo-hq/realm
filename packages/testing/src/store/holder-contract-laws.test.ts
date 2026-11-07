@@ -107,12 +107,17 @@ describe('CLAIM_NAMES_HOLDER', () => {
     await expect(cases[1]!.run()).rejects.toThrow(/must carry no 'holder'/);
   });
 
-  it('is SKIPPED BY NAME — one visible case, never silent — for a store that keeps no claims', async () => {
+  it('is skipped by its field, with its name — one visible case, never silent — for a store that keeps no claims', async () => {
     const store = new InMemoryStore();
     Object.defineProperty(store, 'persistsClaims', { value: false });
     const cases = fidelityCases(store).filter((c) => c.law === 'CLAIM_NAMES_HOLDER');
-    expect(cases.map((c) => c.name)).toEqual([
-      "SKIPPED — store does not declare 'persistsClaims': claim holder round-trip",
+    // (1) red when the skip case loses `skipped: true` (a wiring then runs its no-op as a pass), or
+    //     its name changes; (2) prints each case's name and field.
+    expect(cases.map((c) => ({ name: c.name, skipped: c.skipped }))).toEqual([
+      {
+        name: "SKIPPED — store does not declare 'persistsClaims': claim holder round-trip",
+        skipped: true,
+      },
     ]);
     await cases[0]!.run();
   });
