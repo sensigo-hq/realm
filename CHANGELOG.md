@@ -263,9 +263,9 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
   a stale stored phase is re-stamped by `realm db migrate`; the holder of an idempotency key is
   derived at read, so there is no key index to rebuild; and a definition is registered from its
   source, so there are no definition files to back-fill. A script that calls one of the three now
-  stops with commander's "unknown command". With gc, the `run_absent` fence leaves the
-  `FencePredicate` union (purge's `run_absent_or_terminal` stays, and the published trace-buffer
-  contract passes on it) and `STATE_RUN_RESURRECTED` leaves the error codes.
+  stops with `error: unknown command '<name>'` on stderr and exit code 1. With gc, the `run_absent`
+  fence leaves the `FencePredicate` union (purge's `run_absent_or_terminal` stays, and the published
+  trace-buffer contract passes on it) and `STATE_RUN_RESURRECTED` leaves the error codes.
 
 ### Fixed
 

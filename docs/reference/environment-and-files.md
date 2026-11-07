@@ -85,7 +85,7 @@ Two more kinds of entry exist only while a file is being written:
 | `runs/<file>.lock`               | A folder that marks the file as being written. It is removed when the write ends. |
 | `runs/<file>.<pid>.<random>.tmp` | The new contents of a file, before it replaces the old one.                       |
 
-A temp file or a `.lock` folder left behind under `runs/` by a process that was killed is not removed by Realm; the next write to that file takes the lock over once the folder is older than 10 seconds.
+A temp file left behind under `runs/` by a process that was killed is not removed by Realm. A `.lock` folder left behind is taken over by the next write to that file once the folder is older than 10 seconds.
 
 On version 0.45.0 the temp file's name has a counter where the random part is: `runs/<file>.<pid>.<n>.tmp`.
 
