@@ -185,25 +185,29 @@ describe('#616 unit 8 — the write path', () => {
     const holder = connect(file);
     holder.exec('BEGIN IMMEDIATE');
     const { db } = realmDb(file, { budgetMs: 1_000 });
-    let ticks = 0;
-    const timer = setInterval(() => {
-      ticks += 1;
-    }, 10);
+    // The event loop's turns, one per setImmediate: a loop that is blocked takes none.
+    let turns = 0;
+    let spinning = true;
+    const spin = (): void => {
+      turns += 1;
+      if (spinning) setImmediate(spin);
+    };
+    setImmediate(spin);
     const started = performance.now();
     const out = await settle(db.immediate(insert(1), verified));
     const elapsed = performance.now() - started;
-    clearInterval(timer);
+    spinning = false;
     holder.exec('ROLLBACK');
     // (1) red when the wait is synchronous (a busy timeout as long as the budget, or a blocking
-    //     loop between attempts): the interval cannot fire while the loop is blocked, so the ticks
-    //     stay at 0 or 1; also when the refusal is not STATE_RUN_BUSY with its sentence, or a row
-    //     landed. The floor is 3, not a rate: an idle Linux host counts about 60 ticks in this
-    //     second (58-64 over five runs), the macOS runner counted 15 both times (CI run 42321890910
-    //     and its re-run), so a rate that high fails there with the wait in place. (2) prints the
-    //     error's code and message, the ticks and the elapsed time.
+    //     loop between attempts): the loop cannot turn while it is blocked, so the turns stay at 0
+    //     or 1; also when the refusal is not STATE_RUN_BUSY with its sentence, or a row landed.
+    //     It counts loop turns, not timer ticks: a rate fails on a slow runner (this cell needed 20
+    //     ticks of 10 ms in the second; an idle Linux host counts about 60, the macOS runner
+    //     counted 15 in CI run 42321890910 and its re-run), a count of turns does not. (2) prints
+    //     the error's code and message, the turns and the elapsed time.
     expect(
-      { ...summary(out.error), atLeast3Ticks: ticks >= 3, rows: values(file) },
-      `ticks ${ticks}, elapsed ${elapsed.toFixed(0)} ms`,
+      { ...summary(out.error), atLeast100Turns: turns >= 100, rows: values(file) },
+      `turns ${turns}, elapsed ${elapsed.toFixed(0)} ms`,
     ).toEqual({
       workflowError: true,
       code: 'STATE_RUN_BUSY',
@@ -211,7 +215,7 @@ describe('#616 unit 8 — the write path', () => {
       message:
         'The store was busy for 1 s: another writer held it. Nothing was written. Try again.',
       details: { budget_ms: 1000 },
-      atLeast3Ticks: true,
+      atLeast100Turns: true,
       rows: [],
     });
   });
@@ -682,43 +686,55 @@ describe('#616 unit 8 — the write path', () => {
     expect(typeof calls).toBe('function');
   });
 
-  it('correction check 2: five calls queued behind an outside writer are all refused within about the budget, in call order, nothing written', async () => {
+  it('correction check 2: five calls queued behind an outside writer are all refused when the budget runs out, in call order, each after the first with one attempt, nothing written', async () => {
     const file = freshFile();
     const holder = connect(file);
     holder.exec('BEGIN IMMEDIATE');
     const budgetMs = 400;
-    const { db } = realmDb(file, { budgetMs });
+    // A real connection that passes everything on and records each BEGIN it is asked for.
+    const { wrapped, begins } = withFault(
+      connect(file),
+      () => false,
+      () => new Error('never thrown'),
+      0,
+    );
+    const { db } = realmDb(file, { budgetMs, connection: wrapped });
     const started = performance.now();
     const refused: Array<{ call: number; atMs: number; error: Record<string, unknown> }> = [];
+    let attemptsWhenTheFirstSettled = -1;
     await Promise.all(
       [1, 2, 3, 4, 5].map(async (call) => {
         const out = await settle(db.immediate(insert(call), verified));
+        if (call === 1) attemptsWhenTheFirstSettled = begins.length;
         refused.push({ call, atMs: performance.now() - started, error: summary(out.error) });
       }),
     );
     holder.exec('ROLLBACK');
-    const last = Math.max(...refused.map((r) => r.atMs));
     const first = Math.min(...refused.map((r) => r.atMs));
-    // (1) red when the budget counts from each call's first busy answer, not from the call (the
-    //     queued calls wait a budget each: the last is refused near 5 x 400 ms), when a call is
-    //     refused before its budget, out of call order, with another refusal, or a row landed.
-    //     The bound is 4 x the budget, not the budget plus one attempt for each call: the broken
-    //     count cannot be refused before 5 x the budget, because each call waits its own whole
-    //     budget behind the one before; the macOS runner refused the last call at 2.3 x and 2.1 x
-    //     (CI run 42321890910 and its re-run), so a bound of 2 x failed there with the count
-    //     right. (2) prints every call's refusal time and outcome.
+    // The first call's refusal can be seen one attempt late (the next queued call's attempt may
+    // already have begun), so the four queued calls made 3 or 4 attempts after it, never more.
+    const attemptsAfterwards = begins.length - attemptsWhenTheFirstSettled;
+    // (1) red when the budget counts from each call's first busy answer, not from the call: each
+    //     queued call then waits a budget of its own in many attempts (the break measured 35 after
+    //     the first call settled, the last refusal near 5 x 400 ms), where the right count gives
+    //     each of the four a single attempt, because its budget passed in the queue; also when a
+    //     call is refused before its budget, out of call order, with another refusal, or a row
+    //     landed. It counts attempts, not milliseconds: the bound this cell had (the last refusal
+    //     under 2 x the budget) failed on the macOS runner with the count right (917, 846 and 1,031
+    //     ms in CI runs 42321890910, its re-run and 42323967528). (2) prints every call's refusal
+    //     time and outcome, and the attempts the four queued calls made.
     expect(
       {
         order: refused.map((r) => r.call),
-        withinFourTimesTheBudget: last < 4 * budgetMs,
+        atMostOneAttemptEachForTheFourQueuedCalls: attemptsAfterwards <= 4,
         notBeforeTheBudget: first >= budgetMs,
         errors: refused.map((r) => r.error),
         rows: values(file),
       },
-      refused.map((r) => `#${r.call} at ${r.atMs.toFixed(0)} ms`).join(', '),
+      `${refused.map((r) => `#${r.call} at ${r.atMs.toFixed(0)} ms`).join(', ')}; ${attemptsAfterwards} attempts by the four queued calls`,
     ).toEqual({
       order: [1, 2, 3, 4, 5],
-      withinFourTimesTheBudget: true,
+      atMostOneAttemptEachForTheFourQueuedCalls: true,
       notBeforeTheBudget: true,
       errors: Array(5).fill({
         workflowError: true,
