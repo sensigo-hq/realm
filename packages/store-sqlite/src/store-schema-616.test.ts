@@ -99,7 +99,7 @@ function pragma(db: DatabaseLike, name: string, value: 0 | 1) {
 }
 
 describe('#616 unit 6 — the schema constant', () => {
-  it('a database created from the constant stores exactly its text, and holds its fifteen tables, six indexes and forty-eight triggers', () => {
+  it('a database created from the constant stores exactly its text, and holds its fifteen tables, eleven indexes and forty-eight triggers', () => {
     const db = fresh();
     const rows = db
       .prepare('SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY rowid')
@@ -118,6 +118,11 @@ describe('#616 unit 6 — the schema constant', () => {
         'index runs_by_phase',
         'index runs_by_phase_version',
         'index runs_by_key',
+        'index runs_by_workflow_updated',
+        'index runs_by_workflow_created',
+        'index runs_by_updated',
+        'index runs_by_created',
+        'index runs_by_terminal',
         'trigger runs_version_fence',
         'trigger runs_identity',
         'trigger runs_insert_once',
