@@ -31,7 +31,7 @@
   },
   "devDependencies": {
     "@sensigo/realm-testing": "*",
-    "@types/node": "^26.1.1",
+    "@types/node": "^26.6.6",
     "typescript": "*",
     "vitest": "^4.1.0"
   },
