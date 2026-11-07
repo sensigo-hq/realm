@@ -8,6 +8,8 @@
 // depends on both.
 import { describe, it, expect } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   InMemoryTraceBufferStore,
   assertFencePredicate,
@@ -22,6 +24,7 @@ import {
   FENCED_TRACE_BUFFER_LAWS,
   type FencedTraceBufferLaw,
 } from '@sensigo/realm-testing';
+import { REPO_ROOT } from '../multi-copy/layout.js';
 
 /**
  * The laws of this contract that THIS file deliberately does not run, each with its reason
@@ -72,17 +75,29 @@ function makeAdapter(): { adapter: Parameters<typeof fencedTraceBufferContract>[
   };
 }
 
+/** The cases as this adapter builds them, read when the tests are registered: which laws have a
+ *  case to run, and which cases are skips (issue #616 PR-1b B5). Never run; each law runs its own. */
+const REGISTERED = fencedTraceBufferContract(makeAdapter().adapter);
+
 describe('InMemoryTraceBufferStore — fenced-trio TCK conformance (issue #207)', () => {
   for (const law of LAWS) {
+    // issue #616 PR-1b B5: a skipped case is registered with the runner's own skip, so it is
+    // counted as a skip, never inside a passing law. A law is left out only when it has a case and
+    // every one is skipped; a law with no case at all keeps its test, which fails naming it.
+    const ofLaw = REGISTERED.filter((c) => c.law === law);
+    for (const c of ofLaw) if (c.skipped === true) it.skip(c.name, () => {});
+    if (ofLaw.length > 0 && ofLaw.every((c) => c.skipped === true)) continue;
     it(law, async () => {
       // A fresh store per law — the in-memory store's per-key chain map has no cross-test state
       // to worry about, but a fresh instance keeps each law's cases fully isolated regardless.
       const { adapter } = makeAdapter();
       const cases = fencedTraceBufferContract(adapter);
       const matching = cases.filter((c) => c.law === law);
+      // (1) red when the contract builds no case for this law (it would vanish from the run);
+      //     (2) prints the law's name.
       expect(matching.length, `no cases registered for law ${law}`).toBeGreaterThan(0);
       for (const c of matching) {
-        await c.run();
+        if (c.skipped !== true) await c.run();
       }
     });
   }
@@ -93,16 +108,15 @@ describe('InMemoryTraceBufferStore — fenced-trio TCK conformance (issue #207)'
   it('PER_KEY_INDEPENDENCE (short-timeout variant, for the mutation-probe)', async () => {
     const { adapter } = makeAdapter();
     const cases = fencedTraceBufferContract(adapter);
+    // A skip case's name carries the real case's text, and a skip's no-op `run` passes: the
+    // variant exists to run the REAL case under a short timeout, so it finds the one without the
+    // field. (1) red when the real case is absent or only its skip is there; (2) prints that the
+    // target was undefined.
     const target = cases.find(
-      (c) => c.law === 'PER_KEY_INDEPENDENCE' && c.name.includes('disjoint-run'),
+      (c) =>
+        c.law === 'PER_KEY_INDEPENDENCE' && c.skipped !== true && c.name.includes('disjoint-run'),
     );
     expect(target).toBeDefined();
-    // A skip case's name carries the real case's text, so `find` alone would accept
-    // it — and a skip's no-op `run` passes. The variant exists to run the REAL case
-    // under a short timeout.
-    expect(target!.name.startsWith('SKIPPED — '), 'must run the real case, never a skip').toBe(
-      false,
-    );
     await target!.run();
   }, 2000);
 
@@ -162,23 +176,48 @@ describe('InMemoryTraceBufferStore — fenced-trio TCK conformance (issue #207)'
     }
   }, 10000);
 
-  // issue #616 PR-0, D3: a skipped case renders `✓` for its law in a runner (both realm adapters
-  // have a park, so every park-dependent law above runs for real) — the ONLY visible-but-not-a-✓
-  // skips this adapter registers are these two pre-existing ones, from not supplying the two
-  // optional byte-comparison hooks (`bytesOracle`/`rawWalAccess`; a physical file's on-disk bytes
-  // are an independent ground truth an in-memory structure's own accounting has no analogue of —
-  // see `bytesOracle`'s and `rawWalAccess`'s own doc on `FencedTraceBufferContractAdapter`). This
-  // assertion is what would fail loudly (naming what it lost) if this adapter ever lost its park.
+  // issue #616 PR-0, D3: both realm adapters have a park, so every park-dependent law above runs
+  // for real — the ONLY skips this adapter registers are these two pre-existing ones, from not
+  // supplying the two optional byte-comparison hooks (`bytesOracle`/`rawWalAccess`; a physical
+  // file's on-disk bytes are an independent ground truth an in-memory structure's own accounting
+  // has no analogue of — see `bytesOracle`'s and `rawWalAccess`'s own doc on
+  // `FencedTraceBufferContractAdapter`). Selected by the field (issue #616 PR-1b B5). (1) red when
+  // this adapter loses its park (park-dependent skips appear) or the skip cases lose their field
+  // (none found); (2) prints the skipped cases' names.
   it('registers exactly its two known, pre-existing skips — no park-dependent case is silently skipped', () => {
     const { adapter } = makeAdapter();
     const cases = fencedTraceBufferContract(adapter);
-    const skipped = cases.filter((c) => c.name.startsWith('SKIPPED — ')).map((c) => c.name);
+    const skipped = cases.filter((c) => c.skipped === true).map((c) => c.name);
     expect(skipped.sort()).toEqual(
       [
         'SKIPPED — adapter did not supply bytesOracle (count-based assertions above still ran): byte-exactness against an adapter-supplied oracle',
         'SKIPPED — adapter did not supply rawWalAccess (the shape-tolerant sibling case above still ran): byte-for-byte raw comparison against an adapter-supplied rawWalAccess hook',
       ].sort(),
     );
+  });
+});
+
+describe('InMemoryTraceBufferStore fenced wiring — the testing package page counts what this adapter runs', () => {
+  // issue #616 PR-1b B5: the page's contracts table gives this store's case count, and the sentence
+  // after it the skips, by running the contract here (as docs-pages-625.test.ts pins the fidelity
+  // row). Kept in this file, so no other test file pairs this class with the contract.
+  it("docs/reference/testing-package.md: the contracts table's fencedTraceBufferContract row and the skips the sentence after it counts", () => {
+    const page = readFileSync(join(REPO_ROOT, 'docs/reference/testing-package.md'), 'utf8');
+    const row = page.split('\n').find((line) => /^\| `fencedTraceBufferContract` +\|/.test(line));
+    const cells = (row ?? '').split('|').map((cell) => cell.trim());
+    const said =
+      /passed, except the (\d+) it reports as skipped for `InMemoryTraceBufferStore`/.exec(
+        page.replace(/\s+/g, ' '),
+      )?.[1];
+    const cases = fencedTraceBufferContract(makeAdapter().adapter);
+    // (1) red when the row's laws or cases, or the sentence's skip count, differ from the
+    //     contract's (the row said 74 before #616 PR-1b B5 added a SEAL case); (2) prints the
+    //     row's two cells, the sentence's number and the three counts.
+    expect({ laws: cells[3], cases: cells[4], skips: said }).toEqual({
+      laws: String(FENCED_TRACE_BUFFER_LAWS.length),
+      cases: `${cases.length}, with \`InMemoryTraceBufferStore\``,
+      skips: String(cases.filter((c) => c.skipped === true).length),
+    });
   });
 });
 
