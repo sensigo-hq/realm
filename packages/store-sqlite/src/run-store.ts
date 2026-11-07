@@ -1,13 +1,13 @@
-// run-store.ts — issue #616 PR-1a units 12a, 12b and 13a (design d4-frozen-r3 §2, §3; the censuses
-// `plans/issue-616/u12/census-u12.md` and `u13/census-u13.md`): `SqliteRunStore`, core's run store on
-// a SQLite home, for creating runs, reading one, listing them, updating one, claiming a step of one
-// and settling one. A keyed create is unit 15a's; sealing and saving are 13b's and 13c's.
-// `openRealmHome` builds the one store of a handle; the package's entry exports the class as a type
-// only, so nothing outside the package constructs one.
+// run-store.ts — issue #616 PR-1a units 12a, 12b, 13a and 13b (design d4-frozen-r3 §2, §3; the
+// censuses `plans/issue-616/u12/census-u12.md` and `u13/census-u13.md`): `SqliteRunStore`, core's run
+// store on a SQLite home, for creating runs, reading one, listing them, updating one, claiming a step
+// of one, settling one and stamping a seal onto an old finished run. A keyed create is unit 15a's;
+// saving is 13c's. `openRealmHome` builds the one store of a handle; the package's entry exports the
+// class as a type only, so nothing outside the package constructs one.
 //
 // Every write goes through `RealmDb.immediate` with a `verify` that reads the run back by its content;
-// every read goes through `snapshot`. Each call spends exactly ONE reading of the home's clock (core's
-// clock laws, #715):
+// every read goes through `snapshot`. Each call but a stamp spends exactly ONE reading of the home's
+// clock (core's clock laws, #715):
 //   - `create`: the reading `immediate` takes right after `BEGIN IMMEDIATE`; the run's id is minted
 //     after it. An unkeyed create, or a keyed one whose key no run holds, is stamped with it
 //     unfloored; a keyed create that finds the key's holder floors it by that run (unit 15a);
@@ -17,7 +17,9 @@
 //   - `update`, `claimStep` and `settleStep`: the raw reading their write takes itself, under the
 //     write lock, once it has found the run (a missing run spends none), folded with the STORED
 //     record's `updated_at` (a settle's also with its delta's event instants) before any check, so a
-//     refused update, claim or settle has spent it.
+//     refused update, claim or settle has spent it;
+//   - `stampSeal`: none, on every branch: it carries `updated_at` through unchanged (stamping is not
+//     activity), so it has nothing to stamp.
 // A list is ONE read transaction (n8n's way: a consistent snapshot without the write lock), so it never
 // tears across a concurrent write. An update, a claim or a settle reads the run and writes it in ONE
 // write transaction, so two of them never both act on one version: of two claims of one step, exactly
@@ -48,9 +50,11 @@ import {
   type LoadBearingRunRecordField,
   type RunRecord,
   type RunStore,
+  type SealedBy,
   type SealRunDelta,
   type SettlementDelta,
   type Snapshot,
+  type StampSealResult,
   type StoreSettlement,
   type WorkflowDefinition,
 } from '@sensigo/realm';
@@ -163,9 +167,9 @@ interface Settled {
 }
 
 /**
- * An update's, a claim's or a settle's own check after an error at its COMMIT (unit 9's protocol), by
- * content: true when the stored core document is the text written; a stored version above the
- * written `version` throws {@link VerifyInconclusive} (the write may have landed and been
+ * An update's, a claim's, a settle's or a stamp's own check after an error at its COMMIT (unit 9's
+ * protocol), by content: true when the stored core document is the text written; a stored version
+ * above the written `version` throws {@link VerifyInconclusive} (the write may have landed and been
  * superseded); otherwise false (another writer's text at the same or a lower version, or no run at
  * all). The evidence rows and the core document are one transaction, so the text landing is the
  * whole record landing.
@@ -182,6 +186,12 @@ function verifyWritten(db: DatabaseLike, runId: string, text: string, version: n
     );
   }
   return false;
+}
+
+/** What a stamp did: its answer, and, when it wrote, the core document's text as stored. */
+interface Stamping {
+  readonly result: StampSealResult;
+  readonly text?: string;
 }
 
 /** A claim of a step that is already in flight or settled (the JSON store's words). */
@@ -211,8 +221,8 @@ function notEligibleError(runId: string, stepName: string, eligible: string[]): 
 
 /**
  * Core's run store on a SQLite home: create (keyed or not), get, list, update, claimStep and
- * settleStep (see the module comment). It implements core's `RunStore`; the optional `stampSeal`
- * is unit 13b's.
+ * settleStep and stampSeal (see the module comment). It implements core's `RunStore`, its optional
+ * `stampSeal` included.
  */
 export class SqliteRunStore implements RunStore {
   /** Claims round-trip: the stored record is the record written, `claims` included. */
@@ -500,6 +510,73 @@ export class SqliteRunStore implements RunStore {
       },
       (db, result) => (result.created ? verifyCreated(db, result.record) : true),
     );
+  }
+
+  /**
+   * Stamps `sealedBy` onto run `runId`, a run that finished before runs carried a seal (#367; the one
+   * write of `realm run migrate --stamp-seals`), as the JSON store does. ONE write transaction reads
+   * the run, then four checks, in this order:
+   *   1. a stored version that is not `expectedVersion` THROWS core's `STATE_SNAPSHOT_MISMATCH`;
+   *   2. a run that already holds a seal RETURNS `already_stamped`;
+   *   3. a run that is not finished RETURNS `not_terminal`; both refusals carry the run as it stands;
+   *   4. otherwise core's seal boundary judges the stamp (`assertSealIntegrity`, which throws), and
+   *      the run is written with `sealed_by` appended last, the version moved by one and `updated_at`
+   *      kept byte for byte: stamping is not activity, so retention's clock does not move, and a
+   *      writer holding the run read before the stamp fails its version check instead of wiping it.
+   * The write patches the stored core document, as a claim does (MA 3, 2026-11-07): no evidence entry
+   * or write-once value is made into text or hashed, and the writer re-stamps the phase columns from
+   * it. A run that does not exist is core's `STATE_RUN_NOT_FOUND`. No branch reads the clock.
+   */
+  async stampSeal(
+    runId: string,
+    sealedBy: SealedBy,
+    expectedVersion: number,
+  ): Promise<StampSealResult> {
+    const stamping = await this.#db.immediate(
+      (db): Stamping => {
+        const stored = readStoredCore(db, runId);
+        const fresh = stored === undefined ? null : readRunInTransaction(db, runId);
+        if (stored === undefined || fresh === null) throw runNotFoundError(runId);
+        if (fresh.version !== expectedVersion) {
+          throw versionConflictError(runId, expectedVersion, fresh.version);
+        }
+        if (fresh.sealed_by !== undefined) {
+          return { result: { stamped: false, reason: 'already_stamped', run: fresh } };
+        }
+        if (fresh.terminal_state !== true) {
+          return { result: { stamped: false, reason: 'not_terminal', run: fresh } };
+        }
+        const stamped: RunRecord = { ...fresh, sealed_by: sealedBy };
+        assertSealIntegrity(fresh, stamped);
+        const version = fresh.version + 1;
+        // The stored document with its placeholders in place: `sealed_by` appended last, as in
+        // `stamped`, the version replaced in place and `updated_at` the stored text.
+        const text = writeRunUpdate(
+          db,
+          runId,
+          {
+            ...stored,
+            sealed_by: sealedBy,
+            version,
+            updated_at: stored.updated_at,
+          } as unknown as CoreDocument,
+          { unchanged: true },
+        );
+        const run: RunRecord = {
+          ...stamped,
+          run_phase: deriveRunPhase(stamped),
+          version,
+          updated_at: fresh.updated_at,
+        };
+        return { result: { stamped: true, run }, text };
+      },
+      // A refusal wrote nothing, so there is nothing to look for (SEAMS, the unit 13 rulings, Q3).
+      (db, stamping) =>
+        stamping.text === undefined ||
+        verifyWritten(db, runId, stamping.text, stamping.result.run.version),
+      { takesReading: false },
+    );
+    return stamping.result;
   }
 }
 
