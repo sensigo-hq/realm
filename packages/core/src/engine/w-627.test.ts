@@ -48,7 +48,7 @@ import {
   type ConditionReading,
   type SeparationEvidence,
 } from './separation.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { unreadableFactsOf } from '../store/run-file.js';
 import {
   JsonWorkflowStore,
@@ -92,8 +92,8 @@ function gated(timed = false): WorkflowDefinition {
   } as WorkflowDefinition;
 }
 
-async function newStore(): Promise<JsonFileStore> {
-  return new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-w-627-')));
+async function newStore(): Promise<InMemoryStore> {
+  return new InMemoryStore();
 }
 
 /** A run whose `q` question is open, its record, and its gate id. */
@@ -1203,10 +1203,10 @@ describe('#627 W correction 2 (2.1); #729 PR-4 (f) — a re-read gate shows no q
     );
     // The second caller: its own settle of the gate finds it already open (D-1's `already_open` arm,
     // which renders the LIVE gate) — reached by replaying the opening settle once.
-    class SecondCaller extends JsonFileStore {
+    class SecondCaller extends InMemoryStore {
       override async settleStep(
-        ...args: Parameters<JsonFileStore['settleStep']>
-      ): ReturnType<JsonFileStore['settleStep']> {
+        ...args: Parameters<InMemoryStore['settleStep']>
+      ): ReturnType<InMemoryStore['settleStep']> {
         const first = await super.settleStep(...args);
         const delta = args[1];
         if (delta.kind !== 'open_gate') return first;
@@ -1218,7 +1218,7 @@ describe('#627 W correction 2 (2.1); #729 PR-4 (f) — a re-read gate shows no q
         );
       }
     }
-    const store = new SecondCaller(await mkdtemp(join(tmpdir(), 'realm-w627-prompt-')));
+    const store = new SecondCaller();
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -1264,7 +1264,7 @@ describe('#627 W correction 2 (3.3) — a form’s answer gets no token sentence
       },
     } as WorkflowDefinition;
   };
-  const form = (s: Awaited<ReturnType<typeof atGate>>, store: JsonFileStore = s.store) =>
+  const form = (s: Awaited<ReturnType<typeof atGate>>, store: InMemoryStore = s.store) =>
     submitHumanResponse(store, s.def, {
       runId: s.record.id,
       gateId: s.gateId,

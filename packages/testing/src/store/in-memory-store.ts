@@ -60,8 +60,8 @@ export class InMemoryStore implements RunStore {
    * The clock this store reads the time from (issue #715; rule 10: an in-memory store may use any
    * clock). What it governs (#715 (b), D-16): every call that returns spends ONE reading and returns
    * it — `create`, `update`, `claimStep` and `settleStep` at the write, `get` and `list` BEFORE they
-   * read. `stampSeal` and this store's own internal reads spend none. What it does not govern:
-   * instants minted outside a store, and durations.
+   * read. `stampSeal`, the `seed` fixture and this store's own internal reads spend none. What it
+   * does not govern: instants minted outside a store, and durations.
    */
   readonly clock: Clock;
 
@@ -405,6 +405,25 @@ export class InMemoryStore implements RunStore {
     };
     this.runs.set(runId, written);
     return { stamped: true, run: written };
+  }
+
+  /**
+   * A test fixture (issue #616 PR-2c, c1a): plants `record` AS GIVEN — a structural copy stored under
+   * its id, REPLACING whatever this store held for that id. It is the channel a raw run-file write
+   * was on the JSON store, for a shape past the store boundary (a stale `run_phase` label, a seal the
+   * boundary would refuse). Nothing is checked or derived: no version check, no lock, no seal guard;
+   * `version`, `run_phase` and `updated_at` are kept as given; no reading is spent. When the record
+   * carries `idempotency_key`, the key's pointer is repointed to it, so a keyed `create` finds it; a
+   * key the replaced run held and the seed does not stays pointing at the id, as a raw file write
+   * left the JSON store's `keys/`. Never an import: `save()` (design §5) stays off this store until a
+   * test needs it.
+   */
+  seed(record: RunRecord): void {
+    const planted = structuredClone(record);
+    this.runs.set(planted.id, planted);
+    if (planted.idempotency_key !== undefined) {
+      this.keyIndex.set(`${planted.workflow_id}\0${planted.idempotency_key}`, planted.id);
+    }
   }
 
   /**

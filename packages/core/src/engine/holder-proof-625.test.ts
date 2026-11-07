@@ -3,13 +3,10 @@
 // judged INSIDE the answer's write, and reported on the reply and the record. It never decides the
 // answer: the answer is decided by the gate id alone.
 //
-// Through the REAL engine and a REAL JsonFileStore. Each assertion carries (a) the change that turns
+// Through the REAL engine and a REAL InMemoryStore. Each assertion carries (a) the change that turns
 // it red and (b) what it prints on failure — synthetic ids and tokens only, never a credential.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { InMemoryStore, settableClock, type SettableClock } from '@sensigo/realm-testing';
 import { declareReleaseLine } from '../release-line.js';
 import { executeChain, executeStep, submitHumanResponse } from './execution-loop.js';
 import { composeWaysAt } from './ways.js';
@@ -25,37 +22,22 @@ import type { RunRecord } from '../types/run-record.js';
 import type { EngineReply } from '../types/response-envelope.js';
 import type { StepDefinition, WorkflowDefinition } from '../types/workflow-definition.js';
 import type { Clock } from '../utils/clock.js';
-import { writeTestClockFile } from '../store/test-clock-file.js';
 import { zOf } from '../test-support/instant.js';
 
-/** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
- *  runs folder sits beside the location's clock file (first set to the host's reading), which
- *  `setClockOf` rewrites. */
-async function testLocationRuns(prefix: string): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), prefix));
-  await writeTestClockFile(root, new Date());
-  return join(root, 'runs');
-}
-async function clockedJsonStore(prefix: string): Promise<JsonFileStore> {
-  return new JsonFileStore(await testLocationRuns(prefix));
-}
-async function setClockOf(store: object, t: Date): Promise<void> {
-  const runsDir = (store as { runsDirPath?: string }).runsDirPath;
-  if (runsDir === undefined) throw new Error('setClockOf: this store is not a JSON store');
-  await writeTestClockFile(dirname(runsDir), t);
+/** #715 (b) (01 §C.4): the store's clock decides what is due — an in-memory store on a settable
+ *  clock, first set to the host's reading, which a cell moves. */
+function clockedStore(): InMemoryStore {
+  return new InMemoryStore({ clock: settableClock(new Date()) });
 }
 
 const echo: StepDispatcher = async (_step, input) => ({ ...input });
 const PROGRAM: Attributed = { by: 'alice@host', by_source: 'derived', channel: 'agent' };
 
-let dir: string;
-let store: JsonFileStore;
-beforeEach(async () => {
-  dir = await testLocationRuns('realm-holder-proof-625-');
-  store = new JsonFileStore(dir);
-});
-afterEach(async () => {
-  await rm(dir, { recursive: true, force: true });
+let clock: SettableClock;
+let store: InMemoryStore;
+beforeEach(() => {
+  clock = settableClock(new Date());
+  store = new InMemoryStore({ clock });
 });
 
 type GateConfig = NonNullable<StepDefinition['gate']>;
@@ -130,7 +112,7 @@ const entryOf = (run: RunRecord) => run.evidence.filter((e) => e.kind === 'gate_
 const occurrences = (haystack: unknown, needle: string): number =>
   JSON.stringify(haystack).split(needle).length - 1;
 
-/** A store wrapping a JsonFileStore that can mint claims with no token (#715 (b): the no-`settleStep`
+/** A store wrapping an InMemoryStore that can mint claims with no token (#715 (b): the no-`settleStep`
  *  legacy shape is gone — `settleStep` delegates). */
 class TokenlessStore implements RunStore {
   /** #715 (b): the store's clock is the wrapped store's. */
@@ -142,9 +124,9 @@ class TokenlessStore implements RunStore {
     declareReleaseLine(this);
   }
   readonly persistsClaims: boolean;
-  readonly persistedRunRecordFields: JsonFileStore['persistedRunRecordFields'];
+  readonly persistedRunRecordFields: InMemoryStore['persistedRunRecordFields'];
   constructor(
-    private readonly inner: JsonFileStore,
+    private readonly inner: InMemoryStore,
     opts: { persistsClaims?: boolean; stripToken?: boolean } = {},
   ) {
     this.persistsClaims = opts.persistsClaims ?? true;
@@ -189,9 +171,9 @@ class TokenlessStore implements RunStore {
   }
 }
 
-/** The same JsonFileStore, declaring it keeps no claims. */
-function storeKeepingNoClaims(): JsonFileStore {
-  const s = new JsonFileStore(dir);
+/** An InMemoryStore on the same clock, declaring it keeps no claims. */
+function storeKeepingNoClaims(): InMemoryStore {
+  const s = new InMemoryStore({ clock });
   Object.defineProperty(s, 'persistsClaims', { value: false });
   return s;
 }
@@ -216,7 +198,7 @@ describe('CLAIM_TOKEN_ONE_DOOR — the token leaves the engine on the opening re
     const opened = await open(store, gateWorkflow());
     expect(proofOf(opened.reply) !== undefined).toBe(true);
     // A store that minted no token: no proof — never a promise the reply cannot keep.
-    const bare = new TokenlessStore(await clockedJsonStore('realm-holder-bare-'), {
+    const bare = new TokenlessStore(clockedStore(), {
       stripToken: true,
     });
     const reply = (await open(bare, gateWorkflow())).reply;
@@ -439,7 +421,7 @@ describe("the proof is judged in the answer's write — one verdict on the recor
 
   it('mismatch (a wrong token, and the EMPTY string): recorded as mismatch, answer recorded, never "another program took over"', async () => {
     for (const wrong of ['not-the-token', '']) {
-      const sub = await clockedJsonStore('realm-holder-mm-');
+      const sub = clockedStore();
       const def = gateWorkflow();
       const o = await open(sub, def);
       const { reply, entry, run } = await answer(sub, def, o, wrong);
@@ -501,8 +483,8 @@ describe("the proof is judged in the answer's write — one verdict on the recor
     const noClaims = storeKeepingNoClaims();
     const def = gateWorkflow();
     const o = await open(noClaims, def);
-    // On this store the gate step's claim exists on disk (the fixture is a real JsonFileStore), so
-    // remove it as a store that keeps none would never have written it.
+    // On this store the gate step's claim exists in the record (the fixture is a real
+    // InMemoryStore), so remove it as a store that keeps none would never have written it.
     const { record: planted } = await noClaims.get(o.runId);
     const { confirm: _gone, ...rest } = planted.claims!;
     await noClaims.update({ ...planted, claims: rest });
@@ -547,7 +529,7 @@ describe("the proof is judged in the answer's write — one verdict on the recor
 
   it('the answer path adds at most ONE warning for the proof, in every verdict', async () => {
     for (const token of [undefined, 'wrong', '']) {
-      const sub = await clockedJsonStore('realm-holder-one-');
+      const sub = clockedStore();
       const def = gateWorkflow();
       const o = await open(sub, def);
       const { reply } = await answer(sub, def, o, token);
@@ -677,7 +659,7 @@ describe("a late answer — the verdict stands when the call's own expiry write 
   it('same-choice late answer (ok, answer_recorded false): the verdict earned when the gate id matched, the sentence says "not recorded"', async () => {
     const def = gateWorkflow(EXPIRING);
     const o = await open(store, def);
-    await setClockOf(store, o.afterExpiry);
+    await clock.set(o.afterExpiry);
     const reply = await submitHumanResponse(store, def, {
       runId: o.runId,
       gateId: o.gateId,
@@ -703,7 +685,7 @@ describe("a late answer — the verdict stands when the call's own expiry write 
   it('C6: a late answer with NO token: the expiry sentence and `No claim_token was passed.`, nothing that reads as if a token would have helped', async () => {
     const def = gateWorkflow(EXPIRING);
     const o = await open(store, def);
-    await setClockOf(store, o.afterExpiry);
+    await clock.set(o.afterExpiry);
     const reply = await submitHumanResponse(store, def, {
       runId: o.runId,
       gateId: o.gateId,
@@ -723,7 +705,7 @@ describe("a late answer — the verdict stands when the call's own expiry write 
   it('a late answer that matches carries gate_claim matched and no sentence', async () => {
     const def = gateWorkflow(EXPIRING);
     const o = await open(store, def);
-    await setClockOf(store, o.afterExpiry);
+    await clock.set(o.afterExpiry);
     const reply = await submitHumanResponse(store, def, {
       runId: o.runId,
       gateId: o.gateId,
@@ -736,7 +718,7 @@ describe("a late answer — the verdict stands when the call's own expiry write 
   it('a late answer whose expiry write finds the question ALREADY settled by the clock ⇒ spent/expired', async () => {
     const def = gateWorkflow(EXPIRING);
     const o = await open(store, def);
-    await setClockOf(store, o.afterExpiry);
+    await clock.set(o.afterExpiry);
     const enacted = await store.settleStep(o.runId, { kind: 'expire_gate', gateId: o.gateId }, def);
     expect(enacted.applied).toBe(true);
     const reply = await submitHumanResponse(store, def, {
@@ -757,7 +739,7 @@ describe("a late answer — the verdict stands when the call's own expiry write 
   it('a REFUSED late answer (a different choice than the expiry enacted) carries NO gate_claim', async () => {
     const def = gateWorkflow(EXPIRING);
     const o = await open(store, def);
-    await setClockOf(store, o.afterExpiry);
+    await clock.set(o.afterExpiry);
     const reply = await submitHumanResponse(store, def, {
       runId: o.runId,
       gateId: o.gateId,
