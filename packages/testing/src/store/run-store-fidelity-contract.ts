@@ -47,7 +47,11 @@ import {
  * order it was written: `get_run_state` pages a run's steps in that order, by a step's place in it)
  * and `DRIVE_FAILURE_KEEPS_ITS_FENCE` (#715 (b), 02 §D.2 — a failed drive's entry reads back with the
  * evidence count and the open question's id it was appended at, and one written without them reads
- * back without them: the `drive_failing` finding tells a legacy entry by their absence).
+ * back without them: the `drive_failing` finding tells a legacy entry by their absence) and
+ * `CREATE_REPORTS_CREATED` (#616 PR-1a unit 16a — a create says whether it made a new run:
+ * `created: true` for an unkeyed create, a keyed create on a fresh key and a keyed `rerun` over a
+ * finished run, whose `rerun_of` names the run it replaces; `created: false`, with the live run's
+ * id, for a keyed create that reuses that run).
  */
 export const RUN_STORE_FIDELITY_LAWS = [
   'FIDELITY_HONESTY',
@@ -61,6 +65,7 @@ export const RUN_STORE_FIDELITY_LAWS = [
   'EVIDENCE_KEEPS_ANSWER_FACTS',
   'EVIDENCE_WRITE_ORDER',
   'DRIVE_FAILURE_KEEPS_ITS_FENCE',
+  'CREATE_REPORTS_CREATED',
 ] as const;
 
 export type RunStoreFidelityLaw = (typeof RUN_STORE_FIDELITY_LAWS)[number];
@@ -211,6 +216,21 @@ function assertClaimNames(
         '`claims[step].holder`',
     );
   }
+}
+
+/**
+ * `CREATE_REPORTS_CREATED`'s words for what a create reported: its `created` (`left out` when the
+ * result carries none, as a store that never sets it reports).
+ */
+function reportedCreated(result: { created?: unknown }): string {
+  return result.created === undefined
+    ? '`created` left out'
+    : `created: ${JSON.stringify(result.created)}`;
+}
+
+/** A workflow id and idempotency key no other case, and no earlier run of this case, uses. */
+function mintCreatedTag(): string {
+  return `tck-created-${Math.random().toString(36).slice(2)}`;
 }
 
 /**
@@ -852,6 +872,107 @@ export function runStoreFidelityContract(
       }
     },
   });
+
+  // #616 PR-1a unit 16a — CREATE_REPORTS_CREATED. Always active: every store creates runs, keyed
+  // ones included. The adapter hands one store to every case, so each case mints its own workflow
+  // id and key and asserts only its own fact: (c) and (d) read their first create's run and leave
+  // its `created` to (b).
+  cases.push(
+    {
+      law: 'CREATE_REPORTS_CREATED',
+      name: 'an unkeyed create reports created: true',
+      run: async () => {
+        const result = await adapter.store.create({
+          workflowId: mintCreatedTag(),
+          workflowVersion: 1,
+          params: {},
+        });
+        if (result.created !== true) {
+          throw new Error(
+            `CREATE_REPORTS_CREATED (an unkeyed create): a create that makes a new run must report ` +
+              `created: true; the store reported ${reportedCreated(result)}`,
+          );
+        }
+      },
+    },
+    {
+      law: 'CREATE_REPORTS_CREATED',
+      name: 'a keyed create on a fresh key reports created: true',
+      run: async () => {
+        const tag = mintCreatedTag();
+        const result = await adapter.store.create({
+          workflowId: tag,
+          workflowVersion: 1,
+          params: {},
+          idempotencyKey: tag,
+        });
+        if (result.created !== true) {
+          throw new Error(
+            `CREATE_REPORTS_CREATED (a keyed create on a fresh key): a create that makes a new run ` +
+              `must report created: true; the store reported ${reportedCreated(result)}`,
+          );
+        }
+      },
+    },
+    {
+      law: 'CREATE_REPORTS_CREATED',
+      name: 'a second keyed create while the first run is live reuses it: created: false and the same id',
+      run: async () => {
+        const tag = mintCreatedTag();
+        const options = { workflowId: tag, workflowVersion: 1, params: {}, idempotencyKey: tag };
+        const { record: live } = await adapter.store.create(options);
+        const result = await adapter.store.create(options);
+        if (result.created !== false) {
+          throw new Error(
+            `CREATE_REPORTS_CREATED (a keyed create that reuses the live run under its key): it ` +
+              `must report created: false; the store reported ${reportedCreated(result)}`,
+          );
+        }
+        if (result.record.id !== live.id) {
+          throw new Error(
+            `CREATE_REPORTS_CREATED (a keyed create that reuses the live run under its key): it ` +
+              `must return that run (${live.id}); the store returned ${result.record.id} and ` +
+              'reported created: false',
+          );
+        }
+      },
+    },
+    {
+      law: 'CREATE_REPORTS_CREATED',
+      name: "a keyed create with onTerminalMatch 'rerun' over a finished run reports created: true and a rerun_of naming that run",
+      run: async () => {
+        const tag = mintCreatedTag();
+        const options = { workflowId: tag, workflowVersion: 1, params: {}, idempotencyKey: tag };
+        const { record: first } = await adapter.store.create(options);
+        // The holder ends the way the supersede journey of #558 PR-C ends it, through the store's
+        // own `get` and `update`.
+        const { record: fresh } = await adapter.store.get(first.id);
+        await adapter.store.update({
+          ...fresh,
+          run_phase: 'abandoned',
+          terminal_state: true,
+          abandoned_at: fresh.updated_at,
+          sealed_by: { arm: 'abandon_requested' },
+          terminal_reason: 'Abandoned via realm run abandon',
+        });
+        const result = await adapter.store.create({ ...options, onTerminalMatch: 'rerun' });
+        if (result.created !== true) {
+          throw new Error(
+            `CREATE_REPORTS_CREATED (a keyed create with onTerminalMatch 'rerun' over a finished ` +
+              `run): a create that makes a new run must report created: true; the store reported ` +
+              reportedCreated(result),
+          );
+        }
+        if (result.record.rerun_of !== first.id) {
+          throw new Error(
+            `CREATE_REPORTS_CREATED (a keyed create with onTerminalMatch 'rerun' over a finished ` +
+              `run): the new run's rerun_of must name the run it replaces (${first.id}); the ` +
+              `store wrote ${result.record.rerun_of === undefined ? 'no rerun_of' : `rerun_of ${result.record.rerun_of}`}`,
+          );
+        }
+      },
+    },
+  );
 
   cases.push({
     law: 'STORE_RELEASE_LINE_TRUE',

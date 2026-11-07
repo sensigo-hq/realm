@@ -104,6 +104,16 @@ All notable changes to this project are documented here.
 - **`classifyRegisteredCopy`, `workflowNotFoundError`, `legacyCopyError`, `newerCopyError` and
   `storedCopyFaultError` are exported from `@sensigo/realm` (issue #616).** They judge and refuse a
   registered workflow copy that has no file, with the words a copy with a file gets.
+- **`runStoreFidelityContract` gains the law `CREATE_REPORTS_CREATED`, and `storeClockContract`'s
+  adapter gains `recordsDeletionTime` (issue #616).** The law's four cases check that a create says
+  whether it made a new run: `created: true` for a create with no idempotency key, for a key no run
+  holds, and for a keyed create with `onTerminalMatch: 'rerun'` over an ended run, whose `rerun_of`
+  names the run it replaces; `created: false`, returning the live run, for a second create with the
+  same key while the first run is live. A store whose `create` leaves `created` out now fails the
+  law. `READS_ONE_READING` counts `deleteAllForRun` on its own, on the `clock` route: one reading
+  when the adapter sets `recordsDeletionTime`, none when it does not. A store whose delete stamps
+  the time of the deletion sets the field; set for a store with no `deleteAllForRun`, the
+  `READS_ONE_READING` case fails.
 
 ### Changed
 

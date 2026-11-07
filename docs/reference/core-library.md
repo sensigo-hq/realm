@@ -378,9 +378,9 @@ The 3 fenced functions of a trace buffer take a condition on the run, and must c
 
 | Store                                                          | Cases | Failed |
 | -------------------------------------------------------------- | ----- | ------ |
-| `InMemoryStore`                                                | 9     | 0      |
-| A copy that lists `capability_blocks` and drops it on `update` | 9     | 1      |
-| A copy that lists no fields                                    | 1     | 0      |
+| `InMemoryStore`                                                | 23    | 0      |
+| A copy that lists `capability_blocks` and drops it on `update` | 23    | 1      |
+| A copy that lists no fields                                    | 15    | 0      |
 
 The failure:
 

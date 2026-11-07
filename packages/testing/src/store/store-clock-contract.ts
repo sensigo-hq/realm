@@ -39,10 +39,13 @@ import { createTestLocation, type TestLocation } from '../clock/test-location.js
  * - `KEYED_CREATE_FLOOR_CAPPED` — that floor lifts the stamp by at most ε.
  * - `READS_ONE_READING` (#715 (b), D-16; it REVERSES (a)'s `READS_SPEND_NO_READING`) — `get`, `list`
  *   and, when the store has it, `listWithDiagnostics` spend EXACTLY one reading each (taken before
- *   the load); `stampSeal`, `listRunIds`, `statAllForRun` and `deleteAllForRun` spend none (clock
- *   route only). The `stampSeal` clause stamps a terminal, UNSEALED run the adapter seeds
- *   (`seedLegacyTerminal`), so the stamping code itself runs; a store that declares `stampSeal`
- *   under an adapter without the hook fails the clause with an adapter-wiring message.
+ *   the load); `stampSeal`, `listRunIds` and `statAllForRun` spend none; `deleteAllForRun`, counted
+ *   on its own, spends ONE when the adapter declares `recordsDeletionTime` (the store stamps the time
+ *   of the deletion; #616 PR-1a unit 16a) and none when it does not (clock route only). The
+ *   `stampSeal` clause stamps a terminal, UNSEALED run the adapter seeds (`seedLegacyTerminal`), so
+ *   the stamping code itself runs; a store that declares `stampSeal` under an adapter without the
+ *   hook fails the clause with an adapter-wiring message, and so does an adapter that declares
+ *   `recordsDeletionTime` for a store with no `deleteAllForRun`.
  * - `SNAPSHOT_AT_SOUND` (#715 (b), D6-16) — a read takes its reading BEFORE it loads: given a clock
  *   whose reading coincides with another writer's write, the snapshot holds that write (clock route
  *   only; the hook writes through the store's own `update`, which must land synchronously — the
@@ -103,6 +106,14 @@ export interface StoreClockContractAdapter {
    * skipped.
    */
   seedLegacyTerminal?: (id: string) => Promise<RunRecord>;
+  /**
+   * #616 PR-1a unit 16a: `true` for a store whose `deleteAllForRun` stamps the time of the deletion,
+   * and so takes ONE reading of its clock; absent or `false` for a store whose delete takes none.
+   * `READS_ONE_READING` counts that reading (it cannot see the time the store records). Read on the
+   * `clock` route only, where that law runs. `true` for a store with no `deleteAllForRun` fails the
+   * law with an adapter-wiring message: the flag would claim a verb the store lacks.
+   */
+  recordsDeletionTime?: boolean;
 }
 
 export interface StoreClockContractCase {
@@ -430,7 +441,7 @@ export function storeClockContract(adapter: StoreClockContractAdapter): StoreClo
     }),
     L(
       'READS_ONE_READING',
-      'get, list and listWithDiagnostics spend one reading each; stampSeal (a real stamp of a seeded terminal unsealed run), listRunIds, statAllForRun and deleteAllForRun spend none',
+      'get, list and listWithDiagnostics spend one reading each; stampSeal (a real stamp of a seeded terminal unsealed run), listRunIds and statAllForRun spend none; deleteAllForRun spends one when the adapter says the store records the time of a deletion, and none when it does not',
       T,
       async (c) => {
         const law = 'READS_ONE_READING';
@@ -438,6 +449,18 @@ export function storeClockContract(adapter: StoreClockContractAdapter): StoreClo
           law,
           c.reads !== undefined,
           'this law runs on the clock route only (a location store’s clock is internal)',
+        );
+        const extra = c.store as RunStore & {
+          listWithDiagnostics?: () => Promise<unknown>;
+          listRunIds?: () => Promise<unknown>;
+          statAllForRun?: (id: string) => Promise<unknown>;
+          deleteAllForRun?: (id: string) => Promise<unknown>;
+        };
+        const deletes = typeof extra.deleteAllForRun === 'function';
+        check(
+          law,
+          deletes || adapter.recordsDeletionTime !== true,
+          'ADAPTER_WIRING: the adapter sets recordsDeletionTime, but this store has no deleteAllForRun, so no deletion can take the reading the flag claims. Remove the flag, or wire the store that deletes.',
         );
         const { record: run } = await c.store.create(plain);
         await terminalize(c.store, run);
@@ -457,12 +480,6 @@ export function storeClockContract(adapter: StoreClockContractAdapter): StoreClo
         };
         await one('a get', () => c.store.get(run.id));
         await one('a list', () => c.store.list());
-        const extra = c.store as RunStore & {
-          listWithDiagnostics?: () => Promise<unknown>;
-          listRunIds?: () => Promise<unknown>;
-          statAllForRun?: (id: string) => Promise<unknown>;
-          deleteAllForRun?: (id: string) => Promise<unknown>;
-        };
         if (typeof extra.listWithDiagnostics === 'function') {
           await one('a listWithDiagnostics', () => extra.listWithDiagnostics!());
         }
@@ -488,12 +505,29 @@ export function storeClockContract(adapter: StoreClockContractAdapter): StoreClo
         }
         if (typeof extra.listRunIds === 'function') await extra.listRunIds();
         if (typeof extra.statAllForRun === 'function') await extra.statAllForRun(run.id);
-        if (typeof extra.deleteAllForRun === 'function') await extra.deleteAllForRun(run.id);
         check(
           law,
           c.reads!() === before,
-          `stampSeal, listRunIds, statAllForRun and deleteAllForRun spent ${c.reads!() - before} readings`,
+          `stampSeal, listRunIds and statAllForRun spent ${c.reads!() - before} readings, not 0`,
         );
+        // #616 PR-1a unit 16a: the delete is its own span — one reading for a store that records
+        // the time of the deletion (the adapter says so), none for one that does not.
+        if (deletes) {
+          const records = adapter.recordsDeletionTime === true;
+          const deleted = await spent(c, () => extra.deleteAllForRun!(run.id));
+          check(
+            law,
+            deleted.error === undefined,
+            `deleteAllForRun failed: ${String(deleted.error)}`,
+          );
+          check(
+            law,
+            deleted.reads === (records ? 1 : 0),
+            records
+              ? `deleteAllForRun spent ${String(deleted.reads)} readings, not 1: the adapter sets recordsDeletionTime, so the store stamps the time of the deletion, and that time is one reading`
+              : `deleteAllForRun spent ${String(deleted.reads)} readings, not 0: the adapter does not set recordsDeletionTime; a store whose delete reads the clock, to stamp the time of the deletion, sets it`,
+          );
+        }
       },
     ),
     {

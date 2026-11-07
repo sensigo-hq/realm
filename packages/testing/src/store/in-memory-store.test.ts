@@ -227,6 +227,177 @@ describe('FieldDroppingFakeStore — the TCK catches a dishonest store (issue #1
   });
 });
 
+/**
+ * #616 PR-1a unit 16a — the ways a store can misreport a create's `created`, one per mode. Each is
+ * InMemoryStore with ONE thing broken on ONE branch of `create` (the branch is read from what the
+ * real store did): an unkeyed create, a keyed create on a fresh key, a keyed create that reuses the
+ * live run, or a keyed `rerun` that supersedes a finished one. `reuse-omits` is the shape a store
+ * that never sets `created` on its dedupe path has; `omits-everywhere` never sets it at all.
+ */
+type CreatedMode =
+  | 'unkeyed-false'
+  | 'fresh-false'
+  | 'reuse-true'
+  | 'reuse-new-run'
+  | 'supersede-false'
+  | 'supersede-no-link'
+  | 'reuse-omits'
+  | 'omits-everywhere';
+
+class CreatedMisreportingStore extends InMemoryStore {
+  constructor(private readonly mode: CreatedMode) {
+    super();
+  }
+
+  override async create(options: CreateRunOptions): Promise<CreateResult> {
+    const result = await super.create(options);
+    const branch = !result.created
+      ? 'reuse'
+      : result.record.rerun_of !== undefined
+        ? 'supersede'
+        : options.idempotencyKey !== undefined
+          ? 'fresh'
+          : 'unkeyed';
+    const omitted = (): CreateResult => {
+      const { created: _created, ...rest } = result;
+      return rest as CreateResult;
+    };
+    switch (this.mode) {
+      case 'unkeyed-false':
+        return branch === 'unkeyed' ? { ...result, created: false } : result;
+      case 'fresh-false':
+        return branch === 'fresh' ? { ...result, created: false } : result;
+      case 'reuse-true':
+        return branch === 'reuse' ? { ...result, created: true } : result;
+      case 'reuse-new-run': {
+        if (branch !== 'reuse') return result;
+        const { idempotencyKey: _key, ...unkeyed } = options;
+        return { ...(await super.create(unkeyed)), created: false };
+      }
+      case 'supersede-false':
+        return branch === 'supersede' ? { ...result, created: false } : result;
+      case 'supersede-no-link': {
+        if (branch !== 'supersede') return result;
+        const { rerun_of: _link, ...record } = result.record;
+        return { ...result, record };
+      }
+      case 'reuse-omits':
+        return branch === 'reuse' ? omitted() : result;
+      case 'omits-everywhere':
+        return omitted();
+    }
+  }
+}
+
+/** Each CREATE_REPORTS_CREATED case run in order on ONE store (as the wirings run a law's cases):
+ *  `passed`, or its failure message. */
+async function createdOutcomes(store: RunStore): Promise<string[]> {
+  const cases = runStoreFidelityContract({ store, definition: agentWf, stepName: 'work' }).filter(
+    (c) => c.law === 'CREATE_REPORTS_CREATED',
+  );
+  const got: string[] = [];
+  for (const c of cases) {
+    got.push(
+      await c.run().then(
+        () => 'passed',
+        (err: unknown) => (err instanceof Error ? err.message : String(err)),
+      ),
+    );
+  }
+  return got;
+}
+
+const UNKEYED = 'CREATE_REPORTS_CREATED (an unkeyed create): ';
+const FRESH = 'CREATE_REPORTS_CREATED (a keyed create on a fresh key): ';
+const REUSE = 'CREATE_REPORTS_CREATED (a keyed create that reuses the live run under its key): ';
+const RERUN =
+  "CREATE_REPORTS_CREATED (a keyed create with onTerminalMatch 'rerun' over a finished run): ";
+const MUST_CREATE = 'a create that makes a new run must report created: true; the store reported ';
+const ID = '[0-9a-f-]{36}';
+const escaped = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+describe('#616 PR-1a unit 16a — CREATE_REPORTS_CREATED fails the store that misreports created, on that branch alone', () => {
+  // Each row: (1) can it fail — the break is deleting the case (its message becomes `passed`), or,
+  // for c2 and d2, deleting that conjunct of the case (the id check; the rerun_of check); (2) it
+  // prints the four outcomes, each `passed` or the law's message (the branch, `created` as the
+  // store reported it, and run ids — no value from the environment).
+  const rows: ReadonlyArray<[CreatedMode, string, Array<string | RegExp>]> = [
+    [
+      'unkeyed-false',
+      '(a)',
+      [`${UNKEYED}${MUST_CREATE}created: false`, 'passed', 'passed', 'passed'],
+    ],
+    ['fresh-false', '(b)', ['passed', `${FRESH}${MUST_CREATE}created: false`, 'passed', 'passed']],
+    [
+      'reuse-true',
+      '(c1)',
+      [
+        'passed',
+        'passed',
+        `${REUSE}it must report created: false; the store reported created: true`,
+        'passed',
+      ],
+    ],
+    [
+      'reuse-new-run',
+      '(c2)',
+      [
+        'passed',
+        'passed',
+        new RegExp(
+          `^${escaped(REUSE)}it must return that run \\(${ID}\\); the store returned ${ID} and reported created: false$`,
+        ),
+        'passed',
+      ],
+    ],
+    [
+      'supersede-false',
+      '(d1)',
+      ['passed', 'passed', 'passed', `${RERUN}${MUST_CREATE}created: false`],
+    ],
+    [
+      'supersede-no-link',
+      '(d2)',
+      [
+        'passed',
+        'passed',
+        'passed',
+        new RegExp(
+          `^${escaped(RERUN)}the new run's rerun_of must name the run it replaces \\(${ID}\\); the store wrote no rerun_of$`,
+        ),
+      ],
+    ],
+  ];
+  for (const [mode, conjunct, want] of rows) {
+    it(`${conjunct} the '${mode}' store fails only its case, with the law's message`, async () => {
+      const got = await createdOutcomes(new CreatedMisreportingStore(mode));
+      expect(got).toEqual(want.map((w) => (typeof w === 'string' ? w : expect.stringMatching(w))));
+    });
+  }
+
+  it('a store whose dedupe branch leaves created out, while its fresh branches report true, fails (c) alone: the check is `=== false`, not a falsy created', async () => {
+    // (1) red when case (c) tests `!result.created` instead of `created !== false`: a left-out
+    //     `created` then passes as a reuse; (2) prints the four outcomes.
+    expect(await createdOutcomes(new CreatedMisreportingStore('reuse-omits'))).toEqual([
+      'passed',
+      'passed',
+      `${REUSE}it must report created: false; the store reported \`created\` left out`,
+      'passed',
+    ]);
+  });
+
+  it('a store whose create leaves created out on every branch fails all four cases of the fidelity family', async () => {
+    // (1) red when the law is removed from the contract (no case runs: an empty list); (2) prints the
+    //     outcomes.
+    expect(await createdOutcomes(new CreatedMisreportingStore('omits-everywhere'))).toEqual([
+      `${UNKEYED}${MUST_CREATE}\`created\` left out`,
+      `${FRESH}${MUST_CREATE}\`created\` left out`,
+      `${REUSE}it must report created: false; the store reported \`created\` left out`,
+      `${RERUN}${MUST_CREATE}\`created\` left out`,
+    ]);
+  });
+});
+
 // issue #558 PR-C (C-6): the in-memory twin of JsonFileStore's supersede link. The same journey,
 // so an external implementer reading the testing store sees the same contract.
 describe('InMemoryStore — rerun_of, the supersede link (issue #558 PR-C)', () => {
