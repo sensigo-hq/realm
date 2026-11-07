@@ -121,8 +121,8 @@ describe('#616 PR-2a (iii) — the docs', () => {
   });
 
   it('the CHANGELOG entry', () => {
-    // Executed: "through one place, once per command" — store-door-616.test.ts (no file but the door,
-    // gc.ts and reconcile.ts builds a store) and home.test.ts (every store under the one home);
+    // Executed: "through one place, once per command" — store-door-616.test.ts (no file but the door
+    // builds a store) and home.test.ts (every store under the one home);
     // "`realm serve` shares that one home" — this file's A1 cell; "nothing … changes" — the
     // suite as it stood; the exception — foreign-test-clock-715.test.ts's `realm workflow list` cell
     // on a copied test location. #871's form: `[Unreleased]` until a release renames it, then the

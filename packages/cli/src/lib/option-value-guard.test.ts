@@ -393,7 +393,7 @@ function guardLines(flags: string, long: string, word: string): string[] {
   ];
 }
 
-describe('#920 C-2 — the other 20 options, one command family each (the built realm)', () => {
+describe('#920 C-2 — the other 19 options, one command family each (the built realm)', () => {
   // Each: the option typed with a real flag of the command after it, as the typo; the run exits 1
   // with the guard's two lines, prints nothing on standard output and does nothing. (a) red when the
   // family's row is missing from the guarded table (the command then runs: it writes, drains, starts
@@ -406,12 +406,6 @@ describe('#920 C-2 — the other 20 options, one command family each (the built 
       guardLines(flags, long, word),
     ]);
   }
-
-  it('run reconcile --workflow --dry-run: refused, nothing written', () => {
-    const r = realm(['run', 'reconcile', '--workflow', '--dry-run']);
-    refusedBy(r, '--workflow <id>', '--workflow', '--dry-run');
-    expect(r.stdout.includes('Wrote'), r.shown).toBe(false);
-  }, 20_000);
 
   it('run drain <id> --extensions-module --force: refused (it drained nothing and said so)', () => {
     refusedBy(

@@ -933,9 +933,9 @@ export class JsonTraceBufferStore
 
   /**
    * Returns every WAL file (across all steps, all runs) whose runId is NOT in `liveRunIds`
-   * (issue #163) — candidate orphans for `realm run gc`'s remediation sweep. Does not apply an
-   * age floor or delete anything — see `OrphanSweepableStore`'s own doc for why that's the
-   * caller's job.
+   * (issue #163) — candidate orphans. Does not apply an age floor or delete anything — see
+   * `OrphanSweepableStore`'s own doc for why that's the caller's job. Its one caller, `gc`'s orphan
+   * sweep, left with that command (#616 PR-2c); the JSON classes leave at PR-3.
    *
    * The runId parse is fixed-length, NOT delimiter-based: a WAL filename is
    * `trace-buffer-<36-char UUID>-<base64url(stepId)>.jsonl`, and the base64url step segment

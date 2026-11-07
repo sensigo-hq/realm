@@ -281,9 +281,9 @@ describe('store-fs-guard — every fenced-trio-declaring store has a fenced-TCK-
 // -----------------------------------------------------------------------------------------------
 //
 // Scoped to core + mcp-server ONLY (stable receiver name: a local variable or `options.` field
-// literally named `traceBufferStore`) — purge.ts/gc.ts use store-TYPED receivers (`store`,
-// looped over `artifactStores`/`OrphanSweepableStore[]`) and stay under their own orchestration
-// guards (purge-guard.test.ts's WIRED_ORDER, gc.ts's own fenced-dispatch tests), not this one.
+// literally named `traceBufferStore`) — purge.ts uses store-TYPED receivers (`store`, looped over
+// `artifactStores`) and stays under its own orchestration guard (purge-guard.test.ts's
+// WIRED_ORDER), not this one.
 //
 // A raw (unfenced) `traceBufferStore.delete(`/`.deleteAllForRun(` call site is a DELIBERATE,
 // residual, unguarded destruction — every one still standing after issue #207 PR-2 must be

@@ -2,8 +2,8 @@
 // the half that lives in the CLI package.
 //
 // The engine's own operations are cell'd in core (`gate-claim-stable-625.test.ts` there). The
-// commands below live here: resume, cleanup, drain, purge, gc --heal, migrate --stamp-seals and the
-// batch reclaim selector. While a question is open, none of them changes or removes the claim of
+// commands below live here: resume, cleanup, drain, purge, migrate --stamp-seals and the batch
+// reclaim selector. While a question is open, none of them changes or removes the claim of
 // the step that opened it — the claim's token is the proof an answer may pass back, so a command that
 // re-minted it would silently stop the token meaning anything.
 //
@@ -11,14 +11,11 @@
 // afterwards — token, holder, since, deadline — AND the question is still open. Each carries the
 // change that turns it red and what it prints on failure: synthetic ids only.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import {
   JsonFileStore,
   executeStep,
   drainFinalizers,
   captureEvidence,
-  deriveRunPhase,
   DRAIN_LEASE_MAX,
   classifyInProgressClaims,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
@@ -35,7 +32,6 @@ import { resumeRun } from './resume.js';
 import { cleanupRuns } from './cleanup.js';
 import { runDrainAction, type DrainRuntimeDeps } from './drain.js';
 import { purgeRuns } from './purge.js';
-import { sweepStalePhases } from './gc.js';
 import { migrateStampSeals } from './run-migrate.js';
 import { isAutoReclaimable } from './reclaim.js';
 import { writtenSnapshot } from '@sensigo/realm';
@@ -69,7 +65,6 @@ const workflowStore: WorkflowRegistrar = {
 };
 
 let h: TempHome;
-let dir: string;
 let store: JsonFileStore;
 let runId: string;
 let before: ClaimRecord;
@@ -77,7 +72,6 @@ let gateId: string;
 
 beforeEach(async () => {
   h = await makeTempHome();
-  dir = h.home.runStore.runsDirPath;
   store = h.home.runStore;
   const { record: run } = await store.create({
     workflowId: definition.id,
@@ -152,21 +146,6 @@ describe('GATE_CLAIM_STABLE_WHILE_OPEN — the commands', () => {
     const result = await purgeRuns({ runId, dryRun: false }, store, []);
     expect(result.purged).not.toContain(runId);
     await expectStable();
-  });
-
-  it('gc --heal --force: rewrites a stale PHASE only — never the claim', async () => {
-    // The store re-derives the phase on every write, so a stale persisted phase cannot be planted
-    // through it: write the file directly — the case heal exists for.
-    const file = join(dir, `${runId}.json`);
-    const planted = JSON.parse(await readFile(file, 'utf8')) as RunRecord;
-    await writeFile(file, JSON.stringify({ ...planted, run_phase: 'running' }), 'utf8');
-    expect((JSON.parse(await readFile(file, 'utf8')) as RunRecord).run_phase).toBe('running');
-    const result = await sweepStalePhases(store, { force: true, deriveRunPhase });
-    // (a) red when the heal fails or skips the record (the cell then proves nothing); (b) prints it.
-    expect(result.failed).toEqual([]);
-    expect(result.healed).toHaveLength(1);
-    const after = await expectStable();
-    expect(after.run_phase).toBe('gate_waiting');
   });
 
   it('migrate --stamp-seals --force: only terminal records are offered, so a live run is never rewritten', async () => {

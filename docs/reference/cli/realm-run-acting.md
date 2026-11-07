@@ -792,7 +792,6 @@ realm run migrate --stamp-seals
   • c9334380-2d09-463e-96c1-2a98f98a66c9: abandon_requested (phase abandoned)
 Re-run with --force to actually stamp.
 Residue: 2 terminal run(s) still without a recorded seal arm.
-Run `realm run migrate --stamp-seals` BEFORE `realm run gc --heal` after upgrading across #367 if retention clocks matter: heal rewrites the same records and resets updated_at, which this command deliberately preserves.
 ```
 
 With `--force`, the first lines become:

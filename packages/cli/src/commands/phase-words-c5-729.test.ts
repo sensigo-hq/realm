@@ -205,30 +205,6 @@ describe('#729 PR-3 correction 5 (J-2) — the sweep commands print the phase wh
     );
   }, 60_000);
 
-  /** A terminal record whose PERSISTED phase (`abandoned`) is not the one it derives (`completed`). */
-  const STALE = { ...COMPLETED, run_phase: 'abandoned', sealed_by: undefined };
-
-  it('gc.ts — `persisted … → derived …` (the dry run)', () => {
-    const id = seed('c5-gc-dry', STALE);
-    const r = piped(['run', 'gc', '--heal'], { STATUS_X: 'completed', STATUS_Y: 'abandoned' });
-    // (a) red when either phase prints as plain text; (b) prints the line.
-    expect(lineWith(r.lines, `• ${id}:`)).toBe(
-      `  • ${id}: persisted 'abandoned' → derived 'completed'`,
-    );
-  }, 60_000);
-
-  it('gc.ts — `persisted … → derived …` (--force)', () => {
-    const id = seed('c5-gc-force', STALE);
-    const r = piped(['run', 'gc', '--heal', '--force'], {
-      STATUS_X: 'completed',
-      STATUS_Y: 'abandoned',
-    });
-    // (a) red when either phase prints as plain text; (b) prints the line.
-    expect(lineWith(r.lines, `• ${id}:`)).toBe(
-      `  • ${id}: persisted 'abandoned' → derived 'completed'`,
-    );
-  }, 60_000);
-
   it('run-migrate.ts — `(phase …)` in the incoherent bucket (phaseLabel)', () => {
     const id = seed('c5-migrate-incoherent', {
       run_phase: 'abandoned',
