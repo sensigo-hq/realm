@@ -104,6 +104,8 @@ All notable changes to this project are documented here.
 - **`classifyRegisteredCopy`, `workflowNotFoundError`, `legacyCopyError`, `newerCopyError` and
   `storedCopyFaultError` are exported from `@sensigo/realm` (issue #616).** They judge and refuse a
   registered workflow copy that has no file, with the words a copy with a file gets.
+- **The store contracts mark a skipped case with `skipped: true`.** `FencedTraceBufferContractCase`, `RunStoreFidelityContractCase` and `SettlementContractCase` gain it; a skipped case's name still says why. Register such a case as a skip in your test runner. (#616)
+- **`fencedTraceBufferContract` checks that `sealFenced` evaluates its fence on a step with no line:** a refusing fence must reject, and nothing is sealed. (#616)
 - **`runStoreFidelityContract` gains the law `CREATE_REPORTS_CREATED`, and `storeClockContract`'s
   adapter gains `recordsDeletionTime` (issue #616).** The law's four cases check that a create says
   whether it made a new run: `created: true` for a create with no idempotency key, for a key no run
@@ -245,6 +247,7 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
 - **Every `realm` command opens its stores through one place, once per command (`run gc` and `run reconcile` keep their own until they leave); `realm serve` shares that one home across every request it serves (issue #616).** Nothing a command prints, creates or refuses changes, with one exception: on a copy of a test location, the commands that only read workflows or replays (`realm workflow list`, `realm workflow register`, `realm workflow watch`, `realm workflow validate --registered`, and `realm run diff` of two replays) now stop with the same clock refusal the run commands always gave there, because every command opens its home through the one door.
 - **The `realm-mcp` command runs from its own file (`dist/bin.js`) and opens `~/.realm` itself; nothing changes for its users (issue #616).**
 - **BREAKING — `createRealmMcpServer` takes its stores (issue #616).** The library has no default store: pass `runStore`, `workflowStore`, `traceBufferStore` and `failedAttemptStore`, opened once per process; a JavaScript caller that omits one is refused at construction, before anything is opened. The published tool handlers require the stores their server passes them; a direct caller that omits one is refused by name. The `realm-mcp` command is unchanged for its users.
+- **An `'in-transaction'` adapter of `fencedTraceBufferContract` gives `fenceRuns` as `{ put, remove }`, without `readCount`.** Such a store reads its runs inside its own transaction, so the contract does not count them. (#616)
 
 ### Removed
 

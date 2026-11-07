@@ -206,6 +206,9 @@ export interface SettlementContractCase {
   law: SettlementLaw;
   name: string;
   run: () => Promise<void>;
+  /** Set on a case this store cannot run (issue #616 PR-1b B5): its `name` says why, and its `run`
+   *  does nothing. Register it with your test runner's own skip. */
+  skipped?: true;
 }
 
 /**
@@ -6207,6 +6210,7 @@ function gateProofCases(adapter: SettlementContractAdapter): SettlementContractC
     cases.push({
       law: 'GATE_PROOF_NEVER_GATES_THE_ANSWER',
       name: `SKIPPED — store keeps claims (store_keeps_no_claims is minted for a store declaring persistsClaims: false): [${adapter.storeName}] unverifiable / store_keeps_no_claims`,
+      skipped: true,
       run: async () => {
         // Intentional no-op — see the case name for why.
       },

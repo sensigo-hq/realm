@@ -81,6 +81,9 @@ export interface RunStoreFidelityContractCase {
   law: RunStoreFidelityLaw;
   name: string;
   run: () => Promise<void>;
+  /** Set on a case this store cannot run (issue #616 PR-1b B5): its `name` says why, and its `run`
+   *  does nothing. Register it with your test runner's own skip. */
+  skipped?: true;
 }
 
 /** Adapter a calling test file supplies to parameterize the contract against one concrete store. */
@@ -482,8 +485,9 @@ export function runStoreFidelityContract(
 
   // issue #625 (the holder slice) — CLAIM_NAMES_HOLDER. Active only for a store that keeps claims
   // (`persistsClaims === true`): a store that keeps none has nothing to name a holder ON, and says
-  // so by name rather than passing silently. The case name follows the fenced trace-buffer
-  // contract's skip idiom — `SKIPPED — <reason>: <name>` — so a wiring run lists it.
+  // so by name rather than passing silently. The case follows the fenced trace-buffer contract's
+  // skip idiom — `skipped: true`, which a wiring reads, and the name `SKIPPED — <reason>: <name>`,
+  // which a person reads — so a wiring run lists it (issue #616 PR-1b B5).
   if (adapter.store.persistsClaims === true) {
     cases.push(
       {
@@ -548,6 +552,7 @@ export function runStoreFidelityContract(
     cases.push({
       law: 'CLAIM_NAMES_HOLDER',
       name: "SKIPPED — store does not declare 'persistsClaims': claim holder round-trip",
+      skipped: true,
       run: async () => {
         // Intentional no-op — see the case name for why.
       },
