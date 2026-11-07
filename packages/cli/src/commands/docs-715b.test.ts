@@ -369,6 +369,28 @@ describe('#715 (b) 04 §E — testing-package.md: the store contracts', () => {
     );
   });
 
+  it('#616 PR-1a unit 16a: the storeClockContract adapter table names exactly the adapter’s fields', () => {
+    // (a) red when the adapter gains or loses a field without its row (the `recordsDeletionTime`
+    //     row this unit adds), or a row names no field; (b) prints the table's fields beside the
+    //     interface's, read from the built declarations.
+    const tableFields = section(TESTING, '### `storeClockContract(adapter)`')
+      .split('\n\n')
+      .find((block) => block.startsWith('| Adapter field'))!
+      .split('\n')
+      .slice(2)
+      .map((line) => line.split('|')[1]!.trim().replace(/`/g, ''));
+    const { checker, testing } = publicSurface();
+    const iface = resolved(
+      checker,
+      testing.find((s) => s.getName() === 'StoreClockContractAdapter')!,
+    );
+    const interfaceFields = checker
+      .getDeclaredTypeOfSymbol(iface)
+      .getProperties()
+      .map((p) => p.getName());
+    expect(tableFields.sort()).toEqual(interfaceFields.sort());
+  });
+
   it('settlementContract (correction 1, C-3): without `route`, the cases that move the clock fail saying so, and the other cases run', async () => {
     // Executes the page's `route` row: every case of the contract, each on a fresh adapter (as the
     // page says to), with no `route`. (a) red when a case without its route passes, fails with a

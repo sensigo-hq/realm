@@ -264,9 +264,11 @@ const EXPECTED: Record<string, CensusEntry> = {
       "A read of the stored column for a scan's row; it reaches no store and carries no seal.",
   },
   'packages/testing/src/store/run-store-fidelity-contract.ts': {
-    count: 1,
+    count: 2,
     classes: ['fixture-input'],
-    reason: 'SEALED_BY_ROUNDTRIP seals a run properly to prove the arm survives a round trip.',
+    reason:
+      'SEALED_BY_ROUNDTRIP seals a run properly to prove the arm survives a round trip; ' +
+      "CREATE_REPORTS_CREATED (#616 PR-1a unit 16a) ends a holder run (the #558 PR-C supersede journey), so a keyed 'rerun' has a run to supersede.",
   },
   'packages/testing/src/store/store-clock-contract.ts': {
     count: 1,
@@ -458,12 +460,14 @@ describe('#367 — the terminal-writer census', () => {
   // #616 PR-1a unit 2b: +1 (eligibility.ts, the phase fingerprint's corpus table), in a mapped file.
   // #616 PR-1a unit 12a: +1 (run-store.ts, the create branch), in a new file.
   // #616 PR-1a unit 15a: +1 (run-rows.ts, the key holder's read of the stored column), in a new file.
+  // #616 PR-1a unit 16a: +1 (run-store-fidelity-contract.ts, CREATE_REPORTS_CREATED's holder run), in
+  // a mapped file.
   // #616 PR-2c c3: +3 (store-interface.ts, the facts row's field; run-scan.ts, the row's read and the
   // filter's SQL term), in two new files.
-  it('the post-strip total is 82 across 20 files — the figure the map is built from', () => {
+  it('the post-strip total is 83 across 20 files — the figure the map is built from', () => {
     const scan = scanTerminalWriters(REPO_ROOT);
     const total = Object.values(scan.hits).reduce((n, l) => n + l.length, 0);
-    expect(total).toBe(82);
+    expect(total).toBe(83);
     expect(Object.keys(scan.hits)).toHaveLength(20);
   });
 });
