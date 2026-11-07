@@ -82,6 +82,7 @@ WHEN json_extract(new.record, '$.version') IS NOT json_extract(old.record, '$.ve
 BEGIN SELECT RAISE(ABORT, 'realm.db: a run''s version can only advance by one'); END`,
   // A run's identity never changes. The record's fields are compared through the record itself: a
   // generated column reads NULL in a BEFORE UPDATE trigger when the statement does not set the record.
+  // The rerun link is identity too: which run holds an idempotency key is derived from it (unit 15a).
   `CREATE TRIGGER runs_identity BEFORE UPDATE OF id, record, key_hash ON runs
 WHEN new.id IS NOT old.id
   OR new.key_hash IS NOT old.key_hash
@@ -89,6 +90,7 @@ WHEN new.id IS NOT old.id
   OR json_extract(new.record, '$.workflow_id') IS NOT json_extract(old.record, '$.workflow_id')
   OR json_extract(new.record, '$.idempotency_key') IS NOT json_extract(old.record, '$.idempotency_key')
   OR json_extract(new.record, '$.created_at') IS NOT json_extract(old.record, '$.created_at')
+  OR json_extract(new.record, '$.rerun_of') IS NOT json_extract(old.record, '$.rerun_of')
 BEGIN SELECT RAISE(ABORT, 'realm.db: a run''s identity cannot change'); END`,
   // A run is created once. This also refuses INSERT OR REPLACE, REPLACE INTO and an upsert: their
   // BEFORE INSERT trigger fires before the conflict is resolved.
