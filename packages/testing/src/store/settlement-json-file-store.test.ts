@@ -18,6 +18,7 @@ import {
   settlementContract,
   defaultSettlementFixture,
   SETTLEMENT_LAWS,
+  type SettlementContractCase,
   type SettlementLaw,
 } from './settlement-contract.js';
 
@@ -33,6 +34,41 @@ const NOT_RUN: Partial<Record<SettlementLaw, string>> = {
 
 /** The laws this file runs: every exported law, minus the ones named in NOT_RUN above. */
 const LAWS: readonly SettlementLaw[] = SETTLEMENT_LAWS.filter((law) => !(law in NOT_RUN));
+
+/** The contract's cases for a JsonFileStore in `dir`. */
+function contractCases(dir: string): SettlementContractCase[] {
+  const store = new JsonFileStore(dir);
+  return settlementContract({
+    store,
+    storeName: 'JsonFileStore',
+    settlementFixture: defaultSettlementFixture,
+    // #715 (b): the time-moving families open a fresh store on a test location they move.
+    route: {
+      kind: 'location',
+      makeStore: ({ location }) => new JsonFileStore(location.runsDir),
+    },
+    // issue #367 (part 3): the sanctioned channel for seeding a pre-#367 shape past the store's
+    // own boundary — a direct file write. The stamp laws' SUCCESS legs need a record the boundary
+    // would refuse if it were written through it.
+    seedLegacyTerminal: async (id) => {
+      const { record: run } = await store.create({
+        workflowId: `tck-seed-${id}`,
+        workflowVersion: 1,
+        params: {},
+      });
+      const legacy = {
+        ...run,
+        id,
+        completed_steps: ['a'],
+        terminal_state: true,
+        terminal_reason: 'Workflow completed.',
+        run_phase: 'completed' as const,
+      };
+      await writeFile(join(dir, `${id}.json`), JSON.stringify(legacy, null, 2));
+      return legacy;
+    },
+  });
+}
 
 describe('JsonFileStore — settlement TCK conformance (issue #279, increment 1 + 2)', () => {
   it('declares settleStep and the two new LoadBearingRunRecordFields (settled/finalizer_ledger)', async () => {
@@ -51,37 +87,7 @@ describe('JsonFileStore — settlement TCK conformance (issue #279, increment 1 
     it(`conforms to ${law}`, async () => {
       const dir = await mkdtemp(join(tmpdir(), 'json-file-store-settlement-tck-'));
       try {
-        const store = new JsonFileStore(dir);
-        const cases = settlementContract({
-          store,
-          storeName: 'JsonFileStore',
-          settlementFixture: defaultSettlementFixture,
-          // #715 (b): the time-moving families open a fresh store on a test location they move.
-          route: {
-            kind: 'location',
-            makeStore: ({ location }) => new JsonFileStore(location.runsDir),
-          },
-          // issue #367 (part 3): the sanctioned channel for seeding a pre-#367 shape past the
-          // store's own boundary — a direct file write. The stamp laws' SUCCESS legs need a
-          // record the boundary would refuse if it were written through it.
-          seedLegacyTerminal: async (id) => {
-            const { record: run } = await store.create({
-              workflowId: `tck-seed-${id}`,
-              workflowVersion: 1,
-              params: {},
-            });
-            const legacy = {
-              ...run,
-              id,
-              completed_steps: ['a'],
-              terminal_state: true,
-              terminal_reason: 'Workflow completed.',
-              run_phase: 'completed' as const,
-            };
-            await writeFile(join(dir, `${id}.json`), JSON.stringify(legacy, null, 2));
-            return legacy;
-          },
-        });
+        const cases = contractCases(dir);
         const matching = cases.filter((c) => c.law === law);
         expect(matching.length).toBeGreaterThan(0);
         for (const c of matching) {
@@ -92,6 +98,23 @@ describe('JsonFileStore — settlement TCK conformance (issue #279, increment 1 
       }
     });
   }
+
+  // issue #616 PR-1b B5: JsonFileStore keeps claims, so the contract builds exactly one skip for it.
+  it('its one skipped case, found by the field, is the store_keeps_no_claims case it cannot run', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'json-file-store-settlement-tck-'));
+    try {
+      const skipped = contractCases(dir)
+        .filter((c) => c.skipped === true)
+        .map((c) => c.name);
+      // (1) red when the skip case loses `skipped: true` (it is then run as a pass inside its law)
+      //     or another case gains it; (2) prints the skipped cases' names.
+      expect(skipped).toEqual([
+        'SKIPPED — store keeps claims (store_keeps_no_claims is minted for a store declaring persistsClaims: false): [JsonFileStore] unverifiable / store_keeps_no_claims',
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('JsonFileStore settlement wiring — the run list is derived from the contract', () => {

@@ -87,6 +87,10 @@ export interface FencedTraceBufferContractCase {
   law: FencedTraceBufferLaw;
   name: string;
   run: () => Promise<void>;
+  /** Set on a case this adapter cannot run (issue #616 PR-1b B5): its `name` says why, and its
+   *  `run` does nothing. Register it with your test runner's own skip, so it counts as a skip and
+   *  never as part of a passing law. */
+  skipped?: true;
 }
 
 /**
@@ -98,8 +102,10 @@ export interface FencedTraceBufferContractCase {
  * injected read to park, so `fenceRunPark` is absent for it — that reason is true by construction,
  * never a value this file has to trust. (Keyed on the park's presence alone rather than
  * `fenceForm`, an injected-reader adapter that dropped its park would lose the latch laws and
- * racers silently, under a false reason — see `parkOf`, below, which is the ONLY place this file
- * reads `fenceForm`.)
+ * racers silently, under a false reason — see `parkOf` and `readCountOf`, below, the ONLY two
+ * places this file reads `fenceForm`.) The form also decides what `fenceRuns` holds (issue #616
+ * PR-1b B5): an in-transaction store reads its runs inside its own transaction, where nothing
+ * outside can count those reads, so its `fenceRuns` has no `readCount`.
  */
 export type FencedTraceBufferContractAdapter = {
   /** The store under test — already declaring the fenced trio (`appendFenced`/`deleteFenced`/
@@ -108,13 +114,8 @@ export type FencedTraceBufferContractAdapter = {
    *  `fenceRuns`, below), and with a sufficiently generous lock-acquisition profile (see
    *  `lockProfile`) so a deliberately-parked run read in the latch-based laws doesn't cause a
    *  concurrent caller's own acquisition attempt to give up before the law's observation window
-   *  completes. */
+   *  completes. For an `'in-transaction'` store it is the store itself. */
   store: TraceBufferStore;
-  /** What every adapter supplies to control the run every fence predicate is evaluated against
-   *  (issue #616 PR-0, D3) — the TCK creates runs in it, changes them, removes them, and reads how
-   *  many times a fence evaluation has read a given run. For an `'injected-reader'` store, `store`
-   *  must read runs through the SAME source's `reader` (see `createFenceRunSource`). */
-  fenceRuns: FenceRunControl;
   /** Returns a fresh, never-before-used (runId, stepId) pair for one case — callers should treat
    *  every returned pair as belonging to a disjoint run from every other pair this returns. */
   makeKey: () => { runId: string; stepId: string };
@@ -158,6 +159,11 @@ export type FencedTraceBufferContractAdapter = {
        *  through its injected run reader — the read literally happens inside the same lock/mutex
        *  the destructive effect does, so a parked read holds that section open. */
       fenceForm: 'injected-reader';
+      /** The run source's `control` (issue #616 PR-0, D3): the TCK creates runs in it, changes
+       *  them and removes them, and reads how many times the store has read a given run through
+       *  the source's `reader`. `store` must read runs through that SAME source's `reader` (see
+       *  `createFenceRunSource`). */
+      fenceRuns: FenceRunControl;
       /** What only an injected-reader adapter supplies: the ability to park or fail the store's
        *  next read of a given run (issue #616 PR-0, D3) — see `FenceRunPark`'s own doc. */
       fenceRunPark: FenceRunPark;
@@ -166,20 +172,36 @@ export type FencedTraceBufferContractAdapter = {
       /** The store evaluates the fence inside a database transaction that also holds the runs
        *  (e.g. #616 PR-1's SQLite store) — there is no injected read to park, so the latch-based
        *  laws (`CS_OCCUPANCY`, `PER_KEY_INDEPENDENCE`, `NO_SILENT_LOSS`), the `FENCE_REFUSES`
-       *  `FsIoError` read case, and `FENCE_DATA`'s racer cells produce an explicit, VISIBLE
-       *  documented-skip case rather than a silent omission; that store's own suite runs its racer
-       *  (the transaction's own lock). `FENCE_DATA`'s true/false cells run on both forms. */
+       *  `FsIoError` read case, `FENCE_DATA`'s racer cells and its held-key MALFORMED cells come as
+       *  skipped cases (`skipped: true`) rather than a silent omission; that store's own suite runs
+       *  its racer (the transaction's own lock). `FENCE_DATA`'s true/false cells run on both forms. */
       fenceForm: 'in-transaction';
+      /** `put` and `remove` only (issue #616 PR-1b B5), writing runs where the store reads them:
+       *  the store reads its runs inside its own transaction, so nothing outside can count those
+       *  reads. The TCK puts each run id at most once and removes only ids it never put. */
+      fenceRuns: Omit<FenceRunControl, 'readCount'>;
       fenceRunPark?: undefined;
     }
 );
 
 /** The adapter's park, if it has one — `undefined` for an `'in-transaction'` adapter (issue #616
- *  PR-0, D3). This is the ONLY place this file reads `fenceForm`: every park-dependent case below
- *  calls this rather than testing `fenceForm` itself, so a case can never silently diverge from
- *  what the type actually guarantees. */
+ *  PR-0, D3). This and `readCountOf` are the ONLY two places this file reads `fenceForm`: every
+ *  park-dependent case below calls this rather than testing `fenceForm` itself, so a case can never
+ *  silently diverge from what the type actually guarantees. */
 function parkOf(adapter: FencedTraceBufferContractAdapter): FenceRunPark | undefined {
   return adapter.fenceForm === 'injected-reader' ? adapter.fenceRunPark : undefined;
+}
+
+/** The adapter's read count, if it has one — `undefined` for an `'in-transaction'` adapter, whose
+ *  store reads its runs inside its own transaction (issue #616 PR-1b B5). This and `parkOf` are the
+ *  ONLY two places this file reads `fenceForm`; the MALFORMED cells, the only ones that read a
+ *  count, call this. */
+function readCountOf(
+  adapter: FencedTraceBufferContractAdapter,
+): ((runId: string) => number) | undefined {
+  if (adapter.fenceForm !== 'injected-reader') return undefined;
+  const runs = adapter.fenceRuns;
+  return (runId) => runs.readCount(runId);
 }
 
 const REFUSAL_CODE = 'STATE_RUN_BUSY';
@@ -600,9 +622,11 @@ function buildNoSilentLossCase(
   };
 }
 
-/** A visible, non-silent documented-skip case for a law that a store's declared capabilities
- *  don't reach — mirrors the `fenceForm: 'in-transaction'` skip precedent for the latch-based
- *  trio laws. `reason` names exactly why (e.g. "store does not declare 'seal'"). */
+/** A visible, non-silent skipped case for what this adapter cannot run (a capability its store
+ *  does not declare, a hook it does not supply, a read an in-transaction store cannot hand out).
+ *  `skipped: true` is what a wiring reads (issue #616 PR-1b B5); the name, `SKIPPED — <reason>:
+ *  <name>`, is what a person reads in a runner's output. `reason` names exactly why (e.g. "store
+ *  does not declare 'seal'"). */
 function skipCase(
   law: FencedTraceBufferLaw,
   name: string,
@@ -611,6 +635,7 @@ function skipCase(
   return {
     law,
     name: `SKIPPED — ${reason}: ${name}`,
+    skipped: true,
     run: async () => {
       // Intentional no-op — see the case name for why.
     },
@@ -684,15 +709,47 @@ function buildSealCases(
 
   cases.push({
     law: 'SEAL',
-    name: 'sealFenced on an absent key returns {sealed:false, reason:"absent"}; the fence is still evaluated',
+    name: 'sealFenced on an absent key returns {sealed:false, reason:"absent"}',
     run: async () => {
       const { runId, stepId } = adapter.makeKey();
       const result = await store.sealFenced!(runId, stepId, PASSING_FENCE);
       if (!(result.sealed === false && result.reason === 'absent')) {
         throw new Error(`expected {sealed:false, reason:'absent'}, got: ${JSON.stringify(result)}`);
       }
-      if (adapter.fenceRuns.readCount(runId) < 1) {
-        throw new Error('expected the fence to be evaluated at least once even for an absent key');
+    },
+  });
+
+  // issue #616 PR-1b B5: the fence is evaluated on a step with no line too — shown by a refusal and
+  // a read-back that nothing was sealed, on both forms (a store that answers "absent" before its
+  // fence would let a settle that lost its claim report a clean seal).
+  cases.push({
+    law: 'SEAL',
+    name: "sealFenced on a step with no line still evaluates its fence: a refusing fence rejects with evaluateFence's exact error, and nothing is sealed",
+    run: async () => {
+      const { runId, stepId } = adapter.makeKey();
+      const fence = refusingFence(adapter, runId);
+      let caught: unknown;
+      let result: unknown;
+      try {
+        result = await store.sealFenced!(runId, stepId, fence);
+      } catch (err) {
+        caught = err;
+      }
+      if (caught === undefined) {
+        throw new Error(
+          `SEAL: sealFenced on a step with no line was not refused by its refusing fence — it answered ${JSON.stringify(result)} without evaluating the fence`,
+        );
+      }
+      assertSameError(
+        caught,
+        expectedRefusal(fence, fenceTestRun(runId), runId, stepId),
+        'SEAL — a refusing fence on a step with no line',
+      );
+      const after = await store.listSealedForRun!(runId);
+      if (after.length !== 0) {
+        throw new Error(
+          `SEAL: expected nothing sealed after a refused seal of a step with no line, got ${JSON.stringify(after)}`,
+        );
       }
     },
   });
@@ -1420,7 +1477,11 @@ function buildFenceDataCases(
   // MALFORMED: a plain-JavaScript caller can pass anything — including the guard callback these
   // methods took before issue #616, or a member with a field it does not have — and can hand a step
   // member to the run-wide method. Each is refused with ENGINE_INTERNAL before the run is read or
-  // anything is written, on a live run nothing about which would refuse.
+  // anything is written, on a live run nothing about which would refuse. "Before the run is read"
+  // is counted on an injected-reader store only (its reader's reads); an in-transaction store reads
+  // inside its own transaction, and its own suite shows the refusal comes at once while another
+  // connection holds the lock (issue #616 PR-1b B5).
+  const readCount = readCountOf(adapter);
   const malformed: Array<{ label: string; method: FencedMethod; fence: unknown }> = [
     { label: 'a function in place of the fence', method: 'appendFenced', fence: () => undefined },
     { label: 'null in place of the fence', method: 'deleteFenced', fence: null },
@@ -1457,7 +1518,7 @@ function buildFenceDataCases(
               `got ${describeError(caught)}`,
           );
         }
-        if (adapter.fenceRuns.readCount(runId) !== 0) {
+        if (readCount !== undefined && readCount(runId) !== 0) {
           throw new Error(
             `FENCE_DATA MALFORMED (${m.label}): ${m.method} read the run before refusing the fence`,
           );
@@ -1546,8 +1607,8 @@ function buildFenceDataCases(
 /**
  * Builds the contract cases for `adapter`. See each law's own doc above (the `build*Case`
  * functions) for what it asserts. For `fenceForm: 'in-transaction'` adapters, `CS_OCCUPANCY`,
- * `PER_KEY_INDEPENDENCE`, and `NO_SILENT_LOSS` are replaced with an explicit, VISIBLE
- * documented-skip case each (never a silent omission) — see the adapter's own `fenceForm` doc.
+ * `PER_KEY_INDEPENDENCE`, and `NO_SILENT_LOSS` are replaced with a skipped case each
+ * (`skipped: true`, never a silent omission) — see the adapter's own `fenceForm` doc.
  */
 export function fencedTraceBufferContract(
   adapter: FencedTraceBufferContractAdapter,
@@ -1787,15 +1848,11 @@ export function fencedTraceBufferContract(
       }
       // issue #207 correction: same exact-identity assertion as the >=2-file case above — a
       // zero-match sweep is not a laxer case, it must reject with the fence's own typed error too.
+      // The refusal is itself the proof the fence was evaluated (issue #616 PR-1b B5).
       if (!(caught instanceof WorkflowError) || caught.code !== REFUSAL_CODE) {
         throw new Error(
           `expected a zero-match sweep with a refusing fence to reject with the fence's own typed ` +
             `error (WorkflowError, code=${REFUSAL_CODE}) — never wrapped — got: ${caught}${crossCopyNote(caught, WorkflowError)}`,
-        );
-      }
-      if (adapter.fenceRuns.readCount(runId) < 1) {
-        throw new Error(
-          'expected the fence to be evaluated at least once even for a zero-match sweep',
         );
       }
     },
