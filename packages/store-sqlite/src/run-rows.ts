@@ -16,10 +16,14 @@
 // left out (no placeholder, no blob).
 //
 // The reader runs inside a transaction the caller holds and begins, commits or locks nothing. The
-// writer is all or nothing by its own savepoint: inside the caller's `BEGIN IMMEDIATE` it takes no
+// insert is all or nothing by its own savepoint: inside the caller's `BEGIN IMMEDIATE` it takes no
 // lock of its own and a failed call leaves none of its rows in that transaction; with no transaction
 // open its savepoint is the transaction, holds the write lock for the call and commits the run whole.
-// Neither reads a clock. The limits are checked before the caller's `BEGIN`.
+// The update's writer (`writeRunUpdate`, unit 12b) runs inside the caller's `BEGIN IMMEDIATE` and
+// refuses before its first write. None reads a clock. The limits are checked before the caller's
+// `BEGIN`, and so is the split of an update's record (`splitRunRecord`): ONE function makes every
+// stored piece, for the insert and the update alike, so an entry's stored text and hash cannot differ
+// between the two.
 import { createHash } from 'node:crypto';
 import {
   deriveRunPhase,
@@ -28,6 +32,7 @@ import {
   WRITE_ONCE_RUN_FIELDS,
   type RunRecord,
 } from '@sensigo/realm';
+import { guardRefusalError } from './connection.js';
 import type { DatabaseLike } from './driver.js';
 import { evidenceEntrySha256 } from './evidence-hash.js';
 
@@ -44,6 +49,33 @@ const WRITE_ONCE: ReadonlySet<string> = new Set(WRITE_ONCE_RUN_FIELDS);
 
 /** The record's own JSON value at a key, as an untyped object (the split walks every key). */
 type JsonObject = Record<string, unknown>;
+
+/**
+ * A run's core document as the `runs` row keeps it: the record's keys in its own order, with the
+ * placeholders of the module comment in place of its evidence, its write-once fields and its phase.
+ */
+export type CoreDocument = Record<string, unknown>;
+
+/** One evidence entry as the store keeps it: its stored text, and that text's sha256. */
+export interface StoredEntry {
+  readonly text: string;
+  readonly sha256: string;
+}
+
+/** One write-once field as the store keeps it: its name, and its stored text. */
+export interface StoredField {
+  readonly name: string;
+  readonly text: string;
+}
+
+/** A run record split into the pieces the store keeps (see {@link splitRunRecord}). */
+export interface SplitRunRecord {
+  readonly core: CoreDocument;
+  /** Every evidence entry, by index: entry `seq` is at `entries[seq]`. */
+  readonly entries: readonly StoredEntry[];
+  /** Every write-once field the record holds a value for that JSON keeps. */
+  readonly fields: readonly StoredField[];
+}
 
 /** Whether `value` is a placeholder: an object whose one key is `marker`, holding `expected`. */
 function isPlaceholder(
@@ -146,11 +178,56 @@ const INSERT_BLOB = 'INSERT INTO run_blobs (run_id, name, value) VALUES (?, ?, ?
 const SAVEPOINT = 'realm_insert_run';
 
 /**
+ * Splits `record` into the pieces the store keeps: its core document (its keys in its own order,
+ * placeholders in place; a record with no phase gets the phase's placeholder last), each evidence
+ * entry's stored text and that text's sha256, and each write-once field's stored text. The ONE split:
+ * {@link insertRunRecord} writes what it returns, and an update makes it before its `BEGIN`, so the
+ * texts and hashes are never made while the write lock is held for an update. An entry JSON cannot
+ * hold (`undefined`, a function, a hole) is stored as `null`; a write-once field whose value JSON
+ * leaves out of the record is left out here too (no placeholder, no text). A record whose evidence is
+ * not an array is refused with a plain error naming the run. Pure: it reads nothing but the record.
+ */
+export function splitRunRecord(record: RunRecord): SplitRunRecord {
+  const source = record as unknown as JsonObject;
+  const evidence: unknown = source['evidence'];
+  if (!Array.isArray(evidence)) {
+    throw new Error(`Run ${String(record.id)} is not a run record: its evidence is not an array.`);
+  }
+  const core: CoreDocument = {};
+  const fields: StoredField[] = [];
+  for (const [key, value] of Object.entries(source)) {
+    if (key === 'evidence') {
+      core[key] = { [ROWS]: evidence.length };
+    } else if (key === 'run_phase') {
+      core[key] = { [DERIVED]: 'run_phase' };
+    } else if (WRITE_ONCE.has(key)) {
+      const text = JSON.stringify(value);
+      // A value JSON leaves out of the record (undefined, a function) leaves the field out here too.
+      if (text === undefined) continue;
+      core[key] = { [BLOB]: key };
+      fields.push({ name: key, text });
+    } else {
+      core[key] = value;
+    }
+  }
+  // An imported record with no phase gets the placeholder too (design §3): the read derives it.
+  if (!Object.hasOwn(core, 'run_phase')) core['run_phase'] = { [DERIVED]: 'run_phase' };
+  const entries: StoredEntry[] = [];
+  // By index, not `map`: a hole in the array is an entry too, which JSON holds as null.
+  for (let seq = 0; seq < evidence.length; seq++) {
+    const text = JSON.stringify(evidence[seq]) ?? 'null';
+    entries.push({ text, sha256: evidenceEntrySha256(text) });
+  }
+  return { core, entries, fields };
+}
+
+/**
  * Writes `record` in its stored form: the `runs` row (the core document, placeholders in place, with
  * the derived phase and the derivation's fingerprint in the index columns, and the key's hash), one
  * `evidence` row per entry with the sha256 of its stored text, and one `run_blobs` row per write-once
- * field. Synchronous; every stamp is the record's own, and it throws what SQLite and the file's
- * guards throw, unmapped. The caller checks {@link assertRunRecordWithinLimits} before its `BEGIN`.
+ * field, all as {@link splitRunRecord} makes them. Synchronous; every stamp is the record's own, and
+ * it throws what SQLite and the file's guards throw, unmapped. The caller checks
+ * {@link assertRunRecordWithinLimits} before its `BEGIN`.
  *
  * All or nothing, by its own savepoint around the INSERTs: a throw leaves nothing of this call behind,
  * whether the caller then rolls back, swallows the throw or goes on, and the caller's earlier work in
@@ -162,30 +239,7 @@ const SAVEPOINT = 'realm_insert_run';
  * done, as `RealmDb` does.
  */
 export function insertRunRecord(db: DatabaseLike, record: RunRecord): void {
-  const source = record as unknown as JsonObject;
-  const evidence: unknown = source['evidence'];
-  if (!Array.isArray(evidence)) {
-    throw new Error(`Run ${String(record.id)} is not a run record: its evidence is not an array.`);
-  }
-  const core: JsonObject = {};
-  const blobs: Array<{ name: string; value: string }> = [];
-  for (const [key, value] of Object.entries(source)) {
-    if (key === 'evidence') {
-      core[key] = { [ROWS]: evidence.length };
-    } else if (key === 'run_phase') {
-      core[key] = { [DERIVED]: 'run_phase' };
-    } else if (WRITE_ONCE.has(key)) {
-      const text = JSON.stringify(value);
-      // A value JSON leaves out of the record (undefined, a function) leaves the field out here too.
-      if (text === undefined) continue;
-      core[key] = { [BLOB]: key };
-      blobs.push({ name: key, value: text });
-    } else {
-      core[key] = value;
-    }
-  }
-  // An imported record with no phase gets the placeholder too (design §3): the read derives it.
-  if (!Object.hasOwn(core, 'run_phase')) core['run_phase'] = { [DERIVED]: 'run_phase' };
+  const { core, entries, fields } = splitRunRecord(record);
 
   // SQLite uses the most recent savepoint of a name, so a caller's own of the same name is no clash.
   db.exec(`SAVEPOINT ${SAVEPOINT}`);
@@ -198,14 +252,10 @@ export function insertRunRecord(db: DatabaseLike, record: RunRecord): void {
       keyHash(record),
     );
     const insertEntry = db.prepare(INSERT_EVIDENCE);
-    // By index, not `map`: a hole in the array is an entry too, which JSON holds as null.
-    for (let seq = 0; seq < evidence.length; seq++) {
-      const text = JSON.stringify(evidence[seq]) ?? 'null';
-      insertEntry.run(record.id, seq, text, evidenceEntrySha256(text));
-    }
-    if (blobs.length > 0) {
+    entries.forEach((entry, seq) => insertEntry.run(record.id, seq, entry.text, entry.sha256));
+    if (fields.length > 0) {
       const insertBlob = db.prepare(INSERT_BLOB);
-      for (const blob of blobs) insertBlob.run(record.id, blob.name, blob.value);
+      for (const field of fields) insertBlob.run(record.id, field.name, field.text);
     }
     // Inside the guarded region: with no transaction open this RELEASE is the commit, and a failing
     // one is cleaned up like any other failure, so the connection is not left in a transaction.
@@ -218,6 +268,107 @@ export function insertRunRecord(db: DatabaseLike, record: RunRecord): void {
     }
     throw err;
   }
+}
+
+/**
+ * What an update writes of a run's evidence and write-once fields ({@link writeRunUpdate}):
+ *   - `unchanged`: none of it; the core document carries the stored placeholders as they are (a
+ *     claim, which changes only the core document);
+ *   - `prepared`: the pieces of the incoming record, made by {@link splitRunRecord} before `BEGIN`
+ *     (an update): compared with the stored ones, and the new ones written.
+ */
+export type EvidenceWrite =
+  { readonly unchanged: true } | { readonly prepared: Pick<SplitRunRecord, 'entries' | 'fields'> };
+
+const UPDATE_RUN = 'UPDATE runs SET record = ?, run_phase = ?, phase_version = ? WHERE id = ?';
+/** The update writer's own savepoint (MA 3, 2026-11-07: every multi-row writer is atomic itself). */
+const UPDATE_SAVEPOINT = 'realm_update_run';
+
+/**
+ * Writes the next state of the stored run `runId` inside the caller's `BEGIN IMMEDIATE`, the caller
+ * having read the run's row in that transaction: `nextCore` is the new core document, placeholders in
+ * place, and `evidence` says what else is written ({@link EvidenceWrite}). The one writer of a run's
+ * later states: `update` and `claimStep` call it, and so do unit 13's settle, seal and save.
+ *
+ * For `prepared` it first reads the stored `entry_sha256` sequence and the stored write-once fields,
+ * and refuses, before its first write, an update that would change or remove what is stored: fewer
+ * entries than stored, or an entry whose hash differs from the stored one at its position, is
+ * `STATE_EVIDENCE_REWRITTEN`; a stored write-once field the incoming record changes or leaves out is
+ * `STATE_WRITE_ONCE_REWRITTEN` (with the guards' own sentences: the file's guards stay the backstop
+ * for a writer outside Realm). For `unchanged` it reads nothing.
+ *
+ * Then, all or nothing by its own savepoint (as {@link insertRunRecord}): it `UPDATE`s the `runs` row
+ * (the core document, and the phase index re-stamped: {@link deriveRunPhase} of `nextCore`, whose
+ * every input is a key of the core document, and the derivation's fingerprint), and for `prepared`
+ * inserts the entries beyond the stored count and every write-once field not yet stored. Returns the
+ * core document's text as it wrote it: the write's own check compares the stored text with it.
+ * Synchronous; reads no clock; throws what SQLite and the file's guards throw, unmapped.
+ */
+export function writeRunUpdate(
+  db: DatabaseLike,
+  runId: string,
+  nextCore: CoreDocument,
+  evidence: EvidenceWrite,
+): string {
+  let newEntries: readonly StoredEntry[] = [];
+  let firstNewSeq = 0;
+  let newFields: readonly StoredField[] = [];
+  if ('prepared' in evidence) {
+    const { entries, fields } = evidence.prepared;
+    const stored = db
+      .prepare('SELECT entry_sha256 FROM evidence WHERE run_id = ? ORDER BY seq')
+      .all(runId)
+      .map((row) => String(row['entry_sha256']));
+    if (
+      entries.length < stored.length ||
+      stored.some((hash, seq) => entries[seq]!.sha256 !== hash)
+    ) {
+      throw guardRefusalError('STATE_EVIDENCE_REWRITTEN');
+    }
+    const storedFields = db
+      .prepare('SELECT name, value FROM run_blobs WHERE run_id = ?')
+      .all(runId)
+      .map((row) => ({ name: String(row['name']), text: String(row['value']) }));
+    const incoming = new Map(fields.map((field) => [field.name, field.text]));
+    if (storedFields.some((field) => incoming.get(field.name) !== field.text)) {
+      throw guardRefusalError('STATE_WRITE_ONCE_REWRITTEN');
+    }
+    const storedNames = new Set(storedFields.map((field) => field.name));
+    newEntries = entries.slice(stored.length);
+    firstNewSeq = stored.length;
+    newFields = fields.filter((field) => !storedNames.has(field.name));
+  }
+  const text = JSON.stringify(nextCore);
+
+  // SQLite uses the most recent savepoint of a name, so a caller's own of the same name is no clash.
+  db.exec(`SAVEPOINT ${UPDATE_SAVEPOINT}`);
+  try {
+    db.prepare(UPDATE_RUN).run(
+      text,
+      deriveRunPhase(nextCore as unknown as RunRecord),
+      runPhaseDerivationFingerprint(),
+      runId,
+    );
+    if (newEntries.length > 0) {
+      const insertEntry = db.prepare(INSERT_EVIDENCE);
+      newEntries.forEach((entry, index) =>
+        insertEntry.run(runId, firstNewSeq + index, entry.text, entry.sha256),
+      );
+    }
+    if (newFields.length > 0) {
+      const insertBlob = db.prepare(INSERT_BLOB);
+      for (const field of newFields) insertBlob.run(runId, field.name, field.text);
+    }
+    db.exec(`RELEASE ${UPDATE_SAVEPOINT}`);
+  } catch (err) {
+    // A transaction SQLite rolled back by itself (a full disk, an I/O error) has no savepoint left.
+    if (db.isTransaction) {
+      db.exec(`ROLLBACK TO ${UPDATE_SAVEPOINT}`);
+      db.exec(`RELEASE ${UPDATE_SAVEPOINT}`);
+    }
+    throw err;
+  }
+  return text;
 }
 
 /** The stored run cannot be read back: its record and its rows disagree. */
