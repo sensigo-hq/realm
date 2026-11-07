@@ -506,18 +506,28 @@ describe('#616 PR-2c c3 — the filters', () => {
       record('k-d', WF, { idempotency_key: 'ticket-43' }),
       record('k-e', OTHER, { idempotency_key: KEY }),
     );
-    const pages = await collect(
-      home.handle.runStore.scan({ workflow: WF, key: KEY }, { pageSize: 10 }),
-    );
+    const keyed = { workflow: WF, key: KEY };
+    const pages = await collect(home.handle.runStore.scan(keyed, { pageSize: 10 }));
+    // The key's runs one per page, and resumed after a cursor: the key walk reads every row of the
+    // key and cuts them at the cursor in the store (correction 1, MA 1).
+    const paged = await collect(home.handle.runStore.scan(keyed, { pageSize: 1 }));
+    const resumed = await collect(home.handle.runStore.scan(keyed, { pageSize: 10, after: 'k-a' }));
+    const cursorsOf = (scanned: ReadonlyArray<ScanPage<'record'>>): Array<string | null> =>
+      scanned.map((page) => page.next_after ?? null);
     // (a) red when the key's hash is not tested (k-c and k-d join), when only the holder is listed
-    //     (k-a drops), or when a key alone is not refused; (b) prints the ids, the holder and the
-    //     refusal.
+    //     (k-a drops), when a key alone is not refused, when the key walk's cut keeps the cursor's
+    //     own id (`>=`: page 2 repeats k-a) or ignores the cursor (k-a returns after 'k-a');
+    //     (b) prints the ids per page and the cursors of each scan, the holder and the refusal.
     expect({
       ids: idsOf(pages),
+      paged: { ids: idsOf(paged), cursors: cursorsOf(paged) },
+      resumed: { ids: idsOf(resumed), cursors: cursorsOf(resumed) },
       holder: await home.handle.runStore.resolveKey(WF, KEY),
       alone: await refusal(home.handle.runStore.scan({ key: KEY }, { pageSize: 10 })),
     }).toEqual({
       ids: [['k-a', 'k-b']],
+      paged: { ids: [['k-a'], ['k-b'], []], cursors: ['k-a', 'k-b', null] },
+      resumed: { ids: [['k-b']], cursors: [null] },
       holder: { state: 'held', run_id: 'k-b' },
       alone:
         "A scan's key filter needs a workflow: an idempotency key belongs to one workflow, so give `workflow` with `key`.",
