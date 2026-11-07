@@ -28,6 +28,7 @@ import {
 } from '../index.js';
 import type { RunRecord, SealArm } from '../types/run-record.js';
 import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 
 /** A minimal, schema-complete record. Not written through any store — a pure derivation input. */
 function record(overrides: Partial<RunRecord> = {}): RunRecord {
@@ -405,9 +406,9 @@ describe('#367 — the coherence comparator (the bent one, measured per-arm)', (
 });
 
 describe('#367 — the store boundary, clause by clause', () => {
-  let store: JsonFileStore;
-  beforeEach(async () => {
-    store = await freshStore();
+  let store: InMemoryStore;
+  beforeEach(() => {
+    store = new InMemoryStore();
   });
 
   async function live(): Promise<RunRecord> {
@@ -440,7 +441,7 @@ describe('#367 — the store boundary, clause by clause', () => {
     // transition-scoped precisely so the pre-#367 population stays writable.
     const run = await live();
     const legacy = { ...run, terminal_state: true, terminal_reason: 'legacy prose' };
-    await writeFile(join(store.runsDirPath, `${run.id}.json`), JSON.stringify(legacy, null, 2));
+    store.seed(legacy);
     const { record: reread } = await store.get(run.id);
     expect(reread.sealed_by).toBeUndefined();
     await expect(
@@ -657,7 +658,7 @@ describe('#367 — the store boundary, clause by clause', () => {
       terminal_reason: "Step 'old' failed: from a previous epoch",
       sealed_by: { arm: 'complete' as const },
     };
-    await writeFile(join(store.runsDirPath, `${run.id}.json`), JSON.stringify(scarred, null, 2));
+    store.seed(scarred);
     const { record: stored } = await store.get(run.id);
 
     const { record: acked } = await store.update({
@@ -691,7 +692,7 @@ describe('#367 — the store boundary, clause by clause', () => {
         adjudicated: { by: 'mihai', at: 'now', previous_arm: 'complete' as const },
       },
     };
-    await writeFile(join(store.runsDirPath, `${run.id}.json`), JSON.stringify(scarred, null, 2));
+    store.seed(scarred);
     const { record: stored } = await store.get(run.id);
     await expect(
       store.update({ ...stored, updated_at: 'later' }).then((s) => s.record),
@@ -712,10 +713,7 @@ describe('#367 — the store boundary, clause by clause', () => {
         adjudicated: { by: 'mihai', at: 'now', previous_arm: 'complete' as const },
       },
     };
-    await writeFile(
-      join(store.runsDirPath, `${run.id}.json`),
-      JSON.stringify(ruledRecord, null, 2),
-    );
+    store.seed(ruledRecord);
     const { record: stored } = await store.get(run.id);
     await expect(
       store.update({ ...stored, sealed_by: { ...stored.sealed_by!, arm: 'step_failure' } }),
@@ -737,10 +735,7 @@ describe('#367 — the store boundary, clause by clause', () => {
         adjudicated: { by: 'mihai', at: 'now', previous_arm: 'complete' as const },
       },
     };
-    await writeFile(
-      join(store.runsDirPath, `${run.id}.json`),
-      JSON.stringify(ruledRecord, null, 2),
-    );
+    store.seed(ruledRecord);
     const { record: stored } = await store.get(run.id);
     await expect(
       store.update({
@@ -763,10 +758,7 @@ describe('#367 — the store boundary, clause by clause', () => {
         adjudicated: { by: 'first', at: 'then', previous_arm: 'complete' as const },
       },
     };
-    await writeFile(
-      join(store.runsDirPath, `${run.id}.json`),
-      JSON.stringify(ruledRecord, null, 2),
-    );
+    store.seed(ruledRecord);
     const { record: stored } = await store.get(run.id);
     const { record: flipped } = await store.update({
       ...stored,
@@ -788,7 +780,7 @@ describe('#367 — the store boundary, clause by clause', () => {
       run_phase: 'abandoned' as const,
       terminal_reason: 'prose nothing recognises',
     };
-    await writeFile(join(store.runsDirPath, `${run.id}.json`), JSON.stringify(parked, null, 2));
+    store.seed(parked);
     const { record: stored } = await store.get(run.id);
     const { record: ruled } = await store.update({
       ...stored,
@@ -824,7 +816,7 @@ describe('#367 — the store boundary, clause by clause', () => {
     // human ruled on it. Losing either mark would erase half of that.
     const run = await live();
     const legacy = { ...run, terminal_state: true, terminal_reason: 'Workflow completed.' };
-    await writeFile(join(store.runsDirPath, `${run.id}.json`), JSON.stringify(legacy, null, 2));
+    store.seed(legacy);
     const { record: reread } = await store.get(run.id);
     const stamped = await store.stampSeal!(
       run.id,
@@ -865,7 +857,7 @@ describe('#367 — the store boundary, clause by clause', () => {
       sealed_by: { arm: 'complete' as const },
       aborted_at: { step_id: 'g' },
     };
-    await writeFile(join(store.runsDirPath, `${run.id}.json`), JSON.stringify(stale, null, 2));
+    store.seed(stale);
     const { record: reread } = await store.get(run.id);
     await expect(store.update({ ...reread, updated_at: 'later' })).rejects.toMatchObject({
       code: 'STATE_SEAL_INCOHERENT',
@@ -882,7 +874,7 @@ describe('#367 — the store boundary, clause by clause', () => {
       sealed_by: { arm: 'complete' as const },
       abandoned_at: 'now',
     };
-    await writeFile(join(store.runsDirPath, `${run.id}.json`), JSON.stringify(stale, null, 2));
+    store.seed(stale);
     const { record: reread } = await store.get(run.id);
     await expect(
       store.update({ ...reread, updated_at: 'later' }).then((s) => s.record),
@@ -894,7 +886,7 @@ describe('#367 — the store boundary, clause by clause', () => {
     // output violated a clause must be refused at the same boundary.
     const run = await live();
     const orphanSeed = { ...run, terminal_state: true, sealed_by: { arm: 'complete' as const } };
-    await writeFile(join(store.runsDirPath, `${run.id}.json`), JSON.stringify(orphanSeed, null, 2));
+    store.seed(orphanSeed);
     // A settle on a terminal run refuses upstream (run_terminal) — so the observable here is that
     // the tail is wired at all: the update path above proves the clauses, and this proves settle
     // shares the same store instance and record.
@@ -907,7 +899,7 @@ describe('#367 — operator-facing messages say no more than their branch guards
   // The recurring defect class in this program: a message whose claim is wider than the condition
   // that produces it. Each of these pins the TEXT against the branch it actually fires on.
   it('the unstamped-seal message names the TRANSITION it guards, not "every terminal write"', async () => {
-    const store = await freshStore();
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'wf',
       workflowVersion: 1,
