@@ -162,6 +162,12 @@ const EXPECTED: Record<string, CensusEntry> = {
     classes: ['writer-stamped'],
     reason: 'The create branch mints a fresh, non-terminal run record.',
   },
+  // #616 PR-2c c3: the scan's facts row declares the field.
+  'packages/core/src/store/store-interface.ts': {
+    count: 1,
+    classes: ['type-decl'],
+    reason: "The `RunRow.terminal_state` field declaration (a scan's facts row).",
+  },
   // #729 PR-3 (L-2): the drive path's command-template rule shares `no-restricted-syntax` with the
   // seal rules; these files write no terminal state, and each disable names its prose line.
   'packages/cli/src/agent/prompt-cache.ts': {
@@ -247,6 +253,15 @@ const EXPECTED: Record<string, CensusEntry> = {
       "`findKeyHolder` maps the stored terminal_state column (0/1) to a boolean for core's key-holder pick; it reaches no store.",
     suppression:
       'A read of the stored column for the key holder; it reaches no store and carries no seal.',
+  },
+  // #616 PR-2c c3: the scan's read of the stored column, and its filter's SQL term.
+  'packages/store-sqlite/src/run-scan.ts': {
+    count: 2,
+    classes: ['echo', 'string-literal'],
+    reason:
+      "`runRow` maps the stored terminal_state column (0/1) to a boolean for a scan's facts row, and the `terminal` filter's SQL term names the column; neither reaches a store.",
+    suppression:
+      "A read of the stored column for a scan's row; it reaches no store and carries no seal.",
   },
   'packages/testing/src/store/run-store-fidelity-contract.ts': {
     count: 2,
@@ -418,7 +433,8 @@ describe('#367 — the terminal-writer census', () => {
     // PLAIN.cmd disable. Correction 3 (H-8''): +1, agent.ts's context disable. #715 (b): -1, the
     // buildFinalizedSeal disable in execution-loop.ts (the function was deleted with the legacy path).
     // #616 PR-1a unit 15a: +1, run-rows.ts's key-holder read.
-    expect(claimed).toHaveLength(11);
+    // #616 PR-2c c3: +1, run-scan.ts's facts-row read.
+    expect(claimed).toHaveLength(12);
   });
 
   it("turbo.json globalDependencies matches the sweep table's join-list", () => {
@@ -446,11 +462,13 @@ describe('#367 — the terminal-writer census', () => {
   // #616 PR-1a unit 15a: +1 (run-rows.ts, the key holder's read of the stored column), in a new file.
   // #616 PR-1a unit 16a: +1 (run-store-fidelity-contract.ts, CREATE_REPORTS_CREATED's holder run), in
   // a mapped file.
-  it('the post-strip total is 80 across 18 files — the figure the map is built from', () => {
+  // #616 PR-2c c3: +3 (store-interface.ts, the facts row's field; run-scan.ts, the row's read and the
+  // filter's SQL term), in two new files.
+  it('the post-strip total is 83 across 20 files — the figure the map is built from', () => {
     const scan = scanTerminalWriters(REPO_ROOT);
     const total = Object.values(scan.hits).reduce((n, l) => n + l.length, 0);
-    expect(total).toBe(80);
-    expect(Object.keys(scan.hits)).toHaveLength(18);
+    expect(total).toBe(83);
+    expect(Object.keys(scan.hits)).toHaveLength(20);
   });
 });
 
