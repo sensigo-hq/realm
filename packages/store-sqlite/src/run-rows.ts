@@ -31,8 +31,8 @@
 //
 // A run's deletion (unit 14): `storedBytesOfRun` measures what the store keeps of a run, for the
 // stat and the delete alike, and `deleteRunRows` deletes a run's rows in the caller's `BEGIN
-// IMMEDIATE`, stamped with the caller's instant through `write_clock`, which the schema's tombstone
-// trigger reads.
+// IMMEDIATE`, all or nothing by its own savepoint, stamped with the caller's instant through
+// `write_clock`, which the schema's tombstone trigger reads.
 import { createHash } from 'node:crypto';
 import {
   deriveRunPhase,
@@ -534,6 +534,8 @@ const DELETE_RUN = 'DELETE FROM runs WHERE id = ?';
 const DELETE_EVIDENCE = 'DELETE FROM evidence WHERE run_id = ?';
 const DELETE_BLOBS = 'DELETE FROM run_blobs WHERE run_id = ?';
 const CLEAR_WRITE_CLOCK = 'UPDATE write_clock SET at = NULL';
+/** The deletion's own savepoint (MA 3, 2026-11-07: every multi-row writer is atomic itself). */
+const DELETE_SAVEPOINT = 'realm_delete_run';
 
 /**
  * Deletes the stored run `runId` inside the caller's `BEGIN IMMEDIATE`, stamped `at` (the caller's
@@ -544,11 +546,29 @@ const CLEAR_WRITE_CLOCK = 'UPDATE write_clock SET at = NULL';
  * `at`. Only these four tables: the other stores' rows of the run are their own stores' to delete. The
  * caller has read the run and judged it deletable. Synchronous; reads no clock; throws what SQLite and
  * the file's guards throw, unmapped.
+ *
+ * All or nothing by its own savepoint, as {@link insertRunRecord} (MA 3, 2026-11-07: every multi-row
+ * writer makes its write atomic itself, whatever its callers do today; purge's batches will hold
+ * several deletions in one transaction): a throw leaves none of this call's writes in the caller's
+ * transaction, `write_clock`'s stamp included, and the caller's earlier work as it was.
  */
 export function deleteRunRows(db: DatabaseLike, runId: string, at: string): void {
-  db.prepare(SET_WRITE_CLOCK).run(at);
-  db.prepare(DELETE_RUN).run(runId);
-  db.prepare(DELETE_EVIDENCE).run(runId);
-  db.prepare(DELETE_BLOBS).run(runId);
-  db.prepare(CLEAR_WRITE_CLOCK).run();
+  // SQLite uses the most recent savepoint of a name, so a caller's own of the same name is no clash.
+  db.exec(`SAVEPOINT ${DELETE_SAVEPOINT}`);
+  try {
+    db.prepare(SET_WRITE_CLOCK).run(at);
+    db.prepare(DELETE_RUN).run(runId);
+    db.prepare(DELETE_EVIDENCE).run(runId);
+    db.prepare(DELETE_BLOBS).run(runId);
+    // Inside the savepoint: a deletion rolled back leaves no stamp either.
+    db.prepare(CLEAR_WRITE_CLOCK).run();
+    db.exec(`RELEASE ${DELETE_SAVEPOINT}`);
+  } catch (err) {
+    // A transaction SQLite rolled back by itself (a full disk, an I/O error) has no savepoint left.
+    if (db.isTransaction) {
+      db.exec(`ROLLBACK TO ${DELETE_SAVEPOINT}`);
+      db.exec(`RELEASE ${DELETE_SAVEPOINT}`);
+    }
+    throw err;
+  }
 }

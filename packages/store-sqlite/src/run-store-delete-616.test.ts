@@ -4,7 +4,8 @@
 // run as the last store (the anchor), at the version it selected the run at, after the other stores
 // deleted theirs; purge's dry run showing the bytes it would delete; a run resumed, changed or given a
 // pending finalizer since purge looked; a run already gone; a busy store; a COMMIT that fails before
-// or after its rows reached the file; and SQLite refusing one of the deletion's statements.
+// or after its rows reached the file; SQLite refusing one of the deletion's statements; and a caller
+// that holds several deletions in one transaction and goes on after one failed (purge's batches).
 //
 // These cells stand in for the per-run artifact contract and the clock law's deletion leg until unit
 // 16 wires them (`packages/testing/src/store/per-run-artifact-store-contract.ts`, L1-L6; the
@@ -28,6 +29,7 @@ import { openDatabase, type DatabaseLike } from './driver.js';
 import { openRealmHome } from './index.js';
 import type { OpenSeams } from './open-file.js';
 import { openHome, type RealmHome } from './open-realm-home.js';
+import { deleteRunRows } from './run-rows.js';
 import { faultyFiles, SQLITE, type FaultyFiles } from './test-support/commit-faults.js';
 import { openForeignConnection } from './test-support/foreign-connection.js';
 
@@ -106,6 +108,16 @@ function refusal(err: unknown): unknown {
         details: err.details,
       }
     : `${(err as Error).name}: ${(err as Error).message}`;
+}
+
+/** What a synchronous call did: `'ok'`, or its error's name and message. */
+function settleSync(call: () => unknown): string {
+  try {
+    call();
+    return 'ok';
+  } catch (err) {
+    return `${(err as Error).name}: ${(err as Error).message}`;
+  }
 }
 
 /** What a deletion did: its receipt, or its refusal. */
@@ -660,4 +672,40 @@ describe('#616 unit 14 — deleteAllForRun: failures', () => {
       kept: { runs: 1, evidence: 2, run_blobs: 1 },
     });
   }, 30_000); // its busy refusal waits out the store's 5 s budget
+
+  it("the deletion's writer is all or nothing by its own savepoint: when SQLite refuses its evidence delete inside a transaction its caller holds and goes on with, the run, its rows and write_clock are as before (authorized by MA 3)", async () => {
+    const { home, runStore } = await open(testClock(T).clock);
+    const run = await finished(runStore);
+    const c = await foreign(home);
+    // A trigger of this connection only, refusing the evidence delete (after the run row went).
+    c.exec(
+      'CREATE TEMP TRIGGER refuse_evidence_delete BEFORE DELETE ON main.evidence ' +
+        "BEGIN SELECT RAISE(ABORT, 'unit 14: this evidence may not be deleted'); END",
+    );
+    const before = { kept: kept(c, run.id), writeClock: writeClock(c) };
+    c.exec('BEGIN IMMEDIATE');
+    const failed = settleSync(() => deleteRunRows(c, run.id, AT));
+    const inTransaction = {
+      kept: kept(c, run.id),
+      tombstones: tombstones(c, run.id),
+      writeClock: writeClock(c),
+      open: c.isTransaction,
+    };
+    c.exec('ROLLBACK');
+    // (1) red when the writer has no savepoint of its own (the run row's delete, its tombstone and
+    //     the `write_clock` stamp then stay in the caller's transaction, and a caller that goes on
+    //     commits them), or when `write_clock` is set before the savepoint (the stamp then
+    //     survives the rollback); (2) prints the error, the rows before, and what the caller's
+    //     transaction holds after it.
+    expect({ failed, before, inTransaction }).toEqual({
+      failed: 'Error: unit 14: this evidence may not be deleted',
+      before: { kept: { runs: 1, evidence: 2, run_blobs: 1 }, writeClock: [] },
+      inTransaction: {
+        kept: { runs: 1, evidence: 2, run_blobs: 1 },
+        tombstones: { purged_ids: [], purged_runs: [] },
+        writeClock: [],
+        open: true,
+      },
+    });
+  });
 });
