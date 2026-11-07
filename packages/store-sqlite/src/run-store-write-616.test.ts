@@ -341,7 +341,7 @@ describe('#616 unit 12b — update', () => {
     });
   });
 
-  it('check 9: the texts and hashes of an update are made before its write lock: an evidence entry and a write-once value whose JSON takes the lock on another connection always find it free', async () => {
+  it('check 9: the texts of an update (and so their hashes) are made before its write lock: an evidence entry and a write-once value whose JSON takes the lock on another connection always find it free', async () => {
     const { home, runStore } = await open(testClock(T).clock);
     const { record: run } = await runStore.create(BARE);
     const other = await foreign(home);
@@ -644,13 +644,19 @@ describe('#616 unit 12b — the reading, the floor, the key order, the phase col
     const { record: run } = await runStore.create(BARE);
     const c = await foreign(home);
     const created = stored(c, run.id).phase;
+    // Both columns stale, as an earlier derivation left them: only the update's own re-stamp mends them.
+    c.prepare("UPDATE runs SET run_phase = 'completed', phase_version = 'old' WHERE id = ?").run(
+      run.id,
+    );
     const { record: abandoned } = await runStore.update({
       ...run,
       abandoned_at: '2030-05-06T07:08:09.000Z',
     });
     const afterUpdate = stored(c, run.id).phase;
     // A stale column, as an earlier derivation left it: only the claim's own re-stamp mends it.
-    c.prepare("UPDATE runs SET run_phase = 'running' WHERE id = ?").run(run.id);
+    c.prepare("UPDATE runs SET run_phase = 'running', phase_version = 'old' WHERE id = ?").run(
+      run.id,
+    );
     const claimed = await runStore.claimStep(run.id, 'a', DEF);
     const fingerprint = runPhaseDerivationFingerprint();
     // (1) red when a write leaves the columns as they were (the scan trusts them; `get` derives the

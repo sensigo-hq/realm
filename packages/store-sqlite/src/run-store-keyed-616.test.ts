@@ -434,6 +434,46 @@ describe('#616 unit 15a — a superseded finished run does not hold the key (one
 });
 
 describe('#616 unit 15a — one reading on every outcome, and the floors', () => {
+  it('check 2b (iv): a LIVE run that a finished run names in rerun_of still holds the key: only a finished run is superseded', async () => {
+    const home = await open(testClock(T).clock);
+    await seed(
+      home,
+      record('run-live', at(-HOUR)),
+      finished('run-done', at(-1_000), { rerun_of: 'run-live' }),
+    );
+    // (1) red when a run named in rerun_of is dropped whatever its state (the finished run, newer by
+    //     its stamp, then holds and a default create reuses it instead of the live one); (2) prints
+    //     the create.
+    expect(await outcome(home.handle.runStore, keyed())).toEqual({
+      created: false,
+      id: 'run-live',
+      rerun_of: undefined,
+    });
+  });
+
+  it("check 4b: a rerun is floored by its holder's created_at, not by its updated_at: a holder that ran for 10 s", async () => {
+    const t = testClock(T);
+    const home = await open(t.clock);
+    await seed(
+      home,
+      finished('run-long', T, { idempotency_key: 'k-long', updated_at: at(10_000) }),
+    );
+    t.set(at(-3_000));
+    const r = await home.handle.runStore.create(
+      keyed({ idempotencyKey: 'k-long', onTerminalMatch: 'rerun' }),
+    );
+    // (1) red when the floor reads the holder's updated_at: the rerun is then stamped at the
+    //     reading plus ε (2 s after T), not 1 ms after the holder's created_at; (2) prints the
+    //     stamps.
+    expect({ created: r.created, created_at: r.record.created_at, at: r.at.toISOString() }).toEqual(
+      {
+        created: true,
+        created_at: at(1),
+        at: at(1),
+      },
+    );
+  });
+
   it('check 3: fresh, reuse, rerun and both refusals each spend exactly one reading; a busy refusal spends none', async () => {
     const t = testClock(T);
     const home = await open(t.clock);

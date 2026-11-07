@@ -210,8 +210,9 @@ function notEligibleError(runId: string, stepName: string, eligible: string[]): 
 }
 
 /**
- * Core's run store on a SQLite home: create, get, list, update, claimStep and settleStep (see the
- * module comment). It implements core's `RunStore`; the optional `stampSeal` is unit 13b's.
+ * Core's run store on a SQLite home: create (keyed or not), get, list, update, claimStep and
+ * settleStep (see the module comment). It implements core's `RunStore`; the optional `stampSeal`
+ * is unit 13b's.
  */
 export class SqliteRunStore implements RunStore {
   /** Claims round-trip: the stored record is the record written, `claims` included. */
