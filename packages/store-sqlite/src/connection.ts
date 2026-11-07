@@ -162,7 +162,7 @@ function isSqliteError(err: unknown): err is SqliteError {
 }
 
 /** The busy family: 5 and its extended codes (261 recovery, 517 snapshot, 773 timeout). */
-function isBusy(err: unknown): boolean {
+export function isBusy(err: unknown): boolean {
   return isSqliteError(err) && (err.errcode & 0xff) === 5;
 }
 
