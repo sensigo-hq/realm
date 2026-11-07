@@ -17,7 +17,7 @@
 // checks), which pass through unchanged.
 //
 // The handle carries the home's run store (unit 12a), its duplicate-webhook memory (B8), its workflow
-// registry (B3) and `close()`.
+// registry (B3), its failed-attempt store and replay store (B7), and `close()`.
 // A caller that shares an open home checks, once the open has resolved, that the cache still holds it:
 // a `close()` while the caller waited (MA 2, #998) removed it and closed the connection, so the caller
 // looks the home up once more and opens it afresh instead of receiving a closed handle.
@@ -32,7 +32,9 @@ import {
 } from '@sensigo/realm';
 import { RealmDb } from './connection.js';
 import { SqliteDedupStore } from './dedup-store.js';
+import { SqliteFailedAttemptStore } from './failed-attempt-store.js';
 import type { OpenSeams } from './open-file.js';
+import { SqliteReplayStore } from './replay-store.js';
 import { SqliteRunStore } from './run-store.js';
 import { SqliteWorkflowStore } from './workflow-store.js';
 
@@ -49,8 +51,9 @@ export interface OpenRealmHomeOptions {
 }
 
 /**
- * An open Realm home: its run store, its duplicate-webhook memory, its workflow registry and
- * `close()`, all on the home's one connection. Later units add its other stores.
+ * An open Realm home: its run store, its duplicate-webhook memory, its workflow registry, its
+ * failed-attempt store, its replay store and `close()`, all on the home's one connection. Later units
+ * add its other stores.
  */
 export interface RealmHome {
   /** The home's run store: creates, reads and lists its runs. */
@@ -65,6 +68,10 @@ export interface RealmHome {
    * its current text, and every move of that pointer. After `close()`, its calls reject.
    */
   readonly workflowStore: WorkflowRegistrar;
+  /** The home's failed agent attempts, kept per run (PR-1b B7). */
+  readonly failedAttemptStore: SqliteFailedAttemptStore;
+  /** The home's saved replays, by id (PR-1b B7). */
+  readonly replayStore: SqliteReplayStore;
   /**
    * Closes the home's connection; a later `openRealmHome` opens the home afresh. Every caller in this
    * process that opened the home shares this handle, so a `close()` by any of them ends it for all.
@@ -163,6 +170,8 @@ async function lookUp(
         return store;
       },
       workflowStore: new SqliteWorkflowStore(db),
+      failedAttemptStore: new SqliteFailedAttemptStore(db),
+      replayStore: new SqliteReplayStore(db),
       close(): void {
         if (closed) return;
         closed = true;
