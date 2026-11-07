@@ -150,8 +150,26 @@ async function makeAdapter(): Promise<{
   };
 }
 
+/** The cases as this file's one adapter builds them, read when the tests are registered: which laws
+ *  have a case to run, and which cases are skips (issue #616 PR-1b B5). Never run (each law runs on
+ *  its own fresh adapter), so its folder is removed at once. */
+const REGISTERED = await (async () => {
+  const { adapter, cleanup } = await makeAdapter();
+  try {
+    return fencedTraceBufferContract(adapter);
+  } finally {
+    await cleanup();
+  }
+})();
+
 describe('JsonTraceBufferStore — fenced-trio TCK conformance (issue #207)', () => {
   for (const law of LAWS) {
+    // issue #616 PR-1b B5: a skipped case is registered with the runner's own skip, so it is
+    // counted as a skip, never inside a passing law. A law is left out only when it has a case and
+    // every one is skipped; a law with no case at all keeps its test, which fails naming it.
+    const ofLaw = REGISTERED.filter((c) => c.law === law);
+    for (const c of ofLaw) if (c.skipped === true) it.skip(c.name, () => {});
+    if (ofLaw.length > 0 && ofLaw.every((c) => c.skipped === true)) continue;
     it(law, async () => {
       // Fresh adapter (fresh tmpdir) per law — CS_OCCUPANCY/NO_SILENT_LOSS mutate on-disk state
       // and a stale WAL file from an earlier law must never leak into a later one.
@@ -159,9 +177,11 @@ describe('JsonTraceBufferStore — fenced-trio TCK conformance (issue #207)', ()
       try {
         const cases = fencedTraceBufferContract(adapter);
         const matching = cases.filter((c) => c.law === law);
+        // (1) red when the contract builds no case for this law (it would vanish from the run);
+        //     (2) prints the law's name.
         expect(matching.length, `no cases registered for law ${law}`).toBeGreaterThan(0);
         for (const c of matching) {
-          await c.run();
+          if (c.skipped !== true) await c.run();
         }
       } finally {
         await cleanup();
@@ -173,31 +193,30 @@ describe('JsonTraceBufferStore — fenced-trio TCK conformance (issue #207)', ()
     const { adapter, cleanup } = await makeAdapter();
     try {
       const cases = fencedTraceBufferContract(adapter);
+      // A skip case's name carries the real case's text, and a skip's no-op `run` passes: the
+      // variant exists to run the REAL case under a short timeout, so it finds the one without
+      // the field. (1) red when the real case is absent or only its skip is there; (2) prints
+      // that the target was undefined.
       const target = cases.find(
-        (c) => c.law === 'PER_KEY_INDEPENDENCE' && c.name.includes('disjoint-run'),
+        (c) =>
+          c.law === 'PER_KEY_INDEPENDENCE' && c.skipped !== true && c.name.includes('disjoint-run'),
       );
       expect(target).toBeDefined();
-      // A skip case's name carries the real case's text, so `find` alone would accept
-      // it — and a skip's no-op `run` passes. The variant exists to run the REAL case
-      // under a short timeout.
-      expect(target!.name.startsWith('SKIPPED — '), 'must run the real case, never a skip').toBe(
-        false,
-      );
       await target!.run();
     } finally {
       await cleanup();
     }
   }, 3000);
 
-  // issue #616 PR-0, D3: a skipped case renders `✓` for its law in a runner (both realm adapters
-  // have a park, so every park-dependent law above runs for real) — this adapter supplies EVERY
-  // optional hook (`bytesOracle`, `rawWalAccess`), so it registers NO skip at all. This assertion
-  // is what would fail loudly (naming what it lost) if this adapter ever lost its park.
+  // issue #616 PR-0, D3: both realm adapters have a park, so every park-dependent law above runs
+  // for real — and this adapter supplies EVERY optional hook (`bytesOracle`, `rawWalAccess`), so it
+  // registers NO skip at all. Selected by the field (issue #616 PR-1b B5). (1) red when this
+  // adapter loses its park or a hook (a skip appears); (2) prints the skipped cases' names.
   it('registers no skipped cases at all — every optional hook is supplied', async () => {
     const { adapter, cleanup } = await makeAdapter();
     try {
       const cases = fencedTraceBufferContract(adapter);
-      const skipped = cases.filter((c) => c.name.startsWith('SKIPPED — ')).map((c) => c.name);
+      const skipped = cases.filter((c) => c.skipped === true).map((c) => c.name);
       expect(skipped).toEqual([]);
     } finally {
       await cleanup();
