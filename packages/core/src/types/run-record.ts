@@ -524,12 +524,17 @@ export type CacheControlField = (typeof CACHE_CONTROL_FIELDS)[number];
 /**
  * Caching 3-B (A6): what carried a cache marker, or OpenAI's key, on one request: the `system` text
  * and the prompt's head block (Anthropic's markers, and #896 OpenAI's marks on GPT-5.6 and later),
- * or OpenAI's `key`.
+ * or OpenAI's `key`. Caching 3-M (A-0): or the `conversation` so far — the marker Anthropic's tool
+ * main turns put on a copy of the last message (#899).
  */
-export const CACHE_MARKED_PARTS = ['system', 'prompt', 'key'] as const;
+export const CACHE_MARKED_PARTS = ['system', 'prompt', 'key', 'conversation'] as const;
 export type CacheMarkedPart = (typeof CACHE_MARKED_PARTS)[number];
 
-/** Caching 3-B (A6): the SHA-256 of each part of a request's cached start, as sent (64 lowercase hex). */
+/**
+ * Caching 3-B (A6), 3-M (A-0): a SHA-256 for each part of what the request sent (64 lowercase hex):
+ * `system`, and `tools`, `prompt` (the head on a split request, else the prompt as that request sent
+ * it) and `format` where it had them; `cache_marked` says which parts carried a marker.
+ */
 export interface PrefixParts {
   tools?: string;
   system: string;
@@ -655,13 +660,16 @@ export interface UsageRecord {
   prefix_sha256?: string;
   /** Caching 3-B (A6): the head's length as sent, after disclosure, in UTF-16 code units. */
   prefix_chars?: number;
-  /** Caching 3-B (A6): a SHA-256 per part of the request's cached start, as sent. */
+  /** Caching 3-B (A6), 3-M (A-0): a SHA-256 for each part of what the request sent: `system`, and
+   *  `tools`, `prompt` (the head on a split request, else the prompt as that request sent it) and
+   *  `format` where it had them; `cache_marked` says which parts carried a marker. */
   prefix_parts?: PrefixParts;
   /** Caching 3-B (A6): what carried a cache marker or the key on this request; absent after a
    *  remembered drop (nothing carried one). */
   cache_marked?: CacheMarkedPart[];
-  /** Caching 3-B (A6, C5): whether this request carried strict structured output (D3's
-   *  `strict_sent`, renamed: `tool_args.tools[].strict_sent` already uses that word). */
+  /** Caching 3-B (A6, C5): whether this request carried strict structured output or strict tool
+   *  arguments (D3's `strict_sent`, renamed: `tool_args.tools[].strict_sent` already uses that
+   *  word). */
   request_strict_sent?: boolean;
   /** Caching 3-B (A6, E3): the endpoint's refusal of Realm's cache fields, recorded on the request
    *  whose retry without them worked, and on every later request of the drive. */

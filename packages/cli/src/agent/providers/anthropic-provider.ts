@@ -171,35 +171,70 @@ function userContentWithHead(
 }
 
 /**
- * Caching 3-B (A6, C3) — the split's facts for one single-shot request, read off the body that was
- * SENT (after any ladder rung): the head's digest and length, a digest per part of the cached start,
- * what carried a marker, and whether strict went out.
+ * Caching 3-M (A-0; 3-B's A6, C3) — what one request sent, read off the body that was SENT (after
+ * any ladder rung): a digest per part (the body's tools when it has them, the system text, and
+ * `promptText`), what carried a marker, and whether strict went out. `messageMark` says which
+ * request this is, because the body alone cannot tell a one-block split request from a tool turn's
+ * first message: `prompt` — a single-shot request, marked when its first message's first block
+ * carries `cache_control`; `conversation` — a tool main turn, marked when the last message's last
+ * block carries it (#899). The other word is never read. Strict went out when SOME tool carries it:
+ * a tool turn sets strict per tool, in declared order; a single-shot request's only tool is the
+ * submit tool.
  */
-function anthropicSplitFacts(
+function anthropicPartsFacts(
   body: Record<string, unknown>,
-  headSent: string,
   systemText: string,
+  promptText: string,
+  messageMark: 'prompt' | 'conversation',
 ): Partial<UsageRecord> {
   const marked: CacheMarkedPart[] = [];
   const system = body['system'];
   if (Array.isArray(system) && system.some((b) => (b as Rec)['cache_control'] !== undefined)) {
     marked.push('system');
   }
-  const content = (body['messages'] as Array<{ content: unknown }>)[0]?.content;
-  if (Array.isArray(content) && (content[0] as Rec | undefined)?.['cache_control'] !== undefined) {
-    marked.push('prompt');
+  const messages = body['messages'] as Array<{ content: unknown }>;
+  if (messageMark === 'prompt') {
+    const content = messages[0]?.content;
+    if (
+      Array.isArray(content) &&
+      (content[0] as Rec | undefined)?.['cache_control'] !== undefined
+    ) {
+      marked.push('prompt');
+    }
+  } else {
+    const content = messages[messages.length - 1]?.content;
+    if (
+      Array.isArray(content) &&
+      (content[content.length - 1] as Rec | undefined)?.['cache_control'] !== undefined
+    ) {
+      marked.push('conversation');
+    }
   }
   const tools = body['tools'] as Array<Rec> | undefined;
   return {
-    prefix_sha256: sha256Hex(headSent),
-    prefix_chars: headSent.length,
     prefix_parts: {
       ...(tools !== undefined ? { tools: sha256Hex(JSON.stringify(tools)) } : {}),
       system: sha256Hex(systemText),
-      prompt: sha256Hex(headSent),
+      prompt: sha256Hex(promptText),
     },
     ...(marked.length > 0 ? { cache_marked: marked } : {}),
-    request_strict_sent: tools?.[0]?.['strict'] === true,
+    request_strict_sent: (tools ?? []).some((t) => t['strict'] === true),
+  };
+}
+
+/**
+ * Caching 3-B (A6, C3) — the split's facts for one single-shot request: the head's digest and
+ * length, then {@link anthropicPartsFacts} with the head as the prompt part.
+ */
+function anthropicSplitFacts(
+  body: Record<string, unknown>,
+  headSent: string,
+  systemText: string,
+): Partial<UsageRecord> {
+  return {
+    prefix_sha256: sha256Hex(headSent),
+    prefix_chars: headSent.length,
+    ...anthropicPartsFacts(body, systemText, headSent, 'prompt'),
   };
 }
 
@@ -839,9 +874,11 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
           ...(sentWithCache
             ? this.requestFacts(response, client)
             : this.toolsRequestFacts(response, client)),
+          // caching 3-M (A-0): with no head (a step with no `prompt:`), the parts of what was sent —
+          // the prompt as this request sent it (the JSON retry's carries the reminder).
           ...(shaped.headSent !== undefined
             ? anthropicSplitFacts(sent, shaped.headSent, systemPrompt)
-            : {}),
+            : anthropicPartsFacts(sent, systemPrompt, userContent, 'prompt')),
           // caching 3-B (E3): the gateway's refusal, on the request that worked and every later one.
           ...(this.cacheFields.rejected !== undefined
             ? { cache_controls_rejected: this.cacheFields.rejected }
@@ -1284,12 +1321,15 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       const carriedStrict = toolArgsStrictActive;
       // caching 3-B (E3): a main turn's record carries the gateway's refusal once it is known.
       // caching 3-B (MA2-3B-IA1-12): a turn sent without the cache fields records no ask (#899's rule).
+      // caching 3-M (A-0): and the parts of the body it SENT — the first attempt's, or the #311
+      // retry's (the stripped tools) — with the step's prompt as the prompt part.
       const facts =
-        (withCache: boolean) =>
+        (withCache: boolean, body: Rec) =>
         (response: unknown, client: unknown): Partial<UsageRecord> => ({
           ...(withCache
             ? this.requestFacts(response, client)
             : this.toolsRequestFacts(response, client)),
+          ...anthropicPartsFacts(body, system, prompt, 'conversation'),
           ...(this.cacheFields.rejected !== undefined
             ? { cache_controls_rejected: this.cacheFields.rejected }
             : {}),
@@ -1298,7 +1338,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       const send = async (withCache: boolean): Promise<{ response: any; key: string }> => {
         const sentStrict = toolArgsStrictActive;
         const request = buildMainCallOpts(withCache);
-        const response = await bounded(request.body, facts(withCache));
+        const response = await bounded(request.body, facts(withCache, request.body));
         // Only a strict-DECORATED request that came back 200 counts toward the disclosed
         // "turns before drop" — that is exactly what the number claims.
         if (sentStrict) strictTurnsBeforeDrop += 1;
@@ -1333,7 +1373,10 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         // `messages` from its own key (issue #677): the stripped list is a different list, so the
         // thinking of the turns made while strict was on stays out of it.
         const retry = buildMainCallOpts(withCache);
-        return { response: await bounded(retry.body, facts(withCache)), key: retry.key };
+        return {
+          response: await bounded(retry.body, facts(withCache, retry.body)),
+          key: retry.key,
+        };
       };
       return sendUnderGatewayRule(
         this.cacheFields,
