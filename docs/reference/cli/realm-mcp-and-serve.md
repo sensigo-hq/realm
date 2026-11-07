@@ -164,4 +164,4 @@ realm [--version] [--help] <command>
 - [Connect an MCP client](../../guides/connect-an-mcp-client.md)
 - [MCP tools](../mcp/tools.md)
 - [Deploy a project](../../guides/deploy.md)
-- [`realm workflow`](realm-workflow.md), [`realm run`: commands that read](realm-run-reading.md), [`realm run`: commands that act](realm-run-acting.md), [`realm agent`](realm-agent.md), [`realm listen`](realm-listen.md)
+- [`realm workflow`](realm-workflow.md), [`realm run`: commands that read](realm-run-reading.md), [`realm run`: commands that act](realm-run-acting.md), [`realm db`](realm-db.md), [`realm agent`](realm-agent.md), [`realm listen`](realm-listen.md)

@@ -9,7 +9,12 @@
 // (leaf, flag) pairs that break the law.
 import { describe, expect, it } from 'vitest';
 import type { Command } from 'commander';
-import { workflowCommands, runCommands, topLevelCommands } from '../commands-registry.js';
+import {
+  workflowCommands,
+  runCommands,
+  dbCommands,
+  topLevelCommands,
+} from '../commands-registry.js';
 import { GUARDED_OPTIONS } from './option-value-guard.js';
 
 type Pair = `${string} ${string}`;
@@ -90,7 +95,7 @@ function derived(): Map<Pair, Command[]> {
     }
     for (const sub of command.commands) visit(sub);
   };
-  for (const list of [workflowCommands, runCommands, topLevelCommands])
+  for (const list of [workflowCommands, runCommands, dbCommands, topLevelCommands])
     for (const c of list) visit(c);
   return out;
 }

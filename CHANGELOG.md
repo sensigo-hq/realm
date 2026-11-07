@@ -118,6 +118,8 @@ All notable changes to this project are documented here.
   when the adapter sets `recordsDeletionTime`, none when it does not. A store whose delete stamps
   the time of the deletion sets the field; set for a store with no `deleteAllForRun`, the
   `READS_ONE_READING` case fails.
+- **`realm db backup <path>` copies the store file** by SQLite's `VACUUM INTO`, converts the copy to WAL, checks it (`PRAGMA quick_check`) and refuses a path inside the Realm home or one where anything exists; restoring is a documented procedure, never a command (#616).
+- **Two error codes for it: `STATE_STORE_BACKUP_REFUSED`** (a path inside the home, where anything exists, or that cannot be created; a home with no store file, or an empty one) **and `STATE_STORE_BACKUP_UNVERIFIED`** (the copy fails the quick check; the copy is kept and the store file named as possibly damaged) (#616).
 
 ### Changed
 

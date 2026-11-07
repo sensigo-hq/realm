@@ -33,6 +33,7 @@ import { runMigrateCommand } from './commands/run-migrate.js';
 import { agentCommand } from './commands/agent.js';
 import { webhookCommand } from './commands/webhook.js';
 import { listenCommand } from './commands/listen.js';
+import { dbBackupCommand } from './commands/db-backup.js';
 import { setClockErrorSink } from '@sensigo/realm';
 import { attachWriterHook } from './output/writer.js';
 import { attachOptionValueGuard } from './lib/option-value-guard.js';
@@ -75,6 +76,9 @@ export const runCommands = [
   runMigrateCommand,
 ];
 
+/** Commands that maintain the store file (realm db <cmd>; #616 PR-2c). */
+export const dbCommands = [dbBackupCommand];
+
 /** Top-level commands not nested under a subgroup. */
 export const topLevelCommands = [
   mcpCommand,
@@ -84,14 +88,14 @@ export const topLevelCommands = [
   listenCommand,
 ];
 
-// issue #920: the option-value guard, on every command object in the three lists. Attached BEFORE the
+// issue #920: the option-value guard, on every command object in the four lists. Attached BEFORE the
 // writer's hook (a command's hooks run in the order they were added): a refusal is printed before the
 // writer is installed.
-attachOptionValueGuard([workflowCommands, runCommands, topLevelCommands]);
-// #729 PR-3 (L-1): every command object in the three lists — nested ones included — carries the
+attachOptionValueGuard([workflowCommands, runCommands, dbCommands, topLevelCommands]);
+// #729 PR-3 (L-1): every command object in the four lists — nested ones included — carries the
 // writer's `preAction` hook, so the one writer is installed in any program that reuses realm's
 // commands (cli-cloud attaches the exported hook to its own commands too).
-attachWriterHook([workflowCommands, runCommands, topLevelCommands]);
+attachWriterHook([workflowCommands, runCommands, dbCommands, topLevelCommands]);
 
 /**
  * #715 (b) (03 §A.1, D-22): installs the process's waiter-error sink — a waiter on a store's clock (a
