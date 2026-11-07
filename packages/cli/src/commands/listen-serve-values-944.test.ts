@@ -67,10 +67,20 @@ const lines = (text: string): string[] =>
     .join('<dir>')
     .split('\n')
     .filter((l) => l !== '');
+// `RES_OPTIONS` bounds how long the C library waits for a resolver that never answers (a machine
+// with its network down): by default 5 s per try, 2 tries, for each nameserver and each search
+// name, which was 41 s with two silent nameservers and one search name (measured, 2026-11-07), past
+// the 20 s a run is allowed below. The "name that cannot be resolved" cells then took 5.5 s and
+// printed the same line: the refusal maps a temporary failure (`EAI_AGAIN`) and a missing name
+// (`ENOTFOUND`) alike. A C library that does not read the variable ignores it (measured on glibc).
+// (1) Can it fail: take the key out and run the two `no-such-host.invalid` cells with every
+// nameserver silent: the run is killed at 20 s and the cell fails; (2) it prints the run's code
+// (null), its standard error and its standard output.
 const env = (): Record<string, string> => ({
   PATH: process.env['PATH'] ?? '',
   HOME: home,
   ANTHROPIC_API_KEY: 'k-fake-944',
+  RES_OPTIONS: 'timeout:1 attempts:1',
 });
 
 /** Runs the built `realm` to its end; a run still alive after 20 s is killed (and shows as such). */
