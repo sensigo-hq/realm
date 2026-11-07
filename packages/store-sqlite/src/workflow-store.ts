@@ -208,8 +208,9 @@ export class SqliteWorkflowStore implements WorkflowRegistrar {
  *       deletion or purge removes them), so another writer since cannot have changed them;
  *   (2) it never reads the pointer, which moves on every register: a write that landed and was then
  *       superseded by another writer's register is still answered "landed". The one exception is a
- *       write whose only change was the pointer, which happens only after a writer removed the
- *       file's guards (its newest history row already named `hash`): the pointer is all it wrote;
+ *       write whose only change was the pointer, which happens only after a writer that is not
+ *       Realm appended a history row without moving the pointer, or removed the file's guards (its
+ *       newest history row already named `hash`): the pointer is all it wrote;
  *   (3) a register that wrote nothing answers true without reading.
  */
 function landed(

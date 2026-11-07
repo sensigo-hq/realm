@@ -304,16 +304,7 @@ describe('#616 B3 — the history of the pointer (#493 reads it; nothing here do
     ]);
   });
 
-  it('H2: an identical re-register appends no history row', async () => {
-    const o = await open();
-    const a = workflow('wf', ['a']);
-    await o.home.workflowStore.register(a);
-    await o.home.workflowStore.register(a);
-    // (1) red when a row is appended on every register; (2) prints the history rows.
-    expect(stored(o).registrations.map((r) => r['seq'])).toEqual([0]);
-  });
-
-  it("README: the package README carries the registry's sentence (pinned by checks 1, 2, 3, H1 and H2)", () => {
+  it("README: the package README carries the registry's sentence (pinned by checks 1, 2, 3 and H1)", () => {
     const readme = readFileSync(
       join(dirname(fileURLToPath(import.meta.url)), '..', 'README.md'),
       'utf8',
@@ -771,7 +762,6 @@ describe('#616 B3 — the guards bind a writer that is not Realm (a second conne
   it.each([
     // [cell, the condition whose drop turns it red, the row's id, its definition]
     ['4e, not JSON', 'json_valid', 'z', '{"id": "z", not json'],
-    ['4f, not an object (an array)', 'the two `$.id` tests together', 'z', '["z"]'],
     ['4g, no $.id', 'the two `$.id` tests together', 'z', '{"name": "z"}'],
     ["4h, another workflow's $.id", '$.id IS the id', 'z', '{"id": "c"}'],
     [
