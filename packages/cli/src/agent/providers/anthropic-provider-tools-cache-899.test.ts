@@ -7,6 +7,7 @@
 // test's practice), so a later in-place write can neither hide nor fake a marker. Each assertion
 // names (a) the change that turns it red and (b) what it prints when it fails: counts, marker
 // positions, key lists and setting names only — never a prompt's text, a header or a key.
+import { createHash } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AnthropicProvider } from './anthropic-provider.js';
 import type { ToolDefinition } from '../mcp/mcp-extensions.js';
@@ -417,5 +418,105 @@ describe('#899 — what each request of the tool loop records', () => {
       expect(rec['cache_requested'], keysOf(rec)).toBe('off');
     }
     expect('cache_requested' in recs[2]!, keysOf(recs[2]!)).toBe(false);
+  });
+});
+
+// Caching 3-M (A-0): each main turn records the parts of the body it SENT — the step's tools as
+// sent, the system text, the step's prompt — with `system` and `conversation` marked under a
+// lifetime, and no `prefix_sha256`/`prefix_chars` (inspect's cached-head clause reads only those);
+// the final extraction is unchanged: no marker, no ask, no parts.
+describe('caching 3-M A-0 — the parts of each main turn of a tool step', () => {
+  const sha256 = (t: string): string => createHash('sha256').update(t, 'utf8').digest('hex');
+  const records = (result: { usage?: unknown }): Array<Record<string, unknown>> =>
+    (result.usage ?? []) as Array<Record<string, unknown>>;
+  const systemText = (b: Body): string =>
+    Array.isArray(b.system) ? ((b.system[0] as Block)['text'] as string) : (b.system as string);
+  const strictOf = (b: Body): boolean[] =>
+    (b.tools as Array<{ strict?: boolean }>).map((t) => t.strict === true);
+  const view = (r: Record<string, unknown>, i: number) => ({
+    request: i,
+    parts: r['prefix_parts'],
+    split: [r['prefix_sha256'], r['prefix_chars']],
+    marked: r['cache_marked'],
+    strict: r['request_strict_sent'],
+  });
+
+  it('check 2 — both main turns carry the parts, system and conversation marked; the final request carries none', async () => {
+    const recs = records(await budgetUsedUp(stated('short')));
+    // (a) red when a main turn records no parts, when the final request is given them, or when a
+    //     main turn is given `prefix_chars`/`prefix_sha256`; (b) prints each request's kind, index
+    //     and facts.
+    expect({ kinds: sent.map(kindOf), records: recs.map(view) }).toEqual({
+      kinds: ['main', 'main', 'final'],
+      records: [
+        ...[0, 1].map((i) => ({
+          request: i,
+          parts: {
+            tools: sha256(JSON.stringify(sent[i]!.tools)),
+            system: sha256(systemText(sent[i]!)),
+            prompt: sha256('prompt'),
+          },
+          split: [undefined, undefined],
+          marked: ['system', 'conversation'],
+          strict: false,
+        })),
+        {
+          request: 2,
+          parts: undefined,
+          split: [undefined, undefined],
+          marked: undefined,
+          strict: undefined,
+        },
+      ],
+    });
+  });
+
+  it('check 2(a) — after a #311 strict drop, the retry records the stripped tools and no strict', async () => {
+    script = [
+      Object.assign(new Error('tools.0.custom: grammar is not compilable'), { status: 400 }),
+      reply([VALID]),
+    ];
+    const result = await new AnthropicProvider('claude-x', stated('short')).callStepWithTools(
+      'prompt',
+      [lookupTool({ strict: true })],
+      EXECUTOR,
+      { inputSchema: SCHEMA, maxToolCalls: 8 },
+    );
+    // (a) red when the retry's facts are built from the first attempt's body (the strict list: its
+    //     tools digest and `request_strict_sent: true`); (b) prints the drop, each attempt's strict
+    //     flags as sent, and the one record's strict and tools digest beside the retry's.
+    expect({
+      drop: result.toolArgsStrictDrop?.reason,
+      sentStrict: sent.map(strictOf),
+      recorded: records(result).map((r) => [
+        r['request_strict_sent'],
+        (r['prefix_parts'] as { tools?: string } | undefined)?.tools,
+      ]),
+    }).toEqual({
+      drop: 'api_rejected_schema',
+      sentStrict: [[true], [false]],
+      recorded: [[false, sha256(JSON.stringify(sent[1]!.tools))]],
+    });
+  });
+
+  it('check 2(b) — strict on the second of two tools only: the turn records that strict went out', async () => {
+    script = [reply([VALID])];
+    const fetchTool: ToolDefinition = {
+      ...lookupTool({ strict: true }),
+      id: 'srv:fetch',
+      name: 'fetch',
+    };
+    const result = await new AnthropicProvider('claude-x', stated('short')).callStepWithTools(
+      'prompt',
+      [lookupTool(), fetchTool],
+      EXECUTOR,
+      { inputSchema: SCHEMA, maxToolCalls: 8 },
+    );
+    // (a) red when strict is read off the first tool only; (b) prints the tools' strict flags as
+    //     sent and the record's strict.
+    expect({
+      sent: strictOf(sent[0]!),
+      recorded: records(result)[0]!['request_strict_sent'],
+    }).toEqual({ sent: [false, true], recorded: true });
   });
 });
