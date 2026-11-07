@@ -369,6 +369,8 @@ describe('#715 (a) — the facts two docs sentences rest on', () => {
       'packages/mcp-server/src/test-support/snapshot-double.ts',
       // #616 unit 8: the SQLite write path takes each call's raw reading.
       'packages/store-sqlite/src/connection.ts',
+      // #616 unit 12b: the SQLite run store's update and claimStep take the call's one raw reading and fold it
+      'packages/store-sqlite/src/run-store.ts',
       // The fenced contract's run reader returns a read's reading, as a store's read does.
       'packages/testing/src/store/fence-run-source.ts',
       'packages/testing/src/store/in-memory-store.ts',
