@@ -475,8 +475,7 @@ describe('issue #719 F4 — side files are named only when present, and only for
   const way = (clause: string) =>
     `Restore it from a backup or repair it: the run keeps its record and its idempotency key. Or ` +
     `move it out of '${dir}'${clause}. ${KEY_EFFECT}`;
-  const ORPHANS =
-    " (moved alone, they become orphans that 'realm run gc --older-than <age> --force' deletes)";
+  const ORPHANS = ' (moved alone, they become orphans nothing removes)';
   const read = async () => {
     const err = (await store.get(ID).catch((e: unknown) => e)) as WorkflowError;
     return { side_files: unreadableFactsOf(err)?.side_files, message: err.message };

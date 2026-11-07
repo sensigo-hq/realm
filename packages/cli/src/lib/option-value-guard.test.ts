@@ -393,7 +393,7 @@ function guardLines(flags: string, long: string, word: string): string[] {
   ];
 }
 
-describe('#920 C-2 — the other 20 options, one command family each (the built realm)', () => {
+describe('#920 C-2 — the other 19 options, one command family each (the built realm)', () => {
   // Each: the option typed with a real flag of the command after it, as the typo; the run exits 1
   // with the guard's two lines, prints nothing on standard output and does nothing. (a) red when the
   // family's row is missing from the guarded table (the command then runs: it writes, drains, starts
@@ -406,12 +406,6 @@ describe('#920 C-2 — the other 20 options, one command family each (the built 
       guardLines(flags, long, word),
     ]);
   }
-
-  it('run reconcile --workflow --dry-run: refused, nothing written', () => {
-    const r = realm(['run', 'reconcile', '--workflow', '--dry-run']);
-    refusedBy(r, '--workflow <id>', '--workflow', '--dry-run');
-    expect(r.stdout.includes('Wrote'), r.shown).toBe(false);
-  }, 20_000);
 
   it('run drain <id> --extensions-module --force: refused (it drained nothing and said so)', () => {
     refusedBy(
@@ -718,7 +712,7 @@ describe('#920 C-2 — the pages name every guarded option', () => {
       `${MCP}: the --project and --extensions-module sentence, under realm mcp and realm serve`,
     ).toBe(2);
     // On realm-run-acting.md the --project single-option sentence stands after one section
-    // (advance) and the --workflow one after two (purge, reconcile); reclaim holds the two-option
+    // (advance) and the --workflow one after one (purge); reclaim holds the two-option
     // sentence for --step and --workflow, respond the one for --by and --project, abandon the
     // single --reason one.
     const acting = flat(read(ACTING));
@@ -731,10 +725,10 @@ describe('#920 C-2 — the pages name every guarded option', () => {
         stepAndWorkflow: count(two('--step', '--workflow')),
       },
       `${ACTING}: the single-option sentences, and reclaim's two-option one`,
-    ).toEqual({ project: 1, workflow: 2, reason: 1, stepAndWorkflow: 1 });
+    ).toEqual({ project: 1, workflow: 1, reason: 1, stepAndWorkflow: 1 });
     expect(flat(unreleased()), 'the CHANGELOG [Unreleased] #920 bullet, C-2 clause').toContain(
       flat(
-        'The same now holds for 20 other options that took any word: `--project` (on `workflow run`, `agent`, `run drain`, `run respond`, `run advance`, `mcp` and `serve`), `--extensions-module` (`run drain`, `mcp`, `serve`), `--workflow` (`run list`, `reclaim`, `purge`, `reconcile`), `run export --out`, `run abandon --reason`, `run respond --by`, `run reclaim --step`, and `agent --params` and `--base-url`.',
+        'The same now holds for 19 other options that took any word: `--project` (on `workflow run`, `agent`, `run drain`, `run respond`, `run advance`, `mcp` and `serve`), `--extensions-module` (`run drain`, `mcp`, `serve`), `--workflow` (`run list`, `reclaim`, `purge`), `run export --out`, `run abandon --reason`, `run respond --by`, `run reclaim --step`, and `agent --params` and `--base-url`.',
       ),
     );
   });

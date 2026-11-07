@@ -71,16 +71,15 @@ describe('#616 PR-2a (i) — the one place that asks the system for the home', (
       const src = join(ROOT, 'packages', pkg, 'src');
       if (statSync(src, { throwIfNoEntry: false })?.isDirectory() === true) walk(src);
     }
-    // (1) red when any source file calls homedir( again — the break: restore one of the six old
+    // (1) red when any source file calls homedir( again — the break: restore one of the five old
     //     spellings, e.g. listen.ts's `join(homedir(), '.realm', 'dedup')`; and red when the scan
     //     stops reading the files that held them (`files`: the walk's own denominator).
-    // (2) prints every call found, as file:line: text, and which of the six files the walk read.
+    // (2) prints every call found, as file:line: text, and which of the five files the walk read.
     const FORMER = [
       'packages/core/src/store/json-file-store.ts',
       'packages/core/src/workflow/registrar.ts',
       'packages/cli/src/store/replay-store.ts',
       'packages/cli/src/commands/listen.ts',
-      'packages/cli/src/commands/migrate.ts',
       'packages/cli/src/lib/separation-check.ts',
     ];
     const seen = { calls, files: FORMER.filter((f) => scanned.includes(f)) };

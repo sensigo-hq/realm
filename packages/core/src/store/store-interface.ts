@@ -334,7 +334,7 @@ export interface RunStore {
    * `version` is read only by the CAS protocol, `updated_at` only by retention, sorting and
    * display. Preserving BOTH makes the stamp silently erasable — a writer holding a pre-stamp
    * snapshot passes the CAS and wipes it (executed). Preserving NEITHER resets the retention
-   * clock on every record it touches, which is precisely the harm `gc --heal` causes and this
+   * clock on every record it touches, which is precisely the harm `gc --heal` caused and this
    * vehicle exists to avoid. Stamping is not activity.
    *
    * `run_phase` is re-derived in the same write, like every other write tail. For the startup-death

@@ -51,7 +51,7 @@
 // | agent-manifest-gate, claim-liveness,     | or its own dist              |                                                    |
 // | json-trace-buffer-store-lock-guard,      |                              |                                                    |
 // | read-only-no-extensions, github-adapter, |                              |                                                    |
-// | gc-heal-note, validate-extensions,       |                              |                                                    |
+// | validate-extensions,                     |                              |                                                    |
 // | validate-orphan-manifest,                |                              |                                                    |
 // | listen-extensions-child, server.entry)   |                              |                                                    |
 //

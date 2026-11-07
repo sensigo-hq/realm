@@ -166,8 +166,9 @@ export class JsonFileFailedAttemptStore implements FailedAttemptStore, OrphanSwe
 
   /**
    * Returns every `.attempts.jsonl` sidecar whose runId is NOT in `liveRunIds` (issue #163) —
-   * candidate orphans for `realm run gc`'s remediation sweep. Does not apply an age floor or
-   * delete anything — see `OrphanSweepableStore`'s own doc for why that's the caller's job.
+   * candidate orphans. Does not apply an age floor or delete anything — see `OrphanSweepableStore`'s
+   * own doc for why that's the caller's job. Its one caller, `gc`'s orphan sweep, left with that
+   * command (#616 PR-2c); the JSON classes leave at PR-3.
    *
    * FAIL-CLOSED: `ENOENT` on `runsDir` itself → `[]` (nothing has ever been created here). Any
    * OTHER `readdir` or `stat` error THROWS — never fabricate an empty/partial list, which would

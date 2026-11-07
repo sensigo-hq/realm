@@ -156,7 +156,7 @@ describe('SqliteTraceBufferStore — the fenced trace-buffer contract, in its ow
     });
   }
 
-  it('registers exactly the 17 cases an in-transaction store without byte hooks cannot run, by the field', async () => {
+  it('registers exactly the 16 cases an in-transaction store without byte hooks cannot run, by the field', async () => {
     const { adapter, cleanup } = await makeAdapter();
     try {
       const skipped = fencedTraceBufferContract(adapter)
@@ -177,7 +177,6 @@ describe('SqliteTraceBufferStore — the fenced trace-buffer contract, in its ow
         [
           // FENCE_DATA's racers: covered by B6 (a second process changes the run mid-write).
           `SKIPPED — ${park}: step_open_for_trace RACER (appendFenced)`,
-          `SKIPPED — ${park}: run_absent RACER (deleteAllForRunFenced)`,
           `SKIPPED — ${park}: run_absent_or_terminal RACER (deleteAllForRunFenced)`,
           `SKIPPED — ${park}: run_at_version RACER (deleteFenced)`,
           `SKIPPED — ${park}: run_at_version RACER (sealFenced)`,
@@ -223,10 +222,11 @@ describe('SqliteTraceBufferStore — the fenced trace-buffer contract, in its ow
       } catch (err) {
         second = err instanceof Error ? err.message : String(err);
       }
-      // The store sees the run the second put wrote: its `run_absent` fence refuses.
+      // The store sees the run the second put wrote, a live one: its `run_absent_or_terminal` fence
+      // refuses.
       let seen: unknown;
       try {
-        await adapter.store.deleteAllForRunFenced!(next, { kind: 'run_absent' });
+        await adapter.store.deleteAllForRunFenced!(next, { kind: 'run_absent_or_terminal' });
         seen = 'not refused';
       } catch (err) {
         seen = err instanceof WorkflowError ? err.code : String(err);
@@ -241,7 +241,7 @@ describe('SqliteTraceBufferStore — the fenced trace-buffer contract, in its ow
       }).toEqual({
         first: `Run ${refused} is not a run record: its evidence is not an array.`,
         second: 'landed',
-        seen: 'STATE_RUN_RESURRECTED',
+        seen: 'STATE_RUN_BUSY',
       });
     } finally {
       cleanup();

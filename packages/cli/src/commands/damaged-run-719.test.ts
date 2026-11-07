@@ -349,63 +349,6 @@ describe('issue #719 — a command that reads one run by its id: the message, ex
   }, 60_000);
 });
 
-describe('issue #719 — a decision over every run fails closed, naming every damaged file, exit 1', () => {
-  const tail = (command: string) =>
-    `Repair, restore or move each one out ('realm run list' shows each file's way out), then run '${command}' again.`;
-
-  it.each([
-    [['run', 'reconcile'], 'realm run reconcile'],
-    [['run', 'reconcile', '--dry-run'], 'realm run reconcile --dry-run'],
-    [['run', 'reconcile', '--workflow', 'w'], 'realm run reconcile --workflow w'],
-  ])(
-    '%j: one error naming both, the exact command to run again, no pointer written',
-    async (args, command) => {
-      await readableRun();
-      writeFileSync(badPath(), '{ not json');
-      writeFileSync(join(runs, 'empty.json'), '');
-      const r = realm(args);
-      // (a) red when it reconciles past them, names only the first, or tells the operator to run
-      //     a command other than the one they ran (flags dropped); (b) prints exit and stderr.
-      expect({ code: r.code, err: r.err, keys: existsSync(join(runs, 'keys')) }).toEqual({
-        code: 1,
-        err: [
-          `${command} did not run: 2 run file(s) in '${runs}' could not be read:`,
-          `  ${badPath()}: is not JSON`,
-          `  ${join(runs, 'empty.json')}: is empty`,
-          tail(command),
-        ],
-        keys: false,
-      });
-    },
-    60_000,
-  );
-
-  it('realm run gc --heal --force: one error naming both, nothing healed', async () => {
-    const id = await readableRun();
-    // A stale persisted phase: the heal would rewrite this record.
-    const file = join(runs, `${id}.json`);
-    const rec = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
-    writeFileSync(file, JSON.stringify({ ...rec, run_phase: 'completed' }));
-    const before = readFileSync(file, 'utf8');
-    writeFileSync(badPath(), '{ not json');
-    writeFileSync(join(runs, 'empty.json'), '');
-    const r = realm(['run', 'gc', '--heal', '--force']);
-    const text = r.err.join('\n');
-    expect({
-      code: r.code,
-      named: [
-        text.includes(
-          `realm run gc --heal --force did not run: 2 run file(s) in '${runs}' could not be read:`,
-        ),
-        text.includes(`  ${badPath()}: is not JSON`),
-        text.includes(`  ${join(runs, 'empty.json')}: is empty`),
-        text.includes(tail('realm run gc --heal --force')),
-      ],
-      unchanged: readFileSync(file, 'utf8') === before,
-    }).toEqual({ code: 1, named: [true, true, true, true], unchanged: true });
-  }, 60_000);
-});
-
 describe('issue #719 F5 — a copy of a run whose own file reads is not a damaged run', () => {
   /** A readable run of workflow `w` and a copy of its file (`<id>.bak.json`). */
   async function runAndCopy(
@@ -439,26 +382,6 @@ describe('issue #719 F5 — a copy of a run whose own file reads is not a damage
     });
   }, 60_000);
 
-  it.each([
-    [['run', 'reconcile'], 'reconcile'],
-    [['run', 'gc', '--heal'], 'gc --heal'],
-  ])(
-    '%j runs past a copy, exit 0',
-    async (args) => {
-      const { copy } = await runAndCopy();
-      const before = hashOf(copy);
-      const r = realm(args);
-      // (a) red when a copy makes a decision over every run fail closed; (b) prints the exit, whether
-      //     stderr names the copy, and the unchanged-bytes check.
-      expect({
-        code: r.code,
-        namesCopy: r.err.join('\n').includes(copy),
-        untouched: hashOf(copy) === before,
-      }).toEqual({ code: 0, namesCopy: false, untouched: true });
-    },
-    60_000,
-  );
-
   it('migrate --detailed-exitcode: a copy is not in the damaged group and does not set the exit code', async () => {
     const { copy } = await runAndCopy({
       terminal_state: true,
@@ -481,18 +404,15 @@ describe('issue #719 F5 — a copy of a run whose own file reads is not a damage
     ['absent', (id: string) => rmSync(join(runs, `${id}.json`))],
     ['damaged', (id: string) => writeFileSync(join(runs, `${id}.json`), '{not json')],
   ] as const)(
-    'per-conjunct: a file holding a run whose own file is %s is still counted, and refuses reconcile',
+    'per-conjunct: a file holding a run whose own file is %s is still counted by realm run list',
     async (_label, held) => {
-      const { id, copy } = await runAndCopy();
+      const { id } = await runAndCopy();
       held(id);
       const listed = realm(['run', 'list']);
-      const reconciled = realm(['run', 'reconcile']);
-      // (a) red when such a file is taken for a copy; (b) prints the exits and booleans.
+      // (a) red when such a file is taken for a copy; (b) prints the boolean.
       expect({
         counted: listed.err.some((l) => l.includes('could not be read and are not listed')),
-        reconcileExit: reconciled.code,
-        reconcileNamesIt: reconciled.err.join('\n').includes(copy),
-      }).toEqual({ counted: true, reconcileExit: 1, reconcileNamesIt: true });
+      }).toEqual({ counted: true });
     },
     60_000,
   );
