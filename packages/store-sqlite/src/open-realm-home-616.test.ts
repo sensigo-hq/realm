@@ -201,7 +201,7 @@ const says = (sentence: string): boolean => README.includes(sentence);
 /** The README's sentences, each with the cell below that pins its behaviour. */
 const SENTENCES = {
   opens:
-    '`openRealmHome({ home, clock })` opens a Realm home and resolves to a handle with `runStore` and `close()`.',
+    '`openRealmHome({ home, clock })` opens a Realm home and resolves to a handle with `runStore`, `dedupStoreFor`, `workflowStore` and `close()`.',
   shared:
     'Callers in one process that open the same home share one handle and one connection, so a `close()` by any of them ends it for all.',
   file: 'Realm keeps run records in one SQLite file, `realm.db`, in the Realm home. Never delete, move or replace `realm.db` or its side files `realm.db-wal` and `realm.db-shm` while a Realm process is running.',
@@ -568,7 +568,7 @@ describe('#616 unit 11 — one exporter', () => {
 });
 
 describe('#616 unit 11 — the README sentences, each tied to its behaviour', () => {
-  it("README, the handle (check 9, #616 unit 12a) and the shared handle: both sentences are there, the handle carries runStore and close(), and two callers' handle is one (check 1 pins the connection count)", async () => {
+  it("README, the handle (check 9, #616 unit 12a) and the shared handle: both sentences are there, the handle carries exactly the members the sentence names, and two callers' handle is one (check 1 pins the connection count)", async () => {
     const home = join(tmp(), '.realm');
     const [a, b] = await Promise.all([track(openRealmHome({ home })), openRealmHome({ home })]);
     const carries = Object.keys(a).sort();
@@ -585,7 +585,7 @@ describe('#616 unit 11 — the README sentences, each tied to its behaviour', ()
       bAfter,
     }).toEqual({
       says: [true, true],
-      carries: ['close', 'runStore'],
+      carries: ['close', 'dedupStoreFor', 'runStore', 'workflowStore'],
       one: true,
       bAfter: 'no error',
     });

@@ -6,8 +6,8 @@
 //
 // Every statement is written in the form SQLite keeps in `sqlite_master` (no `IF NOT EXISTS`, no
 // trailing semicolon), so a created file's text equals this constant byte for byte. Later units APPEND
-// to version 1 (PR-1b: the other stores' tables): nothing is released in between (SEAMS S2). After the first release, changing any statement
-// here is a schema change: a new `user_version` and its upgrade step.
+// to version 1 (PR-1b: the other stores' tables): nothing is released in between (SEAMS S2). After the first release these statements are
+// version 1's and never change: a schema change adds the next version to `REALM_STORE_VERSIONS`.
 //
 // Every rule a writer that is not Realm must obey is a TRIGGER, because a connection that sets
 // `PRAGMA ignore_check_constraints = 1` turns every CHECK off while triggers stay on; the CHECKs state
@@ -44,7 +44,10 @@ export const REALM_STORE_PAGE_SIZE = 16384;
  * for every field a read filters on), `evidence` (append-only rows), `run_blobs` (the write-once
  * fields); `store_meta` (the store's one meta row: its tombstone counter and horizon), `write_clock`
  * (the instant of the deleting write), and the tombstones a deleted run leaves: `purged_ids` (its id,
- * kept forever) and `purged_runs` (its detail, compactable below the horizon).
+ * kept forever) and `purged_runs` (its detail, compactable below the horizon). PR-1b appends the other
+ * stores' tables: `webhook_dedup` (B8, the duplicate-webhook memory), and the workflow registry (B3):
+ * `workflow_versions` (each distinct definition text once, by its hash), `workflow_registrations` (every
+ * move of a workflow's pointer, in order) and `workflows` (the pointer).
  */
 export const REALM_STORE_SCHEMA: readonly string[] = [
   // ---- runs: the core document; the generated columns read it, never the reverse ----
@@ -322,4 +325,116 @@ BEGIN
   INSERT INTO purged_runs (seq, id, purged_at, workflow_id, key_hash, sealed_by_arm, run_phase, phase_version)
   VALUES ((SELECT tomb_seq FROM store_meta), old.id, COALESCE((SELECT at FROM write_clock WHERE one = 1), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), old.workflow_id, old.key_hash, old.sealed_by_arm, old.run_phase, old.phase_version);
 END`,
+
+  // ---- webhook_dedup (#616 PR-1b B8): the webhook ids `realm listen` has seen, one row per id per
+  // scope (the workflow id): the id's hash, never the raw id, and the instants of the write that
+  // recorded it, in the store's one text shape, so text order is time order. Its rows are tiny:
+  // WITHOUT ROWID. No guard of its own: a row removed by a writer outside Realm only shortens a
+  // best-effort window, which the run's idempotency key stands behind ----
+  `CREATE TABLE webhook_dedup (
+  scope TEXT NOT NULL,
+  key_hash TEXT NOT NULL,
+  recorded_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  PRIMARY KEY (scope, key_hash)
+) WITHOUT ROWID`,
+  `CREATE INDEX webhook_dedup_by_expiry ON webhook_dedup (scope, expires_at)`,
+
+  // ---- the workflow registry (PR-1b B3): each distinct definition text once, under the lowercase hex
+  // sha256 of its UTF-8 bytes; one pointer per workflow to its current text; and the history of every
+  // move of that pointer, in order. Every instant is a write's one reading, in the store's one shape.
+  // The tables are created in the order the guards read them: versions, then registrations, then
+  // the pointers. The guards' messages map to no typed code ----
+  // A definition is tens of KB, so this stays an ordinary rowid table (WITHOUT ROWID is slow for large
+  // rows), with the guards on its hidden row number below (DELTAS rows 24 and 24b).
+  `CREATE TABLE workflow_versions (
+  hash TEXT PRIMARY KEY NOT NULL,
+  id TEXT NOT NULL,
+  definition TEXT NOT NULL,
+  first_registered_at TEXT NOT NULL
+)`,
+  `CREATE INDEX workflow_versions_by_id ON workflow_versions (id)`,
+  // G4: a version is its own workflow's text: a JSON object stored as text, whose `$.id` is JSON text
+  // equal to the row's id, with no repeated top-level key (SQLite reads the first of two equal keys
+  // and JSON.parse the last, so a repeated `id` would pass this guard as one workflow and be read as
+  // another; DELTAS row 24, as for a run record). A value that is not an object has no `$.id`, so the
+  // text test refuses it; that test is needed of its own: `json_extract` returns an array or object
+  // as its JSON text, which can equal the row's id. A CASE, so each test runs only after the ones
+  // before it passed: in a plain OR chain SQLite may run the key count first and refuse text that is
+  // not JSON with its own "malformed JSON". `IS NOT` throughout: `=` would let a missing `$.id`
+  // through (a NULL WHEN does not fire).
+  `CREATE TRIGGER workflow_versions_insert_valid BEFORE INSERT ON workflow_versions
+WHEN CASE
+    WHEN typeof(new.definition) IS NOT 'text' THEN 1
+    WHEN json_valid(new.definition) IS NOT 1 THEN 1
+    WHEN (SELECT count(*) <> count(DISTINCT key) FROM json_each(new.definition)) THEN 1
+    WHEN json_type(new.definition, '$.id') IS NOT 'text' THEN 1
+    WHEN json_extract(new.definition, '$.id') IS NOT new.id THEN 1
+    ELSE 0
+  END
+BEGIN SELECT RAISE(ABORT, 'realm.db: a workflow version must be a JSON object that carries its own id'); END`,
+  // G5: a hash always names the same text. A second insert of a hash (INSERT OR REPLACE included) is
+  // refused before its conflict is resolved, and so is an insert aimed at a taken row number: a
+  // REPLACE there deletes that row without firing any delete trigger. Judged by looking for the row,
+  // never by whether a number was given. Every update and delete is refused, on any column (a guard
+  // scoped to `rowid` alone lets `SET oid = …` through).
+  `CREATE TRIGGER workflow_versions_insert_once BEFORE INSERT ON workflow_versions
+WHEN EXISTS (SELECT 1 FROM workflow_versions WHERE hash = new.hash)
+  OR EXISTS (SELECT 1 FROM workflow_versions WHERE rowid = new.rowid)
+BEGIN SELECT RAISE(ABORT, 'realm.db: a workflow version cannot change'); END`,
+  `CREATE TRIGGER workflow_versions_no_update BEFORE UPDATE ON workflow_versions
+BEGIN SELECT RAISE(ABORT, 'realm.db: a workflow version cannot change'); END`,
+  `CREATE TRIGGER workflow_versions_no_delete BEFORE DELETE ON workflow_versions
+BEGIN SELECT RAISE(ABORT, 'realm.db: a workflow version cannot change'); END`,
+  // G8: inside an insert guard SQLite gives "no number given" as -1, so one row planted at -1 would
+  // make the row-number arm above refuse every later insert.
+  `CREATE TRIGGER workflow_versions_rowid_positive AFTER INSERT ON workflow_versions
+WHEN new.rowid < 1
+BEGIN SELECT RAISE(ABORT, 'realm.db: a row number must be 1 or more'); END`,
+  // ---- workflow_registrations: one row per move of a workflow's pointer, numbered 0, 1, 2… per
+  // workflow, append-only (#493 reads it) ----
+  `CREATE TABLE workflow_registrations (
+  id TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  hash TEXT NOT NULL,
+  registered_at TEXT NOT NULL,
+  PRIMARY KEY (id, seq)
+) WITHOUT ROWID`,
+  // G6: a row names one of its own workflow's texts, at that workflow's next number: no gap, and no
+  // replaced row (INSERT OR REPLACE at a taken number is not the next number).
+  `CREATE TRIGGER workflow_registrations_insert_own BEFORE INSERT ON workflow_registrations
+WHEN NOT EXISTS (SELECT 1 FROM workflow_versions WHERE hash = new.hash AND id = new.id)
+  OR new.seq IS NOT (SELECT COALESCE(MAX(seq), -1) + 1 FROM workflow_registrations WHERE id = new.id)
+BEGIN SELECT RAISE(ABORT, 'realm.db: a registration can only name one of its own workflow''s versions'); END`,
+  // G7: the history is append-only.
+  `CREATE TRIGGER workflow_registrations_no_update BEFORE UPDATE ON workflow_registrations
+BEGIN SELECT RAISE(ABORT, 'realm.db: the registration history cannot change'); END`,
+  `CREATE TRIGGER workflow_registrations_no_delete BEFORE DELETE ON workflow_registrations
+BEGIN SELECT RAISE(ABORT, 'realm.db: the registration history cannot change'); END`,
+  // ---- workflows: the pointer, one row per workflow ----
+  `CREATE TABLE workflows (
+  id TEXT PRIMARY KEY NOT NULL,
+  current_hash TEXT NOT NULL,
+  registered_at TEXT NOT NULL
+) WITHOUT ROWID`,
+  // G1: a pointer names one of its own workflow's versions, and that workflow's newest registration,
+  // so no pointer moves without its history row (Realm writes the version, then the registration, then
+  // the pointer). The update arm keeps `id`, so no statement fires both G1 and G2.
+  `CREATE TRIGGER workflows_insert_own BEFORE INSERT ON workflows
+WHEN NOT EXISTS (SELECT 1 FROM workflow_versions WHERE hash = new.current_hash AND id = new.id)
+  OR new.current_hash IS NOT (SELECT hash FROM workflow_registrations WHERE id = new.id ORDER BY seq DESC LIMIT 1)
+BEGIN SELECT RAISE(ABORT, 'realm.db: a workflow can only point at one of its own versions'); END`,
+  `CREATE TRIGGER workflows_update_own BEFORE UPDATE ON workflows
+WHEN new.id IS old.id
+  AND (NOT EXISTS (SELECT 1 FROM workflow_versions WHERE hash = new.current_hash AND id = new.id)
+    OR new.current_hash IS NOT (SELECT hash FROM workflow_registrations WHERE id = new.id ORDER BY seq DESC LIMIT 1))
+BEGIN SELECT RAISE(ABORT, 'realm.db: a workflow can only point at one of its own versions'); END`,
+  // G2: an id change would serve one workflow's text under another's id. On any column, so
+  // `UPDATE OR REPLACE … SET id` cannot land and erase the workflow it collides with.
+  `CREATE TRIGGER workflows_id_fixed BEFORE UPDATE ON workflows
+WHEN new.id IS NOT old.id
+BEGIN SELECT RAISE(ABORT, 'realm.db: a workflow''s id cannot change'); END`,
+  // G3: no Realm path deletes a workflow.
+  `CREATE TRIGGER workflows_no_delete BEFORE DELETE ON workflows
+BEGIN SELECT RAISE(ABORT, 'realm.db: a registered workflow cannot be deleted'); END`,
 ];
