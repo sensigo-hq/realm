@@ -542,7 +542,7 @@ Types: `PerRunArtifactStoreContractAdapter`, `ArtifactStoreContractCase`, `Artif
 | `fenceRunPark`                                 | With `'injected-reader'` | The run source's `park`. The cases use it to hold or fail the store's next read of a run.                                                                                                                                                                                                                                                             |
 | `lockProfile`, `bytesOracle`, raw byte readers | No                       | Optional extras. Without one, the checks that need it are skipped: such a case has `skipped: true`, and its name says why. Register it with your test runner's skip.                                                                                                                                                                                  |
 
-An `'in-transaction'` adapter gets 15 cases as skips, because it has no injected run read to hold or fail: the racers, the held-key cases, the failing-read case, and the three latch laws. Its own suite must cover each.
+An `'in-transaction'` adapter gets as skips every case that needs an injected run read to hold or fail: the racers, the held-key cases, the failing-read case, and the three latch laws. Its own suite must cover each.
 
 The 12 laws: `STRUCTURAL`, `FENCE_REFUSES`, `FENCE_DATA`, `CS_OCCUPANCY`, `PER_KEY_INDEPENDENCE`, `NO_SILENT_LOSS`, `CARRIAGE_ROUND_TRIP`, `SEAL`, `SEAL_BUDGET`, `PER_WRITER_BUDGET`, `VERBATIM`, `STORE_RELEASE_LINE_TRUE`.
 
