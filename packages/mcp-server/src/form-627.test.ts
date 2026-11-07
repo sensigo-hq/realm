@@ -231,28 +231,31 @@ function realmTimerDelays(spy: { mock: { calls: unknown[][] } }): number[] {
 const DRIVE_BOUND_MS = 20_000;
 /** The time limit of a cell that uses `drive()`: above the bound, so a hang prints its message. */
 const DRIVE_CELL_MS = 30_000;
-/** Fake time a `drive()` step adds while under {@link DRIVE_CEILING_MS}. */
-const DRIVE_STEP_MS = 50;
 /**
- * The most fake time `drive()` adds at {@link DRIVE_STEP_MS} a step after its advance (#1024): twice
- * the longest delay a cell's handler waits (61 s) — such a timer is registered only once the server's
- * own reads have reached the client, which can be after the advance — and, with the longest advance
- * here (62 s), far under the test client's 600 s per-call timeout. Past it the clock keeps real pace.
+ * After its advance, `drive()` runs the fake clock at this many fake milliseconds per real millisecond
+ * (#1024). Two bounds fix it. Every timer a cell's own path can register — the longest is a handler's
+ * 61 s wait, registered only once the server's reads have reached the client, which under load can be
+ * long after the advance — must fire inside {@link DRIVE_BOUND_MS}: 61 s at 10× is 6.1 s of real time.
+ * The test client's 600 s per-call timeout must NOT: 538 s past the longest advance here (62 s) is 54 s
+ * of real time at 10×, past the bound, so it cannot fire; a store write that takes real time costs
+ * only ten times that in fake time. (The two shapes before this one both failed on CI: 50 ms a step
+ * with no limit reached the 600 s timeout in about 100 ms of real time whenever a store write was
+ * slower — three reds; a 120 s ceiling of such steps, then real pace, was spent in about 30 ms of real
+ * time, and a handler's 61 s timer registered after it never fired inside the bound — one red.)
  */
-const DRIVE_CEILING_MS = 120_000;
+const DRIVE_PACE = 10;
 
 /**
  * Runs `p` under fake timers: advance `ms`, then keep turning the clock and the I/O until it settles,
  * or until {@link DRIVE_BOUND_MS} of REAL time passes (correction 2, 1.8). After the advance each step
- * adds {@link DRIVE_STEP_MS} of fake time until {@link DRIVE_CEILING_MS} has been added, then only the
- * real time that passed since the last step (`Date` is not faked here — `toFake` names only the timer
- * functions): a faked retry timer behind a store write still fires at its due time, and the test
- * client's 600 s per-call timeout stays out of reach. (#1024: the loop once added 50 ms a step without
- * a ceiling, which reaches that timeout in about 100 ms of real time, so a store write slower than
- * that on a loaded runner failed the call with `-32001` — three CI reds.) A step count could run out
- * while real I/O was still pending — a store lock retries on a faked `setTimeout`, so the call then
- * waited on a fake timer nothing advanced (it hung once on CI) — so the bound is real time; a call
- * that does not settle fails with the fake time and the steps it reached.
+ * adds {@link DRIVE_PACE} times the real time that passed since the last step (`Date` is not faked
+ * here — `toFake` names only the timer functions), so the fake clock runs at a bounded multiple of the
+ * real one whatever the machine's load: a faked retry timer behind a store write still fires at its due
+ * time, a timer registered late still fires inside the bound, and the test client's 600 s per-call
+ * timeout stays out of reach. A step count could run out while real I/O was still pending — a store
+ * lock retries on a faked `setTimeout`, so the call then waited on a fake timer nothing advanced (it
+ * hung once on CI) — so the bound is real time; a call that does not settle fails with the fake time
+ * and the steps it reached.
  */
 async function drive<T>(p: Promise<T>, ms: number): Promise<T> {
   let done = false;
@@ -266,7 +269,7 @@ async function drive<T>(p: Promise<T>, ms: number): Promise<T> {
   let steps = 0;
   while (!done && Date.now() - started < DRIVE_BOUND_MS) {
     const now = Date.now();
-    const step = advanced < DRIVE_CEILING_MS ? DRIVE_STEP_MS : now - last;
+    const step = (now - last) * DRIVE_PACE;
     advanced += step;
     last = now;
     await vi.advanceTimersByTimeAsync(step);
@@ -391,10 +394,12 @@ describe('#627 W — the form path (cell 21)', () => {
   const REAL_SET_TIMEOUT = globalThis.setTimeout;
 
   it(
-    'the clock loop keeps real pace while the store settles: a settle of 300 ms of real time still records the answer (#1024)',
+    'the clock loop runs at a bounded pace: a form that reaches the client late and a settle of 300 ms of real time still record the answer (#1024)',
     async () => {
-      // The answer's settle takes 300 ms of REAL time (a loaded CI runner's store write), on the real
-      // clock's timer, so fake time cannot shorten it.
+      // Two delays a loaded CI runner adds, both on the real clock's timer so fake time cannot shorten
+      // them: the form reaches the client late (the server's reads before it are slow), so the
+      // handler's 61 s wait is armed 100 ms of real time after the advance; and the answer's settle
+      // takes 300 ms of real time (the store's write).
       class SlowSettle extends JsonFileStore {
         override async settleStep(
           ...args: Parameters<JsonFileStore['settleStep']>
@@ -408,6 +413,7 @@ describe('#627 W — the form path (cell 21)', () => {
       const s = await session(
         {},
         async () => {
+          await new Promise<void>((r) => REAL_SET_TIMEOUT(r, 100));
           await new Promise((r) => setTimeout(r, 61_000));
           return { action: 'accept', content: { choice: 'reject' } };
         },
@@ -421,11 +427,14 @@ describe('#627 W — the form path (cell 21)', () => {
       } finally {
         vi.useRealTimers();
       }
-      // (a) red when the loop's fast steps have no ceiling (50 ms a step until the call settles: the
+      // (a) red when the loop's fast steps have no limit (50 ms a step until the call settles: the
       //     client's 600 s call timeout is reached in about 100 ms of real time while the settle is
-      //     pending, and the call is rejected `-32001` — shown here before the ceiling existed, and on
-      //     CI three times: PRs #948, #980, #1001); (b) prints the answers recorded and their choice,
-      //     or the rejection.
+      //     pending, and the call is rejected `-32001` — CI three times: PRs #948, #980, #1001), and
+      //     red when they stop at a ceiling and the clock then keeps real pace (the ceiling is spent in
+      //     about 30 ms of real time, before the late-armed 61 s wait exists; at real pace that wait
+      //     lies past the 20 s bound and `drive()` reports the hang — CI once, #1029's run on main
+      //     714468f2); (b) prints the answers recorded and their choice, the rejection, or the hang's
+      //     fake time and steps.
       expect((await answers(s, runId)).map((e) => e.input_summary?.['choice'])).toEqual(['reject']);
     },
     DRIVE_CELL_MS,
