@@ -7,18 +7,15 @@
 //        stated instant is that reading.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, afterEach } from 'vitest';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
-  JsonWorkflowStore,
   advanceRun,
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { InMemoryStore, steppingClock } from '@sensigo/realm-testing';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { handleGetRunState } from './get-run-state.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const T = new Date('2031-05-06T07:00:00.000Z');
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -35,6 +32,11 @@ const THREE: WorkflowDefinition = {
     d: { description: 'D.', execution: 'agent', depends_on: ['c'] },
   },
 };
+
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
 
 describe('#715 (b) §B.2 — one reading per read or write, on a stepping clock', () => {
   it('(ii) one advance over three steps: each settle is stamped with its own reading, taken after the write before it', async () => {
@@ -81,7 +83,9 @@ describe('#715 (b) §B.2 — one reading per read or write, on a stepping clock'
     const clock = steppingClock(T, 1_000);
     const store = new InMemoryStore({ clock });
     const { record } = await store.create({ workflowId: THREE.id, workflowVersion: 1, params: {} });
-    const workflowStore = new JsonWorkflowStore(mkdtempSync(join(tmpdir(), 'realm-715b-one-wf-')));
+    const h = await makeTempHome();
+    handles.push(h);
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register(THREE);
     const before = clock.reads;
     const state = await handleGetRunState(

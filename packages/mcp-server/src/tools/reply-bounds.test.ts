@@ -6,22 +6,16 @@
 // (an in-process client). Every value is a fake. Each assertion names (a) the change that turns it
 // red and (b) what it prints: counts, lines, lengths and booleans — never a whole list, an
 // environment or a key.
-import { describe, it, expect } from 'vitest';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { describe, it, expect, afterEach } from 'vitest';
+import { writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  CURRENT_WORKFLOW_SCHEMA_VERSION,
-  JsonFileStore,
-  JsonWorkflowStore,
-  type WorkflowDefinition,
-} from '@sensigo/realm';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION, type WorkflowDefinition } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
-import { withArtifactStores } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const flat = (t: string) => t.replace(/\s+/g, ' ');
@@ -35,11 +29,16 @@ function claim(page: string, sentence: string): void {
 
 type Reply = Record<string, unknown>;
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 async function connect() {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-reply-bounds-'));
-  const runStore = new JsonFileStore(join(dir, 'runs'));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
-  const server = createRealmMcpServer({ ...withArtifactStores(runStore), workflowStore });
+  const h = await makeTempHome();
+  handles.push(h);
+  const { workflowStore } = h.stores;
+  const server = createRealmMcpServer({ ...h.stores });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'reply-bounds', version: '0' });
   await Promise.all([server.connect(st), client.connect(ct)]);
@@ -62,7 +61,7 @@ async function connect() {
     const wid = (wf['data'] as { workflow_id: string }).workflow_id;
     return (await call('start_run', { workflow_id: wid }))['run_id'] as string;
   };
-  return { call, dir, workflowStore, agentRun };
+  return { call, dir: h.root, workflowStore, agentRun };
 }
 
 const keys = (n: number, prefix = 'zz') =>

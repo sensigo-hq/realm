@@ -4,17 +4,13 @@
 // two remedies work; and a program embedding the engine (a child process per kind) is refused
 // without a rejection left unawaited. What a failing cell prints: statuses, codes, agent actions,
 // booleans and exit codes — never a value.
-import { describe, it, expect } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
+import { describe, it, expect, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   createDefaultRegistry,
   asyncSchemaValidity,
@@ -22,18 +18,23 @@ import {
   type StepDefinition,
 } from '@sensigo/realm';
 import { createRealmMcpServer } from '../server.js';
-import { withArtifactStores } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 type Reply = Record<string, unknown>;
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 async function connect() {
-  const base = await mkdtemp(join(tmpdir(), 'realm-async-runtime-'));
-  const runStore = new JsonFileStore(join(base, 'runs'));
-  const workflowStore = new JsonWorkflowStore(join(base, 'wf'));
+  const h = await makeTempHome();
+  handles.push(h);
+  const { runStore, workflowStore } = h.stores;
   const registry = createDefaultRegistry();
   registry.register('handler', 'h', { id: 'h', execute: async () => ({ data: { ok: true } }) });
-  const server = createRealmMcpServer({ ...withArtifactStores(runStore), workflowStore, registry });
+  const server = createRealmMcpServer({ ...h.stores, registry });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'async-schema-runtime', version: '0' });
   await Promise.all([server.connect(st), client.connect(ct)]);

@@ -16,12 +16,8 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: field
 // names, verbs, tools and booleans — never a token's value.
-import { describe, it, expect, vi } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
-  JsonFileStore,
   buildPreExecutionErrorEnvelope,
   composeWaysOn,
   executeStep,
@@ -37,6 +33,7 @@ import {
 } from '@sensigo/realm';
 import { renderReply, renderWaysOf, mcpDoorPolicy } from './render-reply.js';
 import { generateProtocol } from './protocol/generator.js';
+import { makeTempHome, type TempHome } from './test-support/temp-home.js';
 
 const AT = new Date('2026-10-16T12:00:00.000Z');
 
@@ -91,6 +88,11 @@ const replyOver = (composed: ReturnType<typeof composeWaysOn>, extra: Partial<En
     ...composed,
     ...extra,
   }) as EngineReply;
+
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
 
 describe('#729 PR-0 — the MCP door’s laws', () => {
   it('NARROWING: register is an elsewhere entry (instruction null, for the operator), never a next step', () => {
@@ -249,7 +251,9 @@ describe('#729 PR-0 — the MCP door’s laws', () => {
   });
 
   it('Amendment 9: the published field set — the ways, the engine’s routing fields and error.remedy never leave the door', async () => {
-    const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-door-729-')));
+    const h = await makeTempHome();
+    handles.push(h);
+    const store = h.stores.runStore;
     const { record: run } = await store.create({
       workflowId: LEVER.id,
       workflowVersion: 1,
@@ -308,7 +312,9 @@ describe('#729 PR-0 — the MCP door’s laws', () => {
     const facts = { resource: 'run_file' as const, class: 'parse' as const, path: '/s/r.json' };
     const damaged = buildPreExecutionErrorEnvelope('x', 'r', 0, unreadableRunFileError(facts));
     const envelope = renderReply(damaged, {}).envelope;
-    const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-door-729-')));
+    const h = await makeTempHome();
+    handles.push(h);
+    const store = h.stores.runStore;
     const { record: run } = await store.create({
       workflowId: LEVER.id,
       workflowVersion: 1,
@@ -346,7 +352,9 @@ describe('#729 PR-0 — the MCP door’s laws', () => {
   });
 
   it('A-17: the token leaves only inside the opening reply’s answer — never in gate, never on a later reply; a stray one is refused at the exit', async () => {
-    const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-door-729-')));
+    const h = await makeTempHome();
+    handles.push(h);
+    const store = h.stores.runStore;
     const d: WorkflowDefinition = {
       id: 'tok',
       name: 'tok',
@@ -468,7 +476,9 @@ describe('#729 PR-0 — the MCP door’s laws', () => {
   });
 
   it('Table rows 1–4: the answer’s choices are exactly the open gate’s — its declared choices, not a default', async () => {
-    const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-door-729-')));
+    const h = await makeTempHome();
+    handles.push(h);
+    const store = h.stores.runStore;
     const d = {
       id: 'ch',
       name: 'ch',

@@ -1,23 +1,22 @@
 // create_workflow structured_output tests (issue #236, Deliverable 2 — the 4-touch-point wiring).
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { JsonFileStore, JsonWorkflowStore } from '@sensigo/realm';
 import { handleCreateWorkflow, type CreateWorkflowArgs } from './create-workflow.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 describe('create_workflow — structured_output (issue #236)', () => {
-  let runDir: string;
-  let workflowDir: string;
+  let h: TempHome;
   let stores: { runStore: JsonFileStore; workflowStore: JsonWorkflowStore };
 
   beforeEach(async () => {
-    runDir = await mkdtemp(join(tmpdir(), 'realm-cw-so-run-'));
-    workflowDir = await mkdtemp(join(tmpdir(), 'realm-cw-so-wf-'));
+    h = await makeTempHome();
     stores = {
-      runStore: new JsonFileStore(runDir),
-      workflowStore: new JsonWorkflowStore(workflowDir),
+      runStore: h.stores.runStore,
+      workflowStore: h.stores.workflowStore,
     };
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   it('an eligible schema is created, and the registered definition carries structured_output (touch point 3: the copy loop)', async () => {

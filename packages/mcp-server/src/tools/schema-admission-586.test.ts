@@ -3,9 +3,9 @@
  * before any run is created, and `create_workflow` refuses a malformed step `input_schema` at its
  * own admission door.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp, readdir } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdirSync } from 'node:fs';
+import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { JsonFileStore, JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
@@ -13,6 +13,7 @@ import { WorkflowError } from '@sensigo/realm';
 import { handleStartRun } from './start-run.js';
 import { handleStartRunBatch } from './start-run-batch.js';
 import { handleCreateWorkflow } from './create-workflow.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const workflow: WorkflowDefinition = {
   id: 'sa',
@@ -28,16 +29,22 @@ const workflow: WorkflowDefinition = {
 };
 
 describe('#586 params_schema on the MCP run-creation surfaces', () => {
+  let h: TempHome;
   let runDir: string;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
 
   beforeEach(async () => {
-    runDir = await mkdtemp(join(tmpdir(), 'realm-586-run-'));
-    const wfDir = await mkdtemp(join(tmpdir(), 'realm-586-wf-'));
-    runStore = new JsonFileStore(runDir);
-    workflowStore = new JsonWorkflowStore(wfDir);
+    h = await makeTempHome();
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
+    // The cells count the run files, before any run is written too.
+    runDir = runStore.runsDirPath;
+    mkdirSync(runDir, { recursive: true });
     await workflowStore.register(workflow);
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   const runCount = async (): Promise<number> =>
@@ -118,16 +125,20 @@ describe('#586 params_schema on the MCP run-creation surfaces', () => {
 });
 
 describe('#586 create_workflow — its own admission door', () => {
+  let h: TempHome;
   let stores: { runStore: JsonFileStore; workflowStore: JsonWorkflowStore };
   let workflowDir: string;
 
   beforeEach(async () => {
-    const runDir = await mkdtemp(join(tmpdir(), 'realm-586-cw-run-'));
-    workflowDir = await mkdtemp(join(tmpdir(), 'realm-586-cw-wf-'));
+    h = await makeTempHome();
+    workflowDir = join(h.path, 'workflows');
     stores = {
-      runStore: new JsonFileStore(runDir),
-      workflowStore: new JsonWorkflowStore(workflowDir),
+      runStore: h.stores.runStore,
+      workflowStore: h.stores.workflowStore,
     };
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   it('a malformed input_schema on a NON-strict step is refused — nothing registered, no run', async () => {

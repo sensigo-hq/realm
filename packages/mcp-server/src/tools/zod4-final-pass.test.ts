@@ -8,14 +8,11 @@
 // booleans, never an environment or a key. Correction 1 (06 rev 2): the walk's lists bounded — the
 // first ten named, then the count — on every tool, a long path cut with the diagnostic whole, the
 // two walk sites without a cell, (xi)'s non-aborting sibling, and three claims pinned.
-import { describe, it, expect } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
+import { describe, it, expect, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { JsonFileStore, JsonWorkflowStore } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
@@ -28,7 +25,7 @@ import {
   checkArgsNumbersJoined,
   walkNumbers,
 } from './args-numbers.js';
-import { withArtifactStores } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const flat = (t: string) => t.replace(/\s+/g, ' ');
@@ -42,12 +39,17 @@ function claim(page: string, sentence: string): void {
 
 type Reply = Record<string, unknown>;
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 /** A door with temp stores (the in-memory transport carries `Infinity` as a number). */
 async function connect() {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-zod4-final-'));
-  const runStore = new JsonFileStore(join(dir, 'runs'));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
-  const server = createRealmMcpServer({ ...withArtifactStores(runStore), workflowStore });
+  const h = await makeTempHome();
+  handles.push(h);
+  const { runStore, workflowStore } = h.stores;
+  const server = createRealmMcpServer({ ...h.stores });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'zod4-final', version: '0' });
   await Promise.all([server.connect(st), client.connect(ct)]);

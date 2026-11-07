@@ -2,10 +2,7 @@
 // start_run runs nothing), C10 (start_run's derived phase), the advance_owed status word and the
 // summary's `engine_runnable` / `pending_guards`, C8 (get_run_state judges the capability check with
 // the server's registry), and start_run_batch's per-entry next_actions.
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   JsonFileStore,
   JsonWorkflowStore,
@@ -19,6 +16,7 @@ import { handleGetRunState } from './get-run-state.js';
 import { handleAdvanceRun } from './advance-run.js';
 import { handleSubmitHumanResponse } from './submit-human-response.js';
 import { handleExecuteStep } from './execute-step.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const owedDef: WorkflowDefinition = {
   id: 'owed-wf',
@@ -52,13 +50,17 @@ const handlerDef: WorkflowDefinition = {
 };
 
 describe('#625 PR-2a — the owed call over the MCP handlers', () => {
+  let h: TempHome;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
   beforeEach(async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-owed-625-'));
-    runStore = new JsonFileStore(join(dir, 'runs'));
-    workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    h = await makeTempHome();
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
     for (const d of [owedDef, headDef, handlerDef]) await workflowStore.register(d);
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   it('C1: a deduped start_run runs NOTHING — the owed step stays owed and the reply names the act', async () => {
@@ -631,12 +633,16 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
 });
 
 describe('#872 (a) — the hand-back hint and engine_runnable.requirement over the MCP handlers', () => {
+  let h: TempHome;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
   beforeEach(async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-owed-872-'));
-    runStore = new JsonFileStore(join(dir, 'runs'));
-    workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    h = await makeTempHome();
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
   /** Two `auto` roots that need the handler `h`, which these servers lack. */
   const twoRoots: WorkflowDefinition = {
