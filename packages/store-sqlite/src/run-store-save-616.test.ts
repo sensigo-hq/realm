@@ -124,6 +124,10 @@ function refusal(err: unknown): unknown {
 const saving = (call: Promise<{ outcome: string }>): Promise<unknown> =>
   call.then((r) => r.outcome, refusal);
 
+/** The run `get()` reads back, or its refusal as a reader sees it (no run stored, for one). */
+const readBack = (o: Opened, id: string): Promise<unknown> =>
+  o.runStore.get(id).then((snapshot) => snapshot.record, refusal);
+
 /** A record as `JSON.stringify` holds it: key order included. */
 const text = (record: unknown): string => JSON.stringify(record);
 
@@ -236,10 +240,10 @@ describe('#616 unit 13c — an exported run is imported as it is', () => {
       terminal_state: false,
     };
     const result = await saving(o.runStore.save(record));
-    const back = (await o.runStore.get(id)).record;
+    const back = await readBack(o, id);
     // (1) red when the import stamps an instant or the version from the store (a reading, a version
     //     moved), or stores the record otherwise than given; (2) prints the outcome and, when they
-    //     differ, both records.
+    //     differ, what get() read back (or its refusal) and the record given.
     expect({ result, back: text(back) === text(record) ? 'equal' : { back, record } }).toEqual({
       result: 'imported',
       back: 'equal',
@@ -257,15 +261,15 @@ describe('#616 unit 13c — an exported run is imported as it is', () => {
       sealed_by: { arm: 'complete', step: 'a' },
     });
     const result = await saving(o.runStore.save(stale));
-    const back = (await o.runStore.get(stale.id)).record;
+    const back = await readBack(o, stale.id);
+    const derived = { ...stale, run_phase: 'completed' };
     // (1) red when the read-back compares the record as given (its stale phase) with the run read
-    //     back (the derived one): the import then fails; (2) prints the outcome, the phase read back,
-    //     and whether the rest is the record given.
+    //     back (the derived one): the import then fails; (2) prints the outcome and, when it is not
+    //     the record with the phase `completed`, what get() read back (or its refusal).
     expect({
       result,
-      phase: back.run_phase,
-      rest: text(back) === text({ ...stale, run_phase: back.run_phase }),
-    }).toEqual({ result: 'imported', phase: 'completed', rest: true });
+      back: text(back) === text(derived) ? 'the record, phase completed' : back,
+    }).toEqual({ result: 'imported', back: 'the record, phase completed' });
   });
 });
 
@@ -646,15 +650,14 @@ describe('#616 unit 13c — no seal boundary', () => {
       terminal_reason: 'All steps completed',
     });
     const result = await saving(o.runStore.save(unstamped));
-    const back = (await o.runStore.get(unstamped.id)).record;
+    const back = await readBack(o, unstamped.id);
     // (1) red when the import runs the seal boundary (a finished write with no stamp is then refused
-    //     STATE_SEAL_UNSTAMPED) or stamps it; (2) prints the outcome, the stamp read back and whether
-    //     the rest is the record given.
+    //     STATE_SEAL_UNSTAMPED) or stamps it; (2) prints the outcome and, when it is not the record
+    //     given with no stamp, what get() read back (or its refusal).
     expect({
       result,
-      sealed_by: back.sealed_by,
-      rest: text(back) === text(asRead(unstamped)),
-    }).toEqual({ result: 'imported', sealed_by: undefined, rest: true });
+      back: text(back) === text(asRead(unstamped)) ? 'the record, unstamped' : back,
+    }).toEqual({ result: 'imported', back: 'the record, unstamped' });
   });
 });
 
