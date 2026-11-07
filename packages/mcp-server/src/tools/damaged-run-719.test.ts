@@ -2,30 +2,28 @@
 // cannot read gives that file's own code, and a message naming the file — never its text. Over a
 // real MCP client, on a real JSON store in a temp folder.
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtemp, mkdir, rm, writeFile, chmod } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, writeFile, chmod } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { JsonFileStore, JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { createRealmMcpServer } from '../server.js';
-import { withArtifactStores } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
-const dirs: string[] = [];
+const handles: TempHome[] = [];
 afterEach(async () => {
-  for (const d of dirs.splice(0)) await rm(d, { recursive: true, force: true });
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
 });
 
 async function connect(bad: string, mode?: number) {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-719-mcp-'));
-  dirs.push(dir);
-  const runsDir = join(dir, 'runs');
+  const h = await makeTempHome();
+  handles.push(h);
+  const runsDir = h.stores.runStore.runsDirPath;
   await mkdir(runsDir, { recursive: true });
   await writeFile(join(runsDir, 'bad.json'), bad);
   if (mode !== undefined) await chmod(join(runsDir, 'bad.json'), mode);
-  const runStore = new JsonFileStore(runsDir);
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+  const { workflowStore } = h.stores;
   await workflowStore.register({
     id: 'w',
     name: 'w',
@@ -33,7 +31,7 @@ async function connect(bad: string, mode?: number) {
     schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
     steps: { a: { description: 'A.', execution: 'agent' } },
   } as WorkflowDefinition);
-  const server = createRealmMcpServer({ ...withArtifactStores(runStore), workflowStore });
+  const server = createRealmMcpServer({ ...h.stores });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'damaged-run-719', version: '0' });
   await Promise.all([server.connect(st), client.connect(ct)]);

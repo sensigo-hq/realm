@@ -1,8 +1,7 @@
 // Tests for the 0.10.0 run-recovery surface: abandon_run MCP tool + get_run_state's
 // next_actions / next_actions_status.
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { JsonFileStore, JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import type { WorkflowDefinition, PendingGate } from '@sensigo/realm';
@@ -12,6 +11,7 @@ import { Client } from '@modelcontextprotocol/sdk/client';
 import { handleAbandonRun, registerAbandonRun } from './abandon-run.js';
 import { handleStartRun } from './start-run.js';
 import { handleGetRunState } from './get-run-state.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const agentFirst: WorkflowDefinition = {
   id: 'agentflow',
@@ -46,13 +46,18 @@ async function callRegisteredAbandon(
 }
 
 describe('abandon_run MCP tool', () => {
+  let h: TempHome;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
 
   beforeEach(async () => {
-    runStore = new JsonFileStore(await mkdtemp(join(tmpdir(), 'rec-run-')));
-    workflowStore = new JsonWorkflowStore(await mkdtemp(join(tmpdir(), 'rec-wf-')));
+    h = await makeTempHome();
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
     await workflowStore.register(agentFirst);
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   it('success: abandons a running run, returns a terminal summary', async () => {
@@ -211,14 +216,19 @@ describe('abandon_run MCP tool', () => {
 });
 
 describe('get_run_state — next_actions_status', () => {
+  let h: TempHome;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
 
   beforeEach(async () => {
-    runStore = new JsonFileStore(await mkdtemp(join(tmpdir(), 'nas-run-')));
-    workflowStore = new JsonWorkflowStore(await mkdtemp(join(tmpdir(), 'nas-wf-')));
+    h = await makeTempHome();
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
     await workflowStore.register(agentFirst);
     await workflowStore.register(autoFirst);
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   it('ok: running with an eligible agent step → next_actions non-empty', async () => {
@@ -295,13 +305,18 @@ describe('get_run_state — next_actions_status', () => {
 });
 
 describe('get_run_state — claim liveness (issue #101 wedge detection)', () => {
+  let h: TempHome;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
 
   beforeEach(async () => {
-    runStore = new JsonFileStore(await mkdtemp(join(tmpdir(), 'claim-run-')));
-    workflowStore = new JsonWorkflowStore(await mkdtemp(join(tmpdir(), 'claim-wf-')));
+    h = await makeTempHome();
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
     await workflowStore.register(autoFirst);
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   async function wedgeRun(
@@ -361,13 +376,18 @@ describe('get_run_state — claim liveness (issue #101 wedge detection)', () => 
 });
 
 describe('get_run_state — gate_waiting + fan-out wedge (issue #101 gate/fan-out correction)', () => {
+  let h: TempHome;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
 
   beforeEach(async () => {
-    runStore = new JsonFileStore(await mkdtemp(join(tmpdir(), 'gatewedge-run-')));
-    workflowStore = new JsonWorkflowStore(await mkdtemp(join(tmpdir(), 'gatewedge-wf-')));
+    h = await makeTempHome();
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
     await workflowStore.register(agentFirst);
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   async function gateRun(
@@ -432,13 +452,18 @@ describe('get_run_state — gate_waiting + fan-out wedge (issue #101 gate/fan-ou
 });
 
 describe('get_run_state — skip_details surfacing (issue #111)', () => {
+  let h: TempHome;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
 
   beforeEach(async () => {
-    runStore = new JsonFileStore(await mkdtemp(join(tmpdir(), 'skip-details-run-')));
-    workflowStore = new JsonWorkflowStore(await mkdtemp(join(tmpdir(), 'skip-details-wf-')));
+    h = await makeTempHome();
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
     await workflowStore.register(agentFirst);
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   it('present when non-empty — a run with a recorded skip reason surfaces skip_details', async () => {
@@ -483,13 +508,18 @@ describe('get_run_state — skip_details surfacing (issue #111)', () => {
 // start_run → abandon_run → start_run(rerun) → get_run_state: the supersede was always real; the
 // LINK did not exist, so an agent that reran a run could not tell which run it replaced.
 describe('the rerun is linked — start_run → abandon_run → start_run(rerun) → get_run_state', () => {
+  let h: TempHome;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
 
   beforeEach(async () => {
-    runStore = new JsonFileStore(await mkdtemp(join(tmpdir(), 'rec-rerun-run-')));
-    workflowStore = new JsonWorkflowStore(await mkdtemp(join(tmpdir(), 'rec-rerun-wf-')));
+    h = await makeTempHome();
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
     await workflowStore.register(agentFirst);
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   it('the fresh run carries rerun_of on the record AND on get_run_state; the old one is untouched', async () => {

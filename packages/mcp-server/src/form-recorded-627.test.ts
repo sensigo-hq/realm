@@ -7,12 +7,8 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: the
 // row's name and the door's two counts.
-import { describe, it, expect, vi } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
-  JsonFileStore,
   advanceRun,
   judgeFormWait,
   judgeGateAnswers,
@@ -21,6 +17,7 @@ import {
 } from '@sensigo/realm';
 import { McpDoor } from './door.js';
 import { sendQuestionForm } from './form-path.js';
+import { makeTempHome, type TempHome } from './test-support/temp-home.js';
 
 const stub = vi.hoisted(() => ({ reply: undefined as unknown }));
 
@@ -58,11 +55,17 @@ const RECORDED = {
   unavailable: [],
 } as unknown as EngineReply;
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 /** Sends one form that the person accepts, with the stubbed submit returning `reply`; the counts. */
 async function countsFor(reply: EngineReply) {
   stub.reply = reply;
-  const dir = await mkdtemp(join(tmpdir(), 'realm-rec-627-'));
-  const runStore = new JsonFileStore(join(dir, 'runs'));
+  const h = await makeTempHome();
+  handles.push(h);
+  const runStore = h.stores.runStore;
   const definition = loadWorkflowFromString(YAML);
   const { record: run } = await runStore.create({
     workflowId: 'rec627',

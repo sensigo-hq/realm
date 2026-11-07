@@ -5,15 +5,10 @@
 // lists in its plan, and `blocked_reason.eligible_steps` bounded by construction. Synthetic replies
 // through the real walk unless a cell says the door. Beside each: (a) the change that turns it red;
 // (b) what it prints on failure — keys, counts, sizes and lines, never a value.
-import { describe, it, expect } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, afterEach } from 'vitest';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   ExtensionRegistry,
-  JsonFileStore,
-  JsonWorkflowStore,
   WorkflowError,
   buildPreExecutionErrorEnvelope,
   compileDisclosure,
@@ -37,7 +32,7 @@ import {
 } from './render-reply.js';
 import { sseJsonStringify } from './sse-json.js';
 import { RUN_STATE_PLAN, RUN_STATE_SUMMARY_TABLE } from './tools/get-run-state.js';
-import { withArtifactStores } from './test-support/temp-home.js';
+import { makeTempHome, type TempHome } from './test-support/temp-home.js';
 
 const set = compileDisclosure([], {
   declared: 'resolved',
@@ -163,6 +158,11 @@ describe('#872 (b1) correction 1 AC2 (C2) — phase 1 keeps the largest count th
 
 // ─── AC3: the overflow line ──────────────────────────────────────────────────────────────────────
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 describe('#872 (b1) correction 1 AC3 (C3) — the overflow line: one arm per reply, true in every case', () => {
   it('TEXT: a 40,000-character text reply is sent as it is; 40,001 gets the text arm as its own first line, the text whole after it', () => {
     const at = toolContentOf('t'.repeat(C), disclosureOf({})).content[0]!.text;
@@ -274,8 +274,9 @@ describe('#872 (b1) correction 1 AC3 (C3) — the overflow line: one arm per rep
   });
 
   it('FIELD (the door): a 1,000-item batch failing params_schema — VALIDATION_BATCH_ITEMS names error_details; nothing in it can be cut, so the floor-cut reply is the whole one (N = M)', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-ac3-872-'));
-    const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    const h = await makeTempHome();
+    handles.push(h);
+    const workflowStore = h.stores.workflowStore;
     await workflowStore.register({
       id: 'ac3-batch',
       name: 'ac3-batch',
@@ -289,8 +290,7 @@ describe('#872 (b1) correction 1 AC3 (C3) — the overflow line: one arm per rep
       steps: { s: { description: 'S.', execution: 'agent', depends_on: [] } },
     } as WorkflowDefinition);
     const server = createRealmMcpServer({
-      ...withArtifactStores(new JsonFileStore(join(dir, 'runs'))),
-      workflowStore,
+      ...h.stores,
     });
     const [ct, st] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: 'ac3-872', version: '0' });
@@ -502,12 +502,11 @@ describe('#872 (b1) correction 1 HC4 (H4) — get_run_state’s run lists are cu
 
 /** A JSON-file store pair and an MCP client on a server with `registry` (when given). */
 async function door(registry?: ExtensionRegistry) {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-hc6-872-'));
-  const runStore = new JsonFileStore(join(dir, 'runs'));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+  const h = await makeTempHome();
+  handles.push(h);
+  const { runStore, workflowStore } = h.stores;
   const server = createRealmMcpServer({
-    ...withArtifactStores(runStore),
-    workflowStore,
+    ...h.stores,
     ...(registry !== undefined ? { registry } : {}),
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();

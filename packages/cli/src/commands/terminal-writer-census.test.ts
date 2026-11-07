@@ -233,6 +233,12 @@ const EXPECTED: Record<string, CensusEntry> = {
     classes: ['writer-stamped'],
     reason: 'The create branch mints a fresh, non-terminal run record.',
   },
+  // #616 PR-1a unit 12a: the SQLite run store's create, like the two stores above.
+  'packages/store-sqlite/src/run-store.ts': {
+    count: 1,
+    classes: ['writer-stamped'],
+    reason: 'The create branch mints a fresh, non-terminal run record.',
+  },
   'packages/testing/src/store/run-store-fidelity-contract.ts': {
     count: 1,
     classes: ['fixture-input'],
@@ -424,11 +430,12 @@ describe('#367 — the terminal-writer census', () => {
   // #715 (a): +1 (store-clock-contract.ts, the store-clock TCK's holder run), in a new file.
   // #715 (b): -8 (execution-loop.ts's legacy blocks and buildFinalizedSeal, deleted).
   // #616 PR-1a unit 2b: +1 (eligibility.ts, the phase fingerprint's corpus table), in a mapped file.
-  it('the post-strip total is 77 across 16 files — the figure the map is built from', () => {
+  // #616 PR-1a unit 12a: +1 (run-store.ts, the create branch), in a new file.
+  it('the post-strip total is 78 across 17 files — the figure the map is built from', () => {
     const scan = scanTerminalWriters(REPO_ROOT);
     const total = Object.values(scan.hits).reduce((n, l) => n + l.length, 0);
-    expect(total).toBe(77);
-    expect(Object.keys(scan.hits)).toHaveLength(16);
+    expect(total).toBe(78);
+    expect(Object.keys(scan.hits)).toHaveLength(17);
   });
 });
 

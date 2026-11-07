@@ -15,12 +15,18 @@
 // Every refusal is a rejected promise, never a synchronous throw: the resolver's, the clock file's,
 // this module's own, and the open's (the loader, the filesystem gate, the old-store guard, the file's
 // checks), which pass through unchanged.
+//
+// The handle carries the home's run store (unit 12a), its duplicate-webhook memory (B8) and `close()`.
+// A caller that shares an open home checks, once the open has resolved, that the cache still holds it:
+// a `close()` while the caller waited (MA 2, #998) removed it and closed the connection, so the caller
+// looks the home up once more and opens it afresh instead of receiving a closed handle.
 import { realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { realmHomePath, resolveRootClock, type Clock, type DedupStore } from '@sensigo/realm';
 import { RealmDb } from './connection.js';
 import { SqliteDedupStore } from './dedup-store.js';
 import type { OpenSeams } from './open-file.js';
+import { SqliteRunStore } from './run-store.js';
 
 /** What `openRealmHome` takes. */
 export interface OpenRealmHomeOptions {
@@ -34,8 +40,13 @@ export interface OpenRealmHomeOptions {
   readonly clock?: Clock;
 }
 
-/** An open Realm home. Later units add its other stores. */
+/**
+ * An open Realm home: its run store, its duplicate-webhook memory and `close()`. Later units add its
+ * other stores.
+ */
 export interface RealmHome {
+  /** The home's run store: creates, reads and lists its runs. */
+  readonly runStore: SqliteRunStore;
   /**
    * The duplicate-webhook memory of one workflow (`realm listen`'s): one instance per workflow id, on
    * the home's one connection. After `close()`, its calls reject.
@@ -91,9 +102,19 @@ export function openRealmHome(options: OpenRealmHomeOptions = {}): Promise<Realm
  * `openRealmHome` with the open's seams (package-internal: the package's entry does not export it).
  * A home opened through seams is cached like any other.
  */
-export async function openHome(
+export function openHome(options: OpenRealmHomeOptions, seams: OpenSeams): Promise<RealmHome> {
+  return lookUp(options, seams, true);
+}
+
+/**
+ * The cache's lookup, then the open. A caller that shares an open home gets its handle only while the
+ * cache still holds that open once it has resolved (`close()` removes its own entry); otherwise, when
+ * `again` is true, it looks the home up once more.
+ */
+async function lookUp(
   options: OpenRealmHomeOptions,
   seams: OpenSeams,
+  again: boolean,
 ): Promise<RealmHome> {
   const home = realmHomePath(options.home);
   const key = realKey(home);
@@ -104,7 +125,10 @@ export async function openHome(
         `The Realm home ${home} is already open in this process with another clock; close it first.`,
       );
     }
-    return shared.opening;
+    const handle = await shared.opening;
+    // Closed while this caller waited: the cache no longer holds the open.
+    if (again && homes.get(key)?.opening !== shared.opening) return lookUp(options, seams, false);
+    return handle;
   }
   /** Lets go of this open in the cache, only while the cache still holds it (not a newer open). */
   const forget = (): void => {
@@ -116,6 +140,7 @@ export async function openHome(
     let closed = false;
     const dedupStores = new Map<string, DedupStore>();
     return {
+      runStore: new SqliteRunStore(db),
       dedupStoreFor(workflowId: string): DedupStore {
         let store = dedupStores.get(workflowId);
         if (store === undefined) {

@@ -11,20 +11,14 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: whether
 // the reply's hint and next_actions name an answer way, and the hint — never a token.
-import { describe, it, expect } from 'vitest';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { describe, it, expect, afterEach } from 'vitest';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import {
-  CURRENT_WORKFLOW_SCHEMA_VERSION,
-  JsonFileStore,
-  JsonWorkflowStore,
-  loadWorkflowFromString,
-} from '@sensigo/realm';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION, loadWorkflowFromString } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
-import { withArtifactStores } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const YAML = [
   'id: at627',
@@ -51,15 +45,19 @@ const WAITS_ONCE_REPAIRED =
 
 type Door = 'offered' | 'asked' | 'withheld';
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 /** A server with a run waiting at its question, the registered copy's path, and a tool caller. */
 async function atGate(gateAnswers: Door, forms = false) {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-at-627-'));
-  const runStore = new JsonFileStore(join(dir, 'runs'));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+  const h = await makeTempHome();
+  handles.push(h);
+  const { runStore, workflowStore } = h.stores;
   await workflowStore.register(loadWorkflowFromString(YAML));
   const server = createRealmMcpServer({
-    ...withArtifactStores(runStore),
-    workflowStore,
+    ...h.stores,
     gateAnswers,
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();
@@ -84,7 +82,7 @@ async function atGate(gateAnswers: Door, forms = false) {
     run_id: string;
   };
   const gateId = (await runStore.get(started.run_id)).record.pending_gate!.gate_id;
-  return { copy: join(dir, 'wf', 'at627.json'), runId: started.run_id, gateId, text };
+  return { copy: join(h.path, 'workflows', 'at627.json'), runId: started.run_id, gateId, text };
 }
 
 /** A reply's hint and next_actions, when it is Realm's JSON reply; nothing for an SDK error text. */
@@ -210,13 +208,12 @@ describe('#627 W correction 2 (8.1) — append_trace on a step waiting at its ow
     '      choices: [approve, reject]',
   ].join('\n');
   const atOwnQuestion = async (gateAnswers: Door) => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-at8-627-'));
-    const runStore = new JsonFileStore(join(dir, 'runs'));
-    const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    const h = await makeTempHome();
+    handles.push(h);
+    const { runStore, workflowStore } = h.stores;
     await workflowStore.register(loadWorkflowFromString(GATED));
     const server = createRealmMcpServer({
-      ...withArtifactStores(runStore),
-      workflowStore,
+      ...h.stores,
       gateAnswers,
     });
     const [ct, st] = InMemoryTransport.createLinkedPair();

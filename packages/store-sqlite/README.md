@@ -5,7 +5,7 @@ Do not depend on this package.
 
 ## Opening a home
 
-`openRealmHome({ home, clock })` opens a Realm home and resolves to a handle with `close()`. Callers in one process that open the same home share one handle and one connection, so a `close()` by any of them ends it for all.
+`openRealmHome({ home, clock })` opens a Realm home and resolves to a handle with `runStore`, `dedupStoreFor` and `close()`. Callers in one process that open the same home share one handle and one connection, so a `close()` by any of them ends it for all.
 
 ## The store file
 

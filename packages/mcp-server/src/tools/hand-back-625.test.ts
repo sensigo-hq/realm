@@ -4,10 +4,7 @@
 // go on carried `next_actions: []` and a hint that named nothing), and each `started` entry of
 // `start_run_batch` (C65: the entry carried `next_actions` and no sentence). The way out comes with it
 // when the run cannot go on until its workflow is corrected. Whole-message pins.
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   JsonFileStore,
   JsonWorkflowStore,
@@ -17,6 +14,7 @@ import {
 } from '@sensigo/realm';
 import { handleStartRun } from './start-run.js';
 import { handleStartRunBatch } from './start-run-batch.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 // F15: `compute` is refused for its input and has no `depends_on` (the engine gives it the run's
 // params): its own way out, never "correct the workflow" alone.
@@ -45,14 +43,18 @@ const def = (id: string, withAgent: boolean): WorkflowDefinition => ({
 });
 
 describe('#625 PR-2a, C64 and C65 — one hint for a run handed back with nothing run', () => {
+  let h: TempHome;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
   beforeEach(async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-hand-back-625-'));
-    runStore = new JsonFileStore(join(dir, 'runs'));
-    workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    h = await makeTempHome();
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
     await workflowStore.register(def('hb-stuck', false));
     await workflowStore.register(def('hb-ready', true));
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   it('C65: a started entry whose run can only reach a refused engine step — the creation sentence, the step, the way out', async () => {

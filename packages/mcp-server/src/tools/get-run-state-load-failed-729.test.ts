@@ -7,10 +7,7 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: tool
 // names, codes and booleans — never the loader's message.
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   JsonFileStore,
   JsonWorkflowStore,
@@ -21,6 +18,7 @@ import {
 } from '@sensigo/realm';
 import { handleStartRun } from './start-run.js';
 import { handleGetRunState } from './get-run-state.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 /** `ask` (an agent step), and `h` (an engine step with a handler). */
 const D: WorkflowDefinition = {
@@ -48,15 +46,19 @@ const loadWarnings = (warnings: readonly string[] | undefined) =>
     }));
 
 describe('#729 PR-0 — A-5: get_run_state on a server whose project code failed to load', () => {
+  let h: TempHome;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
   let runId: string;
   beforeEach(async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-load-failed-729-'));
-    runStore = new JsonFileStore(join(dir, 'runs'));
-    workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    h = await makeTempHome();
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
     await workflowStore.register(D);
     runId = (await handleStartRun({ workflow_id: D.id }, { runStore, workflowStore })).run_id;
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   it('a coded failure: nothing callable, one warning with its code, report_to_user', async () => {

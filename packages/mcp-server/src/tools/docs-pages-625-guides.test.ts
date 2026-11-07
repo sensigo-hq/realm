@@ -7,15 +7,11 @@
 // place.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   ExtensionRegistry,
   advanceRun,
   createDefaultRegistry,
@@ -29,7 +25,7 @@ import {
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
-import { makeTempHome, withArtifactStores } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const flat = (t: string) => t.replace(/\s+/g, ' ');
@@ -56,13 +52,17 @@ function block(page: string, marker: string): string[] {
 
 type Reply = Record<string, unknown>;
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 async function connect(registry?: ExtensionRegistry) {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-pages-625-e2-'));
-  const runStore = new JsonFileStore(join(dir, 'runs'));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+  const h = await makeTempHome();
+  handles.push(h);
+  const { runStore, workflowStore } = h.stores;
   const server = createRealmMcpServer({
-    ...withArtifactStores(runStore),
-    workflowStore,
+    ...h.stores,
     ...(registry !== undefined ? { registry } : {}),
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();
@@ -237,7 +237,7 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       offered: [11, ['submit_human_response']],
       withheld: [10, []],
     });
-    home.cleanup();
+    await home.cleanup();
   });
 
   it('connect-an-mcp-client.md: execute_step submits the answer to an agent step; an automatic step is the engine’s — advance_run runs it (#729, the Q3 unit)', async () => {
@@ -902,8 +902,9 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       "A program passed `advanceRun`, `executeStep`, `executeChain`, `submitHumanResponse` or `executeEngineStep` a `caller` that is not one of that function's own words (see [Core library](core-library.md)).",
     );
     claim(page, 'Nothing was read or written. Added after version 0.46.0.');
-    const dir = await mkdtemp(join(tmpdir(), 'realm-pages-625-e2-lib-'));
-    const store = new JsonFileStore(dir);
+    const h = await makeTempHome();
+    handles.push(h);
+    const store = h.stores.runStore;
     const def = wf([
       'id: lib',
       'name: lib',
@@ -1000,8 +1001,9 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       // decision C192: the comment gives the call.
       '// response.ways says what can be done next: a run_step way names a step to execute; when an\n// advance way is offered, call advanceRun(store, definition, { runId: run.id }) (import it beside\n// executeStep). Repeat until neither is offered: the run has ended, or response.unavailable says\n// why nothing can run.',
     );
-    const dir = await mkdtemp(join(tmpdir(), 'realm-pages-625-e2-readme-'));
-    const store = new JsonFileStore(dir);
+    const h = await makeTempHome();
+    handles.push(h);
+    const store = h.stores.runStore;
     const def = wf([
       'id: readme',
       'name: readme',
@@ -1075,12 +1077,13 @@ describe('#872 (b1) B11 — error-codes.md, agent-created-workflows.md, connect-
       "The refusal names each fault once: steps with the same fault share one line — the first step's message, then the other steps' names, `Step 'a': description must be non-empty (also 'b', 'c' and 4 more)`, two more names, then how many more. Steps share a line only when their fault is the same, so every fault shows at once; past about 8,000 characters, the last line counts the rest and names three of their steps (added after version 0.48.0).",
     );
     const { handleCreateWorkflow } = await import('./create-workflow.js');
-    const dir = await mkdtemp(join(tmpdir(), 'realm-guides-872-'));
+    const h = await makeTempHome();
+    handles.push(h);
     const reply = await handleCreateWorkflow(
       { steps: ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((id) => ({ id, description: '' })) },
       {
-        workflowStore: new JsonWorkflowStore(join(dir, 'wf')),
-        runStore: new JsonFileStore(join(dir, 'runs')),
+        workflowStore: h.stores.workflowStore,
+        runStore: h.stores.runStore,
       },
     );
     // (a) red when the page's example and the real line part; (b) prints the line.

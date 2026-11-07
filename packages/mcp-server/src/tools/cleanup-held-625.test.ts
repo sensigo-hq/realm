@@ -5,15 +5,11 @@
 // it; never that the drainer is alive or dead. A live and an expired lease each.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   ExtensionRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   advanceRun,
@@ -22,6 +18,7 @@ import {
 } from '@sensigo/realm';
 import { handleGetRunState } from './get-run-state.js';
 import { handleAdvanceRun } from './advance-run.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 
@@ -50,11 +47,16 @@ const DEF: WorkflowDefinition = {
   },
 };
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 /** A completed run whose cleanup step `tidy` was left pending, then leased by another drainer. */
 async function heldRun(lease: 'live' | 'expired') {
-  const dir = await mkdtemp(join(tmpdir(), 'held-mcp-625-'));
-  const runStore = new JsonFileStore(join(dir, 'runs'));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+  const h = await makeTempHome();
+  handles.push(h);
+  const { runStore, workflowStore } = h.stores;
   await workflowStore.register(DEF);
   const { record: run } = await runStore.create({
     workflowId: DEF.id,

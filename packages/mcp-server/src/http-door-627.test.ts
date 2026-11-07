@@ -9,21 +9,18 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: the
 // listed tool names, the answer tool's _meta, the forms sent and the recorded route — never a token.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { createServer, type IncomingMessage } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { JsonFileStore, JsonWorkflowStore, loadWorkflowFromString } from '@sensigo/realm';
+import { loadWorkflowFromString } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { createRealmMcpServer } from './server.js';
-import { withArtifactStores } from './test-support/temp-home.js';
+import { makeTempHome, type TempHome } from './test-support/temp-home.js';
 
 const YAML = [
   'id: http627',
@@ -53,6 +50,11 @@ async function bodyOf(req: IncomingMessage): Promise<unknown> {
   return raw.length > 0 ? JSON.parse(raw) : undefined;
 }
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 /**
  * A Realm MCP server on localhost, built the way `shape` says, under the default `asked`, with
  * `statelessHttp` passed or not; and a client that declares forms and accepts every form with
@@ -64,14 +66,13 @@ async function httpDoor(
   refuseGet = false,
   jsonResponse = false,
 ) {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-http-627-'));
-  const runStore = new JsonFileStore(join(dir, 'runs'));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+  const h = await makeTempHome();
+  handles.push(h);
+  const { runStore, workflowStore } = h.stores;
   await workflowStore.register(loadWorkflowFromString(YAML));
   const build = () =>
     createRealmMcpServer({
-      ...withArtifactStores(runStore),
-      workflowStore,
+      ...h.stores,
       ...(statelessHttp ? { statelessHttp } : {}),
     });
   const sessions = new Map<string, StreamableHTTPServerTransport>();

@@ -4,20 +4,12 @@
 // `diagnostics[i].key`, `advance_run`'s and `submit_human_response`'s `unknown argument` lines.
 // Through a real server (in-memory transport). Beside each: (a) what turns it red; (b) what it prints
 // on failure — the lines (the names are fake) and booleans.
-import { describe, it, expect } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import {
-  CURRENT_WORKFLOW_SCHEMA_VERSION,
-  JsonFileStore,
-  JsonWorkflowStore,
-  type WorkflowDefinition,
-} from '@sensigo/realm';
+import { describe, it, expect, afterEach } from 'vitest';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION, type WorkflowDefinition } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../index.js';
-import { withArtifactStores } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 type Reply = Record<string, unknown>;
 const GATED = {
@@ -37,12 +29,17 @@ const GATED = {
   },
 } as unknown as WorkflowDefinition;
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 async function connect() {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-echoes-872-'));
-  const runStore = new JsonFileStore(join(dir, 'runs'));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+  const h = await makeTempHome();
+  handles.push(h);
+  const { workflowStore } = h.stores;
   await workflowStore.register(GATED);
-  const server = createRealmMcpServer({ ...withArtifactStores(runStore), workflowStore });
+  const server = createRealmMcpServer({ ...h.stores });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'echoes-872', version: '0' });
   await Promise.all([server.connect(st), client.connect(ct)]);
