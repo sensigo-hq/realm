@@ -530,7 +530,7 @@ describe('#616 PR-1a unit 16a — testing-package.md: the fidelity contract', ()
     // `conforms to CREATE_REPORTS_CREATED` (InMemoryStore; JsonFileStore in the cli).
     claim(
       PAGE,
-      "| `CREATE_REPORTS_CREATED` | A create says whether it made a new run. One with no idempotency key, one with a key no run holds, and one with `onTerminalMatch: 'rerun'` over an ended run report `created: true`; the last one's `rerun_of` names the run it replaces. A second create with the same key while the first run is live reports `created: false` and returns that run. One case for each of the four. Added after version 0.48.0. |",
+      "| `CREATE_REPORTS_CREATED` | A create says whether it made a new run. One with no idempotency key, one with a key no run holds, and one with `onTerminalMatch: 'rerun'` over an ended run report `created: true`; the last one makes a new run, with a different id, whose `rerun_of` names the run it replaces, both in the create's result and when `get` reads the new run back. A second create with the same key while the first run is live reports `created: false` and returns that run. A create resolves `{ record, at, created }`: a store that resolves another shape fails the case. One case for each of the four. Added after version 0.48.0. |",
     );
     // (a) red when the law has another number of cases than the four the row says; (b) prints the
     //     count.

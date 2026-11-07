@@ -52,8 +52,9 @@ import {
  * back without them: the `drive_failing` finding tells a legacy entry by their absence) and
  * `CREATE_REPORTS_CREATED` (#616 PR-1a unit 16a — a create says whether it made a new run:
  * `created: true` for an unkeyed create, a keyed create on a fresh key and a keyed `rerun` over a
- * finished run, whose `rerun_of` names the run it replaces; `created: false`, with the live run's
- * id, for a keyed create that reuses that run).
+ * finished run, which makes a new run, with a different id, whose `rerun_of` names the run it
+ * replaces, in the create's result and as `get` returns it; `created: false`, with the live run's
+ * id, for a keyed create that reuses that run; and a create resolves `{ record, at, created }`).
  */
 export const RUN_STORE_FIDELITY_LAWS = [
   'FIDELITY_HONESTY',
