@@ -197,8 +197,8 @@ describe('#616 unit 15a — a keyed create, one cell per outcome of the policy',
   it('check 1: a fresh key writes a run carrying the key and no rerun_of', async () => {
     const { handle } = await open(testClock(T).clock);
     const r = await handle.runStore.create(keyed());
-    // (1) red when the policy is skipped and a run is written for every create (here: when the key
-    //     is not written into the run); (2) prints created, the key and whether rerun_of is there.
+    // (1) red when the key is left out of the run's record; (2) prints created, the key and whether
+    //     rerun_of is there.
     expect({
       created: r.created,
       key: r.record.idempotency_key,
@@ -286,8 +286,8 @@ describe('#616 unit 15a — a keyed create, one cell per outcome of the policy',
     const home = await open(testClock(T).clock);
     await seed(home, record('run-other', at(-HOUR), { workflow_id: 'other-workflow' }));
     const created = await outcome(home.handle.runStore, keyed());
-    // (1) red when the key is looked up without its workflow (the other workflow's run is reused);
-    //     (2) prints the create.
+    // (1) red when the key is scoped by neither its hash nor the lookup (the other workflow's run is
+    //     reused); (2) prints the create.
     expect({ created: created['created'], same: created['id'] === 'run-other' }).toEqual({
       created: true,
       same: false,
