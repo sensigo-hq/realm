@@ -99,7 +99,7 @@ export interface StoreClockContractAdapter {
    * the running case, past the store's own boundary, and returns it at its real version — a run
    * `stampSeal` really stamps. Modelled on `SettlementContractAdapter.seedLegacyTerminal`: each store
    * supplies its sanctioned channel (a direct file write, a direct map insert); the adapter keeps
-   * the store its `makeStore` built last. `READS_SPEND_NO_READING` needs it for its `stampSeal`
+   * the store its `makeStore` built last. `READS_ONE_READING` needs it for its `stampSeal`
    * clause: a SEALED run answers `already_stamped` before any stamping code runs, so a reading taken
    * in the stamp itself would pass. A store that declares `stampSeal` under an adapter that omits it
    * fails that clause with an adapter-wiring message (the settlement contract's idiom); it is never

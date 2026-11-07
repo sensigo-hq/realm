@@ -237,7 +237,7 @@ describe('#715 (a) C17 — each law fails on the store that breaks it, naming th
     );
   });
 
-  it('READS_SPEND_NO_READING fails with the adapter-wiring message when a stampSeal store’s adapter has no seedLegacyTerminal (correction 1, C-4)', async () => {
+  it('READS_ONE_READING fails with the adapter-wiring message when a stampSeal store’s adapter has no seedLegacyTerminal (correction 1, C-4)', async () => {
     // (a) red when the clause is skipped for an adapter without the hook (the law passes);
     // (b) prints the failure message.
     const cases = storeClockContract({

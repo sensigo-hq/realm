@@ -10,8 +10,9 @@
 // This is "the forcing part" (issue #188): FIDELITY_HONESTY does not just check that a store
 // SAYS it persists a field — it writes a real sample value through create/update and reads it
 // back, so a store that DECLARES `persistedRunRecordFields` dishonestly (claims a field, drops it
-// on write) fails conformance here, before it ever ships. A store that declares NOTHING passes
-// this law vacuously (zero cases generated) — see `runStoreFidelityContract`'s own doc.
+// on write) fails conformance here, before it ever ships. A store that declares NOTHING gets one
+// case of this law: the identity entry a run is created with (`extension_identity`) must not come
+// back, since the store does not list that field (J-5) — see `runStoreFidelityContract`'s own doc.
 import { isDeepStrictEqual } from 'node:util';
 import { crossCopyNote } from './cross-copy-note.js';
 import { storeReleaseLineLaw } from './store-release-line-law.js';
@@ -19,6 +20,7 @@ import {
   WorkflowError,
   type Attributed,
   type EvidenceSnapshot,
+  type CreateResult,
   type RunStore,
   type RunRecord,
   type LoadBearingRunRecordField,
@@ -228,9 +230,62 @@ function reportedCreated(result: { created?: unknown }): string {
     : `created: ${JSON.stringify(result.created)}`;
 }
 
+/** `CREATE_REPORTS_CREATED`'s words for a run's `rerun_of`, returned by `create` or read by `get`. */
+function reportedLink(rerunOf: string | undefined): string {
+  return rerunOf === undefined ? 'no rerun_of' : `rerun_of ${rerunOf}`;
+}
+
 /** A workflow id and idempotency key no other case, and no earlier run of this case, uses. */
 function mintCreatedTag(): string {
   return `tck-created-${Math.random().toString(36).slice(2)}`;
+}
+
+/** The four branches of `CREATE_REPORTS_CREATED`, as each failure message names its own. */
+const CREATED_UNKEYED = 'an unkeyed create';
+const CREATED_FRESH = 'a keyed create on a fresh key';
+const CREATED_REUSE = 'a keyed create that reuses the live run under its key';
+const CREATED_RERUN = "a keyed create with onTerminalMatch 'rerun' over a finished run";
+
+/**
+ * `CREATE_REPORTS_CREATED`'s read of a create's result (#616 PR-1a unit 16a correction). A create
+ * resolves `{ record, at, created }`; a store that resolves nothing, or a value that is not an
+ * object, fails the case in the law's words, naming the branch and which of its creates (`site`)
+ * resolved what, never with a bare `TypeError` from reading a field of it.
+ */
+function createResultOf(branch: string, site: string, result: CreateResult): CreateResult {
+  const value: unknown = result;
+  if (typeof value !== 'object' || value === null) {
+    throw new Error(
+      `CREATE_REPORTS_CREATED (${branch}): a create resolves { record, at, created }; the ` +
+        `${site} resolved ${value === undefined || value === null ? 'nothing' : `a ${typeof value}`}`,
+    );
+  }
+  return result;
+}
+
+/**
+ * {@link createResultOf} for a case that reads the run a create made or reused: the result must
+ * also carry a `record` that is an object (a missing, `null` or non-object one is reported with
+ * the result's own keys, as the shape before #715, `{ run, created }`, is) whose `id` is a string.
+ */
+function createdRunOf(branch: string, site: string, result: CreateResult): CreateResult {
+  const value: { record?: unknown } = createResultOf(branch, site, result);
+  if (typeof value.record !== 'object' || value.record === null) {
+    const keys = Object.keys(value);
+    throw new Error(
+      `CREATE_REPORTS_CREATED (${branch}): a create resolves { record, at, created }; the ` +
+        `${site} resolved an object with no record ` +
+        `(${keys.length === 0 ? 'it has no keys' : `its keys: ${keys.join(', ')}`})`,
+    );
+  }
+  const id: unknown = (value.record as { id?: unknown }).id;
+  if (typeof id !== 'string') {
+    throw new Error(
+      `CREATE_REPORTS_CREATED (${branch}): the run the ${site} returned has no string id; its ` +
+        `id's type is ${typeof id}`,
+    );
+  }
+  return result;
 }
 
 /**
@@ -302,13 +357,14 @@ const SAMPLE_VALUES: {
 /**
  * Builds the contract cases for `adapter`.
  *
- * **FIDELITY_HONESTY** — one case PER FIELD in `adapter.store.persistedRunRecordFields` (zero
- * cases if the store declares nothing — a store with no declaration passes this law vacuously,
- * by construction, and gets the conservative runtime gates instead; that combination is
- * correct-by-design, not a TCK gap). Each case: `create` a fresh run, `update` it to carry a
- * realistic sample value for that field, `get` it back, and byte-compare (via JSON, since every
- * `LoadBearingRunRecordField` is plain-JSON-serializable data) what was written against what was
- * read. A mismatch means the store's declaration is DISHONEST.
+ * **FIDELITY_HONESTY** — one case PER FIELD in `adapter.store.persistedRunRecordFields` (a store
+ * that declares nothing gets one case, J-5 below: the identity entry a run is created with must
+ * not come back, since the store does not list that field; such a store gets the conservative
+ * runtime gates instead, and that combination is correct-by-design, not a TCK gap). Each case:
+ * `create` a fresh run, `update` it to carry a realistic sample value for that field, `get` it
+ * back, and byte-compare (via JSON, since every `LoadBearingRunRecordField` is
+ * plain-JSON-serializable data) what was written against what was read. A mismatch means the
+ * store's declaration is DISHONEST.
  *
  * **CLAIM_SINGLE_OWNER** — races two concurrent `claimStep(runId, sameStep)` calls against a
  * fresh run; asserts exactly one resolves and the other rejects with
@@ -876,20 +932,25 @@ export function runStoreFidelityContract(
   // #616 PR-1a unit 16a — CREATE_REPORTS_CREATED. Always active: every store creates runs, keyed
   // ones included. The adapter hands one store to every case, so each case mints its own workflow
   // id and key and asserts only its own fact: (c) and (d) read their first create's run and leave
-  // its `created` to (b).
+  // its `created` to (b). Every create's result is read through `createResultOf` / `createdRunOf`,
+  // so a store that resolves another shape fails in the law's words (the correction).
   cases.push(
     {
       law: 'CREATE_REPORTS_CREATED',
       name: 'an unkeyed create reports created: true',
       run: async () => {
-        const result = await adapter.store.create({
-          workflowId: mintCreatedTag(),
-          workflowVersion: 1,
-          params: {},
-        });
+        const result = createResultOf(
+          CREATED_UNKEYED,
+          'create',
+          await adapter.store.create({
+            workflowId: mintCreatedTag(),
+            workflowVersion: 1,
+            params: {},
+          }),
+        );
         if (result.created !== true) {
           throw new Error(
-            `CREATE_REPORTS_CREATED (an unkeyed create): a create that makes a new run must report ` +
+            `CREATE_REPORTS_CREATED (${CREATED_UNKEYED}): a create that makes a new run must report ` +
               `created: true; the store reported ${reportedCreated(result)}`,
           );
         }
@@ -900,16 +961,20 @@ export function runStoreFidelityContract(
       name: 'a keyed create on a fresh key reports created: true',
       run: async () => {
         const tag = mintCreatedTag();
-        const result = await adapter.store.create({
-          workflowId: tag,
-          workflowVersion: 1,
-          params: {},
-          idempotencyKey: tag,
-        });
+        const result = createResultOf(
+          CREATED_FRESH,
+          'create',
+          await adapter.store.create({
+            workflowId: tag,
+            workflowVersion: 1,
+            params: {},
+            idempotencyKey: tag,
+          }),
+        );
         if (result.created !== true) {
           throw new Error(
-            `CREATE_REPORTS_CREATED (a keyed create on a fresh key): a create that makes a new run ` +
-              `must report created: true; the store reported ${reportedCreated(result)}`,
+            `CREATE_REPORTS_CREATED (${CREATED_FRESH}): a create that makes a new run must report ` +
+              `created: true; the store reported ${reportedCreated(result)}`,
           );
         }
       },
@@ -920,19 +985,26 @@ export function runStoreFidelityContract(
       run: async () => {
         const tag = mintCreatedTag();
         const options = { workflowId: tag, workflowVersion: 1, params: {}, idempotencyKey: tag };
-        const { record: live } = await adapter.store.create(options);
-        const result = await adapter.store.create(options);
+        const { record: live } = createdRunOf(
+          CREATED_REUSE,
+          'first create',
+          await adapter.store.create(options),
+        );
+        const result = createdRunOf(
+          CREATED_REUSE,
+          'second create',
+          await adapter.store.create(options),
+        );
         if (result.created !== false) {
           throw new Error(
-            `CREATE_REPORTS_CREATED (a keyed create that reuses the live run under its key): it ` +
-              `must report created: false; the store reported ${reportedCreated(result)}`,
+            `CREATE_REPORTS_CREATED (${CREATED_REUSE}): it must report created: false; the store ` +
+              `reported ${reportedCreated(result)}`,
           );
         }
         if (result.record.id !== live.id) {
           throw new Error(
-            `CREATE_REPORTS_CREATED (a keyed create that reuses the live run under its key): it ` +
-              `must return that run (${live.id}); the store returned ${result.record.id} and ` +
-              'reported created: false',
+            `CREATE_REPORTS_CREATED (${CREATED_REUSE}): it must return that run (${live.id}); the ` +
+              `store returned ${result.record.id} and reported created: false`,
           );
         }
       },
@@ -943,7 +1015,11 @@ export function runStoreFidelityContract(
       run: async () => {
         const tag = mintCreatedTag();
         const options = { workflowId: tag, workflowVersion: 1, params: {}, idempotencyKey: tag };
-        const { record: first } = await adapter.store.create(options);
+        const { record: first } = createdRunOf(
+          CREATED_RERUN,
+          'first create',
+          await adapter.store.create(options),
+        );
         // The holder ends the way the supersede journey of #558 PR-C ends it, through the store's
         // own `get` and `update`.
         const { record: fresh } = await adapter.store.get(first.id);
@@ -955,19 +1031,37 @@ export function runStoreFidelityContract(
           sealed_by: { arm: 'abandon_requested' },
           terminal_reason: 'Abandoned via realm run abandon',
         });
-        const result = await adapter.store.create({ ...options, onTerminalMatch: 'rerun' });
+        const result = createdRunOf(
+          CREATED_RERUN,
+          'rerun create',
+          await adapter.store.create({ ...options, onTerminalMatch: 'rerun' }),
+        );
         if (result.created !== true) {
           throw new Error(
-            `CREATE_REPORTS_CREATED (a keyed create with onTerminalMatch 'rerun' over a finished ` +
-              `run): a create that makes a new run must report created: true; the store reported ` +
-              reportedCreated(result),
+            `CREATE_REPORTS_CREATED (${CREATED_RERUN}): a create that makes a new run must report ` +
+              `created: true; the store reported ${reportedCreated(result)}`,
+          );
+        }
+        if (result.record.id === first.id) {
+          throw new Error(
+            `CREATE_REPORTS_CREATED (${CREATED_RERUN}): a create that replaces a run must make a ` +
+              `new run; the store returned the id of the run it replaces (${first.id})`,
           );
         }
         if (result.record.rerun_of !== first.id) {
           throw new Error(
-            `CREATE_REPORTS_CREATED (a keyed create with onTerminalMatch 'rerun' over a finished ` +
-              `run): the new run's rerun_of must name the run it replaces (${first.id}); the ` +
-              `store wrote ${result.record.rerun_of === undefined ? 'no rerun_of' : `rerun_of ${result.record.rerun_of}`}`,
+            `CREATE_REPORTS_CREATED (${CREATED_RERUN}): the new run's rerun_of must name the run ` +
+              `it replaces (${first.id}); the store returned ${reportedLink(result.record.rerun_of)}`,
+          );
+        }
+        // The link a rerun writes must be the link `get` returns: the key holder and `inspect`
+        // read it from the stored record, not from the create's result.
+        const { record: stored } = await adapter.store.get(result.record.id);
+        if (stored.rerun_of !== first.id) {
+          throw new Error(
+            `CREATE_REPORTS_CREATED (${CREATED_RERUN}): the new run's rerun_of, read back by get, ` +
+              `must name the run it replaces (${first.id}); get returned ` +
+              reportedLink(stored.rerun_of),
           );
         }
       },

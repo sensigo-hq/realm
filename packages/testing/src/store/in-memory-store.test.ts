@@ -233,6 +233,15 @@ describe('FieldDroppingFakeStore — the TCK catches a dishonest store (issue #1
  * real store did): an unkeyed create, a keyed create on a fresh key, a keyed create that reuses the
  * live run, or a keyed `rerun` that supersedes a finished one. `reuse-omits` is the shape a store
  * that never sets `created` on its dedupe path has; `omits-everywhere` never sets it at all.
+ *
+ * The correction's modes: `link-not-stored` returns the rerun's `rerun_of` from `create` and drops
+ * it on `get` (a column-mapped store that forgot the column); `self-rerun` answers a rerun with the
+ * run it was to replace, re-opened under that run's id (its seal and end removed), `created: true`,
+ * with `rerun_of` naming itself stored on it, so only the case's new-id check can fail it;
+ * `old-shape` resolves the result before #715, `{ run, created }`; `reuse-no-record` and
+ * `rerun-no-record` are right on a fresh create and leave `record` out on that one branch;
+ * `resolves-nothing` resolves `undefined`; `numeric-id` gives its runs a number for an id (a SQL
+ * store's integer key).
  */
 type CreatedMode =
   | 'unkeyed-false'
@@ -242,14 +251,38 @@ type CreatedMode =
   | 'supersede-false'
   | 'supersede-no-link'
   | 'reuse-omits'
-  | 'omits-everywhere';
+  | 'omits-everywhere'
+  | 'link-not-stored'
+  | 'self-rerun'
+  | 'old-shape'
+  | 'reuse-no-record'
+  | 'rerun-no-record'
+  | 'resolves-nothing'
+  | 'numeric-id';
 
 class CreatedMisreportingStore extends InMemoryStore {
+  private numericIds = 0;
+
   constructor(private readonly mode: CreatedMode) {
     super();
   }
 
+  override async get(runId: string): Promise<Snapshot> {
+    const snapshot = await super.get(runId);
+    if (this.mode !== 'link-not-stored' || snapshot.record.rerun_of === undefined) return snapshot;
+    const { rerun_of: _link, ...record } = snapshot.record;
+    return { ...snapshot, record };
+  }
+
   override async create(options: CreateRunOptions): Promise<CreateResult> {
+    if (this.mode === 'self-rerun' && options.onTerminalMatch === 'rerun') {
+      const held = await super.create({ ...options, onTerminalMatch: 'reuse' });
+      const { sealed_by: _seal, abandoned_at: _at, terminal_reason: _why, ...ended } = held.record;
+      return {
+        ...(await super.update({ ...ended, terminal_state: false, rerun_of: ended.id })),
+        created: true,
+      };
+    }
     const result = await super.create(options);
     const branch = !result.created
       ? 'reuse'
@@ -261,6 +294,10 @@ class CreatedMisreportingStore extends InMemoryStore {
     const omitted = (): CreateResult => {
       const { created: _created, ...rest } = result;
       return rest as CreateResult;
+    };
+    const recordless = (): CreateResult => {
+      const { record: _record, ...rest } = result;
+      return rest as unknown as CreateResult;
     };
     switch (this.mode) {
       case 'unkeyed-false':
@@ -285,6 +322,22 @@ class CreatedMisreportingStore extends InMemoryStore {
         return branch === 'reuse' ? omitted() : result;
       case 'omits-everywhere':
         return omitted();
+      case 'link-not-stored':
+      case 'self-rerun':
+        return result;
+      case 'old-shape':
+        return { run: result.record, created: result.created } as unknown as CreateResult;
+      case 'reuse-no-record':
+        return branch === 'reuse' ? recordless() : result;
+      case 'rerun-no-record':
+        return branch === 'supersede' ? recordless() : result;
+      case 'resolves-nothing':
+        return undefined as unknown as CreateResult;
+      case 'numeric-id':
+        return {
+          ...result,
+          record: { ...result.record, id: ++this.numericIds as unknown as string },
+        };
     }
   }
 }
@@ -318,9 +371,10 @@ const escaped = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 describe('#616 PR-1a unit 16a — CREATE_REPORTS_CREATED fails the store that misreports created, on that branch alone', () => {
   // Each row: (1) can it fail — the break is deleting the case (its message becomes `passed`), or,
-  // for c2 and d2, deleting that conjunct of the case (the id check; the rerun_of check); (2) it
-  // prints the four outcomes, each `passed` or the law's message (the branch, `created` as the
-  // store reported it, and run ids — no value from the environment).
+  // for c2, d2, d3 and d4, deleting that conjunct of the case (the reuse's id check; the returned
+  // rerun_of check; the read-back by `get`; the rerun's new-id check); (2) it prints the four
+  // outcomes, each `passed` or the law's message (the branch, `created` as the store reported it,
+  // and run ids — no value from the environment).
   const rows: ReadonlyArray<[CreatedMode, string, Array<string | RegExp>]> = [
     [
       'unkeyed-false',
@@ -363,7 +417,31 @@ describe('#616 PR-1a unit 16a — CREATE_REPORTS_CREATED fails the store that mi
         'passed',
         'passed',
         new RegExp(
-          `^${escaped(RERUN)}the new run's rerun_of must name the run it replaces \\(${ID}\\); the store wrote no rerun_of$`,
+          `^${escaped(RERUN)}the new run's rerun_of must name the run it replaces \\(${ID}\\); the store returned no rerun_of$`,
+        ),
+      ],
+    ],
+    [
+      'link-not-stored',
+      '(d3)',
+      [
+        'passed',
+        'passed',
+        'passed',
+        new RegExp(
+          `^${escaped(RERUN)}the new run's rerun_of, read back by get, must name the run it replaces \\(${ID}\\); get returned no rerun_of$`,
+        ),
+      ],
+    ],
+    [
+      'self-rerun',
+      '(d4)',
+      [
+        'passed',
+        'passed',
+        'passed',
+        new RegExp(
+          `^${escaped(RERUN)}a create that replaces a run must make a new run; the store returned the id of the run it replaces \\(${ID}\\)$`,
         ),
       ],
     ],
@@ -383,6 +461,57 @@ describe('#616 PR-1a unit 16a — CREATE_REPORTS_CREATED fails the store that mi
       'passed',
       `${REUSE}it must report created: false; the store reported \`created\` left out`,
       'passed',
+    ]);
+  });
+
+  // The correction (Behaviour 3): a create result with no usable `record` fails in the law's words
+  // at the create that resolved it. Each cell: (1) can it fail — the break is reading that create's
+  // result unguarded (a bare TypeError replaces the law's message), or removing that state from the
+  // helper; (2) it prints the four outcomes (the branch, which create, the result's own keys or the
+  // id's type — no value from the environment).
+  const SHAPE = 'a create resolves { record, at, created }; ';
+  it('a store on the shape before #715, { run, created }, passes (a) and (b) and fails (c) and (d) at their first create, naming its keys', async () => {
+    expect(await createdOutcomes(new CreatedMisreportingStore('old-shape'))).toEqual([
+      'passed',
+      'passed',
+      `${REUSE}${SHAPE}the first create resolved an object with no record (its keys: run, created)`,
+      `${RERUN}${SHAPE}the first create resolved an object with no record (its keys: run, created)`,
+    ]);
+  });
+
+  it('a store whose keyed reuse returns no record fails (c) alone, at its second create', async () => {
+    expect(await createdOutcomes(new CreatedMisreportingStore('reuse-no-record'))).toEqual([
+      'passed',
+      'passed',
+      `${REUSE}${SHAPE}the second create resolved an object with no record (its keys: at, created)`,
+      'passed',
+    ]);
+  });
+
+  it('a store whose rerun returns no record fails (d) alone, at the rerun', async () => {
+    expect(await createdOutcomes(new CreatedMisreportingStore('rerun-no-record'))).toEqual([
+      'passed',
+      'passed',
+      'passed',
+      `${RERUN}${SHAPE}the rerun create resolved an object with no record (its keys: at, created)`,
+    ]);
+  });
+
+  it('a create that resolves undefined fails all four cases: the store resolved nothing', async () => {
+    expect(await createdOutcomes(new CreatedMisreportingStore('resolves-nothing'))).toEqual([
+      `${UNKEYED}${SHAPE}the create resolved nothing`,
+      `${FRESH}${SHAPE}the create resolved nothing`,
+      `${REUSE}${SHAPE}the first create resolved nothing`,
+      `${RERUN}${SHAPE}the first create resolved nothing`,
+    ]);
+  });
+
+  it('a store whose runs carry a numeric id passes (a) and (b) and fails (c) and (d) at their first create: no string id', async () => {
+    expect(await createdOutcomes(new CreatedMisreportingStore('numeric-id'))).toEqual([
+      'passed',
+      'passed',
+      `${REUSE}the run the first create returned has no string id; its id's type is number`,
+      `${RERUN}the run the first create returned has no string id; its id's type is number`,
     ]);
   });
 

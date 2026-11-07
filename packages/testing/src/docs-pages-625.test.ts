@@ -500,7 +500,9 @@ describe('#872 (b1) B11 — testing-package.md: the fidelity laws', () => {
       'A copy that lists `capability_blocks` and drops it on `update`': await fidelityRun(
         () => new DropsCapabilityBlocks(),
       ),
-      'A copy that lists no fields': await fidelityRun(() => new ListsNoFieldsKeepsNone()),
+      'A copy that lists no fields and does not keep the identity entry': await fidelityRun(
+        () => new ListsNoFieldsKeepsNone(),
+      ),
     };
     const page = Object.fromEntries(
       Object.keys(runs).map((label) => [label, cellsAfter(CORE_PAGE, '## Check a store', label)]),
