@@ -337,27 +337,43 @@ describe('#373 — messages', () => {
   });
 
   // #729 PR-3 correction 2 (F24 linear, R2-L1-12): the over-cap sentence is found in one forward
-  // pass. (a) red when each shortened sentence is built and measured again (quadratic: seconds at
-  // 4,000 steps); (b) prints a boolean.
-  it('(6e) the over-cap sentence is linear: 4,000 failed steps take under 3× the time of 2,000', () => {
-    const time = (n: number): number => {
+  // pass. The cell's own timeout: the red run builds every candidate sentence twice (about 52 s
+  // each here, 180 s allowed), and the clock must not be what fails it.
+  it('(6e) the over-cap sentence is linear: 20,000 failed steps take under 1 s of CPU time', () => {
+    // The clock is the process's CPU time, not the wall: on a runner shared with the other test
+    // workers a pass is descheduled for as long as they hold the cores, which a wall clock counts and
+    // a CPU clock does not (the pool is forks, so the clock is this file's own process). The estimator
+    // is the least of two passes after a warm-up at a smaller size; the bound sits far from both
+    // hypotheses, as the field's cells set it (measured 2026-11-07: with other workers starting
+    // between its two windows, a wall-clock ratio read 23–37 against a bound of 22 while the CPU
+    // clock read 8–12 in the same runs).
+    const cpu = (): number => {
+      const usage = process.cpuUsage();
+      return (usage.user + usage.system) / 1000;
+    };
+    // The wall form of this cell (4,000 under 3× the time of 2,000, the median of three) went red
+    // under parallel load with the pass linear (a CI-steps run beside a loaded suite, 2026-11-07).
+    // The linear pass costs about 15 ms of CPU here; the quadratic one about 52 s.
+    const least = (n: number, passes: number): number => {
       const steps = Array.from({ length: n }, (_, i) => `step_${i}`);
       const messages = new Map(steps.map((s) => [s, 'm'.repeat(40)]));
-      const runs: number[] = [];
-      for (let i = 0; i < 3; i++) {
-        const t0 = performance.now();
+      let min = Infinity;
+      for (let i = 0; i < passes; i++) {
+        const c0 = cpu();
         renderFailCause(steps, messages);
-        runs.push(performance.now() - t0);
+        min = Math.min(min, cpu() - c0);
       }
-      return runs.sort((a, b) => a - b)[1]!;
+      return min;
     };
-    time(2_000);
-    // A floor on the baseline: the linear pass takes about a millisecond, where a bare ratio is
-    // noise.
-    const small = Math.max(time(2_000), 5);
-    const large = time(4_000);
-    expect({ under3x: large < 3 * small }).toEqual({ under3x: true });
-  });
+    least(2_000, 1);
+    const ms = least(20_000, 2);
+    // (a) red when each shortened sentence is built and measured again (the candidate string built
+    //     for every `kept`, settlement.ts:555-559: 52,145 ms of CPU, measured red-first 2026-11-07);
+    //     (b) prints the CPU time against its bound.
+    expect(ms, `20,000 failed steps: ${ms.toFixed(0)} ms of CPU time (bound 1,000)`).toBeLessThan(
+      1_000,
+    );
+  }, 180_000);
 
   // (a) red when an entry alone over the cap falls back to the whole-sentence marker, or the count
   // reads in the plural for one; (b) prints the sentences (step names are `s` runs).

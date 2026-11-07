@@ -352,40 +352,6 @@ describe('#616 B4 — appends and the budgets', () => {
 });
 
 describe('#616 B4 — the fenced methods', () => {
-  it('check 5a: appendFenced from a writer whose run ended is refused with its own error, nothing written', async () => {
-    const o = await open();
-    const f = await foreign(o.home);
-    putRun(f, finished(RUN));
-    const err = await refusal(() =>
-      o.store.appendFenced(RUN, 'draft', [{ event: 'late' }], {
-        kind: 'step_open_for_trace',
-        run_version: 4,
-      }),
-    );
-    // (1) red when appendFenced skips its fence: it resolves and writes the line; (2) prints the
-    //     rejection and the row count.
-    expect({ code: (err as WorkflowError).code, rows: rows(f, 'trace_buffer') }).toEqual({
-      code: 'STATE_STEP_NOT_ELIGIBLE',
-      rows: 0,
-    });
-  });
-
-  it('check 5b: deleteFenced of a step still in progress is refused with its own error, nothing deleted', async () => {
-    const o = await open();
-    const f = await foreign(o.home);
-    putRun(f, run(RUN));
-    await o.store.append(RUN, 'draft', [{ event: 'progress' }]);
-    const err = await refusal(() =>
-      o.store.deleteFenced(RUN, 'draft', { kind: 'step_not_in_progress' }),
-    );
-    // (1) red when deleteFenced skips its fence: it deletes the live step's lines; (2) prints the
-    //     rejection and the row count.
-    expect({ refusal: facts(err), rows: rows(f, 'trace_buffer') }).toEqual({
-      refusal: { code: 'STATE_STEP_PENDING', message: expect.any(String) },
-      rows: 1,
-    });
-  });
-
   it('check 5c: sealFenced whose fence refuses (the run came back) is refused with its own error, nothing sealed', async () => {
     const o = await open();
     const f = await foreign(o.home);
@@ -576,16 +542,6 @@ describe('#616 B4 — the fenced methods', () => {
       sealed: 1,
     });
   });
-
-  it('ported (JSON): sealFenced evaluates its fence even when the step has no line', async () => {
-    const o = await open();
-    const f = await foreign(o.home);
-    putRun(f, run(RUN));
-    const err = await refusal(() => o.store.sealFenced(RUN, 'draft', { kind: 'run_absent' }));
-    // (1) red when the fence is checked only once lines exist (the call answers 'absent');
-    //     (2) prints the rejection.
-    expect((err as WorkflowError).code).toBe('STATE_RUN_RESURRECTED');
-  });
 });
 
 describe('#616 B4 — sealing', () => {
@@ -628,7 +584,10 @@ describe('#616 B4 — sealing', () => {
     await o.store.append(RUN, 'draft', [{ event: 'first' }]);
     await o.store.append(RUN, 'draft', [{ event: 'second' }], { writerNonce: 'attempt-1' });
     const result = await o.store.sealFenced(RUN, 'draft', { kind: 'run_absent' });
-    // (1) red when the sealed lines are left live; (2) prints the answer, the artifact and the rows.
+    // (1) red when the sealed lines are left live, or a sealed line loses its writer's nonce or its
+    //     `ts` (the fenced contract's SEAL case checks the events only, and its byte-for-byte
+    //     VERBATIM case is skipped on this store; #616 PR-1b B5); (2) prints the answer, the
+    //     artifact and the rows.
     expect({
       result,
       artifacts: await o.store.listSealedForRun(RUN),
@@ -955,19 +914,6 @@ describe('#616 B4 — what export reads', () => {
       steps: Object.keys(all).sort(),
       none: await o.store.readAllForRun('2d6a9e3c-5b7f-4e4a-9cad-9f8e7a6b5c43'),
     }).toEqual({ steps: ['classify', 'draft'], none: {} });
-  });
-
-  it("ported (JSON): read re-attaches each line's writer nonce as _nonce, and none to a plain line", async () => {
-    const o = await open();
-    await o.store.append(RUN, 'draft', [{ event: 'mine' }], { writerNonce: 'attempt-2' });
-    await o.store.append(RUN, 'draft', [{ event: 'plain' }]);
-    const got = await o.store.read(RUN, 'draft');
-    // (1) red when the read drops the line's nonce (the settle adopts entries by it); (2) prints each
-    //     entry's keys and nonce.
-    expect(got.map((e) => [e.event, e._nonce, '_nonce' in e])).toEqual([
-      ['mine', 'attempt-2', true],
-      ['plain', undefined, false],
-    ]);
   });
 });
 
