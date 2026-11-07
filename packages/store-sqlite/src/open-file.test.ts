@@ -1293,7 +1293,9 @@ describe("#616 unit 7b — the mapper's guard slice", () => {
   });
 
   it('every guard message in the schema is either mapped to a code or listed as unmapped', () => {
-    // The ten guards whose refusal stays a plain error, by design (SEAMS, 7b's rulings, point 5).
+    // The guards whose refusal stays a plain error, by design: ten of units 6 and 6b (SEAMS, 7b's
+    // rulings, point 5), and seven of PR-1b B3's eight, which map to no code (its eighth, the row
+    // number's, is the units' own message, listed once).
     const UNMAPPED = [
       'realm.db: the tombstone record is append-only',
       "realm.db: the store's meta row cannot be replaced or deleted",
@@ -1305,6 +1307,14 @@ describe("#616 unit 7b — the mapper's guard slice", () => {
       "realm.db: the store's recorded horizon cannot move backwards",
       'realm.db: a run that is not finished cannot be deleted',
       'realm.db: a live run cannot be recorded as purged',
+      // PR-1b B3: the workflow registry.
+      'realm.db: a workflow can only point at one of its own versions',
+      "realm.db: a workflow's id cannot change",
+      'realm.db: a registered workflow cannot be deleted',
+      'realm.db: a workflow version must be a JSON object that carries its own id',
+      'realm.db: a workflow version cannot change',
+      "realm.db: a registration can only name one of its own workflow's versions",
+      'realm.db: the registration history cannot change',
     ];
     const inSchema = new Set<string>();
     for (const statement of REALM_STORE_SCHEMA) {
