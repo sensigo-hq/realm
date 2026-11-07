@@ -11,15 +11,9 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
-  JsonFileFailedAttemptStore,
   InMemoryTraceBufferStore,
-  JsonFileStore,
-  JsonWorkflowStore,
   testClockNoticeLine,
   type Clock,
   type RunStore,
@@ -29,6 +23,7 @@ import { InMemoryStore, createTestLocation, settableClock } from '@sensigo/realm
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from './server.js';
+import { makeTempHome, type TempHome } from './test-support/temp-home.js';
 
 const T = new Date('2033-01-02T03:04:05.000Z');
 
@@ -49,6 +44,11 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 /** One `start_run` and one `get_run_state` on `runStore`, with stderr captured. */
 async function twoCalls(runStore: RunStore) {
   const lines: string[] = [];
@@ -56,8 +56,9 @@ async function twoCalls(runStore: RunStore) {
     lines.push(String(chunk));
     return true;
   });
-  const dir = await mkdtemp(join(tmpdir(), 'realm-basis-715b-'));
-  const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+  const h = await makeTempHome();
+  handles.push(h);
+  const workflowStore = h.stores.workflowStore;
   await workflowStore.register(ONE);
   // A store that is not a local file store comes with its artifact stores (the server refuses to
   // guess their folder).
@@ -65,7 +66,7 @@ async function twoCalls(runStore: RunStore) {
     runStore,
     workflowStore,
     traceBufferStore: new InMemoryTraceBufferStore(runStore),
-    failedAttemptStore: new JsonFileFailedAttemptStore(join(dir, 'attempts')),
+    failedAttemptStore: h.stores.failedAttemptStore,
   });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'basis-715b', version: '0' });
@@ -110,14 +111,16 @@ describe('#715 (b) §C — what a reply’s instant stands on, and the test-loca
     // (a) red when stampOf drops the basis, the server does not wrap its store with the notice, or the
     //     notice repeats per read; (b) prints the two bases and the notices.
     const location = await createTestLocation({ start: T });
+    const h = await makeTempHome({ home: location.root });
     try {
-      const r = await twoCalls(new JsonFileStore(location.runsDir));
+      const r = await twoCalls(h.stores.runStore);
       expect(r).toEqual({
         startBasis: 'test_clock',
         stateBasis: 'test_clock',
         notices: [testClockNoticeLine(T)],
       });
     } finally {
+      await h.cleanup();
       await location.remove();
     }
   });

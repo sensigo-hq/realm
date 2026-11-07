@@ -185,22 +185,29 @@ describe('#616 unit 8 — the write path', () => {
     const holder = connect(file);
     holder.exec('BEGIN IMMEDIATE');
     const { db } = realmDb(file, { budgetMs: 1_000 });
-    let ticks = 0;
-    const timer = setInterval(() => {
-      ticks += 1;
-    }, 10);
+    // The event loop's turns, one per setImmediate: a loop that is blocked takes none.
+    let turns = 0;
+    let spinning = true;
+    const spin = (): void => {
+      turns += 1;
+      if (spinning) setImmediate(spin);
+    };
+    setImmediate(spin);
     const started = performance.now();
     const out = await settle(db.immediate(insert(1), verified));
     const elapsed = performance.now() - started;
-    clearInterval(timer);
+    spinning = false;
     holder.exec('ROLLBACK');
     // (1) red when the wait is synchronous (a busy timeout as long as the budget, or a blocking
-    //     loop between attempts): the interval cannot fire while the loop is blocked, so the ticks
-    //     stay near 0; also when the refusal is not STATE_RUN_BUSY with its sentence, or a row
-    //     landed. (2) prints the error's code and message, the ticks and the elapsed time.
+    //     loop between attempts): the loop cannot turn while it is blocked, so the turns stay at 0
+    //     or 1; also when the refusal is not STATE_RUN_BUSY with its sentence, or a row landed.
+    //     It counts loop turns, not timer ticks: a rate fails on a slow runner (this cell needed 20
+    //     ticks of 10 ms in the second; an idle Linux host counts about 60, the macOS runner
+    //     counted 15 in CI run 42321890910 and its re-run), a count of turns does not. (2) prints
+    //     the error's code and message, the turns and the elapsed time.
     expect(
-      { ...summary(out.error), atLeast20Ticks: ticks >= 20, rows: values(file) },
-      `ticks ${ticks}, elapsed ${elapsed.toFixed(0)} ms`,
+      { ...summary(out.error), atLeast100Turns: turns >= 100, rows: values(file) },
+      `turns ${turns}, elapsed ${elapsed.toFixed(0)} ms`,
     ).toEqual({
       workflowError: true,
       code: 'STATE_RUN_BUSY',
@@ -208,7 +215,7 @@ describe('#616 unit 8 — the write path', () => {
       message:
         'The store was busy for 1 s: another writer held it. Nothing was written. Try again.',
       details: { budget_ms: 1000 },
-      atLeast20Ticks: true,
+      atLeast100Turns: true,
       rows: [],
     });
   });
@@ -679,41 +686,55 @@ describe('#616 unit 8 — the write path', () => {
     expect(typeof calls).toBe('function');
   });
 
-  it('correction check 2: five calls queued behind an outside writer are all refused within about the budget, in call order, nothing written', async () => {
+  it('correction check 2: five calls queued behind an outside writer are all refused when the budget runs out, in call order, each after the first with one attempt, nothing written', async () => {
     const file = freshFile();
     const holder = connect(file);
     holder.exec('BEGIN IMMEDIATE');
     const budgetMs = 400;
-    const { db } = realmDb(file, { budgetMs });
+    // A real connection that passes everything on and records each BEGIN it is asked for.
+    const { wrapped, begins } = withFault(
+      connect(file),
+      () => false,
+      () => new Error('never thrown'),
+      0,
+    );
+    const { db } = realmDb(file, { budgetMs, connection: wrapped });
     const started = performance.now();
     const refused: Array<{ call: number; atMs: number; error: Record<string, unknown> }> = [];
+    let attemptsWhenTheFirstSettled = -1;
     await Promise.all(
       [1, 2, 3, 4, 5].map(async (call) => {
         const out = await settle(db.immediate(insert(call), verified));
+        if (call === 1) attemptsWhenTheFirstSettled = begins.length;
         refused.push({ call, atMs: performance.now() - started, error: summary(out.error) });
       }),
     );
     holder.exec('ROLLBACK');
-    const last = Math.max(...refused.map((r) => r.atMs));
     const first = Math.min(...refused.map((r) => r.atMs));
-    // (1) red when the budget counts from each call's first busy answer, not from the call (the
-    //     queued calls wait a budget each: the last is refused near 5 x 400 ms), when a call is
-    //     refused before its budget, out of call order, with another refusal, or a row landed.
-    //     The bound is the budget plus one attempt for each call (each up to the connection's
-    //     busy timeout) and room for a loaded machine: 2 x the budget. (2) prints every call's
-    //     refusal time and outcome.
+    // The first call's refusal can be seen one attempt late (the next queued call's attempt may
+    // already have begun), so the four queued calls made 3 or 4 attempts after it, never more.
+    const attemptsAfterwards = begins.length - attemptsWhenTheFirstSettled;
+    // (1) red when the budget counts from each call's first busy answer, not from the call: each
+    //     queued call then waits a budget of its own in many attempts (the break measured 35 after
+    //     the first call settled, the last refusal near 5 x 400 ms), where the right count gives
+    //     each of the four a single attempt, because its budget passed in the queue; also when a
+    //     call is refused before its budget, out of call order, with another refusal, or a row
+    //     landed. It counts attempts, not milliseconds: the bound this cell had (the last refusal
+    //     under 2 x the budget) failed on the macOS runner with the count right (917, 846 and 1,031
+    //     ms in CI runs 42321890910, its re-run and 42323967528). (2) prints every call's refusal
+    //     time and outcome, and the attempts the four queued calls made.
     expect(
       {
         order: refused.map((r) => r.call),
-        withinTwiceTheBudget: last < 2 * budgetMs,
+        atMostOneAttemptEachForTheFourQueuedCalls: attemptsAfterwards <= 4,
         notBeforeTheBudget: first >= budgetMs,
         errors: refused.map((r) => r.error),
         rows: values(file),
       },
-      refused.map((r) => `#${r.call} at ${r.atMs.toFixed(0)} ms`).join(', '),
+      `${refused.map((r) => `#${r.call} at ${r.atMs.toFixed(0)} ms`).join(', ')}; ${attemptsAfterwards} attempts by the four queued calls`,
     ).toEqual({
       order: [1, 2, 3, 4, 5],
-      withinTwiceTheBudget: true,
+      atMostOneAttemptEachForTheFourQueuedCalls: true,
       notBeforeTheBudget: true,
       errors: Array(5).fill({
         workflowError: true,
@@ -780,35 +801,73 @@ describe('#616 unit 8 — the write path', () => {
     const file = freshFile();
     const holder = connect(file);
     holder.exec('BEGIN IMMEDIATE');
-    const { db } = realmDb(file, { budgetMs: 100 });
-    let last = performance.now();
-    let longestGap = 0;
-    const timer = setInterval(() => {
-      const now = performance.now();
-      longestGap = Math.max(longestGap, now - last);
-      last = now;
-    }, 1);
-    const outs = await Promise.all(
-      Array.from({ length: 50 }, (_, i) => settle(db.immediate(insert(i), verified))),
+    // Every BEGIN the class sends is stamped with the number of turns the event loop has taken so far
+    // (a loop that turns once per setImmediate), on a real connection that passes everything on.
+    const { wrapped } = withFault(
+      connect(file),
+      () => false,
+      () => new Error('never thrown'),
+      0,
     );
-    // One more turn, so the gap that ends when the last call settles is measured too.
-    await sleep(5);
-    clearInterval(timer);
+    let turns = 0;
+    let spinning = true;
+    const spin = (): void => {
+      turns += 1;
+      if (spinning) setImmediate(spin);
+    };
+    setImmediate(spin);
+    const turnsAtBegin: number[] = [];
+    const stamped: DatabaseLike = {
+      exec(sql) {
+        if (sql.startsWith('BEGIN')) turnsAtBegin.push(turns);
+        wrapped.exec(sql);
+      },
+      prepare: (sql) => wrapped.prepare(sql),
+      close: () => wrapped.close(),
+      get isTransaction() {
+        return wrapped.isTransaction;
+      },
+    };
+    const { db } = realmDb(file, { budgetMs: 100, connection: stamped });
+    // The in-process lock is held for longer than the budget, as the COMMIT outcome protocol holds
+    // it: all 50 calls queue behind it and every one has passed its budget when it is handed the
+    // lock. (A call queued behind a call that ends within its own budget is another case: it
+    // attempts at once and waits on a timer afterwards. With a fresh start of 50 calls the first few
+    // are of that kind, which is why the first version of this cell failed on the macOS runner.)
+    expect(db.lock.tryTake()).toBe(true);
+    const pending = Array.from({ length: 50 }, (_, i) => settle(db.immediate(insert(i), verified)));
+    await sleep(150);
+    db.lock.release();
+    const outs = await Promise.all(pending);
+    spinning = false;
     holder.exec('ROLLBACK');
+    const distinct = new Set(turnsAtBegin).size;
     // (1) red when a call that got the lock after its budget passed makes its attempt without
-    //     yielding: the 49 queued attempts then run back to back, each blocking for the busy
-    //     timeout, and the program stops for about a second (measured: 1,041-1,087 ms idle and
-    //     under load; with the yield 22-62 ms; plans/issue-616/ia2-u09/probes/burst-results.md).
-    //     The bound, 300 ms, leaves room for a loaded host. Also red when a call is not refused
-    //     busy, or a row landed. (2) prints the longest gap and the distinct refusals.
+    //     yielding: the lock is handed on without the loop turning, so the 50 attempts run back to
+    //     back, each blocking for the busy timeout, and the program stops for about a second
+    //     (measured: 1,041-1,087 ms idle and under load; with the yield 22-62 ms;
+    //     plans/issue-616/ia2-u09/probes/burst-results.md); they then share one turn count (1 of 50
+    //     in the break). A healthy store gives 50 of 50 here; the floor is 45, five of slack for the
+    //     order two immediates run in on another platform, far from the break's 1. It counts loop
+    //     turns, not milliseconds: the first version of this cell bounded the longest gap at 300 ms
+    //     and failed on the macOS runner (CI run 42321890910 and its re-run) with the yield in
+    //     place. Also red when a call makes more or fewer than one attempt, is not refused busy, or a
+    //     row landed. (2) prints how many attempts began in a turn of their own, and how many were
+    //     made.
     expect(
       {
-        longestGapUnder300Ms: longestGap < 300,
+        attempts: turnsAtBegin.length,
+        mostAttemptsInATurnOfTheirOwn: distinct >= 45,
         refusals: [...new Set(outs.map((o) => (o.error as { code?: unknown })?.code))],
         rows: values(file),
       },
-      `longest gap ${longestGap.toFixed(0)} ms`,
-    ).toEqual({ longestGapUnder300Ms: true, refusals: ['STATE_RUN_BUSY'], rows: [] });
+      `${distinct} of ${turnsAtBegin.length} attempts began in a turn of their own`,
+    ).toEqual({
+      attempts: 50,
+      mostAttemptsInATurnOfTheirOwn: true,
+      refusals: ['STATE_RUN_BUSY'],
+      rows: [],
+    });
   });
 
   it('correction check 3: autocommit waits for a busy store, then refuses it with STATE_RUN_BUSY, nothing written', async () => {

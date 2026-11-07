@@ -5,9 +5,8 @@
 // routes through raw append with the envelope advisory present; empty entries always use the raw
 // unlocked path regardless of capability (D3 §2: unchanged, no advisory either way).
 import { declareReleaseLine } from '@sensigo/realm';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   JsonFileStore,
@@ -23,6 +22,7 @@ import type {
   TraceBufferStore,
 } from '@sensigo/realm';
 import { handleAppendTrace, resetUnfencedTraceStoreWarnings } from './append-trace.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 function makeWorkflowDef(): WorkflowDefinition {
   return {
@@ -89,19 +89,22 @@ class LegacyOnlyTraceBufferStore {
 }
 
 describe('append_trace fenced-trio adoption — behavioral spy (issue #207 PR-2)', () => {
-  let runDir: string;
+  let h: TempHome;
   let workflowDir: string;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
 
   beforeEach(async () => {
-    runDir = await mkdtemp(join(tmpdir(), 'realm-append-trace-spy-runs-'));
-    workflowDir = await mkdtemp(join(tmpdir(), 'realm-append-trace-spy-wf-'));
-    runStore = new JsonFileStore(runDir);
-    workflowStore = new JsonWorkflowStore(workflowDir);
+    h = await makeTempHome();
+    workflowDir = join(h.path, 'workflows');
+    runStore = h.stores.runStore;
+    workflowStore = h.stores.workflowStore;
     const def = makeWorkflowDef();
     await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
     resetUnfencedTraceStoreWarnings();
+  });
+  afterEach(async () => {
+    await h.cleanup();
   });
 
   it('capability present + non-empty entries: appendFenced exactly once, raw append never, no advisory', async () => {

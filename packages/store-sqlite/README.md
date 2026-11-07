@@ -5,7 +5,7 @@ Do not depend on this package.
 
 ## Opening a home
 
-`openRealmHome({ home, clock })` opens a Realm home and resolves to a handle with `close()`. Callers in one process that open the same home share one handle and one connection, so a `close()` by any of them ends it for all.
+`openRealmHome({ home, clock })` opens a Realm home and resolves to a handle with `runStore`, `dedupStoreFor`, `workflowStore`, `failedAttemptStore`, `replayStore` and `close()`. Callers in one process that open the same home share one handle and one connection, so a `close()` by any of them ends it for all.
 
 ## The store file
 
@@ -14,6 +14,12 @@ Realm keeps run records in one SQLite file, `realm.db`, in the Realm home. Never
 Text of a deleted run may stay readable in `realm.db`'s free pages and in `realm.db-wal` until the file is vacuumed and checkpointed (purge, a later unit, does both).
 
 One exception to Realm stamping every time itself: a run deleted by SQL outside Realm is stamped with SQLite's own clock.
+
+Duplicate webhooks: each id is remembered, as a hash, for its window, measured on the store's clock and fixed when it is recorded; each record also clears up to 100 expired ids.
+
+## The workflow registry
+
+The workflow registry stores each distinct definition text once, under its hash, with a pointer per workflow to its current text and a record of every move of that pointer; an identical re-register writes nothing.
 
 ## Failed attempts and replays
 

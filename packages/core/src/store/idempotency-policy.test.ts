@@ -29,6 +29,8 @@ function stripComments(text: string): string {
 const CALL_SITE_FILES = [
   join(repoSrc, 'core', 'src', 'store', 'json-file-store.ts'),
   join(repoSrc, 'testing', 'src', 'store', 'in-memory-store.ts'),
+  // #616 unit 15a: the SQLite run store's keyed create.
+  join(repoSrc, 'store-sqlite', 'src', 'run-store.ts'),
 ] as const;
 
 function makeMatched(over: Partial<RunRecord>): RunRecord {
@@ -89,10 +91,11 @@ describe('decideIdempotencyPolicy — the caller-derives contract (issue #558 PR
       }
     }
 
-    // Exactly three today (json-file-store ×2, in-memory-store ×1). A NEW call site that does not
-    // derive fails the property below; a new call site that does derive raises this count and the
-    // author must say so here — deliberately, not silently.
-    expect(sites.length).toBe(3);
+    // Exactly four today (json-file-store ×2, in-memory-store ×1, and the SQLite run store's keyed
+    // create ×1, #616 unit 15a). A NEW call site that does not derive fails the property below; a
+    // new call site that does derive raises this count and the author must say so here —
+    // deliberately, not silently.
+    expect(sites.length).toBe(4);
     for (const site of sites) {
       expect(site.head).toContain('run_phase: deriveRunPhase(');
     }

@@ -233,6 +233,21 @@ const EXPECTED: Record<string, CensusEntry> = {
     classes: ['writer-stamped'],
     reason: 'The create branch mints a fresh, non-terminal run record.',
   },
+  // #616 PR-1a unit 12a: the SQLite run store's create, like the two stores above.
+  'packages/store-sqlite/src/run-store.ts': {
+    count: 1,
+    classes: ['writer-stamped'],
+    reason: 'The create branch mints a fresh, non-terminal run record.',
+  },
+  // #616 PR-1a unit 15a: the key holder's read of the stored column.
+  'packages/store-sqlite/src/run-rows.ts': {
+    count: 1,
+    classes: ['echo'],
+    reason:
+      "`findKeyHolder` maps the stored terminal_state column (0/1) to a boolean for core's key-holder pick; it reaches no store.",
+    suppression:
+      'A read of the stored column for the key holder; it reaches no store and carries no seal.',
+  },
   'packages/testing/src/store/run-store-fidelity-contract.ts': {
     count: 1,
     classes: ['fixture-input'],
@@ -400,7 +415,8 @@ describe('#367 — the terminal-writer census', () => {
     // #729 PR-3: +4 (the drive-path lint's disables). Correction 1 (F26): +1, run-attach.ts's
     // PLAIN.cmd disable. Correction 3 (H-8''): +1, agent.ts's context disable. #715 (b): -1, the
     // buildFinalizedSeal disable in execution-loop.ts (the function was deleted with the legacy path).
-    expect(claimed).toHaveLength(10);
+    // #616 PR-1a unit 15a: +1, run-rows.ts's key-holder read.
+    expect(claimed).toHaveLength(11);
   });
 
   it("turbo.json globalDependencies matches the sweep table's join-list", () => {
@@ -424,11 +440,13 @@ describe('#367 — the terminal-writer census', () => {
   // #715 (a): +1 (store-clock-contract.ts, the store-clock TCK's holder run), in a new file.
   // #715 (b): -8 (execution-loop.ts's legacy blocks and buildFinalizedSeal, deleted).
   // #616 PR-1a unit 2b: +1 (eligibility.ts, the phase fingerprint's corpus table), in a mapped file.
-  it('the post-strip total is 77 across 16 files — the figure the map is built from', () => {
+  // #616 PR-1a unit 12a: +1 (run-store.ts, the create branch), in a new file.
+  // #616 PR-1a unit 15a: +1 (run-rows.ts, the key holder's read of the stored column), in a new file.
+  it('the post-strip total is 79 across 18 files — the figure the map is built from', () => {
     const scan = scanTerminalWriters(REPO_ROOT);
     const total = Object.values(scan.hits).reduce((n, l) => n + l.length, 0);
-    expect(total).toBe(77);
-    expect(Object.keys(scan.hits)).toHaveLength(16);
+    expect(total).toBe(79);
+    expect(Object.keys(scan.hits)).toHaveLength(18);
   });
 });
 

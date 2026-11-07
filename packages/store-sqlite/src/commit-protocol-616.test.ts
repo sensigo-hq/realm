@@ -144,6 +144,16 @@ function summary(err: unknown): Record<string, unknown> {
   };
 }
 
+/**
+ * The two fields that tell a caller what to do next. Pinned beside the cause-bearing fences too,
+ * because a flag worked out from the cause (true only for a full disk, say) would leave every cell
+ * that has a cause green.
+ */
+function flagsOf(err: unknown): { retryable: unknown; agentAction: unknown } {
+  const e = err as Partial<WorkflowError>;
+  return { retryable: e.retryable, agentAction: e.agentAction };
+}
+
 /** Whether the in-process lock is free (taken and given back at once when it is). */
 function lockFree(db: RealmDb): boolean {
   const free = db.lock.tryTake();
@@ -381,12 +391,14 @@ describe('#616 unit 9 — the COMMIT outcome protocol', () => {
     const landed = await settle(write(s, 9));
     // (1) red when an unknown outcome does not fence (the second write waits for the holder and is
     //     refused busy instead), the cause is lost, the full disk is not said in words (in either
-    //     error), a read is refused while fenced, the connection is not reopened before the next
-    //     call (one connection only), or the store never writes again. (2) prints every call's
-    //     outcome, the opens and the meta row.
+    //     error), the flags follow the cause (the first caller's error says retryable for a full
+    //     disk, or a later refusal says it does not), a read is refused while fenced, the connection
+    //     is not reopened before the next call (one connection only), or the store never writes
+    //     again. (2) prints every call's outcome, the flags, the opens and the meta row.
     expect({
       unknown: summary(unknown.error),
       refused: summary(refused.error),
+      flags: { unknown: flagsOf(unknown.error), refused: flagsOf(refused.error) },
       read: read.value,
       opensWhileFenced,
       landed: landed.value,
@@ -405,6 +417,10 @@ describe('#616 unit 9 — the COMMIT outcome protocol', () => {
         message: FENCED_FULL_SENTENCE,
         details: { cause: 'STATE_STORE_FULL' },
         commitOutcome: undefined,
+      },
+      flags: {
+        unknown: { retryable: false, agentAction: 'report_to_user' },
+        refused: { retryable: true, agentAction: 'report_to_user' },
       },
       read: 0,
       opensWhileFenced: 2,
@@ -638,9 +654,14 @@ describe('#616 unit 9 — the COMMIT outcome protocol', () => {
     const holder = other(s.file);
     holder.exec('BEGIN IMMEDIATE');
     const refused = await settle(write(s, 8));
-    // (1) red when the full disk's words are given to every cause (in either error). (2) prints
-    //     both errors.
-    expect({ unknown: summary(unknown.error), refused: summary(refused.error) }).toEqual({
+    // (1) red when the full disk's words are given to every cause (in either error), or the flags
+    //     follow the cause (the first caller's error says retryable, or a later refusal says it
+    //     does not, for a cause that is not a full disk). (2) prints both errors and their flags.
+    expect({
+      unknown: summary(unknown.error),
+      refused: summary(refused.error),
+      flags: { unknown: flagsOf(unknown.error), refused: flagsOf(refused.error) },
+    }).toEqual({
       unknown: {
         workflowError: true,
         code: 'STATE_STORE_WRITES_FENCED',
@@ -654,6 +675,10 @@ describe('#616 unit 9 — the COMMIT outcome protocol', () => {
         message: FENCED_READONLY_SENTENCE,
         details: { cause: 'STATE_STORE_READONLY' },
         commitOutcome: undefined,
+      },
+      flags: {
+        unknown: { retryable: false, agentAction: 'report_to_user' },
+        refused: { retryable: true, agentAction: 'report_to_user' },
       },
     });
   });

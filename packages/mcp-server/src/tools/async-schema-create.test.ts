@@ -2,28 +2,25 @@
 // a truthy `$async`, in its own clauses (the validity, the consequence, the remedy), over a real
 // in-process MCP client: nothing is registered and no run is created; the same workflow without
 // `$async` is created. What a failing cell prints: the reply's status, booleans per clause, counts.
-import { describe, it, expect } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, afterEach } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import {
-  JsonFileStore,
-  JsonWorkflowStore,
-  SCHEMA_KEY_CONSEQUENCE,
-  asyncSchemaValidity,
-} from '@sensigo/realm';
+import { SCHEMA_KEY_CONSEQUENCE, asyncSchemaValidity } from '@sensigo/realm';
 import { createRealmMcpServer } from '../server.js';
-import { withArtifactStores } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 type Reply = Record<string, unknown>;
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 async function connect() {
-  const base = await mkdtemp(join(tmpdir(), 'realm-async-create-'));
-  const runStore = new JsonFileStore(join(base, 'runs'));
-  const workflowStore = new JsonWorkflowStore(join(base, 'wf'));
-  const server = createRealmMcpServer({ ...withArtifactStores(runStore), workflowStore });
+  const h = await makeTempHome();
+  handles.push(h);
+  const { runStore, workflowStore } = h.stores;
+  const server = createRealmMcpServer({ ...h.stores });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'async-schema-create', version: '0' });
   await Promise.all([server.connect(st), client.connect(ct)]);

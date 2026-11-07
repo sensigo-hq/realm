@@ -200,6 +200,8 @@ const says = (sentence: string): boolean => README.includes(sentence);
 
 /** The README's sentences, each with the cell below that pins its behaviour. */
 const SENTENCES = {
+  opens:
+    '`openRealmHome({ home, clock })` opens a Realm home and resolves to a handle with `runStore`, `dedupStoreFor`, `workflowStore`, `failedAttemptStore`, `replayStore` and `close()`.',
   shared:
     'Callers in one process that open the same home share one handle and one connection, so a `close()` by any of them ends it for all.',
   file: 'Realm keeps run records in one SQLite file, `realm.db`, in the Realm home. Never delete, move or replace `realm.db` or its side files `realm.db-wal` and `realm.db-shm` while a Realm process is running.',
@@ -463,6 +465,19 @@ describe('#616 unit 11 — close()', () => {
       newerShared: true,
     });
   });
+
+  it('check 8 (#616 unit 12a; MA 2 on #998): a caller whose shared open resolves after another caller closed the home gets a fresh handle, not the closed one', async () => {
+    const home = join(tmp(), '.realm');
+    const a = await openRealmHome({ home });
+    // B asks while the home is open and has not awaited; A closes; then B awaits.
+    const late = openRealmHome({ home });
+    a.close();
+    const b = await track(late);
+    const used = await b.runStore.get('no-such-run').then(() => 'resolved', describeError);
+    // (1) red when B is handed A's closed handle (its first use then meets a closed connection);
+    //     (2) prints whether B got another handle and what its first read gave.
+    expect({ another: b !== a, used }).toEqual({ another: true, used: 'STATE_RUN_NOT_FOUND' });
+  });
 });
 
 describe('#616 unit 11 — one exporter', () => {
@@ -553,16 +568,31 @@ describe('#616 unit 11 — one exporter', () => {
 });
 
 describe('#616 unit 11 — the README sentences, each tied to its behaviour', () => {
-  it("README, the shared handle: the sentence is there, and two callers' handle is one (check 1 pins the connection count)", async () => {
+  it("README, the handle (check 9, #616 unit 12a) and the shared handle: both sentences are there, the handle carries exactly the members the sentence names, and two callers' handle is one (check 1 pins the connection count)", async () => {
     const home = join(tmp(), '.realm');
     const [a, b] = await Promise.all([track(openRealmHome({ home })), openRealmHome({ home })]);
+    const carries = Object.keys(a).sort();
     a.close();
     const bAfter = settleSync(() => b.close());
-    // (1) red when the sentence is changed or removed, or when two callers get two handles (a
-    //     close() by one would then not end the other's); (2) prints the sentence check, whether
-    //     the handles are the same object, and what closing the second gave.
-    expect({ says: says(SENTENCES.shared), one: a === b, bAfter }).toEqual({
-      says: true,
+    // (1) red when either sentence is changed or removed, when the handle carries other members
+    //     than the sentence names, or when two callers get two handles (a close() by one would then
+    //     not end the other's); (2) prints the sentence checks, the handle's members, whether the
+    //     handles are the same object, and what closing the second gave.
+    expect({
+      says: [says(SENTENCES.opens), says(SENTENCES.shared)],
+      carries,
+      one: a === b,
+      bAfter,
+    }).toEqual({
+      says: [true, true],
+      carries: [
+        'close',
+        'dedupStoreFor',
+        'failedAttemptStore',
+        'replayStore',
+        'runStore',
+        'workflowStore',
+      ],
       one: true,
       bAfter: 'no error',
     });

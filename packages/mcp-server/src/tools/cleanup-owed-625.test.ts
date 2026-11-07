@@ -5,15 +5,11 @@
 // sentence after the refusal, so the reply contradicted itself).
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   advanceRun,
   submitHumanResponse,
@@ -21,6 +17,7 @@ import {
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { handleSubmitHumanResponse } from './submit-human-response.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 
@@ -57,11 +54,16 @@ const def = (withTidy: boolean): WorkflowDefinition => ({
 const PENDING_WAY = (id: string) =>
   `it completed; cleanup step left pending: 'tidy' — 'realm run drain ${id} --force' runs it with code that has its handler.`;
 
+const handles: TempHome[] = [];
+afterEach(async () => {
+  for (const h of handles.splice(0).reverse()) await h.cleanup();
+});
+
 describe('#625 PR-2a, F11 — the ended-run refusal never says "nothing is owed" beside a pending cleanup step', () => {
   async function completed(withTidyMissing: boolean) {
-    const dir = await mkdtemp(join(tmpdir(), 'f11-'));
-    const runStore = new JsonFileStore(join(dir, 'runs'));
-    const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    const h = await makeTempHome();
+    handles.push(h);
+    const { runStore, workflowStore } = h.stores;
     const d = def(!withTidyMissing);
     await workflowStore.register(d);
     const { record: run } = await runStore.create({

@@ -1,14 +1,15 @@
 // issue #558 PR-T (review fold R5) — the agent's discovery surface names what it could not read.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, writeFile, mkdir, chmod } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile, mkdir, chmod } from 'node:fs/promises';
 import { join } from 'node:path';
 import { JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import { handleListWorkflows } from './list-workflows.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const RR = 're-register the workflow from its source (realm workflow register <path-to-workflow>)';
 
 describe('list_workflows — every registered copy the listing could not read is named (issue #558 PR-T, R5)', () => {
+  let h: TempHome;
   let dir: string;
   let store: JsonWorkflowStore;
   const plant = (id: string): Promise<void> =>
@@ -25,12 +26,13 @@ describe('list_workflows — every registered copy the listing could not read is
     );
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-lw-'));
-    store = new JsonWorkflowStore(dir);
+    h = await makeTempHome();
+    dir = join(h.path, 'workflows');
+    store = h.stores.workflowStore;
   });
   afterEach(async () => {
     await chmod(dir, 0o755).catch(() => undefined);
-    await rm(dir, { recursive: true, force: true });
+    await h.cleanup();
   });
 
   it('LW1 a healthy registry: the workflows, an empty unreadable list, and the create_workflow steer', async () => {
@@ -116,7 +118,8 @@ describe('list_workflows — every registered copy the listing could not read is
 
 describe('#627 W correction 2 (3.5) — list_workflows’ hint by class', () => {
   it('a copy a later version of Realm registered: class newer, no repair, and the hint names the other-version case', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-lw-627-'));
+    const h = await makeTempHome();
+    const dir = join(h.path, 'workflows');
     try {
       await writeFile(
         join(dir, 'w1.json'),
@@ -128,7 +131,7 @@ describe('#627 W correction 2 (3.5) — list_workflows’ hint by class', () => 
           steps: {},
         }),
       );
-      const r = await handleListWorkflows({ workflowStore: new JsonWorkflowStore(dir) });
+      const r = await handleListWorkflows({ workflowStore: h.stores.workflowStore });
       if (r.status !== 'ok') throw new Error('fixture: the listing answers');
       // (a) red when the hint promises a repair for every entry (a newer copy carries none) and never
       //     names the other-version case; (b) prints the entry's class, whether it has a repair, and
@@ -141,7 +144,7 @@ describe('#627 W correction 2 (3.5) — list_workflows’ hint by class', () => 
         ),
       }).toEqual({ class: 'newer', repair: undefined, hint: true });
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await h.cleanup();
     }
   });
 });

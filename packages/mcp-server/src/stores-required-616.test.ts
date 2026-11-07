@@ -24,9 +24,9 @@ beforeEach(async () => {
   vi.stubEnv('HOME', home);
   stores = await makeTempHome();
 });
-afterEach(() => {
+afterEach(async () => {
   vi.unstubAllEnvs();
-  stores.cleanup();
+  await stores.cleanup();
   rmSync(home, { recursive: true, force: true });
 });
 
