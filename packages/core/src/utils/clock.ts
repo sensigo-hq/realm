@@ -38,7 +38,7 @@ export const CLOCK_READ_CLASSES = {
   event:
     "An instant the engine records with what happened (a step's start and end, a drive failure, a guard's evidence): the store's clock, read where it happens.",
   outside:
-    "An instant compared with nothing on a run (a log line, a signature window, `Retry-After`, a price day): the host's clock, each read named in the census with its reason.",
+    "An instant compared with no instant the store's clock gave (a log line, a signature window, `Retry-After`, a price day, a request's start compared with another's): the host's clock, each read named in the census with its reason.",
   duration:
     'A duration (elapsed time, a budget, a timeout): the monotonic clock, never compared with an instant.',
 } as const;

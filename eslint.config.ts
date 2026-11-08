@@ -171,9 +171,9 @@ const ZOD_V3_RESTRICTIONS = {
 const TEST_CLOCK_RESTRICTIONS = [
   {
     name: '@sensigo/realm-testing',
-    importNames: ['createTestLocation'],
+    importNames: ['createTestLocation', 'createTestHome'],
     message:
-      'A production module never creates a test location: `createTestLocation` is for tests (#715, D6-52).',
+      'A production module never creates a test location or a test home: `createTestLocation` and `createTestHome` are for tests (#715, D6-52).',
   },
   {
     name: '@sensigo/realm',
@@ -296,7 +296,7 @@ const clockPlugin = {
           },
         ],
         messages: {
-          read: "A clock read outside a run store's clock: read the store's clock (`store.clock.now()`), or — for an instant compared with nothing on a run — name the site in the clock census as `outside` with its reason (#715 (b), 04 §B).",
+          read: "A clock read outside a run store's clock: read the store's clock (`store.clock.now()`), or — for an instant compared with no instant the store's clock gave — name the site in the clock census as `outside` with its reason (#715 (b), 04 §B).",
           dflt: 'A clock-reading parameter default: the caller passes the instant (#715 (b), 04 §B).',
         },
       },
