@@ -29,7 +29,7 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   ExtensionRegistry,
   JsonFileStore,
-  JsonWorkflowStore,
+  type RealmWorkflowRegistrar,
   createDefaultRegistry,
   executeChain,
   executeStep,
@@ -62,7 +62,7 @@ function claim(page: string, sentence: string): void {
 interface Home {
   home: string;
   runs: JsonFileStore;
-  workflows: JsonWorkflowStore;
+  workflows: RealmWorkflowRegistrar;
 }
 
 const folders: string[] = [];
