@@ -145,8 +145,9 @@ export interface MaintenanceCheckHome {
   readonly path: string;
   /**
    * Checks the store file through the handle's read-only connection, writing nothing to it, and
-   * resolves to the published report (`store-check.ts`). It never rejects for a finding: only with
-   * the store's busy refusal (`STATE_RUN_BUSY`, past its budget), and after `close()`.
+   * resolves to the published report (`store-check.ts`). It never rejects for a finding. It rejects with
+   * the store's busy refusal (`STATE_RUN_BUSY`, past its budget), with any error of the integrity check
+   * other than a damaged file's (passed on as every store read passes it), and after `close()`.
    */
   check(): Promise<CheckReport>;
   /** Closes the handle's connection. A second `close()` does nothing. */

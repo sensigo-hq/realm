@@ -15,8 +15,9 @@
 //   3. the WAL's frames, by `PRAGMA wal_checkpoint(NOOP)` in autocommit (inside a read transaction it
 //      fails with errcode 6): it copies nothing and writes nothing (DELTAS 53). Its `log` and
 //      `checkpointed` are exact at that moment; another Realm process moves them.
-// A fact that could not be measured is absent, never 0. `check()` rejects only with the store's busy
-// refusal (`STATE_RUN_BUSY`, past its budget) and after `close()`.
+// A fact that could not be measured is absent, never 0. `check()` rejects with the store's busy
+// refusal (`STATE_RUN_BUSY`, past its budget), with any error of the integrity check other than a
+// damaged file's (passed on as every store read passes it), and after `close()`.
 import { lstatSync } from 'node:fs';
 import { WorkflowError } from '@sensigo/realm';
 import type { RealmDb } from './connection.js';
