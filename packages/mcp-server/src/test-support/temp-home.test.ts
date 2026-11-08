@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { loadWorkflowFromString } from '@sensigo/realm';
+import { loadWorkflowFromString, type RunStore } from '@sensigo/realm';
 import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
 import { makeTempHome, runCount, runIds, type TempHome } from './temp-home.js';
 
@@ -218,8 +218,9 @@ describe('#616 PR-2c c0 — runCount and runIds read the runs through the store'
     const ids = await runIds(store);
     // (1) red when a reader counts the files in the runs folder (`readdir`) instead of asking the
     //     store: the opener makes no runs folder at the open, so on the fresh home the read throws ENOENT;
-    //     `ascending` guards the order against a store whose listing comes back in another order
-    //     (c4's `scan()`, the SQLite rows); (2) prints whether the folder was there first, the count
+    //     `ascending` checks this store's listing only — the JSON store's `list()` already sorts, so
+    //     the order is guarded by the next cell, whose store answers out of order; (2) prints whether
+    //     the folder was there first, the count
     //     and the ids before and after the two creates, and both created ids.
     expect({
       folderBefore,
@@ -237,5 +238,24 @@ describe('#616 PR-2c c0 — runCount and runIds read the runs through the store'
       ascending: true,
     });
     expect(ids).toHaveLength(2);
+  });
+
+  it('a store with no folder whose list() answers b then a: runCount 2, runIds [a, b]', async () => {
+    // A store with no runs folder at all (no `runsDirPath`) whose listing answers `b` then `a`: the
+    // readers can answer only through `list()`, and only their sort puts the ids in order.
+    const store = {
+      list: async () => ({
+        snapshots: [{ record: { id: 'b' } }, { record: { id: 'a' } }],
+        read_at: new Date('2026-11-08T00:00:00.000Z'),
+        consistent_snapshot: true,
+      }),
+    } as unknown as Pick<RunStore, 'list'>;
+    // (1) red when a reader counts the files of a runs folder, even behind an `existsSync` guard (this
+    //     store has none, so a guarded read answers 0 and []), or when runIds drops its sort (it then
+    //     answers [b, a]); (2) prints the count and the ids, expected against got.
+    expect({ count: await runCount(store), ids: await runIds(store) }).toEqual({
+      count: 2,
+      ids: ['a', 'b'],
+    });
   });
 });
