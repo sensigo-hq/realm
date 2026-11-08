@@ -1181,4 +1181,24 @@ describe('caching 3-M A-2a2r — the provider, the address or the model changed'
     );
     expect(cacheMissCauses(list), explain(list)).toEqual(['model_changed']);
   });
+
+  // Correction 1: drive 2 ran with another `--model` AND the profile was edited in the same gap,
+  // so the system part differs too. The model is checked before every part (design M-D). Can fail:
+  // the model check moved after the parts, or after the cache settings (system). Prints each entry.
+  it('another --model and a profile edit in the same gap: model_changed, before the system text', () => {
+    const list = againstReference(
+      {
+        ...anthropicWrote,
+        model: 'claude-opus-5-5',
+        marked: ['system'],
+        parts: { tools: 'submit', system: 'profile after the edit', prompt: 'input' },
+      },
+      {
+        ...anthropicWrote,
+        marked: ['system'],
+        parts: { tools: 'submit', system: 'profile before the edit', prompt: 'input' },
+      },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual(['model_changed']);
+  });
 });
