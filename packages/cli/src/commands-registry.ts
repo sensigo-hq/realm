@@ -9,9 +9,7 @@ import { abandonCommand } from './commands/abandon.js';
 import { reclaimCommand } from './commands/reclaim.js';
 import { cleanupCommand } from './commands/cleanup.js';
 import { purgeCommand } from './commands/purge.js';
-import { gcCommand } from './commands/gc.js';
 import { exportCommand } from './commands/export.js';
-import { reconcileCommand } from './commands/reconcile.js';
 import { attemptsCommand } from './commands/attempts.js';
 import { drainCommand } from './commands/drain.js';
 import { respondCommand } from './commands/respond.js';
@@ -26,9 +24,7 @@ import { workflowListCommand } from './commands/workflow-list.js';
 import { listCommand } from './commands/list.js';
 import { mcpCommand } from './commands/mcp.js';
 import { serveCommand } from './commands/serve.js';
-import { migrateCommand } from './commands/migrate.js';
-// issue #367 (part 3): the run-scoped sibling of `realm workflow migrate` — different group, no
-// collision.
+// issue #367 (part 3): `realm run migrate`, run-scoped.
 import { runMigrateCommand } from './commands/run-migrate.js';
 import { agentCommand } from './commands/agent.js';
 import { webhookCommand } from './commands/webhook.js';
@@ -52,7 +48,6 @@ export const workflowCommands = [
   watchCommand,
   runCommand,
   testCommand,
-  migrateCommand,
 ];
 
 /** Commands that operate on run instances (realm run <cmd>). */
@@ -68,9 +63,7 @@ export const runCommands = [
   runAdvanceCommand,
   cleanupCommand,
   purgeCommand,
-  gcCommand,
   exportCommand,
-  reconcileCommand,
   attemptsCommand,
   drainCommand,
   runMigrateCommand,

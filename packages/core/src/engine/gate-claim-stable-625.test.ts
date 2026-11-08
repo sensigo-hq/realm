@@ -7,8 +7,8 @@
 // the opening reply would silently stop meaning anything.
 //
 // The cells below drive every ENGINE operation that could touch the claim; the commands that live
-// in the CLI package (resume, cleanup, drain, purge, gc --heal, migrate --stamp-seals and the
-// batch reclaim selector) are cell'd in `packages/cli/src/commands/gate-claim-stable-625.test.ts`
+// in the CLI package (resume, cleanup, drain, purge, migrate --stamp-seals and the batch reclaim
+// selector) are cell'd in `packages/cli/src/commands/gate-claim-stable-625.test.ts`
 // — a core test cannot import a command.
 //
 // Each cell asserts (a) the claim is byte-identical before and after — token, holder, since,

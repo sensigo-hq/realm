@@ -64,12 +64,6 @@ export type ErrorCode =
   // Retryable: a live writer self-heals, and a stale lock is eventually stolen (issue #184).
   | 'STATE_RUN_BUSY'
   | 'STATE_TRANSITION_DENIED'
-  // gc's orphan-artifact sweep (issue #207 PR-2): the store's fresh read under the `run_absent`
-  // fence found the run EXISTS AGAIN — a JsonFileStore.save() re-import landed between the
-  // sweep's snapshot and the reap. Purely an internal signal between that fence (core's
-  // `evaluateFence`) and gc's own catch (routes it to the `resurrected` bucket, never
-  // `failed`/an aborted sweep) — not expected to surface in any envelope.
-  | 'STATE_RUN_RESURRECTED'
   | 'STATE_LEGACY_FORMAT'
   // #627 W (R25, W-r2): a registered workflow written by a LATER Realm (its `schema_version` is above
   // what this version reads) — refused at read, since this version would ignore requirements it

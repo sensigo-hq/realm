@@ -1177,12 +1177,12 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
    * NO record parse. Deliberately NOT `list()`: `list()` reads each file through the run-file
    * reader and throws the first that cannot be read as a run (issue #719) — a corrupt-but-PRESENT
    * `<id>.json` would throw there, whereas here it correctly still counts as a live run (the file
-   * exists on disk; whatever reads it later is a separate concern from whether `realm run gc`'s
-   * orphan sweep should treat this run's WAL/sidecar as run-less). Using `list()` for the orphan
+   * exists on disk; whatever reads it later is a separate concern from whether an orphan sweep
+   * should treat this run's WAL/sidecar as run-less). Using `list()` for the orphan
    * sweep's `liveRunIds` would wrongly orphan — and reap — a live-but-corrupt run's artifacts.
    *
-   * Concrete method, NOT on the `RunStore` interface (issue #163) — `gc` constructs a concrete
-   * `JsonFileStore` directly (as it already does for `runsDirPath`), so no external `RunStore`
+   * Concrete method, NOT on the `RunStore` interface (issue #163) — `gc`, its caller until #616
+   * PR-2c removed it, constructed a concrete `JsonFileStore` directly, so no external `RunStore`
    * implementer is forced to add this.
    *
    * FAIL-CLOSED, load-bearing: `ENOENT` (no `runsDir` at all — nothing has ever been created) is

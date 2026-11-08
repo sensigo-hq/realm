@@ -154,7 +154,6 @@ const TABLE: ReadonlyArray<readonly [Page, string, string, string, Cell]> = [
   ['docs/guides/operate-runs.md', 'realm run cleanup --older-than 7d --dry-run', 'bash', 'run', 'operate'],
   ['docs/guides/operate-runs.md', 'realm run export <run-id> --out ./run-44df45a3.json', 'bash', 'run on a real run', 'operate'],
   ['docs/guides/operate-runs.md', 'realm run purge --older-than 30d', 'bash', 'run', 'operate'],
-  ['docs/guides/operate-runs.md', 'realm run gc --older-than 1d', 'bash', 'run', 'operate'],
   ['docs/guides/step-handlers.md', 'export default {', 'javascript', 'program: imported, execute called three ways; and run by the engine', 'handlers'],
   ['docs/guides/step-handlers.md', 'id: price', 'yaml', 'whole workflow: loaded, registered, run', 'handlers'],
   ['docs/guides/step-handlers.md', 'realm workflow validate ./', 'bash', 'run', 'handlers'],
@@ -920,7 +919,6 @@ describe(
       exit('cleanup', sh(line('realm run cleanup')));
       exit('export', sh(line('realm run export <run-id>').replace('<run-id>', ok)));
       exit('purge', sh(line('realm run purge')));
-      exit('gc', sh(line('realm run gc')));
       const runs = Object.fromEntries(
         await Promise.all(
           [
@@ -953,7 +951,6 @@ describe(
           cleanup: 0,
           export: 0,
           purge: 0,
-          gc: 0,
         },
         runs: {
           ok: ['running', ['total']],

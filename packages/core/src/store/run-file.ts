@@ -257,8 +257,8 @@ function moveOut(facts: UnreadableFileFacts): string {
   const list = sideFilesList(fileId(facts.path), facts.side_files ?? []);
   return list === undefined
     ? `move it out of '${folder}'`
-    : `move it out of '${folder}' together with ${list} (moved alone, they become orphans that ` +
-        `'realm run gc --older-than <age> --force' deletes)`;
+    : `move it out of '${folder}' together with ${list} (moved alone, they become orphans nothing ` +
+        `removes)`;
 }
 
 /** The way out of a file, or of the runs folder, that cannot be read — by its errno. */
@@ -409,9 +409,10 @@ export function runsFolderUnreadableError(folder: string, err: unknown): Workflo
 }
 
 /**
- * issue #719 (R10, B3, C3) — a decision over EVERY run (`realm run reconcile`,
- * `realm run gc --heal`) fails closed when any run file cannot be read: ONE error naming every such file, and nothing is
- * written. `RESOURCE_FORMAT_INVALID` when every file's fault is in its bytes, else
+ * issue #719 (R10, B3, C3) — a decision over EVERY run fails closed when any run file cannot be
+ * read: ONE error naming every such file, and nothing is written. Its remaining caller is
+ * `JsonFileStore.reconcileKeys` (PR-3's); purge and `realm run migrate` read past an unreadable
+ * file and report it. `RESOURCE_FORMAT_INVALID` when every file's fault is in its bytes, else
  * `ENGINE_STORE_FAILED`. `command` is the exact command the operator ran, flags included, as its
  * caller passes it. Its facts are typed (`{ scope: 'files', …}` — {@link UnreadableRunFilesFacts});
  * read them through {@link unreadableRunFilesOf}.

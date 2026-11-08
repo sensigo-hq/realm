@@ -1,7 +1,6 @@
 # @sensigo/realm-store-sqlite
 
-SQLite-backed stores for Realm. Not yet released: a later change wires them in.
-Do not depend on this package.
+SQLite-backed stores for Realm: runs, duplicate-webhook ids, workflow definitions, failed attempts, replays and trace buffers, in one `realm.db` file in the Realm home. Realm's own store package, published so that `@sensigo/realm-cli` can depend on it; you do not need to install it yourself.
 
 ## Opening a home
 

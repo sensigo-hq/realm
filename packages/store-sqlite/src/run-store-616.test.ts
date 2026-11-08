@@ -6,10 +6,11 @@
 // rows reached the file, and the engine's release-line check of a store and its errors. A keyed
 // create is unit 15a's (`run-store-keyed-616.test.ts`).
 //
-// These cells stand in for the create, get and list ground of core's shared store laws until unit 16
-// wires the contract (`packages/testing/src/store/store-clock-contract.ts` and
-// `run-store-fidelity-contract.ts`): `WRITE_ONE_READING` (its unkeyed-create row), `READS_ONE_READING`,
-// `READ_AT_CAPPED` and `STORE_RELEASE_LINE_TRUE`.
+// Since unit 16 the shared laws that cover the create, get and list ground also run against this
+// store (`contract-clock-616.test.ts`: `WRITE_ONE_READING` (its unkeyed-create row),
+// `READS_ONE_READING` and `READ_AT_CAPPED`; `contract-fidelity-616.test.ts`:
+// `STORE_RELEASE_LINE_TRUE`). These cells stay for what no shared law sees: the rows and text a
+// write leaves, the exact refusals and their words, and the COMMIT protocol.
 //
 // Each assertion carries (1) the break that turns it red and (2) what it prints when it fails.
 import { mkdtempSync, rmSync } from 'node:fs';

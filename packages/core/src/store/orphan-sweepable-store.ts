@@ -12,11 +12,12 @@
 // exists for the run's entire life. "Artifact present, run file absent" is therefore ONLY true
 // after the run file has been deleted (a pre-#183 purge, a manual `rm`, disk corruption) or DURING
 // the sub-second atomic-write temp-rename window (the run file is a `<id>.json.<pid>.<8 hex>.tmp`, not yet
-// renamed to `<id>.json`). The age floor `gc` already enforces for temps covers that second,
-// narrow window; a genuinely run-less artifact older than the floor is the first, real case.
+// renamed to `<id>.json`). The age floor `gc` enforced for temps (until #616 PR-2c removed it)
+// covered that second, narrow window; a genuinely run-less artifact older than the floor is the
+// first, real case.
 
 /** One candidate orphan artifact — an absolute path this store owns, plus enough metadata for the
- *  caller (gc) to apply its own age floor. */
+ *  caller to apply its own age floor. */
 export interface OrphanArtifact {
   /** Absolute path. The store owns its own filename layout — the caller never reconstructs one. */
   path: string;
@@ -31,7 +32,7 @@ export interface OrphanSweepableStore {
   /**
    * Returns this store's artifacts whose `runId` is NOT in `liveRunIds` — candidate orphans, each
    * with its absolute path and mtime. Does NOT apply an age floor and does NOT delete anything —
-   * both of those are the caller's (gc's) job, so every `OrphanSweepableStore` implementation
+   * both of those are the caller's job, so every `OrphanSweepableStore` implementation
    * shares one age-floor policy instead of each re-implementing it.
    *
    * FAIL-CLOSED, load-bearing: an enumeration or per-artifact stat failure that is NOT `ENOENT`

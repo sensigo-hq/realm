@@ -121,18 +121,6 @@ One or more items failed schema validation. No runs were created.
 
 `realm listen` does this for you. A workflow's `trigger` names where the event's ID is in the request, and a repeated delivery starts no second run. See [Start runs from webhooks](webhooks.md).
 
-## Check the keys in a store
-
-`realm run reconcile --dry-run` reports the keys in use, and the keys that have more than one run:
-
-```text
-Would write 0 pointer(s) across 4 key group(s); 4 already current.
-Duplicate-key groups: 2
-  - workflow 'sync' → canonical 3fa445f0-…; other runs: 6c48086c-…
-```
-
-A key with more than one run is normal after a `rerun`: the newest run is the one the key points at.
-
 ## See also
 
 - [MCP tools reference](../reference/mcp/tools.md) covers `start_run` and `start_run_batch` in full.

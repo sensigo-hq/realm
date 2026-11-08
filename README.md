@@ -185,7 +185,6 @@ The `realm` commands that check or run a workflow (`workflow validate`, `registe
 | `realm run replay <run-id>`               | Re-evaluate preconditions with modified step outputs                                    |
 | `realm run diff <run-a> <run-b>`          | Compare evidence chains of two runs side by side                                        |
 | `realm run cleanup`                       | Mark idle non-terminal runs as abandoned                                                |
-| `realm workflow migrate`                  | Back-fill provenance fields on local workflow definitions from earlier versions         |
 | `realm mcp`                               | Start the MCP server over stdio (for local AI agents)                                   |
 | `realm serve`                             | Start the MCP server over HTTP with Bearer token auth (for hosted platforms)            |
 | `realm listen`                            | Start a webhook server that routes inbound webhooks to workflows (per `trigger:` block) |

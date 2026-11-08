@@ -7,9 +7,12 @@
 // or after its rows reached the file; SQLite refusing one of the deletion's statements; and a caller
 // that holds several deletions in one transaction and goes on after one failed (purge's batches).
 //
-// These cells stand in for the per-run artifact contract and the clock law's deletion leg until unit
-// 16 wires them (`packages/testing/src/store/per-run-artifact-store-contract.ts`, L1-L6; the
-// `READS_ONE_READING` amendment, D8). Unit 15b carries the key read after a deletion (check 9).
+// Since unit 16 the per-run artifact contract and the clock law's deletion leg also run against
+// this store (`contract-artifact-616.test.ts`: `L1_ABSENCE_RESOLVES` to `L6_PREVIEW_EQUALS_RECEIPT`
+// and `STORE_RELEASE_LINE_TRUE`; `contract-clock-616.test.ts`: `READS_ONE_READING` with
+// `recordsDeletionTime`). These cells stay for what no shared law sees: the rows and text a write
+// leaves, the exact refusals and their words, and the COMMIT protocol. Unit 15b carries the key
+// read after a deletion (check 9).
 //
 // Each assertion carries (1) the break that turns it red and (2) what it prints when it fails.
 import { randomUUID } from 'node:crypto';

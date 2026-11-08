@@ -7,35 +7,14 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { InMemoryStore, settableClock, type SettableClock } from '@sensigo/realm-testing';
 import { advanceRun, executeStep } from './execution-loop.js';
 import { describePending, composeNextActionsStatusWord, dueExpiry, owedList } from './pending.js';
 import { composeWaysAt } from './ways.js';
 import { nextCalls, owedOf } from '../test-support/ways-view.js';
-import { JsonFileStore } from '../store/json-file-store.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
-import { writeTestClockFile } from '../store/test-clock-file.js';
 import { writtenSnapshot } from './snapshot.js';
 import { zOf } from '../test-support/instant.js';
-
-/** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
- *  runs folder sits beside the location's clock file (first set to the host's reading), which
- *  `setClockOf` rewrites. */
-async function testLocationRuns(prefix: string): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), prefix));
-  await writeTestClockFile(root, new Date());
-  return join(root, 'runs');
-}
-async function clockedJsonStore(prefix: string): Promise<JsonFileStore> {
-  return new JsonFileStore(await testLocationRuns(prefix));
-}
-async function setClockOf(store: object, t: Date): Promise<void> {
-  const runsDir = (store as { runsDirPath?: string }).runsDirPath;
-  if (runsDir === undefined) throw new Error('setClockOf: this store is not a JSON store');
-  await writeTestClockFile(dirname(runsDir), t);
-}
 
 type OnExpiry = 'settle_default' | 'abort' | undefined;
 
@@ -64,9 +43,13 @@ function def(onExpiry: OnExpiry): WorkflowDefinition {
 }
 
 describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view names it as owed', () => {
-  let store: JsonFileStore;
-  beforeEach(async () => {
-    store = await clockedJsonStore('realm-ae-625-');
+  // #715 (b) (01 §C.4): the store's clock decides what is due — an in-memory store on a settable
+  // clock, first set to the host's reading, which a cell moves.
+  let clock: SettableClock;
+  let store: InMemoryStore;
+  beforeEach(() => {
+    clock = settableClock(new Date());
+    store = new InMemoryStore({ clock });
   });
 
   /** A run at its open question; returns the run id, the gate id, and a clock past its expiry. */
@@ -95,7 +78,7 @@ describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view nam
   it('settle_default through advanceRun: the default is settled, the owed step runs, the run completes; the disclosure is in warnings', async () => {
     const d = def('settle_default');
     const { runId, gateId, past } = await atGate(d);
-    await setClockOf(store, past);
+    await clock.set(past);
     const reply = await advanceRun(store, d, { runId });
     const { record: after } = await store.get(runId);
     // (a) red when advanceRun no longer carries the expiry out first (nothing runs, the question
@@ -124,7 +107,7 @@ describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view nam
   it('abort through advanceRun: the run ends aborted, nothing after the question runs; the hint says the expiry was carried out', async () => {
     const d = def('abort');
     const { runId, gateId, past } = await atGate(d);
-    await setClockOf(store, past);
+    await clock.set(past);
     const reply = await advanceRun(store, d, { runId });
     const { record: after } = await store.get(runId);
     // (a) red when the abort is not carried out; (b) prints the record's state.
@@ -149,7 +132,7 @@ describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view nam
   it('CONTROL — not yet expired: never touched; nothing ran, the question stays open', async () => {
     const d = def('settle_default');
     const { runId, gateId, before } = await atGate(d);
-    await setClockOf(store, before);
+    await clock.set(before);
     const reply = await advanceRun(store, d, { runId });
     const { record: after } = await store.get(runId);
     // (a) red when an unexpired question is carried out; (b) prints the record's gate and the hint.
@@ -172,7 +155,7 @@ describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view nam
   it('CONTROL — a question with no on_expiry (a finding only): never touched, even past its time', async () => {
     const d = def(undefined);
     const { runId, gateId, past } = await atGate(d);
-    await setClockOf(store, past);
+    await clock.set(past);
     const reply = await advanceRun(store, d, { runId });
     const { record: after } = await store.get(runId);
     // (a) red when a finding-only question is settled or aborted; (b) prints the gate and the warnings.

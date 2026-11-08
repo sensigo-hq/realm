@@ -412,7 +412,7 @@ Build a new adapter and store for each case, as above. Several cases delete or d
 | `runStoreFidelityContract`    | `RunStore`                                   | 12   | 23, with `InMemoryStore`             |
 | `settlementContract`          | `RunStore` with `settleStep`                 | 58   | 149, with `InMemoryStore` (below)    |
 | `perRunArtifactStoreContract` | `PerRunArtifactStore`                        | 7    | 7, with `JsonFileFailedAttemptStore` |
-| `fencedTraceBufferContract`   | `TraceBufferStore` with the fenced functions | 12   | 75, with `InMemoryTraceBufferStore`  |
+| `fencedTraceBufferContract`   | `TraceBufferStore` with the fenced functions | 12   | 72, with `InMemoryTraceBufferStore`  |
 | `storeClockContract`          | `RunStore`, on a clock the test moves        | 12   | 12, with `InMemoryStore`             |
 
 Every case in the last column passed, except the 2 it reports as skipped for `InMemoryTraceBufferStore` (it supplies neither byte hook). The store interfaces are in [Core library](core-library.md).

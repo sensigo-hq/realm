@@ -190,14 +190,16 @@ function keyHashOfRecord(record: RunRecord): string | null {
   return keyHashOf(record.workflow_id, key as string);
 }
 
-const KEY_ROWS =
+/** A key's rows, over `runs_by_key` (exported so the read-cold cells plan it, unit c3). */
+export const KEY_ROWS =
   'SELECT id, terminal_state, created_at, rerun_of FROM runs WHERE workflow_id = ? AND key_hash = ?';
 
 /**
  * The run that holds `workflowId`'s idempotency key `key`, or `undefined` when no run carries it,
  * read in the caller's transaction (a call with none open is refused with a plain error): ONE select
- * of the key's rows over the `runs_by_key` index, which holds every column it reads, so no record is
- * read. Then the candidates:
+ * of the key's rows through the `runs_by_key` index. The plan is a `SEARCH … USING INDEX`, not a
+ * covering one (SQLite 3.53.4 `EXPLAIN QUERY PLAN`), so each row's table row is visited; the record
+ * text is not decoded. Then the candidates:
  *   - a FINISHED run that another run of the key names in `rerun_of` does not hold the key: it was
  *     superseded (a live run is never dropped, DELTAS row 27). A rerun stamped before its holder (the
  *     clock more than five seconds behind the holder's stamp) would otherwise give the key back to
@@ -396,8 +398,8 @@ export interface SettlementWrite {
  * refuses a changed or dropped entry and a changed or removed write-once value, and writes a
  * content-equal rebuild as the identical rows. Reference identity cannot see an entry changed in
  * place; core's transforms never change their input (none of 1,351 applied outcomes in core's suites,
- * AUDIT-13A §3), and unit 16's `TRANSFORM_FIDELITY` would show it. Pure: it reads nothing but the two
- * records.
+ * AUDIT-13A §3), and `TRANSFORM_FIDELITY`, which `contract-settlement-616.test.ts` runs against this
+ * store, would show it. Pure: it reads nothing but the two records.
  */
 export function prepareSettlementWrite(fresh: RunRecord, updated: RunRecord): SettlementWrite {
   const { core, fields, evidence } = splitCore(updated);

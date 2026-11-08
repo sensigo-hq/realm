@@ -113,8 +113,8 @@ describe('THE symptom dies end-to-end (issue #279, increment 1, PR-B, verificati
 
   // NOTE: the "no-await single-owner path" (InMemoryStore) is proven separately by
   // @sensigo/realm-testing's own settlement TCK (L1 FRESH_APPLICATION, run against InMemoryStore)
-  // and by that package's dedicated no-await behavioral-overlap pin — packages/core cannot import
-  // @sensigo/realm-testing itself (it would be a circular package dependency: testing already
-  // depends on core), so this file's own proof is JsonFileStore-only, per the constraint the #183/
-  // #188 precedent already established for this exact situation.
+  // and by that package's dedicated no-await behavioral-overlap pin, so this file's own proof is
+  // JsonFileStore-only. Core's tests can import @sensigo/realm-testing without declaring it (a
+  // declared dependency would be a cycle; turbo builds it before every test task, as turbo.json
+  // says).
 });

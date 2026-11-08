@@ -66,8 +66,6 @@ const HOSTS: Array<{ file: string; path: string; readerName: string }> = [
   // #616 PR-2a (iii): the CLI's one door builds the trace buffer for run, agent, reclaim, purge and
   // export (their five rows before), with its own run store as the reader.
   { file: 'lib/home.ts', path: join(DIR, '..', 'lib', 'home.ts'), readerName: 'runStore' },
-  // `realm run gc` keeps its own constructions until 2c deletes it.
-  { file: 'gc.ts', path: join(DIR, 'gc.ts'), readerName: 'runStore' },
   // #616 PR-2a (ii-a): the `realm-mcp` program's opener (mcp-server's src/home.ts), its own run store
   // as the reader.
   { file: 'mcp-server home.ts', path: mcpServerSrcPath('home.ts'), readerName: 'runStore' },

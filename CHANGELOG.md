@@ -118,6 +118,8 @@ All notable changes to this project are documented here.
   when the adapter sets `recordsDeletionTime`, none when it does not. A store whose delete stamps
   the time of the deletion sets the field; set for a store with no `deleteAllForRun`, the
   `READS_ONE_READING` case fails.
+- `InMemoryStore` (in `@sensigo/realm-testing`) gains `seed(record)`: a test plants a run record as given, replacing any stored run of its id — a fixture channel, never an import (#616).
+- **`@sensigo/realm-store-sqlite` is published** from this release on, with the other packages: the SQLite-backed stores — runs, duplicate-webhook ids, workflow definitions, failed attempts, replays and trace buffers — in one `realm.db` file in the Realm home. You do not install it yourself. (#616)
 - **`realm db backup <path>` copies the store file** by SQLite's `VACUUM INTO`, converts the copy to WAL, checks it (`PRAGMA quick_check`) and refuses a path inside the Realm home or one where anything exists; restoring is a documented procedure, never a command (#616).
 - **Two error codes for it: `STATE_STORE_BACKUP_REFUSED`** (a path inside the home, where anything exists, or that cannot be created; a home with no store file, or an empty one) **and `STATE_STORE_BACKUP_UNVERIFIED`** (the copy fails the quick check; the copy is kept and the store file named as possibly damaged) (#616).
 
@@ -248,7 +250,7 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
   stores, it writes the date itself. `renderTemplate` takes the time to render at (`time`); with
   none, a `from_now` stays as written.
 - **One function in core names realm's home (`~/.realm`, read when a command opens its stores) (issue #616).** A command run with `HOME` empty or not absolute now stops with one line instead of keeping its runs under the current folder; one run on an account with no home stops with the same line instead of a stack.
-- **Every `realm` command opens its stores through one place, once per command (`run gc` and `run reconcile` keep their own until they leave); `realm serve` shares that one home across every request it serves (issue #616).** Nothing a command prints, creates or refuses changes, with one exception: on a copy of a test location, the commands that only read workflows or replays (`realm workflow list`, `realm workflow register`, `realm workflow watch`, `realm workflow validate --registered`, and `realm run diff` of two replays) now stop with the same clock refusal the run commands always gave there, because every command opens its home through the one door.
+- **Every `realm` command opens its stores through one place, once per command; `realm serve` shares that one home across every request it serves (issue #616).** Nothing a command prints, creates or refuses changes, with one exception: on a copy of a test location, the commands that only read workflows or replays (`realm workflow list`, `realm workflow register`, `realm workflow watch`, `realm workflow validate --registered`, and `realm run diff` of two replays) now stop with the same clock refusal the run commands always gave there, because every command opens its home through the one door.
 - **The `realm-mcp` command runs from its own file (`dist/bin.js`) and opens `~/.realm` itself; nothing changes for its users (issue #616).**
 - **BREAKING — `createRealmMcpServer` takes its stores (issue #616).** The library has no default store: pass `runStore`, `workflowStore`, `traceBufferStore` and `failedAttemptStore`, opened once per process; a JavaScript caller that omits one is refused at construction, before anything is opened. The published tool handlers require the stores their server passes them; a direct caller that omits one is refused by name. The `realm-mcp` command is unchanged for its users.
 - **An `'in-transaction'` adapter of `fencedTraceBufferContract` gives `fenceRuns` as `{ put, remove }`, without `readCount`.** Such a store reads its runs inside its own transaction, so the contract does not count them. (#616)
@@ -261,6 +263,15 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
   without the line "… another call had already carried out its declared …".
 - **The refusal reason `gate_expired_pending` (issue #715).** A late answer to a question whose time
   is up carries out its expiry in the same write.
+- **BREAKING: `realm run gc`, `realm run reconcile` and `realm workflow migrate` are removed
+  (#616).** They worked only on the JSON run and workflow folders, which the SQLite store replaces:
+  on the store every write is one transaction, so a crash leaves no temp file and no orphan behind;
+  a stale stored phase is re-stamped by `realm db migrate`; the holder of an idempotency key is
+  derived at read, so there is no key index to rebuild; and a definition is registered from its
+  source, so there are no definition files to back-fill. A script that calls one of the three now
+  stops with `error: unknown command '<name>'` on stderr and exit code 1. With gc, the `run_absent`
+  fence leaves the `FencePredicate` union (purge's `run_absent_or_terminal` stays, and the published
+  trace-buffer contract passes on it) and `STATE_RUN_RESURRECTED` leaves the error codes.
 
 ### Fixed
 
@@ -310,10 +321,10 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
   `realm listen`, `realm workflow validate`, `register` and `watch` now refuse a value that starts
   with `-` (a lone `-` is accepted) as the value of `--model`; `--model --strict` used to take
   `--strict` as the model id and drop the flag, so a CI gate passed. Write `--model=<id>` for a
-  value that starts with `-`. The same now holds for 20 other options that took any word:
+  value that starts with `-`. The same now holds for 19 other options that took any word:
   `--project` (on `workflow run`, `agent`, `run drain`, `run respond`, `run advance`, `mcp` and
   `serve`), `--extensions-module` (`run drain`, `mcp`, `serve`), `--workflow` (`run list`,
-  `reclaim`, `purge`, `reconcile`), `run export --out`, `run abandon --reason`, `run respond --by`,
+  `reclaim`, `purge`), `run export --out`, `run abandon --reason`, `run respond --by`,
   `run reclaim --step`, and `agent --params` and `--base-url`.
 - `realm run inspect`, `realm run drain` and `realm run resume` no longer list a step as something
   `realm run advance` runs without saying what it needs: when an owed step needs a handler or
