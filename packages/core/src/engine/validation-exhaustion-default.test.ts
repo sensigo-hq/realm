@@ -3,9 +3,6 @@
 // mutation probes. PR-1's counting/terminalization tests live in validation-exhaustion.test.ts —
 // this file is scoped to the NEW default-settle mechanism only.
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
   executeStep,
   executeChain,
@@ -13,7 +10,7 @@ import {
   DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD,
 } from './execution-loop.js';
 import type { StepDispatcher } from './execution-loop.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { WorkflowDefinition, StepDefinition } from '../types/workflow-definition.js';
 import type { LoadBearingRunRecordField } from '../store/store-interface.js';
@@ -52,7 +49,7 @@ function makeDefaultDef(
 }
 
 async function driveToExhaustion(
-  store: JsonFileStore,
+  store: InMemoryStore,
   def: WorkflowDefinition,
   runId: string,
   command = 'draft',
@@ -71,17 +68,14 @@ async function driveToExhaustion(
 }
 
 describe('issue #220 PR-2 — declared fail-open (validation_exhaustion.mode: default)', () => {
-  let store: JsonFileStore;
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-vx-default-test-'));
-    store = new JsonFileStore(dir);
+  let store: InMemoryStore;
+  beforeEach(() => {
+    store = new InMemoryStore();
   });
 
   describe('(g) V-D4 end-to-end default-settle', () => {
     it('(i)-(vi): settles successfully with default_output, terminalizes the run, stamps diagnostics, discloses on the envelope, and threads the store-honesty advisory', async () => {
-      class UndeclaredFieldStore extends JsonFileStore {
+      class UndeclaredFieldStore extends InMemoryStore {
         override readonly persistedRunRecordFields: ReadonlySet<LoadBearingRunRecordField> =
           new Set([
             'capability_blocks',
@@ -92,7 +86,7 @@ describe('issue #220 PR-2 — declared fail-open (validation_exhaustion.mode: de
             // default-settle SUCCESS envelope too (§5c nuance 1).
           ]);
       }
-      const undeclaredStore = new UndeclaredFieldStore(dir);
+      const undeclaredStore = new UndeclaredFieldStore();
       const def = makeDefaultDef();
       const { record: run } = await undeclaredStore.create({
         workflowId: def.id,
@@ -273,7 +267,7 @@ describe('issue #220 PR-2 — declared fail-open (validation_exhaustion.mode: de
       const { record: after } = await store.get(run.id);
       expect(after.terminal_state).toBe(true);
       expect(finishEnvelope.defaulted_steps).toEqual(['draft']);
-      expect(after.defaulted_steps).toEqual(['draft']); // JsonFileStore persists it too
+      expect(after.defaulted_steps).toEqual(['draft']); // the store persists it too
     });
 
     it('(b) mode: default on a human_confirmed LAST step ⇒ approval via submitHumanResponse settles AND defaulted_steps is stamped', async () => {

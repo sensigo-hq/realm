@@ -3,9 +3,6 @@
 // contract (candidates in `inputs.params`, `accepted`/`rejected`) is gone. What a failing cell
 // prints: states, counts, booleans, codes and the warning's own words — never a span of the source.
 import { describe, it, expect } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { CheckQuotesHandler, CHECK_QUOTES_CONFIG_KEYS } from './check-quotes.js';
 import { createDefaultRegistry } from '../extensions/default-registry.js';
 import { unmetCapabilities } from '../engine/capability.js';
@@ -13,7 +10,7 @@ import { advanceRun, executeChain } from '../engine/execution-loop.js';
 import { applyResume } from '../engine/apply-resume.js';
 import { offeredResumeWay } from '../engine/pending.js';
 import { quoteCacheHolds } from './primitives/locate-quote.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { StepContext } from '../extensions/step-handler.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
@@ -483,7 +480,7 @@ describe('check_quotes on the engine — the step records, the author’s guard 
     }) as unknown as WorkflowDefinition;
 
   async function drive(def: WorkflowDefinition) {
-    const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-760-')));
+    const store = new InMemoryStore();
     const { record: created } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -693,7 +690,7 @@ describe('check_quotes — correction 1 (H6): the re-admission clause, by how th
     }) as unknown as WorkflowDefinition;
 
   async function started(definition: WorkflowDefinition) {
-    const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-760-r-')));
+    const store = new InMemoryStore();
     const { record: created } = await store.create({
       workflowId: definition.id,
       workflowVersion: 1,
@@ -742,7 +739,7 @@ describe('check_quotes — correction 1 (H6): the re-admission clause, by how th
     // Walk 4's shape: with no depends_on the check runs at the run's start, before the values exist,
     // and fails; the run goes on and completes.
     const definition = def({}, false);
-    const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-760-c-')));
+    const store = new InMemoryStore();
     const { record: created } = await store.create({
       workflowId: definition.id,
       workflowVersion: 1,

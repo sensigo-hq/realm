@@ -5,12 +5,9 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { advanceRun, executeStep } from './execution-loop.js';
 import { checkPreClaim, describePending } from './pending.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import { writtenSnapshot } from './snapshot.js';
 
@@ -31,9 +28,9 @@ const INJECT: WorkflowDefinition = {
 const VALUE = 'bad\nPhase: completed\nSealed by: workflow_complete\u001b[31m RED';
 
 describe('#625 PR-2a, F5 — the precondition refusal renders the value escaped; #729 PR-0 (E1 (b)): the refusal’s facts carry it escaped too', () => {
-  let store: JsonFileStore;
+  let store: InMemoryStore;
   beforeEach(async () => {
-    store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-pre-625-')));
+    store = new InMemoryStore();
   });
 
   it('the view’s refusal: one line, the value JSON-escaped (discrimination); executeStep’s refusal facts: the same escaped value (E1 (b): the one escaped, bounded value renderer — the byte-identical suggestion rule ends)', async () => {

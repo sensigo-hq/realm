@@ -5,14 +5,11 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import * as core from '../index.js';
 import { advanceRun, executeStep, submitHumanResponse } from './execution-loop.js';
 import { reclaimStep } from './reclaim-step.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import type { EvidenceSnapshot } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 
@@ -56,9 +53,9 @@ const WF: WorkflowDefinition = {
 };
 
 describe('#625 PR-2a, F4 — output_source: one vocabulary, and the source or why there is none', () => {
-  let store: JsonFileStore;
+  let store: InMemoryStore;
   beforeEach(async () => {
-    store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-os-625-')));
+    store = new InMemoryStore();
   });
 
   const entryOf = async (runId: string, step: string, kind?: string) =>

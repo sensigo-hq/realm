@@ -6,11 +6,9 @@
 // `runnable_here: false`, member by member), decision C3 (the bare-step output rule).
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { mkdtemp as mkdtempP, rm as rmP } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import {
   advanceRun,
   executeChain,
@@ -51,13 +49,8 @@ import { writtenSnapshot } from './snapshot.js';
 
 const echo: StepDispatcher = async (_name, input) => ({ ...input });
 
-async function withStore<T>(fn: (store: JsonFileStore) => Promise<T>): Promise<T> {
-  const dir = await mkdtempP(join(tmpdir(), 'realm-pending-625-'));
-  try {
-    return await fn(new JsonFileStore(dir));
-  } finally {
-    await rmP(dir, { recursive: true, force: true });
-  }
+async function withStore<T>(fn: (store: InMemoryStore) => Promise<T>): Promise<T> {
+  return fn(new InMemoryStore());
 }
 
 function def(steps: Record<string, StepDefinition>, extra?: Partial<WorkflowDefinition>) {

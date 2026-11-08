@@ -2,23 +2,15 @@
 // or returns a plain value, leaves no step timer running and no unhandled rejection; a plain value
 // is the step's output. And the dispatcher branch serves exactly the steps `callsHostDispatcher`
 // is true for.
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { executeStep, type StepDispatcher } from './execution-loop.js';
 import { callsHostDispatcher } from './output-source.js';
 import type { StepDefinition, WorkflowDefinition } from '../types/workflow-definition.js';
 
-let dir: string;
-let store: JsonFileStore;
-beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'realm-719-timer-'));
-  store = new JsonFileStore(dir);
-});
-afterEach(async () => {
-  await rm(dir, { recursive: true, force: true });
+let store: InMemoryStore;
+beforeEach(() => {
+  store = new InMemoryStore();
 });
 
 /** A bare `auto` step with a 2 s timer — the steps whose dispatcher call races a timer. */

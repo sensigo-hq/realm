@@ -1,9 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
   compileSchema,
   compileCached,
@@ -20,7 +17,7 @@ import { WorkflowError, type ValidationErrorFacts } from '../types/workflow-erro
 import type { JsonSchema } from '../types/workflow-definition.js';
 import type { TraceEntry } from '../types/run-record.js';
 import { executeStep } from '../engine/execution-loop.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 
 const schema: JsonSchema = {
@@ -335,8 +332,7 @@ describe('validateAgentSubmission (issue #224)', () => {
 
     for (const { label, submission, expectValid } of table) {
       it(`${label}: executeStep and validateAgentSubmission agree (both ${expectValid ? 'accept' : 'reject'})`, async () => {
-        const dir = await mkdtemp(join(tmpdir(), 'realm-parity-test-'));
-        const store = new JsonFileStore(dir);
+        const store = new InMemoryStore();
         const { record: run } = await store.create({
           workflowId: def.id,
           workflowVersion: 1,
@@ -1127,7 +1123,7 @@ describe('issue #759 — every problem, capped, with the total', () => {
   });
 
   it('G: through the engine, a warn-mode trace with 13 violations records `validation_errors: 13` and the capped warning (red: the count 1)', async () => {
-    const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-759-trace-')));
+    const store = new InMemoryStore();
     const def = {
       id: 'trace-759',
       name: 'T',

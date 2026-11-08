@@ -8,10 +8,7 @@
 // unit-testable this way, per the same technique used by guard-chain-consumption-279.test.ts).
 import { declareReleaseLine } from '../release-line.js';
 import { describe, it, expect } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { executeStep, submitHumanResponse, advanceRun } from './execution-loop.js';
 import { captureEvidence } from '../evidence/snapshot.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
@@ -46,68 +43,63 @@ describe('run_terminal envelope — the composed cancelled-predicate (issue #279
         },
       },
     };
-    const dir = await mkdtemp(join(tmpdir(), 'realm-envelope-cancelled-'));
-    try {
-      const store = new JsonFileStore(dir);
-      const { record: run } = await store.create({
-        workflowId: def.id,
-        workflowVersion: 1,
-        params: {},
-      });
+    const store = new InMemoryStore();
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
 
-      // Pre-claim `aborter` FIRST (before the gate opens) — eligibility.ts's "gate blocks ALL
-      // eligibility" invariant means aborter could never be independently claimed WHILE a gate is
-      // already open; mirroring gate-death-279.test.ts's own fix, both steps' claims must exist
-      // before either commits, matching a realistic fan-out where both were dispatched together.
-      const { record: claimedAborter } = await store.claimStep(run.id, 'aborter', def);
-      const aborterToken = claimedAborter.claims?.['aborter']?.token;
+    // Pre-claim `aborter` FIRST (before the gate opens) — eligibility.ts's "gate blocks ALL
+    // eligibility" invariant means aborter could never be independently claimed WHILE a gate is
+    // already open; mirroring gate-death-279.test.ts's own fix, both steps' claims must exist
+    // before either commits, matching a realistic fan-out where both were dispatched together.
+    const { record: claimedAborter } = await store.claimStep(run.id, 'aborter', def);
+    const aborterToken = claimedAborter.claims?.['aborter']?.token;
 
-      const opened = await executeStep(store, def, {
-        runId: run.id,
-        command: 'gate_step',
-        input: {},
-        dispatcher: async () => ({ preview: true }),
-      });
-      expect(opened.status).toBe('confirm_required');
-      const gateId = opened.gate!.gate_id;
+    const opened = await executeStep(store, def, {
+      runId: run.id,
+      command: 'gate_step',
+      input: {},
+      dispatcher: async () => ({ preview: true }),
+    });
+    expect(opened.status).toBe('confirm_required');
+    const gateId = opened.gate!.gate_id;
 
-      // aborter's OWN settle_step abort — the REAL applyAbortEdge call executeStep's handler-abort
-      // path would have made, applied directly against the CURRENT fresh state (which shows
-      // gate_step's gate open) — proving the cancel-gate logic fires against a genuinely-open gate.
-      const abortSettle = await store.settleStep!(
-        run.id,
-        {
-          kind: 'settle_step',
-          step: 'aborter',
-          outcome: 'abort',
-          ...(aborterToken !== undefined ? { claimToken: aborterToken } : {}),
-          evidence: [],
-          abort: { stepId: 'aborter', abortMessage: 'aborter says stop' },
-        },
-        def,
-      );
-      expect(abortSettle.applied).toBe(true);
+    // aborter's OWN settle_step abort — the REAL applyAbortEdge call executeStep's handler-abort
+    // path would have made, applied directly against the CURRENT fresh state (which shows
+    // gate_step's gate open) — proving the cancel-gate logic fires against a genuinely-open gate.
+    const abortSettle = await store.settleStep!(
+      run.id,
+      {
+        kind: 'settle_step',
+        step: 'aborter',
+        outcome: 'abort',
+        ...(aborterToken !== undefined ? { claimToken: aborterToken } : {}),
+        evidence: [],
+        abort: { stepId: 'aborter', abortMessage: 'aborter says stop' },
+      },
+      def,
+    );
+    expect(abortSettle.applied).toBe(true);
 
-      const { record: finalRunAfterAbort } = await store.get(run.id);
-      expect(finalRunAfterAbort.terminal_state).toBe(true);
-      expect(finalRunAfterAbort.skip_details?.['gate_step']?.kind).toBe('gate_cancelled_by_abort');
+    const { record: finalRunAfterAbort } = await store.get(run.id);
+    expect(finalRunAfterAbort.terminal_state).toBe(true);
+    expect(finalRunAfterAbort.skip_details?.['gate_step']?.kind).toBe('gate_cancelled_by_abort');
 
-      const submitAfterCancel = await submitHumanResponse(store, def, {
-        runId: run.id,
-        gateId,
-        choice: 'approve',
-      });
-      expect(submitAfterCancel.status).toBe('error');
-      expect(submitAfterCancel.error_code).toBe('STATE_RUN_TERMINAL');
-      // issue #332 item 7: agent_action was previously only asserted negatively elsewhere in this
-      // file (:290 — a DIFFERENT envelope, never `report_to_user`); this positive pin closes the
-      // gap for the CANCELLED variant.
-      expect(agentActionFor(submitAfterCancel)).toBe('report_to_user');
-      expect(submitAfterCancel.errors[0]).toContain('NOT recorded');
-      expect(submitAfterCancel.errors[0]).toContain('aborter');
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    const submitAfterCancel = await submitHumanResponse(store, def, {
+      runId: run.id,
+      gateId,
+      choice: 'approve',
+    });
+    expect(submitAfterCancel.status).toBe('error');
+    expect(submitAfterCancel.error_code).toBe('STATE_RUN_TERMINAL');
+    // issue #332 item 7: agent_action was previously only asserted negatively elsewhere in this
+    // file (:290 — a DIFFERENT envelope, never `report_to_user`); this positive pin closes the
+    // gap for the CANCELLED variant.
+    expect(agentActionFor(submitAfterCancel)).toBe('report_to_user');
+    expect(submitAfterCancel.errors[0]).toContain('NOT recorded');
+    expect(submitAfterCancel.errors[0]).toContain('aborter');
   });
 
   it('ZOMBIE variant: a grandfathered terminal-with-stale-gate record (no cancel skip-detail) gets the plain terminal text + the resume/purge pointer', async () => {
@@ -125,50 +117,45 @@ describe('run_terminal envelope — the composed cancelled-predicate (issue #279
         },
       },
     };
-    const dir = await mkdtemp(join(tmpdir(), 'realm-envelope-zombie-'));
-    try {
-      const store = new JsonFileStore(dir);
-      const { record: run } = await store.create({
-        workflowId: def.id,
-        workflowVersion: 1,
-        params: {},
-      });
-      // Hand-shape a #282-class grandfathered record: terminal AND still carrying a pending_gate,
-      // with NO gate_cancelled_by_abort skip detail (the class this closure legislates over).
-      const { record: zombie } = await store.update({
-        ...run,
-        completed_steps: ['gate_step'],
-        terminal_state: true,
-        sealed_by: { arm: 'complete' as const },
-        terminal_reason: 'Workflow completed.',
-        pending_gate: {
-          gate_id: 'zombie-gate',
-          step_name: 'gate_step',
-          preview: {},
-          choices: ['approve', 'reject'],
-          opened_at: new Date().toISOString(),
-        },
-      });
+    const store = new InMemoryStore();
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    // Hand-shape a #282-class grandfathered record: terminal AND still carrying a pending_gate,
+    // with NO gate_cancelled_by_abort skip detail (the class this closure legislates over).
+    const { record: zombie } = await store.update({
+      ...run,
+      completed_steps: ['gate_step'],
+      terminal_state: true,
+      sealed_by: { arm: 'complete' as const },
+      terminal_reason: 'Workflow completed.',
+      pending_gate: {
+        gate_id: 'zombie-gate',
+        step_name: 'gate_step',
+        preview: {},
+        choices: ['approve', 'reject'],
+        opened_at: new Date().toISOString(),
+      },
+    });
 
-      const result = await submitHumanResponse(store, def, {
-        runId: zombie.id,
-        gateId: 'zombie-gate',
-        choice: 'approve',
-      });
-      expect(result.status).toBe('error');
-      expect(result.error_code).toBe('STATE_RUN_TERMINAL');
-      // issue #332 item 7: positive agent_action pin for the ZOMBIE variant (see the CANCELLED
-      // variant above for the same addition and its rationale).
-      expect(agentActionFor(result)).toBe('report_to_user');
-      expect(result.errors[0]).not.toContain('NOT recorded'); // never the cancelled text
-      // #625 PR-2a, decision C170: the way out is true for the kind of ending — this record is
-      // completed, so nothing is owed and `realm run resume` (which refuses it) is not offered.
-      expect(result.errors[0]).toBe(
-        `Run '${zombie.id}' is terminal (completed); cannot submit a gate response — it completed, and nothing is owed.`,
-      );
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    const result = await submitHumanResponse(store, def, {
+      runId: zombie.id,
+      gateId: 'zombie-gate',
+      choice: 'approve',
+    });
+    expect(result.status).toBe('error');
+    expect(result.error_code).toBe('STATE_RUN_TERMINAL');
+    // issue #332 item 7: positive agent_action pin for the ZOMBIE variant (see the CANCELLED
+    // variant above for the same addition and its rationale).
+    expect(agentActionFor(result)).toBe('report_to_user');
+    expect(result.errors[0]).not.toContain('NOT recorded'); // never the cancelled text
+    // #625 PR-2a, decision C170: the way out is true for the kind of ending — this record is
+    // completed, so nothing is owed and `realm run resume` (which refuses it) is not offered.
+    expect(result.errors[0]).toBe(
+      `Run '${zombie.id}' is terminal (completed); cannot submit a gate response — it completed, and nothing is owed.`,
+    );
   });
 });
 
@@ -188,48 +175,43 @@ describe('gate_choice_conflict envelope (issue #279, increment 2, PR-D)', () => 
         },
       },
     };
-    const dir = await mkdtemp(join(tmpdir(), 'realm-envelope-conflict-'));
-    try {
-      const store = new JsonFileStore(dir);
-      const { record: run } = await store.create({
-        workflowId: def.id,
-        workflowVersion: 1,
-        params: {},
-      });
-      const opened = await executeStep(store, def, {
-        runId: run.id,
-        command: 'gate_step',
-        input: {},
-        dispatcher: async () => ({ preview: true }),
-      });
-      const gateId = opened.gate!.gate_id;
+    const store = new InMemoryStore();
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const opened = await executeStep(store, def, {
+      runId: run.id,
+      command: 'gate_step',
+      input: {},
+      dispatcher: async () => ({ preview: true }),
+    });
+    const gateId = opened.gate!.gate_id;
 
-      const firstSubmit = await submitHumanResponse(store, def, {
-        runId: run.id,
-        gateId,
-        choice: 'approve',
-      });
-      expect(firstSubmit.status).toBe('ok');
+    const firstSubmit = await submitHumanResponse(store, def, {
+      runId: run.id,
+      gateId,
+      choice: 'approve',
+    });
+    expect(firstSubmit.status).toBe('ok');
 
-      const conflictingSubmit = await submitHumanResponse(store, def, {
-        runId: run.id,
-        gateId,
-        choice: 'reject',
-      });
-      expect(conflictingSubmit.status).toBe('error');
-      expect(conflictingSubmit.error_code).toBe('STATE_BLOCKED');
-      // #729 PR-0 (P-3, A-16; D-H): the winning choice is the reply's `outcome`, no longer
-      // `error_details.winning_choice`.
-      expect(conflictingSubmit.outcome?.choice).toBe('approve');
-      expect(conflictingSubmit.error_details?.['winning_choice']).toBeUndefined();
-      expect(conflictingSubmit.errors[0]).toContain('approve');
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    const conflictingSubmit = await submitHumanResponse(store, def, {
+      runId: run.id,
+      gateId,
+      choice: 'reject',
+    });
+    expect(conflictingSubmit.status).toBe('error');
+    expect(conflictingSubmit.error_code).toBe('STATE_BLOCKED');
+    // #729 PR-0 (P-3, A-16; D-H): the winning choice is the reply's `outcome`, no longer
+    // `error_details.winning_choice`.
+    expect(conflictingSubmit.outcome?.choice).toBe('approve');
+    expect(conflictingSubmit.error_details?.['winning_choice']).toBeUndefined();
+    expect(conflictingSubmit.errors[0]).toContain('approve');
   });
 });
 
-/** Delegates every method to a real JsonFileStore, except `settleStep`, which — for the FIRST
+/** Delegates every method to a real InMemoryStore, except `settleStep`, which — for the FIRST
  *  call matching `matches` — returns a HAND-CONSTRUCTED SettlementResult instead of delegating.
  *  Used ONLY for D-1/N1's own documented in-contract-UNREACHABLE defensive arms, where the ENGINE
  *  cannot honestly reach the scenario, but the ENVELOPE TEXT LOGIC built around it is still real,
@@ -246,7 +228,7 @@ class ForcesResultStore implements RunStore {
   readonly persistsClaims: boolean;
   private forced = false;
   constructor(
-    private readonly inner: JsonFileStore,
+    private readonly inner: InMemoryStore,
     private readonly matches: (delta: SettlementDelta) => boolean,
     private readonly forcedResult: (fresh: RunRecord) => SettlementResult,
   ) {
@@ -297,47 +279,42 @@ describe('already_open envelope — the LIVE gate wins, rendered verbatim (issue
         },
       },
     };
-    const dir = await mkdtemp(join(tmpdir(), 'realm-envelope-already-open-'));
-    try {
-      const inner = new JsonFileStore(dir);
-      const { record: run } = await inner.create({
-        workflowId: def.id,
-        workflowVersion: 1,
-        params: {},
-      });
-      const liveGate = {
-        gate_id: 'live-gate-id',
-        step_name: 'gate_step',
-        preview: { forced: true },
-        choices: ['approve', 'reject'],
-        opened_at: new Date().toISOString(),
-      };
-      const store = new ForcesResultStore(
-        inner,
-        (d) => d.kind === 'open_gate',
-        (fresh) => ({
-          applied: false,
-          reason: 'already_open',
-          run: { ...fresh, pending_gate: liveGate },
-          gate: liveGate,
-        }),
-      );
+    const inner = new InMemoryStore();
+    const { record: run } = await inner.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const liveGate = {
+      gate_id: 'live-gate-id',
+      step_name: 'gate_step',
+      preview: { forced: true },
+      choices: ['approve', 'reject'],
+      opened_at: new Date().toISOString(),
+    };
+    const store = new ForcesResultStore(
+      inner,
+      (d) => d.kind === 'open_gate',
+      (fresh) => ({
+        applied: false,
+        reason: 'already_open',
+        run: { ...fresh, pending_gate: liveGate },
+        gate: liveGate,
+      }),
+    );
 
-      const result = await executeStep(store, def, {
-        runId: run.id,
-        command: 'gate_step',
-        input: {},
-        dispatcher: async () => ({ preview: true }),
-      });
+    const result = await executeStep(store, def, {
+      runId: run.id,
+      command: 'gate_step',
+      input: {},
+      dispatcher: async () => ({ preview: true }),
+    });
 
-      expect(result.status).toBe('confirm_required');
-      expect(agentActionFor(result)).toBeUndefined(); // never report_to_user
-      expect(result.gate?.gate_id).toBe('live-gate-id'); // the LIVE gate, not the rebuilt one
-      expect(result.gate?.preview).toEqual({ forced: true });
-      expect(result.context_hint).toContain('already paused');
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    expect(result.status).toBe('confirm_required');
+    expect(agentActionFor(result)).toBeUndefined(); // never report_to_user
+    expect(result.gate?.gate_id).toBe('live-gate-id'); // the LIVE gate, not the rebuilt one
+    expect(result.gate?.preview).toEqual({ forced: true });
+    expect(result.context_hint).toContain('already paused');
   });
 });
 
@@ -357,43 +334,38 @@ describe('N1 neutral wording — never amplify a "by_other" white lie (issue #27
         },
       },
     };
-    const dir = await mkdtemp(join(tmpdir(), 'realm-envelope-n1-'));
-    try {
-      const inner = new JsonFileStore(dir);
-      const { record: run } = await inner.create({
-        workflowId: def.id,
-        workflowVersion: 1,
-        params: {},
-      });
-      const store = new ForcesResultStore(
-        inner,
-        (d) => d.kind === 'open_gate',
-        (fresh) => ({
-          applied: false,
-          reason: 'already_settled_by_other',
-          run: {
-            ...fresh,
-            completed_steps: ['gate_step'],
-            settled: {
-              gate_step: { token: 'some-other-gate-id', outcome: 'gate', choice: 'approve' },
-            },
+    const inner = new InMemoryStore();
+    const { record: run } = await inner.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const store = new ForcesResultStore(
+      inner,
+      (d) => d.kind === 'open_gate',
+      (fresh) => ({
+        applied: false,
+        reason: 'already_settled_by_other',
+        run: {
+          ...fresh,
+          completed_steps: ['gate_step'],
+          settled: {
+            gate_step: { token: 'some-other-gate-id', outcome: 'gate', choice: 'approve' },
           },
-        }),
-      );
+        },
+      }),
+    );
 
-      const result = await executeStep(store, def, {
-        runId: run.id,
-        command: 'gate_step',
-        input: {},
-        dispatcher: async () => ({ preview: true }),
-      });
+    const result = await executeStep(store, def, {
+      runId: run.id,
+      command: 'gate_step',
+      input: {},
+      dispatcher: async () => ({ preview: true }),
+    });
 
-      expect(result.status).toBe('error');
-      expect(result.errors[0]).toContain('by a completed gate');
-      expect(result.errors[0]).not.toContain('by a different attempt');
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    expect(result.status).toBe('error');
+    expect(result.errors[0]).toContain('by a completed gate');
+    expect(result.errors[0]).not.toContain('by a different attempt');
   });
 });
 
@@ -407,36 +379,31 @@ describe('capability-block refusal degradation (issue #279, increment 2, PR-D, D
         work: { description: 'w', execution: 'auto', depends_on: [], handler: 'not-registered' },
       },
     };
-    const dir = await mkdtemp(join(tmpdir(), 'realm-envelope-cap-refusal-'));
-    try {
-      const inner = new JsonFileStore(dir);
-      const { record: run } = await inner.create({
-        workflowId: def.id,
-        workflowVersion: 1,
-        params: {},
-      });
-      const store = new ForcesResultStore(
-        inner,
-        (d) => d.kind === 'release_step',
-        (fresh) => ({ applied: false, reason: 'claim_lost', run: fresh }),
-      );
+    const inner = new InMemoryStore();
+    const { record: run } = await inner.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const store = new ForcesResultStore(
+      inner,
+      (d) => d.kind === 'release_step',
+      (fresh) => ({ applied: false, reason: 'claim_lost', run: fresh }),
+    );
 
-      const result = await executeStep(store, def, {
-        runId: run.id,
-        command: 'work',
-        input: {},
-        dispatcher: async () => ({}),
-        registry: new ExtensionRegistry(),
-      });
+    const result = await executeStep(store, def, {
+      runId: run.id,
+      command: 'work',
+      input: {},
+      dispatcher: async () => ({}),
+      registry: new ExtensionRegistry(),
+    });
 
-      expect(result.status).toBe('error');
-      expect(result.error_code).toBe('ENGINE_HANDLER_NOT_REGISTERED'); // the SAME block envelope
-      expect(result.warnings.some((w) => w.includes('capability block not persisted'))).toBe(true);
-      expect(result.warnings.some((w) => w.includes('claim_lost'))).toBe(true);
-      expect(JSON.stringify(result)).not.toContain('STATE_CLAIM_LOST'); // never that framing
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    expect(result.status).toBe('error');
+    expect(result.error_code).toBe('ENGINE_HANDLER_NOT_REGISTERED'); // the SAME block envelope
+    expect(result.warnings.some((w) => w.includes('capability block not persisted'))).toBe(true);
+    expect(result.warnings.some((w) => w.includes('claim_lost'))).toBe(true);
+    expect(JSON.stringify(result)).not.toContain('STATE_CLAIM_LOST'); // never that framing
   });
 });
 
@@ -465,39 +432,34 @@ describe('an answer settles the guard it makes eligible — the #279 convergence
         },
       },
     };
-    const dir = await mkdtemp(join(tmpdir(), 'realm-envelope-hint-present-'));
-    try {
-      const store = new JsonFileStore(dir);
-      const { record: run } = await store.create({
-        workflowId: def.id,
-        workflowVersion: 1,
-        params: {},
-      });
-      const opened = await executeStep(store, def, {
-        runId: run.id,
-        command: 'gate_step',
-        input: {},
-        dispatcher: async () => ({ preview: true }),
-      });
-      const result = await submitHumanResponse(store, def, {
-        runId: run.id,
-        gateId: opened.gate!.gate_id,
-        choice: 'approve',
-      });
-      expect(result.status).toBe('ok');
-      // (a) red when the answer's write stops settling the guard (the store no longer passes
-      //     `cascadeGuards`), or the reply rule stops adding `guards`; (b) prints the reply's
-      //     `guards` value.
-      expect(result.guards).toEqual([{ step: 'guard_after', outcome: 'pass' }]);
-      // (a) red when the removed advisory comes back; (b) prints the reply's warnings.
-      expect(result.warnings.filter((w) => w.includes('converges'))).toEqual([]);
-      // The guard is settled on the record the answer's write produced — nothing is left eligible.
-      // (a) red when the guard is still unsettled after the answer; (b) prints the step lists.
-      const { record: afterAnswer } = await store.get(run.id);
-      expect(afterAnswer.completed_steps).toEqual(['gate_step', 'guard_after']);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    const store = new InMemoryStore();
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const opened = await executeStep(store, def, {
+      runId: run.id,
+      command: 'gate_step',
+      input: {},
+      dispatcher: async () => ({ preview: true }),
+    });
+    const result = await submitHumanResponse(store, def, {
+      runId: run.id,
+      gateId: opened.gate!.gate_id,
+      choice: 'approve',
+    });
+    expect(result.status).toBe('ok');
+    // (a) red when the answer's write stops settling the guard (the store no longer passes
+    //     `cascadeGuards`), or the reply rule stops adding `guards`; (b) prints the reply's
+    //     `guards` value.
+    expect(result.guards).toEqual([{ step: 'guard_after', outcome: 'pass' }]);
+    // (a) red when the removed advisory comes back; (b) prints the reply's warnings.
+    expect(result.warnings.filter((w) => w.includes('converges'))).toEqual([]);
+    // The guard is settled on the record the answer's write produced — nothing is left eligible.
+    // (a) red when the guard is still unsettled after the answer; (b) prints the step lists.
+    const { record: afterAnswer } = await store.get(run.id);
+    expect(afterAnswer.completed_steps).toEqual(['gate_step', 'guard_after']);
   });
 
   it('absent: a RESOLVE with no eligible guard carries no convergence hint', async () => {
@@ -515,30 +477,25 @@ describe('an answer settles the guard it makes eligible — the #279 convergence
         },
       },
     };
-    const dir = await mkdtemp(join(tmpdir(), 'realm-envelope-hint-absent-'));
-    try {
-      const store = new JsonFileStore(dir);
-      const { record: run } = await store.create({
-        workflowId: def.id,
-        workflowVersion: 1,
-        params: {},
-      });
-      const opened = await executeStep(store, def, {
-        runId: run.id,
-        command: 'gate_step',
-        input: {},
-        dispatcher: async () => ({ preview: true }),
-      });
-      const result = await submitHumanResponse(store, def, {
-        runId: run.id,
-        gateId: opened.gate!.gate_id,
-        choice: 'approve',
-      });
-      expect(result.status).toBe('ok');
-      expect(result.warnings.some((w) => w.includes('now eligible'))).toBe(false);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    const store = new InMemoryStore();
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const opened = await executeStep(store, def, {
+      runId: run.id,
+      command: 'gate_step',
+      input: {},
+      dispatcher: async () => ({ preview: true }),
+    });
+    const result = await submitHumanResponse(store, def, {
+      runId: run.id,
+      gateId: opened.gate!.gate_id,
+      choice: 'approve',
+    });
+    expect(result.status).toBe('ok');
+    expect(result.warnings.some((w) => w.includes('now eligible'))).toBe(false);
   });
 });
 
@@ -558,44 +515,39 @@ describe('respondedBy — recorded, not enforced (issue #279, increment 2, PR-D,
         },
       },
     };
-    const dir = await mkdtemp(join(tmpdir(), 'realm-responded-by-'));
-    try {
-      const inner = new JsonFileStore(dir);
-      const { record: run } = await inner.create({
-        workflowId: def.id,
-        workflowVersion: 1,
-        params: {},
-      });
-      let capturedDelta: SettlementDelta | undefined;
-      const store = new ForcesResultStore(
-        inner,
-        (d) => {
-          if (d.kind === 'settle_gate') capturedDelta = d;
-          return false; // never actually force — just observe, then let the real store handle it
-        },
-        (fresh) => ({ applied: true, run: fresh, transitioned: false, pendingFinalizers: [] }),
-      );
-      const opened = await executeStep(inner, def, {
-        runId: run.id,
-        command: 'gate_step',
-        input: {},
-        dispatcher: async () => ({ preview: true }),
-      });
-      const result = await submitHumanResponse(store, def, {
-        runId: run.id,
-        gateId: opened.gate!.gate_id,
-        choice: 'approve',
-        respondedBy: 'operator-42',
-      });
-      expect(result.status).toBe('ok');
-      expect(capturedDelta?.kind).toBe('settle_gate');
-      expect((capturedDelta as { respondedBy?: string }).respondedBy).toBe('operator-42');
-      const { record: finalRun } = await inner.get(run.id);
-      const gateEvidence = finalRun.evidence.find((e) => e.kind === 'gate_response');
-      expect(gateEvidence?.responded_by).toBe('operator-42');
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    const inner = new InMemoryStore();
+    const { record: run } = await inner.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    let capturedDelta: SettlementDelta | undefined;
+    const store = new ForcesResultStore(
+      inner,
+      (d) => {
+        if (d.kind === 'settle_gate') capturedDelta = d;
+        return false; // never actually force — just observe, then let the real store handle it
+      },
+      (fresh) => ({ applied: true, run: fresh, transitioned: false, pendingFinalizers: [] }),
+    );
+    const opened = await executeStep(inner, def, {
+      runId: run.id,
+      command: 'gate_step',
+      input: {},
+      dispatcher: async () => ({ preview: true }),
+    });
+    const result = await submitHumanResponse(store, def, {
+      runId: run.id,
+      gateId: opened.gate!.gate_id,
+      choice: 'approve',
+      respondedBy: 'operator-42',
+    });
+    expect(result.status).toBe('ok');
+    expect(capturedDelta?.kind).toBe('settle_gate');
+    expect((capturedDelta as { respondedBy?: string }).respondedBy).toBe('operator-42');
+    const { record: finalRun } = await inner.get(run.id);
+    const gateEvidence = finalRun.evidence.find((e) => e.kind === 'gate_response');
+    expect(gateEvidence?.responded_by).toBe('operator-42');
   });
 
   it('absent: never set on the delta or the snapshot when not supplied', async () => {
@@ -613,31 +565,26 @@ describe('respondedBy — recorded, not enforced (issue #279, increment 2, PR-D,
         },
       },
     };
-    const dir = await mkdtemp(join(tmpdir(), 'realm-responded-by-absent-'));
-    try {
-      const store = new JsonFileStore(dir);
-      const { record: run } = await store.create({
-        workflowId: def.id,
-        workflowVersion: 1,
-        params: {},
-      });
-      const opened = await executeStep(store, def, {
-        runId: run.id,
-        command: 'gate_step',
-        input: {},
-        dispatcher: async () => ({ preview: true }),
-      });
-      await submitHumanResponse(store, def, {
-        runId: run.id,
-        gateId: opened.gate!.gate_id,
-        choice: 'approve',
-      });
-      const { record: finalRun } = await store.get(run.id);
-      const gateEvidence = finalRun.evidence.find((e) => e.kind === 'gate_response');
-      expect(gateEvidence?.responded_by).toBeUndefined();
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    const store = new InMemoryStore();
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const opened = await executeStep(store, def, {
+      runId: run.id,
+      command: 'gate_step',
+      input: {},
+      dispatcher: async () => ({ preview: true }),
+    });
+    await submitHumanResponse(store, def, {
+      runId: run.id,
+      gateId: opened.gate!.gate_id,
+      choice: 'approve',
+    });
+    const { record: finalRun } = await store.get(run.id);
+    const gateEvidence = finalRun.evidence.find((e) => e.kind === 'gate_response');
+    expect(gateEvidence?.responded_by).toBeUndefined();
   });
 });
 
@@ -657,61 +604,56 @@ describe("evaluatedAtVersion — the chain's own evaluation snapshot (issue #279
         },
       },
     };
-    const dir = await mkdtemp(join(tmpdir(), 'realm-evaluated-at-version-'));
-    try {
-      const inner = new JsonFileStore(dir);
-      const { record: run } = await inner.create({
-        workflowId: def.id,
-        workflowVersion: 1,
-        params: {},
-      });
-      let capturedDelta: SettlementDelta | undefined;
-      const store = new ForcesResultStore(
-        inner,
-        (d) => {
-          if (d.kind === 'settle_guard') capturedDelta = d;
-          return false; // observe only
-        },
-        (fresh) => ({ applied: true, run: fresh, transitioned: false, pendingFinalizers: [] }),
-      );
+    const inner = new InMemoryStore();
+    const { record: run } = await inner.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    let capturedDelta: SettlementDelta | undefined;
+    const store = new ForcesResultStore(
+      inner,
+      (d) => {
+        if (d.kind === 'settle_guard') capturedDelta = d;
+        return false; // observe only
+      },
+      (fresh) => ({ applied: true, run: fresh, transitioned: false, pendingFinalizers: [] }),
+    );
 
-      // issue #625 (re-homed): on a store that declares `settleStep`, the named step's own write
-      // settles every guard it makes eligible, so `executeChain` never issues a `settle_guard` of
-      // its own and this stamp can no longer be observed through it. The chain's guard loop —
-      // moved into `advanceRun` — still issues one on a record that some OTHER write left with an
-      // eligible guard. `store.update` is such a write: one completed step and its evidence entry.
-      const { record: leftover } = await inner.update({
-        ...run,
-        completed_steps: ['step_a'],
-        evidence: [
-          captureEvidence({
-            stepId: 'step_a',
-            startedAt: new Date(),
-            completedAt: new Date(),
-            input: {},
-            output: { status: 'open' },
-          }),
-        ],
-      });
+    // issue #625 (re-homed): on a store that declares `settleStep`, the named step's own write
+    // settles every guard it makes eligible, so `executeChain` never issues a `settle_guard` of
+    // its own and this stamp can no longer be observed through it. The chain's guard loop —
+    // moved into `advanceRun` — still issues one on a record that some OTHER write left with an
+    // eligible guard. `store.update` is such a write: one completed step and its evidence entry.
+    const { record: leftover } = await inner.update({
+      ...run,
+      completed_steps: ['step_a'],
+      evidence: [
+        captureEvidence({
+          stepId: 'step_a',
+          startedAt: new Date(),
+          completedAt: new Date(),
+          input: {},
+          output: { status: 'open' },
+        }),
+      ],
+    });
 
-      await advanceRun(store, def, {
-        runId: run.id,
-        command: 'step_a',
-      });
+    await advanceRun(store, def, {
+      runId: run.id,
+      command: 'step_a',
+    });
 
-      // (a) red when `advanceRun`'s guard loop stops issuing a settle_guard for an eligible guard
-      //     (the loop is not reached, or the record was not left with one); (b) prints the kind.
-      expect(capturedDelta?.kind).toBe('settle_guard');
-      // The captured delta's evaluatedAtVersion is the version of the record the guard's
-      // conditions were evaluated AGAINST — the leftover record's own version, strictly before the
-      // guard's own settle bumps it. (On main this could only be bounded from above; here the
-      // record the loop read is known exactly.)
-      // (a) red when the stamp is dropped or taken from another record; (b) prints the two versions.
-      expect((capturedDelta as { evaluatedAtVersion?: number }).evaluatedAtVersion).toBe(
-        leftover.version,
-      );
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    // (a) red when `advanceRun`'s guard loop stops issuing a settle_guard for an eligible guard
+    //     (the loop is not reached, or the record was not left with one); (b) prints the kind.
+    expect(capturedDelta?.kind).toBe('settle_guard');
+    // The captured delta's evaluatedAtVersion is the version of the record the guard's
+    // conditions were evaluated AGAINST — the leftover record's own version, strictly before the
+    // guard's own settle bumps it. (On main this could only be bounded from above; here the
+    // record the loop read is known exactly.)
+    // (a) red when the stamp is dropped or taken from another record; (b) prints the two versions.
+    expect((capturedDelta as { evaluatedAtVersion?: number }).evaluatedAtVersion).toBe(
+      leftover.version,
+    );
   });
 });

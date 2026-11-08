@@ -4,19 +4,10 @@
 // read at `r`, and only its row carries `record_stamped_ahead`.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { JsonFileStore } from '../store/json-file-store.js';
-import { writeTestClockFile } from '../store/test-clock-file.js';
+import { describe, expect, it } from 'vitest';
+import { InMemoryStore, settableClock } from '@sensigo/realm-testing';
 import { classifyRunHealth } from './run-health.js';
 import { CLOCK_SKEW_EPSILON_MS as EPS } from './instants.js';
-
-const roots: string[] = [];
-afterEach(async () => {
-  for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
-});
 
 const T = Date.parse('2031-05-06T07:00:00.000Z');
 
@@ -25,13 +16,11 @@ describe('#715 (b) §B.2 — a listing judges each row at its own reading', () =
     // (a) red when the listing judges every row at one instant (the ahead row then reads at r, or the
     //     others at r + ε), or the finding fires on a row that is not ahead; (b) prints, per row, its
     //     reading's offset from r and whether it carries the finding.
-    const root = await mkdtemp(join(tmpdir(), 'realm-715b-listing-'));
-    roots.push(root);
-    // The location's clock file first: a file store resolves its clock when it is opened.
-    await writeTestClockFile(root, new Date(T));
-    const store = new JsonFileStore(join(root, 'runs'));
+    // The store's settable clock, first at T; each record is written at its own instant.
+    const clock = settableClock(new Date(T));
+    const store = new InMemoryStore({ clock });
     const make = async (at: number, workflowId: string) => {
-      await writeTestClockFile(root, new Date(at));
+      await clock.set(new Date(at));
       return (await store.create({ workflowId, workflowVersion: 1, params: {} })).record.id;
     };
     const ids = {
@@ -39,7 +28,7 @@ describe('#715 (b) §B.2 — a listing judges each row at its own reading', () =
       ahead: await make(T + 3_600_000, 'b'),
       plainB: await make(T - 30_000, 'c'),
     };
-    await writeTestClockFile(root, new Date(T));
+    await clock.set(new Date(T));
     const listing = await store.list();
     const rows = Object.fromEntries(
       Object.entries(ids).map(([name, id]) => {

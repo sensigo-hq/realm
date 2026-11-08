@@ -1,11 +1,8 @@
 // issue #620 PR-C — the hand-offs (H2 + H3): every exported function that takes a store, and the
 // two reader-backed trace buffers, refuse a store from another release (MISMATCH) or with no line
 // (UNDECLARED) before any work, and accept this release's and a host class it declared.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { describe, it, expect } from 'vitest';
 import { fileURLToPath } from 'node:url';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
   executeChain,
   executeStep,
@@ -18,7 +15,7 @@ import { reclaimStep } from './reclaim-step.js';
 import { getWorkflowForRun } from '../workflow/registrar.js';
 import { readRunForFence } from '../store/fence-predicate.js';
 import { InMemoryTraceBufferStore } from '../store/trace-buffer-store.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { REALM_BRAND, RELEASE_LINE_KEY, createRealmBrand } from '../brand.js';
 import { declareReleaseLine } from '../release-line.js';
 import { createDefaultRegistry } from '../extensions/default-registry.js';
@@ -41,14 +38,6 @@ const def: WorkflowDefinition = {
 };
 const run = { id: 'r', workflow_id: 'h-wf' } as unknown as RunRecord;
 const noop = async (): Promise<Record<string, unknown>> => ({});
-
-let dir: string;
-beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'realm-h-'));
-});
-afterEach(async () => {
-  await rm(dir, { recursive: true, force: true });
-});
 
 /** A store whose methods all fail with a non-release-line error: proves the call got past the check. */
 function storeLike(): Record<string, unknown> {
@@ -154,7 +143,7 @@ describe.each(CALLS)('%s', (_name, call, role) => {
     expect(code ?? 'resolved').not.toMatch(/^ENGINE_RELEASE_LINE_/);
   });
   it('this release’s own store: accepted', async () => {
-    const code = await codeOf(() => call(new JsonFileStore(dir) as never));
+    const code = await codeOf(() => call(new InMemoryStore() as never));
     expect(code ?? 'resolved').not.toMatch(/^ENGINE_RELEASE_LINE_/);
   });
 });
@@ -177,7 +166,7 @@ const REGISTRY_CALLS: Array<[string, (registry: never) => Promise<unknown>, stri
   [
     'executeStep',
     (r) =>
-      executeStep(new JsonFileStore(dir), def, {
+      executeStep(new InMemoryStore(), def, {
         runId: 'r',
         command: 'a',
         input: {},
@@ -189,7 +178,7 @@ const REGISTRY_CALLS: Array<[string, (registry: never) => Promise<unknown>, stri
   [
     'submitHumanResponse',
     (r) =>
-      submitHumanResponse(new JsonFileStore(dir), def, {
+      submitHumanResponse(new InMemoryStore(), def, {
         runId: 'r',
         gateId: 'g',
         choice: 'approve',
@@ -199,13 +188,13 @@ const REGISTRY_CALLS: Array<[string, (registry: never) => Promise<unknown>, stri
   ],
   [
     'drainFinalizers',
-    (r) => drainFinalizers(new JsonFileStore(dir), def, r, 'r'),
+    (r) => drainFinalizers(new InMemoryStore(), def, r, 'r'),
     'The registry handed to drainFinalizers',
   ],
   [
     'advanceRun',
     (r) =>
-      advanceRun(new JsonFileStore(dir), def, {
+      advanceRun(new InMemoryStore(), def, {
         runId: 'r',
         command: 'a',
         registry: r,
@@ -215,7 +204,7 @@ const REGISTRY_CALLS: Array<[string, (registry: never) => Promise<unknown>, stri
   [
     'executeChain',
     (r) =>
-      executeChain(new JsonFileStore(dir), def, {
+      executeChain(new InMemoryStore(), def, {
         runId: 'r',
         command: 'a',
         input: {},
@@ -241,7 +230,7 @@ describe('registries', () => {
     const reg = {};
     Object.defineProperty(reg, Symbol.for('@sensigo/realm/ExtensionRegistry'), { value: OTHER });
     const code = await codeOf(() =>
-      executeChain(new JsonFileStore(dir), def, {
+      executeChain(new InMemoryStore(), def, {
         runId: 'r',
         command: 'a',
         input: {},
@@ -258,7 +247,7 @@ describe('registries', () => {
       }
     }
     const code = await codeOf(() =>
-      executeChain(new JsonFileStore(dir), def, {
+      executeChain(new InMemoryStore(), def, {
         runId: 'r',
         command: 'a',
         input: {},
@@ -270,7 +259,7 @@ describe('registries', () => {
   });
   it('this release’s registry is accepted', async () => {
     const code = await codeOf(() =>
-      executeChain(new JsonFileStore(dir), def, {
+      executeChain(new InMemoryStore(), def, {
         runId: 'r',
         command: 'a',
         input: {},
