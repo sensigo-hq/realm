@@ -153,7 +153,8 @@ describe('caching 3-M A-2b1 — inspect prints each miss beneath its own attempt
   // A single-attempt step: live-899's drive_a (six Anthropic tool turns of one call, counts and
   // stamps as captured in plans/llm-prompt-caching/tools-path/live-899/), constructed with two
   // misses. Turn 2 read only 1000 and wrote 6087 (a lookback that reached only an earlier
-  // breakpoint, #946); turn 4 started 420 s after turn 3 (five sequential tool calls) and read 0.
+  // breakpoint, #946); turn 4 started 420 s after turn 3 (constructed: the capture's turns are
+  // seconds apart) and read 0.
   // Can fail: the line's read count taken from the shortfall (5993, 7181). Prints the lines.
   it("a single attempt's misses sit beneath `Diagnostics:`, each with what it read", async () => {
     const requests = [
