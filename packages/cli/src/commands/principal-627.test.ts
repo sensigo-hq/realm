@@ -10,10 +10,10 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
   advanceRun,
   loadWorkflowFromString,
   presentWayOfGate,
+  type RunStore,
 } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -56,7 +56,7 @@ async function opened(h: TempHome) {
   return { store, runId: run.id, gateId: (await store.get(run.id)).record.pending_gate!.gate_id };
 }
 
-const principalOf = async (store: JsonFileStore, runId: string) =>
+const principalOf = async (store: RunStore, runId: string) =>
   (await store.get(runId)).record.evidence.find((e) => e.kind === 'gate_response')?.principal;
 
 describe('#627 W — cell 25: the principal each door stamps', () => {

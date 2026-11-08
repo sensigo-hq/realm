@@ -12,7 +12,6 @@ import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
   type RealmWorkflowRegistrar,
   abandonRun,
   createDefaultRegistry,
@@ -20,6 +19,7 @@ import {
   describePending,
   type RunRecord,
   type WorkflowDefinition,
+  type RunStore,
 } from '@sensigo/realm';
 import { renderDetachMap } from './run.js';
 import { runAgent } from '../agent/run-agent.js';
@@ -60,7 +60,7 @@ const SENTENCE = `An operator ended this run, with the reason ${SHOWN}; to run t
 describe('#625 PR-2a, F2 — the CLI on a run an operator ended', { timeout: 60_000 }, () => {
   let h: TempHome & { readonly root: string };
   let home: string;
-  let runStore: JsonFileStore;
+  let runStore: RunStore;
   let workflowStore: RealmWorkflowRegistrar;
 
   beforeEach(async () => {

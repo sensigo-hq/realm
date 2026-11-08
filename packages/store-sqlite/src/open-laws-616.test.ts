@@ -254,7 +254,8 @@ describe('#616 unit 7a — the source laws of the open', () => {
       opens: [],
       admitted: [
         'src/maintenance.ts: openDatabase(temporary)',
-        'src/open-file.ts: openDatabase(path)',
+        // #616 PR-2c c8a1: the open's one call now passes the check's read-only option through.
+        'src/open-file.ts: openDatabase(path, options)',
       ],
       memorySeen: true,
     });

@@ -15,12 +15,12 @@ import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
   type RealmWorkflowRegistrar,
   ExtensionRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   advanceRun,
   type WorkflowDefinition,
+  type RunStore,
 } from '@sensigo/realm';
 import { advanceRunFromShell } from './run-advance.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
@@ -53,7 +53,7 @@ describe(
   () => {
     let h: TempHome & { readonly root: string };
     let home: string;
-    let runs: JsonFileStore;
+    let runs: RunStore;
     let workflows: RealmWorkflowRegistrar;
 
     beforeEach(async () => {
@@ -230,7 +230,7 @@ describe(
         const racing = new Proxy(runs, {
           get(target, prop) {
             if (prop === 'settleStep') {
-              return async (...a: Parameters<NonNullable<JsonFileStore['settleStep']>>) => {
+              return async (...a: Parameters<NonNullable<RunStore['settleStep']>>) => {
                 if (a[1].kind === 'lease_finalizer' && !fired) {
                   fired = true;
                   await target.settleStep!(

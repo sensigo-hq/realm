@@ -12,7 +12,6 @@
 // change that turns it red and what it prints on failure: synthetic ids only.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
-  JsonFileStore,
   executeStep,
   drainFinalizers,
   captureEvidence,
@@ -36,6 +35,7 @@ import { migrateStampSeals } from './run-migrate.js';
 import { isAutoReclaimable } from './reclaim.js';
 import { writtenSnapshot } from '@sensigo/realm';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import type { CliHome } from '../lib/home.js';
 
 const echo: StepDispatcher = async (_step, input) => ({ ...input });
 const PROGRAM: Attributed = { by: 'alice@host', by_source: 'derived', channel: 'agent' };
@@ -65,7 +65,7 @@ const workflowStore: WorkflowRegistrar = {
 };
 
 let h: TempHome;
-let store: JsonFileStore;
+let store: CliHome['runStore'];
 let runId: string;
 let before: ClaimRecord;
 let gateId: string;

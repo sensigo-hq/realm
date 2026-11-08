@@ -13,10 +13,10 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
-  JsonFileStore,
   type RealmWorkflowRegistrar,
   executeStep,
   loadWorkflowFromString,
+  type RunStore,
 } from '@sensigo/realm';
 import type { RunRecord, WorkflowDefinition } from '@sensigo/realm';
 import { openRealmHome } from '@sensigo/realm-store-sqlite';
@@ -115,7 +115,7 @@ describe(
     let h: TempHome & { readonly root: string };
     let home: string;
     let elsewhere: string;
-    let runStore: JsonFileStore;
+    let runStore: RunStore;
     let workflowStore: RealmWorkflowRegistrar;
     const folders: string[] = [];
 

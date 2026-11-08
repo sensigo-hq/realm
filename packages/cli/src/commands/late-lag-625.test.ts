@@ -10,11 +10,11 @@ import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
   type RealmWorkflowRegistrar,
   executeStep,
   loadWorkflowFromString,
   type WorkflowDefinition,
+  type RunStore,
 } from '@sensigo/realm';
 import { zOf } from '../test-support/instant.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
@@ -70,7 +70,7 @@ describe(
   () => {
     let h: TempHome & { readonly root: string };
     let home: string;
-    let runStore: JsonFileStore;
+    let runStore: RunStore;
     let workflowStore: RealmWorkflowRegistrar;
 
     beforeEach(async () => {

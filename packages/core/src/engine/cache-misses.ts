@@ -249,16 +249,16 @@ export const CACHE_MISS_CAUSES = [
    *  strict-output ladder moved it (#236, #311, #313, the sticky drop). */
   'strict_ladder',
   /** Against an earlier drive's request, whether strict output was sent differs; the record cannot
-   *  tell whether Realm or the operator changed it (`--strict-base-url`, a workflow edit, or the
-   *  earlier drive's ladder). */
+   *  tell whether Realm or the operator changed it (`--strict-base-url`, a workflow edit, or
+   *  Realm's own retries in either drive). */
   'strict_changed',
   /** The tools part differs: inside one list the MCP server listed different tools between
    *  attempts; against an earlier drive's request also a workflow edit (on Anthropic a schema edit
    *  changes the submit tool). */
   'tools',
-  /** The instructions part differs: against an earlier drive's request, an edit of the profile or
-   *  of the step's instructions, or another Realm version's base text; Realm never changes it
-   *  within a drive. */
+  /** The system text differs: against an earlier drive's request, an edit of the agent profile or
+   *  of the step's schema, or another Realm version's base text (a step's `instructions:` never
+   *  reach the model); Realm never changes it within a drive. */
   'system',
   /** Inside one list, a later call's first request carries Realm's own repair feedback after the
    *  prompt, where that moves what was cached: the prompt or the conversation is marked on both, or

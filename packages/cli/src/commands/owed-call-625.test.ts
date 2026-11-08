@@ -7,14 +7,14 @@ import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-  type JsonFileStore,
   executeStep,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type WorkflowDefinition,
   type RunRecord,
+  type RunStore,
 } from '@sensigo/realm';
 import { printChildrenWhenATestFails } from '../test-support/child-output.js';
-import { createTestLocation } from '@sensigo/realm-testing';
+import { createTestHome } from '@sensigo/realm-testing';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
@@ -53,7 +53,7 @@ const gateThenAuto: WorkflowDefinition = {
 
 async function setup(): Promise<{
   home: string;
-  runs: JsonFileStore;
+  runs: RunStore;
   run: RunRecord;
   gateId: string;
   h: TempHome;
@@ -236,7 +236,7 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
       // #715 (b) 04 §D (B4): `~/.realm` is a test location, made BEFORE the store opens (a store takes
       // its clock when it is built); the cell moves the clock the spawned `realm` reads instead of
       // waiting on the real one. #616 PR-2b: a second handle on the location, opened after it.
-      const loc = await createTestLocation({ start: new Date(), root: h.path });
+      const loc = await createTestHome({ start: new Date(), root: h.path });
       located = await makeTempHome({ home: h.path });
       const runs = located.home.runStore;
       const { record: run } = await runs.create({

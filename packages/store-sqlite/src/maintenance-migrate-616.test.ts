@@ -500,21 +500,24 @@ describe('#616 PR-2c c7 — migrate: the backup first, the ladder one step at a 
     });
   });
 
-  // MA 3's rider R2: the two `migrate` pre-checks. `backup`'s code and sentences, and `backup` as the
-  // default, are c6's cell (4) (`maintenance-616.test.ts`: the entry opened with no verb), not repeated.
+  // MA 3's rider R2: the two pre-checks of each verb but `backup`. `backup`'s code and sentences, and
+  // `backup` as the default, are c6's cell (4) (`maintenance-616.test.ts`: the entry opened with no
+  // verb), not repeated. #616 PR-2c c8a1: `check` joins, with its own code and "to check" words.
   it.each([
-    ['no store file', 'missing'],
-    ['an empty store file', 'empty'],
+    ['migrate', 'no store file', 'missing', 'STATE_STORE_MIGRATE_REFUSED'],
+    ['migrate', 'an empty store file', 'empty', 'STATE_STORE_MIGRATE_REFUSED'],
+    ['check', 'no store file', 'missing', 'STATE_STORE_CHECK_REFUSED'],
+    ['check', 'an empty store file', 'empty', 'STATE_STORE_CHECK_REFUSED'],
   ] as const)(
-    '(F) opened for migrate, a home with %s is refused STATE_STORE_MIGRATE_REFUSED in its own words, before anything is created or set up',
-    async (_, kind) => {
+    '(F) opened for %s, a home with %s is refused in its own words, before anything is created or set up',
+    async (verb, _, kind, code) => {
       const path = join(tmp(), '.realm');
       const file = join(path, 'realm.db');
       if (kind === 'empty') {
         mkdirSync(path);
         closeSync(openSync(file, 'wx'));
       }
-      const refused = await refusal(openRealmHomeForMaintenance({ home: path, verb: 'migrate' }));
+      const refused = await refusal(openRealmHomeForMaintenance({ home: path, verb }));
       const holds = existsSync(path)
         ? readdirSync(path).map((name) => `${name} ${statSync(join(path, name)).size}`)
         : 'no home';
@@ -525,16 +528,16 @@ describe('#616 PR-2c c7 — migrate: the backup first, the ladder one step at a 
         kind === 'missing'
           ? {
               refused: {
-                code: 'STATE_STORE_MIGRATE_REFUSED',
-                message: `There is no store file at ${file} to migrate.`,
-                details: { path: file, reason: `there is no store file at ${file} to migrate` },
+                code,
+                message: `There is no store file at ${file} to ${verb}.`,
+                details: { path: file, reason: `there is no store file at ${file} to ${verb}` },
               },
               holds: 'no home',
             }
           : {
               refused: {
-                code: 'STATE_STORE_MIGRATE_REFUSED',
-                message: `${file} holds no store yet: there is nothing to migrate.`,
+                code,
+                message: `${file} holds no store yet: there is nothing to ${verb}.`,
                 details: { path: file, reason: `${file} holds no store yet` },
               },
               holds: ['realm.db 0'],

@@ -11,7 +11,6 @@ import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
   type RealmWorkflowRegistrar,
   ExtensionRegistry,
   executeChain,
@@ -20,11 +19,12 @@ import {
   type StepDefinition,
   type WorkflowDefinition,
   writeTestClockFile,
+  type RunStore,
 } from '@sensigo/realm';
 import { inspectRun } from './inspect.js';
 import { sweepExpiredGates } from './listen.js';
 import { printChildrenWhenATestFails } from '../test-support/child-output.js';
-import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
+import { createTestHome, type TestHome } from '@sensigo/realm-testing';
 import { makeTempHome } from '../test-support/temp-home.js';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
@@ -94,18 +94,16 @@ const inputWayOut = (id: string, deps: boolean): string =>
 async function stores(located = false): Promise<{
   home: string;
   path: string;
-  runs: JsonFileStore;
+  runs: RunStore;
   workflows: RealmWorkflowRegistrar;
-  clock?: TestLocation['clock'];
+  clock?: TestHome['clock'];
   cleanup: () => Promise<void>;
 }> {
   const made = await makeTempHome();
   // #715 (b) 04 §D (B4): `located` makes `~/.realm` a test location BEFORE the store opens (a store
   // takes its clock when it is built), so a cell moves the clock the spawned `realm` reads instead of
   // waiting on the real one: the location's own handle, opened after it, holds the stores.
-  const loc = located
-    ? await createTestLocation({ start: new Date(), root: made.path })
-    : undefined;
+  const loc = located ? await createTestHome({ start: new Date(), root: made.path }) : undefined;
   const h = loc !== undefined ? await makeTempHome({ home: loc.root }) : made;
   return {
     home: made.root,
@@ -121,7 +119,7 @@ async function stores(located = false): Promise<{
 }
 
 /** A run at its open gate: `decide` opened, unanswered. */
-async function atGate(runs: JsonFileStore, d: WorkflowDefinition): Promise<[string, string]> {
+async function atGate(runs: RunStore, d: WorkflowDefinition): Promise<[string, string]> {
   const { record: run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
   await executeStep(runs, d, {
     runId: run.id,
