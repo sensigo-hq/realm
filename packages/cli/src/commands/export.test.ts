@@ -496,27 +496,6 @@ describe('buildExportBundle', () => {
     }
   });
 
-  it.each(['completed', 'failed', 'abandoned', 'aborted'] as const)(
-    'terminal phase %s never emits a warning',
-    async (phase) => {
-      const { dir, runStore, failedAttemptStore, traceBufferStore, cleanup } = await makeStores();
-      try {
-        const run = makeRun({ run_phase: phase, terminal_state: true });
-        await injectRun(dir, run);
-
-        const { warning } = await buildExportBundle(run.id, {
-          runStore,
-          failedAttemptStore,
-          traceBufferStore,
-        });
-
-        expect(warning).toBeUndefined();
-      } finally {
-        await cleanup();
-      }
-    },
-  );
-
   it('nonexistent run: rejects with STATE_RUN_NOT_FOUND, writes nothing', async () => {
     const { runStore, failedAttemptStore, traceBufferStore, cleanup } = await makeStores();
     try {

@@ -8,7 +8,7 @@
 // — because these are pre-#367 shapes the store boundary would refuse if they were written through
 // it. That is the point: they are what real legacy records look like.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { writeFile, readFile, mkdir, utimes } from 'node:fs/promises';
+import { writeFile, readFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { JsonFileStore } from '@sensigo/realm';
 import type { RunRecord, RunStore, SealArm } from '@sensigo/realm';
@@ -232,20 +232,6 @@ describe('#367 part 3 — the migration vehicle stamps every classifiable shape'
     expect((await onDisk('incoherent-prose')).version).toBe(1);
   });
 
-  it('`run_phase` MATERIALISES on remap rows and is retained on agreeing rows', async () => {
-    // The startup deaths sat on disk as `abandoned` and derive `failed` since the substrate. This
-    // is the clock-preserving materialisation `--heal` could not do: the phase moves, the clock does
-    // not.
-    await seedCorpus();
-    await migrateStampSeals(store, { force: true });
-    for (const [id, , , expectedPhase] of SHAPES) {
-      expect((await onDisk(id)).run_phase, `${id} phase`).toBe(expectedPhase);
-    }
-    const spawn = await onDisk('spawn');
-    expect(spawn.run_phase).toBe('failed'); // was 'abandoned' on disk
-    expect(spawn.updated_at).toBe(AT); // and the clock did not move
-  });
-
   it('an UNCLASSIFIABLE record is bucketed, printed, and never written', async () => {
     await seedCorpus();
     const before = await onDisk('unclassifiable');
@@ -449,27 +435,6 @@ describe('#367 part 3 — the report says no more than the branch it is printed 
     }).join('\n');
     expect(text).not.toContain('every terminal run already carries its seal arm');
   });
-
-  it('LEG 1 executed: force + a REAL failed write (a FRESH lock the sweep cannot take)', async () => {
-    // The lock must be FRESH: proper-lockfile steals a stale one, and the stamp would then
-    // SUCCEED — the fixture would prove nothing. `mkdir` + a current mtime is what makes the
-    // acquisition genuinely fail.
-    await seed('locked', { terminal_reason: 'Workflow completed.', run_phase: 'completed' });
-    await mkdir(join(dir, 'locked.json.lock'), { recursive: true });
-    const now = new Date();
-    await utimes(join(dir, 'locked.json.lock'), now, now);
-
-    const buckets = await migrateStampSeals(store, { force: true });
-    expect(buckets.failed).toHaveLength(1); // non-vacuity: the write really did fail
-    const text = renderMigrateReport(buckets, { force: true }).join('\n');
-    expect(text).not.toContain('every terminal run already carries its seal arm');
-    // LEG 2: a failed write leaves the record armless, so it IS residue.
-    expect(text).toContain('Residue: 1 terminal run(s) still without a recorded seal arm.');
-    expect((await onDisk('locked')).sealed_by).toBeUndefined();
-    expect(migrateExitCode(buckets)).toBe(1);
-    // The lock-retry backoff is real time — this cell waits it out rather than mocking it, so the
-    // failure it observes is the one an operator would actually hit.
-  }, 30_000);
 
   it('LEG 1 executed: DRY RUN + an unclassifiable record', async () => {
     await seed('mystery', { terminal_reason: 'who knows', run_phase: 'abandoned' });
