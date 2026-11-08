@@ -218,11 +218,11 @@ describe('#715 (a) — the docs sentences', () => {
     // file beside runs/, and none elsewhere).
     claim(
       TESTING,
-      "A test of Realm's own source keeps `createTestLocation`, and the clock file's helpers `@sensigo/realm` exports for this package, out of the `.ts` and `.mjs` files in the `src` folders of Realm's four packages, except test files (`*.test.ts`, which create test locations), the files that define or re-export them, the file store's own file (it reads the clock file, and a comment there names it) and this package: no command, server or library there creates a test location or writes a clock file.",
+      "A test of Realm's own source keeps `createTestLocation` and `createTestHome`, and the clock file's helpers `@sensigo/realm` exports for this package, out of the `.ts` and `.mjs` files in the `src` folders of Realm's four packages, except test files (`*.test.ts`, which create test locations), the files that define or re-export them, the file store's own file (it reads the clock file, and a comment there names it) and this package: no command, server or library there creates a test location or writes a clock file.",
     );
     claim(TESTING, 'The file store reads a clock file, only when it sits beside `runs/`.');
     // The type count cell below.
-    claim(TESTING, 'The 30 types are named in the group that uses them.');
+    claim(TESTING, 'The 31 types are named in the group that uses them.');
     // C16 (the family takes an adapter and returns cases).
     claim(
       TESTING,
@@ -327,7 +327,7 @@ describe('#715 (a) — the docs sentences', () => {
       "**A run store's clock (issue #715).** `@sensigo/realm` exports `Clock`, `createSystemClock`, `systemClock`, `takeReading` and `floorAtHolder`.",
       '`JsonFileStore` and `InMemoryStore` have a `clock`, the time they stamp their writes with; `InMemoryStore` takes one: `new InMemoryStore({ clock })`.',
       // C7–C17.
-      '**Test clocks and test locations (issue #715).** `@sensigo/realm-testing` exports `settableClock`, `steppingClock`, `countingClock`, `createTestLocation`, and the store contract `storeClockContract` with its laws `STORE_CLOCK_LAWS`.',
+      '**Test clocks and test locations (issue #715).** `@sensigo/realm-testing` exports `settableClock`, `steppingClock`, `countingClock`, `createTestLocation`, `createTestHome`, and the store contract `storeClockContract` with its laws `STORE_CLOCK_LAWS`.',
       "A test location's clock is the file `.realm-test-clock` beside its `runs/` folder.",
       // C3.
       'A store opened on a copy of a test location in another folder refuses with the new code `STATE_TEST_CLOCK_FOREIGN`.',
@@ -407,7 +407,7 @@ describe('#715 (a) — the facts two docs sentences rest on', () => {
     ]);
   });
 
-  it('the testing package exports 30 types (testing-package.md, "The 30 types")', () => {
+  it('the testing package exports 31 types (testing-package.md, "The 31 types")', () => {
     // (a) red when a type is added or dropped without the page; (b) prints the count.
     const index = read('packages/testing/src/index.ts');
     const names = [...index.matchAll(/export type \{([^}]*)\}/g)].flatMap((m) =>
@@ -416,6 +416,6 @@ describe('#715 (a) — the facts two docs sentences rest on', () => {
         .map((n) => n.trim())
         .filter((n) => n !== ''),
     );
-    expect(new Set(names).size, names.join(', ')).toBe(30);
+    expect(new Set(names).size, names.join(', ')).toBe(31);
   });
 });
