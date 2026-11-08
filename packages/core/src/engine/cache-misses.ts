@@ -1,8 +1,8 @@
 // cache-misses.ts — caching #600, 3-M piece A-2a1: whether each request of one stored list read
 // what the request before it left in the provider's cache, worked out when the record is read
 // (n8n's way), from what the records hold. Piece A-2a2: for a request that missed, the first
-// difference on the record between it and its predecessor (pieces A-2a2r and A-2a3 add causes).
-// Showing it is A-2b.
+// difference on the record between it and its predecessor; piece A-2a2r: a change of provider,
+// address or model, checked first (pieces A-2a2s and A-2a3 add causes). Showing it is A-2b.
 //
 // Pure: no clock, no I/O, no store. Total: it never throws on a stored list, whatever another
 // writer or an older version put in it. Not exported from core's index: it has no public shape
@@ -209,6 +209,16 @@ export function cacheReadVerdicts(requests: unknown): CacheReadVerdict[] {
  * never a proven cause.
  */
 export const CACHE_MISS_CAUSES = [
+  /** The provider differs: drive 2 ran with another `--provider` (inside one list the provider is
+   *  stamped once per drive, so it cannot differ there). */
+  'provider_changed',
+  /** The address differs, between the provider's own and another one: drive 2 ran with or without
+   *  `--base-url`, `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL` (`endpoint` records only that kind,
+   *  never the address itself). */
+  'endpoint_changed',
+  /** The model the response named differs: drive 2 ran with another `--model`, or an address
+   *  answered from another model (a gateway's fallback, which can happen inside one list too). */
+  'model_changed',
   /** The request or its predecessor has no `prefix_parts` on the record (another writer's request,
    *  or one written before Realm recorded the parts), so no part could be compared. */
   'parts_not_recorded',
@@ -289,13 +299,21 @@ function causeAt(
   const before = cachePredecessor(list, i);
   // A missed request always has a predecessor; without one no part could be compared.
   if (before === undefined) return 'parts_not_recorded';
+  // Piece A-2a2r: each differs only where both sides record it; checked before anything else.
+  const changed = (field: 'provider' | 'endpoint' | 'model'): boolean =>
+    typeof now[field] === 'string' &&
+    typeof before[field] === 'string' &&
+    now[field] !== before[field];
+  if (changed('provider')) return 'provider_changed';
+  if (changed('endpoint')) return 'endpoint_changed';
+  if (changed('model')) return 'model_changed';
   const beforeParts = before['prefix_parts'];
   if (!plainObject(nowParts) || !plainObject(beforeParts)) return 'parts_not_recorded';
   const differs = (part: keyof PrefixParts): boolean =>
     digest(nowParts, part) !== digest(beforeParts, part);
   if (differs('tools')) return 'tools';
   if (differs('system')) return 'system';
-  // Inside one list a prompt difference can come only from repair feedback (A-2a2r names it).
+  // Inside one list a prompt difference can come only from repair feedback (A-2a2s names it).
   if (
     from === 'reference' &&
     promptInside(now) &&
