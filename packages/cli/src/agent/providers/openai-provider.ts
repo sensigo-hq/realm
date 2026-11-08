@@ -162,16 +162,21 @@ export function withCacheKey(
 }
 
 /**
- * Caching 3-B (A6, D2) — the split's facts for one OpenAI request, read off the body SENT: the
- * head's digest and length, a digest per part (the system text, the head, the tools and the
- * response format where the body has them), the key when it went out, and whether strict did.
- * `cache_requested` stays `provider_rules`: the key is a hint, not an ask (D4.6-9). #896: on a body
- * with explicit marks, `cache_marked` also names the marked system text and prompt head.
+ * Caching 3-B (A6, D2) — the facts of one OpenAI request, read off the body SENT: with a plan (the
+ * step's prompt was split), the head's digest and length; on every request (3-M A-0), a digest per
+ * part (the system text, the prompt part, the tools and the response format where the body has
+ * them), the key when it went out, and whether strict did. The prompt part is the head with a plan,
+ * else `promptText`: the step's prompt as the provider was given it (a repair attempt's carries the
+ * feedback), never a message read back — o1 folds the system text into its one user message, and
+ * its JSON retry's second message is the model's own answer. `cache_requested` stays
+ * `provider_rules`: the key is a hint, not an ask (D4.6-9). #896: on a body with explicit marks,
+ * `cache_marked` also names the marked system text and prompt head.
  */
 export function openAiSplitFacts(
   body: Record<string, unknown>,
-  plan: OpenAiCachePlan,
+  plan: OpenAiCachePlan | undefined,
   systemText: string,
+  promptText: string,
 ): Partial<UsageRecord> {
   const keySent = typeof body['prompt_cache_key'] === 'string';
   // #896: what carried a mark or the key, from the body sent: the system text, the prompt's head.
@@ -184,12 +189,13 @@ export function openAiSplitFacts(
   const tools = body['tools'] as Array<{ function?: { strict?: boolean } }> | undefined;
   const format = body['response_format'] as { json_schema?: { strict?: boolean } } | undefined;
   return {
-    prefix_sha256: sha256Hex(plan.head),
-    prefix_chars: plan.head.length,
+    ...(plan !== undefined
+      ? { prefix_sha256: sha256Hex(plan.head), prefix_chars: plan.head.length }
+      : {}),
     prefix_parts: {
       ...(tools !== undefined ? { tools: sha256Hex(JSON.stringify(tools)) } : {}),
       system: sha256Hex(systemText),
-      prompt: sha256Hex(plan.head),
+      prompt: sha256Hex(plan !== undefined ? plan.head : promptText),
       ...(format !== undefined ? { format: sha256Hex(JSON.stringify(format)) } : {}),
     },
     ...(marked.length > 0 ? { cache_marked: marked } : {}),
@@ -568,7 +574,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
         toUsageRecord(requests.length, requestStart, readOpenAiUsage(response), {
           ...openAiRequestFacts(response, client),
           ...(explicit ? this.explicitAskFacts() : {}),
-          ...(plan !== undefined ? openAiSplitFacts(opts, plan, systemPrompt) : {}),
+          ...openAiSplitFacts(opts, plan, systemPrompt, prompt),
           ...this.rejectedFact(),
         }),
       );
@@ -766,7 +772,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
           toUsageRecord(requests.length, requestStart, readOpenAiUsage(response), {
             ...openAiRequestFacts(response, client),
             ...(explicit ? this.explicitAskFacts() : {}),
-            ...(plan !== undefined ? openAiSplitFacts(o, plan, systemPrompt) : {}),
+            ...openAiSplitFacts(o, plan, systemPrompt, prompt),
             ...this.rejectedFact(),
           }),
         );
@@ -942,7 +948,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
         toUsageRecord(requests.length, requestStart, readOpenAiUsage(response), {
           ...openAiRequestFacts(response, client),
           ...(explicitOff ? this.explicitAskFacts() : {}),
-          ...(plan !== undefined ? openAiSplitFacts(body, plan, systemText) : {}),
+          ...openAiSplitFacts(body, plan, systemText, prompt),
           ...this.rejectedFact(),
         }),
       );

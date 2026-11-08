@@ -272,15 +272,8 @@ describe('caching 3-B Part F — the reference text, the describer and the CHANG
   });
 
   it('the record page lists the split’s facts, and the store contract holds them', () => {
-    // The facts: `anthropic-provider-head-3b.test.ts`, `openai-cache-key-3b.test.ts`,
-    // `gateway-rule-3b.test.ts`; the contract: testing `usage-record-law-600.test.ts`.
-    claim(
-      'docs/reference/run-record-and-export.md',
-      'A request whose step prompt Realm split at its stable start (its head) also carries the split’s facts (added after version 0.48.0):'.replace(
-        '’',
-        "'",
-      ),
-    );
+    // The contract: testing `usage-record-law-600.test.ts`. The record page's lead sentence for
+    // these facts is 3-M A-0's now, claimed in `docs-3m-a0.test.ts`.
     claim(
       'docs/reference/testing-package.md',
       "It also comes back with the split's facts: `prefix_sha256`, `prefix_chars`, `prefix_parts`, `cache_marked`, `request_strict_sent`, `cache_controls_rejected` and `cache_key_sent` (added after version 0.48.0).",
