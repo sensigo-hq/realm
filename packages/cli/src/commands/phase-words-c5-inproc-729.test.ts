@@ -25,9 +25,8 @@ import {
   type RunRecord,
   type StepDefinition,
   type WorkflowDefinition,
-  writeTestClockFile,
 } from '@sensigo/realm';
-import { InMemoryStore } from '@sensigo/realm-testing';
+import { createTestHome, InMemoryStore } from '@sensigo/realm-testing';
 import { runAgent } from '../agent/run-agent.js';
 import { LlmProvider } from '../agent/providers/llm-provider.js';
 import { addDeclaredValues, installWriter, writerCtx, writerTestSeams } from '../output/writer.js';
@@ -760,7 +759,11 @@ describe("#729 PR-3 correction 5 (J-2) — `realm listen`'s log lines carry the 
   it("listen.ts — the sweeper's `cannot_go_on`: `stays open (phase '…')` whole (the declared route: `running`)", async () => {
     installWriter('broadcast');
     addDeclaredValues({ C5_PIN: 'running' });
-    const h = await makeTempHome();
+    // #616 PR-2c c10a-2d: the ONE handle opened on a test home, so its clock moves the time the sweeper
+    // reads; no other handle opens the folder.
+    const owned = mkdtempSync(join(tmpdir(), 'realm-c5-sweep-'));
+    const th = await createTestHome({ start: new Date(), root: join(owned, '.realm') });
+    const h = await makeTempHome({ home: th.root });
     try {
       const runs = h.home.runStore;
       const workflows = h.home.workflowStore;
@@ -806,18 +809,9 @@ describe("#729 PR-3 correction 5 (J-2) — `realm listen`'s log lines carry the 
         input: {},
         dispatcher: async () => ({}),
       });
-      // #715 (b): the store's clock decides — the same folder reopened as a test location an hour on.
-      await writeTestClockFile(h.path, new Date(Date.now() + 3_600_000));
-      const reopened = await makeTempHome({ home: h.path });
-      try {
-        await sweepExpiredGates({
-          runStore: reopened.home.runStore,
-          workflowStore: workflows,
-          logger,
-        } as never);
-      } finally {
-        await reopened.cleanup();
-      }
+      // #715 (b): the store's clock decides — the one handle's test-home clock moved an hour on.
+      await th.clock.advance(3_600_000);
+      await sweepExpiredGates({ runStore: runs, workflowStore: workflows, logger } as never);
       const lines = fieldsOf('listen: sweeper enacted an expired gate')?.['cannot_go_on'] as
         string[] | undefined;
       const way = lines?.at(-1) ?? '';
@@ -825,7 +819,10 @@ describe("#729 PR-3 correction 5 (J-2) — `realm listen`'s log lines carry the 
       //     way out's head.
       expect(way.slice(0, way.indexOf(': '))).toBe(`Run ${run.id} stays open (phase 'running')`);
     } finally {
+      // The store closed before its folder goes.
       await h.cleanup();
+      await th.remove();
+      rmSync(owned, { recursive: true, force: true });
     }
   });
 });
