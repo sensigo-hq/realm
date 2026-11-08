@@ -14,9 +14,11 @@
 // its own expired ids.
 //
 // After the batches, when at least one run was deleted: the free pages go back in steps of
-// {@link VACUUM_STEP_PAGES} (`incremental_vacuum` through `exec()`: `run()` and `get()` free one page),
-// each step checking that the free-page count fell by its size or to zero; then one TRUNCATE
-// checkpoint. Both run with no transaction (a checkpoint cannot run inside one). With `secure_delete`
+// {@link VACUUM_STEP_PAGES} (`incremental_vacuum` through `all()`, which returns one row per page
+// freed: `run()` and `get()` free one page), each step judged by its own rows, until a step returns
+// fewer than its size (correction 1: a free-page count read before and after the step, across
+// statements with no transaction, can be moved by another process's commit in between, and would end
+// the vacuum with an error); then one TRUNCATE checkpoint. Both run with no transaction (a checkpoint cannot run inside one). With `secure_delete`
 // FAST (the open sets it), the vacuum and a checkpoint that completes leave no text of a deleted run
 // readable in `realm.db` or `realm.db-wal`. A checkpoint another process blocks answers `busy: 1`;
 // it is tried once and carried, the deletes stand.
@@ -34,7 +36,7 @@
 // store file's size on disk before the first batch minus its size after the checkpoint, never
 // negative. Pages of a deleted run still in the log, never checkpointed, do not show in it: it is a
 // floor.
-import { statSync } from 'node:fs';
+import { lstatSync } from 'node:fs';
 import type { WorkflowError } from '@sensigo/realm';
 import {
   deleteFailure,
@@ -42,7 +44,6 @@ import {
   type RowsDeleted,
 } from './artifact-delete-failure.js';
 import type { RealmDb } from './connection.js';
-import type { DatabaseLike } from './driver.js';
 import {
   ARTIFACT as FAILED_ATTEMPTS,
   deleteFailedAttemptRowsOfRun,
@@ -129,7 +130,8 @@ export async function purgeHome(
 ): Promise<PurgeReport> {
   const runs: PurgeRunOutcome[] = [];
   if (selection.length === 0) return { runs, stored_bytes_deleted: 0, file_bytes_reclaimed: 0 };
-  const sizeBefore = statSync(file).size;
+  // An lstat: the open refuses a `realm.db` that is a symbolic link, so its size is the file's.
+  const sizeBefore = lstatSync(file).size;
   let stopped: PurgeReport['stopped'];
   for (let first = 0; first < selection.length; first += PURGE_BATCH_RUNS) {
     const batch = selection.slice(first, first + PURGE_BATCH_RUNS);
@@ -153,7 +155,7 @@ export async function purgeHome(
   const checkpoint = await resetLog(db);
   let sizeAfter: number;
   try {
-    sizeAfter = statSync(file).size;
+    sizeAfter = lstatSync(file).size;
   } catch {
     // The file was there before the batches; a size that cannot be read now reports no shrink.
     sizeAfter = sizeBefore;
@@ -242,38 +244,27 @@ async function purgeBatch(
   }
 }
 
-/** The connection's free-page count. */
-function freePages(db: DatabaseLike): number {
-  return Number(db.prepare('PRAGMA freelist_count').get()?.['freelist_count'] ?? 0);
-}
-
 /**
- * Returns the free pages to the file system in steps of {@link VACUUM_STEP_PAGES}, each with no
- * transaction, until none is left; a step whose free-page count did not fall by its size (or to zero)
- * ends the return with an error, carried.
+ * Returns the free pages to the file system in steps of {@link VACUUM_STEP_PAGES}, each one statement
+ * with no transaction, until a step returns fewer pages than its size: nothing was left to return.
+ * Each step is judged by its own result, one row per page it freed (`all()`; the design's executed
+ * probe), never by the free-page count read before and after it: another process's commit between
+ * two statements moves that count (correction 1). A step's statement that fails ends the return with
+ * its error, carried.
  */
 async function returnFreePages(db: RealmDb): Promise<PurgeVacuum> {
   let steps = 0;
   let returned = 0;
   try {
     for (;;) {
-      const step = await db.autocommit((tx): number => {
-        const before = freePages(tx);
-        if (before === 0) return 0;
-        // Through `exec()`: `run()` and `get()` free one page (the design's executed probe).
-        tx.exec(`PRAGMA incremental_vacuum(${VACUUM_STEP_PAGES})`);
-        const fell = before - freePages(tx);
-        const expected = Math.min(VACUUM_STEP_PAGES, before);
-        if (fell !== expected) {
-          throw new Error(
-            `A vacuum step returned ${fell} of ${expected} free pages (${before} were free).`,
-          );
-        }
-        return fell;
-      });
-      if (step === 0) break;
-      steps += 1;
-      returned += step;
+      const freed = await db.autocommit(
+        (tx): number => tx.prepare(`PRAGMA incremental_vacuum(${VACUUM_STEP_PAGES})`).all().length,
+      );
+      if (freed > 0) {
+        steps += 1;
+        returned += freed;
+      }
+      if (freed < VACUUM_STEP_PAGES) break;
     }
     return { steps, pages_returned: returned };
   } catch (error) {

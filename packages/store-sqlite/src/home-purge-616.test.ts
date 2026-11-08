@@ -272,6 +272,50 @@ function beginHooks(): {
   };
 }
 
+/**
+ * The open's `openFile` seam over the real driver, with a hook at each `incremental_vacuum` statement the
+ * home's connection is sent once counting starts (as `exec` or as `prepare`, whichever form the vacuum
+ * uses): the hook runs BEFORE the statement is forwarded, so a foreign commit made there lands between
+ * two vacuum steps.
+ */
+function vacuumHooks(): {
+  seams: OpenSeams;
+  start(at: Record<number, () => void>): void;
+  statements(): number;
+} {
+  let counting = false;
+  let seen = 0;
+  let hooks: Record<number, () => void> = {};
+  const hit = (sql: string): void => {
+    if (!counting || !sql.startsWith('PRAGMA incremental_vacuum')) return;
+    seen += 1;
+    hooks[seen]?.();
+  };
+  const wrap = (real: DatabaseLike): DatabaseLike => ({
+    exec(sql: string): void {
+      hit(sql);
+      real.exec(sql);
+    },
+    prepare(sql: string): StatementLike {
+      hit(sql);
+      return real.prepare(sql);
+    },
+    close: () => real.close(),
+    get isTransaction() {
+      return real.isTransaction;
+    },
+  });
+  return {
+    seams: { openFile: (path) => wrap(openDatabase(path)) },
+    start(at) {
+      hooks = at;
+      seen = 0;
+      counting = true;
+    },
+    statements: () => seen,
+  };
+}
+
 /** Writes a new run on a foreign connection in a write transaction of its own: another process's write. */
 function foreignRun(c: DatabaseLike, id: string): void {
   const record: Record<string, unknown> = {
@@ -559,6 +603,44 @@ describe('#616 PR-2c c9 — the home’s purge: the free pages, the log, and the
       error: undefined,
       freeAfter: 0,
     });
+  });
+
+  it('F2 (correction 1): another process’s commit between two vacuum steps does not end the vacuum: each step is judged by the pages it returned, and every free page goes back', async () => {
+    const hooks = vacuumHooks();
+    const { home, handle } = await open(hooks.seams);
+    const run = await markedRun(handle, 'F2-PAGES ', 600_000);
+    const seed = await markedRun(handle, 'F2-SEED ', 200_000);
+    const c = await foreign(home);
+    let between = 'not made';
+    hooks.start({
+      // Before the second step's statement is sent: another process deletes a large finished run,
+      // freeing its pages beside the purge's vacuum.
+      2: () => {
+        try {
+          c.exec('BEGIN IMMEDIATE');
+          c.prepare('DELETE FROM runs WHERE id = ?').run(seed.id);
+          c.prepare('DELETE FROM evidence WHERE run_id = ?').run(seed.id);
+          c.prepare('DELETE FROM run_blobs WHERE run_id = ?').run(seed.id);
+          c.exec('COMMIT');
+          between = 'committed';
+        } catch (err) {
+          between = `refused: ${(err as Error).message}`;
+        }
+      },
+    });
+    const report = await handle.purge(select([run]));
+    const vacuum = report.vacuum ?? { steps: 0, pages_returned: 0 };
+    // (1) red when a step is judged by the free-page count read before and after it (the foreign
+    //     commit moves the count between the two reads, and the vacuum ends with an error), when the
+    //     vacuum stops before the pages the foreign commit freed, or when the hook never reached a
+    //     second step (the first must return a full step); (2) prints what the foreign write did, the
+    //     statements counted, the vacuum's result and the free pages left.
+    expect({
+      between,
+      reachedSecondStep: hooks.statements() >= 2,
+      error: 'error' in vacuum ? String(vacuum.error) : undefined,
+      freeAfter: Number(c.prepare('PRAGMA freelist_count').get()?.['freelist_count']),
+    }).toEqual({ between: 'committed', reachedSecondStep: true, error: undefined, freeAfter: 0 });
   });
 });
 
