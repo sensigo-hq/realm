@@ -253,7 +253,7 @@ describe('#616 unit 7a — the source laws of the open', () => {
     expect({ opens, admitted, memorySeen: memory > 0 }).toEqual({
       opens: [],
       admitted: [
-        'src/maintenance.ts: openDatabase(target)',
+        'src/maintenance.ts: openDatabase(temporary)',
         'src/open-file.ts: openDatabase(path)',
       ],
       memorySeen: true,

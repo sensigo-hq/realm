@@ -41,7 +41,6 @@
 // This module and `connection.ts` import each other; neither reads the other's bindings at the top
 // level, so either may be loaded first.
 import { accessSync, constants, lstatSync } from 'node:fs';
-import { getSystemErrorMessage } from 'node:util';
 import {
   REALM_STORE_APPLICATION_ID,
   REALM_STORE_PAGE_SIZE,
@@ -61,7 +60,7 @@ import {
 } from './connection.js';
 import { loadSqlite, openDatabase, type DatabaseLike } from './driver.js';
 import { assertLocalFilesystem, SYSTEM_PROBE, type FilesystemProbe } from './filesystem-gate.js';
-import { prepareHome } from './home.js';
+import { prepareHome, systemErrorText } from './home.js';
 import { storedSchemaDifference, type SchemaDifference } from './schema-ladder.js';
 
 /** The options of the open: the home's clock, and the busy budget of every call on the store. */
@@ -212,7 +211,7 @@ function assertWritable(path: string): void {
     accessSync(path, constants.W_OK);
   } catch (err) {
     const errno = (err as NodeJS.ErrnoException).errno;
-    if (typeof errno === 'number') throw readOnlyError(path, getSystemErrorMessage(errno));
+    if (typeof errno === 'number') throw readOnlyError(path, systemErrorText(errno));
     throw err;
   }
 }

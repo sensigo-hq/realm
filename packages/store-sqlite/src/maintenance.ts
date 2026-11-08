@@ -15,20 +15,43 @@
 // one, is refused there, because the open would create the file or set the empty one up, and a
 // maintenance verb writes no store. Any other answer of `lstat` is left to the open to judge.
 //
-// `backup(target)` (§8): the target is refused when its folder is the home or inside it (judged by
-// real paths), then created EMPTY and owner-only, exclusively (`O_EXCL` refuses anything at the
-// path, a dangling link included), so the copy is owner-only from its first byte; then ONE
-// `VACUUM INTO` in autocommit writes the copy into it (SQLite takes an empty file as its target);
-// then the copy, opened on its own, is switched to WAL (Realm's own open refuses any other journal
-// mode), checked with `PRAGMA quick_check` (DELTAS 31: a failure names the SOURCE as possibly
-// damaged and keeps the copy), its mode read back, and closed. `realm.db` is never written,
-// renamed or replaced. Restoring is a documented procedure, never a command.
-import { closeSync, lstatSync, openSync, realpathSync, statSync, unlinkSync } from 'node:fs';
+// `backup(target)` (§8) never puts anything but a finished copy at the operator's path:
+//   1. the target is refused when its folder is the home or inside it (judged by real paths), and
+//      when anything exists at it (`lstat`, so a dangling link counts): Realm never replaces one;
+//   2. the copy is made BESIDE it, in `<target>.part-<pid>-<12 hex>` (random, as `placeFence` names
+//      its temporary files, so two runs, or two containers whose process is pid 1, never meet),
+//      created exclusively and owner-only (0600) so it is never readable by others, not even for a
+//      moment; ONE `VACUUM INTO` in autocommit writes the copy into it (SQLite takes an empty one);
+//   3. that file, opened on its own, is switched to WAL (Realm's own open refuses any other journal
+//      mode), checked with `PRAGMA quick_check`, its mode read back, closed (closing a WAL file no
+//      one else holds leaves no sidecar) and flushed to the disk;
+//   4. it is published under the target's name by `link` then `unlink`, which never replaces
+//      anything; where the filesystem has no hard links it is renamed instead, after one more look;
+//      then the target's folder is flushed, so the new name survives a crash.
+// So the target only ever holds a finished copy: a run killed before the publish leaves nothing
+// there, only files whose names begin `<target>.part-`. Every failure after the up-front checks
+// removes the temporary file and is one `STATE_STORE_BACKUP_REFUSED` (`copyFailed`) that blames a
+// file only when the cause points at it.
+// A copy that fails the quick check is still published, and refused `STATE_STORE_BACKUP_UNVERIFIED`
+// (DELTAS 31: the source is named as possibly damaged and the copy is kept). Realm writes nothing
+// of its own to `realm.db`; SQLite may first replay a write-ahead log a crashed Realm left beside
+// it, as any open does. Restoring is a documented procedure, never a command.
+import { randomBytes } from 'node:crypto';
+import {
+  closeSync,
+  fsyncSync,
+  linkSync,
+  lstatSync,
+  openSync,
+  realpathSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+} from 'node:fs';
 import { basename, dirname, join, resolve, sep } from 'node:path';
-import { getSystemErrorMessage } from 'node:util';
 import { realmHomePath, systemClock, WorkflowError } from '@sensigo/realm';
 import { openDatabase, type DatabaseLike } from './driver.js';
-import { DATABASE_FILE } from './home.js';
+import { DATABASE_FILE, systemErrorText } from './home.js';
 import { openRealmDb, type OpenSeams } from './open-file.js';
 
 /** What `backup` reports of the copy it made and checked. */
@@ -52,8 +75,9 @@ export interface MaintenanceHome {
   /**
    * Copies the store file to `target` (see the module comment) and resolves to the copy's report.
    * Refused with `STATE_STORE_BACKUP_REFUSED` (a target inside the home, a target where anything
-   * exists, a target that cannot be created) and `STATE_STORE_BACKUP_UNVERIFIED` (the copy fails
-   * SQLite's quick check). After `close()`, it rejects.
+   * exists, a target that cannot be created, a copy that fails or cannot be published) and
+   * `STATE_STORE_BACKUP_UNVERIFIED` (the copy fails SQLite's quick check). After `close()`, it
+   * rejects.
    */
   backup(target: string): Promise<BackupReport>;
   /** Closes the handle's connection. A second `close()` does nothing. */
@@ -64,6 +88,12 @@ export interface MaintenanceHome {
 export type MaintenanceSeams = OpenSeams & {
   /** Runs SQLite's quick check on the copy and returns its rows' texts; the real check by default. */
   readonly quickCheck?: (db: DatabaseLike) => string[];
+  /** Publishes the finished copy under the target's name; `linkSync` by default. */
+  readonly link?: (from: string, to: string) => void;
+  /** Flushes a file to the disk; by default it is opened, `fsyncSync`-ed and closed. */
+  readonly syncFile?: (path: string) => void;
+  /** Flushes a folder's names to the disk; by default opened read-only, `fsyncSync`-ed, closed. */
+  readonly syncFolder?: (path: string) => void;
 };
 
 /** A refusal to back up, with the path it is about and the reason. */
@@ -90,6 +120,168 @@ function targetRefused(target: string, reason: string, remedy: string): Workflow
     reason,
   );
 }
+
+/** Something already exists at the target: Realm never replaces a file. */
+function alreadyThere(target: string): WorkflowError {
+  return targetRefused(
+    target,
+    'a file already exists there',
+    'Realm never replaces a file; name a path where nothing exists.',
+  );
+}
+
+/** An error the operating system gave a filesystem call (`errno`, `code`). */
+function isSystemError(err: unknown): err is NodeJS.ErrnoException & { errno: number } {
+  return (
+    err instanceof Error &&
+    typeof (err as NodeJS.ErrnoException).errno === 'number' &&
+    typeof (err as NodeJS.ErrnoException).code === 'string'
+  );
+}
+
+/** SQLite's own error, as the built-in SQLite throws it on a connection the primitive doesn't own. */
+function isRawSqliteError(err: unknown): err is Error & { errcode: number } {
+  return (
+    err instanceof Error &&
+    (err as { code?: unknown }).code === 'ERR_SQLITE_ERROR' &&
+    typeof (err as { errcode?: unknown }).errcode === 'number'
+  );
+}
+
+/**
+ * The cause's own text: the system's words for a system error; SQLite's message with its code for
+ * a SQLite error (the primitive's plain errors already end `(SQLite error N)`); else the message.
+ */
+function causeText(err: unknown): string {
+  if (isSystemError(err)) return systemErrorText(err.errno);
+  if (isRawSqliteError(err)) return `${err.message} (SQLite error ${err.errcode})`;
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** A sentence part that ends where the next sentence starts: one trailing period dropped. */
+function clause(text: string): string {
+  return text.endsWith('.') ? text.slice(0, -1) : text;
+}
+
+/** A typed refusal's code, read by its field (another copy of core's refusal is not `instanceof`). */
+function codeOf(err: unknown): unknown {
+  return typeof err === 'object' && err !== null ? (err as { code?: unknown }).code : undefined;
+}
+
+/** The refusals `copyFailed` passes on as they are: made here already, or the CLI prints them. */
+const PASSED_ON = new Set([
+  'STATE_STORE_BACKUP_UNVERIFIED',
+  'STATE_STORE_BACKUP_REFUSED',
+  'STATE_STORE_VERSION_NEWER',
+]);
+
+/**
+ * A failure after the up-front checks (the copy, the steps on it, its publish), as ONE refusal
+ * naming the target, its sentence chosen by what failed: it blames the store file only when SQLite
+ * could not read it (11, 26 from the store's connection), and says the copy could not be written
+ * when SQLite (10, 13, 14, 8, or the typed full / read-only refusals the primitive makes of them,
+ * whose own texts are about the store file) or the system (an fsync, a rename) could not write it:
+ * one sentence for both (MA 3's ruling, 2026-11-08). The caller removed the temporary file first,
+ * so nothing is at the target.
+ */
+function copyFailed(target: string, source: string, err: unknown): unknown {
+  const code = codeOf(err);
+  if (typeof code === 'string' && PASSED_ON.has(code)) return err;
+  const nothing = `Nothing was written at ${target}.`;
+  const refuse = (reason: string, sentence: string): WorkflowError =>
+    backupRefused(`Cannot back up the store to ${target}: ${sentence} ${nothing}`, target, reason);
+  if (code === 'STATE_STORE_FULL') {
+    return refuse('the disk is full', 'the copy could not be written: the disk is full.');
+  }
+  if (code === 'STATE_STORE_READONLY') {
+    const details = (err as { details?: { reason?: unknown } }).details;
+    const reason = typeof details?.reason === 'string' ? details.reason : causeText(err);
+    return refuse(reason, `the copy could not be written: ${clause(reason)}.`);
+  }
+  if (isSystemError(err)) {
+    const reason = causeText(err);
+    return refuse(reason, `the copy could not be written: ${clause(reason)}.`);
+  }
+  const errcode = (err as { errcode?: unknown } | null)?.errcode;
+  if (typeof errcode === 'number') {
+    const primary = errcode & 0xff;
+    const reason = causeText(err);
+    // A plain error of the primitive (no code) comes from the store's connection: VACUUM INTO.
+    if ((primary === 11 || primary === 26) && code === undefined) {
+      return refuse(
+        reason,
+        `SQLite could not read ${source}: ${clause(reason)}. The store file may be damaged.`,
+      );
+    }
+    if (primary === 13) {
+      return refuse('the disk is full', 'the copy could not be written: the disk is full.');
+    }
+    if (primary === 10 || primary === 14 || primary === 8) {
+      return refuse(reason, `the copy could not be written: ${clause(reason)}.`);
+    }
+  }
+  const reason = causeText(err);
+  return refuse(reason, `${clause(reason)}.`);
+}
+
+/** The copy is at the target, but the folder holding its name could not be flushed to the disk. */
+function folderFlushFailed(target: string, err: unknown): WorkflowError {
+  const reason = causeText(err);
+  return backupRefused(
+    `Cannot back up the store to ${target}: the copy was made and published, but its folder could ` +
+      `not be flushed: ${clause(reason)}. Check the copy before you rely on it.`,
+    target,
+    reason,
+  );
+}
+
+/**
+ * Refused when anything is at `target` (a dangling link too); a path that cannot be looked at is
+ * refused in the system's words.
+ */
+function refuseIfTaken(target: string): void {
+  try {
+    lstatSync(target);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+    if (isSystemError(err))
+      throw targetRefused(target, systemErrorText(err.errno), 'Check the path.');
+    throw err;
+  }
+  throw alreadyThere(target);
+}
+
+/** Removes the temporary file this call made; one that cannot be removed is left (its name says). */
+function removeTemporary(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch {
+    // Gone already, or not removable: the refusal the caller throws is what the operator needs.
+  }
+}
+
+/** The real `syncFile`: opened, flushed, closed. */
+function syncFileOnDisk(path: string): void {
+  const fd = openSync(path, 'r+');
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** The real `syncFolder`: opened read-only, flushed, closed. */
+function syncFolderOnDisk(path: string): void {
+  const fd = openSync(path, 'r');
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** A folder flush the platform does not offer (Windows refuses to open a folder): skipped. */
+const FOLDER_FLUSH_SKIPPED = new Set(['EISDIR', 'EPERM', 'EACCES']);
 
 /** The copy fails SQLite's quick check: the file it was copied from may be damaged (DELTAS 31). */
 function backupUnverified(copy: string, source: string, firstLine: string): WorkflowError {
@@ -185,6 +377,9 @@ export async function openMaintenance(
     throw err;
   }
   const quickCheck = seams.quickCheck ?? quickCheckRows;
+  const link = seams.link ?? linkSync;
+  const syncFile = seams.syncFile ?? syncFileOnDisk;
+  const syncFolder = seams.syncFolder ?? syncFolderOnDisk;
   let closed = false;
   return {
     path: source,
@@ -202,67 +397,95 @@ export async function openMaintenance(
           'Write the copy outside the home.',
         );
       }
-      // (ii) The copy's file, created empty and owner-only, exclusively: nothing at the path is
-      // ever replaced, and the copy is never readable by others, not even for a moment.
-      let fd: number;
+      // (ii) Nothing at the target: Realm never replaces a file.
+      refuseIfTaken(target);
+      // (iii) The copy is made beside the target, in a file created empty, owner-only and
+      // exclusively, so it is never readable by others, not even for a moment.
+      const temporary = `${target}.part-${process.pid}-${randomBytes(6).toString('hex')}`;
       try {
-        fd = openSync(target, 'wx', 0o600);
+        closeSync(openSync(temporary, 'wx', 0o600));
       } catch (err) {
-        const { code, errno } = err as NodeJS.ErrnoException;
-        if (code === 'EEXIST') {
-          throw targetRefused(
-            target,
-            'a file already exists there',
-            'Realm never replaces a file; name a path where nothing exists.',
-          );
-        }
-        if (typeof errno === 'number') {
-          throw targetRefused(target, getSystemErrorMessage(errno), 'Check the path.');
+        if (isSystemError(err)) {
+          throw targetRefused(target, systemErrorText(err.errno), 'Check the path.');
         }
         throw err;
       }
-      closeSync(fd);
-      // (iii) The copy, by one VACUUM INTO in autocommit (VACUUM cannot run inside a transaction).
+      // (iv) One VACUUM INTO in autocommit (VACUUM cannot run inside a transaction); then the copy
+      // on its own: WAL, the quick check, the mode read back, closed and flushed to the disk.
+      let unverified: string | undefined;
+      let copied = 0;
       try {
         await db.autocommit((c) => {
-          c.prepare('VACUUM INTO ?').run(target);
+          c.prepare('VACUUM INTO ?').run(temporary);
         });
-      } catch (err) {
-        // The file this call made, whatever SQLite left in it: the user's path as it was.
+        const copy = openDatabase(temporary);
         try {
-          unlinkSync(target);
-        } catch {
-          // Gone already, or not removable: the error below is what the caller needs.
+          const mode = String(copyPragma(copy, 'PRAGMA journal_mode = WAL'));
+          if (mode !== 'wal') {
+            throw new Error(
+              `SQLite left the copy in journal mode ${mode} when Realm set wal, and Realm opens ` +
+                'only WAL files',
+            );
+          }
+          const rows = quickCheck(copy);
+          if (rows.length === 0 || rows.some((row) => row !== 'ok')) {
+            unverified = rows.find((row) => row !== 'ok') ?? 'no answer';
+          } else {
+            const after = String(copyPragma(copy, 'PRAGMA journal_mode'));
+            if (after !== 'wal') {
+              throw new Error(
+                `the copy reads journal mode ${after} after Realm set wal, and Realm opens only ` +
+                  'WAL files',
+              );
+            }
+            copied = Number(copyPragma(copy, 'PRAGMA user_version'));
+          }
+        } finally {
+          copy.close();
         }
-        throw err;
+        syncFile(temporary);
+      } catch (err) {
+        removeTemporary(temporary);
+        throw copyFailed(target, source, err);
       }
-      // (iv) The copy finished: WAL (Realm's own open refuses any other journal mode), checked,
-      // its mode read back, closed (closing a WAL file that no one else holds leaves no sidecar).
-      const copy = openDatabase(target);
-      let copied: number;
+      // (v) Published under the target's name without replacing anything: a hard link fails if
+      // anything appeared there meanwhile. Where the filesystem has no hard links (FAT, exFAT, some
+      // FUSE and network filesystems), git's rule: look once more, then rename.
       try {
-        const mode = String(copyPragma(copy, 'PRAGMA journal_mode = WAL'));
-        if (mode !== 'wal') {
-          throw new Error(
-            `SQLite left the copy at ${target} in journal mode ${mode} when Realm set wal; the copy ` +
-              'was kept, but Realm will not open it.',
-          );
+        link(temporary, target);
+        // A failed unlink AFTER a good link is ignored (MA 3's ruling, 2026-11-08): the copy is
+        // published, and the leftover is a second name of the same file, one the page's `.part-`
+        // sentence tells the operator to delete.
+        removeTemporary(temporary);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+          removeTemporary(temporary);
+          throw alreadyThere(target);
         }
-        const rows = quickCheck(copy);
-        if (rows.length === 0 || rows.some((row) => row !== 'ok')) {
-          throw backupUnverified(target, source, rows.find((row) => row !== 'ok') ?? 'no answer');
+        try {
+          refuseIfTaken(target);
+        } catch (refused) {
+          removeTemporary(temporary);
+          throw refused;
         }
-        const after = String(copyPragma(copy, 'PRAGMA journal_mode'));
-        if (after !== 'wal') {
-          throw new Error(
-            `The copy at ${target} reads journal mode ${after} after Realm set wal; the copy was ` +
-              'kept, but Realm will not open it.',
-          );
+        // The one place a file created between this look and the rename could be replaced: the
+        // rename cannot refuse an existing name, and nothing narrower is offered without links.
+        try {
+          renameSync(temporary, target);
+        } catch (renameErr) {
+          removeTemporary(temporary);
+          throw copyFailed(target, source, renameErr);
         }
-        copied = Number(copyPragma(copy, 'PRAGMA user_version'));
-      } finally {
-        copy.close();
       }
+      // (vi) The folder flushed, so the new name survives a crash (Litestream #1342).
+      try {
+        syncFolder(dirname(target));
+      } catch (err) {
+        if (!FOLDER_FLUSH_SKIPPED.has(String((err as NodeJS.ErrnoException).code))) {
+          throw folderFlushFailed(target, err);
+        }
+      }
+      if (unverified !== undefined) throw backupUnverified(target, source, unverified);
       return {
         path: target,
         bytes: statSync(target).size,
