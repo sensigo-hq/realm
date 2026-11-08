@@ -57,8 +57,6 @@ function fakesDate(text: string): boolean {
 const ALLOWED: Record<string, string> = {
   'packages/core/src/store/json-file-store-clock-715.test.ts':
     "the S4 cell: a JSON store beside a faked `Date`, by design — it shows the store's time is its clock's, not the faked global",
-  'packages/core/src/engine/reliability.test.ts':
-    "C1/C2 spy `Date.now` scoped to execution-loop frames only (#573's frame-scoped shape, J20); C3/C4b fake Date on an in-memory store (C4a builds none)",
   'packages/cli/src/agent/drive-failure.test.ts':
     'D7/D8 spy `Date.now` in cells that build no store (elapsed is monotonic whatever the wall does); the JSON-store cells run on the real clock',
   'packages/cli/src/agent/gate/slack-gate-notifier.test.ts':
