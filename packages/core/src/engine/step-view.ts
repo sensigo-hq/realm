@@ -572,8 +572,9 @@ function addMoney(into: Money, more: Money): void {
   into.net = into.uncached_counterfactual - into.total;
 }
 
-/** `cache_creation_input_tokens`, else `cache_write_tokens` — first present, never summed. */
-function cacheWriteField(entry: unknown): number | undefined {
+/** `cache_creation_input_tokens`, else `cache_write_tokens` — first present, never summed. Exported
+ *  inside core for `cache-misses.ts` (caching 3-M A-2a1), so the rule has one copy here. */
+export function cacheWriteField(entry: unknown): number | undefined {
   const a = numField(entry, 'cache_creation_input_tokens');
   if (a !== undefined) return a;
   return numField(entry, 'cache_write_tokens');
