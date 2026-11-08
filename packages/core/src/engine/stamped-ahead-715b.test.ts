@@ -1,8 +1,8 @@
 // stamped-ahead-715b.test.ts — issue #715 (b) 02 §D.1 (D6-3, D6-34) with Amendment 7: the run-health
 // finding `record_stamped_ahead` fires when a record's `updated_at` lies more than ε after the
-// reader's RAW reading, and carries that raw lead — never the capped one. Each record is made by a
-// JSON store on a test location whose clock stood `lead` ahead when it was written, then read with
-// the clock back at T: the store reads it at `max(T, min(updated_at, T + ε))`.
+// reader's RAW reading, and carries that raw lead — never the capped one. Each record is made by an
+// in-memory store whose settable clock stood `lead` ahead when it was written, then read with the
+// clock back at T: the store reads it at `max(T, min(updated_at, T + ε))`.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, expect, it } from 'vitest';

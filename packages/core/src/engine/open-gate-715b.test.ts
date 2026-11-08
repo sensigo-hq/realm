@@ -2,7 +2,7 @@
 // DURATIONS; the store's write mints the gate's instants from its own reading. The MR-114 shape,
 // inverted: before (b) the engine minted `opened_at` from the host's clock while the store judged the
 // answer at ITS reading, so on a store two hours ahead the reply offered an answer the store then
-// refused as late. Every store here is a JSON store on a test location whose clock file says T.
+// refused as late. Every store here is an in-memory store on a settable clock that says T.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, expect, it } from 'vitest';

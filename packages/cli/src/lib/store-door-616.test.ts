@@ -141,7 +141,7 @@ const ALLOWED_TESTS: Record<string, Array<{ file: string; sites: number; subject
       file: 'engine/execution-loop.test.ts',
       sites: 1,
       subject:
-        'one cell: an unknown run id\'s error envelope carries the JSON store\'s not-found words ("Run not found"); PR-3',
+        'one cell: an unknown run id\'s error envelope carries the JSON store\'s not-found words ("Run not found") and offers no next call; PR-3',
     },
     {
       file: 'engine/sealed-by-substrate.test.ts',

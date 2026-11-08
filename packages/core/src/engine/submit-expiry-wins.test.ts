@@ -1,7 +1,7 @@
 // submit-expiry-wins.test.ts — issue #291, SUBMIT_EXPIRY_WINS law family: a late
 // submitHumanResponse call against an expired-unresolved gate is honestly composed against
 // whatever the enforce clock actually enacted. #715 (b): one store path (the legacy CAS path is
-// gone), and the store's clock — a test location's clock file — decides when the answer arrives.
+// gone), and the store's clock — a settable clock — decides when the answer arrives.
 import { describe, it, expect } from 'vitest';
 import { InMemoryStore, settableClock, type SettableClock } from '@sensigo/realm-testing';
 import { executeStep, submitHumanResponse } from './execution-loop.js';

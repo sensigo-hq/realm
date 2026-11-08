@@ -329,7 +329,7 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
       "A call judges an open question's expiry by its store's clock: it carries out an expired question's declared `on_expiry` first only when the question's time is up at the store's reading (the `now` option that set this time is removed after version 0.48.0).",
     );
     for (const fn of ['executeStep', 'executeChain'] as const) {
-      // Each round opens its questions at the host's time: the store's clock file is reset to it.
+      // Each round opens its questions at the host's time: the store's clock is set back to it.
       await setClockOf(store, new Date());
       const call = async (runId: string, now?: Date) => {
         if (now !== undefined) await setClockOf(store, now);

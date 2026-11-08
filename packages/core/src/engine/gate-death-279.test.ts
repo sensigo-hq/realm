@@ -133,7 +133,7 @@ describe('R5-death (issue #279, increment 2, PR-D) — gate/guard terminal seals
       execute: async () => {
         handlerCallCount += 1;
         // Prove POST-COMMIT: by the time the finalizer's handler runs, the gate resolution must
-        // already be durably recorded — read a FRESH copy from disk, not an in-memory draft.
+        // already be durably recorded — read a FRESH copy from the store, not the engine's draft.
         const { record: fresh } = await store.get(run.id);
         snapshotAtHandlerCallTime = {
           completed: [...fresh.completed_steps].sort(),

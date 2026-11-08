@@ -1,8 +1,8 @@
 // render-time-715b.test.ts — issue #715 (b) 02 §D.4 (D6-22, D5 §3.4): a template's `from_now` reads no
 // clock. A text STORED in a record (a question's message, and the display text made from it) writes
 // time as an absolute instant; a text rendered for one reply (a step's prompt; the opening reply's
-// hint) is judged at that reply's reading. The instants are in 2031 on a test location's clock, far
-// from the host's: a filter that read the wall clock would say "in 5 years".
+// hint) is judged at that reply's reading. The instants are in 2031 on the store's settable clock,
+// far from the host's: a filter that read the wall clock would say "in 5 years".
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, expect, it } from 'vitest';
