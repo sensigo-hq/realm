@@ -976,10 +976,11 @@ describe('caching 3-M A-2b1 — CostView.misses', () => {
       cache_marked: ['system', 'conversation'],
     }));
   /**
-   * (b)'s list, constructed from the capture: turn 3's answer asked for five tool calls, run one
-   * after another, about a minute each (`tool_timeout: 60`), so turn 4 starts 420 s after turn 3,
-   * reads 0 and writes 7275 (its prompt, 7277, less its 2 uncached tokens). Turn 5 follows 1.313 s
-   * later as captured and reads 7275 = 0 + 7275: it holds.
+   * (b)'s list, constructed from the capture: turn 4 starts 420 s after turn 3, reads 0 and writes
+   * 7275 (its prompt, 7277, less its 2 uncached tokens). The capture's own turns are seconds apart
+   * and ask for one tool call each; 420 s is what a slow round of tools would leave (the tool step
+   * in cache-misses.test.ts). Turn 5 follows 1.313 s later as captured and reads 7275 = 0 + 7275:
+   * it holds.
    */
   const pausedTurns = (): Turn[] =>
     LIVE_899.map((t, i) =>
