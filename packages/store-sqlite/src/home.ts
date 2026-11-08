@@ -238,15 +238,17 @@ function createDatabaseFile(path: string): boolean {
 /**
  * Prepares the Realm home at `home` for its database (see the module comment) and returns the
  * database file's path. The open (unit 7b) continues from there: it checks the file, sets it up and
- * opens the connection. With `check` (the maintenance entry opened for `'check'`, #616 PR-2c c8a1) it
- * only looks: the folder's writability and the old-store guard, with their refusals unchanged; it
- * makes no folder, no fence and no file.
+ * opens the connection. With `check` (the maintenance entry opened for `'check'`, #616 PR-2c c8a1,
+ * c8a3) it only looks: the old-store guard, its refusal unchanged; it makes no folder, no fence and no
+ * file, and leaves the folder's writability to the check, which reports it ({@link homeIsWritable}).
  */
 export function prepareHome(home: string, check = false): string {
-  writing(home, () => {
-    if (!check) mkdirSync(home, { recursive: true });
-    accessSync(home, constants.W_OK | constants.X_OK);
-  });
+  if (!check) {
+    writing(home, () => {
+      mkdirSync(home, { recursive: true });
+      accessSync(home, constants.W_OK | constants.X_OK);
+    });
+  }
   const found = LEGACY_STORE_NAMES.map((name) => ({ name, is: inspect(join(home, name)) }));
   if (found.some((f) => f.is === 'legacy' || f.is === 'other')) throw guardRefusal(home, found);
   const database = join(home, DATABASE_FILE);
@@ -255,4 +257,18 @@ export function prepareHome(home: string, check = false): string {
   for (const f of found) if (f.is === 'absent') placeFence(home, f.name);
   writing(database, () => createDatabaseFile(database));
   return database;
+}
+
+/**
+ * Whether the operating system lets Realm write in the home folder, as the open asks it (the check's
+ * `writable`, #616 PR-2c c8a3): SQLite makes the store's side files there.
+ */
+export function homeIsWritable(home: string): boolean {
+  try {
+    accessSync(home, constants.W_OK | constants.X_OK);
+    return true;
+  } catch (err) {
+    if (isSystemError(err)) return false;
+    throw err;
+  }
 }
