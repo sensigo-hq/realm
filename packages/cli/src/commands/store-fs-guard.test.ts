@@ -7,11 +7,12 @@
 //     the one documented atomic-write.ts exemption. A future edit that reaches for
 //     `unlink(...).catch(() => {})` instead of `deleteIfExists` silently reintroduces exactly the
 //     bug #183 fixes — this test fails loudly on that drift instead.
-//  2. Every store class WIRED into purge.ts's PerRunArtifactStore orchestrator (see
-//     purge-guard.test.ts's WIRED_ORDER) must have a TCK-invoking contract test somewhere in the
-//     repo — a store that adds `deleteAllForRun` and is wired into purge.ts but never actually
-//     run through `perRunArtifactStoreContract` would silently ship unverified against the L1-L4
-//     laws.
+//  2. Every store class purge deletes through — WIRED into purge.ts's PerRunArtifactStore
+//     orchestrator (see purge-guard.test.ts's WIRED_ORDER and ANCHOR), or, on a SQLite home, wired
+//     through the home's purge (its WIRED_THROUGH_HOME_PURGE, #616 PR-2c c9) — must have a
+//     TCK-invoking contract test somewhere in the repo — a store that adds `deleteAllForRun` and is
+//     wired into purge but never actually run through `perRunArtifactStoreContract` would silently
+//     ship unverified against the L1-L4 laws.
 //
 // A THIRD guard was considered and DEFERRED (issue #184's own STOP/report escape hatch): a
 // source-text check asserting `JsonFileStore.deleteAllForRun` never acquires a key lock BEFORE
@@ -160,11 +161,20 @@ describe('store-fs-guard — no raw unlink outside fs-io.ts / the atomic-write.t
 // Guard 2: every WIRED PerRunArtifactStore has a TCK-invoking contract test
 // -----------------------------------------------------------------------------------------------
 
-// Mirrors purge-guard.test.ts's WIRED_ORDER exactly (kept as an independent literal here rather
+// The stores purge deletes through, from purge-guard.test.ts: its WIRED_ORDER and ANCHOR (the JSON
+// stores, purge.ts's own array and anchor) and its WIRED_THROUGH_HOME_PURGE (#616 PR-2c c9: the
+// SQLite stores, whose rows the home's purge deletes). Kept as an independent literal here rather
 // than imported — these are two intentionally separate guard files, per issue #183's own
-// instruction to add this as a new file; duplicating three class-name literals is cheaper than
-// coupling the two guards' internals together).
-const WIRED_STORES = ['JsonTraceBufferStore', 'JsonFileFailedAttemptStore', 'JsonFileStore'];
+// instruction to add this as a new file; duplicating six class-name literals is cheaper than
+// coupling the two guards' internals together.
+const WIRED_STORES = [
+  'JsonTraceBufferStore',
+  'JsonFileFailedAttemptStore',
+  'JsonFileStore',
+  'SqliteTraceBufferStore',
+  'SqliteFailedAttemptStore',
+  'SqliteRunStore',
+];
 
 /** This guard's OWN file — excluded from its own scan below (issue #197 PR-1, design §12: fixing
  *  the self-scan false positive that was DISCOVERED but deliberately left unfixed during issue
@@ -208,8 +218,9 @@ describe('store-fs-guard — every WIRED PerRunArtifactStore has a TCK-invoking 
     const uncovered = WIRED_STORES.filter((name) => !covered.has(name));
     expect(
       uncovered,
-      `${uncovered.join(', ')} ${uncovered.length === 1 ? 'is' : 'are'} WIRED into purge.ts's ` +
-        `orchestrator but no test file both imports it and calls perRunArtifactStoreContract(...) ` +
+      `${uncovered.join(', ')} ${uncovered.length === 1 ? 'is' : 'are'} wired into purge ` +
+        `(purge.ts's orchestrator, or the SQLite home's purge) but no test file both imports it ` +
+        `and calls perRunArtifactStoreContract(...) ` +
         `— add a *.contract.test.ts wiring it into the TCK (see json-file-store.contract.test.ts ` +
         `under packages/cli/src/store-contracts/ for the pattern).`,
     ).toEqual([]);

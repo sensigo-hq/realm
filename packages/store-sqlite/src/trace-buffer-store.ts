@@ -46,7 +46,11 @@ import {
   type TraceBufferStore,
   type TraceCapability,
 } from '@sensigo/realm';
-import { deleteFailure, isOwnStatementFailure } from './artifact-delete-failure.js';
+import {
+  deleteFailure,
+  isOwnStatementFailure,
+  type RowsDeleted,
+} from './artifact-delete-failure.js';
 import { REALM_STORE_SQLITE_BRAND } from './brand.js';
 import type { RealmDb } from './connection.js';
 import type { DatabaseLike } from './driver.js';
@@ -56,7 +60,7 @@ import { readRunInTransaction } from './run-rows.js';
 const STORE_NAME = 'SqliteTraceBufferStore';
 
 /** The artifact a per-run delete failure names. */
-const ARTIFACT = 'trace_buffer';
+export const ARTIFACT = 'trace_buffer';
 
 const STEP_FIGURES = `SELECT
   COALESCE(SUM(entry_count), 0) AS file_count,
@@ -176,6 +180,25 @@ function noneRemain(db: DatabaseLike, runId: string, seen: SeenRows): boolean {
     !seen.lines.some((row) => lineStillThere(db, runId, row)) &&
     !seen.seals.some((row) => sealStillThere(db, runId, row))
   );
+}
+
+/**
+ * Deletes run `runId`'s lines and sealed artifacts in the caller's write transaction (#616 PR-2c c9:
+ * this store's per-run delete and the home's purge both call it): reads them, deletes them and returns
+ * their bytes (the figure `statAllForRun` reports, so a preview equals the receipt); its check is true
+ * when none of the rows it read remains. Checks no fence. Synchronous; reads no clock; throws what
+ * SQLite throws, unmapped.
+ */
+export function deleteTraceRowsOfRun(db: DatabaseLike, runId: string): RowsDeleted {
+  const lines = db.prepare(RUN_LINES).all(runId).map(lineRow);
+  const seals = db.prepare(RUN_SEALS).all(runId).map(sealRow);
+  db.prepare(DELETE_RUN_LINES).run(runId);
+  db.prepare(DELETE_RUN_SEALS).run(runId);
+  const seen: SeenRows = { lines, seals };
+  return {
+    bytes: [...lines, ...seals].reduce((sum, row) => sum + row.bytes, 0),
+    gone: (check) => noneRemain(check, runId, seen),
+  };
 }
 
 /**
@@ -466,34 +489,25 @@ export class SqliteTraceBufferStore implements TraceBufferStore, PerRunArtifactS
     runId: string,
     fence: RunScopedFencePredicate | undefined,
   ): Promise<ArtifactDeletionReport> {
-    let seen: SeenRows = { lines: [], seals: [] };
     let statementFailed = false;
     try {
-      return await this.#db.immediate(
-        (db) => {
-          seen = { lines: [], seals: [] };
+      const deleted = await this.#db.immediate(
+        (db): RowsDeleted => {
           statementFailed = false;
           if (fence !== undefined) evaluateFence(fence, readRunInTransaction(db, runId), runId);
-          let lines: LineRow[];
-          let seals: SealRow[];
           try {
             // The reads of the rows it deletes are the delete's own statements too (MA 4, 2026-11-07).
-            lines = db.prepare(RUN_LINES).all(runId).map(lineRow);
-            seals = db.prepare(RUN_SEALS).all(runId).map(sealRow);
-            db.prepare(DELETE_RUN_LINES).run(runId);
-            db.prepare(DELETE_RUN_SEALS).run(runId);
+            return deleteTraceRowsOfRun(db, runId);
           } catch (err) {
             // A busy answer is the primitive's to wait out, not a failed delete.
             statementFailed = isOwnStatementFailure(err);
             throw err;
           }
-          seen = { lines, seals };
-          const bytes = [...lines, ...seals].reduce((sum, row) => sum + row.bytes, 0);
-          return { bytes_deleted: bytes };
         },
-        (db) => noneRemain(db, runId, seen),
+        (db, deleted) => deleted.gone(db),
         { takesReading: false },
       );
+      return { bytes_deleted: deleted.bytes };
     } catch (err) {
       throw deleteFailure(err, statementFailed, { runId, store: STORE_NAME, artifact: ARTIFACT });
     }

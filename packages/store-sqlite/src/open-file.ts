@@ -468,6 +468,7 @@ export async function openRealmDb(
     path,
     clock: options.clock,
     reopen,
+    schemaVersion: realm,
     ...(options.budgetMs === undefined ? {} : { budgetMs: options.budgetMs }),
   });
   try {

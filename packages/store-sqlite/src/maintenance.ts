@@ -37,6 +37,27 @@
 // (DELTAS 31: the source is named as possibly damaged and the copy is kept). Realm writes nothing
 // of its own to `realm.db`; SQLite may first replay a write-ahead log a crashed Realm left beside
 // it, as any open does. Restoring is a documented procedure, never a command.
+//
+// `migrate(options)` (c7; §2 "Schema evolution", §3 "The re-stamp", §8) upgrades the file, in order:
+//   1. `backup(target)` first, every refusal of it included (a copy that fails the quick check
+//      ends the verb: a store that may be damaged is not migrated), unless the operator stated
+//      `backup: false` (`--no-backup`);
+//   2. the schema ladder (`migrateSchema`, unit 6c) ONE VERSION AT A TIME, each version its own
+//      `autocommit` body: the step's own `BEGIN IMMEDIATE`, its statements, the compare with its
+//      version's schema, the evidence re-check, `user_version` moved, COMMIT. Each step is reported
+//      before the next starts, and a busy store re-runs one step's body, never a committed step.
+//      The first step that fails ends the verb `STATE_STORE_MIGRATE_FAILED`, with the version READ
+//      after the failure, never assumed (the ladder's COMMIT is raw: an error it reports may come
+//      after the step landed);
+//   3. the re-stamp, after the ladder (it is this Realm's SQL, so it meets this Realm's schema):
+//      every run whose `phase_version` is not the running derivation's fingerprint gets the phase
+//      its stored record derives and that fingerprint. The stale stamps are found by the read API's
+//      loose index scan (`staleStampsOf`); each batch reads one stamp's rows over
+//      `runs_by_phase_version` and writes them in ONE write transaction, by a statement that sets
+//      only `run_phase` and `phase_version` and holds only while the row's `version` is the one
+//      read. It mints no instant and takes no reading. A busy store beyond its budget ends it
+//      `STATE_RUN_BUSY`; the batches already committed stay, and their count is reported first.
+// The handle's `schemaVersion` stays what the open found.
 import { randomBytes } from 'node:crypto';
 import {
   closeSync,
@@ -50,10 +71,23 @@ import {
   unlinkSync,
 } from 'node:fs';
 import { basename, dirname, join, resolve, sep } from 'node:path';
-import { realmHomePath, systemClock, WorkflowError } from '@sensigo/realm';
+import {
+  deriveRunPhase,
+  REALM_STORE_VERSIONS,
+  realmHomePath,
+  runPhaseDerivationFingerprint,
+  SCAN_MAX_PAGE_SIZE,
+  systemClock,
+  WorkflowError,
+  type RunPhase,
+  type RunRecord,
+} from '@sensigo/realm';
+import type { RealmDb, Verify } from './connection.js';
 import { openDatabase, type DatabaseLike } from './driver.js';
 import { DATABASE_FILE, systemErrorText } from './home.js';
 import { openRealmDb, type OpenSeams } from './open-file.js';
+import { staleStampsOf } from './run-scan.js';
+import { migrateSchema, type SchemaStepReport } from './schema-ladder.js';
 
 /** What `backup` reports of the copy it made and checked. */
 export interface BackupReport {
@@ -81,8 +115,50 @@ export interface MaintenanceHome {
    * rejects.
    */
   backup(target: string): Promise<BackupReport>;
+  /**
+   * Upgrades the store file (see the module comment): `backup` first unless `backup: false`, then
+   * each pending schema step in its own transaction, then the re-stamp. Refused with `backup`'s
+   * refusals, `STATE_STORE_MIGRATE_FAILED` at the first step that fails, and the store's own
+   * (`STATE_RUN_BUSY` during the re-stamp, after the batches already committed). After `close()`,
+   * it rejects.
+   */
+  migrate(options: MigrateOptions): Promise<MigrateReport>;
   /** Closes the handle's connection. A second `close()` does nothing. */
   close(): void;
+}
+
+/** The verb a maintenance entry is opened for: its two pre-check refusals carry its code and words. */
+export type MaintenanceVerb = 'backup' | 'migrate';
+
+/** One line `realm db migrate` prints, as `migrate` reaches it. */
+export type MigrateProgress =
+  /** The backup made first. */
+  | { readonly kind: 'backup'; readonly report: BackupReport }
+  /** One schema step, committed. */
+  | { readonly kind: 'step'; readonly report: SchemaStepReport }
+  /** No step was pending: the file is at this Realm's version. */
+  | { readonly kind: 'current'; readonly schemaVersion: number }
+  /** The re-stamp's count: when it finished, or the count so far before a busy refusal. */
+  | { readonly kind: 'restamped'; readonly runs: number };
+
+/** What `migrate` is asked to do. */
+export interface MigrateOptions {
+  /** Where `backup` puts its copy before anything changes; `false` makes none (`--no-backup`). */
+  readonly backup: string | false;
+  /** Called with each line's event, in order, as it happens. */
+  readonly progress?: (event: MigrateProgress) => void;
+}
+
+/** What `migrate` did. */
+export interface MigrateReport {
+  /** The copy made first; `undefined` with `backup: false`. */
+  readonly backup: BackupReport | undefined;
+  /** The steps, in order; none when the file was already at this Realm's version. */
+  readonly steps: readonly SchemaStepReport[];
+  /** The file's schema version now: this Realm's. */
+  readonly schemaVersion: number;
+  /** How many runs the re-stamp stamped with the running derivation. */
+  readonly restamped: number;
 }
 
 /** What a test replaces besides the open's seams (package-internal). */
@@ -108,9 +184,95 @@ function backupRefused(message: string, path: string, reason: string): WorkflowE
   });
 }
 
-/** A refusal about the store file to back up (none there, or an empty one). */
-function sourceRefused(source: string, reason: string, message: string): WorkflowError {
-  return backupRefused(message, source, reason);
+/** A refusal of `realm db migrate` before the open, with the path it is about and the reason. */
+function migrateRefused(message: string, path: string, reason: string): WorkflowError {
+  return new WorkflowError(message, {
+    code: 'STATE_STORE_MIGRATE_REFUSED',
+    category: 'STATE',
+    agentAction: 'report_to_user',
+    retryable: false,
+    details: { path, reason },
+  });
+}
+
+/**
+ * The pre-check's refusal of the store file (`missing`: none there; else an empty one), in the words
+ * and with the code of the verb the entry was opened for. An exhaustive switch: a verb added to
+ * {@link MaintenanceVerb} does not compile until it names its code and its two sentences here (MA 3's
+ * rider R1, DELTAS row 48b).
+ */
+function sourceRefused(verb: MaintenanceVerb, source: string, missing: boolean): WorkflowError {
+  switch (verb) {
+    case 'backup':
+      return missing
+        ? backupRefused(
+            `There is no store file at ${source} to back up.`,
+            source,
+            `there is no store file at ${source} to back up`,
+          )
+        : backupRefused(
+            `${source} holds no store yet: there is nothing to back up.`,
+            source,
+            `${source} holds no store yet`,
+          );
+    case 'migrate':
+      return missing
+        ? migrateRefused(
+            `There is no store file at ${source} to migrate.`,
+            source,
+            `there is no store file at ${source} to migrate`,
+          )
+        : migrateRefused(
+            `${source} holds no store yet: there is nothing to migrate.`,
+            source,
+            `${source} holds no store yet`,
+          );
+    default: {
+      const unknown: never = verb;
+      throw new Error(`The maintenance entry has no verb ${String(unknown)}.`);
+    }
+  }
+}
+
+/**
+ * A schema step of `migrate` failed. `at` is the file's version READ after the failure: `from` when
+ * nothing of the step is in the file, higher when it is (a COMMIT that reported an error after the
+ * step landed, or another process that moved the file). `backup` is the copy's path, when one was
+ * made. The reason is the error's own text, its final period dropped.
+ */
+function migrateFailed(
+  source: string,
+  from: number,
+  to: number,
+  err: unknown,
+  at: number,
+  backup: string | undefined,
+): WorkflowError {
+  const reason = (err instanceof Error ? err.message : String(err)).replace(/\.$/, '');
+  const state =
+    at > from
+      ? `${source} is at schema version ${at}: the step is in it. Run the command again to ` +
+        'continue from there.'
+      : `${source} is at schema version ${at}; nothing of the step is in it. Run the command ` +
+        'again once the cause is fixed.';
+  const kept = backup === undefined ? '' : ` The backup made before the step is at ${backup}.`;
+  return new WorkflowError(
+    `The step from schema version ${from} to ${to} failed: ${reason}. ${state}${kept}`,
+    {
+      code: 'STATE_STORE_MIGRATE_FAILED',
+      category: 'STATE',
+      agentAction: 'report_to_user',
+      retryable: false,
+      details: {
+        path: source,
+        from,
+        to,
+        at,
+        reason,
+        ...(backup === undefined ? {} : { backup }),
+      },
+    },
+  );
 }
 
 /** A refusal about the target of a backup. */
@@ -340,57 +502,122 @@ function copyPragma(db: DatabaseLike, sql: string): unknown {
   return row === undefined ? undefined : Object.values(row)[0];
 }
 
+/** The store file's schema version, read now. */
+function fileVersion(db: RealmDb): Promise<number> {
+  return db.autocommit((c) => Number(copyPragma(c, 'PRAGMA user_version')));
+}
+
+/** How many rows one re-stamp batch reads: the page size the store's read API already names. */
+const RESTAMP_BATCH = SCAN_MAX_PAGE_SIZE;
+
+/** A batch's candidates: one stale stamp's rows after a cursor, over that stamp's index (§3). */
+const STAMP_ROWS =
+  'SELECT id, version, record FROM runs INDEXED BY runs_by_phase_version ' +
+  'WHERE phase_version = ? AND id > ? ORDER BY id LIMIT ?';
+
+/** One run re-stamped: the two phase columns only, and only while its version is the one read. */
+const RESTAMP = 'UPDATE runs SET run_phase = ?, phase_version = ? WHERE id = ? AND version = ?';
+
+/** A re-stamped run's two phase columns, read back by the COMMIT outcome protocol. */
+const STAMP_OF = 'SELECT run_phase, phase_version FROM runs WHERE id = ?';
+
+/** What one re-stamp batch wrote, and where the next batch of its stamp starts. */
+interface RestampBatch {
+  /** The runs stamped again, with the phase each was given. */
+  readonly stamped: ReadonlyArray<{ readonly id: string; readonly phase: RunPhase }>;
+  /** The last id the batch read: the next batch reads after it. */
+  readonly last: string;
+  /** True when the batch read a full batch, so the stamp may have more rows. */
+  readonly full: boolean;
+}
+
+/**
+ * One batch of the re-stamp, inside its write transaction: the rows of `stamp` after `after`, each
+ * given the phase its stored record derives and `running`, by a statement predicated on the version
+ * read (a row an engine wrote since is left as the engine stamped it, and not counted).
+ */
+function restampBatch(
+  c: DatabaseLike,
+  stamp: unknown,
+  after: string,
+  running: string,
+): RestampBatch {
+  const rows = c.prepare(STAMP_ROWS).all(stamp, after, RESTAMP_BATCH);
+  const update = c.prepare(RESTAMP);
+  const stamped: Array<{ id: string; phase: RunPhase }> = [];
+  for (const row of rows) {
+    const id = String(row['id']);
+    // The derivation reads seven core fields of the record, as the read API's does (run-scan.ts).
+    const phase = deriveRunPhase(JSON.parse(String(row['record'])) as RunRecord);
+    if (Number(update.run(phase, running, id, row['version']).changes) === 1) {
+      stamped.push({ id, phase });
+    }
+  }
+  return {
+    stamped,
+    last: rows.length === 0 ? after : String(rows[rows.length - 1]!['id']),
+    full: rows.length === RESTAMP_BATCH,
+  };
+}
+
+/** The re-stamp batch's content check: every run it stamped carries the phase and the stamp given. */
+function restampLanded(running: string): Verify<RestampBatch> {
+  return (c: DatabaseLike, batch: RestampBatch): boolean => {
+    const read = c.prepare(STAMP_OF);
+    return batch.stamped.every(({ id, phase }) => {
+      const row = read.get(id);
+      return row?.['run_phase'] === phase && row['phase_version'] === running;
+    });
+  };
+}
+
+/** A refusal of the busy family, by its code. */
+function isBusyRefusal(err: unknown): boolean {
+  return err instanceof WorkflowError && err.code === 'STATE_RUN_BUSY';
+}
+
 /**
  * Opens the Realm home for maintenance (see the module comment). `home` is an absolute path;
- * `~/.realm` (core's resolver) when left out.
+ * `~/.realm` (core's resolver) when left out. `verb` is the verb it is opened for: its two
+ * pre-check refusals carry that verb's code and words; `backup` when left out.
  */
 export function openRealmHomeForMaintenance(
-  options: { readonly home?: string } = {},
+  options: { readonly home?: string; readonly verb?: MaintenanceVerb } = {},
 ): Promise<MaintenanceHome> {
   return openMaintenance(options, {});
 }
 
 /** `openRealmHomeForMaintenance` with the open's seams and the quick check's (package-internal). */
 export async function openMaintenance(
-  options: { readonly home?: string },
+  options: { readonly home?: string; readonly verb?: MaintenanceVerb },
   seams: MaintenanceSeams,
 ): Promise<MaintenanceHome> {
+  const verb = options.verb ?? 'backup';
   const home = realmHomePath(options.home);
   const source = join(home, DATABASE_FILE);
   let size: number | undefined;
   try {
     size = lstatSync(source).size;
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      throw sourceRefused(
-        source,
-        `there is no store file at ${source} to back up`,
-        `There is no store file at ${source} to back up.`,
-      );
-    }
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') throw sourceRefused(verb, source, true);
     // Anything else (a folder that cannot be read, a file where a folder should be): the open judges.
   }
-  if (size === 0) {
-    throw sourceRefused(
-      source,
-      `${source} holds no store yet`,
-      `${source} holds no store yet: there is nothing to back up.`,
-    );
-  }
+  if (size === 0) throw sourceRefused(verb, source, false);
   const db = await openRealmDb(home, { clock: systemClock, acceptOlderSchema: true }, seams);
   let schemaVersion: number;
   try {
-    schemaVersion = await db.autocommit((c) => Number(copyPragma(c, 'PRAGMA user_version')));
+    schemaVersion = await fileVersion(db);
   } catch (err) {
     db.close();
     throw err;
   }
+  const versions = seams.versions ?? REALM_STORE_VERSIONS;
   const quickCheck = seams.quickCheck ?? quickCheckRows;
   const link = seams.link ?? linkSync;
   const syncFile = seams.syncFile ?? syncFileOnDisk;
   const syncFolder = seams.syncFolder ?? syncFolderOnDisk;
   let closed = false;
-  return {
+  const handle: MaintenanceHome = {
     path: source,
     schemaVersion,
     async backup(given: string): Promise<BackupReport> {
@@ -502,10 +729,64 @@ export async function openMaintenance(
         quickCheck: 'ok',
       };
     },
+    async migrate(options: MigrateOptions): Promise<MigrateReport> {
+      if (closed) throw new Error(`The maintenance handle on ${source} is closed.`);
+      const progress = options.progress ?? ((): void => undefined);
+      // 1. The backup first: its refusals, and a copy that fails the quick check, end the verb here.
+      const copy = options.backup === false ? undefined : await handle.backup(options.backup);
+      if (copy !== undefined) progress({ kind: 'backup', report: copy });
+      // 2. The ladder, one version per autocommit body (the ladder opens each step's transaction).
+      const target = db.schemaVersion;
+      const steps: SchemaStepReport[] = [];
+      let at = await fileVersion(db);
+      while (at < target) {
+        const to = at + 1;
+        let reports: SchemaStepReport[];
+        try {
+          reports = await db.autocommit((c) => migrateSchema(c, to, versions));
+        } catch (err) {
+          throw migrateFailed(source, to - 1, to, err, await fileVersion(db), copy?.path);
+        }
+        for (const report of reports) {
+          steps.push(report);
+          progress({ kind: 'step', report });
+        }
+        at = to;
+      }
+      if (steps.length === 0) progress({ kind: 'current', schemaVersion: at });
+      // 3. The re-stamp: each stale stamp's rows, a batch per write transaction, no reading taken.
+      const running = runPhaseDerivationFingerprint();
+      let restamped = 0;
+      try {
+        const stamps = await db.snapshot((c) => staleStampsOf(c, running), {
+          takesReading: false,
+        });
+        for (const stamp of stamps) {
+          let after = '';
+          for (;;) {
+            const from = after;
+            const batch = await db.immediate(
+              (c) => restampBatch(c, stamp, from, running),
+              restampLanded(running),
+              { takesReading: false },
+            );
+            restamped += batch.stamped.length;
+            if (!batch.full) break;
+            after = batch.last;
+          }
+        }
+      } catch (err) {
+        if (isBusyRefusal(err)) progress({ kind: 'restamped', runs: restamped });
+        throw err;
+      }
+      progress({ kind: 'restamped', runs: restamped });
+      return { backup: copy, steps, schemaVersion: at, restamped };
+    },
     close(): void {
       if (closed) return;
       closed = true;
       db.close();
     },
   };
+  return handle;
 }

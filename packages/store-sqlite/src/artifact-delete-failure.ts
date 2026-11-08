@@ -11,6 +11,7 @@
 // outcome is not one), so none of them is wrapped.
 import { artifactDeleteFailedError, WorkflowError } from '@sensigo/realm';
 import { isBusy } from './connection.js';
+import type { DatabaseLike } from './driver.js';
 
 /** SQLite's primary result codes by number (`errcode & 0xff`), the names SQLite gives them. */
 const PRIMARY_RESULT_CODES: Readonly<Record<number, string>> = {
@@ -62,6 +63,17 @@ function failureCode(err: unknown): string {
  */
 export function isOwnStatementFailure(err: unknown): boolean {
   return !isBusy(err);
+}
+
+/**
+ * What one store's rows of a run, deleted in the caller's write transaction, came to (#616 PR-2c c9):
+ * their bytes, the store's own measure, and the store's own content check for the COMMIT outcome
+ * protocol, true when none of the rows it deleted is still there. Each per-run artifact store's
+ * package-internal deleter returns one; its own `deleteAllForRun` and the home's purge both call it.
+ */
+export interface RowsDeleted {
+  readonly bytes: number;
+  readonly gone: (db: DatabaseLike) => boolean;
 }
 
 /** Who a delete failure names. */

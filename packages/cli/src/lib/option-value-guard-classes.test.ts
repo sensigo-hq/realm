@@ -126,8 +126,8 @@ describe('#920 C-2 — every value-taking option is classified exactly once', ()
       },
       JSON.stringify({ inTwo, unclassified, notInTree, shared }),
     ).toEqual({
-      counts: { guarded: 24, ownCheck: 54 },
-      tree: 78,
+      counts: { guarded: 25, ownCheck: 54 },
+      tree: 79,
       inTwo: [],
       unclassified: [],
       notInTree: [],
