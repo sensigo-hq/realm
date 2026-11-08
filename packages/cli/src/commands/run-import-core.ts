@@ -1,9 +1,10 @@
 // run-import-core.ts — issue #616 PR-2c, unit c11a (design d4-frozen-r3 §5 "Importing runs";
 // `plans/issue-616/pr2c/c11/DESIGN-c11.md` §3 and §6): the importer's CORE. One file in, one result
-// out: the file is read whole, classified, its run given to the home's `save()`, and the answer is
-// one of six words — `imported`, `unchanged`, `diverged`, `purged`, `legacy`, `not_a_run` — with a
-// reason and notes, or a STOP. `importLine` turns a word into the file's output line. Nothing here is
-// a command: `realm run import` (c11b) prints the lines, walks folders and sets the exit code.
+// out, in two halves (c11c): `prepareFile` reads the file whole and classifies it, touching no store;
+// `commitFile` gives a ready file's run to the home's `save()`. The answer is one of six words —
+// `imported`, `unchanged`, `diverged`, `purged`, `legacy`, `not_a_run` — with a reason and notes, or a
+// STOP. `importLine` turns a word into the file's output line. Nothing here is a command: `realm run
+// import` (c11b) prints the lines, walks folders, reads files ahead and sets the exit code.
 //
 // The two documents it reads are Realm's own: a bare run record, and an export bundle
 // (`realm run export`), an object whose `realm_export_version` is a number. Only the integers 4 and 5
@@ -53,6 +54,21 @@ export interface ImportStop {
 
 /** One file's result. */
 export type ImportResult = ImportOutcome | ImportStop;
+
+/**
+ * A file read and classified, its run ready for `save()`: the record, and the export bundle it came in
+ * (undefined for a bare record). Whether the record has a usable id is `save()`'s to say.
+ */
+export interface ReadyFile {
+  readonly kind: 'ready';
+  /** The file's path, as it was given. */
+  readonly path: string;
+  readonly record: Record<string, unknown>;
+  readonly bundle: Record<string, unknown> | undefined;
+}
+
+/** What reading and classifying a file gives: a finished outcome, or a file ready for its save. */
+export type PreparedFile = ImportOutcome | ReadyFile;
 
 /** The home the core imports into: its run store, the concrete class (`save()` is not on core's). */
 export interface ImportHome {
@@ -177,11 +193,12 @@ function outcome(
 }
 
 /**
- * Reads the file at `path` whole, classifies it, gives its run to `home.runStore.save()` and returns
- * what became of it (see the module comment). Never throws for a file: a refusal is a word, and a
- * store-wide or unexpected failure is a STOP carrying the error.
+ * Reads the file at `path` whole and classifies it (see the module comment): an outcome that needs no
+ * store (it cannot be read, is not JSON, is not an object, is an export of a version this Realm does
+ * not read, or an export without a run), or the file ready for its save. Never throws and never
+ * writes; a file whose object has no usable id is ready (`commitFile` says what it is).
  */
-export async function importFile(path: string, home: ImportHome): Promise<ImportResult> {
+export async function prepareFile(path: string): Promise<PreparedFile> {
   let text: string;
   try {
     text = await readFile(path, 'utf8');
@@ -231,7 +248,16 @@ export async function importFile(path: string, home: ImportHome): Promise<Import
   } else {
     record = value;
   }
+  return { kind: 'ready', path, record, bundle };
+}
 
+/**
+ * Gives a ready file's run to `home.runStore.save()` and returns what became of the file (see the
+ * module comment). Never throws for a file: a refusal is a word, and a store-wide or unexpected
+ * failure is a STOP carrying the error.
+ */
+export async function commitFile(ready: ReadyFile, home: ImportHome): Promise<ImportResult> {
+  const { path, record, bundle } = ready;
   let saved: 'imported' | 'unchanged';
   try {
     saved = (await home.runStore.save(record as unknown as RunRecord)).outcome;

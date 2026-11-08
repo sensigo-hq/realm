@@ -759,6 +759,8 @@ Ignored 1 entry that is not a .json file.
 
 After the files' lines, one line counts the files by word; when a folder's entries were not read, one more line counts them.
 
+For more than 100 files, a line on the error output (stderr) every 100 files says how many are done (`100 of 250 files`), so a long import shows it is going on.
+
 When the store refuses a write for a reason that is not the file's (it stays busy, its disk is full, it cannot be written), or a file meets an error nothing expects, the import stops at that file. The lines already printed stand, then `Error: stopped at <path>: <message>`, and what to do: `<n> files were not started; run the same command again: runs already imported read unchanged.`, or, for an error nothing expects, its stack and `<n> files were not started; fix or move that file, then run the command again.` No count line is printed.
 
 As in the CLI's other output, a path under your home folder has the home folder's name hidden when the output is piped or logged.

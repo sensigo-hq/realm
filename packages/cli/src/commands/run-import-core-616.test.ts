@@ -24,7 +24,19 @@ import { openRealmHome, type RealmHome } from '@sensigo/realm-store-sqlite';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildExportBundle } from './export.js';
-import { importFile, importLine } from './run-import-core.js';
+import {
+  commitFile,
+  importLine,
+  prepareFile,
+  type ImportHome,
+  type ImportResult,
+} from './run-import-core.js';
+
+/** c11c: the core's two halves, paired as `runImport` pairs them (the cells below are c11a's). */
+async function importFile(path: string, home: ImportHome): Promise<ImportResult> {
+  const prepared = await prepareFile(path);
+  return prepared.kind === 'ready' ? commitFile(prepared, home) : prepared;
+}
 
 const AS_ROOT = process.getuid?.() === 0;
 if (AS_ROOT) {

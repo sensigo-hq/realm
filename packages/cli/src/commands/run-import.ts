@@ -1,16 +1,20 @@
 // run-import.ts — issue #616 PR-2c, unit c11b (design d4-frozen-r3 §5 "Importing runs";
 // `plans/issue-616/pr2c/c11/DESIGN-c11.md`): `realm run import <path…>`, the command around c11a's core
 // (`run-import-core.ts`). It brings Realm's own JSON documents — bare run records and export bundles —
-// from files and folders into the SQLite store, one file after another, in order, each through the
-// core's `importFile`, with one line per file, one summary line and the exit code the kubectl rule
-// gives: 0 only when every file was `imported` or `unchanged`.
+// from files and folders into the SQLite store, with one line per file, one summary line and the exit
+// code the kubectl rule gives: 0 only when every file was `imported` or `unchanged`. Unit c11c: up to
+// 32 files are read and classified ahead (the core's `prepareFile`) while the files are saved one after
+// another, in path order (its `commitFile`), each line printed in that order; for more than 100 files a
+// progress line goes to stderr every 100 files. The saves stay one at a time: the same run named by two
+// files reads `imported` then `unchanged`, every time.
 //
 // Every argument is looked at FIRST, before the store is opened and before any file is read: a path
 // that does not exist, that is neither a file nor a folder, a folder that cannot be listed, or one with
 // no `.json` entry is refused, naming the first such path, and nothing is imported. A folder is read
 // for its `*.json` entries directly in it (sorted by the default string comparison, not below it); the
 // other entries are counted and said, never read. A store-wide failure, or an error nothing expects, is
-// a STOP: no further file is started, and the command says where it stopped and what to do.
+// a STOP: no further file is saved (files read ahead wrote nothing and are dropped), and the command
+// says where it stopped and what to do.
 //
 // The logic is `runImport`, which returns the exit code and touches no `process` field; the command is
 // a thin wrapper that sets `process.exitCode` and returns — never `process.exit`, which cuts the piped
@@ -20,13 +24,17 @@ import { readdir, stat } from 'node:fs/promises';
 import { Command } from 'commander';
 import { openRealmHome, type RealmHome } from '@sensigo/realm-store-sqlite';
 import {
+  commitFile,
   counted,
-  importFile,
   importLine,
+  prepareFile,
   shown,
   systemWords,
   type ImportHome,
+  type ImportResult,
   type ImportWord,
+  type PreparedFile,
+  type ReadyFile,
 } from './run-import-core.js';
 
 /** Where `runImport` gets its home and writes its lines. */
@@ -37,7 +45,23 @@ export interface RunImportIo {
   readonly out: (line: string) => void;
   /** One line on standard error. */
   readonly err: (line: string) => void;
+  /**
+   * Reads and classifies one file; the core's `prepareFile` when left out (a cell counts what is in
+   * flight). One that throws is a bug: the loop does not catch it.
+   */
+  readonly prepare?: (path: string) => Promise<PreparedFile>;
+  /**
+   * Saves one ready file; the core's `commitFile` when left out (a cell orders the saves). One that
+   * throws is a bug: the loop does not catch it.
+   */
+  readonly commit?: (ready: ReadyFile, home: ImportHome) => Promise<ImportResult>;
 }
+
+/** The most files in flight at once: started (being read, or read and waiting) and not yet printed. */
+const IN_FLIGHT = 32;
+
+/** For more than this many files, a progress line goes to stderr after every this many files. */
+const PROGRESS_EVERY = 100;
 
 /** The refusal of a folder with no `.json` entry directly in it. */
 const NO_JSON = 'no .json files (a folder is read for .json files directly in it, not below it)';
@@ -123,9 +147,11 @@ function ignoredOf(entries: number): string {
 }
 
 /**
- * `realm run import <path…>` (see the module comment): checks every argument, then opens the home,
- * imports each file in order, writes its line, and returns the exit code. A refusal of the store's open
- * is thrown as it is (the CLI's entry prints a typed refusal as one `Error:` line).
+ * `realm run import <path…>` (see the module comment): checks every argument, then opens the home, reads
+ * up to {@link IN_FLIGHT} files ahead while it saves them one after another in path order, writes each
+ * file's line in that order (and a progress line every {@link PROGRESS_EVERY} files of a longer list),
+ * and returns the exit code. A refusal of the store's open is thrown as it is (the CLI's entry prints a
+ * typed refusal as one `Error:` line).
  */
 export async function runImport(paths: readonly string[], io: RunImportIo): Promise<number> {
   const plan = await planOf(paths);
@@ -134,10 +160,24 @@ export async function runImport(paths: readonly string[], io: RunImportIo): Prom
     return 1;
   }
   const home = await io.openHome();
+  const prepare = io.prepare ?? prepareFile;
+  const commit = io.commit ?? commitFile;
+  const total = plan.files.length;
   const counts = new Map<ImportWord, number>();
-  for (let i = 0; i < plan.files.length; i++) {
+  // The files in flight, in path order: started and not yet printed. The head is saved only once every
+  // earlier file's line is printed, so at most one save runs at a time, in path order; a printed file
+  // leaves the queue, and with it the only reference the loop held to its text and record.
+  const inFlight: Array<Promise<PreparedFile>> = [];
+  let started = 0;
+  const topUp = (): void => {
+    while (started < total && inFlight.length < IN_FLIGHT)
+      inFlight.push(prepare(plan.files[started++]!));
+  };
+  topUp();
+  for (let i = 0; i < total; i++) {
     const path = plan.files[i]!;
-    const result = await importFile(path, home);
+    const prepared = await inFlight[0]!;
+    const result = prepared.kind === 'ready' ? await commit(prepared, home) : prepared;
     if (result.kind === 'stop') {
       const error = result.error;
       const message = error instanceof Error ? error.message : String(error);
@@ -156,13 +196,21 @@ export async function runImport(paths: readonly string[], io: RunImportIo): Prom
           io.err(shown(stack));
         }
       }
-      io.err(notStarted(plan.files.length - i - 1, result.stop));
+      // The files read ahead wrote nothing: they are dropped, and their reads end without a word.
+      io.err(notStarted(total - i - 1, result.stop));
       return 1;
     }
     counts.set(result.word, (counts.get(result.word) ?? 0) + 1);
     io.out(importLine(result));
+    inFlight.shift();
+    const done = i + 1;
+    // By count, never by time (the clock rule); never after the last file: the summary follows it.
+    if (total > PROGRESS_EVERY && done % PROGRESS_EVERY === 0 && done < total) {
+      io.err(`${done} of ${total} files`);
+    }
+    topUp();
   }
-  io.out(summaryOf(plan.files.length, counts));
+  io.out(summaryOf(total, counts));
   if (plan.ignored > 0) io.out(ignoredOf(plan.ignored));
   const failed = [...counts.keys()].some((word) => word !== 'imported' && word !== 'unchanged');
   return failed ? 1 : 0;
