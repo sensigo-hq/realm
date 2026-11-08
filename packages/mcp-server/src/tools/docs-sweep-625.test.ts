@@ -30,7 +30,7 @@ import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 const OPENED: TestLocation[] = [];
 async function located(dir: string): Promise<string> {
   // A second server on the same folder in one cell shares its location (and its clock).
-  const open = OPENED.find((l) => l.runsDir === join(dir, 'runs'));
+  const open = OPENED.find((l) => l.root === dir);
   if (open !== undefined) return open.runsDir;
   const loc = await createTestLocation({ start: new Date(), root: dir });
   OPENED.push(loc);

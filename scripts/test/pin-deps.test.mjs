@@ -6,6 +6,7 @@ import { mkdirSync, writeFileSync, readFileSync, cpSync } from 'node:fs';
 import { join } from 'node:path';
 import semver from 'semver';
 import { makeTempDir, removeTempDir, runNode, scriptPath } from './helpers.mjs';
+import { publishedSet, readReleaseSet } from '../lib/release-set.mjs';
 
 const REPO_ROOT = new URL('../..', import.meta.url).pathname;
 
@@ -16,11 +17,19 @@ function writeJson(p, obj) {
   writeFileSync(p, JSON.stringify(obj, null, 2) + '\n');
 }
 
-test('PD1 — spelling: copies the real four package.json files, pins from "*" to the shared version, idempotent', () => {
+// PD1 reads the published set from the tree, as the release scripts do (`publishedSet(readReleaseSet())`,
+// #616 PR-2c c13a): a package that joins the set, or a new internal dependency, edits nothing here.
+// The fields are the test's own list (pin-deps.mjs's header: `dependencies`, `optionalDependencies`,
+// `peerDependencies`; never `devDependencies`), so a field dropped from the list the script pins
+// through (`internalDeps`) turns the count red.
+const PINNED_FIELDS = ['dependencies', 'optionalDependencies', 'peerDependencies'];
+
+test('PD1 — spelling: copies the real package.json of every published package, pins from "*" to the shared version, idempotent', () => {
+  const dirs = publishedSet(readReleaseSet(REPO_ROOT)).map((m) => m.dir.slice('packages/'.length));
   const root = makeTempDir('pd1');
   try {
     mkdirSync(join(root, 'packages'), { recursive: true });
-    for (const dir of ['core', 'mcp-server', 'testing', 'cli']) {
+    for (const dir of dirs) {
       mkdirSync(join(root, 'packages', dir), { recursive: true });
       cpSync(
         join(REPO_ROOT, 'packages', dir, 'package.json'),
@@ -28,17 +37,28 @@ test('PD1 — spelling: copies the real four package.json files, pins from "*" t
       );
     }
     // read the version the real tree shares FROM THE COPIES — never hard-code it.
-    const version = readJson(join(root, 'packages', 'core', 'package.json')).version;
-    for (const dir of ['mcp-server', 'testing', 'cli']) {
+    const version = readJson(join(root, 'packages', dirs[0], 'package.json')).version;
+    for (const dir of dirs) {
       assert.equal(readJson(join(root, 'packages', dir, 'package.json')).version, version);
     }
 
     // snapshot every non-internal-dep byte via a deep copy comparison after run 1: capture the
     // full JSON of each file before, so we can assert nothing ELSE changed.
     const before = {};
-    for (const dir of ['core', 'mcp-server', 'testing', 'cli']) {
+    for (const dir of dirs) {
       before[dir] = readFileSync(join(root, 'packages', dir, 'package.json'), 'utf-8');
     }
+    // How many specs must change: every internal "*" in the pinned fields of the copies.
+    let owed = 0;
+    for (const dir of dirs) {
+      const pkg = JSON.parse(before[dir]);
+      for (const field of PINNED_FIELDS) {
+        for (const [dep, spec] of Object.entries(pkg[field] ?? {})) {
+          if (dep.startsWith('@sensigo/') && spec === '*') owed++;
+        }
+      }
+    }
+    assert.ok(owed > 0, 'the copies hold no internal "*" spec: the test would check nothing');
 
     const r1 = runNode(scriptPath('pin-deps.mjs'), ['--root', root], {
       cwd: root,
@@ -47,9 +67,9 @@ test('PD1 — spelling: copies the real four package.json files, pins from "*" t
     assert.equal(r1.status, 0, r1.stderr);
 
     let changedSpecs = 0;
-    for (const dir of ['core', 'mcp-server', 'testing', 'cli']) {
+    for (const dir of dirs) {
       const pkg = readJson(join(root, 'packages', dir, 'package.json'));
-      for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
+      for (const field of PINNED_FIELDS) {
         for (const [dep, spec] of Object.entries(pkg[field] ?? {})) {
           if (!dep.startsWith('@sensigo/')) continue;
           const beforePkg = JSON.parse(before[dir]);
@@ -63,15 +83,15 @@ test('PD1 — spelling: copies the real four package.json files, pins from "*" t
     }
     assert.equal(
       changedSpecs,
-      5,
-      'exactly five internal specs should have changed from "*" to the version',
+      owed,
+      `every internal "*" spec of the copies (${owed}) should have changed from "*" to the version`,
     );
 
     // nothing else in any file changed: rebuild a "would-have-changed" copy of the before state
     // with ONLY the internal *-specs replaced by version, and compare byte-for-byte.
-    for (const dir of ['core', 'mcp-server', 'testing', 'cli']) {
+    for (const dir of dirs) {
       const expected = JSON.parse(before[dir]);
-      for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
+      for (const field of PINNED_FIELDS) {
         for (const dep of Object.keys(expected[field] ?? {})) {
           if (dep.startsWith('@sensigo/') && expected[field][dep] === '*')
             expected[field][dep] = version;
@@ -88,7 +108,7 @@ test('PD1 — spelling: copies the real four package.json files, pins from "*" t
 
     // a second run leaves every file byte-identical
     const afterFirstRun = {};
-    for (const dir of ['core', 'mcp-server', 'testing', 'cli']) {
+    for (const dir of dirs) {
       afterFirstRun[dir] = readFileSync(join(root, 'packages', dir, 'package.json'), 'utf-8');
     }
     const r2 = runNode(scriptPath('pin-deps.mjs'), ['--root', root], {
@@ -96,7 +116,7 @@ test('PD1 — spelling: copies the real four package.json files, pins from "*" t
       env: process.env,
     });
     assert.equal(r2.status, 0, r2.stderr);
-    for (const dir of ['core', 'mcp-server', 'testing', 'cli']) {
+    for (const dir of dirs) {
       assert.equal(
         readFileSync(join(root, 'packages', dir, 'package.json'), 'utf-8'),
         afterFirstRun[dir],

@@ -8,7 +8,7 @@
 //
 // In-process through the real command, with `node:readline/promises` mocked (the #447 harness).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -19,6 +19,7 @@ vi.mock('node:readline/promises', () => ({
 
 import { runCommand } from './run.js';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
+import { makeTempHome, runIds, type TempHome } from '../test-support/temp-home.js';
 
 const yaml = (id: string, compute: string[]): string =>
   [
@@ -39,6 +40,7 @@ const yaml = (id: string, compute: string[]): string =>
   ].join('\n');
 
 describe('#625 PR-2a, C64 — realm workflow run: a step no typed output can unblock', () => {
+  let h: TempHome & { readonly root: string };
   let home: string;
   let dir: string;
   let savedHome: string | undefined;
@@ -47,11 +49,11 @@ describe('#625 PR-2a, C64 — realm workflow run: a step no typed output can unb
   let errSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     clearProjectExtensionsCache();
-    home = mkdtempSync(join(tmpdir(), 'realm-625-c64-run-home-'));
+    h = await makeTempHome();
+    home = h.root;
     dir = mkdtempSync(join(tmpdir(), 'realm-625-c64-run-wf-'));
-    mkdirSync(join(home, '.realm'), { recursive: true });
     savedHome = process.env['HOME'];
     process.env['HOME'] = home;
     savedTTY = process.stdin.isTTY;
@@ -64,12 +66,12 @@ describe('#625 PR-2a, C64 — realm workflow run: a step no typed output can unb
     }) as never);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (savedTTY === undefined) delete (process.stdin as { isTTY?: boolean }).isTTY;
     else process.stdin.isTTY = savedTTY;
     if (savedHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = savedHome;
-    rmSync(home, { recursive: true, force: true });
+    await h.cleanup();
     rmSync(dir, { recursive: true, force: true });
     mocks.question.mockReset();
     vi.restoreAllMocks();
@@ -78,10 +80,7 @@ describe('#625 PR-2a, C64 — realm workflow run: a step no typed output can unb
   const logged = (): string[] => logSpy.mock.calls.map((c: unknown[]) => String(c[0]));
   const errored = (): string[] => errSpy.mock.calls.map((c: unknown[]) => String(c[0]));
   const asked = (): string[] => mocks.question.mock.calls.map((c: unknown[]) => String(c[0]));
-  const runId = (): string =>
-    readdirSync(join(home, '.realm', 'runs'))
-      .filter((f) => f.endsWith('.json'))[0]!
-      .replace('.json', '');
+  const runId = async (): Promise<string> => (await runIds(h.home.runStore))[0]!;
   const wayOut = (id: string): string =>
     `Run ${id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${id} — or end it: realm run abandon ${id}`;
 
@@ -104,7 +103,7 @@ describe('#625 PR-2a, C64 — realm workflow run: a step no typed output can unb
     expect(errored()).toEqual([
       '\nWorkflow stalled: nothing else can run.',
       "'compute' cannot run (precondition): Precondition failed for step 'compute'. Precondition failed: 'ask.ok == true'. Resolved value: undefined.",
-      wayOut(runId()),
+      wayOut(await runId()),
     ]);
   });
 
@@ -123,7 +122,7 @@ describe('#625 PR-2a, C64 — realm workflow run: a step no typed output can unb
     expect(errored()).toEqual([
       '\nWorkflow stalled: nothing else can run.',
       "'compute' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it.",
-      `To end the run instead: realm run abandon ${runId()}`,
+      `To end the run instead: realm run abandon ${await runId()}`,
     ]);
   });
 

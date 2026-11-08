@@ -25,7 +25,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type CacheAuto,
-  type RunRecord,
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { OpenAIProvider } from '../agent/providers/openai-provider.js';
@@ -100,7 +99,7 @@ afterAll(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-type Deployment = { home: string; proj: string; runId: string; pricesPath: string };
+type Deployment = { home: string; proj: string; runId: string; pricesPath: string; h: TempHome };
 /** One scratch deployment: a trust root with `realm.yaml` (and its price file, when any), the
  *  one-step workflow registered in a fresh HOME, and one run created there. */
 async function deployment(
@@ -140,7 +139,7 @@ async function deployment(
     workflowVersion: 1,
     params: { ticket: TICKET },
   });
-  return { home, proj, runId: run.id, pricesPath };
+  return { home, proj, runId: run.id, pricesPath, h };
 }
 
 function run(
@@ -216,9 +215,7 @@ async function drive(name: string, d: Deployment, args: string[]) {
     },
   );
   const inspect = await run(d, ['run', 'inspect', d.runId]);
-  const record = JSON.parse(
-    readFileSync(join(d.home, '.realm', 'runs', `${d.runId}.json`), 'utf8'),
-  ) as RunRecord;
+  const { record } = await d.h.home.runStore.get(d.runId);
   const request = record.evidence[0]?.diagnostics?.cache?.requests?.[0] as
     Record<string, unknown> | undefined;
   const bodies = existsSync(bodyLog)

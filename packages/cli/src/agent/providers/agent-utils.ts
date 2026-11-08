@@ -3,6 +3,7 @@ import type {
   AgentSubmissionValidation,
   CacheControlField,
   CacheControlsRejected,
+  CacheReference,
   RequestEndpoint,
   UsageRecord,
 } from '@sensigo/realm';
@@ -842,6 +843,72 @@ export function appendRequests(
     ...entry,
     request_index: index,
   }));
+}
+
+/** Caching 3-M (piece A-1): the predecessor's fields a reference copies — compile-forced to be
+ *  exactly `CacheReference`'s, `from` aside. */
+const REFERENCE_FIELDS = {
+  request_start: true,
+  request_id: true,
+  provider: true,
+  model: true,
+  endpoint: true,
+  cache_read_input_tokens: true,
+  cache_creation_input_tokens: true,
+  cache_write_tokens: true,
+  cache_creation: true,
+  cache_lifetime_s: true,
+  cache_ttl_sent: true,
+  cache_auto: true,
+  prefix_chars: true,
+  prefix_parts: true,
+  cache_marked: true,
+  request_strict_sent: true,
+} as const satisfies Record<Exclude<keyof CacheReference, 'from'>, true>;
+
+const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value);
+
+/**
+ * Caching 3-M (piece A-1) — gives a step's first request in a drive the copy of its predecessor when
+ * that predecessor is on the run's record (`recorded`, the step's last request there): `arrived[0]`
+ * gains `reference`, `{ from: 'run' }` plus each of `CacheReference`'s fields `recorded` has. Every
+ * other request's predecessor is the element before it in the same stored list, so nothing is
+ * copied for it. Called on each arriving array after its mint, with `prior` the requests the step
+ * already holds in this drive (`usageForStep`), at the points where a provider's usage enters the
+ * record: the three success returns and the tools and single-shot catches in `run-agent.ts`.
+ *
+ * When `prior` is non-empty, `recorded` is absent, or `arrived` is empty, no entry gains one. A
+ * `recorded` that is not a plain object with a string `request_start` counts as absent; if
+ * `arrived[0]` is not a plain object, no entry gains one. A `reference` key an arriving entry
+ * carried is always removed or replaced (as `mintRequestIds` replaces `request_id`). Pure and total:
+ * returns new objects, never mutates its inputs, and never throws — at the catches it runs outside
+ * `recordDriveFailure`'s fence, where a throw would replace the user's error. An entry that is not a
+ * plain object passes through unchanged.
+ */
+export function attachRecordedReference(
+  prior: readonly UsageRecord[] | undefined,
+  arrived: readonly UsageRecord[],
+  recorded: UsageRecord | undefined,
+): UsageRecord[] {
+  const predecessor =
+    (prior === undefined || prior.length === 0) &&
+    isPlainRecord(recorded) &&
+    typeof recorded['request_start'] === 'string'
+      ? recorded
+      : undefined;
+  return arrived.map((entry, index) => {
+    if (!isPlainRecord(entry)) return entry;
+    const { reference: _carried, ...rest } = entry as UsageRecord;
+    if (index !== 0 || predecessor === undefined) return rest;
+    const reference: Record<string, unknown> = { from: 'run' };
+    for (const field of Object.keys(REFERENCE_FIELDS) as (keyof typeof REFERENCE_FIELDS)[]) {
+      if (Object.hasOwn(predecessor, field) && predecessor[field] !== undefined) {
+        reference[field] = predecessor[field];
+      }
+    }
+    return { ...rest, reference: reference as CacheReference };
+  });
 }
 
 /**

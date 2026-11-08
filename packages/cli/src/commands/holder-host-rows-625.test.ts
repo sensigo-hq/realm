@@ -12,10 +12,10 @@
 // harness). Each assertion carries (a) the change that turns it red and (b) what it prints on
 // failure: synthetic names only.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome, runIds } from '../test-support/temp-home.js';
 
 const mocks = vi.hoisted(() => ({ question: vi.fn(), close: vi.fn() }));
 vi.mock('node:readline/promises', () => ({
@@ -94,7 +94,6 @@ describe('issue #625 PR-H — the host rows that run in-process', () => {
     h = await makeTempHome();
     home = h.root;
     proj = mkdtempSync(join(tmpdir(), 'realm-holder-rows-proj-'));
-    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
     savedHome = process.env['HOME'];
     process.env['HOME'] = home;
     savedOperator = process.env['REALM_OPERATOR'];
@@ -175,9 +174,7 @@ describe('issue #625 PR-H — the host rows that run in-process', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-    const id = readdirSync(join(home, '.realm', 'runs'))
-      .filter((f) => f.endsWith('.json'))[0]!
-      .replace('.json', '');
+    const id = (await runIds(h.home.runStore))[0]!;
     const { record: run } = await h.home.runStore.get(id);
     // (a) red when `run.ts` stops passing its identity, or uses another channel; (b) prints it.
     expect(

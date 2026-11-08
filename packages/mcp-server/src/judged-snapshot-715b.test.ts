@@ -10,16 +10,16 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure —
 // booleans, counts, key lists and texts with the value cut out, never the value itself.
 import { describe, it, expect, afterEach } from 'vitest';
-import { join } from 'node:path';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
-  JsonFileStore,
   advanceRun,
+  declareReleaseLine,
   compileDisclosure,
   executeStep,
   judgedSnapshotOf,
   loadWorkflowFromString,
   submitHumanResponse,
+  type RunStore,
   type Snapshot,
   type WorkflowDefinition,
 } from '@sensigo/realm';
@@ -30,6 +30,30 @@ import { createRealmMcpServer } from './server.js';
 import { renderReply } from './render-reply.js';
 import { mcpHostOf } from './tools/start-run.js';
 import { makeTempHome, type ServerExtras, type TempHome } from './test-support/temp-home.js';
+
+/** #616 PR-2c (c0, R10): a run store that forwards every verb to `inner`, the ones in `over` replaced —
+ *  a double that intercepts a verb without a second store on the home's folder. It declares this
+ *  realm's release line, as every store realm runs against must. */
+function delegating(inner: RunStore, over: Partial<RunStore>): RunStore {
+  const store = {
+    get clock() {
+      return inner.clock;
+    },
+    persistsClaims: inner.persistsClaims,
+    persistedRunRecordFields: inner.persistedRunRecordFields,
+    create: (o: Parameters<RunStore['create']>[0]) => inner.create(o),
+    get: (id: string) => inner.get(id),
+    update: (r: Parameters<RunStore['update']>[0]) => inner.update(r),
+    list: (w?: string) => inner.list(w),
+    claimStep: (...a: Parameters<RunStore['claimStep']>) => inner.claimStep(...a),
+    settleStep: ((...a: unknown[]) =>
+      (inner.settleStep as (...x: unknown[]) => unknown)(...a)) as RunStore['settleStep'],
+    stampSeal: (...a: Parameters<NonNullable<RunStore['stampSeal']>>) => inner.stampSeal!(...a),
+    ...over,
+  } as RunStore;
+  declareReleaseLine(store);
+  return store;
+}
 
 /** A unique value put in the run's `params` — a record field no engine reply carries. */
 const SENTINEL = 'SENTINEL-715B-MCP-6c1d';
@@ -56,13 +80,17 @@ const ONE: WorkflowDefinition = {
   steps: { a: { description: 'A.', execution: 'agent', depends_on: [] } },
 };
 
-/** A JSON store that counts its reads. */
-class CountingStore extends JsonFileStore {
-  gets = 0;
-  override async get(runId: string): Promise<Snapshot> {
-    this.gets += 1;
-    return super.get(runId);
-  }
+/** A store over the handle's that counts its reads (#616 PR-2c c0, R10: the same calls a subclass
+ *  saw — the JSON store makes no internal `get`). */
+function countingStore(inner: RunStore): RunStore & { gets: number } {
+  const counting = delegating(inner, {
+    get: async (runId: string): Promise<Snapshot> => {
+      counting.gets += 1;
+      return inner.get(runId);
+    },
+  }) as RunStore & { gets: number };
+  counting.gets = 0;
+  return counting;
 }
 
 type Reply = Record<string, unknown>;
@@ -79,7 +107,7 @@ async function connect(
 ) {
   const h = await makeTempHome();
   handles.push(h);
-  const runStore = new CountingStore(join(h.path, 'runs'));
+  const runStore = countingStore(h.stores.runStore);
   const workflowStore = h.stores.workflowStore;
   for (const d of definitions) await workflowStore.register(d);
   const server = createRealmMcpServer({
@@ -197,7 +225,7 @@ describe('#715 (b) Amendment 4 addendum (v) — an after-statement composed from
         '    depends_on: [q]',
       ].join('\n'),
     );
-    const box: { runId?: string; gateId?: string; store?: JsonFileStore } = {};
+    const box: { runId?: string; gateId?: string; store?: RunStore } = {};
     const { call, sent, runStore } = await connect(
       [QUESTION],
       {

@@ -580,6 +580,30 @@ describe('#616 unit 13c — the idempotency key', () => {
     });
   });
 
+  it("check 8: the empty string is a key: a live run whose key '' a live run holds is refused, and nothing is written", async () => {
+    const o = await open(testClock().clock);
+    const c = await foreign(o.home);
+    const { record: holder } = await o.runStore.create({
+      workflowId: 'wf-import',
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: '',
+    });
+    const incoming = exported({ idempotency_key: '', created_at: LATER, updated_at: LATER });
+    const result = await saving(o.runStore.save(incoming));
+    // (1) red when the key check is a truthiness test (the empty key is then taken for none: the
+    //     import succeeds and the key has two live runs); (2) prints the refusal and the rows stored
+    //     of the incoming run.
+    expect({ result, stored: counts(c, incoming.id) }).toEqual({
+      result: {
+        code: 'STATE_RUN_DIVERGED',
+        message: `Idempotency key for workflow 'wf-import' is already held by a different live run '${holder.id}'; the imported run '${incoming.id}' was not imported.`,
+        details: { runId: incoming.id, existingOwnerRunId: holder.id },
+      },
+      stored: NOTHING,
+    });
+  });
+
   it('check 8: a finished run whose key a live run holds imports, and the live run stays the holder', async () => {
     const { o, holder } = await withLiveHolder();
     const finished = exported({
