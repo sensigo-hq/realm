@@ -5,8 +5,9 @@
 // thin formatting layer isn't unit-tested here either, consistent with cleanup.ts/reclaim.ts).
 import { declared } from '../test-support/declared.js';
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { v4 as uuidv4 } from 'uuid';
@@ -23,7 +24,6 @@ import type { RunRecord, RunStore, PerRunArtifactStore } from '@sensigo/realm';
 import { JsonTraceBufferStore } from '@sensigo/realm-mcp';
 import { snap } from '../test-support/snapshot-double.js';
 import { writtenSnapshot } from '@sensigo/realm';
-import { makeTempHome } from '../test-support/temp-home.js';
 
 /** Recompute the pointer-file path the store uses (sha256 of workflowId\0key) — test-side only,
  *  mirroring json-file-store.test.ts's own helper; NOT a production code path. */
@@ -71,12 +71,14 @@ interface Stores {
 }
 
 async function makeStores(): Promise<Stores> {
-  const h = await makeTempHome();
-  const dir = h.home.runStore.runsDirPath;
-  const runStore = h.home.runStore;
-  const failedAttemptStore = h.home.failedAttemptStore;
+  // #616 PR-2c (c10a-2a): the JSON stores, built here on a scratch folder of this file's own, so these
+  // cells keep covering the JSON per-store path once the door opens the SQLite home (until PR-3).
+  const scratch = await mkdtemp(join(tmpdir(), 'realm-purge-'));
+  const dir = join(scratch, 'runs');
+  const runStore = new JsonFileStore(dir);
+  const failedAttemptStore = new JsonFileFailedAttemptStore(dir);
   // issue #616 PR-0: the trace buffer evaluates fences against the anchor run store.
-  const traceBufferStore = h.home.traceBufferStore;
+  const traceBufferStore = new JsonTraceBufferStore(dir, runStore);
   return {
     dir,
     runStore,
@@ -85,7 +87,7 @@ async function makeStores(): Promise<Stores> {
     // issue #184: runStore is now passed to purgeRuns SEPARATELY as the anchorStore argument —
     // artifactStores holds the non-anchor stores only (mechanical signature update).
     artifactStores: [traceBufferStore, failedAttemptStore],
-    cleanup: () => h.cleanup(),
+    cleanup: () => rm(scratch, { recursive: true, force: true }),
   };
 }
 

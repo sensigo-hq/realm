@@ -20,7 +20,7 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { createTestLocation } from '@sensigo/realm-testing';
+import { createTestHome } from '@sensigo/realm-testing';
 import { spawn, spawnSync } from 'node:child_process';
 import {
   chmodSync,
@@ -39,7 +39,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { load as parseYaml } from 'js-yaml';
-import { JsonFileStore, loadWorkflowFromFile, loadWorkflowFromString } from '@sensigo/realm';
+import { loadWorkflowFromFile, loadWorkflowFromString, type RunStore } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -248,7 +248,7 @@ describe(
     let home: string;
     let project: string;
     let bin: string;
-    let runStore: JsonFileStore;
+    let runStore: RunStore;
 
     beforeEach(async () => {
       h = await makeTempHome();
@@ -804,7 +804,7 @@ describe(
       });
       // #715 (b) 04 §D (B4): `~/.realm` is a test location before the `realm mcp` child opens the
       // question, so the cell moves the clock the children read instead of waiting on the real one.
-      const loc = await createTestLocation({ start: new Date(), root: join(home, '.realm') });
+      const loc = await createTestHome({ start: new Date(), root: join(home, '.realm') });
       const at = await atGate('limited');
       await loc.clock.advance(1_500);
       const drain = sh(fence(page, 'realm run drain').trim());

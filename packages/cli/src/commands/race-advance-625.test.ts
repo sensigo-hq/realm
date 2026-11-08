@@ -14,7 +14,6 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
   ExtensionRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   WorkflowError,
@@ -25,6 +24,7 @@ import {
   type Attributed,
   type StepDefinition,
   type WorkflowDefinition,
+  type RunStore,
 } from '@sensigo/realm';
 import { advanceRunFromShell } from './run-advance.js';
 import { makeTempHome } from '../test-support/temp-home.js';
@@ -76,7 +76,7 @@ function wf(id: string, x?: string[]): WorkflowDefinition {
 async function advance(
   def: WorkflowDefinition,
   moment: 'read' | 'claim',
-  act: (runs: JsonFileStore, runId: string) => Promise<void>,
+  act: (runs: RunStore, runId: string) => Promise<void>,
 ) {
   const h = await makeTempHome();
   const home = h.root;
@@ -103,7 +103,7 @@ async function advance(
           };
         }
         if (prop === 'claimStep' && moment === 'claim') {
-          return async (...a: Parameters<JsonFileStore['claimStep']>) => {
+          return async (...a: Parameters<RunStore['claimStep']>) => {
             if (a[1] === 's' && !fired) {
               fired = true;
               await act(target, a[0]);

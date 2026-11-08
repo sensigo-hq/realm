@@ -50,9 +50,9 @@ const ALLOWED_TESTS: Record<string, Array<{ file: string; sites: number; subject
     },
     {
       file: 'commands/purge.test.ts',
-      sites: 1,
+      sites: 4,
       subject:
-        "one cell: the fence judged against the trace buffer's OWN reader, an anchor stub (the door wires the run store as reader)",
+        "the store helper builds the three JSON stores itself (the JSON per-store path, c10a-2a; PR-3), and one cell: the fence judged against the trace buffer's OWN reader, an anchor stub (the door wires the run store as reader)",
     },
     {
       file: 'multi-copy/multi-copy.test.ts',
