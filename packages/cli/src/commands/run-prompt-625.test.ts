@@ -190,15 +190,15 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
     return line.replace('  ⏸  Gate: confirm | gate_id: ', '');
   };
 
-  /** The stored record, read through the cell's handle on the scratch home. */
+  /** The stored record, read through the cell's current handle (`stores()`: the located one once `locate()` ran). */
   async function readRecord() {
     return (await stores().runStore.get(await runId())).record;
   }
 
   /**
    * #715 (b) 04 §D (B4): no cell waits on the real clock for a question to expire. A cell whose
-   * question must expire under `realm workflow run` makes the scratch `~/.realm` a test location
-   * BEFORE the command builds its store (`locate()`), and moves that clock past the deadline
+   * question must expire under `realm workflow run` makes a fresh root's `.realm` a test home and points
+   * HOME at it BEFORE the command builds its store (`locate()`), and moves that clock past the deadline
    * (`pastDue()`); this process's own expiry timer waits on the store's clock, so it fires then.
    * (C146's race cells below keep the real clock, with their reason.)
    */

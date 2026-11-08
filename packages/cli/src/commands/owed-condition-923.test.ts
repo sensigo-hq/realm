@@ -66,7 +66,7 @@ interface Home {
 }
 
 const folders: string[] = [];
-/** Every handle a cell opened; a location's handle after the one that made its root. */
+/** Every handle a cell opened; a located cell's ONE handle, on a test home under a fresh root (see `folders`). */
 const handles: TempHome[] = [];
 afterEach(async () => {
   for (const t of handles.splice(0).reverse()) await t.cleanup();

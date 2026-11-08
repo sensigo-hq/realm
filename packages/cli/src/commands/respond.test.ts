@@ -540,7 +540,7 @@ describe('respondCommand — `Error loading extensions:` (issue #466)', () => {
 // -------------------------------------------------------------------------------------------------
 describe('the answerer clause reads the record (#706 walk W8-R1)', () => {
   let h: TempHome;
-  /** The other handles (the workflow store's own, bob's), cleaned before `h`. */
+  /** The other handles (the workflow store's own), cleaned before `h`; bob reads through a Proxy over the one store (c10a-2d). */
   const extras: TempHome[] = [];
   let runStore: RunStore;
   let workflowStore: RealmWorkflowRegistrar;
