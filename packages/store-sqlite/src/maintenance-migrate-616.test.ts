@@ -350,6 +350,42 @@ describe('#616 PR-2c c7 — migrate: the backup first, the ladder one step at a 
     });
   });
 
+  // State 6's busy case (the operator did not stop Realm): the error-codes row names it. The store's
+  // busy wait runs its 5 s budget, so the cell has its own.
+  it(
+    '(B3) a step that meets another writer holding the store beyond its budget fails as that step: the file at version 1 with nothing of the step in it, and the line says so',
+    { timeout: 30_000 },
+    async () => {
+      const live = join(tmp(), '.realm');
+      const file = join(live, 'realm.db');
+      await storeWithRuns(live, 1);
+      const m = await maintain(live, { schemaVersion: 3, versions: ladder() });
+      const holder = await openForeignConnection(live);
+      let failed: unknown;
+      holder.exec('BEGIN IMMEDIATE');
+      try {
+        failed = await refusal(m.migrate({ backup: false }));
+      } finally {
+        holder.exec('ROLLBACK');
+        holder.close();
+      }
+      const reason =
+        'The store was busy for 5 s: another writer held it. Nothing was written. Try again';
+      // (1) red when the busy refusal leaves the ladder as it is (STATE_RUN_BUSY, which names no step
+      //     and no version); (2) prints the refusal's code, message and details, and the file's version.
+      expect({ failed, file: versionOf(file) }).toEqual({
+        failed: {
+          code: 'STATE_STORE_MIGRATE_FAILED',
+          message:
+            `The step from schema version 1 to 2 failed: ${reason}. ${file} is at schema version 1; ` +
+            'nothing of the step is in it. Run the command again once the cause is fixed.',
+          details: { path: file, from: 1, to: 2, at: 1, reason },
+        },
+        file: 1,
+      });
+    },
+  );
+
   it("(C) a store already at this Realm's version: no step, the line saying so, and a re-stamp of nothing", async () => {
     const live = join(tmp(), '.realm');
     const file = join(live, 'realm.db');
