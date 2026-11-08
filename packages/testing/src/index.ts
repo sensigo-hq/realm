@@ -64,6 +64,9 @@ export { settableClock, steppingClock, countingClock } from './clock/settable-cl
 export type { SettableClock, SettableClockOptions } from './clock/settable-clock.js';
 export { createTestLocation } from './clock/test-location.js';
 export type { TestLocation } from './clock/test-location.js';
+// #616 PR-2c c10a-0: a test home for the SQLite store (no `runs/`).
+export { createTestHome } from './clock/test-home.js';
+export type { TestHome } from './clock/test-home.js';
 
 // Fixtures
 export {

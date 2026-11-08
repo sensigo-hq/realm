@@ -33,6 +33,9 @@ const TESTING = 'packages/testing/src/clock/zz-lint-probe.ts';
 const SOURCES = {
   createTestLocation:
     "import { createTestLocation } from '@sensigo/realm-testing';\nexport const f = createTestLocation;\n",
+  // #616 PR-2c c10a-0: the test home for the SQLite store.
+  createTestHome:
+    "import { createTestHome } from '@sensigo/realm-testing';\nexport const f = createTestHome;\n",
   writeTestClockFile:
     "import { writeTestClockFile } from '@sensigo/realm';\nexport const f = writeTestClockFile;\n",
   fileClock: "import { fileClock } from '@sensigo/realm';\nexport const f = fileClock;\n",
@@ -61,6 +64,7 @@ describe('#715 (a) C.4 — the test-clock import rule and its file sets', () => 
     // (b) prints the hit counts per import and path.
     expect(at).toEqual({
       createTestLocation: { production: 1, test: 0, testing: 0 },
+      createTestHome: { production: 1, test: 0, testing: 0 },
       writeTestClockFile: { production: 1, test: 0, testing: 0 },
       fileClock: { production: 1, test: 0, testing: 0 },
       readTestClockFile: { production: 1, test: 0, testing: 0 },
@@ -112,6 +116,8 @@ const NEEDLES = [
   // #616 PR-1a unit 2: the store's reader of a root's clock file.
   'resolveRootClock',
   'createTestLocation',
+  // #616 PR-2c c10a-0: the test home for the SQLite store.
+  'createTestHome',
   '.realm-test-clock',
   // #715 (b) (04 §B.4): the test-clock marks.
   'markTestClock',
@@ -201,6 +207,11 @@ describe('#715 (a) correction 1 (C-2) — no production file names a test-clock 
         text: "const p = join(root, '.realm-test-clock');\n",
       },
       {
+        // #616 PR-2c c10a-0: the test home, named in an awaited import.
+        path: 'packages/mcp-server/src/zz-seed-test-home.ts',
+        text: "const { createTestHome } = await import('@sensigo/realm-testing');\n",
+      },
+      {
         path: 'packages/cli/src/commands/zz-seed-clean.ts',
         text: "const { JsonFileStore } = await import('@sensigo/realm');\n",
       },
@@ -215,6 +226,7 @@ describe('#715 (a) correction 1 (C-2) — no production file names a test-clock 
       'packages/cli/src/commands/zz-seed-then.ts',
       'packages/mcp-server/src/zz-seed-reexport.ts',
       'packages/core/src/zz-seed-name.mjs',
+      'packages/mcp-server/src/zz-seed-test-home.ts',
     ]);
   });
 

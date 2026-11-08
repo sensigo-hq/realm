@@ -70,7 +70,7 @@ All notable changes to this project are documented here.
   `clock`, the time they stamp their writes with; `InMemoryStore` takes one:
   `new InMemoryStore({ clock })`.
 - **Test clocks and test locations (issue #715).** `@sensigo/realm-testing` exports
-  `settableClock`, `steppingClock`, `countingClock`, `createTestLocation`, and the store contract
+  `settableClock`, `steppingClock`, `countingClock`, `createTestLocation`, `createTestHome`, and the store contract
   `storeClockContract` with its laws `STORE_CLOCK_LAWS`. A test location's clock is the file
   `.realm-test-clock` beside its `runs/` folder. A store opened on a copy of a test location in
   another folder refuses with the new code `STATE_TEST_CLOCK_FOREIGN`.
