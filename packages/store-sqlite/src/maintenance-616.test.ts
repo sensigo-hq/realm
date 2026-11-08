@@ -12,11 +12,15 @@
 // with a damaged page, a target that cannot be written (an I/O error, a full disk), a run killed in
 // the middle (a timeout, a container stop: nothing may be left at the operator's path), a file that
 // appears at the path while the copy is made, a filesystem without hard links (FAT and exFAT sticks),
-// and the flushes that make the copy and its name survive a crash.
+// and the flushes that make the copy and its name survive a crash. Correction 2 adds SQLite's
+// read-only refusals of the copy, both ways they arrive (10d, 10e), every member of the skipped
+// folder flushes and a real folder Realm may not read (14b), and the files SQLite leaves beside a
+// copy that fails (14e).
 //
 // Each assertion carries (1) the break that turns it red and (2) what it prints when it fails.
 import { spawnSync } from 'node:child_process';
 import {
+  chmodSync,
   closeSync,
   copyFileSync,
   existsSync,
@@ -46,11 +50,21 @@ import { systemErrorText } from './home.js';
 import { openRealmHome, openRealmHomeForMaintenance } from './index.js';
 import { openMaintenance, type MaintenanceHome } from './maintenance.js';
 import { openHome, type RealmHome } from './open-realm-home.js';
-import { faultyFiles, SQLITE, type Fault } from './test-support/commit-faults.js';
+import { faultyFiles, SQLITE, sqliteError, type Fault } from './test-support/commit-faults.js';
 import { openForeignConnection } from './test-support/foreign-connection.js';
 import { ladder } from './test-support/schema-versions.js';
 
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const AS_ROOT = process.getuid?.() === 0;
+if (AS_ROOT) {
+  console.warn(
+    '#616 PR-2c c6: the cell of a folder Realm may not read is skipped: root can read any folder.',
+  );
+}
+
+/** SQLite's read-only refusal (8, `SQLITE_READONLY`); its text is SQLite's for the code. */
+const readOnly = (): Error =>
+  sqliteError(8, 'attempt to write a readonly database', 'attempt to write a readonly database');
 
 const RUN: CreateRunOptions = {
   workflowId: 'triage',
@@ -154,7 +168,11 @@ function leftovers(target: string): string[] {
  * SystemError of Node's errors page), for a filesystem this machine does not have (no hard links)
  * or a disk that fails (EIO).
  */
-function systemError(code: 'ENOTSUP' | 'EIO' | 'EPERM', syscall: string, path: string): Error {
+function systemError(
+  code: 'ENOTSUP' | 'EIO' | 'EPERM' | 'EACCES' | 'EISDIR',
+  syscall: string,
+  path: string,
+): Error {
   const errno = -constants.errno[code];
   return Object.assign(new Error(`${code}: ${systemErrorText(errno)}, ${syscall} '${path}'`), {
     code,
@@ -281,12 +299,13 @@ describe('#616 PR-2c c6 — the maintenance entry and realm db backup', () => {
     const remedy = 'Realm never replaces a file; name a path where nothing exists.';
     // (1) red when the look before the copy is removed, or follows links (`stat` instead of
     //     `lstat`: the dangling link reads as nothing there): the copy is then made and renamed over
-    //     the file and the link (a resolved report, the file's text gone, the link a file);
-    //     (2) prints both refusals, the file's text, the link's state and whether its target exists.
+    //     the file and the link (a resolved report, the file replaced, the link a file);
+    //     (2) prints both refusals, whether the file is as made (or its size, never its bytes), the
+    //     link's state and whether its target exists.
     expect({
       file: await refusal(m.backup(file)),
       link: await refusal(m.backup(link)),
-      text: readFileSync(file, 'utf8'),
+      kept: asMade(file, 'the user keeps this'),
       linkStill: lstatSync(link).isSymbolicLink(),
       targetMade: existsSync(nowhere),
     }).toEqual({
@@ -300,7 +319,7 @@ describe('#616 PR-2c c6 — the maintenance entry and realm db backup', () => {
         message: `Cannot back up the store to ${link}: ${reason}. ${remedy}`,
         details: { path: link, reason },
       },
-      text: 'the user keeps this',
+      kept: 'as made',
       linkStill: true,
       targetMade: false,
     });
@@ -629,6 +648,90 @@ describe('#616 PR-2c c6 correction — a failed copy is one refusal, and nothing
     });
   });
 
+  it.each([
+    {
+      cause: 'SQLite 14 (cannot open)',
+      error: SQLITE.cantOpen,
+      reason: 'unable to open database file',
+    },
+    {
+      cause: 'SQLite 8 (read-only)',
+      error: readOnly,
+      reason: 'attempt to write a readonly database',
+    },
+  ])(
+    '(10d) $cause at the copy, which the primitive makes STATE_STORE_READONLY: the write sentence, no store file blamed, and nothing is left',
+    async ({ error, reason }) => {
+      const root = tmp();
+      const live = join(root, '.realm');
+      await storeWithRuns(live, 1);
+      const files = faultyFiles(openDatabase);
+      const m = await maintain(live, { openFile: files.openFile });
+      files.opened[0]?.arm(atVacuum(error));
+      const target = join(root, 'copy.db');
+      // (1) red when the typed read-only refusal gets no branch of its own (its own sentence, "Realm
+      //     cannot write to <the store file>", blames the store), or when the temporary file is
+      //     left; (2) prints the refusal, the path's state, what was left and the fault's hits.
+      expect({
+        refused: await refusal(m.backup(target)),
+        atPath: existsSync(target),
+        left: leftovers(target),
+        fired: files.opened[0]?.hits(),
+      }).toEqual({
+        refused: {
+          code: 'STATE_STORE_BACKUP_REFUSED',
+          message: `Cannot back up the store to ${target}: the copy could not be written: ${reason}. Nothing was written at ${target}.`,
+          details: { path: target, reason },
+        },
+        atPath: false,
+        left: [],
+        fired: 1,
+      });
+    },
+  );
+
+  it.each([
+    {
+      cause: 'SQLite 14',
+      error: SQLITE.cantOpen,
+      reason: 'unable to open database file (SQLite error 14)',
+    },
+    {
+      cause: 'SQLite 8',
+      error: readOnly,
+      reason: 'attempt to write a readonly database (SQLite error 8)',
+    },
+  ])(
+    "(10e) $cause raised on the copy's own connection (SQLite's raw error, not the primitive's): the write sentence with SQLite's code, and nothing is left",
+    async ({ error, reason }) => {
+      const root = tmp();
+      const live = join(root, '.realm');
+      await storeWithRuns(live, 1);
+      const m = await maintain(live, {
+        quickCheck: () => {
+          throw error();
+        },
+      });
+      const target = join(root, 'copy.db');
+      // (1) red when a raw 14 or 8 gets no write sentence (it then reads as "another reason"), or
+      //     when the temporary file is left; (2) prints the refusal, the path's state and what was
+      //     left beside it.
+      expect({
+        refused: await refusal(m.backup(target)),
+        atPath: existsSync(target),
+        left: leftovers(target),
+      }).toEqual({
+        refused: {
+          code: 'STATE_STORE_BACKUP_REFUSED',
+          message: `Cannot back up the store to ${target}: the copy could not be written: ${reason}. Nothing was written at ${target}.`,
+          details: { path: target, reason },
+        },
+        atPath: false,
+        left: [],
+      });
+    },
+  );
+
   describe('(11) a run killed in the middle', { timeout: 120_000 }, () => {
     /**
      * Runs `backup(target)` in a child (the built package) whose copy is killed by SIGKILL right
@@ -837,23 +940,56 @@ describe('#616 PR-2c c6 correction — a failed copy is one refusal, and nothing
       ]);
     });
 
-    it('(14b) a folder flush the platform refuses (EPERM) is skipped, and the backup succeeds', async () => {
-      const root = tmp();
-      const live = join(root, '.realm');
-      await storeWithRuns(live, 1);
-      const m = await maintain(live, {
-        syncFolder: (path) => {
-          throw systemError('EPERM', 'open', path);
-        },
-      });
-      const target = join(root, 'copy.db');
-      // (1) red when EPERM is not in the skipped set (the backup is refused on Windows-like
-      //     platforms); (2) prints the outcome and whether the copy is at the path.
-      expect({ outcome: await outcome(m.backup(target)), atPath: existsSync(target) }).toEqual({
-        outcome: 'resolved',
-        atPath: true,
-      });
-    });
+    it.each(['EPERM', 'EACCES', 'EISDIR'] as const)(
+      '(14b) a folder flush the platform refuses (%s) is skipped, and the backup succeeds',
+      async (code) => {
+        const root = tmp();
+        const live = join(root, '.realm');
+        await storeWithRuns(live, 1);
+        const m = await maintain(live, {
+          syncFolder: (path) => {
+            throw systemError(code, 'open', path);
+          },
+        });
+        const target = join(root, 'copy.db');
+        // (1) red when this code is not in the skipped set (the backup is refused, "its folder
+        //     could not be flushed", where the platform cannot open or flush a folder); (2) prints
+        //     the outcome and whether the copy is at the path.
+        expect({ outcome: await outcome(m.backup(target)), atPath: existsSync(target) }).toEqual({
+          outcome: 'resolved',
+          atPath: true,
+        });
+      },
+    );
+
+    it.skipIf(AS_ROOT || process.platform === 'win32')(
+      '(14b-real) a folder the account may write and enter but not read (mode 0300): its flush is refused EACCES and skipped, and the backup succeeds (skipped as root, who reads any folder, and on Windows, where chmod sets no such mode)',
+      async () => {
+        const root = tmp();
+        const live = join(root, '.realm');
+        await storeWithRuns(live, 1);
+        const folder = join(root, 'drop-box');
+        mkdirSync(folder);
+        const target = join(folder, 'copy.db');
+        const m = await maintain(live);
+        chmodSync(folder, 0o300);
+        let result: string;
+        try {
+          result = await outcome(m.backup(target));
+        } finally {
+          // A 0300 folder that holds a file cannot be removed by the cleanup.
+          chmodSync(folder, 0o700);
+        }
+        // (1) red when EACCES is not in the skipped set: the backup is refused after the copy was
+        //     published ("its folder could not be flushed: permission denied"); (2) prints the
+        //     outcome, what was left beside the path and the copy's header.
+        expect({ outcome: result, left: leftovers(target), copy: copyHeader(target) }).toEqual({
+          outcome: 'resolved',
+          left: [],
+          copy: { version: 1, mode: 'wal' },
+        });
+      },
+    );
 
     it('(14c) a folder flush that fails (EIO) is refused after the publish, and the copy stays at the path', async () => {
       const root = tmp();
@@ -913,6 +1049,35 @@ describe('#616 PR-2c c6 correction — a failed copy is one refusal, and nothing
         atPath: false,
         left: [],
       });
+    });
+
+    it('(14e) a failure after SQLite left files beside the temporary one removes them too: the folder lists exactly what it listed before the run', async () => {
+      const root = tmp();
+      const live = join(root, '.realm');
+      await storeWithRuns(live, 1);
+      const m = await maintain(live, {
+        // What a WAL switch that fails on a nearly full disk leaves (the fresh reader's tmpfs sweep,
+        // MA3-RV1034C-08: `-wal` and `-shm`), and the rollback journal's name too.
+        syncFile: (path) => {
+          for (const suffix of ['-wal', '-shm', '-journal']) writeFileSync(`${path}${suffix}`, '');
+          throw systemError('EIO', 'fsync', path);
+        },
+      });
+      const target = join(root, 'copy.db');
+      const before = readdirSync(root).sort();
+      const reason = systemErrorText(-constants.errno.EIO);
+      // (1) red when only the temporary file is removed (its `-wal`, `-shm` and `-journal` stay
+      //     beside the path); (2) prints the refusal and the folder's names after the run.
+      expect({ refused: await refusal(m.backup(target)), after: readdirSync(root).sort() }).toEqual(
+        {
+          refused: {
+            code: 'STATE_STORE_BACKUP_REFUSED',
+            message: `Cannot back up the store to ${target}: the copy could not be written: ${reason}. Nothing was written at ${target}.`,
+            details: { path: target, reason },
+          },
+          after: before,
+        },
+      );
     });
   });
 });

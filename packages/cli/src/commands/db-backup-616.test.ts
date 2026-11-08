@@ -320,7 +320,8 @@ describe('#616 PR-2c c6 — realm db backup, on the built CLI', { timeout: 120_0
 describe('#616 PR-2c c6 correction — the page says what the command does', () => {
   it('the four steps, and what the command may write besides the copy', () => {
     // Executed by the store's cells 5 (owner-only), 1 (WAL, the restored copy opens), 14a (the
-    // flushes, then the link, then the folder) and 12, 13b (never replaces).
+    // flushes, then the link, then the folder), 12 (the link refuses a file that appeared) and 13a,
+    // 13b (no hard links: one more look, then the move).
     claim(
       PAGE,
       'It creates a temporary file beside `<path>`, readable and writable by your account only (mode 600; on Linux and macOS), so the copy is never readable by others. SQLite copies the whole store into it in one step (`VACUUM INTO`).',
@@ -331,7 +332,7 @@ describe('#616 PR-2c c6 correction — the page says what the command does', () 
     );
     claim(
       PAGE,
-      'It publishes the copy under `<path>` without ever replacing anything, and flushes the folder, so that the copy and its name survive a crash.',
+      'It publishes the copy under `<path>` with a hard link, which cannot replace a file that is there; where the filesystem has no hard links (FAT, exFAT, some network filesystems), it looks at `<path>` once more and moves the copy in. Then it flushes the folder, so that the copy and its name survive a crash.',
     );
     // The fence files: the open's own preparation (store-sqlite home.test.ts, "the fences"), which
     // the maintenance entry runs; the WAL replay: SQLite's recovery at any open (the fresh reader's

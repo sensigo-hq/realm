@@ -30,8 +30,9 @@
 //      then the target's folder is flushed, so the new name survives a crash.
 // So the target only ever holds a finished copy: a run killed before the publish leaves nothing
 // there, only files whose names begin `<target>.part-`. Every failure after the up-front checks
-// removes the temporary file and is one `STATE_STORE_BACKUP_REFUSED` (`copyFailed`) that blames a
-// file only when the cause points at it.
+// removes the temporary file, and the `-wal`, `-shm` and `-journal` files SQLite names from it (a WAL
+// switch that fails on a nearly full disk leaves the first two), and is one
+// `STATE_STORE_BACKUP_REFUSED` (`copyFailed`) that blames a file only when the cause points at it.
 // A copy that fails the quick check is still published, and refused `STATE_STORE_BACKUP_UNVERIFIED`
 // (DELTAS 31: the source is named as possibly damaged and the copy is kept). Realm writes nothing
 // of its own to `realm.db`; SQLite may first replay a write-ahead log a crashed Realm left beside
@@ -260,6 +261,14 @@ function removeTemporary(path: string): void {
   }
 }
 
+/**
+ * Removes what a failed run made beside the target: the temporary file and the three files SQLite
+ * names from it by appending `-wal`, `-shm` and `-journal`, each as `removeTemporary` does.
+ */
+function removeCopy(temporary: string): void {
+  for (const suffix of ['', '-wal', '-shm', '-journal']) removeTemporary(`${temporary}${suffix}`);
+}
+
 /** The real `syncFile`: opened, flushed, closed. */
 function syncFileOnDisk(path: string): void {
   const fd = openSync(path, 'r+');
@@ -445,7 +454,7 @@ export async function openMaintenance(
         }
         syncFile(temporary);
       } catch (err) {
-        removeTemporary(temporary);
+        removeCopy(temporary);
         throw copyFailed(target, source, err);
       }
       // (v) Published under the target's name without replacing anything: a hard link fails if
@@ -459,13 +468,13 @@ export async function openMaintenance(
         removeTemporary(temporary);
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
-          removeTemporary(temporary);
+          removeCopy(temporary);
           throw alreadyThere(target);
         }
         try {
           refuseIfTaken(target);
         } catch (refused) {
-          removeTemporary(temporary);
+          removeCopy(temporary);
           throw refused;
         }
         // The one place a file created between this look and the rename could be replaced: the
@@ -473,7 +482,7 @@ export async function openMaintenance(
         try {
           renameSync(temporary, target);
         } catch (renameErr) {
-          removeTemporary(temporary);
+          removeCopy(temporary);
           throw copyFailed(target, source, renameErr);
         }
       }
