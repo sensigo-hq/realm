@@ -29,6 +29,10 @@ Replays are saved and read by id; a store failure is reported as itself, never a
 
 The trace buffer keeps one row per line, in append order, and a step's read waits for a write in flight.
 
+## Concurrent writers
+
+Writers take turns on one lock. A write that cannot get its turn within 5 seconds is refused with `STATE_RUN_BUSY`, which is retryable: nothing is written, and trying again is safe. Realm's own test run prints the commits per second and the busy refusals it saw with 1, 4, 8 and 16 writer processes, in lines that start with `L-THROUGHPUT`, so the log of a run shows what that machine did. The lines are recorded, not asserted, and they are not a promise.
+
 ## Where it runs
 
 Realm refuses a home on a network drive or on a filesystem it does not recognise, including WSL's `/mnt/c`, because SQLite's write-ahead log does not work there. Set `REALM_STORE_FS=local` to use such a folder anyway.

@@ -11,7 +11,9 @@
 // provider module's record cannot put its own text under a `fact` row.
 //
 // Caching 3-M (piece A-1): a request's `reference`, the copy of its predecessor, is kept only in its
-// one shape, and each field inside it obeys the rule that field obeys on the request itself.
+// one shape, and each field inside it obeys the rule that field obeys on the request itself. Piece
+// A-1b: a request's `request_in_call`, its place in its provider call, is kept as a non-negative
+// safe integer or dropped.
 import { readStoredName } from './holder.js';
 import { normalizeCacheAuto } from '../economics/cache-lifetime.js';
 import {
@@ -41,10 +43,11 @@ const NAME_FIELDS = [
  * five shapes, other keys gone) or deleted when that is `undefined`. Caching 3-B: each split fact
  * (`prefix_sha256`, `prefix_chars`, `prefix_parts`, `cache_marked`, `request_strict_sent`,
  * `cache_controls_rejected`, `cache_key_sent`) is kept in its one shape or deleted. Caching 3-M
- * (piece A-1): `reference` is kept only when its `from` is a word of `CACHE_REFERENCE_SOURCES` and
- * its `request_start` a string, or deleted whole; inside it, each copied field passes the rule it
- * passes here and is dropped alone when it fails, and any other key (a `reference`, a
- * `request_index`) is dropped.
+ * (piece A-1b): `request_in_call` is kept when it is a non-negative safe integer, as `prefix_chars`
+ * is, or deleted. Caching 3-M (piece A-1): `reference` is kept only when its `from` is a word of
+ * `CACHE_REFERENCE_SOURCES` and its `request_start` a string, or deleted whole; inside it, each
+ * copied field passes the rule it passes here and is dropped alone when it fails, and any other key
+ * (a `reference`, a `request_index`, a `request_in_call`) is dropped.
  * Every other field, and every entry that is not an object (a `null`, a number), passes through
  * unchanged. Total: it never throws, because it runs inside `recordDriveFailure`'s fence, where a
  * throw loses the record. It returns new objects; the input is not changed.
@@ -141,6 +144,7 @@ const REFERENCE_KEYS = {
   provider: true,
   model: true,
   endpoint: true,
+  cache_requested: true,
   cache_read_input_tokens: true,
   cache_creation_input_tokens: true,
   cache_write_tokens: true,
@@ -171,18 +175,20 @@ function normalizeReference(value: unknown): CacheReference | undefined {
   return boundFields(kept) as CacheReference;
 }
 
+/** A count or a place as Realm writes it: a non-negative safe integer. */
+const nonNegativeSafeInteger = (v: unknown): number | undefined =>
+  typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : undefined;
+
 /** Caching 3-B (A6): each split fact and the one shape it is kept in (or `undefined`: dropped).
- *  Caching 3-M (piece A-1): and the request's `reference`. */
+ *  Caching 3-M (piece A-1): and the request's `reference`; (piece A-1b) and its `request_in_call`. */
 const SPLIT_FACT_NORMALIZERS: readonly [string, (value: unknown) => unknown][] = [
   ['prefix_sha256', (v) => (isSha256Hex(v) ? v : undefined)],
-  [
-    'prefix_chars',
-    (v) => (typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : undefined),
-  ],
+  ['prefix_chars', nonNegativeSafeInteger],
   ['prefix_parts', normalizePrefixParts],
   ['cache_marked', normalizeCacheMarked],
   ['request_strict_sent', (v) => (typeof v === 'boolean' ? v : undefined)],
   ['cache_controls_rejected', normalizeCacheControlsRejected],
   ['cache_key_sent', (v) => (v === true ? true : undefined)],
   ['reference', normalizeReference],
+  ['request_in_call', nonNegativeSafeInteger],
 ];

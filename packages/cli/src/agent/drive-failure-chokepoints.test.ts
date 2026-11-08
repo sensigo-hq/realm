@@ -234,6 +234,7 @@ describe('#401 chokepoint (2) — issue #600 PR 1a (D9): usage on a thrown drive
     expect(entry.usage).toEqual(
       billedThenThrown.driveCall.usage.map((r) => ({
         ...r,
+        request_in_call: billedThenThrown.driveCall.usage.indexOf(r),
         request_id: expect.stringMatching(
           /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
         ),
