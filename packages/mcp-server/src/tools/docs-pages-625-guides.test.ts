@@ -824,7 +824,7 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     ]);
   });
 
-  it('error-codes.md: 109 codes defined — 94 raised, 15 that nothing raises', () => {
+  it('error-codes.md: 111 codes defined — 96 raised, 15 that nothing raises', () => {
     claim(
       'docs/reference/error-codes.md',
       'This page lists all 111 codes that Realm defines: the 96 it raises, with when each is raised and what it tells the caller to do, and the 15 that nothing raises.',
