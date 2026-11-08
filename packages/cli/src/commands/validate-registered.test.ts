@@ -347,25 +347,27 @@ describe('validate --registered (issue #427)', () => {
 
   // -------------------------------------------------------------------------------------------
   // #616 PR-2c c5c — a refusal whose copy has no file (a database's row; injected here through the
-  // JSON registry's `get`, as no command reaches one at the base): no registry-entry line — on the
-  // SQLite registry such a copy makes `workflow list` fail, so it counts nothing under "could not be
-  // read" — and no file to remove.
+  // JSON registry's `get`, as no command reaches one at the base): no file to remove. #616 PR-2c c5a:
+  // the registry-entry line again — the SQLite registry's listing counts such a copy under "could not
+  // be read", by its workflow id.
+  const ENTRY =
+    'The registry holds an entry for \'wf\' — realm workflow list counts it under "could not be read" instead of listing it.';
   const REREGISTER =
     're-register the workflow from its source (realm workflow register <path-to-workflow>)';
 
-  it('c5c state 2: a damaged copy with no file prints its error and the re-register act alone', async () => {
+  it('c5c state 2: a damaged copy with no file prints its error, the registry-entry line and the re-register act alone', async () => {
     const err = storedCopyFaultError('wf', { kind: 'not_a_workflow', fault: 'no_steps' });
     vi.spyOn(JsonWorkflowStore.prototype, 'get').mockRejectedValue(err);
     await expect(
       validateCommand.parseAsync(['--registered', 'wf'], { from: 'user' }),
     ).rejects.toThrow('process.exit');
-    // (a) red when the registry-entry line is printed for a refusal with no file, or when the
-    //     pathless branch is removed ("; if it was never registered from a source, remove the file
-    //     (rm ) instead."); (b) prints every line.
-    expect(out()).toBe(`Error: ${err.message}\nTo repair: ${REREGISTER}.`);
+    // (a) red when the registry-entry line is left out for a refusal with no file (c5a), or when
+    //     the pathless branch is removed ("; if it was never registered from a source, remove the
+    //     file (rm ) instead."); (b) prints every line.
+    expect(out()).toBe(`Error: ${err.message}\n${ENTRY}\nTo repair: ${REREGISTER}.`);
   });
 
-  it('c5c state 3: the damaged pointer (no file, no fault) prints its own words alone', async () => {
+  it('c5c state 3: the damaged pointer (no file, no fault) prints its own words and the registry-entry line, no repair', async () => {
     // A copy of the SQLite registry's `damagedPointerError` (store-sqlite `workflow-store.ts:73-86`,
     // private to its module): its code, details and message.
     const err = new WorkflowError(
@@ -384,10 +386,10 @@ describe('validate --registered (issue #427)', () => {
     await expect(
       validateCommand.parseAsync(['--registered', 'wf'], { from: 'user' }),
     ).rejects.toThrow('process.exit');
-    // (a) red when the registry-entry line is printed for a refusal with no file, or when the
-    //     pointer gets a repair act (the `fault` condition removed: "To repair: re-register …");
+    // (a) red when the registry-entry line is left out for a refusal with no file (c5a), or when
+    //     the pointer gets a repair act (the `fault` condition removed: "To repair: re-register …");
     //     (b) prints every line.
-    expect(out()).toBe(`Error: ${err.message}`);
+    expect(out()).toBe(`Error: ${err.message}\n${ENTRY}`);
   });
 
   // -------------------------------------------------------------------------------------------

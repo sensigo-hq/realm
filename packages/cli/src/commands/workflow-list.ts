@@ -8,11 +8,19 @@
 // each copy it cannot (an older or a later Realm's among them, #627 W), and each one is audited
 // with `realm workflow validate --registered <id>`.
 import { Command } from 'commander';
-import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION, listWorkflowsDiagnosed } from '@sensigo/realm';
 import { openCliHome } from '../lib/home.js';
-import type { WorkflowDefinition } from '@sensigo/realm';
+import type {
+  ClassTable,
+  DisclosureClass,
+  IdUnreadableClass,
+  KeysOfUnion,
+  UnreadableFileEntry,
+  UnreadableIdEntry,
+  UnreadableRegistryEntry,
+  WorkflowDefinition,
+} from '@sensigo/realm';
 import { printJsonByTable } from '../output/writer.js';
-import type { ClassTable } from '@sensigo/realm';
 
 /**
  * Alphabetical by id — the documented order, and the only one an operator can predict.
@@ -42,11 +50,19 @@ function pad(value: string, width: number): string {
 }
 
 /** #729 PR-3 (L-5): the listing's class table — ids, names, versions and paths are facts; a read
- *  failure's reason is a diagnostic copy. */
+ *  failure's reason is a diagnostic copy. #616 PR-2c c5a: the entry's rows cover both arms' keys at
+ *  compile time, so a key left out fails `tsc`. */
 const WORKFLOW_LIST_JSON_TABLE: ClassTable = {
   workflows: 'fact',
   unreadable: {
-    nested: { reason: 'bounded', file: 'fact', class: 'fact', errno: 'fact', repair: 'fact' },
+    nested: {
+      reason: 'bounded',
+      file: 'fact',
+      workflow_id: 'fact',
+      class: 'fact',
+      errno: 'fact',
+      repair: 'fact',
+    } satisfies Record<KeysOfUnion<UnreadableRegistryEntry>, DisclosureClass>,
   },
   mismatched: 'fact',
 };
@@ -55,9 +71,10 @@ export const workflowListCommand = new Command('list')
   .description('List registered workflow definitions (sorted by id)')
   .option('--json', 'Emit the listing as JSON on stdout, and nothing else')
   .action(async (opts: { json?: boolean }) => {
-    // #616 PR-2a (iii): the one door, opened once; the registry's listing with diagnostics.
+    // #616 PR-2a (iii): the one door, opened once; the registry's listing with diagnostics, through
+    // core's one function (#616 PR-2c c5a).
     const store = (await openCliHome()).workflowStore;
-    const { workflows, unreadable, mismatched } = await store.listWithDiagnostics();
+    const { workflows, unreadable, mismatched } = await listWorkflowsDiagnosed(store);
     const sorted = sortedById(workflows);
 
     if (opts.json === true) {
@@ -195,8 +212,9 @@ export const workflowListCommand = new Command('list')
             many: (n, names) => `⚠ ${String(n)} files in the registry are gone: ${names}`,
           },
         ];
+        const byFile = unreadable.filter((u): u is UnreadableFileEntry => u.file !== undefined);
         for (const g of groups) {
-          const inClass = unreadable.filter((u) => u.class === g.cls);
+          const inClass = byFile.filter((u) => u.class === g.cls);
           if (inClass.length === 0) continue;
           // One sentence per (class, errno): two files failing for DIFFERENT reasons never share
           // a sentence that names only one of them (executed: an EACCES file was reported under
@@ -210,6 +228,42 @@ export const workflowListCommand = new Command('list')
                 TAIL,
             );
           }
+        }
+        // #616 PR-2c c5a: entries by workflow id (the SQLite registry) — one line per class, naming
+        // its workflows; no errno on this arm.
+        const byId = unreadable.filter((u): u is UnreadableIdEntry => u.workflow_id !== undefined);
+        const idGroups: Array<{
+          cls: IdUnreadableClass;
+          one: (id: string) => string;
+          many: (n: number, ids: string) => string;
+        }> = [
+          {
+            cls: 'parse',
+            one: (id) => `⚠ 1 workflow in the registry has a damaged stored copy: ${id}`,
+            many: (n, ids) =>
+              `⚠ ${String(n)} workflows in the registry have damaged stored copies: ${ids}`,
+          },
+          {
+            cls: 'newer',
+            one: (id) =>
+              `⚠ 1 workflow in the registry was registered by a later version of Realm: ${id}`,
+            many: (n, ids) =>
+              `⚠ ${String(n)} workflows in the registry were registered by a later version of Realm: ${ids}`,
+          },
+          {
+            cls: 'legacy',
+            one: (id) =>
+              `⚠ 1 workflow in the registry was registered by an older version of Realm: ${id}; re-register each from its source (realm workflow register <path-to-workflow>)`,
+            many: (n, ids) =>
+              `⚠ ${String(n)} workflows in the registry were registered by an older version of Realm: ${ids}; re-register each from its source (realm workflow register <path-to-workflow>)`,
+          },
+        ];
+        for (const g of idGroups) {
+          const ids = byId.filter((u) => u.class === g.cls).map((u) => u.workflow_id);
+          if (ids.length === 0) continue;
+          console.warn(
+            (ids.length === 1 ? g.one(ids.join(', ')) : g.many(ids.length, ids.join(', '))) + TAIL,
+          );
         }
       }
     }

@@ -3,7 +3,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   ExtensionRegistry,
-  type JsonWorkflowStore,
+  type WorkflowRegistrar,
   withTestClockNotice,
   WorkflowError,
   createDefaultRegistry,
@@ -72,9 +72,12 @@ export interface RealmMcpServerOptions {
    * (`VALIDATION_OPTION_INVALID`, naming every missing store). Open them once per process; the
    * `realm-mcp` command opens `~/.realm` itself.
    *
-   * The workflow registry (the class: `list_workflows` reads its listing with diagnostics).
+   * The workflow registry: any `WorkflowRegistrar` (#661; before #616 PR-2c c5a, a
+   * `JsonWorkflowStore`). `list_workflows` also names each registered copy it could not read when the
+   * registry has `listWithDiagnostics`, as Realm's own registries do; a registry without it is listed
+   * as its `list()` returns. Its release line is checked at construction, as every store's is.
    */
-  workflowStore: JsonWorkflowStore;
+  workflowStore: WorkflowRegistrar;
   /**
    * Run store. Any `RunStore` implementation (issue #188, PR-1 — was `JsonFileStore`-only).
    *

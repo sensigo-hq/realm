@@ -20,8 +20,11 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  legacyCopyError,
   loadWorkflowFromFile,
   loadWorkflowFromString,
+  newerCopyError,
+  storedCopyFaultError,
   WorkflowError,
   type WorkflowDefinition,
 } from '@sensigo/realm';
@@ -931,5 +934,133 @@ describe('#616 B3 — the guards bind a writer that is not Realm (a second conne
         attempt(c, 'DELETE FROM workflow_registrations WHERE id = ? AND seq = 0', 'a'),
       ),
     ).toEqual({ outcome: G.history, unchanged: true });
+  });
+});
+
+describe('#616 PR-2c c5a — the listing names every current copy it cannot read, by its id, and never fails whole', () => {
+  const REREGISTER =
+    're-register the workflow from its source (realm workflow register <path-to-workflow>)';
+  /** The listing's settled value: the readable ids, each entry, and each entry's keys. */
+  async function listing(o: Opened) {
+    const got = await o.home.workflowStore.listWithDiagnostics!();
+    return {
+      workflows: got.workflows.map((d) => d.id),
+      unreadable: got.unreadable,
+      keys: got.unreadable.map((u) => Object.keys(u).sort()),
+      mismatched: got.mismatched,
+    };
+  }
+  /** `wf` registered, then its pointer moved by SQL to a hash no version has (check 11a's seed). */
+  async function movePointerToNothing(o: Opened): Promise<void> {
+    await o.home.workflowStore.register(workflow('wf', ['a']));
+    const c = await foreign(o);
+    c.exec('DROP TRIGGER workflows_insert_own');
+    c.exec('DROP TRIGGER workflows_update_own');
+    c.prepare('UPDATE workflows SET current_hash = ? WHERE id = ?').run(
+      hashOf(JSON.stringify(workflow('wf', ['x']))),
+      'wf',
+    );
+  }
+
+  // One cell per member of the SQLite arm's set (DELTAS 47): each seeded as B3's checks 5a, 5b, 5c
+  // and 11a seed it.
+  it.each([
+    {
+      member: 'an older-format copy (legacy)',
+      seed: (o: Opened) =>
+        o.home.workflowStore.register({ id: 'old', name: 'Old', version: 1, steps: {} } as never),
+      entry: { workflow_id: 'old', class: 'legacy', reason: legacyCopyError('old').message },
+    },
+    {
+      member: 'a later-format copy (newer)',
+      seed: (o: Opened) =>
+        o.home.workflowStore.register({
+          id: 'new',
+          name: 'New',
+          version: 1,
+          schema_version: 2,
+          steps: {},
+        } as never),
+      entry: { workflow_id: 'new', class: 'newer', reason: newerCopyError('new', 2).message },
+    },
+    {
+      member: 'JSON that fails the checker (parse, with the re-register act)',
+      seed: async (o: Opened) =>
+        foreignRegister(await foreign(o), 'odd', '{"id":"odd"}', readingAt(9)),
+      entry: {
+        workflow_id: 'odd',
+        class: 'parse',
+        reason: storedCopyFaultError('odd', { kind: 'not_a_workflow', fault: 'not_legacy_shape' })
+          .message,
+        repair: REREGISTER,
+      },
+    },
+    {
+      member: 'a damaged pointer (parse, no repair: its reason names the remedy)',
+      seed: movePointerToNothing,
+      entry: { workflow_id: 'wf', class: 'parse', reason: damagedPointer('wf') },
+    },
+  ])('one member: $member — its own entry by id, with no `file` and no `errno`', async (m) => {
+    const o = await open();
+    await m.seed(o);
+    // (1) red when the member is judged as `list()` judges it (an older or later copy skipped, a
+    //     damaged one rethrown), when an entry gains a `file` or an `errno`, or (member 3) when its
+    //     repair offers a file to remove; (2) prints the listing, each entry and its keys.
+    expect(await listing(o)).toEqual({
+      workflows: [],
+      unreadable: [m.entry],
+      keys: [Object.keys(m.entry).sort()],
+      mismatched: [],
+    });
+  });
+
+  it('mixed: two readable copies and one of each bad kind — the readable ones listed, every bad one its own entry, in id order; the call resolves', async () => {
+    const o = await open();
+    for (const id of ['c', 'a']) await o.home.workflowStore.register(workflow(id, ['s']));
+    await o.home.workflowStore.register({ id: 'old', name: 'Old', version: 1, steps: {} } as never);
+    await o.home.workflowStore.register({
+      id: 'new',
+      name: 'New',
+      version: 1,
+      schema_version: 2,
+      steps: {},
+    } as never);
+    foreignRegister(await foreign(o), 'odd', '{"id":"odd"}', readingAt(9));
+    await movePointerToNothing(o);
+    const got = await listing(o);
+    // (1) red when one bad row is rethrown (the listing rejects) or skipped; (2) prints the ids, the
+    //     entries' ids and classes, and `mismatched`.
+    expect({
+      workflows: got.workflows,
+      unreadable: got.unreadable.map((u) => [u.workflow_id, u.class]),
+      mismatched: got.mismatched,
+    }).toEqual({
+      workflows: ['a', 'c'],
+      unreadable: [
+        ['new', 'newer'],
+        ['odd', 'parse'],
+        ['old', 'legacy'],
+        ['wf', 'parse'],
+      ],
+      mismatched: [],
+    });
+  });
+
+  it("a failed read: the listing rejects with the read's error, never an entry and never empty lists (check 7c's seam)", async () => {
+    const o = await open();
+    await o.home.workflowStore.register(workflow('readable', ['s']));
+    arm(o, {
+      at: (sql) => sql.includes('ORDER BY w.id'),
+      times: 1,
+      first: 'nothing',
+      error: SQLITE.ioError,
+    });
+    const got = await settle(o.home.workflowStore.listWithDiagnostics!());
+    // (1) red when the read's error is caught and answered as an entry or as empty lists; (2) prints
+    //     what the listing settled with.
+    expect({ value: got.value, error: String(got.error) }).toEqual({
+      value: undefined,
+      error: 'Error: disk I/O error (SQLite error 10)',
+    });
   });
 });
