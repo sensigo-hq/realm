@@ -25,6 +25,7 @@ import {
   VERSION,
   probeClassOf,
   repairActFor,
+  definitionAbsenceOf,
   type LoaderWarning,
   type WorkflowRegistrar,
 } from '@sensigo/realm';
@@ -658,7 +659,13 @@ async function validateRegistered(
       // (R10, walk 2: "This copy IS registered" was a claim about history that the bytes cannot
       // carry — a half-written file nobody registered gets the same sentence; the registry HOLDS
       // an entry under that id is what realm knows.)
-      if (probeClassOf(err) !== 'registry_broken') {
+      // (#616 c5c: NOT for a damaged copy that has no file — a database's row. On the SQLite registry
+      // such a copy makes `workflow list` fail, so the listing counts nothing under "could not be
+      // read" and the sentence would be false.)
+      const pathless =
+        err.code === 'RESOURCE_FORMAT_INVALID' &&
+        definitionAbsenceOf(err, { workflow_id: id })?.path === undefined;
+      if (probeClassOf(err) !== 'registry_broken' && !pathless) {
         console.error(
           `The registry holds an entry for '${id}' — realm workflow list counts it under "could not be read" instead of listing it.`,
         );

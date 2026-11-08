@@ -123,6 +123,13 @@ function storedFileFacts(err: WorkflowError): UnreadableFileFacts | undefined {
   return stored?.scope === 'file' ? stored : undefined;
 }
 
+/** #616 c5c: the file path of the copy a refusal is about, read one way (`repairActFor` and
+ *  `definitionAbsenceOf`): a copy with no file (a database's row) has none. */
+function copyPathOf(err: WorkflowError): string | undefined {
+  const filed = storedFileFacts(err)?.path ?? err.details['path'];
+  return typeof filed === 'string' ? filed : undefined;
+}
+
 /** issue #719 (C3): what is wrong with a registered copy's bytes — they are not JSON, or they are
  *  JSON that is not an object (`shape`: `null`, `array`, `string`, `number` or `boolean`), or
  *  (#627 W correction 2, 3.7 and 8.6 (d)) an object that is not a workflow (`fault`). */
@@ -384,7 +391,8 @@ export interface RepairAct {
  * workflow: its repair act (`repairActFor`), without the alternative — never `rm` while a run waits
  * on it; a copy an older or a later Realm registered: that class's own remedy, as its refusal words
  * it; no copy: registering it. Any other error is named, with no repair: the question is never
- * offered as answerable once the read has failed.
+ * offered as answerable once the read has failed. (#616 c5c: so is a damaged copy that gets no act,
+ * the SQLite registry's damaged pointer, whose own words carry its way on.)
  */
 export function gateRepairOf(err: unknown): string {
   const lead = `Its question ${GATE_UNANSWERABLE}.`;
@@ -413,12 +421,19 @@ export function repairActFor(err: WorkflowError): RepairAct | undefined {
   const stored = storedFileFacts(err);
   if (stored?.resource === 'run_file') return undefined;
   const path = String(stored?.path ?? err.details['path'] ?? '');
-  if (err.code === 'RESOURCE_FORMAT_INVALID')
+  if (err.code === 'RESOURCE_FORMAT_INVALID') {
+    // #616 c5c: a copy with no file (the SQLite registry's row) names no file to remove. A damaged
+    // one (`storedCopyFaultError`, the only builder that carries `fault`) is repaired by registering
+    // it again, which never reads the damaged copy. Any other refusal with no file (the SQLite
+    // registry's damaged pointer) carries its own way on in its message, so it gets no act (LAW-r).
+    if (copyPathOf(err) === undefined)
+      return err.details['fault'] !== undefined ? { act: REREGISTER_ACT } : undefined;
     return {
       act: REREGISTER_ACT,
       alternative: `if it was never registered from a source, remove the file (rm ${path}) instead`,
       command: `rm ${path}`,
     };
+  }
   if (err.code !== 'STATE_WORKFLOW_UNREADABLE') return undefined;
   const cls = probeClassOf(err);
   if (cls === undefined) return undefined;
@@ -860,8 +875,8 @@ export function definitionAbsenceOf(
       format: { schema_version: newer.schema_version, reads_up_to: newer.reads_up_to },
     };
   }
-  const filed = storedFileFacts(err)?.path ?? err.details['path'];
-  const path = typeof filed === 'string' ? { path: filed } : {};
+  const filed = copyPathOf(err);
+  const path = filed !== undefined ? { path: filed } : {};
   switch (err.code) {
     case 'STATE_WORKFLOW_NOT_FOUND':
       return {
@@ -1072,14 +1087,23 @@ export async function getWorkflowForRun(
             repairClause(true),
           ),
         );
-      case 'RESOURCE_FORMAT_INVALID':
+      case 'RESOURCE_FORMAT_INVALID': {
+        // #616 c5c: a refusal with no file and no act (the SQLite registry's damaged pointer) carries
+        // its own way on, registering again first; a gate-waiting run is told what comes after it,
+        // as the legacy arm tells it.
+        const repair = repairClause(true);
+        const afterRegistering =
+          repair === undefined && copyPathOf(err) === undefined && gate !== undefined
+            ? 'Once re-registered, answer the gate.'
+            : undefined;
         throw copy(
           join(
             withFullStop(err.message),
             terminal ? undefined : disposalSentence('To end the run:'),
-            repairClause(true),
+            repair ?? afterRegistering,
           ),
         );
+      }
       case 'STATE_LEGACY_FORMAT':
         // The store's own message already carries the re-register remedy (wrapping it again would
         // double-remedy — this function's JSDoc); a gate-waiting run is told what comes after it.
