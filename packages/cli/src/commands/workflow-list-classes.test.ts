@@ -7,8 +7,15 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, symlinkSync }
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { workflowListCommand } from './workflow-list.js';
-import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
-import type { WorkflowDefinition } from '@sensigo/realm';
+import {
+  CURRENT_WORKFLOW_SCHEMA_VERSION,
+  JsonWorkflowStore,
+  legacyCopyError,
+  newerCopyError,
+  storedCopyFaultError,
+  unreadableById,
+} from '@sensigo/realm';
+import type { UnreadableIdEntry, WorkflowDefinition } from '@sensigo/realm';
 
 const TAIL = ' — realm cannot audit what it cannot read.';
 
@@ -183,5 +190,90 @@ describe('realm workflow list — one sentence per class (issue #558 PR-T)', () 
       '0 workflows registered; the registry itself could not be read.',
     );
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+});
+
+// #616 PR-2c c5a — the id arm (a registry with no files, the SQLite registry): its entries name each
+// workflow by id. The CLI home is the JSON registry, so the listing is injected through its
+// `listWithDiagnostics`, with entries built by core's own builders (`unreadableById`).
+describe('realm workflow list — entries by workflow id (#616 PR-2c c5a)', () => {
+  let home: string;
+  let originalHome: string | undefined;
+  const out: string[] = [];
+  const err: string[] = [];
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'realm-wf-ids-'));
+    originalHome = process.env['HOME'];
+    process.env['HOME'] = home;
+    out.length = 0;
+    err.length = 0;
+    vi.spyOn(console, 'log').mockImplementation((m: unknown) => void out.push(String(m)));
+    vi.spyOn(console, 'warn').mockImplementation((m: unknown) => void err.push(String(m)));
+  });
+
+  afterEach(() => {
+    if (originalHome === undefined) delete process.env['HOME'];
+    else process.env['HOME'] = originalHome;
+    rmSync(home, { recursive: true, force: true });
+    vi.restoreAllMocks();
+  });
+
+  const damaged = (id: string) =>
+    unreadableById(id, storedCopyFaultError(id, { kind: 'not_a_workflow', fault: 'no_steps' }))!;
+  const listing = (unreadable: UnreadableIdEntry[]): void => {
+    vi.spyOn(JsonWorkflowStore.prototype, 'listWithDiagnostics').mockResolvedValue({
+      workflows: [definition('ok')],
+      unreadable,
+      mismatched: [],
+    } as never);
+  };
+
+  it('one ⚠ line per class, each naming its one id, and the count line as before', async () => {
+    listing([
+      unreadableById('old', legacyCopyError('old'))!,
+      unreadableById('new', newerCopyError('new', 2))!,
+      damaged('bad'),
+    ]);
+    await workflowListCommand.parseAsync([], { from: 'user' });
+    // (1) red when the names are read from `file` (each line names "undefined"), or a class's line is
+    //     missing or worded as the file arm's; (2) prints the count line and every ⚠ line.
+    expect({ count: out.at(-1), lines: err }).toEqual({
+      count: '\n1 workflow registered; 3 entries in the registry could not be read.',
+      lines: [
+        `⚠ 1 workflow in the registry has a damaged stored copy: bad${TAIL}`,
+        `⚠ 1 workflow in the registry was registered by a later version of Realm: new${TAIL}`,
+        `⚠ 1 workflow in the registry was registered by an older version of Realm: old; re-register each from its source (realm workflow register <path-to-workflow>)${TAIL}`,
+      ],
+    });
+  });
+
+  it('several ids in one class: one line, counted, naming each', async () => {
+    listing([damaged('b1'), damaged('b2')]);
+    await workflowListCommand.parseAsync([], { from: 'user' });
+    // (1) red when the ids are read from `file`, or each id gets a line of its own; (2) prints the
+    //     ⚠ lines.
+    expect(err).toEqual([
+      `⚠ 2 workflows in the registry have damaged stored copies: b1, b2${TAIL}`,
+    ]);
+  });
+
+  it('--json: each entry as the registrar gave it — `workflow_id`, never `file`', async () => {
+    const entries = [unreadableById('old', legacyCopyError('old'))!, damaged('bad')];
+    listing(entries);
+    await workflowListCommand.parseAsync(['--json'], { from: 'user' });
+    const json = JSON.parse(out.join('\n')) as { unreadable: Array<Record<string, unknown>> };
+    // (1) red when an entry gains a `file` or loses its `workflow_id`; (2) prints each entry and its
+    //     keys.
+    expect({
+      unreadable: json.unreadable,
+      keys: json.unreadable.map((u) => Object.keys(u).sort()),
+    }).toEqual({
+      unreadable: entries,
+      keys: [
+        ['class', 'reason', 'workflow_id'],
+        ['class', 'reason', 'repair', 'workflow_id'],
+      ],
+    });
   });
 });

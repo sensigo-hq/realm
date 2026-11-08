@@ -1,5 +1,6 @@
 // workflow-store.ts — issue #616 PR-1b B3: THE WORKFLOW REGISTRY ON SQLITE. `SqliteWorkflowStore`
-// implements core's `WorkflowRegistrar` (`register`, `get`, `list`) on the home's database, in the
+// implements core's `WorkflowRegistrar` (`register`, `get`, `list`, and since #616 PR-2c c5a the
+// diagnostic listing `listWithDiagnostics`, by workflow id) on the home's database, in the
 // three tables core's schema constant declares (`workflow_versions`, `workflow_registrations`,
 // `workflows`; their guards are the design):
 //   - each distinct definition text is stored once, under the lowercase hex sha256 of its UTF-8
@@ -20,8 +21,10 @@ import {
   legacyCopyError,
   newerCopyError,
   storedCopyFaultError,
+  unreadableById,
   workflowNotFoundError,
   WorkflowError,
+  type UnreadableIdEntry,
   type WorkflowDefinition,
   type WorkflowRegistrar,
 } from '@sensigo/realm';
@@ -193,6 +196,39 @@ export class SqliteWorkflowStore implements WorkflowRegistrar {
       if (copy !== 'skip') definitions.push(copy);
     }
     return definitions;
+  }
+
+  /**
+   * #616 PR-2c c5a: everything `list()` returns, plus each current copy it cannot read, named by its
+   * workflow's id (the id arm of core's `RegistryListing`), read in the one snapshot `list()` reads.
+   * Each row is judged on its own, in id order, as `get` judges it: one bad row is its own entry and
+   * never fails the listing. A read that fails rejects with the read's error, as `list()` does.
+   * `mismatched` is always empty: register keys the row by the definition's own id.
+   */
+  async listWithDiagnostics(): Promise<{
+    workflows: WorkflowDefinition[];
+    unreadable: UnreadableIdEntry[];
+    mismatched: [];
+  }> {
+    const rows = await this.#db.snapshot(
+      (db) =>
+        db.prepare(`${CURRENT_COPY} ORDER BY w.id`).all() as Array<{
+          id: string;
+          definition: unknown;
+        }>,
+    );
+    const workflows: WorkflowDefinition[] = [];
+    const unreadable: UnreadableIdEntry[] = [];
+    for (const row of rows) {
+      try {
+        workflows.push(judge(row.id, row.definition, 'throw') as WorkflowDefinition);
+      } catch (err) {
+        const entry = err instanceof WorkflowError ? unreadableById(row.id, err) : undefined;
+        if (entry === undefined) throw err;
+        unreadable.push(entry);
+      }
+    }
+    return { workflows, unreadable, mismatched: [] };
   }
 }
 

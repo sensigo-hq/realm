@@ -3,7 +3,14 @@
 // `[]` + "use create_workflow" over an unreadable registry — steering the agent into minting a
 // duplicate of a workflow that still exists).
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { JsonWorkflowStore, type DisclosureClass } from '@sensigo/realm';
+import {
+  listWorkflowsDiagnosed,
+  type DisclosureClass,
+  type KeysOfUnion,
+  type UnreadableFileEntry,
+  type UnreadableRegistryEntry,
+  type WorkflowRegistrar,
+} from '@sensigo/realm';
 import {
   disclosureOfTool,
   safeTool,
@@ -17,26 +24,30 @@ import { toolMeta } from '../tool-annotations.js';
 import { assertToolStores } from './assert-tool-stores.js';
 
 export interface HandleStores {
-  /** The workflow registry — the class: the listing reads its `listWithDiagnostics`. #616 PR-2a
+  /** The workflow registry: any `WorkflowRegistrar` (#661). Listed through core's
+   *  `listWorkflowsDiagnosed`: its `listWithDiagnostics` when it has one, else `list()`. #616 PR-2a
    *  (ii-b): required — the handler builds no store. */
-  workflowStore: JsonWorkflowStore;
+  workflowStore: WorkflowRegistrar;
 }
 
-/** A registered copy the listing could not read — the same census `realm workflow list` prints. */
-export interface UnreadableWorkflowEntry {
-  /** The registry file (its basename), or the registry directory for `registry_broken`. */
-  file: string;
-  /** `unreadable` · `not_a_file` · `empty` · `parse` · `registry_broken` · `newer` (a later version
-   *  of Realm registered it) · `legacy` (an older version did) — never an error code. */
-  class: string;
-  /** Present only for the OS-error classes — never fabricated. */
-  errno?: string;
-  /** The store's own sentence for the failure. */
-  reason: string;
-  /** The repair act for the class — an operator's act (a shell command), named so the agent can
-   *  relay it; absent only for a class with no act. */
-  repair?: string;
-}
+/**
+ * A registered copy the listing could not read — the same census `realm workflow list` prints. Each
+ * entry carries exactly one of two fields (#616 PR-2c c5a), and all of one registry's entries carry
+ * the same one:
+ * - `file` (a registry of files, the JSON registry): the registry file's basename, or the registry
+ *   directory for `registry_broken`; `errno` only for the OS-error classes, never fabricated. Its
+ *   classes are eight: `missing` · `unreadable` · `not_a_file` · `empty` · `registry_broken` ·
+ *   `parse` · `newer` (a later version of Realm registered it) · `legacy` (an older version did).
+ * - `workflow_id` (a registry with no files, the SQLite registry): the registered workflow's id; never
+ *   `file` or `errno`. Its classes are three: `legacy` · `newer` · `parse` — a copy that is not JSON
+ *   or fails the checker, or a damaged pointer row, whose `repair` is absent because its `reason` names
+ *   the remedy.
+ *
+ * On both arms `class` is never an error code, `reason` is the store's own sentence for the failure,
+ * and `repair` is the repair act for it — an operator's act, named so the agent can relay it; absent
+ * for a failure with no act.
+ */
+export type UnreadableWorkflowEntry = UnreadableRegistryEntry;
 
 export type ListWorkflowsResult =
   | {
@@ -73,9 +84,10 @@ const HEALTHY_HINT =
  */
 export async function handleListWorkflows(stores: HandleStores): Promise<ListWorkflowsResult> {
   assertToolStores(stores, 'handleListWorkflows', ['workflowStore']);
-  const store = stores.workflowStore;
-  const { workflows, unreadable } = await store.listWithDiagnostics();
-  const broken = unreadable.find((u) => u.class === 'registry_broken');
+  const { workflows, unreadable } = await listWorkflowsDiagnosed(stores.workflowStore);
+  const broken = unreadable.find(
+    (u): u is UnreadableFileEntry => u.class === 'registry_broken' && u.file !== undefined,
+  );
   if (broken !== undefined) {
     return {
       status: 'error',
@@ -95,13 +107,25 @@ export async function handleListWorkflows(stores: HandleStores): Promise<ListWor
       hint: 'Realm could not read the registry directory, so it cannot tell you what is registered there; nothing can be listed or started until an operator repairs it. Do not create a workflow to work around it.',
     };
   }
-  const entries: UnreadableWorkflowEntry[] = unreadable.map((u) => ({
-    file: u.file,
-    class: u.class,
-    ...(u.errno !== undefined ? { errno: u.errno } : {}),
-    reason: u.reason,
-    ...(u.repair !== undefined ? { repair: u.repair } : {}),
-  }));
+  // #616 PR-2c c5a: each entry with its own arm's fields and no other — a `workflow_id` entry never
+  // carries `file`.
+  const entries: UnreadableWorkflowEntry[] = unreadable.map((u) =>
+    u.workflow_id !== undefined
+      ? {
+          workflow_id: u.workflow_id,
+          class: u.class,
+          reason: u.reason,
+          ...(u.repair !== undefined ? { repair: u.repair } : {}),
+        }
+      : {
+          file: u.file,
+          class: u.class,
+          ...(u.errno !== undefined ? { errno: u.errno } : {}),
+          reason: u.reason,
+          ...(u.repair !== undefined ? { repair: u.repair } : {}),
+        },
+  );
+  const byFile = entries.some((u) => u.file !== undefined);
   const count = `${String(entries.length)} registered workflow ${entries.length === 1 ? 'copy' : 'copies'} could not be read`;
   return {
     status: 'ok',
@@ -111,14 +135,15 @@ export async function handleListWorkflows(stores: HandleStores): Promise<ListWor
     hint:
       entries.length === 0
         ? HEALTHY_HINT
-        : // Correction 2 (3.5): by class — a newer or a legacy copy carries no `repair`; its reason
-          // names the way out.
-          `${count} — 'unreadable' names each file and the reason, with the repair where one applies (an operator's act). Do not create a workflow to replace one listed there until an operator has looked: the entry may be a registered workflow that only needs its file repaired, or one an older or a later version of Realm registered, whose reason names the way out. Call get_workflow_protocol with a workflow_id before calling start_run.`,
+        : byFile
+          ? // Correction 2 (3.5): by class — a newer or a legacy copy carries no `repair`; its reason
+            // names the way out.
+            `${count} — 'unreadable' names each file and the reason, with the repair where one applies (an operator's act). Do not create a workflow to replace one listed there until an operator has looked: the entry may be a registered workflow that only needs its file repaired, or one an older or a later version of Realm registered, whose reason names the way out. Call get_workflow_protocol with a workflow_id before calling start_run.`
+          : // #616 PR-2c c5a: entries by workflow id (the SQLite registry) — no file to repair; a
+            // damaged row's reason names what to do.
+            `${count} — 'unreadable' names each workflow by its id and the reason, with the repair where one applies (an operator's act). Do not create a workflow to replace one listed there until an operator has looked: the entry may be a registered workflow that only needs registering again from its source, one an older or a later version of Realm registered, whose reason names the way out, or a registry row that was damaged, whose reason names what to do. Call get_workflow_protocol with a workflow_id before calling start_run.`,
   };
 }
-
-/** Every key of every member of a union. */
-type KeysOfUnion<T> = T extends unknown ? keyof T : never;
 
 /** #729 PR-3 (M-1): the list's class table, over both arms. A file's reason is the error text a read
  *  gave (a diagnostic copy); paths, ids and the composed hint are facts. */
@@ -128,11 +153,12 @@ export const LIST_WORKFLOWS_TABLE = {
   unreadable: {
     nested: {
       file: 'fact',
+      workflow_id: 'fact',
       class: 'fact',
       errno: 'fact',
       reason: 'bounded',
       repair: 'fact',
-    } satisfies Record<keyof UnreadableWorkflowEntry, DisclosureClass>,
+    } satisfies Record<KeysOfUnion<UnreadableWorkflowEntry>, DisclosureClass>,
   },
   warnings: 'bounded',
   hint: 'fact',

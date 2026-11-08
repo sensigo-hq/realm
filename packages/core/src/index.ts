@@ -834,6 +834,17 @@ export {
 export { JsonWorkflowStore } from './workflow/registrar.js';
 export type { WorkflowRegistrar } from './workflow/registrar.js';
 export { getWorkflowForRun, definitionAbsenceOf } from './workflow/registrar.js';
+// #616 PR-2c c5a: the registry's diagnostic listing — its entry arms, the one function the hosts list
+// a registrar through, and the id arm's entry builder (the SQLite registry's).
+export { listWorkflowsDiagnosed, unreadableById } from './workflow/registrar.js';
+export type {
+  RegistryListing,
+  UnreadableRegistryEntry,
+  UnreadableFileEntry,
+  UnreadableIdEntry,
+  FileUnreadableClass,
+  IdUnreadableClass,
+} from './workflow/registrar.js';
 // #616 B2: the one judge of a registered copy, and the refusals of a copy that has no file, with the
 // words a copy with a file gets.
 export {
@@ -925,6 +936,7 @@ export type {
   DisclosureReceipt,
   FactProducer,
   FactProducers,
+  KeysOfUnion,
 } from './utils/disclosure-walk.js';
 export {
   PENDING_GATE_TABLE,
