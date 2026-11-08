@@ -16,7 +16,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   JsonFileStore,
-  JsonWorkflowStore,
+  type RealmWorkflowRegistrar,
   advanceRun,
   executeStep,
   expiryCarriedOutLine,
@@ -58,7 +58,7 @@ describe('#625 PR-2a, C146/C147 — a late `realm run respond` says which call c
   let project: string;
   let savedHome: string | undefined;
   let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let workflowStore: RealmWorkflowRegistrar;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;

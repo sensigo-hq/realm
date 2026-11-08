@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   JsonFileStore,
-  JsonWorkflowStore,
+  type RealmWorkflowRegistrar,
   ExtensionRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type StepDefinition,
@@ -70,7 +70,7 @@ async function stores(): Promise<{
   h: TempHome;
   home: string;
   runs: JsonFileStore;
-  workflows: JsonWorkflowStore;
+  workflows: RealmWorkflowRegistrar;
 }> {
   const h = await makeTempHome();
   return { h, home: h.root, runs: h.home.runStore, workflows: h.home.workflowStore };

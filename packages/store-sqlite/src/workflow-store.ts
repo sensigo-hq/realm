@@ -1,6 +1,7 @@
 // workflow-store.ts — issue #616 PR-1b B3: THE WORKFLOW REGISTRY ON SQLITE. `SqliteWorkflowStore`
-// implements core's `WorkflowRegistrar` (`register`, `get`, `list`, and since #616 PR-2c c5a the
-// diagnostic listing `listWithDiagnostics`, by workflow id) on the home's database, in the
+// implements core's `WorkflowRegistrar` (`register`, `get`, `list`, and since #616 PR-2c c5a and c5b
+// its optional members: the diagnostic listing `listWithDiagnostics`, by workflow id, and the capped
+// read `getCapped`) on the home's database, in the
 // three tables core's schema constant declares (`workflow_versions`, `workflow_registrations`,
 // `workflows`; their guards are the design):
 //   - each distinct definition text is stored once, under the lowercase hex sha256 of its UTF-8
@@ -24,9 +25,10 @@ import {
   unreadableById,
   workflowNotFoundError,
   WorkflowError,
+  type CappedRead,
+  type RealmWorkflowRegistrar,
   type UnreadableIdEntry,
   type WorkflowDefinition,
-  type WorkflowRegistrar,
 } from '@sensigo/realm';
 import { REALM_STORE_SQLITE_BRAND } from './brand.js';
 import type { RealmDb } from './connection.js';
@@ -36,6 +38,10 @@ import type { DatabaseLike } from './driver.js';
 const CURRENT_COPY = `SELECT w.id AS id, v.definition AS definition
 FROM workflows w LEFT JOIN workflow_versions v ON v.hash = w.current_hash AND v.id = w.id`;
 const POINTER = 'SELECT current_hash FROM workflows WHERE id = ?';
+/** #616 PR-2c c5b: the pointer of one workflow with its current copy's size in UTF-8 bytes (NULL when
+ *  no version sits under the pointer's hash). `octet_length` reads no content. */
+const CURRENT_SIZE = `SELECT octet_length(v.definition) AS bytes
+FROM workflows w LEFT JOIN workflow_versions v ON v.hash = w.current_hash AND v.id = w.id WHERE w.id = ?`;
 const VERSION_TEXT = 'SELECT definition FROM workflow_versions WHERE hash = ?';
 const NEWEST_REGISTRATION =
   'SELECT seq, hash, registered_at FROM workflow_registrations WHERE id = ? ORDER BY seq DESC LIMIT 1';
@@ -123,7 +129,7 @@ function judge(
 }
 
 /** Core's registrar on a Realm home's database (see the module comment). */
-export class SqliteWorkflowStore implements WorkflowRegistrar {
+export class SqliteWorkflowStore implements RealmWorkflowRegistrar {
   readonly #db: RealmDb;
 
   constructor(db: RealmDb) {
@@ -175,6 +181,29 @@ export class SqliteWorkflowStore implements WorkflowRegistrar {
     );
     if (row === undefined) throw workflowNotFoundError(workflowId);
     return judge(workflowId, row.definition, 'throw') as WorkflowDefinition;
+  }
+
+  /**
+   * #616 PR-2c c5b: the current copy read under a size cap, in one snapshot. The stored text's size
+   * in UTF-8 bytes is read first; a copy over `capBytes` answers that size and its text is never
+   * read. Otherwise the text is read and judged exactly as `get` judges it, refusals included (a
+   * damaged pointer's size is a byte count, 0 or NULL, and it answers as `get` does).
+   */
+  async getCapped(workflowId: string, capBytes: number): Promise<CappedRead> {
+    const read = await this.#db.snapshot((db) => {
+      const sized = db.prepare(CURRENT_SIZE).get(workflowId) as { bytes: unknown } | undefined;
+      if (sized === undefined) return { found: false as const };
+      if (typeof sized.bytes === 'number' && sized.bytes > capBytes) {
+        return { found: true as const, over: sized.bytes };
+      }
+      const row = db.prepare(`${CURRENT_COPY} WHERE w.id = ?`).get(workflowId) as {
+        definition: unknown;
+      };
+      return { found: true as const, definition: row.definition };
+    });
+    if (!read.found) throw workflowNotFoundError(workflowId);
+    if ('over' in read) return { over: { bytes: read.over } };
+    return { definition: judge(workflowId, read.definition, 'throw') as WorkflowDefinition };
   }
 
   /**

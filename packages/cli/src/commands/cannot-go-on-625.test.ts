@@ -12,7 +12,7 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   JsonFileStore,
-  JsonWorkflowStore,
+  type RealmWorkflowRegistrar,
   ExtensionRegistry,
   executeChain,
   executeStep,
@@ -95,7 +95,7 @@ async function stores(located = false): Promise<{
   home: string;
   path: string;
   runs: JsonFileStore;
-  workflows: JsonWorkflowStore;
+  workflows: RealmWorkflowRegistrar;
   clock?: TestLocation['clock'];
   cleanup: () => Promise<void>;
 }> {

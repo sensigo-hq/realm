@@ -26,7 +26,7 @@ vi.mock('node:readline/promises', () => ({
 
 import {
   JsonFileStore,
-  JsonWorkflowStore,
+  type RealmWorkflowRegistrar,
   ExtensionRegistry,
   advanceRun,
   createDefaultRegistry,
@@ -103,7 +103,7 @@ describe(
     let h: TempHome & { readonly root: string };
     let home: string;
     let runStore: JsonFileStore;
-    let workflowStore: JsonWorkflowStore;
+    let workflowStore: RealmWorkflowRegistrar;
 
     beforeEach(async () => {
       h = await makeTempHome();

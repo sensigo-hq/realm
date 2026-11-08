@@ -14,7 +14,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   JsonFileStore,
-  JsonWorkflowStore,
+  type RealmWorkflowRegistrar,
   executeStep,
   loadWorkflowFromString,
 } from '@sensigo/realm';
@@ -113,7 +113,7 @@ describe(
     let home: string;
     let elsewhere: string;
     let runStore: JsonFileStore;
-    let workflowStore: JsonWorkflowStore;
+    let workflowStore: RealmWorkflowRegistrar;
     const folders: string[] = [];
 
     beforeEach(async () => {

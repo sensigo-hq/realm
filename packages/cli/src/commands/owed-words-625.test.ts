@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   JsonFileStore,
-  JsonWorkflowStore,
+  type RealmWorkflowRegistrar,
   ExtensionRegistry,
   describePending,
   executeStep,
@@ -694,7 +694,7 @@ describe('#625 PR-2a, C37 — realm run advance and respond: the words after the
 describe('#625 PR-2a, C43 and C44 — realm run advance: the opening says whether anything is owed; one way out', () => {
   const advance = async (
     runs: JsonFileStore,
-    workflows: JsonWorkflowStore,
+    workflows: RealmWorkflowRegistrar,
     home: string,
     runId: string,
   ): Promise<{ code: 0 | 1; lines: string[] }> => {
@@ -909,7 +909,7 @@ describe('#625 PR-2a, round 6 — the count words (C55), the fit words (C56), an
     }) as ExtensionIdentityEntry;
   const preview = async (
     runs: JsonFileStore,
-    workflows: JsonWorkflowStore,
+    workflows: RealmWorkflowRegistrar,
     home: string,
     runId: string,
     registry: ExtensionRegistry,
