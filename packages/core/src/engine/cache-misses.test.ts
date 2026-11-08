@@ -7,14 +7,20 @@
 //
 // On a failing CI host each cell prints every entry's position, `request_in_call`,
 // `cache_requested`, `provider` and token counts (test values only; no record holds prompt text),
-// then the verdict that differed.
+// then the verdict that differed. Piece A-2a2's cells (`cacheMissCauses`, at the end) print more:
+// see `explain`.
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
+  cacheMissCauses,
   cachePredecessor,
   cacheReadVerdicts,
   type CacheNotComparedCause,
   type CacheReadVerdict,
 } from './cache-misses.js';
+
+/** The parts a request sent, each named by a label the builder turns into its SHA-256. */
+type Parts = { tools?: string; system?: string; prompt?: string; format?: string };
 
 type Spec = {
   /** A string on every request Realm records; absent or a number only in the cells of a record
@@ -29,7 +35,22 @@ type Spec = {
   /** The write, under the provider's own field; absent: not reported. */
   write?: unknown;
   reference?: unknown;
+  // Piece A-2a2's facts; each is absent unless a cell sets it.
+  /** `endpoint`, the client's kind; absent: `default`. */
+  endpoint?: string;
+  /** Anthropic's `cache_lifetime_s` on a `lifetime` request; absent: 300. */
+  lifetime_s?: number;
+  /** `request_strict_sent`. */
+  strict?: boolean;
+  /** `cache_marked`. */
+  marked?: string[];
+  /** `prefix_chars`: present on a split request (0 for a blank head). */
+  prefix_chars?: number;
+  /** `prefix_parts`. */
+  parts?: Parts;
 };
+
+const sha256 = (label: string): string => createHash('sha256').update(label).digest('hex');
 
 /** One step's stored list, an entry per spec, in order. */
 function stored(...specs: Spec[]): Record<string, unknown>[] {
@@ -40,22 +61,37 @@ function stored(...specs: Spec[]): Record<string, unknown>[] {
       request_start: `2026-11-08T05:00:${String(i).padStart(2, '0')}.000Z`,
       request_index: i,
       model: anthropic ? 'claude-sonnet-5-5' : 'gpt-5.5',
-      endpoint: 'default',
+      endpoint: s.endpoint ?? 'default',
       ...(s.provider === undefined ? {} : { provider: s.provider }),
       input_tokens: 4 + count(s.read) + count(s.write),
       output_tokens: 40,
     };
+    const lifetime = s.lifetime_s ?? 300;
     if (s.asked !== undefined) r['cache_requested'] = s.asked;
-    if (anthropic && s.asked === 'lifetime') r['cache_lifetime_s'] = 300;
+    if (anthropic && s.asked === 'lifetime') r['cache_lifetime_s'] = lifetime;
     if (s.read !== undefined) r['cache_read_input_tokens'] = s.read;
     if (s.write !== undefined) {
       r[anthropic ? 'cache_creation_input_tokens' : 'cache_write_tokens'] = s.write;
       if (anthropic && typeof s.write === 'number') {
-        r['cache_creation'] = { ephemeral_5m_input_tokens: s.write, ephemeral_1h_input_tokens: 0 };
+        const hour = lifetime === 3600;
+        r['cache_creation'] = {
+          ephemeral_5m_input_tokens: hour ? 0 : s.write,
+          ephemeral_1h_input_tokens: hour ? s.write : 0,
+        };
       }
     }
     if (s.in_call !== undefined) r['request_in_call'] = s.in_call;
     if (s.reference !== undefined) r['reference'] = s.reference;
+    if (s.prefix_chars !== undefined) r['prefix_chars'] = s.prefix_chars;
+    if (s.parts !== undefined) {
+      const digests: Record<string, string> = {};
+      for (const [part, label] of Object.entries(s.parts)) {
+        if (typeof label === 'string') digests[part] = sha256(label);
+      }
+      r['prefix_parts'] = digests;
+    }
+    if (s.marked !== undefined) r['cache_marked'] = [...s.marked];
+    if (s.strict !== undefined) r['request_strict_sent'] = s.strict;
     return r;
   });
 }
@@ -488,4 +524,451 @@ describe("caching 3-M A-2a1 — who asked: a provider module's request, and a pr
       expect(cacheReadVerdicts(list), show(list)).toEqual([{ outcome: 'not_asked' }]);
     },
   );
+});
+
+// Piece A-2a2: why a request that missed may have missed (`cacheMissCauses`). In every cell each
+// missed request and its predecessor have the same provider, endpoint, model and
+// `request_strict_sent`, and the request has a tools part whenever its predecessor has one.
+
+/** A-1b's copy of an earlier drive's request, as the run's record keeps it: the request's own
+ *  fields under `CacheReference`'s keys, never a place, an index or token totals. */
+function referenceOf(spec: Spec): Record<string, unknown> {
+  const {
+    request_index: _index,
+    request_in_call: _place,
+    input_tokens: _input,
+    output_tokens: _output,
+    ...kept
+  } = stored(spec)[0] ?? {};
+  return { from: 'run', ...kept, request_start: '2026-11-08T04:00:00.000Z' };
+}
+
+/** A later drive's step: one request, `now`, judged against its reference, `before`. */
+function againstReference(now: Spec, before: Spec): Record<string, unknown>[] {
+  return stored({ ...now, in_call: 0, reference: referenceOf(before) });
+}
+
+/**
+ * What an A-2a2 cell prints on failure, per entry: its position, A-2a1's verdict, the facts a cause
+ * reads, the counts, and the parts it records with, against the predecessor its verdict names,
+ * whether each part's digest is the same (=), differs (≠) or is on one side only. Its reference is
+ * printed the same way. Never a digest or a prompt's text.
+ */
+function explain(list: readonly unknown[]): string {
+  const verdicts = cacheReadVerdicts(list);
+  const record = (e: unknown): Record<string, unknown> | undefined =>
+    e !== null && typeof e === 'object' && !Array.isArray(e)
+      ? (e as Record<string, unknown>)
+      : undefined;
+  const facts = (r: Record<string, unknown>): string =>
+    [
+      `provider=${String(r['provider'])}`,
+      `endpoint=${String(r['endpoint'])}`,
+      `model=${String(r['model'])}`,
+      `in_call=${String(r['request_in_call'])}`,
+      `asked=${String(r['cache_requested'])}`,
+      `marked=${JSON.stringify(r['cache_marked'])}`,
+      `lifetime_s=${String(r['cache_lifetime_s'])}`,
+      `strict=${String(r['request_strict_sent'])}`,
+      `prefix_chars=${String(r['prefix_chars'])}`,
+      `read=${JSON.stringify(r['cache_read_input_tokens'])}`,
+      `write=${JSON.stringify(r['cache_creation_input_tokens'] ?? r['cache_write_tokens'])}`,
+    ].join(' ');
+  const parts = (r: Record<string, unknown>, against?: Record<string, unknown>): string => {
+    const mine = record(r['prefix_parts']) ?? {};
+    const theirs = against === undefined ? undefined : (record(against['prefix_parts']) ?? {});
+    const keys = [...new Set([...Object.keys(mine), ...Object.keys(theirs ?? {})])];
+    const each = keys.map((k) => {
+      if (theirs === undefined) return k;
+      if (!Object.hasOwn(mine, k)) return `${k}(predecessor only)`;
+      if (!Object.hasOwn(theirs, k)) return `${k}(here only)`;
+      return `${k}(${mine[k] === theirs[k] ? '=' : '≠'})`;
+    });
+    return `parts: ${each.join(' ') || 'none'}`;
+  };
+  return list
+    .map((e, i) => {
+      const r = record(e);
+      if (r === undefined) return `#${i} ${JSON.stringify(e)}`;
+      const v = verdicts[i];
+      const before =
+        v === undefined || !('predecessor' in v)
+          ? undefined
+          : v.predecessor.from === 'list'
+            ? record(list[v.predecessor.at])
+            : record(r['reference']);
+      const ref = record(r['reference']);
+      return (
+        `#${i} verdict=${JSON.stringify(v)} ${facts(r)} ${parts(r, before)}` +
+        (ref === undefined ? '' : `\n   reference: ${facts(ref)} ${parts(ref)}`)
+      );
+    })
+    .join('\n');
+}
+
+/** Anthropic: an earlier request read 0 and wrote 6,897; a request that reads 0 then misses. */
+const anthropicWrote: Spec = {
+  provider: A,
+  asked: 'lifetime',
+  read: 0,
+  write: 6897,
+  strict: false,
+};
+/** OpenAI before GPT-5.6: an earlier request read 8,000 and reported no write… */
+const openaiRead: Spec = { provider: O, asked: 'provider_rules', read: 8000, strict: false };
+/** …and a request that read 0 misses by 8,000 under the tolerance. */
+const openaiMissed: Spec = { provider: O, asked: 'provider_rules', read: 0, strict: false };
+
+describe('caching 3-M A-2a2 — the cached span, judged on both sides (each against a reference)', () => {
+  // An Anthropic single-shot step whose prompt is not split: only the system text is marked, on
+  // both. The step's input changed, so the prompt differs, but it was never cached. Can fail: the
+  // span ignored (a differing prompt compared anyway) names `prompt`. Prints each entry.
+  it('a prompt outside what both asked to be cached is no cause: unexplained', () => {
+    const list = againstReference(
+      {
+        ...anthropicWrote,
+        marked: ['system'],
+        parts: { tools: 'submit', system: 'profile', prompt: 'input B' },
+      },
+      {
+        ...anthropicWrote,
+        marked: ['system'],
+        parts: { tools: 'submit', system: 'profile', prompt: 'input A' },
+      },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual(['unexplained']);
+  });
+
+  // An Anthropic split single-shot step (`system` and `prompt` marked on both), after a workflow
+  // edit of the text before the step's first placeholder. Can fail: `prompt` left out of the marks
+  // that put the prompt inside (unexplained). Prints each entry.
+  it('a cached prompt head that differs is named prompt', () => {
+    const list = againstReference(
+      {
+        ...anthropicWrote,
+        marked: ['system', 'prompt'],
+        prefix_chars: 48,
+        parts: { tools: 'submit', system: 'profile', prompt: 'head after the edit' },
+      },
+      {
+        ...anthropicWrote,
+        marked: ['system', 'prompt'],
+        prefix_chars: 40,
+        parts: { tools: 'submit', system: 'profile', prompt: 'head before the edit' },
+      },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual(['prompt']);
+  });
+
+  // A workflow edit put literal text before the step's first placeholder: the earlier drive's head
+  // was blank (`prefix_chars: 0`, only `system` marked), this drive's is not (`prompt` marked too).
+  // The prompt lies inside on this side only, so it is not compared; the marks differ. Can fail:
+  // the span judged on the request only names `prompt`. Prints each entry.
+  it('a prompt cached on the request but not on its predecessor is not compared: cache_settings', () => {
+    const list = againstReference(
+      {
+        ...anthropicWrote,
+        marked: ['system', 'prompt'],
+        prefix_chars: 30,
+        parts: { tools: 'submit', system: 'profile', prompt: 'literal head' },
+      },
+      {
+        ...anthropicWrote,
+        marked: ['system'],
+        prefix_chars: 0,
+        parts: { tools: 'submit', system: 'profile', prompt: 'blank head' },
+      },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual(['cache_settings']);
+  });
+
+  // The reverse edit, that literal text removed: the earlier drive's head was not blank, this
+  // drive's is. Can fail: the span judged on the predecessor only names `prompt`. Prints each
+  // entry.
+  it('a prompt cached on the predecessor but not on the request is not compared: cache_settings', () => {
+    const list = againstReference(
+      {
+        ...anthropicWrote,
+        marked: ['system'],
+        prefix_chars: 0,
+        parts: { tools: 'submit', system: 'profile', prompt: 'blank head' },
+      },
+      {
+        ...anthropicWrote,
+        marked: ['system', 'prompt'],
+        prefix_chars: 30,
+        parts: { tools: 'submit', system: 'profile', prompt: 'literal head' },
+      },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual(['cache_settings']);
+  });
+
+  // OpenAI before GPT-5.6 at its own address (`provider_rules`), a split step, the same edit: the
+  // earlier drive's blank head sent no key and recorded no marks; this drive's head records `key`.
+  // Under `provider_rules` the prompt lies inside on both sides, and both are split, so it is
+  // compared, before the settings. Can fail: `provider_rules` left out of the span, or
+  // `prefix_chars: 0` read as absent (a truthiness test): each names `cache_settings`. Prints each
+  // entry.
+  it('under provider_rules a split prompt is compared on both sides, a blank head included: prompt', () => {
+    const list = againstReference(
+      {
+        ...openaiMissed,
+        marked: ['key'],
+        prefix_chars: 30,
+        parts: { system: 'profile', prompt: 'literal head', format: 'json_object' },
+      },
+      {
+        ...openaiRead,
+        prefix_chars: 0,
+        parts: { system: 'profile', prompt: 'blank head', format: 'json_object' },
+      },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual(['prompt']);
+  });
+
+  // An Anthropic tool step (`system` and `conversation` marked on both). Its reference is an
+  // earlier drive's repair opener, whose prompt carries that drive's repair feedback. Can fail:
+  // `conversation` left out of the span (unexplained). Prints each entry.
+  it("a tool step's prompt differs from an earlier drive's repair opener: prompt", () => {
+    const list = againstReference(
+      {
+        ...anthropicWrote,
+        marked: ['system', 'conversation'],
+        parts: { tools: 'mcp tools', system: 'profile', prompt: 'input' },
+      },
+      {
+        ...anthropicWrote,
+        marked: ['system', 'conversation'],
+        parts: { tools: 'mcp tools', system: 'profile', prompt: "input and that drive's feedback" },
+      },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual(['prompt']);
+  });
+});
+
+describe("caching 3-M A-2a2 — the prompt's two shapes", () => {
+  // Both on a gateway (`endpoint: 'custom'`) under the runner's default, so no key goes out and
+  // nothing is marked on either. After a workflow edit the earlier drive's request split its prompt
+  // and this one did not: one `prompt` digests a head, the other a whole prompt. Can fail: the shape
+  // rule dropped names `prompt`. Prints each entry.
+  it('a split prompt and a whole prompt are not compared: unexplained', () => {
+    const list = againstReference(
+      { ...openaiMissed, endpoint: 'custom', parts: { system: 'profile', prompt: 'whole prompt' } },
+      {
+        ...openaiRead,
+        endpoint: 'custom',
+        prefix_chars: 25,
+        parts: { system: 'profile', prompt: 'head' },
+      },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual(['unexplained']);
+  });
+});
+
+describe('caching 3-M A-2a2 — the parts, in order', () => {
+  // Inside one list: an Anthropic tool step whose repair opener (position 2) follows the MCP server
+  // listing different tools; its prompt also carries the feedback. Position 1 is the first call's
+  // final request (no `cache_requested`). Can fail: the tools check removed (unexplained). Prints
+  // each entry.
+  it("tools re-listed differently before a repair opener: tools, before the prompt's feedback", () => {
+    const conversation = ['system', 'conversation'];
+    const list = stored(
+      {
+        ...anthropicWrote,
+        in_call: 0,
+        marked: conversation,
+        parts: { tools: 'mcp tools, first listing', system: 'profile', prompt: 'input' },
+      },
+      {
+        provider: A,
+        in_call: 1,
+        read: 6897,
+        write: 0,
+        strict: false,
+        parts: { system: 'profile', prompt: 'input' },
+      },
+      {
+        ...anthropicWrote,
+        in_call: 0,
+        marked: conversation,
+        parts: {
+          tools: 'mcp tools, second listing',
+          system: 'profile',
+          prompt: 'input and feedback',
+        },
+      },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual([undefined, undefined, 'tools']);
+  });
+
+  // Inside one list: an OpenAI tool step with no `prompt:`, before GPT-5.6 (`provider_rules`, not
+  // strict). Call 0 is positions 0–2: two turns and its final request, which sends no tools and
+  // reads in full (held). Position 3 is call 1's first request, the repair opener; its predecessor
+  // is call 0's first request, which read from the cache and reports no write. The SDK types that
+  // field as optional; the captured pre-5.6 answers carry none, but all were cold reads, so this
+  // warm shape is built from the type. Only the prompt differs (its feedback). Can fail: a prompt
+  // difference inside one list named `prompt`, or the predecessor taken as the entry just before
+  // (the final request, with no tools: `tools`). Prints each entry.
+  it('inside one list a prompt difference names nothing: unexplained', () => {
+    const turn: Parts = {
+      tools: 'mcp tools',
+      system: 'profile',
+      prompt: 'input',
+      format: 'json_object',
+    };
+    const list = stored(
+      { ...openaiRead, in_call: 0, read: 4000, parts: turn },
+      { ...openaiRead, in_call: 1, read: 5000, parts: turn },
+      {
+        ...openaiRead,
+        in_call: 2,
+        read: 5000,
+        parts: { system: 'profile', prompt: 'input', format: 'json_object' },
+      },
+      { ...openaiMissed, in_call: 0, parts: { ...turn, prompt: 'input and feedback' } },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      'unexplained',
+    ]);
+  });
+
+  // Against a reference after a profile edit: an Anthropic tool step whose reference is an earlier
+  // drive's repair opener, so the system text and the prompt both differ. Can fail: the system
+  // check removed, or the prompt checked before it (each names `prompt`). Prints each entry.
+  it('the system text and the prompt both differ: system', () => {
+    const list = againstReference(
+      {
+        ...anthropicWrote,
+        marked: ['system', 'conversation'],
+        parts: { tools: 'mcp tools', system: 'profile after the edit', prompt: 'input' },
+      },
+      {
+        ...anthropicWrote,
+        marked: ['system', 'conversation'],
+        parts: {
+          tools: 'mcp tools',
+          system: 'profile before the edit',
+          prompt: "input and that drive's feedback",
+        },
+      },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual(['system']);
+  });
+
+  // Against a reference: the same gateway (`endpoint: 'custom'` on both), reached through
+  // `OPENAI_BASE_URL` in drive 1 (JSON mode on) and `--base-url` in drive 2 (off), for a non-strict
+  // step: drive 1 sent a format part, drive 2 none. Can fail: the format check removed
+  // (unexplained). Prints each entry.
+  it('JSON mode moved with --base-url: format', () => {
+    const list = againstReference(
+      { ...openaiMissed, endpoint: 'custom', parts: { system: 'profile', prompt: 'input' } },
+      {
+        ...openaiRead,
+        endpoint: 'custom',
+        parts: { system: 'profile', prompt: 'input', format: 'json_object' },
+      },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual(['format']);
+  });
+
+  // Against a reference after an Anthropic schema and profile edit: the submit tool and the system
+  // text both differ. Can fail: the order reversed, or the tools check removed (each names
+  // `system`). Prints each entry.
+  it('the tools and the system text both differ: tools', () => {
+    const list = againstReference(
+      {
+        ...anthropicWrote,
+        marked: ['system'],
+        parts: { tools: 'submit, schema 2', system: 'profile 2, schema 2', prompt: 'input' },
+      },
+      {
+        ...anthropicWrote,
+        marked: ['system'],
+        parts: { tools: 'submit, schema 1', system: 'profile 1, schema 1', prompt: 'input' },
+      },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual(['tools']);
+  });
+});
+
+describe('caching 3-M A-2a2 — the cache settings (each against a reference)', () => {
+  // OpenAI before GPT-5.6 at its own address, a split step: drive 1 ran under the runner's default
+  // and sent the key (`cache_marked: ['key']`); drive 2 ran under `--prompt-cache off`, still
+  // `provider_rules`, with no key. Every part is the same. Can fail: the settings check removed
+  // (unexplained). Prints each entry.
+  it('the key sent in one drive and not the other: cache_settings', () => {
+    const split: Parts = { system: 'profile', prompt: 'head', format: 'json_object' };
+    const list = againstReference(
+      { ...openaiMissed, prefix_chars: 30, parts: split },
+      { ...openaiRead, marked: ['key'], prefix_chars: 30, parts: split },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual(['cache_settings']);
+  });
+
+  // Anthropic: drive 1 asked for 5 minutes and drive 2 for 1 hour, with the same marks and parts;
+  // only `cache_lifetime_s` differs, and on Anthropic that alone reads in full. Can fail: the
+  // lifetime compared (cache_settings). Prints each entry.
+  it('a lifetime-only change is no cause: unexplained', () => {
+    const split: Spec = {
+      ...anthropicWrote,
+      marked: ['system', 'prompt'],
+      prefix_chars: 30,
+      parts: { tools: 'submit', system: 'profile', prompt: 'head' },
+    };
+    const list = againstReference({ ...split, lifetime_s: 3600 }, { ...split, lifetime_s: 300 });
+    expect(cacheMissCauses(list), explain(list)).toEqual(['unexplained']);
+  });
+});
+
+describe('caching 3-M A-2a2 — only a request that missed gets a cause, and it never throws', () => {
+  // An Anthropic tool step that read what it should: the first request has nothing earlier, the
+  // second is held, the final asked nothing. The outcomes are checked first, so the cell cannot
+  // pass on a list with no held entry. Can fail: a cause minted for a held request. Prints each
+  // entry.
+  it('a request not compared, held or not asked gets no cause', () => {
+    const conversation = ['system', 'conversation'];
+    const turn: Parts = { tools: 'mcp tools', system: 'profile', prompt: 'input' };
+    const list = stored(
+      { ...anthropicWrote, in_call: 0, marked: conversation, parts: turn },
+      { ...anthropicWrote, in_call: 1, read: 6897, write: 96, marked: conversation, parts: turn },
+      { provider: A, in_call: 2, read: 6993, write: 0, strict: false, parts: turn },
+    );
+    expect(
+      cacheReadVerdicts(list).map((v) => v.outcome),
+      explain(list),
+    ).toEqual(['not_compared', 'held', 'not_asked']);
+    expect(cacheMissCauses(list), explain(list)).toEqual([undefined, undefined, undefined]);
+  });
+
+  // A step that called no model has no list. Mapped over `cacheReadVerdicts`, which already gives
+  // `[]` there, so removing the array test leaves this green (GROUNDING). Prints the input.
+  it('requests that is not an array gives no causes', () => {
+    expect(cacheMissCauses(undefined), 'requests: undefined').toEqual([]);
+  });
+
+  // A-2a1's check-6 list: entries that are not objects, then an Anthropic call whose second
+  // request carries its counts as strings. Can fail: an entry's fields read before its verdict is
+  // known to be `missed` (the `null` entry throws). Prints the list and the error, then the causes.
+  it('a list from another writer is read without a throw, and nothing in it missed', () => {
+    const list: unknown[] = [
+      null,
+      'a string',
+      ['an', 'array'],
+      ...stored(
+        { provider: A, in_call: 0, asked: 'lifetime', read: 0, write: 6897 },
+        { provider: A, in_call: 1, asked: 'lifetime', read: '6897', write: '96' },
+      ),
+    ];
+    expect(() => cacheMissCauses(list), explain(list)).not.toThrow();
+    expect(cacheMissCauses(list), explain(list)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ]);
+  });
 });

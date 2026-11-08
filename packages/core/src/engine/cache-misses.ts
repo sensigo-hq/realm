@@ -1,12 +1,14 @@
 // cache-misses.ts — caching #600, 3-M piece A-2a1: whether each request of one stored list read
 // what the request before it left in the provider's cache, worked out when the record is read
-// (n8n's way), from what the records hold. Why a request missed is piece A-2a2; showing it is A-2b.
+// (n8n's way), from what the records hold. Piece A-2a2: for a request that missed, the first
+// difference on the record between it and its predecessor (pieces A-2a2r and A-2a3 add causes).
+// Showing it is A-2b.
 //
 // Pure: no clock, no I/O, no store. Total: it never throws on a stored list, whatever another
 // writer or an older version put in it. Not exported from core's index: it has no public shape
 // until A-2b.
 import { counter } from '../economics/price-source.js';
-import type { CacheRequest } from '../types/run-record.js';
+import type { CacheRequest, PrefixParts } from '../types/run-record.js';
 import { cacheWriteField } from './step-view.js';
 
 /** What `cacheReadVerdicts` says of one request. */
@@ -199,4 +201,122 @@ function verdictAt(list: readonly unknown[], i: number): CacheReadVerdict {
 export function cacheReadVerdicts(requests: unknown): CacheReadVerdict[] {
   if (!Array.isArray(requests)) return [];
   return requests.map((_, i) => verdictAt(requests, i));
+}
+
+/**
+ * Why a request that missed may have missed (piece A-2a2): the first difference on the record
+ * between it and its predecessor, checked in this order. Each names a difference the records hold,
+ * never a proven cause.
+ */
+export const CACHE_MISS_CAUSES = [
+  /** The request or its predecessor has no `prefix_parts` on the record (another writer's request,
+   *  or one written before Realm recorded the parts), so no part could be compared. */
+  'parts_not_recorded',
+  /** The tools part differs: inside one list the MCP server listed different tools between
+   *  attempts; against an earlier drive's request also a workflow edit (on Anthropic a schema edit
+   *  changes the submit tool). */
+  'tools',
+  /** The instructions part differs: against an earlier drive's request, an edit of the profile or
+   *  of the step's instructions, or another Realm version's base text; Realm never changes it
+   *  within a drive. */
+  'system',
+  /** The prompt part differs where both requests had it cached, against an earlier drive's request:
+   *  from the step's input, the workflow file (every drive re-loads it), or that drive's repair
+   *  feedback (the earlier request can be a repair attempt's first request). */
+  'prompt',
+  /** The answer-format part differs: against an earlier drive's request, JSON mode moved with
+   *  `--base-url` while the client's kind stayed the same (a schema edit also changes the
+   *  instructions, so it is named `system`). */
+  'format',
+  /** What carried a cache marker or the key differs (no `cache_marked` is none): against an
+   *  earlier drive's request `--prompt-cache off`, a setting stated on a gateway, or a workflow
+   *  edit that moves where the prompt's fixed start ends; inside one list only Realm's gateway rule
+   *  dropping OpenAI's key. A lifetime-only change is not one: on Anthropic it reads in full. */
+  'cache_settings',
+  /** None of the causes above applies. The record cannot see a split request's cached tail under
+   *  `provider_rules` (it has no digest), a move between two custom addresses (`endpoint` is only
+   *  a kind), the conversation after the prompt (tool results), or the provider evicting the
+   *  entry. */
+  'unexplained',
+] as const;
+export type CacheMissCause = (typeof CACHE_MISS_CAUSES)[number];
+
+/** One part's digest on one side, or `undefined` where that side has none. */
+function digest(parts: Entry, part: keyof PrefixParts): string | undefined {
+  const value = parts[part];
+  return typeof value === 'string' ? value : undefined;
+}
+
+/** What carried a cache marker or the key on one side; no `cache_marked` is none. */
+function marks(side: Entry): ReadonlySet<unknown> {
+  const marked = side['cache_marked'];
+  return new Set<unknown>(Array.isArray(marked) ? marked : []);
+}
+
+function sameSet(a: ReadonlySet<unknown>, b: ReadonlySet<unknown>): boolean {
+  return a.size === b.size && [...a].every((member) => b.has(member));
+}
+
+/** Behaviour 2: whether the prompt lies inside what this side asked to be cached. */
+function promptInside(side: Entry): boolean {
+  const marked = marks(side);
+  return (
+    marked.has('prompt') ||
+    marked.has('conversation') ||
+    side['cache_requested'] === 'provider_rules'
+  );
+}
+
+/** A split request's `prompt` digests the head, any other the whole prompt; a blank head is 0. */
+function split(side: Entry): boolean {
+  return typeof side['prefix_chars'] === 'number';
+}
+
+/**
+ * Behaviour 3 for the missed request at `i`, whose predecessor came `from` the list or its
+ * reference. Both sides asked (A-2a1's predecessor rule returns only a request that asked), so
+ * tools, system and format lie inside what both asked to be cached; the prompt is checked per side.
+ */
+function causeAt(
+  list: readonly unknown[],
+  i: number,
+  from: CachePredecessorPlace['from'],
+): CacheMissCause {
+  // Called only for a request that missed, which is a plain object that asked: that is what makes
+  // this read safe, so it comes first (no later check stands in for it).
+  const now = list[i] as Entry;
+  const nowParts = now['prefix_parts'];
+  const before = cachePredecessor(list, i);
+  // A missed request always has a predecessor; without one no part could be compared.
+  if (before === undefined) return 'parts_not_recorded';
+  const beforeParts = before['prefix_parts'];
+  if (!plainObject(nowParts) || !plainObject(beforeParts)) return 'parts_not_recorded';
+  const differs = (part: keyof PrefixParts): boolean =>
+    digest(nowParts, part) !== digest(beforeParts, part);
+  if (differs('tools')) return 'tools';
+  if (differs('system')) return 'system';
+  // Inside one list a prompt difference can come only from repair feedback (A-2a2r names it).
+  if (
+    from === 'reference' &&
+    promptInside(now) &&
+    promptInside(before) &&
+    split(now) === split(before) &&
+    differs('prompt')
+  ) {
+    return 'prompt';
+  }
+  if (differs('format')) return 'format';
+  if (!sameSet(marks(now), marks(before))) return 'cache_settings';
+  return 'unexplained';
+}
+
+/**
+ * One entry per entry of `requests`, in the list's order: for a request `cacheReadVerdicts` calls
+ * `missed`, its one cause; for every other, `undefined`. `[]` when `requests` is not an array.
+ */
+export function cacheMissCauses(requests: unknown): (CacheMissCause | undefined)[] {
+  if (!Array.isArray(requests)) return [];
+  return cacheReadVerdicts(requests).map((verdict, i) =>
+    verdict.outcome === 'missed' ? causeAt(requests, i, verdict.predecessor.from) : undefined,
+  );
 }
