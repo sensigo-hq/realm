@@ -17,9 +17,11 @@
 // says where it stopped and what to do.
 //
 // The logic is `runImport`, which returns the exit code and touches no `process` field; the command is
-// a thin wrapper that sets `process.exitCode` and returns — never `process.exit`, which cuts the piped
-// output whose last lines are the summary and the stop's explanation. Every string from a file or an
-// error goes through the core's `shown`, so no file can make a second line.
+// a thin wrapper that sets `process.exitCode` and returns — never `process.exit`, which can drop output
+// a pipe has not taken yet, and the summary and the stop's explanation are the last lines (a bare Node
+// process does lose it; this CLI was not seen to, and why is not explained: MA3-2C11-B-ERRATUM-01).
+// Every string from a file or an error goes through the core's `shown`, so no file can make a second
+// line.
 import { readdir, stat } from 'node:fs/promises';
 import { Command } from 'commander';
 import { openRealmHome, type RealmHome } from '@sensigo/realm-store-sqlite';
@@ -223,7 +225,7 @@ export const runImportCommand = new Command('import')
     const opened: { home?: RealmHome } = {};
     try {
       // `process.exitCode`, never `process.exit`: the summary and the stop's lines are the last
-      // ones, and `process.exit` cuts output a pipe has not taken yet.
+      // ones, and `process.exit` can drop output a pipe has not taken yet (see the module comment).
       process.exitCode = await runImport(paths, {
         openHome: async () => (opened.home = await openRealmHome()),
         out: (line) => console.log(line),
