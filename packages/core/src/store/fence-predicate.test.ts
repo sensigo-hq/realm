@@ -104,7 +104,7 @@ const NOT_FOUND = {
 
 const NOT_A_FENCE_TAIL =
   '. A fenced trace-buffer method takes a FencePredicate — an object whose kind is one of ' +
-  'step_open_for_trace, run_absent, run_absent_or_terminal, run_at_version, step_not_in_progress.';
+  'step_open_for_trace, run_absent_or_terminal, run_at_version, step_not_in_progress.';
 
 const ENGINE_INTERNAL = {
   class: 'WorkflowError',
@@ -211,20 +211,6 @@ const REFUSALS: Array<{
       // (a) red when the claim's deadline is not said; (b) prints the message.
       message: "Step 'step-a' is held by another call until 2026-10-16T12:00:00.000Z.",
       details: { step_id: 'step-a', step_state: 'in_progress', run_version: 7 },
-    },
-  },
-  {
-    label: 'run_absent × the run exists again',
-    fence: { kind: 'run_absent' },
-    record: run(),
-    expected: {
-      class: 'WorkflowError',
-      message: "Run 'run-1' exists again — no longer an orphan",
-      code: 'STATE_RUN_RESURRECTED',
-      category: 'STATE',
-      agentAction: 'report_to_user',
-      retryable: false,
-      details: { runId: 'run-1' },
     },
   },
   {
@@ -403,11 +389,11 @@ const REFUSALS: Array<{
   },
   {
     label: 'a wrong field: an unexpected field on a member that takes none',
-    fence: { kind: 'run_absent', version: 3 },
+    fence: { kind: 'run_absent_or_terminal', version: 3 },
     record: run(),
     expected: {
       ...ENGINE_INTERNAL,
-      message: "Invalid 'run_absent' fence: it has an unexpected 'version' field.",
+      message: "Invalid 'run_absent_or_terminal' fence: it has an unexpected 'version' field.",
     },
   },
   {
@@ -512,7 +498,6 @@ const PASSES: Array<{
     record: run(),
     stepId: STEP_ID,
   },
-  { label: 'run_absent × the run is absent', fence: { kind: 'run_absent' }, record: null },
   {
     label: 'run_absent_or_terminal × the run is absent',
     fence: { kind: 'run_absent_or_terminal' },
@@ -601,10 +586,9 @@ describe('evaluateFence — every refusal, field by field (issue #616 PR-0)', ()
     ).toEqual(['step_open_for_trace', 'step_not_in_progress']);
   });
 
-  it('FENCE_PREDICATE_KINDS names the five members in declaration order', () => {
+  it('FENCE_PREDICATE_KINDS names the four members in declaration order', () => {
     expect(FENCE_PREDICATE_KINDS).toEqual([
       'step_open_for_trace',
-      'run_absent',
       'run_absent_or_terminal',
       'run_at_version',
       'step_not_in_progress',
@@ -639,10 +623,9 @@ describe('readRunForFence — the reader’s own "run not found" (FENCE_REQUIRES
     }
   });
 
-  it('the three members that tolerate absence read it as "no run"', async () => {
+  it('the two members that tolerate absence read it as "no run"', async () => {
     for (const fence of [
       { kind: 'step_open_for_trace', run_version: 1 },
-      { kind: 'run_absent' },
       { kind: 'run_absent_or_terminal' },
     ] satisfies FencePredicate[]) {
       await expect(readRunForFence(goneReader, RUN_ID, fence), fence.kind).resolves.toBeNull();
@@ -658,7 +641,6 @@ describe('readRunForFence — the reader’s own "run not found" (FENCE_REQUIRES
     });
     for (const fence of [
       { kind: 'step_open_for_trace', run_version: 1 },
-      { kind: 'run_absent' },
       { kind: 'run_absent_or_terminal' },
       { kind: 'run_at_version', version: 1 },
       { kind: 'step_not_in_progress' },

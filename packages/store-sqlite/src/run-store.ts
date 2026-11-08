@@ -1,14 +1,15 @@
-// run-store.ts — issue #616 PR-1a units 12a, 12b, 13a, 13b and 14 (design d4-frozen-r3 §2, §3; the
-// censuses `plans/issue-616/u12/census-u12.md` and `u13/census-u13.md`): `SqliteRunStore`, core's run
-// store on a SQLite home, for creating runs, reading one, listing them, updating one, claiming a step
-// of one, settling one and stamping a seal onto an old finished run, and (unit 14) for deleting a
-// finished run and measuring what it keeps of one. A keyed create is unit 15a's; saving is 13c's.
-// `openRealmHome` builds the one store of a handle; the package's entry exports the class as a type
-// only, so nothing outside the package constructs one.
+// run-store.ts — issue #616 PR-1a units 12a, 12b, 13a, 13b, 13c and 14 (design d4-frozen-r3 §2, §3,
+// §5; the censuses `plans/issue-616/u12/census-u12.md` and `u13/census-u13.md`): `SqliteRunStore`,
+// core's run store on a SQLite home, for creating runs, reading one, listing them, updating one,
+// claiming a step of one, settling one, stamping a seal onto an old finished run and importing one
+// another store exported (`save`), and (unit 14) for deleting a finished run and measuring what it
+// keeps of one. A keyed create is unit 15a's. `openRealmHome` builds the one store of a handle; the
+// package's entry exports the class as a type only, so nothing outside the package constructs one.
 //
 // Every write goes through `RealmDb.immediate` with a `verify` that reads the run back by its content;
-// every read goes through `snapshot`. Each call but a stamp spends exactly ONE reading of the home's
-// clock (core's clock laws, #715), except the two calls of a per-run artifact store (unit 14):
+// every read goes through `snapshot`. Each call but a stamp and `save` spends exactly ONE reading of
+// the home's clock (core's clock laws, #715), except the two calls of a per-run artifact store (unit
+// 14):
 //   - `statAllForRun`: none (its snapshot takes none: the size judges nothing by time);
 //   - `deleteAllForRun`: one raw reading under the write lock once the run is found deletable, which
 //     stamps the run's tombstone; a missing run and a refused deletion spend none.
@@ -24,16 +25,22 @@
 //     record's `updated_at` (a settle's also with its delta's event instants) before any check, so a
 //     refused update, claim or settle has spent it;
 //   - `stampSeal`: none, on every branch: it carries `updated_at` through unchanged (stamping is not
-//     activity), so it has nothing to stamp.
+//     activity), so it has nothing to stamp;
+//   - `save`: none, on every branch, as the interface's text says: an import keeps the record's own
+//     instants;
+//   - `scan` (unit c3): one per page, the reading that page's `snapshot` takes; `tombstonesSince` and
+//     `resolveKey`: the one their `snapshot` takes.
 // A list is ONE read transaction (n8n's way: a consistent snapshot without the write lock), so it never
 // tears across a concurrent write. An update, a claim or a settle reads the run and writes it in ONE
 // write transaction, so two of them never both act on one version: of two claims of one step, exactly
-// one wins and the other is refused as already claimed.
+// one wins and the other is refused as already claimed. An import, too, looks for the run and writes
+// it in one write transaction: of two imports of one new run, one writes it and the other finds it.
 import { randomUUID } from 'node:crypto';
 import {
   applySettlement,
   assertSealIntegrity,
   brandClass,
+  canonicalJson,
   computeClaimDeadline,
   decideIdempotencyPolicy,
   deriveRunPhase,
@@ -41,6 +48,7 @@ import {
   floorAtHolder,
   floorAtRecord,
   foldReading,
+  isRunRecordShape,
   isStepSettledOrInFlight,
   runNotFoundError,
   takeRawReading,
@@ -53,11 +61,15 @@ import {
   type Clock,
   type CreateResult,
   type CreateRunOptions,
+  type KeyAnswer,
   type Listing,
   type LoadBearingRunRecordField,
   type PerRunArtifactStore,
   type RunRecord,
   type RunStore,
+  type ScanFilter,
+  type ScanOptions,
+  type ScanPage,
   type SealedBy,
   type SealRunDelta,
   type SettlementDelta,
@@ -82,6 +94,7 @@ import {
   writeRunUpdate,
   type CoreDocument,
 } from './run-rows.js';
+import { assertScanArguments, readHorizon, readKeyAnswer, readScanPage } from './run-scan.js';
 
 /** A run id's length (a version 4 uuid): the provisional record's id takes as many bytes. */
 const PROVISIONAL_ID = '00000000-0000-0000-0000-000000000000';
@@ -126,17 +139,17 @@ function freshRecord(
 }
 
 /**
- * A create's own check after an error at its COMMIT (unit 9's protocol), by content: true when the
- * stored run is the record written, false when no run has its id. A run with its id that holds
- * something else was written and then changed by another writer: whether this write landed cannot
- * be told from it, so the check throws {@link VerifyInconclusive}.
+ * A create's or an import's own check after an error at its COMMIT (unit 9's protocol), by content:
+ * true when the stored run is the record written (as `get()` reads it), false when no run has its id.
+ * A run with its id that holds something else was written and then changed by another writer:
+ * whether this write landed cannot be told from it, so the check throws {@link VerifyInconclusive}.
  */
 function verifyCreated(db: DatabaseLike, record: RunRecord): boolean {
   const stored = readRunInTransaction(db, record.id);
   if (stored === null) return false;
   if (JSON.stringify(stored) === JSON.stringify(record)) return true;
   throw new VerifyInconclusive(
-    `The stored run ${record.id} is not the record its create wrote: another writer changed it.`,
+    `The stored run ${record.id} is not the record its write stored: another writer changed it.`,
   );
 }
 
@@ -230,6 +243,16 @@ function notEligibleError(runId: string, stepName: string, eligible: string[]): 
   });
 }
 
+/** The fields of a run record that hold an instant, as {@link SqliteRunStore.save} checks them. */
+const RECORD_STAMPS = ['created_at', 'updated_at'] as const;
+
+/** The id `value` names, when it is an object whose `id` is a string. */
+function idOf(value: unknown): string | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const id: unknown = (value as Record<string, unknown>)['id'];
+  return typeof id === 'string' ? id : undefined;
+}
+
 /** The store's name in a delete failure, and the artifact it names (the shared rule). */
 const STORE = 'SqliteRunStore';
 const ARTIFACT = 'runs';
@@ -277,10 +300,120 @@ function verifyDeleted(db: DatabaseLike, runId: string, deletion: Deletion): boo
 }
 
 /**
- * Core's run store on a SQLite home: create (keyed or not), get, list, update, claimStep and
- * settleStep and stampSeal (see the module comment). It implements core's `RunStore`, its optional
- * `stampSeal` included. It is a per-run artifact store (unit 14): purge deletes a run's rows through
- * it, as the anchor, once PR-2c wires purge.
+ * Whether `text` is an instant in the one form the store keeps, `toISOString()`'s
+ * (`YYYY-MM-DDTHH:MM:SS.sssZ`): the text an instant read from it prints back. A text that names no
+ * instant (`toISOString` would throw on it) is not one either.
+ */
+function isStoredInstant(text: string): boolean {
+  const instant = new Date(text);
+  return !Number.isNaN(instant.getTime()) && instant.toISOString() === text;
+}
+
+/** An import of something that is not a run record in the current format (`save`). */
+function notCurrentRecordError(runId: string | undefined): WorkflowError {
+  return new WorkflowError(
+    'This is not a run record in the current format, so it cannot be imported. Nothing was imported.',
+    {
+      code: 'STATE_LEGACY_FORMAT',
+      category: 'STATE',
+      agentAction: 'report_to_user',
+      retryable: false,
+      ...(runId !== undefined ? { details: { runId } } : {}),
+    },
+  );
+}
+
+/** An import of a run whose `field` is not an instant in the stored form (`save`). */
+function timestampInvalidError(runId: string, field: string): WorkflowError {
+  return new WorkflowError(
+    `Run '${runId}' has a ${field} that is not a timestamp of the form 2026-11-05T12:00:00.000Z. Nothing was imported.`,
+    {
+      code: 'STATE_RUN_TIMESTAMP_INVALID',
+      category: 'STATE',
+      agentAction: 'report_to_user',
+      retryable: false,
+      details: { runId, field },
+    },
+  );
+}
+
+/** An import of a run whose id was deleted on purpose at `purgedAt` (`save`). */
+function purgedError(runId: string, purgedAt: string): WorkflowError {
+  return new WorkflowError(
+    `Run '${runId}' was deleted on ${purgedAt} and its id cannot be used again. Nothing was imported.`,
+    {
+      code: 'STATE_RUN_PURGED',
+      category: 'STATE',
+      agentAction: 'report_to_user',
+      retryable: false,
+      details: { runId, purged_at: purgedAt },
+    },
+  );
+}
+
+/** An import of a run stored here at another version (`save`; the JSON store's words). */
+function divergedVersionError(
+  runId: string,
+  localVersion: number,
+  incomingVersion: number,
+): WorkflowError {
+  return new WorkflowError(
+    `Run '${runId}' exists locally with a different version (local: ${localVersion}, incoming: ${incomingVersion}). Manual resolution required.`,
+    {
+      code: 'STATE_RUN_DIVERGED',
+      category: 'STATE',
+      agentAction: 'report_to_user',
+      retryable: false,
+      details: { runId, localVersion, incomingVersion },
+    },
+  );
+}
+
+/** An import of a run stored here at the same version with other content (`save`). */
+function divergedContentError(runId: string, version: number): WorkflowError {
+  return new WorkflowError(
+    `Run '${runId}' exists locally at version ${version} with different content from the incoming run. Manual resolution required.`,
+    {
+      code: 'STATE_RUN_DIVERGED',
+      category: 'STATE',
+      agentAction: 'report_to_user',
+      retryable: false,
+      details: { runId, localVersion: version, incomingVersion: version },
+    },
+  );
+}
+
+/** An import of a live run whose idempotency key another live run holds (`save`). */
+function keyHeldError(record: RunRecord, ownerId: string): WorkflowError {
+  return new WorkflowError(
+    `Idempotency key for workflow '${record.workflow_id}' is already held by a different live run '${ownerId}'; the imported run '${record.id}' was not imported.`,
+    {
+      code: 'STATE_RUN_DIVERGED',
+      category: 'STATE',
+      agentAction: 'report_to_user',
+      retryable: false,
+      details: { runId: record.id, existingOwnerRunId: ownerId },
+    },
+  );
+}
+
+/**
+ * When run `runId` was deleted, from its tombstone in `purged_ids` (kept forever: a purged id is
+ * refused even after `purged_runs`' detail of it is compacted), or `undefined` when it never was;
+ * in the caller's transaction.
+ */
+function purgedAtOf(db: DatabaseLike, runId: string): string | undefined {
+  const row = db.prepare('SELECT purged_at FROM purged_ids WHERE id = ?').get(runId);
+  return row === undefined ? undefined : String(row['purged_at']);
+}
+
+/**
+ * Core's run store on a SQLite home: create (keyed or not), get, list, update, claimStep,
+ * settleStep and stampSeal (see the module comment), and `save`, the import verb, which is not on
+ * the interface. It implements core's `RunStore`, its optional `stampSeal` included. It is a per-run
+ * artifact store (unit 14): purge deletes a run's rows through it, as the anchor, once PR-2c wires
+ * purge. It also pages its runs (`scan`) and answers who holds a key (`resolveKey`), which core's
+ * interface gains in unit c4.
  */
 export class SqliteRunStore implements RunStore, PerRunArtifactStore {
   /** Claims round-trip: the stored record is the record written, `claims` included. */
@@ -354,6 +487,65 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
       const snapshots = rows.map((row) => readSnapshot(db, String(row['id']), reading));
       return { snapshots, read_at: reading, consistent_snapshot: true };
     });
+  }
+
+  /**
+   * Reads the store's runs in pages, by id (unit c3; design §6): an async iterator whose every page is
+   * its own read transaction, taken at that page's one reading (`read_at`), so every run present for
+   * the whole scan is returned exactly once. `filter` narrows it (`run-scan.ts` names the index each
+   * filter walks); `options.pageSize` is required, a whole number from 1 to `SCAN_MAX_PAGE_SIZE`;
+   * `options.after` starts after that id. In the `'record'` projection (the default) each run is as
+   * `get()` returns it, judged at the page's reading floored by its own `updated_at`; in the `'row'`
+   * projection it is its facts row, read without reassembling the record. With `include_purged` the
+   * matching tombstones come beside the runs, in id order, and count toward the page. The iterator
+   * ends after a page that is not full. A page size out of range, or a `key` with no `workflow`, is
+   * refused before any read: the first `next()` rejects with a plain error.
+   */
+  scan(
+    filter: ScanFilter,
+    options: ScanOptions & { projection: 'row' },
+  ): AsyncGenerator<ScanPage<'row'>, void, undefined>;
+  scan(
+    filter: ScanFilter,
+    options: ScanOptions & { projection?: 'record' },
+  ): AsyncGenerator<ScanPage<'record'>, void, undefined>;
+  scan(
+    filter: ScanFilter,
+    options: ScanOptions,
+  ): AsyncGenerator<ScanPage<'record'> | ScanPage<'row'>, void, undefined>;
+  async *scan(
+    filter: ScanFilter,
+    options: ScanOptions,
+  ): AsyncGenerator<ScanPage<'record' | 'row'>, void, undefined> {
+    assertScanArguments(filter, options);
+    // The caller's objects are copied, so a change to them mid-scan does not change the walks.
+    const scanned: ScanFilter = { ...filter };
+    const { pageSize } = options;
+    const projection = options.projection === 'row' ? 'row' : 'record';
+    let after = options.after ?? '';
+    for (;;) {
+      const request = { pageSize, projection, after } as const;
+      const page = await this.#db.snapshot((db, reading) =>
+        readScanPage(db, reading, scanned, request, (runId) => readSnapshot(db, runId, reading)),
+      );
+      yield page;
+      if (page.next_after === undefined) return;
+      after = page.next_after;
+    }
+  }
+
+  /** The tombstone horizon, `store_meta.tombstones_since` (unit c3): one read. */
+  async tombstonesSince(): Promise<string> {
+    return this.#db.snapshot((db) => readHorizon(db));
+  }
+
+  /**
+   * Who holds `workflowId`'s idempotency key `key` (unit c3; design §3, axis 7), in ONE snapshot: the
+   * holder `findKeyHolder` derives → `held`; else the key's tombstones → `purged`, listing each run's
+   * id and `purged_at`, with the horizon; else `unseen`, with the horizon. Never another run's record.
+   */
+  async resolveKey(workflowId: string, key: string): Promise<KeyAnswer> {
+    return this.#db.snapshot((db) => readKeyAnswer(db, workflowId, key));
   }
 
   /**
@@ -523,6 +715,71 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
       { takesReading: false },
     );
     return settled.result;
+  }
+
+  /**
+   * Imports `record`, a run another store exported (realm-cloud's pull and sync; `realm run import`),
+   * as a stored run: written with its own id, version, instants, evidence, write-once fields and key
+   * when no run has its id (`imported`), nothing done when the run is here with the same content
+   * (`unchanged`). Not on core's `RunStore` (an import verb only this store has). It spends no reading
+   * and never runs the seal boundary: a finished record with no seal stamp imports as it is.
+   *
+   * Refused, before `BEGIN` and with nothing spent, in this order: a value that is not a run record in
+   * the current format (core's `isRunRecordShape`; `STATE_LEGACY_FORMAT`); a `created_at` or
+   * `updated_at` that is not an instant in the stored form (`STATE_RUN_TIMESTAMP_INVALID`, naming
+   * the field); a record past the store's limits (`STATE_STORE_LIMIT_EXCEEDED`). Then, in ONE write
+   * transaction: an id deleted on purpose (`STATE_RUN_PURGED`, naming when, from `purged_ids`); a
+   * run stored with the id at another version, or at the same version with other content (core's
+   * canonical JSON of both, the phase derived on both: key order does not count), `STATE_RUN_DIVERGED`;
+   * a LIVE record whose idempotency key (a string; `null` or absent is none) another live run holds
+   * (15a's {@link findKeyHolder}), `STATE_RUN_DIVERGED`. A refusal writes nothing.
+   *
+   * The write is {@link insertRunRecord}, then the run is read back in the same transaction and must
+   * be the record given, its phase the derived one, by strict `JSON.stringify` equality: any other
+   * difference fails the import with a plain error, and nothing is written. After an error at
+   * COMMIT the run is looked for by that content; a run found here wrote nothing, so it is there.
+   */
+  async save(record: RunRecord): Promise<{ readonly outcome: 'imported' | 'unchanged' }> {
+    if (!isRunRecordShape(record)) throw notCurrentRecordError(idOf(record));
+    for (const field of RECORD_STAMPS) {
+      if (!isStoredInstant(record[field])) throw timestampInvalidError(record.id, field);
+    }
+    assertRunRecordWithinLimits(record);
+    // The record as `get()` reads it back: its phase the derivation's, at the key's own position.
+    const written: RunRecord = { ...record, run_phase: deriveRunPhase(record) };
+    const outcome = await this.#db.immediate(
+      (db): 'imported' | 'unchanged' => {
+        const purgedAt = purgedAtOf(db, record.id);
+        if (purgedAt !== undefined) throw purgedError(record.id, purgedAt);
+        const stored = readRunInTransaction(db, record.id);
+        if (stored !== null) {
+          if (stored.version !== record.version) {
+            throw divergedVersionError(record.id, stored.version, record.version);
+          }
+          if (canonicalJson(stored) !== canonicalJson(written)) {
+            throw divergedContentError(record.id, stored.version);
+          }
+          return 'unchanged';
+        }
+        const key: unknown = record.idempotency_key;
+        if (record.terminal_state !== true && typeof key === 'string') {
+          const holder = findKeyHolder(db, record.workflow_id, key);
+          if (holder !== undefined && !holder.terminal_state) throw keyHeldError(record, holder.id);
+        }
+        insertRunRecord(db, record);
+        const back = readRunInTransaction(db, record.id);
+        if (back === null || JSON.stringify(back) !== JSON.stringify(written)) {
+          throw new Error(
+            `The imported run ${record.id} does not read back as the record it was given, so it was not imported.`,
+          );
+        }
+        return 'imported';
+      },
+      // A run found here wrote nothing, so there is nothing to look for.
+      (db, done) => done === 'unchanged' || verifyCreated(db, written),
+      { takesReading: false },
+    );
+    return { outcome };
   }
 
   /**

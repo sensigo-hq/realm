@@ -352,26 +352,28 @@ describe('#616 B4 — appends and the budgets', () => {
 });
 
 describe('#616 B4 — the fenced methods', () => {
-  it('check 5c: sealFenced whose fence refuses (the run came back) is refused with its own error, nothing sealed', async () => {
+  it('check 5c: sealFenced whose fence refuses (the run is live) is refused with its own error, nothing sealed', async () => {
     const o = await open();
     const f = await foreign(o.home);
     putRun(f, run(RUN));
     await o.store.append(RUN, 'draft', [{ event: 'progress' }]);
-    const err = await refusal(() => o.store.sealFenced(RUN, 'draft', { kind: 'run_absent' }));
+    const err = await refusal(() =>
+      o.store.sealFenced(RUN, 'draft', { kind: 'run_absent_or_terminal' }),
+    );
     // (1) red when sealFenced skips its fence: it seals and deletes the lines; (2) prints the
     //     rejection and both row counts.
     expect({
       code: (err as WorkflowError).code,
       live: rows(f, 'trace_buffer'),
       sealed: rows(f, 'trace_sealed'),
-    }).toEqual({ code: 'STATE_RUN_RESURRECTED', live: 1, sealed: 0 });
+    }).toEqual({ code: 'STATE_RUN_BUSY', live: 1, sealed: 0 });
   });
 
   it('check 5d: deleteAllForRunFenced of a run that is live again is refused with its own error, nothing deleted', async () => {
     const o = await open();
     const f = await foreign(o.home);
     await o.store.append(RUN, 'classify', [{ event: 'sealed later' }]);
-    await o.store.sealFenced(RUN, 'classify', { kind: 'run_absent' });
+    await o.store.sealFenced(RUN, 'classify', { kind: 'run_absent_or_terminal' });
     await o.store.append(RUN, 'draft', [{ event: 'progress' }]);
     putRun(f, run(RUN));
     const err = await refusal(() =>
@@ -493,7 +495,7 @@ describe('#616 B4 — the fenced methods', () => {
     const o = await open({ budgetMs: 300 });
     const f = await foreign(o.home);
     f.exec('BEGIN IMMEDIATE');
-    const fence: RunScopedFencePredicate = { kind: 'run_absent' };
+    const fence: RunScopedFencePredicate = { kind: 'run_absent_or_terminal' };
     const got = {
       appendFenced: await refusal(() =>
         o.store.appendFenced(RUN, 'draft', [{ event: 'x' }], fence),
@@ -519,7 +521,7 @@ describe('#616 B4 — the fenced methods', () => {
     const o = await open();
     const f = await foreign(o.home);
     await o.store.append(RUN, 'classify', [{ event: 'to seal' }]);
-    await o.store.sealFenced(RUN, 'classify', { kind: 'run_absent' });
+    await o.store.sealFenced(RUN, 'classify', { kind: 'run_absent_or_terminal' });
     await o.store.append(RUN, 'draft', [{ event: 'progress' }]);
     // Driver-seam fault: the run read's statement fails with SQLite's I/O error and does not run.
     faults(o).arm({
@@ -528,9 +530,11 @@ describe('#616 B4 — the fenced methods', () => {
       first: 'nothing',
       error: SQLITE.ioError,
     });
-    const err = await refusal(() => o.store.deleteAllForRunFenced(RUN, { kind: 'run_absent' }));
-    // (1) red when a failed read is taken for an absent run (the run_absent fence passes and the rows
-    //     go), and when the read failure is wrapped as ENGINE_ARTIFACT_DELETE_FAILED; (2) prints the
+    const err = await refusal(() =>
+      o.store.deleteAllForRunFenced(RUN, { kind: 'run_absent_or_terminal' }),
+    );
+    // (1) red when a failed read is taken for an absent run (the run_absent_or_terminal fence passes
+    //     and the rows go), and when the read failure is wrapped as ENGINE_ARTIFACT_DELETE_FAILED; (2) prints the
     //     rejection and both row counts.
     expect({
       refusal: facts(err),
@@ -548,7 +552,7 @@ describe('#616 B4 — sealing', () => {
   it('check 8a: sealing a step with no line answers absent and stores nothing', async () => {
     const o = await open();
     const f = await foreign(o.home);
-    const result = await o.store.sealFenced(RUN, 'draft', { kind: 'run_absent' });
+    const result = await o.store.sealFenced(RUN, 'draft', { kind: 'run_absent_or_terminal' });
     // (1) red when an empty artifact is sealed; (2) prints the answer and the sealed rows.
     expect({ result, sealed: rows(f, 'trace_sealed') }).toEqual({
       result: { sealed: false, reason: 'absent' },
@@ -561,10 +565,10 @@ describe('#616 B4 — sealing', () => {
     const f = await foreign(o.home);
     for (let i = 0; i < SEALED_ARTIFACTS_LIMIT_PER_STEP; i++) {
       await o.store.append(RUN, 'draft', [{ event: `round ${i}` }]);
-      await o.store.sealFenced(RUN, 'draft', { kind: 'run_absent' });
+      await o.store.sealFenced(RUN, 'draft', { kind: 'run_absent_or_terminal' });
     }
     await o.store.append(RUN, 'draft', [{ event: 'one too many' }]);
-    const result = await o.store.sealFenced(RUN, 'draft', { kind: 'run_absent' });
+    const result = await o.store.sealFenced(RUN, 'draft', { kind: 'run_absent_or_terminal' });
     // (1) red when the limit is skipped: a ninth artifact is sealed and the line goes; (2) prints the
     //     answer, the seqs sealed and the live rows.
     expect({
@@ -583,7 +587,7 @@ describe('#616 B4 — sealing', () => {
     const f = await foreign(o.home);
     await o.store.append(RUN, 'draft', [{ event: 'first' }]);
     await o.store.append(RUN, 'draft', [{ event: 'second' }], { writerNonce: 'attempt-1' });
-    const result = await o.store.sealFenced(RUN, 'draft', { kind: 'run_absent' });
+    const result = await o.store.sealFenced(RUN, 'draft', { kind: 'run_absent_or_terminal' });
     // (1) red when the sealed lines are left live, or a sealed line loses its writer's nonce or its
     //     `ts` (the fenced contract's SEAL case checks the events only, and its byte-for-byte
     //     VERBATIM case is skipped on this store; #616 PR-1b B5); (2) prints the answer, the
@@ -768,7 +772,7 @@ describe('#616 B4 — a per-run delete that fails', () => {
     const o = await open();
     const f = await foreign(o.home);
     await o.store.append(RUN, 'classify', [{ event: 'to seal' }]);
-    await o.store.sealFenced(RUN, 'classify', { kind: 'run_absent' });
+    await o.store.sealFenced(RUN, 'classify', { kind: 'run_absent_or_terminal' });
     await o.store.append(RUN, 'draft', [{ event: 'progress' }]);
     // Driver-seam fault: the read of the run's lines (an unreadable page is met there first) fails with
     // SQLite's I/O error and does not run.
@@ -859,7 +863,7 @@ describe('#616 B4 — a per-run delete that fails', () => {
     const f = await foreign(o.home);
     for (const runId of [RUN, OTHER_RUN]) {
       await o.store.append(runId, 'classify', [{ event: 'to seal' }]);
-      await o.store.sealFenced(runId, 'classify', { kind: 'run_absent' });
+      await o.store.sealFenced(runId, 'classify', { kind: 'run_absent_or_terminal' });
       await o.store.append(runId, 'draft', [{ event: 'progress' }]);
       await o.store.append(runId, 'review', [{ event: 'progress' }]);
     }
@@ -892,7 +896,7 @@ describe('#616 B4 — what export reads', () => {
     const o = await open();
     await o.store.append(RUN, 'draft', [{ event: 'plain' }]);
     const live = (await o.store.readAllForRun(RUN))['draft']?.[0] as object;
-    await o.store.sealFenced(RUN, 'draft', { kind: 'run_absent' });
+    await o.store.sealFenced(RUN, 'draft', { kind: 'run_absent_or_terminal' });
     const sealed = (await o.store.listSealedForRun(RUN))[0]?.lines[0] as object;
     // (1) red when a NULL column becomes `nonce: null`, which export reads as a live writer's nonce;
     //     (2) prints both lines' keys.

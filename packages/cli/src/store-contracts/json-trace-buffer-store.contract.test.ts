@@ -55,7 +55,9 @@ async function makeAdapter(): Promise<{
    */
   const seed = async (): Promise<void> => {
     await store.append(runId, 'tck-sealed-step', [{ event: 'tck-to-be-sealed' }]);
-    const sealed = await store.sealFenced(runId, 'tck-sealed-step', { kind: 'run_absent' });
+    const sealed = await store.sealFenced(runId, 'tck-sealed-step', {
+      kind: 'run_absent_or_terminal',
+    });
     if (!sealed.sealed) {
       throw new Error(
         `TCK fixture is toothless: sealFenced did not produce a sealed artifact (${JSON.stringify(sealed)}) — L6 needs both artifact classes present (issue #189).`,

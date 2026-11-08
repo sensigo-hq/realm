@@ -137,7 +137,7 @@ describe('realm workflow validate — orphaned-manifest guard (the one admission
 // `realm workflow` group that loads a definition for validation/execution is invoked against
 // the orphan fixture and MUST reject it. The list is derived from commands-registry.ts's
 // workflowCommands, minus the ones that do not load-a-workflow-to-run (init scaffolds,
-// migrate rewrites, watch is a long-running watcher). ANY new step-executing / preflight
+// watch is a long-running watcher). ANY new step-executing / preflight
 // command MUST either appear here or be justified — a silent per-branch bypass is the bug
 // this test exists to prevent.
 describe('every workflow-loading command rejects an orphaned manifest (behavioral enumeration)', () => {
@@ -196,7 +196,6 @@ describe('every workflow-loading command rejects an orphaned manifest (behaviora
   const GUARD_NOT_APPLICABLE: Record<string, string> = {
     init: 'scaffolds a new workflow; loads no existing definition',
     list: 'reads the registry store directly, never loads a workflow from a path (issue #427)',
-    migrate: 'rewrites a workflow file in place; does not load-to-run',
     webhook: "removed alias (use 'realm listen'); loads no workflow",
   };
   const GUARDED_VIA_CHOKEPOINT_NOT_SPAWN_TESTED: Record<string, string> = {

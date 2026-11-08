@@ -31,7 +31,7 @@ function sealedFileName(runId: string, stepId: string, seq: number): string {
 }
 
 /** A fence that passes while the run is absent from `runs` (issue #616 PR-0). */
-const PASS: FencePredicate = { kind: 'run_absent' };
+const PASS: FencePredicate = { kind: 'run_absent_or_terminal' };
 
 /** A reader for a store built on a path that NEVER fences (issue #616 PR-0, D2) — every unfenced
  *  method these throwaway stores exercise (`deleteAllForRun`/`readAllForRun`/`listOrphans`) never
@@ -504,8 +504,10 @@ describe('JsonTraceBufferStore', () => {
 
     it('a refusing fence rejects the whole call — no seal happens', async () => {
       await store.append('run-1', 'step-a', [{ event: 'a' }]);
-      runs.set('run-1', { id: 'run-1' } as RunRecord); // present ⇒ `run_absent` refuses
-      await expect(store.sealFenced('run-1', 'step-a', PASS)).rejects.toThrow('exists again');
+      runs.set('run-1', { id: 'run-1' } as RunRecord); // present and live ⇒ `run_absent_or_terminal` refuses
+      await expect(store.sealFenced('run-1', 'step-a', PASS)).rejects.toThrow(
+        'is no longer terminal',
+      );
       expect(existsSync(join(dir, walFileName('run-1', 'step-a')))).toBe(true); // untouched
     });
   });

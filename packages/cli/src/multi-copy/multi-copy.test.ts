@@ -4,14 +4,15 @@
 // false for an error another copy made.
 //
 // This file proves what a copy does with an object another copy made, on a layout built from the
-// BUILT packages (`layout.ts`): rows 1–9 are the crossings that went wrong, row 10 is the control
-// (a copy of ANOTHER release is never recognised), row 11 is the non-vacuity guard (the copies are
-// distinct, and none silently resolved the repository's own workspace).
+// BUILT packages (`layout.ts`): rows 2–9 are the crossings that went wrong (row 1, gc's, left with
+// the command, #616), row 10 is the control (a copy of ANOTHER release is never recognised), row 11
+// is the non-vacuity guard (the copies are distinct, and none silently resolved the repository's own
+// workspace).
 //
 // The assertions state what must hold once copies of one release recognise each other. Written
-// before the change, rows 1–9 are red and rows 10–11 are green.
+// before the change, rows 2–9 are red and rows 10–11 are green.
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -31,13 +32,11 @@ import { snap } from '../test-support/snapshot-double.js';
 type Core = typeof import('@sensigo/realm');
 type Mcp = typeof import('@sensigo/realm-mcp');
 type Testing = typeof import('@sensigo/realm-testing');
-type GcModule = typeof import('../commands/gc.js');
 type PurgeModule = typeof import('../commands/purge.js');
 type LlmProviderModule = typeof import('../agent/providers/llm-provider.js');
 
 const SETUP_TIMEOUT = 120_000;
 const TEST_TIMEOUT = 60_000;
-const ONE_HOUR_MS = 3_600_000;
 
 let layout: Layout;
 const scratch: string[] = [];
@@ -88,38 +87,16 @@ async function injectRun(dir: string, run: RunRecord): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Row 1 — gc: a `Run not found` thrown by the CLI copy's run store, read by realm-mcp's core copy
-// inside the trace-buffer fence.
+// Row 10's crossing: realm-mcp's trace buffer handed a run store of a given copy.
 // ---------------------------------------------------------------------------------------------
 
-const ORPHAN_ID = '22222222-2222-4222-8222-222222222222';
-
-/** Reaps one orphaned trace file, the run store being `runStoreCore`'s `JsonFileStore`. */
-async function reapOrphanWith(runStoreCore: Copy): Promise<{
-  reaped: number;
-  failed: string[];
-}> {
-  const dir = await tempDir('gc');
+/** Builds realm-mcp's trace buffer over `runStoreCore`'s `JsonFileStore`, which refuses a run store
+ *  of another release. */
+async function traceBufferOver(runStoreCore: Copy): Promise<unknown> {
+  const dir = await tempDir('trace');
   const cliCore = await core(runStoreCore);
   const mcp = await layout.load<Mcp>(layout.cli.mcp);
-  const gc = await layout.load<GcModule>(layout.cli.cli, 'dist/commands/gc.js');
-
-  const runStore = new cliCore.JsonFileStore(dir);
-  const trace = new mcp.JsonTraceBufferStore(dir, runStore);
-  await trace.append(ORPHAN_ID, 'step-a', [{ event: 'x' }]);
-  const wal = join(
-    dir,
-    `trace-buffer-${ORPHAN_ID}-${Buffer.from('step-a').toString('base64url')}.jsonl`,
-  );
-  const backdated = new Date(Date.now() - 2 * ONE_HOUR_MS);
-  await utimes(wal, backdated, backdated);
-
-  const liveRunIds = await runStore.listRunIds();
-  const result = await gc.sweepOrphanArtifacts([trace], liveRunIds, {
-    olderThanMs: ONE_HOUR_MS,
-    dryRun: false,
-  });
-  return { reaped: result.reaped.length, failed: result.failed.map((f) => f.error) };
+  return new mcp.JsonTraceBufferStore(dir, new cliCore.JsonFileStore(dir));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -653,18 +630,6 @@ async function codeDir(base: string, prefix: string): Promise<string> {
 // The rows
 // =============================================================================================
 
-describe('1 — gc reads a `Run not found` that another copy of the same release made', () => {
-  it(
-    'an orphaned trace file is reaped',
-    async () => {
-      const result = await reapOrphanWith(layout.cli.cliCore);
-      expect(result.failed).toEqual([]);
-      expect(result.reaped).toBe(1);
-    },
-    TEST_TIMEOUT,
-  );
-});
-
 describe('2 — purge classifies a refusal that another copy of the same release made', () => {
   it(
     'a run resumed mid-purge is blocked, never failed',
@@ -789,7 +754,7 @@ describe('10 — control: a copy of another release is not recognised (issue #62
   it(
     '1: a run store of another release handed to the trace buffer is refused at construction',
     async () => {
-      await expect(reapOrphanWith(layout.other.core)).rejects.toMatchObject({
+      await expect(traceBufferOver(layout.other.core)).rejects.toMatchObject({
         code: 'ENGINE_RELEASE_LINE_MISMATCH',
       });
     },
@@ -931,7 +896,6 @@ describe('11 — the layout is what it claims to be', () => {
         layout.file(layout.project.core, 'dist/index.js'),
         layout.file(layout.project.cli, 'dist/agent/index.js'),
         layout.file(layout.cli.cli, 'dist/agent/index.js'),
-        layout.file(layout.cli.cli, 'dist/commands/gc.js'),
         layout.file(layout.cli.cli, 'dist/commands/purge.js'),
         layout.file(layout.cli.cliCore, 'dist/index.js'),
         layout.file(layout.cli.mcp, 'dist/index.js'),
