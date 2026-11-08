@@ -622,7 +622,8 @@ function askEntryText(entry: CacheRequestedEntry): string {
 
 /**
  * Issue #600 PR 2 (D3) — THE one composer of a cost line's request facts, shared by the step line,
- * each earlier attempt's line and the failed-drive line, so the three print the same words.
+ * each earlier attempt's line and the failed-drive line, so the three print the same words. The
+ * miss lines beneath those lines have their own composer, `missLines` (caching 3-M A-2b1).
  * `model`: the model the responses named. `ask`: what realm asked the provider to cache, then —
  * when the record shows it — a write kept for another lifetime than the one asked, or a lifetime
  * asked with nothing written or read. A fact the record holds no readable value for (`absent_cause`,
@@ -826,6 +827,24 @@ function sourcesText(money: Money, recordedModels: readonly string[] | undefined
     ),
   );
   return parts.join('; ');
+}
+
+/**
+ * Caching 3-M A-2b1 — THE one composer of a cost's miss lines, shared by the step's line, each
+ * attempt's line and the failure block's `usage:` line: one line per request that missed the
+ * cache, in list order, from the cost view's `misses` (worked out in core; nothing here recomputes
+ * them). The read count is what the request read: the expected count less the shortfall. A-2b2
+ * replaces the bracketed cause word with its sentence.
+ */
+function missLines(cost: CostView | undefined): string[] {
+  if (cost?.misses === undefined) return [];
+  return cost.misses.map((miss) => {
+    const { expected_tokens: expected, shortfall_tokens: shortfall, cause } = miss.derived;
+    return (
+      `cache miss: request ${String(miss.position + 1)} of ${String(cost.requests)} ` +
+      `read ${String(expected - shortfall)} of ${String(expected)} expected tokens (${cause})`
+    );
+  });
 }
 
 /**
@@ -1454,6 +1473,8 @@ export async function inspectRun(
       const cost = driveFailureCosts[i]?.cost;
       if (cost !== undefined) {
         lines.push(formatDriveFailureUsage(cost, entry.error_class));
+        // caching 3-M A-2b1: each request that missed the cache, beneath the usage line.
+        for (const line of missLines(cost)) lines.push(`      ${line}`);
       }
     });
     // Only when the ring has ROLLED — otherwise this line would restate a count the entries
@@ -1785,6 +1806,8 @@ export async function inspectRun(
           const money = moneyText(attempt.cost) ?? '';
           const segs = [prompt, output, facts.model ?? '', cache, money].filter((s) => s !== '');
           lines.push(chalk.dim(`     ${label}: ${segs.join(' | ')}`));
+          // caching 3-M A-2b1: this attempt's own misses, beneath its line.
+          for (const line of missLines(attempt.cost)) lines.push(chalk.dim(`       ${line}`));
         } else {
           const sentence = costAbsenceSentence(attempt.cost_unrecorded, attempt.cost_unreadable);
           if (sentence !== undefined) lines.push(chalk.dim(`     ${label}: ${sentence}`));
@@ -1800,6 +1823,8 @@ export async function inspectRun(
               `${formatDiagnostics(lastSnap.diagnostics, lastAttempt?.cost)}`,
           ),
         );
+        // caching 3-M A-2b1: the last attempt's misses, beneath its line.
+        for (const line of missLines(lastAttempt?.cost)) lines.push(chalk.dim(`       ${line}`));
       }
       const lastSentence = costAbsenceSentence(
         lastAttempt?.cost_unrecorded,
@@ -1882,6 +1907,9 @@ export async function inspectRun(
               `     Diagnostics: ${formatDiagnostics(snap.diagnostics, singleAttempt?.cost)}`,
             ),
           );
+          // caching 3-M A-2b1: the step's misses, beneath its line.
+          for (const line of missLines(singleAttempt?.cost))
+            lines.push(chalk.dim(`       ${line}`));
         }
         // issue #600 PR 1b: the absence sentence — beneath Diagnostics when there is one, beneath
         // the entry line otherwise (a step whose evidence carries no `diagnostics` at all).
