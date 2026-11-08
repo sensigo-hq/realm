@@ -976,12 +976,15 @@ describe('caching 3-M A-2a2 — only a request that missed gets a cause, and it 
 describe('caching 3-M A-2a2 — correction 1: the rules with no cell of their own', () => {
   const conversation = ['system', 'conversation'];
 
-  // Group 1 (a): a step re-driven after an upgrade. Its reference is a copy of the run's earlier
-  // record, written by 0.48.0: `provider`, `cache_requested` and the counts, no `prefix_parts` (and
-  // no `request_strict_sent`, unset on both sides here). Can fail: the predecessor-side object test
-  // removed (it throws reading the parts), or the word changed (`unexplained`). Prints the list
-  // and the error, then the cause.
-  it('a reference written before Realm recorded the parts: parts_not_recorded', () => {
+  // Group 1 (a): a reference with no `prefix_parts`: `provider`, `cache_requested` and the counts
+  // only (and no `request_strict_sent`, unset on both sides here). Realm's own drives never make
+  // one: the pick of a reference (`lastCallOpenerIn`) takes only a request with `request_in_call`
+  // 0, which 0.48.0 did not write, so a 0.48.0 record is never copied. A record another writer
+  // made, or an unreleased main build between A-1b and A-0, can be. This pins that the module never
+  // throws on one and names the absence. Can fail: the predecessor-side object test removed (it
+  // throws reading the parts), or the word changed (`unexplained`). Prints the list and the error,
+  // then the cause.
+  it('a reference from a record that holds no parts: parts_not_recorded', () => {
     const list = againstReference(
       {
         provider: A,
