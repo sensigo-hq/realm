@@ -9,7 +9,7 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: step,
 // handler and adapter names and the lines the command printed — never a value.
-import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
+import { createTestHome, type TestHome } from '@sensigo/realm-testing';
 import { describe, it, expect, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import {
@@ -28,7 +28,6 @@ import {
   BUILT_IN_REQUIREMENTS,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   ExtensionRegistry,
-  JsonFileStore,
   type RealmWorkflowRegistrar,
   createDefaultRegistry,
   executeChain,
@@ -36,6 +35,7 @@ import {
   isBuiltInRequirement,
   type StepDefinition,
   type WorkflowDefinition,
+  type RunStore,
 } from '@sensigo/realm';
 import { printChildrenWhenATestFails } from '../test-support/child-output.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
@@ -61,7 +61,7 @@ function claim(page: string, sentence: string): void {
 
 interface Home {
   home: string;
-  runs: JsonFileStore;
+  runs: RunStore;
   workflows: RealmWorkflowRegistrar;
 }
 
@@ -89,11 +89,11 @@ async function freshHome(): Promise<Home> {
  * BEFORE its stores open (a store takes its clock when it is built). A cell moves the clock the
  * spawned `realm` reads instead of waiting on the real one for a question to expire.
  */
-async function locatedHome(): Promise<Home & { clock: TestLocation['clock'] }> {
+async function locatedHome(): Promise<Home & { clock: TestHome['clock'] }> {
   const made = await makeTempHome();
   handles.push(made);
   const home = realpathSync(made.root);
-  const loc = await createTestLocation({ start: new Date(), root: join(home, '.realm') });
+  const loc = await createTestHome({ start: new Date(), root: join(home, '.realm') });
   // The location's own handle, opened after it: its stores take the location's clock.
   const t = await makeTempHome({ home: loc.root });
   handles.push(t);

@@ -25,6 +25,7 @@ vi.mock('node:readline/promises', () => ({
 import { runCommand, setInFlightWatchForTests } from './run.js';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
 import { makeTempHome, runIds, type TempHome } from '../test-support/temp-home.js';
+import type { CliHome } from '../lib/home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const WORKFLOW_PAGE = 'docs/reference/cli/realm-workflow.md';
@@ -207,7 +208,6 @@ describe('#625 PR-2a, F7 — realm workflow run reads core’s classifier', () =
   );
 
   it('row 1: another process holds the step when the engine claims it for the typed answer (STATE_STEP_ALREADY_CLAIMED) — C179’s not-run line, never `✗` (preservation)', async () => {
-    const core = await import('@sensigo/realm');
     const yaml = [
       'id: f7-wfrun-claimed',
       'name: f7-wfrun-claimed',
@@ -218,18 +218,22 @@ describe('#625 PR-2a, F7 — realm workflow run reads core’s classifier', () =
       '    execution: auto',
       '',
     ].join('\n');
-    const realClaim = core.JsonFileStore.prototype.claimStep;
+    // The prototype the handle's instance has: the command opens its own handle through the door, so
+    // a spy on `h.home.runStore` would intercept nothing (c10a-2a).
+    const proto = Object.getPrototypeOf(h.home.runStore) as CliHome['runStore'];
+    const realClaim = proto.claimStep;
     let raced = false;
-    const spy = vi
-      .spyOn(core.JsonFileStore.prototype, 'claimStep')
-      .mockImplementation(async function (this: InstanceType<typeof core.JsonFileStore>, ...a) {
-        if (!raced && a[1] === 's') {
-          raced = true;
-          // another process claims `s` first, and holds it
-          await realClaim.call(this, a[0], a[1], a[2], OTHER);
-        }
-        return realClaim.apply(this, a);
-      });
+    const spy = vi.spyOn(proto, 'claimStep').mockImplementation(async function (
+      this: CliHome['runStore'],
+      ...a
+    ) {
+      if (!raced && a[1] === 's') {
+        raced = true;
+        // another process claims `s` first, and holds it
+        await realClaim.call(this, a[0], a[1], a[2], OTHER);
+      }
+      return realClaim.apply(this, a);
+    });
     mocks.question.mockImplementation(async () => '');
     const restore = setInFlightWatchForTests(300);
     try {

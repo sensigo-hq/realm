@@ -25,7 +25,6 @@ vi.mock('node:readline/promises', () => ({
 }));
 
 import {
-  JsonFileStore,
   type RealmWorkflowRegistrar,
   ExtensionRegistry,
   advanceRun,
@@ -33,6 +32,7 @@ import {
   executeChain,
   executeStep,
   loadWorkflowFromString,
+  type RunStore,
 } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { runCommand, renderDetachMap } from './run.js';
@@ -102,7 +102,7 @@ describe(
   () => {
     let h: TempHome & { readonly root: string };
     let home: string;
-    let runStore: JsonFileStore;
+    let runStore: RunStore;
     let workflowStore: RealmWorkflowRegistrar;
 
     beforeEach(async () => {

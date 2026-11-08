@@ -6,7 +6,6 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
   type RealmWorkflowRegistrar,
   ExtensionRegistry,
   describePending,
@@ -24,6 +23,7 @@ import {
   type Attributed,
   type StepHandlerResult,
   writeTestClockFile,
+  type RunStore,
 } from '@sensigo/realm';
 import { FIT_WORDS, fitWords, advanceRunFromShell } from './run-advance.js';
 import { stopReasons } from './ways-renderer.js';
@@ -302,7 +302,7 @@ describe('#625 PR-2a — realm run advance: the words', () => {
       });
       const realClaim = runs.claimStep.bind(runs);
       let first = true;
-      runs.claimStep = async (...args: Parameters<JsonFileStore['claimStep']>) => {
+      runs.claimStep = async (...args: Parameters<RunStore['claimStep']>) => {
         if (first) {
           first = false;
           await realClaim(args[0], args[1], args[2], {
@@ -693,7 +693,7 @@ describe('#625 PR-2a, C37 — realm run advance and respond: the words after the
 
 describe('#625 PR-2a, C43 and C44 — realm run advance: the opening says whether anything is owed; one way out', () => {
   const advance = async (
-    runs: JsonFileStore,
+    runs: RunStore,
     workflows: RealmWorkflowRegistrar,
     home: string,
     runId: string,
@@ -908,7 +908,7 @@ describe('#625 PR-2a, round 6 — the count words (C55), the fit words (C56), an
       coverage: 'dir_tree_v1',
     }) as ExtensionIdentityEntry;
   const preview = async (
-    runs: JsonFileStore,
+    runs: RunStore,
     workflows: RealmWorkflowRegistrar,
     home: string,
     runId: string,
@@ -1201,7 +1201,7 @@ describe('#625 PR-2a, round 25 — C194 (walk c10, W1-2): realm run advance when
     const watched = new Proxy(runs, {
       get(target, prop) {
         if (prop === 'settleStep') {
-          return async (...a: Parameters<NonNullable<JsonFileStore['settleStep']>>) => {
+          return async (...a: Parameters<NonNullable<RunStore['settleStep']>>) => {
             const r = await target.settleStep!(...a);
             if (a[1].kind === 'settle_step' && a[1].step === 'process' && !r.applied) {
               refusals.push(r.reason);
@@ -1399,7 +1399,7 @@ describe('#625 PR-2a, round 25 — C194 (walk c10, W1-2): realm run advance when
       const racing = new Proxy(runs, {
         get(target, prop) {
           if (prop === 'settleStep') {
-            return async (...args: Parameters<NonNullable<JsonFileStore['settleStep']>>) => {
+            return async (...args: Parameters<NonNullable<RunStore['settleStep']>>) => {
               const [id, delta, d2] = args;
               if (
                 delta.kind === 'settle_guard' &&
@@ -1481,7 +1481,7 @@ describe('#625 PR-2a, round 25 — C194 (walk c10, W1-2): realm run advance when
 describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says "failed" only when the run\'s record lists the step the refusal is about as failed', () => {
   const HERE: Attributed = { by: 'here-a', by_source: 'ambient', channel: 'advance' };
   const RACER: Attributed = { by: 'racer-b', by_source: 'ambient', channel: 'advance' };
-  type Ctx = { runs: JsonFileStore; d: WorkflowDefinition; runId: string };
+  type Ctx = { runs: RunStore; d: WorkflowDefinition; runId: string };
   type Handler = (ctx: Ctx) => Promise<StepHandlerResult>;
 
   /**
@@ -1493,7 +1493,7 @@ describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says
   async function advance(
     yaml: string[],
     handlers: Record<string, Handler>,
-    wrap: (target: JsonFileStore, ctx: Ctx) => Record<string, unknown> = () => ({}),
+    wrap: (target: RunStore, ctx: Ctx) => Record<string, unknown> = () => ({}),
   ) {
     const { home, runs, workflows, cleanup } = await stores();
     try {
@@ -1680,7 +1680,7 @@ describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says
             ]
           : sAndDone('c199-claim-ended');
       const r = await advance(yaml, { slow: quick, quick }, (target, ctx) => ({
-        claimStep: async (...a: Parameters<JsonFileStore['claimStep']>) => {
+        claimStep: async (...a: Parameters<RunStore['claimStep']>) => {
           if (!raced && a[1] === 's') {
             raced = true;
             if (kase === 'question') {
@@ -1926,8 +1926,8 @@ describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says
     id: string,
     okA: boolean,
     settle: (
-      target: JsonFileStore,
-      args: Parameters<NonNullable<JsonFileStore['settleStep']>>,
+      target: RunStore,
+      args: Parameters<NonNullable<RunStore['settleStep']>>,
     ) => Promise<unknown>,
   ) {
     let wroteA = false;
@@ -1952,7 +1952,7 @@ describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says
       ],
       { quick },
       (target) => ({
-        settleStep: async (...args: Parameters<NonNullable<JsonFileStore['settleStep']>>) => {
+        settleStep: async (...args: Parameters<NonNullable<RunStore['settleStep']>>) => {
           if (args[1].kind === 'settle_guard') return settle(target, args);
           const r = await target.settleStep!(...args);
           if (args[1].kind === 'settle_step' && args[1].step === 'x' && !wroteA) {
