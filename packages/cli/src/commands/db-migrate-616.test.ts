@@ -7,8 +7,9 @@
 // Schema steps cannot run here (only version 1 exists; the store's cells climb the synthetic ladder
 // through the open's seams). The cells that need a second raw connection on the home's `realm.db` (a
 // store whose runs an older derivation stamped; a file a newer Realm migrated; another writer holding
-// the store through the re-stamp) wait for the route to one: no CLI source may name the built-in
-// SQLite (the store package's one-loader law).
+// the store through the re-stamp) open it with `openForeignConnection` from the store package's
+// `./test-support` subpath (c9a), the one lawful route: no CLI source names the built-in SQLite (the
+// store package's one-loader law).
 //
 // Each assertion carries (1) the break that turns it red and (2) what it prints when it fails.
 import { spawnSync } from 'node:child_process';
@@ -18,6 +19,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openRealmHome } from '@sensigo/realm-store-sqlite';
+import { openForeignConnection } from '@sensigo/realm-store-sqlite/test-support';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { lineOf } from './db-migrate.js';
 
@@ -76,6 +78,39 @@ async function makeStore(): Promise<void> {
     extensionIdentity: [],
   });
   h.close();
+}
+
+/** Makes the home's store with `runs` runs, through the store package's own open, and closes it. */
+async function storeWithRuns(runs: number): Promise<string[]> {
+  const h = await openRealmHome({ home });
+  const ids: string[] = [];
+  for (let i = 0; i < runs; i++) {
+    const created = await h.runStore.create({
+      workflowId: 'triage',
+      workflowVersion: 1,
+      params: {},
+      extensionIdentity: [],
+    });
+    ids.push(created.record.id);
+  }
+  h.close();
+  return ids;
+}
+
+/**
+ * Stamps `ids` as an older derivation would have, on a second connection (the store's cell D's
+ * planting): another fingerprint and a phase their records do not derive; record and version untouched.
+ */
+async function plantStaleStamps(ids: readonly string[]): Promise<void> {
+  const foreign = await openForeignConnection(home);
+  try {
+    const plant = foreign.prepare(
+      "UPDATE runs SET run_phase = 'completed', phase_version = 'derivation-a' WHERE id = ?",
+    );
+    for (const id of ids) plant.run(id);
+  } finally {
+    foreign.close();
+  }
 }
 
 /** What a folder holds: each name with its bytes' hash, so any change to it shows. */
@@ -181,6 +216,75 @@ describe('#616 PR-2c c7 — realm db migrate, on the built CLI', { timeout: 120_
     });
   });
 
+  it('(K) runs another phase derivation stamped are re-stamped and counted: 2, then 0', async () => {
+    const ids = await storeWithRuns(3);
+    await plantStaleStamps(ids.slice(0, 2));
+    const file = shown(join(home, 'realm.db'));
+    const first = realm(['db', 'migrate', '--no-backup']);
+    const second = realm(['db', 'migrate', '--no-backup']);
+    // (1) red when the re-stamp does not run on the command's path, or its count is not the line's
+    //     (the first run says 0), or the stamps are not written (the second run says 2); (2) prints
+    //     both runs.
+    expect({ first, second }).toEqual({
+      first: { code: 0, stdout: ALREADY(file) + RESTAMPED(2), stderr: '' },
+      second: { code: 0, stdout: ALREADY(file) + RESTAMPED(0), stderr: '' },
+    });
+  });
+
+  it("(L) a file a newer Realm migrated is the open's own refusal as one Error line, exit 1; with --backup nothing is copied", async () => {
+    await storeWithRuns(1);
+    const foreign = await openForeignConnection(home);
+    try {
+      foreign.exec('PRAGMA user_version = 2');
+    } finally {
+      foreign.close();
+    }
+    const copy = join(base, 'copy.db');
+    const noBackup = realm(['db', 'migrate', '--no-backup']);
+    const withBackup = realm(['db', 'migrate', '--backup', copy]);
+    const refused = {
+      code: 1,
+      stdout: '',
+      stderr:
+        'Error: This store was migrated by a newer Realm: its schema is version 2 and this Realm writes version 1. Upgrade Realm to read or write it.\n',
+    };
+    // (1) red when STATE_STORE_VERSION_NEWER is not printed as one line (a stack follows), or the
+    //     backup is made before the open refuses; (2) prints both runs and whether a copy exists.
+    expect({ noBackup, withBackup, copied: existsSync(copy) }).toEqual({
+      noBackup: refused,
+      withBackup: refused,
+      copied: false,
+    });
+  });
+
+  it('(F2) another writer holds the store through the re-stamp: the lines so far, then the busy refusal as one Error line, exit 1, no stack', async () => {
+    const ids = await storeWithRuns(2);
+    await plantStaleStamps(ids);
+    const holder = await openForeignConnection(home);
+    let run: Run;
+    try {
+      // Two stale stamps, so the re-stamp opens a write transaction; the write lock held across the
+      // whole run (in WAL mode the open's reads pass under it; the re-stamp's write does not).
+      holder.exec('BEGIN IMMEDIATE');
+      try {
+        run = realm(['db', 'migrate', '--no-backup']);
+      } finally {
+        holder.exec('ROLLBACK');
+      }
+    } finally {
+      holder.close();
+    }
+    const file = shown(join(home, 'realm.db'));
+    // (1) red when STATE_RUN_BUSY is not in the expected-refusal set (a stack follows the line), or
+    //     the count so far is not reported before the refusal; (2) prints the run.
+    expect(run).toEqual({
+      code: 1,
+      stdout: ALREADY(file) + RESTAMPED(0),
+      stderr:
+        'Error: The store was busy for 5 s: another writer held it. Nothing was written. Try again.\n',
+    });
+  });
+
   it('(M) realm db --help lists migrate, and realm db migrate --help names both flags', () => {
     const group = realm(['db', '--help']);
     const migrate = realm(['db', 'migrate', '--help']);
@@ -255,8 +359,7 @@ describe('#616 PR-2c c7 — the page says what realm db migrate does', () => {
       PAGE,
       'Either line ends, when a copy was made, with ` The backup made before the step is at <path>.`',
     );
-    // The busy line after the count so far: its CLI cell waits for the route to a second raw
-    // connection on the home's store file (see the file's header).
+    // F2: the busy line after the count so far.
     claim(
       PAGE,
       'the re-stamp line with the number of runs re-stamped so far, then `The store was busy for <s> s: another writer held it. Nothing was written. Try again.`',
