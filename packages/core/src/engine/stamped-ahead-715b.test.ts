@@ -5,30 +5,19 @@
 // the clock back at T: the store reads it at `max(T, min(updated_at, T + ε))`.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { JsonFileStore } from '../store/json-file-store.js';
-import { writeTestClockFile } from '../store/test-clock-file.js';
+import { describe, expect, it } from 'vitest';
+import { InMemoryStore, settableClock } from '@sensigo/realm-testing';
 import { classifyRunHealth } from './run-health.js';
 import { CLOCK_SKEW_EPSILON_MS as EPS } from './instants.js';
-
-const roots: string[] = [];
-afterEach(async () => {
-  for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
-});
 
 const T = Date.parse('2026-10-30T10:00:00.000Z');
 
 /** The `record_stamped_ahead` finding of a record written `lead` ms ahead of T, read at T. */
 async function readAfterLead(lead: number) {
-  const root = await mkdtemp(join(tmpdir(), 'realm-715b-ahead-'));
-  roots.push(root);
-  await writeTestClockFile(root, new Date(T + lead));
-  const store = new JsonFileStore(join(root, 'runs'));
+  const clock = settableClock(new Date(T + lead));
+  const store = new InMemoryStore({ clock });
   const { record } = await store.create({ workflowId: 'w', workflowVersion: 1, params: {} });
-  await writeTestClockFile(root, new Date(T));
+  await clock.set(new Date(T));
   const snapshot = await store.get(record.id);
   return classifyRunHealth(snapshot).find((f) => f.kind === 'record_stamped_ahead');
 }

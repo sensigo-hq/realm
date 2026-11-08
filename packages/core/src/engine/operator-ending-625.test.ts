@@ -7,9 +7,6 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import * as core from '../index.js';
 import {
   submitHumanResponse,
@@ -18,7 +15,7 @@ import {
 } from './execution-loop.js';
 import { abandonRun } from './abandon-run.js';
 import { resumeWay } from './pending.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import type { RunRecord } from '../types/run-record.js';
 import type { EngineReply } from '../types/response-envelope.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
@@ -50,9 +47,9 @@ const F2 = core as unknown as {
 const render = (redaction as { escapedBoundedValue?: (v: unknown) => string }).escapedBoundedValue;
 
 describe('#625 PR-2a, F2 — a run an operator ended is never offered the undo', () => {
-  let store: JsonFileStore;
+  let store: InMemoryStore;
   beforeEach(async () => {
-    store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-op-625-')));
+    store = new InMemoryStore();
   });
 
   /** A run whose step `a` failed, then ended as `how`: an operator's abandon, or an engine failure. */

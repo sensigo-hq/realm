@@ -6,13 +6,10 @@
 // running, a capability_blocks marker is written, error_code discriminates, and a fixed registry
 // RECOVERS the step) plus the genuine-failure path staying terminal. They use the REAL empty-registry
 // path, never the testing mocks (which throw the generic *_FAILED codes = terminal).
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { executeStep } from './execution-loop.js';
 import { findCapabilityBlockedSteps } from './capability.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepDispatcher } from './execution-loop.js';
@@ -59,14 +56,9 @@ function goodAdapter(): ServiceAdapter {
 }
 
 describe('recoverable incapability (#134) — Part A', () => {
-  let store: JsonFileStore;
-  let dir: string;
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-cap-test-'));
-    store = new JsonFileStore(dir);
-  });
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+  let store: InMemoryStore;
+  beforeEach(() => {
+    store = new InMemoryStore();
   });
 
   // Test 1a — handler-not-registered settles recoverably and RECOVERS on a fixed registry.

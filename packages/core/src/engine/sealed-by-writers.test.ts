@@ -7,32 +7,26 @@
 // the finalizer-handler call count, because the guard classifier that reads the arm is what feeds
 // the finalizer drain: a wrong answer there silently runs the wrong cleanup.
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
 import { executeStep, executeChain, submitHumanResponse } from './execution-loop.js';
 import { abandonRun } from './abandon-run.js';
 import { applyResume } from './apply-resume.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore, settableClock, type SettableClock } from '@sensigo/realm-testing';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type { RunStore } from '../store/store-interface.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepHandler } from '../extensions/step-handler.js';
-import { writeTestClockFile } from '../store/test-clock-file.js';
 
-/** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
- *  runs folder sits beside the location's clock file (first set to the host's reading), which
- *  `setClockOf` rewrites. */
-async function testLocationRuns(prefix: string): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), prefix));
-  await writeTestClockFile(root, new Date());
-  return join(root, 'runs');
+/** #715 (b) (01 §C.4): the store's clock decides what is due — an in-memory store on a settable
+ *  clock, first set to the host's reading, which `setClockOf` moves. */
+function clockedStore(): InMemoryStore {
+  return new InMemoryStore({ clock: settableClock(new Date()) });
 }
 async function setClockOf(store: object, t: Date): Promise<void> {
-  const runsDir = (store as { runsDirPath?: string }).runsDirPath;
-  if (runsDir === undefined) throw new Error('setClockOf: this store is not a JSON store');
-  await writeTestClockFile(dirname(runsDir), t);
+  const clock = (store as { clock?: Partial<SettableClock> }).clock ?? {};
+  if (typeof clock.set !== 'function')
+    throw new Error('setClockOf: this store has no settable clock');
+  await clock.set(t);
 }
 
 const succeed = async (): Promise<Record<string, unknown>> => ({});
@@ -41,14 +35,12 @@ const explode = (m: string) => async (): Promise<Record<string, unknown>> => {
 };
 
 describe('#367 — the writer census: every terminal path persists its own arm', () => {
-  let dir: string;
-  let declaring: JsonFileStore;
+  let declaring: InMemoryStore;
   let finalizerCalls: number;
   let registry: ExtensionRegistry;
 
   beforeEach(async () => {
-    dir = await testLocationRuns('realm-seal-writers-');
-    declaring = new JsonFileStore(dir);
+    declaring = clockedStore();
     finalizerCalls = 0;
     const handler: StepHandler = {
       id: 'fin-handler',

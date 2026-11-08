@@ -6,13 +6,10 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: codes,
 // step names, verbs and booleans — never a value a caller supplied.
 import { describe, it, expect } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { admitWay, readSupplier, type Unavailable, type WaysContext } from './ways.js';
 import { writtenSnapshot } from './snapshot.js';
 import { advanceRun, executeStep, notCallableWords } from './execution-loop.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { RunRecord } from '../types/run-record.js';
@@ -112,8 +109,8 @@ function ctx(definition: WorkflowDefinition, extra: Partial<WaysContext> = {}): 
 async function answered(
   definition: WorkflowDefinition,
   params: Record<string, unknown> = { x: 'from-params' },
-): Promise<{ store: JsonFileStore; record: RunRecord }> {
-  const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-q3-729-')));
+): Promise<{ store: InMemoryStore; record: RunRecord }> {
+  const store = new InMemoryStore();
   const { record: run } = await store.create({
     workflowId: definition.id,
     workflowVersion: 1,
@@ -213,7 +210,7 @@ describe('#729 Q3 — the agent party: an eligible engine step called by name is
   });
 
   it('cell 4: the agent step called by name with party agent → admitted (the agent’s own step)', async () => {
-    const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-q3-729-')));
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: W3.id,
       workflowVersion: 1,

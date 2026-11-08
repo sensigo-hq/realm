@@ -5,28 +5,16 @@
 // refused as late. Every store here is a JSON store on a test location whose clock file says T.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { JsonFileStore } from '../store/json-file-store.js';
-import { writeTestClockFile } from '../store/test-clock-file.js';
+import { describe, expect, it } from 'vitest';
+import { InMemoryStore, settableClock } from '@sensigo/realm-testing';
 import { executeStep, submitHumanResponse } from './execution-loop.js';
 import { nextCalls } from '../test-support/ways-view.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 
-const roots: string[] = [];
-afterEach(async () => {
-  for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
-});
-
-/** A JSON store on a test location whose clock says `t` (core's tests can import the testing
- *  package undeclared, as `reliability.test.ts` does: turbo builds it before every test task). */
-async function location(t: Date): Promise<JsonFileStore> {
-  const root = await mkdtemp(join(tmpdir(), 'realm-715b-open-'));
-  roots.push(root);
-  await writeTestClockFile(root, t);
-  return new JsonFileStore(join(root, 'runs'));
+/** An in-memory store whose clock says `t` (core's tests can import the testing package
+ *  undeclared, as `reliability.test.ts` does: turbo builds it before every test task). */
+async function location(t: Date): Promise<InMemoryStore> {
+  return new InMemoryStore({ clock: settableClock(t) });
 }
 
 /** One agent step with a question: 300 s to answer (abort on expiry), a reminder every 60 s. */

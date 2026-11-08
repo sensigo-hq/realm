@@ -1,7 +1,7 @@
 // guard-cascade-625.test.ts — issue #625 (PR-1): a guard is settled by the write that makes it
 // eligible, and every reply and every printed line about it is minted once.
 //
-// What these cells pin, through the REAL engine and a REAL JsonFileStore:
+// What these cells pin, through the REAL engine and a REAL InMemoryStore:
 //   - the three guard-ending sentences, `guards` and `ended_by` (with `reason`) on the ANSWER path
 //     and on the STEP path — one cell per sentence per path;
 //   - a guard that passes and lets the run go on: `guards` only, the reply's own sentence kept;
@@ -17,10 +17,7 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore, settableClock, type SettableClock } from '@sensigo/realm-testing';
 import {
   expiryCarriedOutLine,
   advanceRun,
@@ -45,20 +42,17 @@ import type { StepDefinition, WorkflowDefinition } from '../types/workflow-defin
 import type { StepDispatcher } from './execution-loop.js';
 import type { EngineReply } from '../types/response-envelope.js';
 import { nextCalls } from '../test-support/ways-view.js';
-import { writeTestClockFile } from '../store/test-clock-file.js';
 
-/** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
- *  runs folder sits beside the location's clock file (first set to the host's reading), which
- *  `setClockOf` rewrites. */
-async function testLocationRuns(prefix: string): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), prefix));
-  await writeTestClockFile(root, new Date());
-  return join(root, 'runs');
+/** #715 (b) (01 §C.4): the store's clock decides what is due — an in-memory store on a settable
+ *  clock, first set to the host's reading, which `setClockOf` moves. */
+function clockedStore(): InMemoryStore {
+  return new InMemoryStore({ clock: settableClock(new Date()) });
 }
 async function setClockOf(store: object, t: Date): Promise<void> {
-  const runsDir = (store as { runsDirPath?: string }).runsDirPath;
-  if (runsDir === undefined) throw new Error('setClockOf: this store is not a JSON store');
-  await writeTestClockFile(dirname(runsDir), t);
+  const clock = (store as { clock?: Partial<SettableClock> }).clock ?? {};
+  if (typeof clock.set !== 'function')
+    throw new Error('setClockOf: this store has no settable clock');
+  await clock.set(t);
 }
 
 // ---------------------------------------------------------------------------
@@ -147,13 +141,8 @@ const expiring = (defaultChoice: string): Partial<GateConfig> => ({
   default_choice: defaultChoice,
 });
 
-async function withStore<T>(fn: (store: JsonFileStore) => Promise<T>): Promise<T> {
-  const dir = await testLocationRuns('realm-guard-cascade-625-');
-  try {
-    return await fn(new JsonFileStore(dir));
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
+async function withStore<T>(fn: (store: InMemoryStore) => Promise<T>): Promise<T> {
+  return fn(clockedStore());
 }
 
 /** Creates a run and opens the gate on `confirm`. Returns the run id, the gate id and an instant

@@ -12,14 +12,11 @@
 // legitimate use of this shape exists (unlike `#if 0`-style dead code, which is why compilers warn
 // there), and `.failed` shipped the same day, so no workflow anywhere can already carry it.
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { loadWorkflowFromString } from './yaml-loader.js';
 import { executeStep, executeChain } from '../engine/execution-loop.js';
 import { findEligibleSteps } from '../engine/eligibility.js';
 import type { StepDispatcher } from '../engine/execution-loop.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import { agentActionFor } from '../test-support/ways-view.js';
 
@@ -378,10 +375,10 @@ describe('dead failure condition — the claimed consequences, executed (issue #
   const explode: StepDispatcher = async () => {
     throw new Error('work exploded');
   };
-  let store: JsonFileStore;
+  let store: InMemoryStore;
 
   beforeEach(async () => {
-    store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-dead-cond-')));
+    store = new InMemoryStore();
   });
 
   /** `work`, then a dependent `cleanup` carrying the dead leaf on the caller's surface. */

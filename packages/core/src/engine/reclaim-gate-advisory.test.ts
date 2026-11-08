@@ -1,26 +1,17 @@
 // reclaim-gate-advisory.test.ts — issue #291, Deliverable 4c ([F7] defer-to-drain advisory):
 // reclaimStep never enacts a sibling gate's expiry itself — it only discloses it, pointing at
 // `realm run drain --expired` as the guaranteed-reachable lever.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { reclaimStep } from './reclaim-step.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import type { RunRecord, PendingGate } from '../types/run-record.js';
 
 const pastIso = () => new Date(Date.now() - 60_000).toISOString();
 
 describe('reclaimStep — gate expiry advisory (issue #291, [F7])', () => {
-  let store: JsonFileStore;
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-reclaim-gate-advisory-'));
-    store = new JsonFileStore(dir);
-  });
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+  let store: InMemoryStore;
+  beforeEach(() => {
+    store = new InMemoryStore();
   });
 
   // `on_expiry` alone admits an EXPLICIT `undefined`, because callers use it to ERASE the base
