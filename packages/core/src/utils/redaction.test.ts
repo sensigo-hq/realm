@@ -615,10 +615,22 @@ describe('#729 PR-3 — an inbound value carrying a marker (D1 D5)', () => {
   });
 });
 
+/**
+ * The process's CPU time, in milliseconds: the clock of the linearity cells that follow it here.
+ * A wall clock counts the time the process is descheduled while other workers (or a second test run
+ * on the same machine) hold the cores, which says nothing about the pass; this file's pool is forks,
+ * so the CPU clock is its own process (#1020 moved the two cells below that use their own copy of it).
+ */
+const cpuMs = (): number => {
+  const usage = process.cpuUsage();
+  return (usage.user + usage.system) / 1000;
+};
+
 describe('#729 PR-3 — the pattern pass is linear in the text', () => {
-  it('a 200,000-character text with long name-like runs is passed in well under a second', () => {
+  it('a 200,000-character text with long name-like runs is passed in well under a second of CPU time', () => {
     // A quadratic scan (a pattern tried at every position over a long run) took 35–52 seconds on
-    // this text; the separator scans take milliseconds.
+    // this text; the separator scans take 10–20 ms of CPU. The wall form of this cell (under 1 s)
+    // is the clock a descheduled process fails; the bound sits far from both.
     const FILL = Array.from({ length: 40_000 }, (_, i) => i.toString(36).padStart(5, '0')).join('');
     const text = `see FAKEbig${FILL} and ${FILL}:x here`;
     const set = compileDisclosure([], {
@@ -626,13 +638,13 @@ describe('#729 PR-3 — the pattern pass is linear in the text', () => {
       audience: 'agent',
       environment: 'swept',
     }).set;
-    const t0 = performance.now();
+    const c0 = cpuMs();
     disclose(text, set, 'all');
-    const ms = performance.now() - t0;
+    const ms = cpuMs() - c0;
     // (a) red when a name or URL anchor is matched by a regex tried at every position; (b) prints
-    //     a boolean.
-    expect({ underOneSecond: ms < 1000 }).toEqual({ underOneSecond: true });
-  });
+    //     the CPU milliseconds measured and the bound.
+    expect(ms, 'CPU ms for 200,000 characters (bound 1,000)').toBeLessThan(1000);
+  }, 120_000);
 });
 
 // ── #729 PR-3 correction 1: the law's RECORD 08 rules ──────────────────────────────────────────
@@ -882,13 +894,17 @@ describe('#729 PR-3 correction 1 — D-5: the forms the name rule reads (F9)', (
     });
   });
 
-  it('PEM bodies are read once each: 20,000 BEGIN lines with no END pass in well under a second', () => {
+  // The cell's own timeout: the red run reads each body to the end of the text, about 23 s of CPU
+  // here, and the clock must not be what fails it. The linear pass costs 50–150 ms of CPU; the wall
+  // form of this cell (under 1 s) went red once in a local counted run under load (2026-11-08).
+  it('PEM bodies are read once each: 20,000 BEGIN lines with no END pass in under 2 s of CPU time', () => {
     const text = JSON.stringify({ b: '-----BEGIN X----- '.repeat(20_000) });
-    const t0 = performance.now();
+    const c0 = cpuMs();
     disclose(text, NONE, 'all');
-    // (a) red when each BEGIN searches the rest of the text again; (b) prints a boolean.
-    expect(performance.now() - t0 < 1000).toBe(true);
-  });
+    // (a) red when each BEGIN searches the rest of the text again; (b) prints the CPU milliseconds
+    //     measured and the bound.
+    expect(cpuMs() - c0, 'CPU ms for 20,000 BEGIN lines (bound 2,000)').toBeLessThan(2000);
+  }, 120_000);
 
   it('the new names; `db_pwd` is a credential and `PWD` alone is not', () => {
     // (a) red when a new name is dropped, or `pwd` alone becomes a credential (every `PWD=` path

@@ -515,16 +515,21 @@ describe('#627 W — the form path (cell 21)', () => {
     const pending = s
       .call('present_question', { run_id: runId, gate_id: gateId }, controller.signal)
       .catch(() => 'cancelled');
-    await new Promise((r) => setTimeout(r, 50));
+    // The cancel is sent once the form is OPEN, not after a guess of how long that takes (a call
+    // cancelled before its form is sent gets none, and withdraws nothing), and the count is read
+    // once the server's withdrawal has arrived, then once more after a short wait for any second.
+    await until(() => s.elicited() >= 1, 5_000);
     controller.abort();
     await pending;
+    await until(() => s.withdrawn() >= 1, 5_000);
     await new Promise((r) => setTimeout(r, 50));
-    // (a) red when the signal is dropped (the form stays answerable); (b) prints whether it was
-    //     withdrawn and what was recorded.
-    expect({ withdrawn: s.withdrawn(), recorded: (await answers(s, runId)).length }).toEqual({
-      withdrawn: 1,
-      recorded: 0,
-    });
+    // (a) red when the signal is dropped (the form stays answerable); (b) prints whether the form
+    //     opened, whether it was withdrawn and what was recorded.
+    expect({
+      opened: s.elicited(),
+      withdrawn: s.withdrawn(),
+      recorded: (await answers(s, runId)).length,
+    }).toEqual({ opened: 1, withdrawn: 1, recorded: 0 });
   });
 });
 
@@ -568,7 +573,8 @@ describe('#627 W — present_question', () => {
     );
     const { runId, gateId } = await openedElsewhere(s);
     const first = s.call('present_question', { run_id: runId, gate_id: gateId });
-    await new Promise((r) => setTimeout(r, 50));
+    // The second call is made once the first form is OPEN (a guess of how long that takes can lose).
+    await until(() => s.elicited() >= 1, 5_000);
     const second = await s.call('present_question', { run_id: runId, gate_id: gateId });
     release({ action: 'decline' });
     await first;
@@ -674,6 +680,8 @@ describe('#627 W — after the wait: a fresh read, four branches', () => {
     box.s = s;
     const { runId, gateId } = await openedElsewhere(s);
     const reply = await s.call('present_question', { run_id: runId, gate_id: gateId });
+    // The withdrawal is read once it has arrived, then after a short wait for any second.
+    await until(() => s.withdrawn() >= 1, 5_000);
     await new Promise((r) => setTimeout(r, 100));
     // (a) red when the form stays open after the settle, the reply is W-f2, or the reply names the
     //     CLI's answer command anywhere (correction 1, A1: the agent's route words name no command);

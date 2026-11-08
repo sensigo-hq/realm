@@ -44,7 +44,7 @@ describe('caching 3-M A-0 — the record page', () => {
     // the same cells' `split` pins.
     claim(
       RECORD_PAGE,
-      "`prefix_sha256` and `prefix_chars` are on a request whose step prompt Realm split at its stable start (its head). `prefix_parts` and `request_strict_sent` are on every request Realm's Anthropic and OpenAI providers make, except Anthropic's tool-loop final request, and `cache_marked` is on those that carried a marker or the key. `cache_controls_rejected` and `cache_key_sent` are as their rows say (added after version 0.48.0):",
+      "`prefix_sha256` and `prefix_chars` are on a request whose step prompt Realm split at its stable start (its head). `prefix_parts` and `request_strict_sent` are on every request Realm's Anthropic and OpenAI providers make, except Anthropic's tool-loop final request, and `cache_marked` is on those that carried a marker or the key. `cache_controls_rejected` and `cache_key_sent` are as their rows say. All of these were added after version 0.48.0; a request recorded before has none of them:",
     );
   });
 
@@ -53,7 +53,7 @@ describe('caching 3-M A-0 — the record page', () => {
     // prompt as sent: `anthropic-provider-head-3b.test.ts` check 4 (the JSON retry's own text).
     claim(
       RECORD_PAGE,
-      'A SHA-256 for each part of what the request sent: `system`, and `tools`, `prompt` (the head on a split request, else the prompt as that request sent it) and `format` where it had them; `cache_marked` says which parts carried a marker.',
+      'A SHA-256 for each part of what the request sent: `system`, and `tools`, `prompt` (the first characters Realm cut as the head on a split request, even when it went out whole; else the prompt as that request sent it) and `format` where it had them; `cache_marked` says which parts carried a marker.',
     );
   });
 
@@ -85,8 +85,9 @@ describe('caching 3-M A-0 — the type comments in run-record.ts', () => {
     // The same cells as the record page's rows above.
     for (const sentence of [
       "Caching 3-M (A-0): or the `conversation` so far — the marker Anthropic's tool main turns put on a copy of the last message (#899).",
-      'Caching 3-B (A6), 3-M (A-0): a SHA-256 for each part of what the request sent (64 lowercase hex): `system`, and `tools`, `prompt` (the head on a split request, else the prompt as that request sent it) and `format` where it had them; `cache_marked` says which parts carried a marker.',
-      'Caching 3-B (A6), 3-M (A-0): a SHA-256 for each part of what the request sent: `system`, and `tools`, `prompt` (the head on a split request, else the prompt as that request sent it) and `format` where it had them; `cache_marked` says which parts carried a marker.',
+      'Caching 3-B (A6), 3-M (A-0): a SHA-256 for each part of what the request sent (64 lowercase hex): `system`, and `tools`, `prompt` (the first characters Realm cut as the head on a split request, even when it went out whole; else the prompt as that request sent it) and `format` where it had them; `cache_marked` says which parts carried a marker.',
+      'Caching 3-B (A6), 3-M (A-0): a SHA-256 for each part of what the request sent: `system`, and `tools`, `prompt` (the first characters Realm cut as the head on a split request, even when it went out whole; else the prompt as that request sent it) and `format` where it had them; `cache_marked` says which parts carried a marker.',
+      "Caching 3-B (A6): what carried a cache marker or the key on this request. Absent when nothing did: under `--prompt-cache off`, after the endpoint refused the cache fields, on Anthropic's tool-loop final request, and on an OpenAI request that carried neither a mark nor the key.",
       'Caching 3-B (A6, C5): whether this request carried strict structured output or strict tool arguments',
     ]) {
       claimComment(RUN_RECORD, sentence);
