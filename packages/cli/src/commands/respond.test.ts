@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { respondToGate, respondCommand } from './respond.js';
 import {
   JsonFileStore,
-  JsonWorkflowStore,
+  type RealmWorkflowRegistrar,
   WorkflowError,
   ExtensionRegistry,
   executeStep,
@@ -85,7 +85,7 @@ describe('respondToGate', () => {
   /** The other handles a cell opened, cleaned after it. */
   const extras: TempHome[] = [];
   let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let workflowStore: RealmWorkflowRegistrar;
 
   beforeEach(async () => {
     h = await makeTempHome();
@@ -225,7 +225,7 @@ const gateFinalizerWorkflow: WorkflowDefinition = {
 describe('respondToGate — fires finalizers on gate completion (registry threaded)', () => {
   let h: TempHome;
   let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let workflowStore: RealmWorkflowRegistrar;
 
   beforeEach(async () => {
     h = await makeTempHome();
@@ -546,7 +546,7 @@ describe('the answerer clause reads the record (#706 walk W8-R1)', () => {
   /** The other handles (the workflow store's own, bob's), cleaned before `h`. */
   const extras: TempHome[] = [];
   let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let workflowStore: RealmWorkflowRegistrar;
   let registry: ExtensionRegistry;
   let runId: string;
   let gateId: string;
@@ -805,7 +805,7 @@ describe('#729 PR-0 correction (C5) — a wrong gate id: the refusal names its w
   /** The refused answer's lines, as the command prints them. */
   async function refusedLines(
     runStore: JsonFileStore,
-    workflowStore: JsonWorkflowStore,
+    workflowStore: RealmWorkflowRegistrar,
     runId: string,
   ): Promise<string[]> {
     try {

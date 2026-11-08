@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   JsonFileStore,
-  JsonWorkflowStore,
+  type RealmWorkflowRegistrar,
   drainFinalizers,
   captureEvidence,
   DRAIN_LEASE_MAX,
@@ -54,7 +54,7 @@ describe('classifyGateExpiry (issue #291)', () => {
 describe('runDrainAction --expired (issue #291, [F5])', () => {
   let h: TempHome;
   let store: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let workflowStore: RealmWorkflowRegistrar;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;

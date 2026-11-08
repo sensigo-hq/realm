@@ -13,7 +13,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   JsonFileStore,
-  JsonWorkflowStore,
+  type RealmWorkflowRegistrar,
   ExtensionRegistry,
   advanceRun,
   executeStep,
@@ -99,7 +99,7 @@ describe(
     let h: TempHome & { readonly root: string };
     let home: string;
     let runStore: JsonFileStore;
-    let workflowStore: JsonWorkflowStore;
+    let workflowStore: RealmWorkflowRegistrar;
 
     beforeEach(async () => {
       h = await makeTempHome();

@@ -309,7 +309,7 @@ describe('#616 PR-2c c6 — realm db backup, on the built CLI', { timeout: 120_0
       db: line(db.stdout, /^\s+backup\s/),
     }).toEqual({
       top: 'db Maintain the store file',
-      db: 'backup <path> Copy the store file to a new file outside the Realm home, and',
+      db: 'backup <path> Copy the store file to a new file outside the Realm home,',
     });
   });
 });

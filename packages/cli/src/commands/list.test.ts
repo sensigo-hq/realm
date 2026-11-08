@@ -1079,9 +1079,34 @@ describe('issue #729 — realm run list --stuck names a run that cannot go on, a
   /** W2's run before summarize: an agent step ready — it can go on. */
   const healthy = live({ id: 'run-healthy' });
   const stuckList = (runs: RunRecord[], definition: WorkflowDefinition = W2) =>
-    listRuns(undefined, makeStore(runs), undefined, true, undefined, undefined, () => ({
+    listRuns(undefined, makeStore(runs), undefined, true, undefined, undefined, async () => ({
       definition,
     }));
+
+  it('#616 PR-2c c5b: the probe is awaited once per distinct workflow — three runs of one and one of another make two calls', async () => {
+    const calls: string[] = [];
+    const runs = [
+      live({ id: 'run-a1' }),
+      live({ id: 'run-a2' }),
+      live({ id: 'run-a3' }),
+      live({ id: 'run-b1', workflow_id: 'w-other' }),
+    ];
+    await listRuns(
+      undefined,
+      makeStore(runs),
+      undefined,
+      true,
+      undefined,
+      undefined,
+      async (id) => {
+        calls.push(id);
+        return { definition: W2 };
+      },
+    );
+    // (a) red when the probe is called once per run (four calls); (b) prints the ids it was called
+    //     with.
+    expect(calls.sort()).toEqual(['w-other', 'w2']);
+  });
 
   it('7a. lists the stuck run at age 0 with `<step>=cannot_go_on(<check>) (realm run inspect <id>)`', async () => {
     const out = await stuckList([stuck, healthy]);

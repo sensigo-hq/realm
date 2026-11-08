@@ -30,8 +30,8 @@ import {
   type Clock,
   type DedupStore,
   type PerRunArtifactStore,
+  type RealmWorkflowRegistrar,
   type TraceBufferStore,
-  type WorkflowRegistrar,
 } from '@sensigo/realm';
 import { RealmDb } from './connection.js';
 import { SqliteDedupStore } from './dedup-store.js';
@@ -71,9 +71,11 @@ export interface RealmHome {
   dedupStoreFor(workflowId: string): DedupStore;
   /**
    * The workflow registry (PR-1b B3): each distinct definition text once, a pointer per workflow to
-   * its current text, and every move of that pointer. After `close()`, its calls reject.
+   * its current text, and every move of that pointer. After `close()`, its calls reject. It has every
+   * optional member of core's registrar (the listing with diagnostics, the capped read: #616 PR-2c
+   * c5a, c5b).
    */
-  readonly workflowStore: WorkflowRegistrar;
+  readonly workflowStore: RealmWorkflowRegistrar;
   /** The home's failed agent attempts, kept per run (PR-1b B7). */
   readonly failedAttemptStore: SqliteFailedAttemptStore;
   /** The home's saved replays, by id (PR-1b B7). */
