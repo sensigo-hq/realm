@@ -14,10 +14,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
-  JsonFileStore,
   advanceRun,
   executeStep,
   type WorkflowDefinition,
+  type RunStore,
 } from '@sensigo/realm';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
@@ -223,14 +223,9 @@ describe('#729 PR-3 correction 5 (J-2) — the sweep commands print the phase wh
     );
   }, 60_000);
 
-  it('run-migrate.ts — `(phase … → …)` in the stamped bucket', () => {
-    const id = seed('c5-migrate-stamp', {
-      run_phase: 'completed',
-      terminal_state: true,
-      terminal_reason: 'Abandoned by the operator',
-      abandoned_at: AT,
-    });
-    // The other branch: a record whose phase the stamp keeps prints the one word.
+  it('run-migrate.ts — `(phase …)` in the stamped bucket: a phase the stamp keeps prints as one word', () => {
+    // A record whose phase the stamp keeps (the branch every stamped run reaches once the phase is
+    // derived, never stored; the `→` branch's stored ≠ derived case is c10a-4's, on a tampered row).
     const same = seed('c5-migrate-same', {
       run_phase: 'abandoned',
       terminal_state: true,
@@ -238,14 +233,12 @@ describe('#729 PR-3 correction 5 (J-2) — the sweep commands print the phase wh
       abandoned_at: AT,
     });
     const r = piped(['run', 'migrate', '--stamp-seals'], {
-      STATUS_X: 'completed',
       STATUS_Y: 'abandoned',
     });
-    // (a) red when a phase prints as plain text on either branch; (b) prints both lines.
-    expect([lineWith(r.lines, `• ${id}:`), lineWith(r.lines, `• ${same}:`)]).toEqual([
-      `  • ${id}: abandon_requested (phase completed → abandoned)`,
+    // (a) red when the phase prints as plain text, or as the `→` form; (b) prints the line.
+    expect(lineWith(r.lines, `• ${same}:`)).toBe(
       `  • ${same}: abandon_requested (phase abandoned)`,
-    ]);
+    );
   }, 60_000);
 });
 
@@ -423,7 +416,7 @@ describe('#729 PR-3 correction 5 (J-2) — `realm run respond` prints the phase 
   async function question(
     expired: boolean,
     withAfter: boolean,
-  ): Promise<{ def: WorkflowDefinition; runId: string; gateId: string; runs: JsonFileStore }> {
+  ): Promise<{ def: WorkflowDefinition; runId: string; gateId: string; runs: RunStore }> {
     const def = await registered({
       confirm: {
         description: 'Confirm.',

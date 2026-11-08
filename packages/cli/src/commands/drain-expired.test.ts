@@ -5,12 +5,12 @@
 // terminal" line for such a run; it still predicts nothing and writes nothing. finding-only gates are listed but never acted on.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
-  JsonFileStore,
   type RealmWorkflowRegistrar,
   drainFinalizers,
   captureEvidence,
   DRAIN_LEASE_MAX,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
+  type RunStore,
 } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { classifyGateExpiry, runDrainAction, type DrainRuntimeDeps } from './drain.js';
@@ -53,7 +53,7 @@ describe('classifyGateExpiry (issue #291)', () => {
 
 describe('runDrainAction --expired (issue #291, [F5])', () => {
   let h: TempHome;
-  let store: JsonFileStore;
+  let store: RunStore;
   let workflowStore: RealmWorkflowRegistrar;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errSpy: ReturnType<typeof vi.spyOn>;

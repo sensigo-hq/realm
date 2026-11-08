@@ -12,7 +12,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { JsonFileStore } from '@sensigo/realm';
+import type { RunStore } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -66,7 +66,7 @@ describe(
     let h: TempHome & { readonly root: string };
     let home: string;
     let project: string;
-    let runStore: JsonFileStore;
+    let runStore: RunStore;
 
     beforeEach(async () => {
       h = await makeTempHome();

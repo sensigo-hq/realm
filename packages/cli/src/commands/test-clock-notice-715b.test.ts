@@ -14,14 +14,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { testClockNoticeLine } from '@sensigo/realm';
-import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
+import { createTestHome, type TestHome } from '@sensigo/realm-testing';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const CLI = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 const T = new Date('2033-01-02T03:04:05.000Z');
 
 let scratch = '';
-let location: TestLocation | undefined;
+let location: TestHome | undefined;
 /** #616 PR-2b: the handle on the location, opened after it; its `root` is the child's HOME. */
 let located: TempHome | undefined;
 let runId = '';
@@ -29,7 +29,7 @@ let runId = '';
 beforeAll(async () => {
   scratch = mkdtempSync(join(tmpdir(), 'realm-notice-715b-'));
   mkdirSync(join(scratch, 'plain'), { recursive: true });
-  location = await createTestLocation({ start: T, root: join(scratch, 'at-location', '.realm') });
+  location = await createTestHome({ start: T, root: join(scratch, 'at-location', '.realm') });
   located = await makeTempHome({ home: location.root });
   const { record } = await located.home.runStore.create({
     workflowId: 'notice-715b',

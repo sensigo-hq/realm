@@ -23,19 +23,19 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
+import { createTestHome, type TestHome } from '@sensigo/realm-testing';
 
 const CLI = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 const T = Date.parse('2033-01-02T03:04:05.000Z');
 
 let scratch = '';
 let home = '';
-let source: TestLocation | undefined;
+let source: TestHome | undefined;
 
 beforeAll(async () => {
   scratch = mkdtempSync(join(tmpdir(), 'realm-c6-'));
   home = join(scratch, 'home');
-  source = await createTestLocation({
+  source = await createTestHome({
     start: new Date(T),
     root: join(scratch, 'made-here', '.realm'),
   });

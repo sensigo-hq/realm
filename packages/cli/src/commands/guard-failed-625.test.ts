@@ -12,11 +12,11 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
   ExtensionRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type StepDefinition,
   type WorkflowDefinition,
+  type RunStore,
 } from '@sensigo/realm';
 import { advanceRunFromShell } from './run-advance.js';
 import { makeTempHome } from '../test-support/temp-home.js';
@@ -56,7 +56,7 @@ const AFTER = { description: 'T.', execution: 'auto', depends_on: ['g'] } as Ste
  */
 async function advance(
   def: WorkflowDefinition,
-  prep?: (runs: JsonFileStore, runId: string) => Promise<void>,
+  prep?: (runs: RunStore, runId: string) => Promise<void>,
   registry = new ExtensionRegistry(),
 ) {
   const h = await makeTempHome();
@@ -95,7 +95,7 @@ async function advance(
 }
 
 /** `p` recorded by a plain write that decides no guard, so the call's own loop decides `g`. */
-async function pRecordedWithoutItsGuard(runs: JsonFileStore, runId: string): Promise<void> {
+async function pRecordedWithoutItsGuard(runs: RunStore, runId: string): Promise<void> {
   const { record: cur } = await runs.get(runId);
   const now = new Date().toISOString();
   await runs.update({

@@ -34,6 +34,12 @@
 // schema, the application id, `user_version` and the store's meta row, its time from the home's
 // clock. A second first opener waits at its `BEGIN IMMEDIATE`, finds the schema and does nothing.
 //
+// The maintenance entry's check (`check`, PR-2c c8a1; DELTAS 50 Q1, 52 (0)) runs the same open and
+// writes nothing: the connection and any reopen are read-only (`SQLITE_OPEN_READONLY`, so no close
+// copies the WAL into the file); step 3 only looks (the folder's writability and the old-store guard;
+// no folder, fence or file is made); an uninitialised file is not set up, so it is refused as a file
+// that is not a Realm store (its application id). Every other refusal is the same.
+//
 // The reopen `RealmDb` needs after a poisoned connection opens the same file again and applies the
 // same pragmas, read back. It runs inside a call of the class (the lock is held, the busy wait is
 // around it), so it applies them directly: the class is synchronous there.
@@ -75,6 +81,12 @@ export interface OpenOptions {
    * stay refused. Every other open leaves it out and refuses an older file.
    */
   readonly acceptOlderSchema?: true;
+  /**
+   * The maintenance entry opened for `'check'` (`maintenance.ts`; DELTAS 50 Q1, 52 (0)): the verb is
+   * the switch. The connection and any reopen are read-only, the home is looked at but nothing is
+   * made in it, and an uninitialised file is refused, never set up (see the module comment).
+   */
+  readonly check?: true;
 }
 
 /**
@@ -84,8 +96,8 @@ export interface OpenOptions {
 export interface OpenSeams {
   /** The loader's version check; the one loader's by default. */
   readonly loadSqlite?: () => { version: string };
-  /** Opens a connection on the store file; the one loader's by default. */
-  readonly openFile?: (path: string) => DatabaseLike;
+  /** Opens a connection on the store file (read-only for the check); the one loader's by default. */
+  readonly openFile?: (path: string, options?: { readonly readOnly: true }) => DatabaseLike;
   /** What the filesystem gate asks the system; this machine by default. Its platform also decides
    *  the macOS pragmas. */
   readonly probe?: FilesystemProbe;
@@ -309,10 +321,12 @@ async function checkFile(
   schema: readonly string[],
   versions: StoreSchemaVersions,
   acceptOlderSchema: boolean,
+  check = false,
 ): Promise<'uninitialised' | 'ready'> {
   try {
     const header = await db.autocommit((c) => readHeader(c));
-    if (isUninitialised(header)) return 'uninitialised';
+    // The check sets nothing up: an uninitialised file meets the application id's refusal below.
+    if (isUninitialised(header) && !check) return 'uninitialised';
     if (header.applicationId !== REALM_STORE_APPLICATION_ID) {
       throw settingsRefused(path, [
         `its application id is ${header.applicationId}, not Realm's ${REALM_STORE_APPLICATION_ID}`,
@@ -416,17 +430,24 @@ async function setUp(
 }
 
 /** Opens a connection on the store file; a SQLite error leaves mapped (14: the read-only refusal). */
-function connect(path: string, openFile: (path: string) => DatabaseLike): DatabaseLike {
+function connect(
+  path: string,
+  openFile: (path: string, options?: { readonly readOnly: true }) => DatabaseLike,
+  readOnly: boolean,
+): DatabaseLike {
   try {
-    return openFile(path);
+    return readOnly ? openFile(path, { readOnly: true }) : openFile(path);
   } catch (err) {
     throw mapSqliteError(err, path);
   }
 }
 
 /** The one loader's open of the store file (the source law that keeps one opener names this). */
-function openFileThroughTheLoader(path: string): DatabaseLike {
-  return openDatabase(path);
+function openFileThroughTheLoader(
+  path: string,
+  options?: { readonly readOnly: true },
+): DatabaseLike {
+  return openDatabase(path, options);
 }
 
 /** The open (see the module comment); `RealmDb.open` runs it. */
@@ -438,7 +459,8 @@ export async function openRealmDb(
   (seams.loadSqlite ?? loadSqlite)();
   const probe = seams.probe ?? SYSTEM_PROBE;
   assertLocalFilesystem(home, probe);
-  const path = prepareHome(home);
+  const check = options.check === true;
+  const path = prepareHome(home, check);
   const kind = notAFile(path);
   if (kind !== undefined) throw settingsRefused(path, [kind]);
   assertWritable(path);
@@ -455,7 +477,7 @@ export async function openRealmDb(
   const openFile = seams.openFile ?? openFileThroughTheLoader;
   const pragmas = connectionPragmas(probe.platform);
   const reopen = (): DatabaseLike => {
-    const connection = connect(path, openFile);
+    const connection = connect(path, openFile, check);
     try {
       for (const pragma of pragmas) applyPragma(connection, path, pragma);
     } catch (err) {
@@ -464,7 +486,7 @@ export async function openRealmDb(
     }
     return connection;
   };
-  const db = new RealmDb(connect(path, openFile), {
+  const db = new RealmDb(connect(path, openFile, check), {
     path,
     clock: options.clock,
     reopen,
@@ -472,7 +494,7 @@ export async function openRealmDb(
     ...(options.budgetMs === undefined ? {} : { budgetMs: options.budgetMs }),
   });
   try {
-    if ((await checkFile(db, path, realm, schema, versions, older)) === 'uninitialised') {
+    if ((await checkFile(db, path, realm, schema, versions, older, check)) === 'uninitialised') {
       await setUp(db, path, realm, schema);
       if ((await checkFile(db, path, realm, schema, versions, older)) !== 'ready') {
         throw new Error(

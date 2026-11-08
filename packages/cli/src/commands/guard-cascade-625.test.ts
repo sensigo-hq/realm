@@ -14,7 +14,6 @@ import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  JsonFileStore,
   type RealmWorkflowRegistrar,
   ExtensionRegistry,
   executeStep,
@@ -23,6 +22,7 @@ import {
   captureEvidence,
   DRAIN_LEASE_MAX,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
+  type RunStore,
 } from '@sensigo/realm';
 import type { RunRecord, StepDefinition, StepHandler, WorkflowDefinition } from '@sensigo/realm';
 import { respondCommand, respondToGate } from './respond.js';
@@ -116,7 +116,7 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
   let home: string;
   let project: string;
   let savedHome: string | undefined;
-  let runStore: JsonFileStore;
+  let runStore: RunStore;
   let workflowStore: RealmWorkflowRegistrar;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errSpy: ReturnType<typeof vi.spyOn>;

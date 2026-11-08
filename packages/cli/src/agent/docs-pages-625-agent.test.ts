@@ -20,7 +20,6 @@ import {
   createDefaultRegistry,
   executeChain,
   executeStep,
-  JsonFileStore,
   type RealmWorkflowRegistrar,
   loadWorkflowFromString,
   submitHumanResponse,
@@ -927,7 +926,7 @@ describe(
     });
 
     async function fresh(): Promise<{
-      runStore: JsonFileStore;
+      runStore: RunStore;
       workflowStore: RealmWorkflowRegistrar;
     }> {
       const made = await makeTempHome();

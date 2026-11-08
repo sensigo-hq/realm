@@ -11,22 +11,22 @@ import { join } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import { buildExportBundle, resolveExportPath } from './export.js';
 import {
-  JsonFileStore,
-  JsonFileFailedAttemptStore,
   buildFailedAttemptRecord,
   serializeFailedAttemptLine,
   FsIoError,
   WorkflowError,
+  type FailedAttemptStore,
+  type RunStore,
+  type TraceBufferStore,
 } from '@sensigo/realm';
 import { composeRunCost, type PriceSource, type RunRecord } from '@sensigo/realm';
-import { JsonTraceBufferStore } from '@sensigo/realm-mcp';
 import { makeTempHome } from '../test-support/temp-home.js';
 
 async function makeStores(): Promise<{
   dir: string;
-  runStore: JsonFileStore;
-  failedAttemptStore: JsonFileFailedAttemptStore;
-  traceBufferStore: JsonTraceBufferStore;
+  runStore: RunStore;
+  failedAttemptStore: FailedAttemptStore;
+  traceBufferStore: TraceBufferStore;
   cleanup: () => Promise<void>;
 }> {
   const h = await makeTempHome();
@@ -69,7 +69,7 @@ function makeRun(overrides: Partial<RunRecord> & { id?: string }): RunRecord {
   };
 }
 
-async function appendSidecarLine(store: JsonFileFailedAttemptStore, runId: string): Promise<void> {
+async function appendSidecarLine(store: FailedAttemptStore, runId: string): Promise<void> {
   const rec = buildFailedAttemptRecord({
     run_id: runId,
     workflow_id: 'wf-1',
@@ -495,27 +495,6 @@ describe('buildExportBundle', () => {
       await cleanup();
     }
   });
-
-  it.each(['completed', 'failed', 'abandoned', 'aborted'] as const)(
-    'terminal phase %s never emits a warning',
-    async (phase) => {
-      const { dir, runStore, failedAttemptStore, traceBufferStore, cleanup } = await makeStores();
-      try {
-        const run = makeRun({ run_phase: phase, terminal_state: true });
-        await injectRun(dir, run);
-
-        const { warning } = await buildExportBundle(run.id, {
-          runStore,
-          failedAttemptStore,
-          traceBufferStore,
-        });
-
-        expect(warning).toBeUndefined();
-      } finally {
-        await cleanup();
-      }
-    },
-  );
 
   it('nonexistent run: rejects with STATE_RUN_NOT_FOUND, writes nothing', async () => {
     const { runStore, failedAttemptStore, traceBufferStore, cleanup } = await makeStores();

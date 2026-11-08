@@ -73,13 +73,13 @@ const STORE_STOPS: ReadonlySet<string> = new Set([
 ]);
 
 /** A value from a file, as one printable line piece: escaped and bounded, its JSON quotes taken off. */
-function shown(value: unknown): string {
+export function shown(value: unknown): string {
   const text = escapedBoundedValue(value);
   return text.length >= 2 && text.startsWith('"') && text.endsWith('"') ? text.slice(1, -1) : text;
 }
 
 /** `<n> <unit>s`, or `1 <unit>`. */
-function counted(n: number, unit: string): string {
+export function counted(n: number, unit: string): string {
   return `${n} ${unit}${n === 1 ? '' : 's'}`;
 }
 
@@ -88,7 +88,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /** The operating system's words for a failed read (`errno`), or the error's own message. */
-function systemWords(err: unknown): string {
+export function systemWords(err: unknown): string {
   const errno = (err as { errno?: unknown }).errno;
   if (typeof errno === 'number') {
     const entry = getSystemErrorMap().get(errno);

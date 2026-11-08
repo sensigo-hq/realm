@@ -19,7 +19,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Command, CommanderError } from 'commander';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { CURRENT_WORKFLOW_SCHEMA_VERSION, JsonFileStore, executeStep } from '@sensigo/realm';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION, executeStep, type RunStore } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { attachOptionValueGuard, looksLikeFlag } from './option-value-guard.js';
 import { makeTempHome, type TempHome, runIds } from '../test-support/temp-home.js';
@@ -501,7 +501,7 @@ describe('#920 C-2 — the other 19 options, one command family each (the built 
     );
   }, 20_000);
   /** A live run of a one-step workflow, made in this HOME's store; returns the store and its id. */
-  async function liveRun(): Promise<{ runs: JsonFileStore; id: string }> {
+  async function liveRun(): Promise<{ runs: RunStore; id: string }> {
     const runs = h.home.runStore;
     const def = {
       id: 'live',
@@ -520,7 +520,7 @@ describe('#920 C-2 — the other 19 options, one command family each (the built 
   }
 
   /** A run waiting at an open question (`confirm`, choices approve/reject, not expired). */
-  async function atOpenQuestion(): Promise<{ runs: JsonFileStore; id: string; gate: string }> {
+  async function atOpenQuestion(): Promise<{ runs: RunStore; id: string; gate: string }> {
     const runs = h.home.runStore;
     const def = {
       id: 'asked',
