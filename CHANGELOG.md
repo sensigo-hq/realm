@@ -123,6 +123,8 @@ All notable changes to this project are documented here.
   `READS_ONE_READING` case fails.
 - `InMemoryStore` (in `@sensigo/realm-testing`) gains `seed(record)`: a test plants a run record as given, replacing any stored run of its id — a fixture channel, never an import (#616).
 - **`@sensigo/realm-store-sqlite` is published** from this release on, with the other packages: the SQLite-backed stores — runs, duplicate-webhook ids, workflow definitions, failed attempts, replays and trace buffers — in one `realm.db` file in the Realm home. You do not install it yourself. (#616)
+- **`realm db backup <path>` copies the store file** by SQLite's `VACUUM INTO`, converts the copy to WAL, checks it (`PRAGMA quick_check`) and refuses a path inside the Realm home or one where anything exists; restoring is a documented procedure, never a command (#616).
+- **Two error codes for it: `STATE_STORE_BACKUP_REFUSED`** (a path inside the home, where anything exists, or that cannot be created; a home with no store file, or an empty one; a copy that fails or cannot be written, with nothing left at the path) **and `STATE_STORE_BACKUP_UNVERIFIED`** (the copy fails the quick check; the copy is kept and the store file named as possibly damaged) (#616).
 
 ### Changed
 

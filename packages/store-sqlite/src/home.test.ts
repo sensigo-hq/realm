@@ -18,7 +18,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { constants, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { WorkflowError } from '@sensigo/realm';
@@ -27,7 +27,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mapSqliteError, RealmDb } from './connection.js';
 import { openDatabase } from './driver.js';
 import type { DatabaseLike } from './driver.js';
-import { prepareHome } from './home.js';
+import { prepareHome, systemErrorText } from './home.js';
 import { VERSION } from './version.js';
 
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -607,4 +607,58 @@ describe('#616 unit 7a — a home or a store file Realm cannot write', () => {
       });
     },
   );
+});
+
+describe('#616 PR-2c c6 correction — the store package loads on every Node the CLI allows', () => {
+  it("(a) the system's words for an errno read as Node's, and an errno Node does not know reads as Node's own text for it", () => {
+    const text = (code: 'ENOENT' | 'EACCES' | 'EROFS' | 'ENOSPC' | 'EEXIST'): string =>
+      systemErrorText(-constants.errno[code]);
+    // (1) red when the helper returns the map entry's other half (the name `ENOENT`), the map is
+    //     read with a positive errno (every refusal then reads "Unknown system error 2"), or the
+    //     fallback is dropped or reworded; (2) prints each errno's text.
+    expect({
+      ENOENT: text('ENOENT'),
+      EACCES: text('EACCES'),
+      EROFS: text('EROFS'),
+      ENOSPC: text('ENOSPC'),
+      EEXIST: text('EEXIST'),
+      unknown: systemErrorText(-99999),
+    }).toEqual({
+      ENOENT: 'no such file or directory',
+      EACCES: 'permission denied',
+      EROFS: 'read-only file system',
+      ENOSPC: 'no space left on device',
+      EEXIST: 'file already exists',
+      unknown: 'Unknown system error -99999',
+    });
+  });
+
+  it('(b) no module of the package uses `getSystemErrorMessage`, which Node 22.0–22.11 and Node 20 do not have: every `realm` command would die at start there', () => {
+    const SRC = join(PACKAGE_ROOT, 'src');
+    const sources = (dir: string): string[] =>
+      readdirSync(dir).flatMap((name) => {
+        const path = join(dir, name);
+        if (statSync(path).isDirectory()) return sources(path);
+        return name.endsWith('.ts') && !name.endsWith('.test.ts') ? [path] : [];
+      });
+    const files = sources(SRC);
+    const hits: string[] = [];
+    for (const file of files) {
+      readFileSync(file, 'utf8')
+        .split('\n')
+        .forEach((line, i) => {
+          const code = line.trim();
+          if (code.startsWith('//') || code.startsWith('*') || code.startsWith('/*')) return;
+          if (/\bgetSystemErrorMessage\b/.test(code))
+            hits.push(`${file.slice(SRC.length + 1)}:${i + 1}`);
+        });
+    }
+    // (1) red when a module imports or calls it again (the line is listed); the file count is
+    //     checked too, so a scan that reads no file cannot pass as "none"; (2) prints each hit as
+    //     `<file>:<line>` and how many files were read.
+    expect({ read: files.length >= 20 ? 'at least 20' : files.length, hits }).toEqual({
+      read: 'at least 20',
+      hits: [],
+    });
+  });
 });
