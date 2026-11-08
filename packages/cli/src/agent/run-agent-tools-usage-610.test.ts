@@ -370,3 +370,42 @@ describe('#715 (R) — every request the tools path records carries an id realm 
     }).toEqual({ requestMints: 3, stored: 3, sameInOrder: true });
   });
 });
+
+/** Caching 3-M (piece A-1b): each stored request's `request_index`, `request_in_call` and id. */
+const placesOf = (u: UsageRecord[] | undefined) =>
+  (u ?? []).map((r) => ({ index: r.request_index, in_call: r.request_in_call, id: r.request_id }));
+
+describe('caching 3-M A-1b — each request records its place in the provider call that made it', () => {
+  it('check 1: one call of three requests, rejected, then a repair call of one — places 0, 1, 2, 0; request_index 0–3 across both calls', async () => {
+    const { stepEntry } = await drive(workflow(), [
+      // No tool runs (`toolCalls` left out), so the rejected answer is repaired by a new call.
+      { output: {}, usage: [rec(0, 100), rec(1, 200), rec(2, 300)] },
+      { output: { category: 'billing' }, usage: [rec(3, 400)] },
+    ]);
+    const requests = stepEntry?.diagnostics?.cache?.requests;
+    // (a) red when the place is not minted (none), or is counted over the step's whole list after
+    //     the append instead of per arriving array (the repair's request reads 3); (b) prints each
+    //     request's index, place and id.
+    expect(placesOf(requests)).toEqual([
+      { index: 0, in_call: 0, id: expect.any(String) },
+      { index: 1, in_call: 1, id: expect.any(String) },
+      { index: 2, in_call: 2, id: expect.any(String) },
+      { index: 3, in_call: 0, id: expect.any(String) },
+    ]);
+  });
+
+  it('check 2: D2 — a two-request call repaired, then a one-request call that throws — the drive-failure entry holds places 0, 1, 0', async () => {
+    const { run } = await drive(workflow(), [
+      { output: {}, usage: [rec(0, 100), rec(1, 200)] },
+      { throw: true, usage: [rec(0, 300)] },
+    ]);
+    const usage = run.drive_failures?.entries.at(-1)?.usage;
+    // (a) red when the throwing call's usage gets no places (minted at the three success returns
+    //     only); (b) prints each request's index, place and id.
+    expect(placesOf(usage)).toEqual([
+      { index: 0, in_call: 0, id: expect.any(String) },
+      { index: 1, in_call: 1, id: expect.any(String) },
+      { index: 2, in_call: 0, id: expect.any(String) },
+    ]);
+  });
+});

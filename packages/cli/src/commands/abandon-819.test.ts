@@ -9,7 +9,7 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: run
 // and gate ids, file names, printed lines — never a token or an environment.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { abandonCommand, emptyReasonRefusal } from './abandon.js';
 import { respondCommand } from './respond.js';
@@ -31,7 +31,6 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
   let h: TempHome & { readonly root: string };
   let home: string;
   let wfDir: string;
-  let runsDir: string;
   let originalHome: string | undefined;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errSpy: ReturnType<typeof vi.spyOn>;
@@ -41,8 +40,6 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
     h = await makeTempHome();
     home = h.root;
     wfDir = join(h.path, 'workflows');
-    runsDir = h.home.runStore.runsDirPath;
-    await mkdir(runsDir, { recursive: true });
     await mkdir(wfDir, { recursive: true });
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
@@ -64,17 +61,33 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
 
   /** A run of `workflowId` waiting at gate `g-1`; its registered copy written as `copy`, if given. */
   async function atGate(workflowId: string, copy?: string) {
-    if (copy !== undefined) await writeFile(join(wfDir, `${workflowId}.json`), copy);
+    if (copy !== undefined) await plantCopy(workflowId, copy);
     const store = h.home.runStore;
     const { record: run } = await store.create({ workflowId, workflowVersion: 1, params: {} });
     await store.update({ ...run, pending_gate: { ...GATE } });
     return { store, id: run.id };
   }
-  /** `realm run abandon <args>`: whether it exited 1, what it printed, and whether the run's file
-   *  is byte for byte what it was. */
+  /** #616 PR-2c (c0): a copy the registry can write — a JSON object, whatever admission would say of
+   *  it — goes through `register` (verbatim, no admission, R6); bytes that are not JSON (a cut or
+   *  broken copy: B-layout, c5's) are written raw into the registry folder. */
+  async function plantCopy(workflowId: string, copy: string): Promise<void> {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(copy);
+    } catch {
+      parsed = undefined;
+    }
+    if (typeof parsed === 'object' && parsed !== null) {
+      await h.home.workflowStore.register(parsed as never);
+    } else {
+      await writeFile(join(wfDir, `${workflowId}.json`), copy);
+    }
+  }
+  /** `realm run abandon <args>`: whether it exited 1, what it printed, and whether the run's record
+   *  is what it was (read through the store, #616 PR-2c c0). */
   async function abandon(id: string, ...args: string[]) {
-    const file = join(runsDir, `${id}.json`);
-    const before = await readFile(file);
+    const store = h.home.runStore;
+    const before = JSON.stringify((await store.get(id)).record);
     errSpy.mockClear();
     const failed = await abandonCommand.parseAsync([id, ...args], { from: 'user' }).then(
       () => false,
@@ -83,7 +96,7 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
     return {
       failed,
       err: errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n'),
-      unchanged: before.equals(await readFile(file)),
+      unchanged: before === JSON.stringify((await store.get(id)).record),
     };
   }
   const NOT_OPEN = (id: string) =>

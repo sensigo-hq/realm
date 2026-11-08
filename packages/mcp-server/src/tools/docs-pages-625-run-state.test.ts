@@ -9,7 +9,7 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -38,7 +38,7 @@ import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 const OPENED: TestLocation[] = [];
 async function located(dir: string): Promise<string> {
   // A second server on the same folder in one cell shares its location (and its clock).
-  const open = OPENED.find((l) => l.runsDir === join(dir, 'runs'));
+  const open = OPENED.find((l) => l.root === dir);
   if (open !== undefined) return open.runsDir;
   const loc = await createTestLocation({ start: new Date(), root: dir });
   OPENED.push(loc);
@@ -90,10 +90,6 @@ async function connect(opts: { registry?: ExtensionRegistry; home?: string } = {
   const h = await makeTempHome({ home: root });
   handles.push(h);
   const { runStore, workflowStore } = h.stores;
-  const runsDir = runStore.runsDirPath;
-  const wfDir = join(h.path, 'workflows');
-  mkdirSync(runsDir, { recursive: true });
-  mkdirSync(wfDir, { recursive: true });
   const server = createRealmMcpServer({
     ...h.stores,
     ...(opts.registry !== undefined ? { registry: opts.registry } : {}),
@@ -112,7 +108,7 @@ async function connect(opts: { registry?: ExtensionRegistry; home?: string } = {
       return { _text: text };
     }
   };
-  return { call, runStore, workflowStore, base, runsDir, wfDir };
+  return { call, runStore, workflowStore, base };
 }
 
 /** The built `realm`, with a fresh HOME. */

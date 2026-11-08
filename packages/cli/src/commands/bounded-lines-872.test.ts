@@ -5,7 +5,6 @@
 // every choice). Beside each: (a) the change that turns it red; (b) what it prints on failure — the
 // lines (the names are fake), never a value.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -110,8 +109,6 @@ describe(
     beforeEach(async () => {
       h = await makeTempHome();
       home = h.root;
-      mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
-      mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
     });
     afterEach(async () => {
       await h.cleanup();

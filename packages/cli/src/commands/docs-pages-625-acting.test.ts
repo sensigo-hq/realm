@@ -120,8 +120,6 @@ describe(
       h = await makeTempHome();
       home = h.root;
       elsewhere = realpathSync(mkdtempSync(join(tmpdir(), 'realm-625-acting-elsewhere-')));
-      mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
-      mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
       runStore = h.home.runStore;
       workflowStore = h.home.workflowStore;
     });

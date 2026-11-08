@@ -8,7 +8,7 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: codes,
 // step names, field names and booleans — never a token or a value a caller supplied.
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -168,7 +168,7 @@ async function connect() {
     };
     return JSON.parse(raw.content[0]!.text) as Reply;
   };
-  return { call, runStore, runsDir: runStore.runsDirPath };
+  return { call, runStore, failedAttemptStore: h.stores.failedAttemptStore };
 }
 
 /** A run of `d` with `first` answered through the library (no chain): its engine steps wait, eligible. */
@@ -619,15 +619,18 @@ describe('#729 Q3 correction 1, C2 — no agent-step telemetry for an engine ste
         params: { nope: 1 },
       });
       const agentLines = spy.mock.calls.slice(nAgent).map((a) => String(a[0]));
-      const sidecar = (id: string) => {
-        const path = join(c.runsDir, `${id}.attempts.jsonl`);
-        return existsSync(path) ? readFileSync(path, 'utf8').trim().split('\n').length : 0;
-      };
+      const sidecar = async (id: string) => (await c.failedAttemptStore.read(id)).records.length;
       // (a) red when the `execution === 'agent'` gate is removed (the auto step's refusal writes the
       //     agent's submitted keys beside the engine input's errors); (b) prints booleans and counts.
       expect({
-        auto: [autoLines.some((l) => l.includes('agent_step_attempt_failed')), sidecar(runId)],
-        agent: [agentLines.some((l) => l.includes('agent_step_attempt_failed')), sidecar(agentRun)],
+        auto: [
+          autoLines.some((l) => l.includes('agent_step_attempt_failed')),
+          await sidecar(runId),
+        ],
+        agent: [
+          agentLines.some((l) => l.includes('agent_step_attempt_failed')),
+          await sidecar(agentRun),
+        ],
       }).toEqual({ auto: [false, 0], agent: [true, 1] });
       // tools.md:298 — only an agent step's answer reaches that row now (an `auto` step's is :299):
       // `provide_input`, the rules broken with their total (#759's `error_count`), and the countdown.

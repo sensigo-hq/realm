@@ -7,7 +7,7 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -161,7 +161,10 @@ describe(
           tools: listed.length,
           advance: listed.includes('advance_run'),
           workflows: workflows.map((w) => w.id),
-          runFile: existsSync(join(home, '.realm', 'runs', `${String(s['run_id'])}.json`)),
+          runFile: await runStore.get(String(s['run_id'])).then(
+            () => true,
+            () => false,
+          ),
         };
       }
       const viaMcp = await stdio(CLI, ['mcp']);

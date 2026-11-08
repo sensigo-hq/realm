@@ -7,7 +7,7 @@
 // `realm workflow run` in-process through the real command, `node:readline/promises` mocked (the
 // #447 harness, as `run-cannot-go-on-625.test.ts`).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -31,7 +31,7 @@ import { clearProjectExtensionsCache } from '../extensions/load-project-extensio
 import { readFileSync as readDoc625 } from 'node:fs';
 import { join as joinDoc625, dirname as dirDoc625 } from 'node:path';
 import { fileURLToPath as urlDoc625 } from 'node:url';
-import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { makeTempHome, runIds, type TempHome } from '../test-support/temp-home.js';
 
 /** C174: (a) red when the page no longer holds the sentence word for word; (b) prints it. */
 function claimDoc625(page: string, sentence: string): void {
@@ -211,6 +211,7 @@ const ASK = (deps: string, pre: string): string[] => [
 const FIRST = ['  first:', '    description: First.', '    execution: agent', '    depends_on: []'];
 
 describe('#625 PR-2a, C82 — realm workflow run never prompts for a refused agent step', () => {
+  let h: TempHome & { readonly root: string };
   let home: string;
   let dir: string;
   let savedHome: string | undefined;
@@ -218,11 +219,11 @@ describe('#625 PR-2a, C82 — realm workflow run never prompts for a refused age
   let errSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     clearProjectExtensionsCache();
-    home = mkdtempSync(join(tmpdir(), 'realm-c82-run-home-'));
+    h = await makeTempHome();
+    home = h.root;
     dir = mkdtempSync(join(tmpdir(), 'realm-c82-run-wf-'));
-    mkdirSync(join(home, '.realm'), { recursive: true });
     savedHome = process.env['HOME'];
     process.env['HOME'] = home;
     savedTTY = process.stdin.isTTY;
@@ -235,12 +236,12 @@ describe('#625 PR-2a, C82 — realm workflow run never prompts for a refused age
     }) as never);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (savedTTY === undefined) delete (process.stdin as { isTTY?: boolean }).isTTY;
     else process.stdin.isTTY = savedTTY;
     if (savedHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = savedHome;
-    rmSync(home, { recursive: true, force: true });
+    await h.cleanup();
     rmSync(dir, { recursive: true, force: true });
     mocks.question.mockReset();
     vi.restoreAllMocks();
@@ -248,10 +249,7 @@ describe('#625 PR-2a, C82 — realm workflow run never prompts for a refused age
 
   const errored = (): string[] => errSpy.mock.calls.map((c: unknown[]) => String(c[0]));
   const asked = (): string[] => mocks.question.mock.calls.map((c: unknown[]) => String(c[0]));
-  const runId = (): string =>
-    readdirSync(join(home, '.realm', 'runs'))
-      .filter((f) => f.endsWith('.json'))[0]!
-      .replace('.json', '');
+  const runId = async (): Promise<string> => (await runIds(h.home.runStore))[0]!;
 
   async function run(text: string): Promise<number> {
     writeFileSync(join(dir, 'workflow.yaml'), text, 'utf8');
@@ -275,7 +273,7 @@ describe('#625 PR-2a, C82 — realm workflow run never prompts for a refused age
       errored: [
         '\nWorkflow stalled: nothing else can run.',
         "'ask' cannot run (precondition): Precondition failed for step 'ask'. Precondition failed: 'ask.ok == true'. Resolved value: undefined.",
-        wayOut(runId()),
+        wayOut(await runId()),
       ],
     });
   });
@@ -291,7 +289,7 @@ describe('#625 PR-2a, C82 — realm workflow run never prompts for a refused age
       errored: [
         '\nWorkflow stalled: nothing else can run.',
         "'ask' cannot run (precondition): Precondition failed for step 'ask'. Precondition failed: 'first.ok == true'. Resolved value: false.",
-        wayOut(runId()),
+        wayOut(await runId()),
       ],
     });
   });

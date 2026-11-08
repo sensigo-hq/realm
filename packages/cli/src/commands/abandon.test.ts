@@ -7,7 +7,6 @@
 // historicized here only. #616 PR-2b: the stores come from `makeTempHome()`'s handle (a static
 // import); the lazy imports stay for the other names.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdir } from 'node:fs/promises';
 import { abandonCommand } from './abandon.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
@@ -21,7 +20,6 @@ const ADVISORY =
 describe('realm run abandon (CLI command)', () => {
   let h: TempHome & { readonly root: string };
   let home: string;
-  let runsDir: string;
   let originalHome: string | undefined;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errSpy: ReturnType<typeof vi.spyOn>;
@@ -30,8 +28,6 @@ describe('realm run abandon (CLI command)', () => {
   beforeEach(async () => {
     h = await makeTempHome();
     home = h.root;
-    runsDir = h.home.runStore.runsDirPath;
-    await mkdir(runsDir, { recursive: true });
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});

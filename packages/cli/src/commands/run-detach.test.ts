@@ -25,7 +25,7 @@ import { join } from 'node:path';
 import type { RunRecord, PendingView, WorkflowDefinition } from '@sensigo/realm';
 import { describePending, owedList } from '@sensigo/realm';
 import { runCommands, topLevelCommands } from '../commands-registry.js';
-import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome, runIds } from '../test-support/temp-home.js';
 
 const mocks = vi.hoisted(() => ({ question: vi.fn(), close: vi.fn() }));
 vi.mock('node:readline/promises', () => ({
@@ -419,8 +419,7 @@ steps:
     // never assigns promptStep is invisible.
     mocks.question.mockImplementation(async () => {
       const store = h.home.runStore;
-      const files = readdirSync(runsDir()).filter((f) => f.endsWith('.json'));
-      const id = files[0]!.replace('.json', '');
+      const id = (await runIds(store))[0]!;
       const { record: rec } = await store.get(id);
       await store.update({
         ...rec,
@@ -544,8 +543,7 @@ steps:
      *  scratch HOME, #616 PR-2b). */
     const readRecord = async (): Promise<RunRecord> => {
       const store = h.home.runStore;
-      const files = readdirSync(runsDir()).filter((f) => f.endsWith('.json'));
-      return (await store.get(files[0]!.replace('.json', ''))).record;
+      return (await store.get((await runIds(store))[0]!)).record;
     };
 
     it("B1 a typo'd gate choice re-prompts the live gate instead of dying silently", async () => {
@@ -819,8 +817,7 @@ steps:
         .mockImplementationOnce(async () => '{}')
         .mockImplementationOnce(async () => {
           const store = h.home.runStore;
-          const files = readdirSync(runsDir()).filter((f) => f.endsWith('.json'));
-          const id = files[0]!.replace('.json', '');
+          const id = (await runIds(store))[0]!;
           const { record: fresh } = await store.get(id);
           // Strip the gate by destructuring — never `pending_gate: undefined`, a TS2412 under this
           // repo's exactOptionalPropertyTypes.
@@ -863,8 +860,7 @@ steps:
      *  scratch HOME, #616 PR-2b). */
     const readRecord = async (): Promise<RunRecord> => {
       const store = h.home.runStore;
-      const files = readdirSync(runsDir()).filter((f) => f.endsWith('.json'));
-      return (await store.get(files[0]!.replace('.json', ''))).record;
+      return (await store.get((await runIds(store))[0]!)).record;
     };
 
     it('R1 the agent site: bad JSON and every non-object re-ask, then the object settles', async () => {

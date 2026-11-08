@@ -16,7 +16,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -40,16 +40,16 @@ import { generateProtocol } from '../protocol/generator.js';
 import { createRealmMcpServer } from '../server.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
-/** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
- *  runs folder beside the location's clock file (first set to the host's reading), which
- *  `setClockOf` rewrites. */
-async function testLocationRuns(prefix: string): Promise<string> {
+/** #715 (b) (01 §C.4): the store's clock decides what is due — the home is a test location: its
+ *  clock file (first set to the host's reading) sits in the home's own folder, and `setClockOf`
+ *  rewrites it there. */
+async function testLocationRoot(prefix: string): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), prefix));
   await writeTestClockFile(root, new Date());
-  return join(root, 'runs');
+  return root;
 }
-async function setClockOf(store: JsonFileStore, t: Date): Promise<void> {
-  await writeTestClockFile(dirname(store.runsDirPath), t);
+async function setClockOf(home: TempHome, t: Date): Promise<void> {
+  await writeTestClockFile(home.path, t);
 }
 
 const DRIVER: Attributed = { by: 'server@host', by_source: 'derived', channel: 'mcp-stdio' };
@@ -76,7 +76,7 @@ let workflowStore: JsonWorkflowStore;
 
 beforeEach(async () => {
   // The location first, then the handle on its root.
-  h = await makeTempHome({ home: dirname(await testLocationRuns('realm-holder-mcp-run-')) });
+  h = await makeTempHome({ home: await testLocationRoot('realm-holder-mcp-run-') });
   runStore = h.stores.runStore;
   workflowStore = h.stores.workflowStore;
   await workflowStore.register(definition);
@@ -368,7 +368,7 @@ describe('C2 — get_run_state on a run whose gate expired to its default (a rea
       { runStore, workflowStore, driver: DRIVER },
     );
     const gate = (await runStore.get(started.run_id)).record.pending_gate!;
-    await setClockOf(runStore, new Date(new Date(gate.expires_at!).getTime() + 60_000));
+    await setClockOf(h, new Date(new Date(gate.expires_at!).getTime() + 60_000));
     const enacted = await runStore.settleStep(
       started.run_id,
       { kind: 'expire_gate', gateId: gate.gate_id },
@@ -410,7 +410,7 @@ describe('C2 — get_run_state on a run whose gate expired to its default (a rea
       { runStore, workflowStore, driver: DRIVER },
     );
     const gate = (await runStore.get(started.run_id)).record.pending_gate!;
-    await setClockOf(runStore, new Date(new Date(gate.expires_at!).getTime() + 60_000));
+    await setClockOf(h, new Date(new Date(gate.expires_at!).getTime() + 60_000));
     const enacted = await runStore.settleStep(
       started.run_id,
       { kind: 'expire_gate', gateId: gate.gate_id },

@@ -3,8 +3,6 @@
 // start_run / start_run_batch (throwing provider → no run created) and before execution
 // in execute_step; it wins over the construction-time registry when both are supplied.
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { mkdirSync } from 'node:fs';
-import { readdir } from 'node:fs/promises';
 import {
   JsonFileStore,
   JsonWorkflowStore,
@@ -17,7 +15,7 @@ import { handleStartRun } from './start-run.js';
 import { handleStartRunBatch } from './start-run-batch.js';
 import { handleExecuteStep } from './execute-step.js';
 import { handleCreateWorkflow, type CreateWorkflowArgs } from './create-workflow.js';
-import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { makeTempHome, runCount, type TempHome } from '../test-support/temp-home.js';
 
 function makeAdapterDef(): WorkflowDefinition {
   return {
@@ -46,7 +44,6 @@ function makeRecordingAdapter(calls: string[]): ServiceAdapter {
 
 describe('registryProvider', () => {
   let h: TempHome;
-  let runDir: string;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
 
@@ -54,19 +51,11 @@ describe('registryProvider', () => {
     h = await makeTempHome();
     runStore = h.stores.runStore;
     workflowStore = h.stores.workflowStore;
-    // The cells count the run files, before any run is written too.
-    runDir = runStore.runsDirPath;
-    mkdirSync(runDir, { recursive: true });
     await workflowStore.register(makeAdapterDef());
   });
   afterEach(async () => {
     await h.cleanup();
   });
-
-  async function runFileCount(): Promise<number> {
-    const entries = await readdir(runDir);
-    return entries.filter((f) => f.endsWith('.json')).length;
-  }
 
   it('start_run: a throwing provider fails the call with NO run created', async () => {
     const registryProvider = vi.fn(async () => {
@@ -76,7 +65,7 @@ describe('registryProvider', () => {
       handleStartRun({ workflow_id: 'svc-wf' }, { runStore, workflowStore, registryProvider }),
     ).rejects.toThrow('broken extensions module');
     expect(registryProvider).toHaveBeenCalledTimes(1);
-    expect(await runFileCount()).toBe(0);
+    expect(await runCount(runStore)).toBe(0);
   });
 
   it('start_run: the provider registry is used for step execution and wins over `registry`', async () => {
@@ -108,7 +97,7 @@ describe('registryProvider', () => {
         { runStore, workflowStore, registryProvider },
       ),
     ).rejects.toThrow('broken extensions module');
-    expect(await runFileCount()).toBe(0);
+    expect(await runCount(runStore)).toBe(0);
   });
 
   it('execute_step: a throwing provider fails before execution', async () => {

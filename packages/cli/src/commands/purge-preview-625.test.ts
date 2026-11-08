@@ -6,7 +6,7 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -51,8 +51,6 @@ describe(
     beforeEach(async () => {
       h = await makeTempHome();
       home = h.root;
-      mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
-      mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
       runStore = h.home.runStore;
       await h.home.workflowStore.register(ONE);
     });
@@ -124,7 +122,10 @@ describe(
         expect({
           code: preview.code,
           would: preview.out.some((l) => l.includes('WOULD be purged')),
-          kept: existsSync(join(home, '.realm', 'runs', `${run.id}.json`)),
+          kept: await runStore.get(run.id).then(
+            () => true,
+            () => false,
+          ),
         }).toEqual({ code: 0, would: true, kept: true });
       },
     );

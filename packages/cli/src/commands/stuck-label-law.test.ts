@@ -8,13 +8,13 @@
 // that label. Stated per FINDING (a fixture may carry other findings — `capability_block`'s
 // antecedent co-fires), so the assertion is containment, never equality.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, statSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { listRuns, listCommand } from './list.js';
 import { STUCK_DEFINITION_PARSE_CAP_BYTES, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import type { RunStore, RunRecord, RunHealthFinding, WorkflowDefinition } from '@sensigo/realm';
 import { snap, listing, doubleClock, noSettle } from '../test-support/snapshot-double.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 type Kind = RunHealthFinding['kind'];
 
@@ -237,29 +237,29 @@ describe('the --stuck label law (issue #558 PR-T)', () => {
 // finding NAMES the size and reads ZERO bytes — a listing must never be the surface that
 // detonates a #557 expansion bomb.
 describe('the --stuck listing cap (issue #558 PR-T)', () => {
+  let h: TempHome & { readonly root: string };
   let home: string;
   let wfDir: string;
-  let runsDir: string;
   let originalHome: string | undefined;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errSpy: ReturnType<typeof vi.spyOn>;
 
-  beforeEach(() => {
-    home = mkdtempSync(join(tmpdir(), 'realm-stuck-cap-'));
+  beforeEach(async () => {
+    h = await makeTempHome();
+    home = h.root;
     wfDir = join(home, '.realm', 'workflows');
-    runsDir = join(home, '.realm', 'runs');
+    // Kept (#616 PR-2c c0, R5 (i)): the cells write registry copies raw into it (B-layout, c5's).
     mkdirSync(wfDir, { recursive: true });
-    mkdirSync(runsDir, { recursive: true });
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (originalHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = originalHome;
-    rmSync(home, { recursive: true, force: true });
+    await h.cleanup();
     vi.restoreAllMocks();
   });
 
@@ -269,29 +269,25 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
     workflowId: string,
     updatedAt: string = OLDER,
     extra: Record<string, unknown> = {},
-  ): void => {
-    writeFileSync(
-      join(runsDir, `${id}.json`),
-      JSON.stringify({
-        id,
-        workflow_id: workflowId,
-        workflow_version: 1,
-        run_phase: 'running',
-        completed_steps: [],
-        in_progress_steps: [],
-        failed_steps: [],
-        skipped_steps: [],
-        version: 1,
-        params: {},
-        evidence: [],
-        created_at: OLDER,
-        updated_at: updatedAt,
-        terminal_state: false,
-        ...extra,
-      }),
-      'utf8',
-    );
-  };
+  ): Promise<void> =>
+    // #616 PR-2c (c0): saved verbatim through the store (its updated_at kept, its phase derived).
+    h.home.runStore.save({
+      id,
+      workflow_id: workflowId,
+      workflow_version: 1,
+      run_phase: 'running',
+      completed_steps: [],
+      in_progress_steps: [],
+      failed_steps: [],
+      skipped_steps: [],
+      version: 1,
+      params: {},
+      evidence: [],
+      created_at: OLDER,
+      updated_at: updatedAt,
+      terminal_state: false,
+      ...extra,
+    } as RunRecord);
   const out = (): string => logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
   const err = (): string => errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
 
@@ -302,7 +298,7 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
     expect(statSync(big).size).toBeGreaterThan(STUCK_DEFINITION_PARSE_CAP_BYTES);
     // Touched NOW: the fixture's default `updated_at` is old enough to be idle-selected under
     // the default 24h gate, which would list the run for a DIFFERENT reason.
-    plantRun('run-big', 'wf-big', new Date().toISOString());
+    await plantRun('run-big', 'wf-big', new Date().toISOString());
 
     // The instrument: a spy on the module's own reader would not see `readFileSync` through the
     // built core, so the claim is pinned at the OBSERVABLE the cap produces — the size sentence,
@@ -334,9 +330,9 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
         'utf8',
       );
     }
-    plantRun('run-a', 'wf-big');
-    plantRun('run-b', 'wf-big');
-    plantRun('run-c', 'wf-big2');
+    await plantRun('run-a', 'wf-big');
+    await plantRun('run-b', 'wf-big');
+    await plantRun('run-c', 'wf-big2');
 
     await listCommand.parseAsync(['--stuck', '--older-than', '0m'], { from: 'user' });
 
@@ -362,7 +358,7 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
       JSON.stringify({ id: 'wf-big', schema_version: 3, pad }),
       'utf8',
     );
-    plantRun('run-big', 'wf-big');
+    await plantRun('run-big', 'wf-big');
 
     await listCommand.parseAsync(['--stuck', '--older-than', '0m'], { from: 'user' });
 
@@ -378,7 +374,7 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
 
   it('CAP2 an UNDER-cap corrupt copy is PARSED and SELECTED — invariant (iii) made total', async () => {
     writeFileSync(join(wfDir, 'wf-corrupt.json'), '{ not json', 'utf8');
-    plantRun('run-corrupt', 'wf-corrupt');
+    await plantRun('run-corrupt', 'wf-corrupt');
 
     await listCommand.parseAsync(['--stuck', '--older-than', '0m'], { from: 'user' });
 
@@ -394,8 +390,8 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
       'utf8',
     );
     writeFileSync(join(wfDir, 'wf-corrupt.json'), '{ not json', 'utf8');
-    plantRun('run-big', 'wf-big');
-    plantRun('run-corrupt', 'wf-corrupt');
+    await plantRun('run-big', 'wf-big');
+    await plantRun('run-corrupt', 'wf-corrupt');
 
     await listCommand.parseAsync(['--stuck', '--older-than', '0m'], { from: 'user' });
 
@@ -427,7 +423,7 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
     const copy = join(wfDir, 'wf-gate.json');
     writeFileSync(copy, JSON.stringify({ id: 'wf-gate', schema_version: 3 }), 'utf8');
     chmodSync(copy, 0o000);
-    plantRun('run-g', 'wf-gate', OLDER, {
+    await plantRun('run-g', 'wf-gate', OLDER, {
       run_phase: 'gate_waiting',
       pending_gate: {
         gate_id: 'g1',
@@ -453,13 +449,13 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
   it('CAP5 a corrupt copy and a legacy copy render WORDS in the class slot — never an error code', async () => {
     writeFileSync(join(wfDir, 'wf-corrupt.json'), '{ not json', 'utf8');
     // #819 (U3): the older cohort's shape — a string name and a number version (W-C2R-CORE-12).
-    writeFileSync(
-      join(wfDir, 'wf-legacy.json'),
-      JSON.stringify({ id: 'wf-legacy', name: 'wf-legacy', version: 1 }),
-      'utf8',
-    );
-    plantRun('run-corrupt', 'wf-corrupt');
-    plantRun('run-legacy', 'wf-legacy');
+    await h.home.workflowStore.register({
+      id: 'wf-legacy',
+      name: 'wf-legacy',
+      version: 1,
+    } as never);
+    await plantRun('run-corrupt', 'wf-corrupt');
+    await plantRun('run-legacy', 'wf-legacy');
 
     await listCommand.parseAsync(['--stuck', '--older-than', '0m'], { from: 'user' });
 
@@ -483,19 +479,15 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
   });
 
   it('CAP4 a HEALTHY copy produces no definition_unresolvable label at all', async () => {
-    writeFileSync(
-      join(wfDir, 'wf-ok.json'),
-      JSON.stringify({
-        id: 'wf-ok',
-        name: 'n',
-        version: 1,
-        schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
-        origin: 'human',
-        steps: { a: { description: 'a', execution: 'agent' } },
-      }),
-      'utf8',
-    );
-    plantRun('run-ok', 'wf-ok');
+    await h.home.workflowStore.register({
+      id: 'wf-ok',
+      name: 'n',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      origin: 'human',
+      steps: { a: { description: 'a', execution: 'agent' } },
+    } as never);
+    await plantRun('run-ok', 'wf-ok');
 
     await listCommand.parseAsync(['--stuck', '--older-than', '0m'], { from: 'user' });
 

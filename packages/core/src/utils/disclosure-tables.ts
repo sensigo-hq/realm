@@ -22,6 +22,7 @@ import type {
   UsageRecord,
   PrefixParts,
   CacheControlsRejected,
+  CacheReference,
   WorkflowContextSnapshot,
 } from '../types/run-record.js';
 import type { DisclosureAudience, DisclosureSet } from './redaction.js';
@@ -97,8 +98,9 @@ const CACHE_CONTROLS_REJECTED_TABLE = {
 
 /** A provider's per-request usage. `model` is a value (the model a provider answered with can be
  *  anything a configuration says); realm agent's own prints, where the requested model is known,
- *  show it (01 #16). */
-export const USAGE_RECORD_TABLE = {
+ *  show it (01 #16). Caching 3-M (piece A-1): every row but `reference`, which holds a copy of some
+ *  of these rows — declared apart so the copy can take its rows from here. */
+const USAGE_RECORD_ROWS = {
   request_index: 'fact',
   request_start: 'fact',
   prompt_tokens: 'fact',
@@ -121,6 +123,9 @@ export const USAGE_RECORD_TABLE = {
   cache_split_offered: 'fact',
   // #715 (R): an id realm mints per request (`mintRequestIds`), never a provider's.
   request_id: 'fact',
+  // Caching 3-M (piece A-1b): the request's place in its provider call, a number realm mints
+  // (`mintRequestIds`); normalised at the write (`boundRequestFacts`).
+  request_in_call: 'fact',
   // Caching 3-B (A6): each written at the request's mint by the adapter, normalised at the write
   // (`boundRequestFacts`): digests of the head and parts as sent, a count, closed words, a boolean.
   prefix_sha256: 'fact',
@@ -130,6 +135,36 @@ export const USAGE_RECORD_TABLE = {
   request_strict_sent: 'fact',
   cache_controls_rejected: { nested: CACHE_CONTROLS_REJECTED_TABLE },
   cache_key_sent: 'fact',
+} as const satisfies Row<Omit<UsageRecord, 'reference'>>;
+
+/** Caching 3-M (piece A-1): a request's copied predecessor. `from` is Realm's closed word; every
+ *  other row is the request's own row for that field, taken by key, never retyped. `request_id`
+ *  stays `fact`, as on the request: it is Realm's own id (#715 (R)), not a provider's. */
+const REFERENCE_TABLE = {
+  from: 'fact',
+  request_start: USAGE_RECORD_ROWS.request_start,
+  request_id: USAGE_RECORD_ROWS.request_id,
+  provider: USAGE_RECORD_ROWS.provider,
+  model: USAGE_RECORD_ROWS.model,
+  endpoint: USAGE_RECORD_ROWS.endpoint,
+  cache_requested: USAGE_RECORD_ROWS.cache_requested,
+  cache_read_input_tokens: USAGE_RECORD_ROWS.cache_read_input_tokens,
+  cache_creation_input_tokens: USAGE_RECORD_ROWS.cache_creation_input_tokens,
+  cache_write_tokens: USAGE_RECORD_ROWS.cache_write_tokens,
+  cache_creation: USAGE_RECORD_ROWS.cache_creation,
+  cache_lifetime_s: USAGE_RECORD_ROWS.cache_lifetime_s,
+  cache_ttl_sent: USAGE_RECORD_ROWS.cache_ttl_sent,
+  cache_auto: USAGE_RECORD_ROWS.cache_auto,
+  prefix_chars: USAGE_RECORD_ROWS.prefix_chars,
+  prefix_parts: USAGE_RECORD_ROWS.prefix_parts,
+  cache_marked: USAGE_RECORD_ROWS.cache_marked,
+  request_strict_sent: USAGE_RECORD_ROWS.request_strict_sent,
+} as const satisfies Row<CacheReference>;
+
+/** A provider's per-request usage: its rows, and (caching 3-M, piece A-1) its copied predecessor. */
+export const USAGE_RECORD_TABLE = {
+  ...USAGE_RECORD_ROWS,
+  reference: { nested: REFERENCE_TABLE },
 } as const satisfies Row<UsageRecord>;
 
 const STEP_CACHE_TABLE = {
@@ -470,6 +505,18 @@ export const USAGE_RECORD_FACTS = {
   prefix_sha256: 'hash',
   cache_marked: 'enum',
 } as const satisfies FactProducers<typeof USAGE_RECORD_TABLE, UsageRecord>;
+
+/** Caching 3-M (piece A-1): each producer taken from the request's own registry by key. */
+export const REFERENCE_FACTS = {
+  from: 'enum',
+  request_start: USAGE_RECORD_FACTS.request_start,
+  request_id: USAGE_RECORD_FACTS.request_id,
+  provider: USAGE_RECORD_FACTS.provider,
+  endpoint: USAGE_RECORD_FACTS.endpoint,
+  cache_requested: USAGE_RECORD_FACTS.cache_requested,
+  cache_auto: USAGE_RECORD_FACTS.cache_auto,
+  cache_marked: USAGE_RECORD_FACTS.cache_marked,
+} as const satisfies FactProducers<typeof REFERENCE_TABLE, CacheReference>;
 
 export const PREFIX_PARTS_FACTS = {
   tools: 'hash',

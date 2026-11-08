@@ -59,8 +59,6 @@ describe(
     beforeEach(async () => {
       h = await makeTempHome();
       home = h.root;
-      mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
-      mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
       runs = h.home.runStore;
       workflows = h.home.workflowStore;
     });

@@ -4,10 +4,11 @@
 // produce were unpinned. The catch wraps `loadWorkflowFromFile` alone, so everything it sees IS a
 // loader failure — which is why it needs no family-split else-arm, unlike register/test/agent.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync, readdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCommand } from './run.js';
+import { makeTempHome, runIds, type TempHome } from '../test-support/temp-home.js';
 
 describe('run — the loader voice (issue #425)', () => {
   let dir: string;
@@ -93,16 +94,18 @@ steps:
     execution: agent
 `;
 
+  let h: TempHome & { readonly root: string };
   let home: string;
   let originalHome: string | undefined;
   let dir: string;
   let errSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     // A scratch HOME because the load-bearing conjunct below READS the runs dir — the store
     // resolves it from homedir() at construction time (#285), so pointing HOME here isolates it.
-    home = mkdtempSync(join(tmpdir(), 'realm-run-tty-home-'));
+    h = await makeTempHome();
+    home = h.root;
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     dir = mkdtempSync(join(tmpdir(), 'realm-run-tty-'));
@@ -114,23 +117,18 @@ steps:
     }) as never);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (originalHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = originalHome;
-    rmSync(home, { recursive: true, force: true });
+    await h.cleanup();
     rmSync(dir, { recursive: true, force: true });
     vi.restoreAllMocks();
   });
 
-  /** The runs the command wrote into the scratch HOME, tolerating the dir never existing. */
-  function runRecords(): string[] {
-    try {
-      return readdirSync(join(home, '.realm', 'runs')).filter((f) => f.endsWith('.json'));
-    } catch {
-      // Post-guard the store is never constructed, so the directory does not exist. A naive
-      // readdirSync here would throw ENOENT and red the GREEN case.
-      return [];
-    }
+  /** The runs the command wrote into the scratch HOME, read through the handle's store (#616 PR-2c,
+   *  c0): a folder the command never made lists no run. */
+  async function runRecords(): Promise<string[]> {
+    return runIds(h.home.runStore);
   }
 
   it('refuses a piped stdin with a pointed message, and creates NO run', async () => {
@@ -147,7 +145,7 @@ steps:
     );
     expect(exitSpy).toHaveBeenCalledWith(1);
     // The acceptance bar, and the reason the guard sits where it does: nothing was minted.
-    expect(runRecords()).toEqual([]);
+    expect(await runRecords()).toEqual([]);
   });
 
   it('a terminal is let through — the guard governs entry, not execution', async () => {
@@ -180,7 +178,7 @@ steps:
       // this cell's purpose stays the #426 guard, so only the entry/exit shape is pinned here.
       await expect(runCommand.parseAsync([file], { from: 'user' })).rejects.toThrow('process.exit');
       expect(exitSpy).toHaveBeenCalledWith(1);
-      expect(runRecords()).toHaveLength(1);
+      expect(await runRecords()).toHaveLength(1);
     } finally {
       process.stdin.isTTY = savedIsTTY;
     }
@@ -236,7 +234,7 @@ steps:
     expect(errored).toContain('dev-mode run is interactive');
     expect(errored).not.toContain('Invalid params for workflow');
     expect(exitSpy).toHaveBeenCalledWith(1);
-    expect(runRecords()).toEqual([]);
+    expect(await runRecords()).toEqual([]);
   });
 
   it('#586 on a TERMINAL stdin the params refusal fires, in the run voice, with NO run created', async () => {
@@ -263,7 +261,7 @@ steps:
     expect(errored).not.toContain('Invalid input for step');
     expect(errored).not.toContain('dev-mode run is interactive');
     expect(exitSpy).toHaveBeenCalledWith(1);
-    expect(runRecords()).toEqual([]);
+    expect(await runRecords()).toEqual([]);
   });
 
   it('#586 BOUNDARY the other way: malformed --params JSON still wins over the schema check', async () => {
@@ -290,7 +288,7 @@ steps:
     const errored = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(errored).not.toContain('Invalid params for workflow');
     expect(errored).toContain('dev-mode run is interactive');
-    expect(runRecords()).toEqual([]);
+    expect(await runRecords()).toEqual([]);
   });
 
   it('#586 a MALFORMED params_schema in a FILE is refused by the loader, never by the params check', async () => {
@@ -314,6 +312,6 @@ steps:
       "'type' must be one of array, boolean, integer, null, number, object, string ('type: banana' here)",
     );
     expect(errored).not.toContain('declares a params_schema that is not a valid JSON Schema');
-    expect(runRecords()).toEqual([]);
+    expect(await runRecords()).toEqual([]);
   });
 });

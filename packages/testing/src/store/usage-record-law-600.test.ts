@@ -8,7 +8,10 @@
 // #898: `cache_auto` carries a nested `prices`; a store that drops it fails (S6), and one that keeps
 // its keys in another order, at both levels, passes. Caching 3-B adds the split's seven facts
 // (`prefix_sha256`, `prefix_chars`, `prefix_parts`, `cache_marked`, `request_strict_sent`,
-// `cache_controls_rejected`, `cache_key_sent`): eighteen fields, each red against a store that drops it.
+// `cache_controls_rejected`, `cache_key_sent`): eighteen fields then, each red against a store that drops it.
+// Caching 3-M (piece A-1) adds the nineteenth, `reference`, the copy of a request's predecessor: an
+// object the law compares whole, so a store that drops a key inside it fails. Piece A-1b adds the
+// twentieth, `request_in_call`, the request's place in its provider call.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: the
 // law's message, which names the field, where it was, and the test values written and read back.
@@ -29,8 +32,9 @@ const agentWf: WorkflowDefinition = {
   steps: { s: { description: 'S.', execution: 'agent', depends_on: [] } },
 };
 
-/** The eighteen request fields the law holds: the ten issue #600 adds to `UsageRecord` (PR 2's nine,
- *  the lifetime unit's `cache_auto`), #715 (R)'s `request_id` and caching 3-B's seven. */
+/** The twenty request fields the law holds: the ten issue #600 adds to `UsageRecord` (PR 2's nine,
+ *  the lifetime unit's `cache_auto`), #715 (R)'s `request_id`, caching 3-B's seven, 3-M's
+ *  `reference` and A-1b's `request_in_call`. */
 const FIELDS = [
   'model',
   'cache_requested',
@@ -50,6 +54,8 @@ const FIELDS = [
   'request_strict_sent',
   'cache_controls_rejected',
   'cache_key_sent',
+  'reference',
+  'request_in_call',
 ] as const;
 
 /** The USAGE_RECORD_ROUNDTRIP case of the TCK, against `store`. */
@@ -95,6 +101,16 @@ function droppingPrices() {
     if (auto === null || typeof auto !== 'object') return r;
     const { prices: _gone, ...rest } = auto as Record<string, unknown>;
     return { ...r, cache_auto: rest };
+  });
+}
+
+/** Caching 3-M (piece A-1): keeps `reference` but drops its `request_id`, in both places. */
+function droppingReferenceId() {
+  return changing((r) => {
+    const reference = r['reference'];
+    if (reference === null || typeof reference !== 'object') return r;
+    const { request_id: _gone, ...rest } = reference as Record<string, unknown>;
+    return { ...r, reference: rest };
   });
 }
 
@@ -176,6 +192,16 @@ describe('issue #600 PR 2 — USAGE_RECORD_ROUNDTRIP', () => {
     const Lossy = droppingPrices();
     await expect(lawOf(new Lossy()).run()).rejects.toThrow(
       /round-trip a request record's cache_auto /,
+    );
+  });
+
+  // Caching 3-M (piece A-1), check 7. (a) red when the TCK `reference` lacks the key this store
+  // drops, or the law stops comparing `reference` whole; (b) prints the law's own failure line,
+  // which names the field and the test values written and read back.
+  it('fails for a store that drops a key inside reference (caching 3-M)', async () => {
+    const Lossy = droppingReferenceId();
+    await expect(lawOf(new Lossy()).run()).rejects.toThrow(
+      /round-trip a request record's reference /,
     );
   });
 });

@@ -9,15 +9,7 @@
 // CI host a cell prints the command's output, the request's `system` field or the stored request
 // facts: no environment, header or key.
 import { spawn } from 'node:child_process';
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,7 +20,7 @@ import {
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { startAnthropicStub } from '../agent/test-support/anthropic-stub.js';
-import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome, runIds } from '../test-support/temp-home.js';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 const CLOSED_PORT = 'http://127.0.0.1:9';
@@ -150,16 +142,16 @@ function runCli(args: string[], childEnv: Record<string, string>): Promise<Done>
 const OPENAI_CUSTOM_LONG =
   "Caching: this endpoint caches by its own rules; Realm sends a cache key that helps repeated steps reach the same cache (this endpoint treats it as a hint). Realm cannot set this endpoint's lifetime or turn its caching off. --prompt-cache long sets no lifetime on this endpoint.";
 
-const runsDir = () => join(home, '.realm', 'runs');
-function runFiles(): string[] {
-  if (!existsSync(runsDir())) return [];
-  return readdirSync(runsDir()).filter((f) => f.endsWith('.json'));
+/** The runs on the handle's home, by id, read through its store (#616 PR-2c, c0). */
+async function runFiles(): Promise<string[]> {
+  return runIds(h.home.runStore);
 }
-function onlyRun(): { text: string; record: RunRecord } {
-  const files = runFiles();
+/** The one run and its record's text, read through the handle's store. */
+async function onlyRun(): Promise<{ text: string; record: RunRecord }> {
+  const files = await runFiles();
   expect(files, 'exactly one run file').toHaveLength(1);
-  const text = readFileSync(join(runsDir(), files[0]!), 'utf8');
-  return { text, record: JSON.parse(text) as RunRecord };
+  const { record } = await h.home.runStore.get(files[0]!);
+  return { text: JSON.stringify(record), record };
 }
 const wf = (dir: string) => ['--workflow', join(dir, 'workflow.yaml')];
 /** stderr's first line when it is the C3E refusal of workflow `id`, else `'not the refusal'`. */
@@ -194,7 +186,7 @@ async function driveAgainstStandIn(extra: string[]) {
       ANTHROPIC(stub.baseUrl),
     );
     expect(r.code, r.stdout + r.stderr).toBe(0);
-    const { text, record } = onlyRun();
+    const { text, record } = await onlyRun();
     const request = record.evidence[0]!.diagnostics!.cache!.requests[0]!;
     return { r, stub, text, request, port: new URL(stub.baseUrl).port };
   } finally {
@@ -279,7 +271,7 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
     );
     expect({
       refused: r.stderr.includes('sets caching only'),
-      runs: runFiles().length,
+      runs: (await runFiles()).length,
       startLine: r.stdout.includes(OPENAI_CUSTOM_LONG),
     }).toEqual({ refused: false, runs: 1, startLine: true });
   }, 30_000);
@@ -290,7 +282,7 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
       ['agent', ...wf('wf'), '--provider-module', './p.mjs', '--prompt-cache', 'short'],
       env(),
     );
-    expect({ code: r.code, stderr: r.stderr.trim(), runs: runFiles() }).toEqual({
+    expect({ code: r.code, stderr: r.stderr.trim(), runs: await runFiles() }).toEqual({
       code: 1,
       stderr:
         'Error: --provider-module cannot be combined with --provider, --model, --base-url, --strict-base-url, or --prompt-cache',
@@ -352,7 +344,7 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
       [1, 'refused'],
       [1, 'refused'],
     ]);
-    expect(runFiles()).toEqual([]);
+    expect(await runFiles()).toEqual([]);
   }, 60_000);
 
   // M11 (issue #899), the create path: a workflow whose every agent step calls tools now has a
@@ -366,7 +358,7 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
     expect({
       code: r.code,
       stderr: notTheRefusal(r.stderr, 'prompt-cache-600-tools'),
-      runFiles: runFiles().length,
+      runFiles: (await runFiles()).length,
     }).toEqual({ code: r.code, stderr: 'not the refusal', runFiles: 1 });
   }, 60_000);
 
@@ -396,8 +388,7 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
     } as RunRecord);
     const seen = [];
     for (const run of [live, failed]) {
-      const file = join(runsDir(), `${run.id}.json`);
-      const before = readFileSync(file);
+      const before = JSON.stringify((await h.home.runStore.get(run.id)).record);
       const r = await runCli(
         ['agent', '--run-id', run.id, '--model', 'claude-x', '--prompt-cache', 'short'],
         ANTHROPIC(CLOSED_PORT),
@@ -407,17 +398,14 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
         refused:
           r.stderr.trim() ===
             `${C3E(definition.id)} If run ${run.id} exists, it was not changed.` || r.stderr.trim(),
-        unchanged: readFileSync(file).equals(before),
+        unchanged: JSON.stringify((await h.home.runStore.get(run.id)).record) === before,
       });
     }
     expect(seen).toEqual([
       { code: 1, refused: true, unchanged: true },
       { code: 1, refused: true, unchanged: true },
     ]);
-    expect(
-      (JSON.parse(readFileSync(join(runsDir(), `${failed.id}.json`), 'utf8')) as RunRecord)
-        .terminal_state,
-    ).toBe(true);
+    expect((await h.home.runStore.get(failed.id)).record.terminal_state).toBe(true);
   }, 60_000);
 
   // M11 (issue #899), the attach path: --run-id of a run of a workflow whose every agent step calls
@@ -444,8 +432,7 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
     const store = h.home.runStore;
     const run = (await store.create({ workflowId: definition.id, workflowVersion: 1, params: {} }))
       .record;
-    const file = join(runsDir(), `${run.id}.json`);
-    const before = readFileSync(file);
+    const before = JSON.stringify((await store.get(run.id)).record);
     const r = await runCli(
       ['agent', '--run-id', run.id, '--model', 'claude-x', '--prompt-cache', 'long'],
       ANTHROPIC(CLOSED_PORT),
@@ -453,8 +440,8 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
     expect({
       code: r.code,
       stderr: notTheRefusal(r.stderr, definition.id),
-      runFiles: runFiles().length,
-      changed: !readFileSync(file).equals(before),
+      runFiles: (await runFiles()).length,
+      changed: JSON.stringify((await store.get(run.id)).record) !== before,
     }).toEqual({ code: r.code, stderr: 'not the refusal', runFiles: 1, changed: true });
   }, 60_000);
 
@@ -466,7 +453,7 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
       ANTHROPIC(CLOSED_PORT),
     );
     expect(plain.stderr).not.toContain('--prompt-cache has nothing to apply to');
-    expect(runFiles()).toHaveLength(1);
+    expect(await runFiles()).toHaveLength(1);
     const child = await runCli(
       [
         'agent',
@@ -481,7 +468,7 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
     );
     expect(child.stderr).not.toContain('--prompt-cache has nothing to apply to');
     expect(child.stdout).toContain('Caching: no step is cached; this workflow has no agent step.');
-    expect(runFiles()).toHaveLength(2);
+    expect(await runFiles()).toHaveLength(2);
   }, 60_000);
 });
 
@@ -505,7 +492,7 @@ describe('the re-attach command and a listen child (issue #600 PR 2, C6, G22)', 
       ],
       ANTHROPIC(CLOSED_PORT),
     );
-    const runId = runFiles()[0]!.replace(/\.json$/, '');
+    const runId = (await runFiles())[0]!;
     expect(blockedCommand(r), r.stderr).toBe(
       `realm agent --run-id ${runId} --provider anthropic --model claude-x --prompt-cache long`,
     );
@@ -529,7 +516,7 @@ describe('the re-attach command and a listen child (issue #600 PR 2, C6, G22)', 
       ],
       OPENAI(),
     );
-    const runId = runFiles()[0]!.replace(/\.json$/, '');
+    const runId = (await runFiles())[0]!;
     expect(blockedCommand(r), r.stderr).toBe(
       `realm agent --run-id ${runId} --provider openai --model gpt-x --prompt-cache long`,
     );
@@ -552,7 +539,7 @@ describe('the re-attach command and a listen child (issue #600 PR 2, C6, G22)', 
       ],
       OPENAI(),
     );
-    const runId = runFiles()[0]!.replace(/\.json$/, '');
+    const runId = (await runFiles())[0]!;
     expect(blockedCommand(r), r.stderr).toBe(
       `realm agent --run-id ${runId} --provider openai --model gpt-x --prompt-cache long`,
     );
@@ -564,7 +551,7 @@ describe('the re-attach command and a listen child (issue #600 PR 2, C6, G22)', 
       ['agent', ...wf('blocked'), '--model', 'claude-x'],
       ANTHROPIC(CLOSED_PORT),
     );
-    const runId = runFiles()[0]!.replace(/\.json$/, '');
+    const runId = (await runFiles())[0]!;
     expect(blockedCommand(r), r.stderr).toBe(`realm agent --run-id ${runId} --model claude-x`);
   }, 30_000);
 });

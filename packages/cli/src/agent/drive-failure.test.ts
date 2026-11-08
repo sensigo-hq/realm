@@ -370,6 +370,7 @@ describe('the payload is a BOUNDARY, not a spread (issue #401)', () => {
     expect(buildEntry(withArray, 's', 'anthropic', performance.now(), new Date()).usage).toEqual(
       withArray.driveCall.usage.map((r) => ({
         ...r,
+        request_in_call: withArray.driveCall.usage.indexOf(r),
         request_id: expect.stringMatching(
           /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
         ),

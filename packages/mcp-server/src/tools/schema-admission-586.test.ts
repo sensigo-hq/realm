@@ -4,8 +4,6 @@
  * own admission door.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync } from 'node:fs';
-import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { JsonFileStore, JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
@@ -13,7 +11,7 @@ import { WorkflowError } from '@sensigo/realm';
 import { handleStartRun } from './start-run.js';
 import { handleStartRunBatch } from './start-run-batch.js';
 import { handleCreateWorkflow } from './create-workflow.js';
-import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { makeTempHome, runCount, type TempHome } from '../test-support/temp-home.js';
 
 const workflow: WorkflowDefinition = {
   id: 'sa',
@@ -30,7 +28,6 @@ const workflow: WorkflowDefinition = {
 
 describe('#586 params_schema on the MCP run-creation surfaces', () => {
   let h: TempHome;
-  let runDir: string;
   let runStore: JsonFileStore;
   let workflowStore: JsonWorkflowStore;
 
@@ -38,17 +35,11 @@ describe('#586 params_schema on the MCP run-creation surfaces', () => {
     h = await makeTempHome();
     runStore = h.stores.runStore;
     workflowStore = h.stores.workflowStore;
-    // The cells count the run files, before any run is written too.
-    runDir = runStore.runsDirPath;
-    mkdirSync(runDir, { recursive: true });
     await workflowStore.register(workflow);
   });
   afterEach(async () => {
     await h.cleanup();
   });
-
-  const runCount = async (): Promise<number> =>
-    (await readdir(runDir)).filter((f) => f.endsWith('.json')).length;
 
   it('start_run refuses violating params with VALIDATION_INPUT_SCHEMA and creates NO run', async () => {
     await expect(
@@ -57,14 +48,14 @@ describe('#586 params_schema on the MCP run-creation surfaces', () => {
       code: 'VALIDATION_INPUT_SCHEMA',
       message: "Invalid params for workflow 'sa': /ticket_id must be string",
     });
-    expect(await runCount()).toBe(0);
+    expect(await runCount(runStore)).toBe(0);
   });
 
   it('start_run refuses a MISSING required param at the root', async () => {
     await expect(
       handleStartRun({ workflow_id: 'sa', params: {} }, { runStore, workflowStore }),
     ).rejects.toThrow("Invalid params for workflow 'sa': (root) must have required property");
-    expect(await runCount()).toBe(0);
+    expect(await runCount(runStore)).toBe(0);
   });
 
   it('start_run refuses BEFORE the registry resolve — a throwing provider is never reached', async () => {
@@ -87,7 +78,7 @@ describe('#586 params_schema on the MCP run-creation surfaces', () => {
       } as never),
     ).rejects.toThrow('Invalid params for workflow');
     expect(resolved).toBe(false);
-    expect(await runCount()).toBe(0);
+    expect(await runCount(runStore)).toBe(0);
   });
 
   it('control: conforming params create a run', async () => {
@@ -96,7 +87,7 @@ describe('#586 params_schema on the MCP run-creation surfaces', () => {
       { runStore, workflowStore },
     );
     expect(result).toBeDefined();
-    expect(await runCount()).toBe(1);
+    expect(await runCount(runStore)).toBe(1);
   });
 
   it('start_run_batch reports the item with the bracketed index and the params voice', async () => {
@@ -127,11 +118,9 @@ describe('#586 params_schema on the MCP run-creation surfaces', () => {
 describe('#586 create_workflow — its own admission door', () => {
   let h: TempHome;
   let stores: { runStore: JsonFileStore; workflowStore: JsonWorkflowStore };
-  let workflowDir: string;
 
   beforeEach(async () => {
     h = await makeTempHome();
-    workflowDir = join(h.path, 'workflows');
     stores = {
       runStore: h.stores.runStore,
       workflowStore: h.stores.workflowStore,
@@ -164,7 +153,7 @@ describe('#586 create_workflow — its own admission door', () => {
     );
     expect(JSON.stringify(result)).toContain("; set 'type' to one of those values.");
     expect(JSON.stringify(result)).not.toContain('data/type');
-    expect(await readdir(workflowDir)).toEqual([]);
+    expect(await h.stores.workflowStore.list()).toEqual([]);
   });
 
   it('a dangling $ref on a step input_schema is refused in the same sentence the loader mints', async () => {
@@ -185,7 +174,7 @@ describe('#586 create_workflow — its own admission door', () => {
       "; add that definition, or remove the 'input_schema' block.",
     );
     expect(JSON.stringify(result)).not.toContain("can't resolve reference");
-    expect(await readdir(workflowDir)).toEqual([]);
+    expect(await h.stores.workflowStore.list()).toEqual([]);
   });
 
   it("a STRICT-CLASS input_schema (unknown keyword) opens 'is refused by realm's validator' at this door", async () => {
@@ -200,7 +189,7 @@ describe('#586 create_workflow — its own admission door', () => {
       "Step 'a': 'input_schema' is refused by realm's validator — strict mode: unknown keyword: \\\"foo\\\". Every execute_step",
     );
     expect(JSON.stringify(result)).not.toContain('is not a valid JSON Schema');
-    expect(await readdir(workflowDir)).toEqual([]);
+    expect(await h.stores.workflowStore.list()).toEqual([]);
   });
 
   it('the STRICT twin is refused by the same check, before the eligibility walk', async () => {
@@ -221,7 +210,7 @@ describe('#586 create_workflow — its own admission door', () => {
     expect(JSON.stringify(result)).toContain("'input_schema' is not a valid JSON Schema");
     // NOT the eligibility verdict — the compile refused the block before anything read it.
     expect(JSON.stringify(result)).not.toContain('missing_additional_properties');
-    expect(await readdir(workflowDir)).toEqual([]);
+    expect(await h.stores.workflowStore.list()).toEqual([]);
   });
 
   // The consequence sentence has ONE home (core's SCHEMA_KEY_CONSEQUENCE): this door consumes it,
