@@ -93,7 +93,7 @@ describe('caching 3-M A-1 — the store contract and the CHANGELOG', () => {
     // check 3; the fresh run: check 5's witness; the contract: `usage-record-law-600.test.ts`
     // (check 7).
     claimChangelog(
-      "- **`UsageRecord` gains `reference`:** a step's first request in a drive carries a copy of the first request of the same step's last call on the run's record, when an earlier drive made that request, with `from: 'run'`. A fresh run's requests have none, and the store contract (`USAGE_RECORD_ROUNDTRIP`) holds it. (#600)",
+      "- **`UsageRecord` gains `reference`:** a step's first request in a drive carries a copy of the first request of the same step's last call on the run's record, when an earlier drive made that request on this version or later, with `from: 'run'`. A fresh run's requests have none, and the store contract (`USAGE_RECORD_ROUNDTRIP`) holds it. (#600)",
     );
   });
 });

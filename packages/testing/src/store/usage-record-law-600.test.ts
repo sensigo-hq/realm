@@ -8,7 +8,7 @@
 // #898: `cache_auto` carries a nested `prices`; a store that drops it fails (S6), and one that keeps
 // its keys in another order, at both levels, passes. Caching 3-B adds the split's seven facts
 // (`prefix_sha256`, `prefix_chars`, `prefix_parts`, `cache_marked`, `request_strict_sent`,
-// `cache_controls_rejected`, `cache_key_sent`): twenty fields, each red against a store that drops it.
+// `cache_controls_rejected`, `cache_key_sent`): eighteen fields then, each red against a store that drops it.
 // Caching 3-M (piece A-1) adds the nineteenth, `reference`, the copy of a request's predecessor: an
 // object the law compares whole, so a store that drops a key inside it fails. Piece A-1b adds the
 // twentieth, `request_in_call`, the request's place in its provider call.
