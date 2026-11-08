@@ -217,9 +217,10 @@ type Row = Record<string, unknown>;
 
 /**
  * The stale stamps a phase filter's page walks, in one snapshot: the distinct `phase_version` values
- * other than `running`, found one index probe at a time (§3).
+ * other than `running`, found one index probe at a time (§3). The maintenance handle's re-stamp
+ * (`realm db migrate`, c7) finds the stamps it re-stamps here too.
  */
-function staleStampsOf(db: DatabaseLike, running: string): unknown[] {
+export function staleStampsOf(db: DatabaseLike, running: string): unknown[] {
   const probe = db.prepare(STAMP_PROBE);
   const stamps: unknown[] = [];
   let from: unknown = '';

@@ -92,7 +92,7 @@ const CELLS = {
   coreAdapter: 'core README: the adapter fragment serves a step through executeStep',
   embedded: 'mcp-server README: the embedded server program serves 11 tools over stdio',
   provider: 'cli README: the custom provider module drives realm agent',
-  db: 'realm-db: realm db backup on a home with a store makes the copy',
+  db: 'realm-db: realm db backup, then realm db migrate --backup, on a home with a store, each make their copy',
 } as const;
 type Cell = keyof typeof CELLS;
 
@@ -159,6 +159,7 @@ const TABLE: ReadonlyArray<readonly [Page, string, string, string, Cell]> = [
   ['docs/guides/step-handlers.md', 'realm workflow validate ./', 'bash', 'run', 'handlers'],
   ['docs/guides/step-handlers.md', 'realm workflow register ./', 'bash', 'run; then start_run over stdio', 'handlers'],
   ['docs/reference/cli/realm-db.md', 'realm db backup ./realm-backup.db', 'bash', 'run on a home with a store', 'db'],
+  ['docs/reference/cli/realm-db.md', 'realm db migrate --backup ./realm-before-upgrade.db', 'bash', 'run on the same home, after the backup', 'db'],
   ['packages/cli/README.md', 'npm install -g @sensigo/realm-cli', '-', 'EXCLUDED: the npm registry; the package is checked', 'installs'],
   ['packages/cli/README.md', 'OPENAI_API_KEY=<your-key> realm agent \\', 'bash', 'EXCLUDED: a model provider and its key; the flags are checked', 'provider'],
   ['packages/cli/README.md', '// my-ollama-provider.mjs', 'javascript', 'program: written under the name its first line gives; Ollama is a stub', 'provider'],
@@ -1031,14 +1032,31 @@ describe(
       store.close();
       const line = fence('docs/reference/cli/realm-db.md', 'realm db backup').trim();
       const r = sh(line);
-      // (a) red when the command is not on the CLI, refuses this path, or makes no file there;
-      //     (b) prints the line, its exit code and its first line on stderr.
+      // #616 PR-2c c7: the page's second line, in the same folder, after the first.
+      const migrateLine = fence('docs/reference/cli/realm-db.md', 'realm db migrate').trim();
+      const m = sh(migrateLine);
+      // (a) red when a command is not on the CLI, refuses its path, or makes no file there (the
+      //     second example naming the first's file meets "a file already exists there"); (b) prints
+      //     each line, its exit code and its first line on stderr.
       expect({
         line,
         code: r.code,
         err: r.err.split('\n')[0],
         made: existsSync(join(project, 'realm-backup.db')),
-      }).toEqual({ line, code: 0, err: '', made: true });
+        migrateLine,
+        migrateCode: m.code,
+        migrateErr: m.err.split('\n')[0],
+        migrateMade: existsSync(join(project, 'realm-before-upgrade.db')),
+      }).toEqual({
+        line,
+        code: 0,
+        err: '',
+        made: true,
+        migrateLine,
+        migrateCode: 0,
+        migrateErr: '',
+        migrateMade: true,
+      });
     });
 
     it(CELLS.coreQuickStart, async () => {
