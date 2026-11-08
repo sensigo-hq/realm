@@ -479,8 +479,14 @@ describe('#627 W — the form path (cell 21)', () => {
   it(
     'Realm’s own timeout is a non-answer: W-f2 says it stopped waiting, after the form-wait cap',
     async () => {
+      // The form waits the cap LESS the real time the call spent before the form was sent
+      // (`performance.now()`, which fake timers do not touch), and W-f2 says what the form waited. On
+      // a loaded runner that is over half a second and the hint says 29 s (CI: #1040's run
+      // 42453622838). A clock that stands still spends none, so this cell pins the cap itself; that
+      // the call's own time counts against the cap is the injected-clock cell "the per-call budget"
+      // below.
       const s = await session(
-        { formWaitSeconds: 30 },
+        { formWaitSeconds: 30, monotonicNow: () => 0 },
         (req) =>
           new Promise<ElicitReply>((resolve) => {
             req.signal.addEventListener('abort', () => resolve({ action: 'cancel' }));
