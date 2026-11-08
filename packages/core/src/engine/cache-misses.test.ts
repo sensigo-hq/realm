@@ -1202,3 +1202,207 @@ describe('caching 3-M A-2a2r — the provider, the address or the model changed'
     expect(cacheMissCauses(list), explain(list)).toEqual(['model_changed']);
   });
 });
+
+describe("caching 3-M A-2a2s — Realm's own changes: the final request, the strict ladder, repair feedback", () => {
+  /** The model of the captured GPT-5.6 answers (`plans/issue-896/live-checks/`). */
+  const luna = 'gpt-5.6-luna';
+  const conversation = ['system', 'conversation'];
+  const turn = (tools: string, prompt = 'input'): Parts => ({
+    tools,
+    system: 'profile',
+    prompt,
+    format: 'json_object',
+  });
+
+  // 1 (a) An OpenAI strict tool step (`structured_output: strict`): turns 0 and 1 send strict tool
+  // arguments, then the final request sends no tools and records no strict. Can fail: the strict
+  // ladder checked first, or final_request moved after the parts (each gives strict_ladder).
+  // Prints each entry.
+  it("the final request after a strict tool step's turns: final_request, before the strict ladder", () => {
+    const list = stored(
+      { ...openaiRead, in_call: 0, read: 0, strict: true, parts: turn('mcp tools') },
+      { ...openaiRead, in_call: 1, read: 4000, strict: true, parts: turn('mcp tools') },
+      {
+        ...openaiMissed,
+        in_call: 2,
+        strict: false,
+        parts: { system: 'profile', prompt: 'input', format: 'json_object' },
+      },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual([undefined, undefined, 'final_request']);
+  });
+
+  // 1 (b) A GPT-5.6 single-shot step at OpenAI's own address, asking with a lifetime: its JSON
+  // retry is the same call, with no tools on either side and every part the same. Both answers'
+  // counts are C1's captured first answer (read 0, wrote 3,930; results-gpt-5.6-luna.json): the
+  // provider did not keep the entry, which the record cannot see. Can fail: final_request without
+  // its "the earlier request sent tools" test (final_request). Prints each entry.
+  it('a single-shot JSON retry, no tools on either side: unexplained, not final_request', () => {
+    const shot: Spec = {
+      provider: O,
+      model: luna,
+      asked: 'lifetime',
+      read: 0,
+      write: 3930,
+      strict: false,
+      marked: ['system'],
+      parts: { system: 'profile', prompt: 'input', format: 'json_object' },
+    };
+    const list = stored({ ...shot, in_call: 0 }, { ...shot, in_call: 1 });
+    expect(cacheMissCauses(list), explain(list)).toEqual([undefined, 'unexplained']);
+  });
+
+  // 2 (a) OpenAI's #313 ladder: turn 1 sent strict tool arguments, the endpoint refused them, and
+  // turn 2 went without, so its tools part differs too. Can fail: the tools checked before the
+  // ladder (tools), or final_request without its "this request sent none" test (final_request).
+  // Prints each entry.
+  it('strict dropped between two turns of one call: strict_ladder', () => {
+    const list = stored(
+      { ...openaiRead, in_call: 0, read: 0, strict: true, parts: turn('mcp tools, strict') },
+      { ...openaiRead, in_call: 1, read: 4000, strict: true, parts: turn('mcp tools, strict') },
+      { ...openaiMissed, in_call: 2, strict: false, parts: turn('mcp tools, not strict') },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual([undefined, undefined, 'strict_ladder']);
+  });
+
+  // 2 (b) The same values against a reference, on the same gateway: drive 2 ran through the same
+  // `--base-url` without the `--strict-base-url` drive 1 had (strict is lifted only with
+  // `--base-url`). The record cannot tell this from Realm's ladder. Can fail: the ladder named
+  // across drives (strict_ladder), or the tools checked before it (tools). Prints each entry.
+  it('strict sent in the earlier drive and not this one: strict_changed', () => {
+    const list = againstReference(
+      { ...openaiMissed, endpoint: 'custom', strict: false, parts: turn('mcp tools, not strict') },
+      { ...openaiRead, endpoint: 'custom', strict: true, parts: turn('mcp tools, strict') },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual(['strict_changed']);
+  });
+
+  // 2 (c) Strict back on inside one list: an Anthropic tool step whose call 0 met a 503 on its
+  // first turn. The refused request left no entry, so call 0's first entry is its retry without
+  // strict. A 503 does not arm the sticky drop, so call 1, the repair attempt, sends strict again;
+  // its prompt also carries the feedback. Can fail: "differ" read as "true, then false" (tools), or
+  // the repair feedback checked before the ladder (repair_feedback). Prints each entry.
+  it('strict sent again by the repair attempt: strict_ladder, before the repair feedback', () => {
+    const anthropicTurn = (tools: string, prompt = 'input'): Parts => ({
+      tools,
+      system: 'profile',
+      prompt,
+    });
+    const list = stored(
+      {
+        ...anthropicWrote,
+        in_call: 0,
+        strict: false,
+        marked: conversation,
+        parts: anthropicTurn('mcp tools, not strict'),
+      },
+      { provider: A, in_call: 1, read: 6897, write: 0 },
+      {
+        ...anthropicWrote,
+        in_call: 0,
+        strict: true,
+        marked: conversation,
+        parts: anthropicTurn('mcp tools, strict', 'input and feedback'),
+      },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual([undefined, undefined, 'strict_ladder']);
+  });
+
+  // 2 (d) The same direction against a reference: the first turn of drive 1's last call met the
+  // 503 (no strict); drive 2 sent strict. Can fail: "differ" read as "true, then false" (tools).
+  // Prints each entry.
+  it('strict not sent in the earlier drive and sent in this one: strict_changed', () => {
+    const list = againstReference(
+      {
+        ...anthropicWrote,
+        strict: true,
+        marked: conversation,
+        parts: { tools: 'mcp tools, strict', system: 'profile', prompt: 'input' },
+      },
+      {
+        ...anthropicWrote,
+        strict: false,
+        marked: conversation,
+        parts: { tools: 'mcp tools, not strict', system: 'profile', prompt: 'input' },
+      },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual(['strict_changed']);
+  });
+
+  // 3 (a) An Anthropic tool step: call 0 holds turns 0 and 1 and its final request (no
+  // `cache_requested`), then comes call 1's first request, whose prompt carries the repair
+  // feedback; the conversation is marked on both. Can fail: the repair feedback check removed (a
+  // prompt difference inside one list is then no cause: unexplained). Prints each entry.
+  it("a repair opener's feedback under a marked conversation: repair_feedback", () => {
+    const parts = (prompt: string): Parts => ({ tools: 'mcp tools', system: 'profile', prompt });
+    const list = stored(
+      { ...anthropicWrote, in_call: 0, strict: false, marked: conversation, parts: parts('input') },
+      {
+        ...anthropicWrote,
+        in_call: 1,
+        read: 6897,
+        write: 96,
+        strict: false,
+        marked: conversation,
+        parts: parts('input'),
+      },
+      { provider: A, in_call: 2, read: 6993, write: 0 },
+      {
+        ...anthropicWrote,
+        in_call: 0,
+        strict: false,
+        marked: conversation,
+        parts: parts('input and feedback'),
+      },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      'repair_feedback',
+    ]);
+  });
+
+  // 3 (b) A GPT-5.6 tool step with no `prompt:` (unsplit, so its prompt part is the whole prompt),
+  // under `provider_rules`: call 0's first request, then its repair opener. Both answers' counts
+  // are C9's captured first answer (read 0, wrote 4,012; results-gpt-5.6-luna-C9.json). Can fail:
+  // the write branch dropped (unexplained). Prints each entry.
+  it("a GPT-5.6 repair opener's feedback after a reported write: repair_feedback", () => {
+    const tool: Spec = { provider: O, model: luna, asked: 'provider_rules', strict: false };
+    const list = stored(
+      { ...tool, in_call: 0, read: 0, write: 4012, parts: turn('mcp tools') },
+      { ...tool, in_call: 0, read: 0, write: 4012, parts: turn('mcp tools', 'input and feedback') },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual([undefined, 'repair_feedback']);
+  });
+
+  // 3 (c) The same, the earlier request reporting a write of 0: its counts are C1's captured
+  // second answer (read 3,930, wrote 0; results-gpt-5.6-luna.json), the repair opener's C9's first
+  // (read 0, wrote 4,012). C1 is an explicit-mode capture; a write of 0 under `provider_rules` is
+  // INFERRED (an identical re-send; the implicit warm reads captured wrote 82 and 19). Can fail:
+  // "reported" read as "wrote more than 0" (unexplained). Prints each entry.
+  it('a reported write of 0 is a reported write: repair_feedback', () => {
+    const tool: Spec = { provider: O, model: luna, asked: 'provider_rules', strict: false };
+    const list = stored(
+      { ...tool, in_call: 0, read: 3930, write: 0, parts: turn('mcp tools') },
+      { ...tool, in_call: 0, read: 0, write: 4012, parts: turn('mcp tools', 'input and feedback') },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual([undefined, 'repair_feedback']);
+  });
+
+  // 3 (d) An Anthropic split single-shot step (`system` and `prompt` marked on both) whose tail has
+  // text: call 0's first request, then call 1's, its repair opener. The feedback lands in the tail,
+  // so the head's digest is unchanged and every part is the same. Can fail: the repair feedback
+  // without its "the digests differ" test (repair_feedback). Prints each entry.
+  it('feedback in the tail of a split prompt leaves the head unchanged: unexplained', () => {
+    const shot: Spec = {
+      ...anthropicWrote,
+      write: 3000,
+      marked: ['system', 'prompt'],
+      prefix_chars: 40,
+      parts: { tools: 'submit', system: 'profile', prompt: 'head' },
+    };
+    const list = stored({ ...shot, in_call: 0 }, { ...shot, in_call: 0 });
+    expect(cacheMissCauses(list), explain(list)).toEqual([undefined, 'unexplained']);
+  });
+});
