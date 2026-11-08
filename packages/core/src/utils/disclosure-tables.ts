@@ -123,6 +123,9 @@ const USAGE_RECORD_ROWS = {
   cache_split_offered: 'fact',
   // #715 (R): an id realm mints per request (`mintRequestIds`), never a provider's.
   request_id: 'fact',
+  // Caching 3-M (piece A-1b): the request's place in its provider call, a number realm mints
+  // (`mintRequestIds`); normalised at the write (`boundRequestFacts`).
+  request_in_call: 'fact',
   // Caching 3-B (A6): each written at the request's mint by the adapter, normalised at the write
   // (`boundRequestFacts`): digests of the head and parts as sent, a count, closed words, a boolean.
   prefix_sha256: 'fact',
@@ -144,6 +147,7 @@ const REFERENCE_TABLE = {
   provider: USAGE_RECORD_ROWS.provider,
   model: USAGE_RECORD_ROWS.model,
   endpoint: USAGE_RECORD_ROWS.endpoint,
+  cache_requested: USAGE_RECORD_ROWS.cache_requested,
   cache_read_input_tokens: USAGE_RECORD_ROWS.cache_read_input_tokens,
   cache_creation_input_tokens: USAGE_RECORD_ROWS.cache_creation_input_tokens,
   cache_write_tokens: USAGE_RECORD_ROWS.cache_write_tokens,
@@ -509,6 +513,7 @@ export const REFERENCE_FACTS = {
   request_id: USAGE_RECORD_FACTS.request_id,
   provider: USAGE_RECORD_FACTS.provider,
   endpoint: USAGE_RECORD_FACTS.endpoint,
+  cache_requested: USAGE_RECORD_FACTS.cache_requested,
   cache_auto: USAGE_RECORD_FACTS.cache_auto,
   cache_marked: USAGE_RECORD_FACTS.cache_marked,
 } as const satisfies FactProducers<typeof REFERENCE_TABLE, CacheReference>;
