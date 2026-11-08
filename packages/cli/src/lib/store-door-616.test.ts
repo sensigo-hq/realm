@@ -9,6 +9,13 @@
 // #616 PR-2b (A1): a second table, for the package's test files. A test opens its stores through the
 // package's test helper (`makeTempHome`), so unit 2c changes the door and the tests follow; the table
 // names the few test files that still construct a store, each with its count and its subject.
+//
+// #616 PR-2c c1a: core joined both tables once c1a routed the engine's tests onto the in-memory
+// stores. Core's production source builds none of the six, so its row in the first table is empty
+// and that cell's check that the walk read each allowed file has nothing to check; the second
+// table's exact counts for core's kept test files are what show the walk read core. The scan sees a
+// construction BY NAME: a subclass's `new X(` (judged-snapshot-715b's `InterposingStore` once was) is
+// invisible to it, as to `count-sites.mjs`.
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, dirname, relative, sep } from 'node:path';
@@ -24,6 +31,8 @@ const ALLOWED: Record<string, string[]> = {
   cli: ['lib/home.ts'],
   // #616 PR-2a (ii-b): the `realm-mcp` program's opener; the library and its tools build none.
   'mcp-server': ['home.ts'],
+  // #616 PR-2c c1a: core opens no store; a host does.
+  core: [],
 };
 
 /** Test files allowed to construct a store, each with how many constructions it holds and its
@@ -117,6 +126,115 @@ const ALLOWED_TESTS: Record<string, Array<{ file: string; sites: number; subject
       sites: 1,
       subject:
         'one cell: a sidecar store on a folder that does not exist (best-effort independence); PR-3',
+    },
+  ],
+  // #616 PR-2c c1a: the engine's tests build their run stores in memory; these keep a JSON
+  // construction because the JSON store (or registry) is their subject. PR-3 deletes them.
+  core: [
+    {
+      file: 'engine/docs-claims-625.test.ts',
+      sites: 2,
+      subject:
+        'the three docs cells about a run file that is not JSON, each on its own clocked JSON store, and the registry cell ("Register it with `realm workflow register <file>`": the JSON registry\'s copy judge); c12 rewrites them, PR-3',
+    },
+    {
+      file: 'engine/execution-loop.test.ts',
+      sites: 1,
+      subject:
+        'one cell: an unknown run id\'s error envelope carries the JSON store\'s not-found words ("Run not found") and offers no next call; PR-3',
+    },
+    {
+      file: 'engine/sealed-by-substrate.test.ts',
+      sites: 1,
+      subject:
+        'the purge-gate cell: `deleteAllForRun`, a verb the in-memory store lacks (c9 / PR-3)',
+    },
+    {
+      file: 'engine/structured-output-evidence.test.ts',
+      sites: 1,
+      subject: 'the round-trip cell: a persist and a read through `JsonFileStore`; PR-3',
+    },
+    {
+      file: 'engine/unanswerable-819.test.ts',
+      sites: 1,
+      subject: "U2/U3: the JSON registry's copy check over planted files; PR-3",
+    },
+    {
+      file: 'engine/w-627.test.ts',
+      sites: 5,
+      subject:
+        'the five registry cells: `getSync` on planted copies, `listWithDiagnostics` over planted shapes, a newer copy whose words embed its path; PR-3',
+    },
+    {
+      file: 'release-line.test.ts',
+      sites: 1,
+      subject: 'a local `class JsonFileStore {}` fixture branded as another release, not the store',
+    },
+    {
+      file: 'store/claim-clock.test.ts',
+      sites: 1,
+      subject:
+        'describe 1: `claimStep` writes the claim clock atomically, a store-contract law on the JSON store (the contracts pin it on the in-memory and SQLite stores); PR-3',
+    },
+    {
+      file: 'store/failed-attempt-store.test.ts',
+      sites: 4,
+      subject: "`JsonFileFailedAttemptStore`'s own cells: the `.attempts.jsonl` sidecar; PR-3",
+    },
+    {
+      file: 'store/json-file-store-clock-715.test.ts',
+      sites: 4,
+      subject:
+        '#715 (a)/(b) on the JSON store: readings per member, the pointer files, the per-key floor; PR-3',
+    },
+    {
+      file: 'store/json-file-store.test.ts',
+      sites: 6,
+      subject: "the JSON store's own cells; PR-3",
+    },
+    {
+      file: 'store/lazy-home-resolution-285.test.ts',
+      sites: 2,
+      subject: 'construction-time `$HOME` resolution of the two JSON classes; PR-3',
+    },
+    {
+      file: 'store/run-file-readdir-719.test.ts',
+      sites: 1,
+      subject: 'a runs folder that cannot be listed while a damaged run file is read; PR-3',
+    },
+    {
+      file: 'store/run-file.test.ts',
+      sites: 4,
+      subject:
+        'the run-file reader: every damaged class, the folder errors, the one composer; PR-3',
+    },
+    {
+      file: 'store/test-clock-file.test.ts',
+      sites: 8,
+      subject:
+        "the clock file through the JSON store's construction-time resolution (C1\u2013C6, C-10); PR-3",
+    },
+    {
+      file: 'workflow/registrar-listing-read-719.test.ts',
+      sites: 1,
+      subject: 'a copy whose read fails after its probe is `unreadable` with its errno; PR-3',
+    },
+    {
+      file: 'workflow/registrar-probe.test.ts',
+      sites: 7,
+      subject:
+        'the shapes a registered copy can be in, through real damaged files (the file-shaped arms); c5 / PR-3',
+    },
+    {
+      file: 'workflow/registrar.test.ts',
+      sites: 2,
+      subject:
+        'describe 1 (register, get, list over planted copies) and C14 (a fresh parse per get); PR-3',
+    },
+    {
+      file: 'workflow/t21-729.test.ts',
+      sites: 1,
+      subject: "cell 3: the JSON registry's path-carrying arms (unreadable, invalid, legacy); PR-3",
     },
   ],
 };
@@ -233,7 +351,7 @@ describe('#616 PR-2a (iii) — every store comes through the one door', () => {
   });
 
   for (const [pkg, allowed] of Object.entries(ALLOWED)) {
-    it(`${pkg}: no file but ${allowed.join(', ')} constructs a store`, () => {
+    it(`${pkg}: ${allowed.length > 0 ? `no file but ${allowed.join(', ')}` : 'no file'} constructs a store`, () => {
       const { files, sites } = constructions(pkg);
       // The instrument accounts for its input: it read each allowed file, and the pattern matches
       // the constructions those files really hold (a scan that read nothing, or a pattern that

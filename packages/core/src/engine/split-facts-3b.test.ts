@@ -78,6 +78,16 @@ describe('caching 3-B A6 — the split facts at the write', () => {
     // (a) red when an unknown key passes; (b) prints the kept parts.
     expect(out!['prefix_parts']).toEqual({ system: HEX });
   });
+
+  it("caching 3-M A-0: cache_marked keeps ['system', 'conversation'], an Anthropic tool turn's marks", () => {
+    const [out] = boundRequestFacts([{ cache_marked: ['system', 'conversation'] }]) as Record<
+      string,
+      unknown
+    >[];
+    // (a) red when `conversation` is missing from CACHE_MARKED_PARTS: the write drops the whole
+    //     list, as it drops an unknown word; (b) prints the kept record.
+    expect(out).toEqual({ cache_marked: ['system', 'conversation'] });
+  });
 });
 
 describe('caching 3-B A5 — renderStepPromptWithBoundary', () => {

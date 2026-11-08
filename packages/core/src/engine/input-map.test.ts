@@ -1,11 +1,8 @@
 // Tests for input_map — static path-mapping for adapter params from run state.
 // Source: execution-loop.ts
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect } from 'vitest';
 import { executeStep } from './execution-loop.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepDispatcher } from './execution-loop.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
@@ -15,12 +12,6 @@ import { vi } from 'vitest';
 const noOpDispatcher: StepDispatcher = async (_step, _input, _run, _signal) => ({});
 
 describe('input_map', () => {
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-input-map-'));
-  });
-
   it('absent input_map — options.input passed to adapter unchanged', async () => {
     const def: WorkflowDefinition = {
       id: 'imap-wf',
@@ -40,7 +31,7 @@ describe('input_map', () => {
     const fetchSpy = vi.spyOn(adapter, 'fetch');
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'imap-wf',
       workflowVersion: 1,
@@ -88,7 +79,7 @@ describe('input_map', () => {
     const fetchSpy = vi.spyOn(adapter, 'fetch');
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
 
     // Start run with params.repo = 'acme/api'
     const { record: run } = await store.create({
@@ -157,7 +148,7 @@ describe('input_map', () => {
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
     registry.register('handler', 'make-pr', handler);
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
 
     const { record: run } = await store.create({
       workflowId: 'imap-wf',
@@ -211,7 +202,7 @@ describe('input_map', () => {
     const fetchSpy = vi.spyOn(adapter, 'fetch');
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'imap-wf',
       workflowVersion: 1,
@@ -271,7 +262,7 @@ describe('input_map', () => {
     const fetchSpy = vi.spyOn(adapter, 'fetch');
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'imap-settlement-wf',
       workflowVersion: 1,
@@ -321,7 +312,7 @@ describe('input_map', () => {
     const adapter = new MockAdapter('mock', { 'call-api': { status: 200, data: { result: 1 } } });
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
 
     const { record: run } = await store.create({
       workflowId: 'imap-wf',
@@ -361,7 +352,7 @@ describe('input_map', () => {
     const adapter = new MockAdapter('mock', { fetch: { status: 200, data: { ok: true } } });
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
 
     const { record: run } = await store.create({
       workflowId: 'imap-wf',
@@ -408,7 +399,7 @@ describe('input_map', () => {
     const fetchSpy = vi.spyOn(adapter, 'fetch');
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'imap-wf',
       workflowVersion: 1,
@@ -456,7 +447,7 @@ describe('input_map', () => {
     const fetchSpy = vi.spyOn(adapter, 'fetch');
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'imap-wf',
       workflowVersion: 1,
@@ -500,7 +491,7 @@ describe('input_map', () => {
     const adapter = new MockAdapter('mock', { upsert: { status: 200, data: { id: '42' } } });
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'imap-wf',
       workflowVersion: 1,
@@ -541,7 +532,7 @@ describe('input_map', () => {
     const fetchSpy = vi.spyOn(adapter, 'fetch');
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'imap-wf',
       workflowVersion: 1,
@@ -584,7 +575,7 @@ describe('input_map', () => {
     const fetchSpy = vi.spyOn(adapter, 'fetch');
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'imap-wf',
       workflowVersion: 1,
@@ -627,7 +618,7 @@ describe('input_map', () => {
     const fetchSpy = vi.spyOn(adapter, 'fetch');
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'imap-wf',
       workflowVersion: 1,
@@ -670,7 +661,7 @@ describe('input_map', () => {
     const fetchSpy = vi.spyOn(adapter, 'fetch');
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'imap-wf',
       workflowVersion: 1,
@@ -716,7 +707,7 @@ describe('input_map', () => {
     const fetchSpy = vi.spyOn(adapter, 'fetch');
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'imap-wf',
       workflowVersion: 1,
@@ -764,7 +755,7 @@ describe('input_map', () => {
     const fetchSpy = vi.spyOn(adapter, 'fetch');
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'imap-wf',
       workflowVersion: 1,
@@ -809,7 +800,7 @@ describe('input_map', () => {
     const fetchSpy = vi.spyOn(adapter, 'fetch');
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'imap-wf',
       workflowVersion: 1,
@@ -854,7 +845,7 @@ describe('input_map', () => {
     const fetchSpy = vi.spyOn(adapter, 'fetch');
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'imap-wf',
       workflowVersion: 1,
@@ -900,7 +891,7 @@ describe('input_map', () => {
     const fetchSpy = vi.spyOn(adapter, 'fetch');
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'imap-wf',
       workflowVersion: 1,
@@ -960,7 +951,7 @@ describe('input_map', () => {
     const adapter = new MockAdapter('mock', { query: { status: 200, data: {} } });
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'imap-wf',
       workflowVersion: 1,
@@ -1053,7 +1044,7 @@ describe('input_map', () => {
     const fetchSpy = vi.spyOn(adapter, 'fetch');
     const registry = new ExtensionRegistry();
     registry.register('adapter', 'mock', adapter);
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'imap-wf',
       workflowVersion: 1,

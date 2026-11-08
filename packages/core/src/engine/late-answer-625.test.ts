@@ -2,27 +2,21 @@
 // open AND moved on name what the run owes now (the different-choice late answer; the
 // gate_choice_conflict on a gate ANOTHER writer expired). Every other refusal keeps [].
 import { describe, it, expect } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore, settableClock, type SettableClock } from '@sensigo/realm-testing';
 import { executeStep, submitHumanResponse } from './execution-loop.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import { nextCalls } from '../test-support/ways-view.js';
-import { writeTestClockFile } from '../store/test-clock-file.js';
 
-/** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
- *  runs folder sits beside the location's clock file (first set to the host's reading), which
- *  `setClockOf` rewrites. */
-async function testLocationRuns(prefix: string): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), prefix));
-  await writeTestClockFile(root, new Date());
-  return join(root, 'runs');
+/** #715 (b) (01 §C.4): the store's clock decides what is due — an in-memory store on a settable
+ *  clock, first set to the host's reading, which `setClockOf` moves. */
+function clockedStore(): InMemoryStore {
+  return new InMemoryStore({ clock: settableClock(new Date()) });
 }
 async function setClockOf(store: object, t: Date): Promise<void> {
-  const runsDir = (store as { runsDirPath?: string }).runsDirPath;
-  if (runsDir === undefined) throw new Error('setClockOf: this store is not a JSON store');
-  await writeTestClockFile(dirname(runsDir), t);
+  const clock = (store as { clock?: Partial<SettableClock> }).clock ?? {};
+  if (typeof clock.set !== 'function')
+    throw new Error('setClockOf: this store has no settable clock');
+  await clock.set(t);
 }
 
 const def: WorkflowDefinition = {
@@ -46,7 +40,7 @@ const def: WorkflowDefinition = {
   },
 };
 
-async function opened(store: JsonFileStore) {
+async function opened(store: InMemoryStore) {
   const { record: run } = await store.create({
     workflowId: def.id,
     workflowVersion: 1,
@@ -65,82 +59,62 @@ async function opened(store: JsonFileStore) {
 
 describe('#625 PR-2a — C9: a refused answer on a run that moved on names the owed work', () => {
   it('the different-choice late answer (its own expiry write settled another default): its ways end with advance (#729 PR-0: next_actions → ways)', async () => {
-    const dir = await testLocationRuns('realm-late-625-');
-    try {
-      const store = new JsonFileStore(dir);
-      const { runId, gateId, afterExpiry } = await opened(store);
-      await setClockOf(store, afterExpiry);
-      const reply = await submitHumanResponse(store, def, {
-        runId,
-        gateId,
-        choice: 'reject',
-      });
-      expect(reply.status).toBe('error');
-      expect(reply.error_code).toBe('STATE_BLOCKED');
-      expect(nextCalls(reply)).toEqual(['advance']);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    const store = clockedStore();
+    const { runId, gateId, afterExpiry } = await opened(store);
+    await setClockOf(store, afterExpiry);
+    const reply = await submitHumanResponse(store, def, {
+      runId,
+      gateId,
+      choice: 'reject',
+    });
+    expect(reply.status).toBe('error');
+    expect(reply.error_code).toBe('STATE_BLOCKED');
+    expect(nextCalls(reply)).toEqual(['advance']);
   });
 
   it('gate_choice_conflict on a gate another writer expired: its ways end with advance (#729 PR-0: next_actions → ways)', async () => {
-    const dir = await testLocationRuns('realm-late-625-');
-    try {
-      const store = new JsonFileStore(dir);
-      const { runId, gateId, afterExpiry } = await opened(store);
-      await setClockOf(store, afterExpiry);
-      await store.settleStep(runId, { kind: 'expire_gate', gateId }, def);
-      const reply = await submitHumanResponse(store, def, {
-        runId,
-        gateId,
-        choice: 'reject',
-      });
-      expect(reply.status).toBe('error');
-      expect(nextCalls(reply)).toEqual(['advance']);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    const store = clockedStore();
+    const { runId, gateId, afterExpiry } = await opened(store);
+    await setClockOf(store, afterExpiry);
+    await store.settleStep(runId, { kind: 'expire_gate', gateId }, def);
+    const reply = await submitHumanResponse(store, def, {
+      runId,
+      gateId,
+      choice: 'reject',
+    });
+    expect(reply.status).toBe('error');
+    expect(nextCalls(reply)).toEqual(['advance']);
   });
 
   it('CONTROL: a refusal while the gate is still open (a choice not on the list) keeps next_actions empty', async () => {
-    const dir = await testLocationRuns('realm-late-625-');
-    try {
-      const store = new JsonFileStore(dir);
-      const { runId, gateId } = await opened(store);
-      const reply = await submitHumanResponse(store, def, { runId, gateId, choice: 'maybe' });
-      expect(reply.status).toBe('error');
-      expect(nextCalls(reply)).toEqual([]);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    const store = clockedStore();
+    const { runId, gateId } = await opened(store);
+    const reply = await submitHumanResponse(store, def, { runId, gateId, choice: 'maybe' });
+    expect(reply.status).toBe('error');
+    expect(nextCalls(reply)).toEqual([]);
   });
 });
 
 describe('#625 PR-2a — advanceRun on a terminal run', () => {
   it('runs nothing and says so', async () => {
     const { advanceRun } = await import('./execution-loop.js');
-    const dir = await testLocationRuns('realm-late-625-');
-    try {
-      const store = new JsonFileStore(dir);
-      const { record: run } = await store.create({
-        workflowId: def.id,
-        workflowVersion: 1,
-        params: {},
-      });
-      await store.update({
-        ...run,
-        terminal_state: true,
-        sealed_by: { arm: 'abandon_requested' },
-        terminal_reason: 'Abandoned',
-      } as never);
-      const reply = await advanceRun(store, def, { runId: run.id });
-      expect(reply.context_hint).toBe(
-        `Run '${run.id}' is already terminal (abandoned); nothing ran.`,
-      );
-      expect(nextCalls(reply)).toEqual([]);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    const store = clockedStore();
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    await store.update({
+      ...run,
+      terminal_state: true,
+      sealed_by: { arm: 'abandon_requested' },
+      terminal_reason: 'Abandoned',
+    } as never);
+    const reply = await advanceRun(store, def, { runId: run.id });
+    expect(reply.context_hint).toBe(
+      `Run '${run.id}' is already terminal (abandoned); nothing ran.`,
+    );
+    expect(nextCalls(reply)).toEqual([]);
   });
 });
 
@@ -151,23 +125,18 @@ describe('#715 (b) A.8 (iii) — a late answer is one write, and its reply is ju
   it('version + 1 once; the reply’s as_of is the enactment’s updated_at; the answer is not recorded', async () => {
     // (a) red when the late answer takes two writes again (two version steps), or the reply is
     //     composed at another instant than the write's (as_of ≠ updated_at); (b) prints both.
-    const dir = await testLocationRuns('realm-late-715b-');
-    try {
-      const store = new JsonFileStore(dir);
-      const { runId, gateId, afterExpiry } = await opened(store);
-      const { record: before } = await store.get(runId);
-      await setClockOf(store, afterExpiry);
-      // The default's own choice: the `ok` late reply (a different choice is C9's error reply above).
-      const reply = await submitHumanResponse(store, def, { runId, gateId, choice: 'approve' });
-      const { record: after } = await store.get(runId);
-      expect({
-        status: reply.status,
-        recorded: reply.answer_recorded,
-        steps: after.version - before.version,
-        as_of: reply.basis?.as_of,
-      }).toEqual({ status: 'ok', recorded: false, steps: 1, as_of: after.updated_at });
-    } finally {
-      await rm(dirname(dir), { recursive: true, force: true });
-    }
+    const store = clockedStore();
+    const { runId, gateId, afterExpiry } = await opened(store);
+    const { record: before } = await store.get(runId);
+    await setClockOf(store, afterExpiry);
+    // The default's own choice: the `ok` late reply (a different choice is C9's error reply above).
+    const reply = await submitHumanResponse(store, def, { runId, gateId, choice: 'approve' });
+    const { record: after } = await store.get(runId);
+    expect({
+      status: reply.status,
+      recorded: reply.answer_recorded,
+      steps: after.version - before.version,
+      as_of: reply.basis?.as_of,
+    }).toEqual({ status: 'ok', recorded: false, steps: 1, as_of: after.updated_at });
   });
 });

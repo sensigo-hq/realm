@@ -7,9 +7,6 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: the
 // entry's word, the receipt's fields — gate ids and instants are the fixture's own.
 import { describe, it, expect } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
 import {
   advanceRun,
   executeChain,
@@ -17,26 +14,20 @@ import {
   executeStep,
   submitHumanResponse,
 } from './execution-loop.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore, settableClock, type SettableClock } from '@sensigo/realm-testing';
 import type { EngineReply } from '../types/response-envelope.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
-import { writeTestClockFile } from '../store/test-clock-file.js';
 
-/** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
- *  runs folder sits beside the location's clock file (first set to the host's reading), which
- *  `setClockOf` rewrites. */
-async function testLocationRuns(prefix: string): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), prefix));
-  await writeTestClockFile(root, new Date());
-  return join(root, 'runs');
-}
-async function clockedJsonStore(prefix: string): Promise<JsonFileStore> {
-  return new JsonFileStore(await testLocationRuns(prefix));
+/** #715 (b) (01 §C.4): the store's clock decides what is due — an in-memory store on a settable
+ *  clock, first set to the host's reading, which `setClockOf` moves. */
+function clockedStore(): InMemoryStore {
+  return new InMemoryStore({ clock: settableClock(new Date()) });
 }
 async function setClockOf(store: object, t: Date): Promise<void> {
-  const runsDir = (store as { runsDirPath?: string }).runsDirPath;
-  if (runsDir === undefined) throw new Error('setClockOf: this store is not a JSON store');
-  await writeTestClockFile(dirname(runsDir), t);
+  const clock = (store as { clock?: Partial<SettableClock> }).clock ?? {};
+  if (typeof clock.set !== 'function')
+    throw new Error('setClockOf: this store has no settable clock');
+  await clock.set(t);
 }
 
 /** `q` (a question; settle_default 60 s after it opens), `after` (auto), `side` (auto, independent). */
@@ -66,7 +57,7 @@ const LAG_MS = 7_000;
 
 /** A run with its question open, and the instant `LAG_MS` after its deadline. */
 async function due() {
-  const store = await clockedJsonStore('realm-receipt-729-');
+  const store = clockedStore();
   const { record: run } = await store.create({ workflowId: D.id, workflowVersion: 1, params: {} });
   await executeStep(store, D, {
     runId: run.id,

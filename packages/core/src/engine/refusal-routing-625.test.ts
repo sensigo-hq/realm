@@ -9,11 +9,8 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { executeStep, type StepDispatcher } from './execution-loop.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import type { StepDefinition, WorkflowDefinition } from '../types/workflow-definition.js';
 import type { EngineReply } from '../types/response-envelope.js';
 import { agentActionFor, nextCalls } from '../test-support/ways-view.js';
@@ -58,9 +55,9 @@ function routing(reply: EngineReply) {
 }
 
 describe('#625 PR-2a, C94 — a refusal before the claim says what can be called instead', () => {
-  let store: JsonFileStore;
+  let store: InMemoryStore;
   beforeEach(async () => {
-    store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-rr-625-')));
+    store = new InMemoryStore();
   });
 
   async function callRefused(d: WorkflowDefinition): Promise<EngineReply> {

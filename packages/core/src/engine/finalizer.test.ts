@@ -5,13 +5,10 @@
 // Terminal outcome mapping: complete = success/try · fail|abort = catch · always = finally.
 // The engine owns only WHICH finalizers run, WHEN (terminal transition), in what ORDER, and
 // at-most-ONCE. A finalizer failure is recorded but never changes the run outcome.
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { executeChain } from './execution-loop.js';
 import { abandonRun } from './abandon-run.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepDispatcher } from './execution-loop.js';
@@ -103,23 +100,17 @@ function matrixWorkflow(domainHandler: string): WorkflowDefinition {
 }
 
 describe('finalizer drain — outcome matching', () => {
-  let store: JsonFileStore;
-  let dir: string;
+  let store: InMemoryStore;
   let order: string[];
   let registry: ExtensionRegistry;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-finalizer-'));
-    store = new JsonFileStore(dir);
+    store = new InMemoryStore();
     order = [];
     registry = new ExtensionRegistry();
     registry.register('handler', 'h_complete', okHandler('h_complete', order));
     registry.register('handler', 'h_catch', okHandler('h_catch', order));
     registry.register('handler', 'h_always', okHandler('h_always', order));
-  });
-
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
   });
 
   async function drive(domainHandler: StepHandler): Promise<string> {
@@ -172,20 +163,14 @@ describe('finalizer drain — outcome matching', () => {
 });
 
 describe('finalizer drain — ordering', () => {
-  let store: JsonFileStore;
-  let dir: string;
+  let store: InMemoryStore;
   let order: string[];
   let registry: ExtensionRegistry;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-finalizer-order-'));
-    store = new JsonFileStore(dir);
+    store = new InMemoryStore();
     order = [];
     registry = new ExtensionRegistry();
-  });
-
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
   });
 
   it('outcome-specific finalizers run in declaration order, always runs LAST', async () => {
@@ -262,21 +247,15 @@ describe('finalizer drain — ordering', () => {
 });
 
 describe('finalizer drain — failure handling (non-fatal, drain continues)', () => {
-  let store: JsonFileStore;
-  let dir: string;
+  let store: InMemoryStore;
   let order: string[];
   let registry: ExtensionRegistry;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-finalizer-fail-'));
-    store = new JsonFileStore(dir);
+    store = new InMemoryStore();
     order = [];
     registry = new ExtensionRegistry();
     registry.register('handler', 'domain_ok', okHandler('domain_ok', order));
-  });
-
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
   });
 
   async function driveComplete(def: WorkflowDefinition): Promise<string> {
@@ -434,20 +413,14 @@ describe('finalizer drain — failure handling (non-fatal, drain continues)', ()
 });
 
 describe('finalizer drain — idempotent at-most-once', () => {
-  let store: JsonFileStore;
-  let dir: string;
+  let store: InMemoryStore;
   let order: string[];
   let registry: ExtensionRegistry;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-finalizer-idem-'));
-    store = new JsonFileStore(dir);
+    store = new InMemoryStore();
     order = [];
     registry = new ExtensionRegistry();
-  });
-
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
   });
 
   it('a finalizer already in completed_steps is not re-run (resume / re-drive safety)', async () => {
@@ -493,8 +466,7 @@ describe('finalizer drain — idempotent at-most-once', () => {
 });
 
 describe('finalizer drain — guard-terminated runs (Blocking fix #1)', () => {
-  let store: JsonFileStore;
-  let dir: string;
+  let store: InMemoryStore;
   let order: string[];
   let registry: ExtensionRegistry;
 
@@ -532,17 +504,12 @@ describe('finalizer drain — guard-terminated runs (Blocking fix #1)', () => {
   };
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-finalizer-guard-'));
-    store = new JsonFileStore(dir);
+    store = new InMemoryStore();
     order = [];
     registry = new ExtensionRegistry();
     registry.register('handler', 'h_complete', okHandler('h_complete', order));
     registry.register('handler', 'h_catch', okHandler('h_catch', order));
     registry.register('handler', 'h_always', okHandler('h_always', order));
-  });
-
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
   });
 
   async function driveGuard(status: Record<string, unknown>): Promise<string> {
@@ -593,21 +560,15 @@ describe('finalizer drain — guard-terminated runs (Blocking fix #1)', () => {
 });
 
 describe('finalizer drain — abandon runs no finalizers', () => {
-  let store: JsonFileStore;
-  let dir: string;
+  let store: InMemoryStore;
   let order: string[];
   let registry: ExtensionRegistry;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-finalizer-abandon-'));
-    store = new JsonFileStore(dir);
+    store = new InMemoryStore();
     order = [];
     registry = new ExtensionRegistry();
     registry.register('handler', 'h_always', okHandler('h_always', order));
-  });
-
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
   });
 
   // issue #302 (D-B): this contract is now DOCUMENTED (docs/reference/yaml-schema.md's
@@ -657,15 +618,10 @@ describe('finalizer drain — abandon runs no finalizers', () => {
 // so a finalizer branches in handler code today (issue #360 tracks widening that).
 // =================================================================================================
 describe('finalizer handler sees the failed marker (issue #305)', () => {
-  let store: JsonFileStore;
-  let dir: string;
+  let store: InMemoryStore;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-fin-305-'));
-    store = new JsonFileStore(dir);
-  });
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+    store = new InMemoryStore();
   });
 
   it('a completed-with-failed-steps run drains a finalizer whose handler reads failed:true for the failed step and failed:false for the completed one', async () => {

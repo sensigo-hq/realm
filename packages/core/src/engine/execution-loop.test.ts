@@ -1,5 +1,5 @@
 import { declared } from '../test-support/declared.js';
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, onTestFinished, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,6 +12,7 @@ import {
 } from './execution-loop.js';
 import { buildDisclosureSet } from '../utils/redaction.js';
 import { endsWithCutSentence } from './question-view.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { JsonFileStore } from '../store/json-file-store.js';
 import { classifyRunHealth } from './run-health.js';
 import { WorkflowError } from '../types/workflow-error.js';
@@ -58,12 +59,10 @@ const failDispatcher: StepDispatcher = async () => {
 };
 
 describe('executeStep', () => {
-  let store: JsonFileStore;
-  let dir: string;
+  let store: InMemoryStore;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-exec-test-'));
-    store = new JsonFileStore(dir);
+    store = new InMemoryStore();
   });
 
   it('successful step returns status ok and updates completed_steps', async () => {
@@ -220,6 +219,11 @@ describe('executeStep', () => {
   });
 
   it('unknown run ID returns error envelope', async () => {
+    // A JSON store of its own (c1a-2): the assertion reads the JSON store's not-found words ("Run not
+    // found"); the in-memory store's are "Run '<id>' not found", so on it the assertion would change.
+    const dir = await mkdtemp(join(tmpdir(), 'realm-exec-test-'));
+    onTestFinished(() => rm(dir, { recursive: true, force: true }));
+    const store = new JsonFileStore(dir);
     const envelope = await executeStep(store, definition, {
       runId: 'does-not-exist',
       command: 'step-one',
@@ -2046,12 +2050,9 @@ describe('executeStep', () => {
   });
 
   // Cleanup
-  it('cleanup', async () => {
-    await rm(dir, { recursive: true, force: true });
-  });
 
   describe('cleanup failure warning', () => {
-    // issue #279 (increment 1, PR-B): JsonFileStore now declares settleStep, so the fail site's
+    // issue #279 (increment 1, PR-B): the store now declares settleStep, so the fail site's
     // MIGRATED path (not the legacy store.update path) handles this run — a genuine settleStep
     // throw surfaces as a hard ENGINE_STORE_FAILED error envelope (the complete-site's own
     // pre-existing catch pattern, replicated at all three migrated sites — design record §1/D1),
@@ -3069,7 +3070,7 @@ describe('executeStep', () => {
         params: {},
       });
 
-      // JsonFileStore declares settleStep — the fail site's MIGRATED path handles this run, so
+      // The store declares settleStep — the fail site's MIGRATED path handles this run, so
       // simulating a persist failure now means mocking settleStep, not store.update (the fail
       // site's legacy-only call, unreachable once the store declares the capability).
       vi.spyOn(store, 'settleStep').mockImplementation(async () => {
@@ -3145,8 +3146,7 @@ describe('executeStep', () => {
 });
 
 describe('WAL trace buffer integration (B-lite)', () => {
-  let store: JsonFileStore;
-  let dir: string;
+  let store: InMemoryStore;
 
   const agentDef: WorkflowDefinition = {
     id: 'wal-test-wf',
@@ -3162,8 +3162,7 @@ describe('WAL trace buffer integration (B-lite)', () => {
   };
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-wal-test-'));
-    store = new JsonFileStore(dir);
+    store = new InMemoryStore();
   });
 
   it('WAL entries present + no execute_step.trace → evidence has trace from WAL', async () => {
@@ -3349,8 +3348,7 @@ describe('WAL trace buffer integration (B-lite)', () => {
 // ---------------------------------------------------------------------------
 
 describe('trace provenance — honest seal-at-claim (issue #185)', () => {
-  let store: JsonFileStore;
-  let dir: string;
+  let store: InMemoryStore;
 
   const agentDef: WorkflowDefinition = {
     id: 'wal-test-wf',
@@ -3366,8 +3364,7 @@ describe('trace provenance — honest seal-at-claim (issue #185)', () => {
   };
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-185-test-'));
-    store = new JsonFileStore(dir);
+    store = new InMemoryStore();
   });
 
   describe('Finding 1 — budget-priority preserves the conclusion', () => {
@@ -3693,12 +3690,10 @@ describe('trace provenance — honest seal-at-claim (issue #185)', () => {
 // ---------------------------------------------------------------------------
 
 describe('Step 5 dispatch-failure envelope', () => {
-  let store: JsonFileStore;
-  let dir: string;
+  let store: InMemoryStore;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-step5-test-'));
-    store = new JsonFileStore(dir);
+    store = new InMemoryStore();
   });
 
   // Two-step workflow: step_a (agent) → step_b (agent, trigger_rule: one_failed).
@@ -3887,7 +3882,7 @@ describe('Step 5 dispatch-failure envelope', () => {
       params: {},
     });
 
-    // JsonFileStore declares settleStep — the fail site's MIGRATED path handles this run;
+    // The store declares settleStep — the fail site's MIGRATED path handles this run;
     // store.update is never called there, so simulating a persist failure means mocking
     // settleStep. A genuine throw now hard-stops (agent_action: 'stop') REGARDLESS of the
     // original dispatch error's own agentAction — design record §1/D1's replicated
@@ -3923,7 +3918,7 @@ describe('Step 5 dispatch-failure envelope', () => {
       params: {},
     });
 
-    // issue #279 (increment 1, PR-B): JsonFileStore declares settleStep — the fail site's
+    // issue #279 (increment 1, PR-B): the store declares settleStep — the fail site's
     // MIGRATED path settles via settleStep, not store.update. Track the version it returns.
     const originalSettleStep = store.settleStep!.bind(store);
     let persistedVersion: number | undefined;
@@ -3972,12 +3967,10 @@ describe('Step 5 dispatch-failure envelope', () => {
 // ---------------------------------------------------------------------------
 
 describe('retry_after on ResponseEnvelope', () => {
-  let store: JsonFileStore;
-  let dir: string;
+  let store: InMemoryStore;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-retry-after-test-'));
-    store = new JsonFileStore(dir);
+    store = new InMemoryStore();
   });
 
   const twoStepDef: WorkflowDefinition = {
@@ -4217,11 +4210,10 @@ describe('retry_after on ResponseEnvelope', () => {
 // ---------------------------------------------------------------------------
 
 describe('min_retry_seconds floor', () => {
-  let store: JsonFileStore;
+  let store: InMemoryStore;
 
   beforeEach(async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-min-retry-test-'));
-    store = new JsonFileStore(dir);
+    store = new InMemoryStore();
   });
 
   it('floors a short Retry-After header to min_retry_seconds', async () => {
@@ -4464,8 +4456,7 @@ describe('min_retry_seconds floor', () => {
 // ---------------------------------------------------------------------------
 
 describe('guard step execution', () => {
-  let store: JsonFileStore;
-  let dir: string;
+  let store: InMemoryStore;
 
   const guardWorkflow: WorkflowDefinition = {
     id: 'guard-wf',
@@ -4492,8 +4483,7 @@ describe('guard step execution', () => {
   };
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-guard-test-'));
-    store = new JsonFileStore(dir);
+    store = new InMemoryStore();
   });
 
   it('guard passes — run continues with downstream agent step in next_actions', async () => {
@@ -4741,12 +4731,10 @@ describe('guard step execution', () => {
 // ---------------------------------------------------------------------------
 
 describe('handler warn result', () => {
-  let store: JsonFileStore;
-  let dir: string;
+  let store: InMemoryStore;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-warn-test-'));
-    store = new JsonFileStore(dir);
+    store = new InMemoryStore();
   });
 
   const warnDefinition: WorkflowDefinition = {
@@ -4909,12 +4897,10 @@ describe('handler warn result', () => {
 // ---------------------------------------------------------------------------
 
 describe('when: run.params integration', () => {
-  let store: JsonFileStore;
-  let dir: string;
+  let store: InMemoryStore;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-runparams-test-'));
-    store = new JsonFileStore(dir);
+    store = new InMemoryStore();
   });
 
   it('step with when: run.params.mode == live is skipped when run started with mode: shadow', async () => {
@@ -4981,12 +4967,10 @@ describe('when: run.params integration', () => {
 // ---------------------------------------------------------------------------
 
 describe('input_map on handler steps', () => {
-  let store: JsonFileStore;
-  let dir: string;
+  let store: InMemoryStore;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-inputmap-handler-test-'));
-    store = new JsonFileStore(dir);
+    store = new InMemoryStore();
   });
 
   it('handler step with $literal input_map receives resolved params', async () => {
@@ -5163,12 +5147,10 @@ describe('input_map on handler steps', () => {
 // ---------------------------------------------------------------------------
 
 describe('_debug field capture', () => {
-  let store: JsonFileStore;
-  let dir: string;
+  let store: InMemoryStore;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-debug-test-'));
-    store = new JsonFileStore(dir);
+    store = new InMemoryStore();
   });
 
   const debugDef: WorkflowDefinition = {
@@ -5284,12 +5266,10 @@ describe('_debug field capture', () => {
 // ---------------------------------------------------------------------------
 
 describe('_debug stripping on direct auto-step invocation', () => {
-  let store: JsonFileStore;
-  let dir: string;
+  let store: InMemoryStore;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-debug-strip-test-'));
-    store = new JsonFileStore(dir);
+    store = new InMemoryStore();
   });
 
   it('handler step without input_map receives params with _debug stripped', async () => {
@@ -5433,12 +5413,10 @@ describe('_debug stripping on direct auto-step invocation', () => {
 // ---------------------------------------------------------------------------
 
 describe('executeChain — terminal-run entry guard (#91)', () => {
-  let store: JsonFileStore;
-  let dir: string;
+  let store: InMemoryStore;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-chain-entry-test-'));
-    store = new JsonFileStore(dir);
+    store = new InMemoryStore();
   });
 
   it('is a byte-unchanged no-op on a terminal aborted run (no step claimed)', async () => {
@@ -5531,8 +5509,7 @@ describe('executeChain — terminal-run entry guard (#91)', () => {
 
 // Issue #92 follow-up (0.10.0): submitHumanResponse defensive terminal guard.
 describe('submitHumanResponse — terminal-run guard', () => {
-  let store: JsonFileStore;
-  let dir: string;
+  let store: InMemoryStore;
 
   const gateWf: WorkflowDefinition = {
     id: 'gate-terminal-wf',
@@ -5550,8 +5527,7 @@ describe('submitHumanResponse — terminal-run guard', () => {
   };
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-gate-terminal-'));
-    store = new JsonFileStore(dir);
+    store = new InMemoryStore();
   });
 
   it('a gate response on a terminal run is rejected with STATE_RUN_TERMINAL (no re-drive)', async () => {
@@ -5594,10 +5570,6 @@ describe('submitHumanResponse — terminal-run guard', () => {
     expect(after.version).toBe(before.version);
     expect(after.terminal_state).toBe(true);
   });
-
-  it('cleanup', async () => {
-    await rm(dir, { recursive: true, force: true });
-  });
 });
 
 // #729 PR-4 (01; 04 "The mint under PR-3's law"): a gate's question is minted with the host's
@@ -5612,9 +5584,9 @@ describe('#729 PR-4 — the mint takes the host’s disclosure set', () => {
     declaredState: 'resolved',
     audience: 'agent',
   }).set;
-  let store: JsonFileStore;
+  let store: InMemoryStore;
   beforeEach(async () => {
-    store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-pr4-mint-')));
+    store = new InMemoryStore();
   });
   /** One bare `auto` gate step whose message substitutes the run's `token` param. */
   const def = (message: string): WorkflowDefinition => ({

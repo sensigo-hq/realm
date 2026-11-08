@@ -1,6 +1,7 @@
 // openai-provider.test.ts — Tests for OpenAIProvider callStep and callStepWithTools.
 // All tests mock the openai package — no real API calls are made.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import OpenAI from 'openai';
 import { OpenAIProvider, OPENAI_DEFAULT_BASE_URL } from './openai-provider.js';
 import { WorkflowError } from '@sensigo/realm';
@@ -1290,19 +1291,40 @@ describe('OpenAIProvider — the request facts (issue #600 PR 2)', () => {
     const { request_index: _i, request_start: _s, prompt_tokens: _p, ...rest } = usage![0]!;
     return rest;
   };
+  // Caching 3-M (A-0): these requests have no head (no `cachePrefixChars`), and each records the
+  // parts of what it sent. Every digest is taken here from the body the SDK received as call `n`:
+  // its system message, the prompt, and its response format.
+  const sha256 = (text: string): string => createHash('sha256').update(text).digest('hex');
+  const sentParts = (n: number): Record<string, unknown> => {
+    const body = mockCreate.mock.calls[n]![0] as {
+      messages: Array<{ content: string }>;
+      response_format: unknown;
+    };
+    return {
+      prefix_parts: {
+        system: sha256(body.messages[0]!.content),
+        prompt: sha256('prompt'),
+        format: sha256(JSON.stringify(body.response_format)),
+      },
+    };
+  };
 
   beforeEach(() => {
     mockCreate.mockReset();
   });
 
   // G7 (OpenAI), both record sites: the JSON-mode path and the strict path. (a) red when OpenAI
-  // does not write provider_rules, or writes cache_split_offered true; (b) prints the facts.
+  // does not write provider_rules, or writes cache_split_offered true; 3-M A-0: also red when an
+  // unsplit request records no parts, a digest of anything but what it sent, or the wrong strict;
+  // (b) prints the facts.
   it('G7 — provider_rules and cache_split_offered false, on both record sites; no lifetime fields', async () => {
     mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":"a"}'));
     const plain = await new OpenAIProvider('gpt-4o').callStepWithMeta('prompt', SCHEMA);
     expect(facts(plain.usage as never)).toEqual({
       cache_requested: 'provider_rules',
       cache_split_offered: false,
+      ...sentParts(0),
+      request_strict_sent: false,
     });
     mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":"a"}'));
     const strict = await new OpenAIProvider('gpt-4o').callStepWithMeta(
@@ -1316,6 +1338,8 @@ describe('OpenAIProvider — the request facts (issue #600 PR 2)', () => {
     expect(facts(strict.usage as never)).toEqual({
       cache_requested: 'provider_rules',
       cache_split_offered: false,
+      ...sentParts(1),
+      request_strict_sent: true,
     });
     // Realm sends OpenAI no cache field.
     for (const call of mockCreate.mock.calls) {

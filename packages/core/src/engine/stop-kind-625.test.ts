@@ -9,12 +9,9 @@
 // and reads the reply and the callbacks. Part 3 is `executeChain`'s chain (an `execute_step` call).
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, beforeEach } from 'vitest';
 import * as core from '../index.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { advanceRun, executeChain, executeStep } from './execution-loop.js';
 import { abandonRun } from './abandon-run.js';
 import { reclaimStep } from './reclaim-step.js';
@@ -266,14 +263,9 @@ const DEF_X_FREE: WorkflowDefinition = {
 };
 
 describe('#625 PR-2a, F7 — advanceRun meets each row as a real race and goes on', () => {
-  let dir: string;
-  let store: JsonFileStore;
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-f7-race-'));
-    store = new JsonFileStore(dir);
-  });
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+  let store: InMemoryStore;
+  beforeEach(() => {
+    store = new InMemoryStore();
   });
 
   type Moment = 'read' | 'claim' | 'handler';
@@ -368,7 +360,7 @@ describe('#625 PR-2a, F7 — advanceRun meets each row as a real race and goes o
           };
         }
         if (prop === 'claimStep' && moment === 'claim') {
-          return async (...a: Parameters<JsonFileStore['claimStep']>) => {
+          return async (...a: Parameters<InMemoryStore['claimStep']>) => {
             if (a[1] === 's' && !fired) {
               if (act === 'claimFake') {
                 fired = true;
@@ -683,7 +675,7 @@ describe('#625 PR-2a, F7 — advanceRun meets each row as a real race and goes o
     const refusing = new Proxy(store, {
       get(target, prop) {
         if (prop === 'claimStep') {
-          return async (...a: Parameters<JsonFileStore['claimStep']>) => {
+          return async (...a: Parameters<InMemoryStore['claimStep']>) => {
             claims += 1;
             throw new WorkflowError(
               `Step '${a[1]}' is not eligible for execution on run '${a[0]}'.`,
@@ -716,14 +708,9 @@ describe('#625 PR-2a, F7 — advanceRun meets each row as a real race and goes o
 });
 
 describe('#625 PR-2a, F7 — execute_step’s chain (executeChain) composes its reply from the record after a race', () => {
-  let dir: string;
-  let store: JsonFileStore;
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-f7-chain-'));
-    store = new JsonFileStore(dir);
-  });
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+  let store: InMemoryStore;
+  beforeEach(() => {
+    store = new InMemoryStore();
   });
 
   it('another program runs the chained step to the run’s end before its read: the reply is the completed run’s, the named step said completed', async () => {
@@ -746,7 +733,7 @@ describe('#625 PR-2a, F7 — execute_step’s chain (executeChain) composes its 
     const racing = new Proxy(store, {
       get(target, prop) {
         if (prop === 'settleStep') {
-          return async (...a: Parameters<NonNullable<JsonFileStore['settleStep']>>) => {
+          return async (...a: Parameters<NonNullable<InMemoryStore['settleStep']>>) => {
             const res = await target.settleStep!(...a);
             if (a[1].kind === 'settle_step' && a[1].step === 'a') settledA = true;
             return res;

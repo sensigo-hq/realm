@@ -4,6 +4,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { JsonFileStore } from './json-file-store.js';
 import { executeStep } from '../engine/execution-loop.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
@@ -99,16 +100,11 @@ describe('claimStep writes the liveness clock atomically (JsonFileStore)', () =>
   });
 });
 
-describe('settle sites delete the claim clock (JsonFileStore)', () => {
-  let store: JsonFileStore;
-  let dir: string;
+describe('settle sites delete the claim clock (InMemoryStore)', () => {
+  let store: InMemoryStore;
 
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-clock-settle-'));
-    store = new JsonFileStore(dir);
-  });
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+  beforeEach(() => {
+    store = new InMemoryStore();
   });
 
   it('complete → claims[S] deleted', async () => {

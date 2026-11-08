@@ -15,9 +15,6 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
 import {
   advanceRun,
   executeStep,
@@ -26,27 +23,21 @@ import {
 } from './execution-loop.js';
 import { ADVANCE_CALLERS } from './callers.js';
 import { describePending } from './pending.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore, settableClock, type SettableClock } from '@sensigo/realm-testing';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import { agentActionFor, nextCalls, owedOf, proofOf } from '../test-support/ways-view.js';
-import { writeTestClockFile } from '../store/test-clock-file.js';
 import { writtenSnapshot } from './snapshot.js';
 
-/** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
- *  runs folder sits beside the location's clock file (first set to the host's reading), which
- *  `setClockOf` rewrites. */
-async function testLocationRuns(prefix: string): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), prefix));
-  await writeTestClockFile(root, new Date());
-  return join(root, 'runs');
-}
-async function clockedJsonStore(prefix: string): Promise<JsonFileStore> {
-  return new JsonFileStore(await testLocationRuns(prefix));
+/** #715 (b) (01 §C.4): the store's clock decides what is due — an in-memory store on a settable
+ *  clock, first set to the host's reading, which `setClockOf` moves. */
+function clockedStore(): InMemoryStore {
+  return new InMemoryStore({ clock: settableClock(new Date()) });
 }
 async function setClockOf(store: object, t: Date): Promise<void> {
-  const runsDir = (store as { runsDirPath?: string }).runsDirPath;
-  if (runsDir === undefined) throw new Error('setClockOf: this store is not a JSON store');
-  await writeTestClockFile(dirname(runsDir), t);
+  const clock = (store as { clock?: Partial<SettableClock> }).clock ?? {};
+  if (typeof clock.set !== 'function')
+    throw new Error('setClockOf: this store has no settable clock');
+  await clock.set(t);
 }
 
 /** `q` (a question, 60 s, `on_expiry` as given), then `after` (a bare `auto` step). */
@@ -74,9 +65,9 @@ function gated(onExpiry: 'settle_default' | 'abort' | undefined): WorkflowDefini
 }
 
 describe('#625 PR-2a, C133/C134/C135/C136 — the caller, the opener, what a refused answer leaves owed, the act', () => {
-  let store: JsonFileStore;
+  let store: InMemoryStore;
   beforeEach(async () => {
-    store = await clockedJsonStore('realm-co-625-');
+    store = clockedStore();
   });
 
   async function atQuestion(d: WorkflowDefinition) {
@@ -102,7 +93,7 @@ describe('#625 PR-2a, C133/C134/C135/C136 — the caller, the opener, what a ref
     const { runId, past } = await atQuestion(d);
     const before = JSON.stringify((await store.get(runId)).record);
     const calls: string[] = [];
-    const watched = Object.create(store) as JsonFileStore;
+    const watched = Object.create(store) as InMemoryStore;
     for (const m of ['get', 'update', 'settleStep', 'claimStep', 'create', 'list'] as const) {
       const own = (store[m] as (...a: unknown[]) => unknown).bind(store);
       Object.assign(watched, { [m]: (...a: unknown[]) => (calls.push(m), own(...a)) });

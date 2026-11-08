@@ -1,24 +1,15 @@
 // render-time-715b.test.ts — issue #715 (b) 02 §D.4 (D6-22, D5 §3.4): a template's `from_now` reads no
 // clock. A text STORED in a record (a question's message, and the display text made from it) writes
 // time as an absolute instant; a text rendered for one reply (a step's prompt; the opening reply's
-// hint) is judged at that reply's reading. The instants are in 2031 on a test location's clock, far
-// from the host's: a filter that read the wall clock would say "in 5 years".
+// hint) is judged at that reply's reading. The instants are in 2031 on the store's settable clock,
+// far from the host's: a filter that read the wall clock would say "in 5 years".
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { JsonFileStore } from '../store/json-file-store.js';
-import { writeTestClockFile } from '../store/test-clock-file.js';
+import { describe, expect, it } from 'vitest';
+import { InMemoryStore, settableClock } from '@sensigo/realm-testing';
 import { advanceRun } from './execution-loop.js';
 import { applyFilter } from './render-template.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
-
-const roots: string[] = [];
-afterEach(async () => {
-  for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
-});
 
 const T = new Date('2031-05-06T07:00:00.000Z');
 const DUE = new Date(T.getTime() + 2 * 3_600_000).toISOString();
@@ -41,10 +32,7 @@ describe('#715 (b) §D.4 — from_now takes its instant from the caller', () => 
   it('a question’s stored message and its display: the absolute instant; the opening reply’s hint and a step’s prompt in a reply: relative to the reply’s reading', async () => {
     // (a) red when a stored text keeps a relative phrase, or a reply's text is judged at any instant
     //     but its own reading; (b) prints the four texts.
-    const root = await mkdtemp(join(tmpdir(), 'realm-715b-render-'));
-    roots.push(root);
-    await writeTestClockFile(root, T);
-    const store = new JsonFileStore(join(root, 'runs'));
+    const store = new InMemoryStore({ clock: settableClock(T) });
     const def: WorkflowDefinition = {
       id: 'render-715b',
       name: 'render 715b',
