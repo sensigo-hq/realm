@@ -2637,7 +2637,8 @@ describe(
         PAGE,
         'Each `<path>` is a file, or a folder whose `.json` files are imported. A folder is read for the `.json` files directly in it, not below it; its other entries are not read, and the command counts them.',
       );
-      // The crown (a re-run reads unchanged; the files untouched): this file.
+      // The crown (a re-run reads unchanged): this file; the files untouched: run-import-616.test.ts,
+      // "the files you give are never moved, changed or deleted".
       claim(
         PAGE,
         'A run already in the store is never overwritten, and the files you give are never moved, changed or deleted.',
@@ -2652,10 +2653,11 @@ describe(
         PAGE,
         "The store's own refusals, such as a home that still holds the old store's folders, are one `Error:` line, and nothing is imported.",
       );
-      // run-import-616.test.ts, "discovery" (the order); the crown (the line's shape).
+      // run-import-616.test.ts, "paths are imported in the order given" and "a folder's files come in
+      // the order of their names by character code"; the crown (the line's shape).
       claim(
         PAGE,
-        "Each file gets one line, in the order of the arguments and a folder's files in name order: a word, two spaces, the file, and after a colon why it was not imported.",
+        "Each file gets one line, in the order of the arguments, a folder's files in the order of their names by character code (`10.json` before `2.json`, `B.json` before `a.json`): a word, two spaces, the file, and after a colon why it was not imported.",
       );
       // run-import-core-616.test.ts (c11a), checks 1-4: each word's cases.
       claim(PAGE, '| `imported`  | The run was not in the store, and now is.');
@@ -2689,7 +2691,7 @@ describe(
         PAGE,
         "An export is masked when it is written, and an import takes a file's values as they are: a run imported from an export holds its hidden values, and over the same run already in the store it reads `diverged`.",
       );
-      // run-import-616.test.ts, "discovery" (only `.json` names are read).
+      // run-import-616.test.ts, "only names ending in exactly .json are read" (`.attempts.jsonl` among them).
       claim(
         PAGE,
         "The old store's `<id>.attempts.jsonl` files are not `.json` files: they are not imported.",
