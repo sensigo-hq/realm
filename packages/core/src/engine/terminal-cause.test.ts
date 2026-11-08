@@ -10,14 +10,11 @@
 // mint sites left the whole 3791-test suite green. So every cell here is new ground, and each was
 // written VERIFY-FIRST — run against the real engine, then pinned to what it actually does.
 import { describe, it, expect } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { executeStep, executeChain } from './execution-loop.js';
 import { GUARD_INPUT, renderFailCause } from './settlement.js';
 import { applyResume } from './apply-resume.js';
 import { captureEvidence } from '../evidence/snapshot.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type { RunStore } from '../store/store-interface.js';
 import type { RunRecord } from '../types/run-record.js';
@@ -29,8 +26,8 @@ const explode = (message: string) => async (): Promise<Record<string, unknown>> 
 };
 const succeed = async (): Promise<Record<string, unknown>> => ({});
 
-async function freshStore(): Promise<JsonFileStore> {
-  return new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-terminal-cause-')));
+async function freshStore(): Promise<InMemoryStore> {
+  return new InMemoryStore();
 }
 
 /** A finalizer registry whose single handler either throws or succeeds. */

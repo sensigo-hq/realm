@@ -1,10 +1,12 @@
 // cache-reference-3m.test.ts — caching 3-M piece A-1 at the driver: when a step's first request in a
 // drive has an earlier request of the same step on the run's own record (an earlier drive that failed
 // the step, or a step resumed and driven again), that request carries `reference`, a copy of the
-// earlier request's facts, `from: 'run'`; every other request carries none (its predecessor is the
-// element before it in the same stored list). Driven through the real `runAgent` against the real
-// `InMemoryStore`, with a scripted provider double; a later drive re-attaches with `existingRunId`
-// (`realm agent --run-id`) and a failed step is reopened with `applyResume` (`realm run resume`).
+// earlier request's facts, `from: 'run'`; every other request carries none (its predecessor is an
+// earlier entry of the same list). Piece A-1b: the earlier request is the first request of the
+// step's last call on the record, found by its `request_in_call` 0. Driven through the real
+// `runAgent` against the real `InMemoryStore`, with a scripted provider double; a later drive
+// re-attaches with `existingRunId` (`realm agent --run-id`) and a failed step is reopened with
+// `applyResume` (`realm run resume`).
 // Every value is a fake. Each assertion names (a) the change that turns it red and (b) what it prints
 // when it fails: the request ids and the `reference` objects compared, never a prompt's text.
 import { describe, it, expect, vi } from 'vitest';
@@ -59,6 +61,7 @@ const referenceTo = (stored: UsageRecord) => ({
   provider: stored.provider,
   model: stored.model,
   endpoint: stored.endpoint,
+  cache_requested: stored.cache_requested,
   cache_read_input_tokens: stored.cache_read_input_tokens,
   cache_creation_input_tokens: stored.cache_creation_input_tokens,
   cache_creation: stored.cache_creation,
@@ -253,9 +256,9 @@ describe('caching 3-M A-1 — a drive re-attached after a drive failed the step'
       failed.run.id,
     );
     const [first, second] = lastEvidenceRequests(again.run, 'draft');
-    // (a) red when the driver does not look the step's last request up on the record (no
-    //     reference), or puts one on every arriving request (the second's); (b) prints the ids and
-    //     the references compared.
+    // (a) red when the driver does not look up the first request of the step's last call on the
+    //     record (no reference), or puts one on every arriving request (the second's); (b) prints
+    //     the ids and the references compared.
     expect({ first: idAndReference(first), second: idAndReference(second) }).toEqual({
       first: { id: expect.any(String), reference: referenceTo(before) },
       second: { id: expect.any(String), reference: undefined },
@@ -503,6 +506,113 @@ describe('caching 3-M A-1 — a multi-step run: the copy comes from the same ste
       calls: 2,
       draft: { id: expect.any(String), reference: referenceTo(before) },
       review: { id: expect.any(String), reference: undefined },
+    });
+  });
+});
+
+/** Caching 3-M (piece A-1b): each stored request's `request_index`, `request_in_call` and id, what
+ *  check 3's cells print about the list a reference was taken from. */
+const places = (requests: UsageRecord[]) =>
+  requests.map((r) => ({ index: r.request_index, in_call: r.request_in_call, id: r.request_id }));
+
+describe('caching 3-M A-1b — the copy across drives is the first request of the step’s last call', () => {
+  it('check 3 (a): a tool step whose drive failed after two turns and its final request — the re-attached drive references the FIRST turn', async () => {
+    const store = new InMemoryStore();
+    const def = workflow('tools');
+    // One call's three requests: two main turns, then the final request (one array, one call),
+    // numbered as a provider numbers its own array (on a drive's first call no append re-bases them).
+    const failed = await drive(store, def, [
+      {
+        throw: true,
+        usage: [
+          billed(1, 2000),
+          { ...billed(2, 2010), request_index: 1 },
+          { ...billed(3, 2020), request_index: 2 },
+        ],
+      },
+    ]);
+    const earlier = lastFailureRequests(failed.run, 'classify');
+    const again = await drive(
+      store,
+      def,
+      [{ output: { category: 'billing' }, toolCalls: 1, usage: [billed(5, 2030)] }],
+      failed.run.id,
+    );
+    const [first] = lastEvidenceRequests(again.run, 'classify');
+    // (a) red when the lookup takes the list's last request (A-1's pick: the final request); (b)
+    //     prints the earlier list's indexes, places and ids, and the new request's id and reference.
+    expect({ earlier: places(earlier), first: idAndReference(first) }).toEqual({
+      earlier: [
+        { index: 0, in_call: 0, id: expect.any(String) },
+        { index: 1, in_call: 1, id: expect.any(String) },
+        { index: 2, in_call: 2, id: expect.any(String) },
+      ],
+      first: { id: expect.any(String), reference: referenceTo(earlier[0]!) },
+    });
+  });
+
+  it('check 3 (b): an earlier drive whose list holds two calls (a repair, then a failure) — the reference is the SECOND call’s first request', async () => {
+    const store = new InMemoryStore();
+    const def = workflow('tools');
+    const failed = await drive(store, def, [
+      // The first call runs no tool and its answer is rejected (a call that ran a tool is never
+      // repaired); the repair call throws after two requests.
+      { output: {}, usage: [billed(1, 2000), billed(2, 2010)] },
+      { throw: true, usage: [billed(3, 2020), billed(4, 2030)] },
+    ]);
+    const earlier = lastFailureRequests(failed.run, 'classify');
+    const again = await drive(
+      store,
+      def,
+      [{ output: { category: 'billing' }, toolCalls: 1, usage: [billed(5, 2040)] }],
+      failed.run.id,
+    );
+    const [first] = lastEvidenceRequests(again.run, 'classify');
+    // (a) red when the lookup takes the list's first call opener instead of its last; (b) prints
+    //     the earlier list's indexes, places and ids, and the new request's id and reference.
+    expect({ earlier: places(earlier), first: idAndReference(first) }).toEqual({
+      earlier: [
+        { index: 0, in_call: 0, id: expect.any(String) },
+        { index: 1, in_call: 1, id: expect.any(String) },
+        { index: 2, in_call: 0, id: expect.any(String) },
+        { index: 3, in_call: 1, id: expect.any(String) },
+      ],
+      first: { id: expect.any(String), reference: referenceTo(earlier[2]!) },
+    });
+  });
+
+  it('check 3 (c): a recorded list with no `request_in_call` anywhere (recorded before A-1b) — no reference', async () => {
+    const store = new InMemoryStore();
+    const def = workflow('tools');
+    const failed = await drive(store, def, [{ throw: true, usage: [billed(1, 2000)] }]);
+    // The stored entry's requests lose `request_in_call`, as a request recorded before this piece
+    // has none; written back the way the file's `resume` helper writes.
+    const { record } = await store.get(failed.run.id);
+    await store.update({
+      ...record,
+      drive_failures: {
+        ...record.drive_failures!,
+        entries: record.drive_failures!.entries.map((f) =>
+          f.usage === undefined
+            ? f
+            : { ...f, usage: f.usage.map(({ request_in_call: _gone, ...rest }) => rest) },
+        ),
+      },
+    });
+    const again = await drive(
+      store,
+      def,
+      [{ output: { category: 'billing' }, toolCalls: 1, usage: [billed(5, 2030)] }],
+      failed.run.id,
+    );
+    const earlier = lastFailureRequests(again.run, 'classify');
+    const [first] = lastEvidenceRequests(again.run, 'classify');
+    // (a) red when an absent `request_in_call` is read as 0 (the old request becomes the copy);
+    //     (b) prints the earlier list's indexes, places and ids, and the new request's id and
+    //     reference.
+    expect({ earlier: places(earlier), first: idAndReference(first) }).toEqual({
+      earlier: [{ index: 0, in_call: undefined, id: expect.any(String) }],
+      first: { id: expect.any(String), reference: undefined },
     });
   });
 });

@@ -1,34 +1,23 @@
 // stamped-ahead-715b.test.ts — issue #715 (b) 02 §D.1 (D6-3, D6-34) with Amendment 7: the run-health
 // finding `record_stamped_ahead` fires when a record's `updated_at` lies more than ε after the
-// reader's RAW reading, and carries that raw lead — never the capped one. Each record is made by a
-// JSON store on a test location whose clock stood `lead` ahead when it was written, then read with
-// the clock back at T: the store reads it at `max(T, min(updated_at, T + ε))`.
+// reader's RAW reading, and carries that raw lead — never the capped one. Each record is made by an
+// in-memory store whose settable clock stood `lead` ahead when it was written, then read with the
+// clock back at T: the store reads it at `max(T, min(updated_at, T + ε))`.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { JsonFileStore } from '../store/json-file-store.js';
-import { writeTestClockFile } from '../store/test-clock-file.js';
+import { describe, expect, it } from 'vitest';
+import { InMemoryStore, settableClock } from '@sensigo/realm-testing';
 import { classifyRunHealth } from './run-health.js';
 import { CLOCK_SKEW_EPSILON_MS as EPS } from './instants.js';
-
-const roots: string[] = [];
-afterEach(async () => {
-  for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
-});
 
 const T = Date.parse('2026-10-30T10:00:00.000Z');
 
 /** The `record_stamped_ahead` finding of a record written `lead` ms ahead of T, read at T. */
 async function readAfterLead(lead: number) {
-  const root = await mkdtemp(join(tmpdir(), 'realm-715b-ahead-'));
-  roots.push(root);
-  await writeTestClockFile(root, new Date(T + lead));
-  const store = new JsonFileStore(join(root, 'runs'));
+  const clock = settableClock(new Date(T + lead));
+  const store = new InMemoryStore({ clock });
   const { record } = await store.create({ workflowId: 'w', workflowVersion: 1, params: {} });
-  await writeTestClockFile(root, new Date(T));
+  await clock.set(new Date(T));
   const snapshot = await store.get(record.id);
   return classifyRunHealth(snapshot).find((f) => f.kind === 'record_stamped_ahead');
 }

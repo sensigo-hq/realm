@@ -11,7 +11,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
+import { InMemoryWorkflowRegistrar } from '../test-support/in-memory-registrar.js';
 import { JsonWorkflowStore, getWorkflowForRun } from '../workflow/registrar.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { RunRecord } from '../types/run-record.js';
@@ -29,11 +30,11 @@ const GATE = {
 };
 
 let dir: string;
-let runs: JsonFileStore;
+let runs: InMemoryStore;
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'realm-819-'));
-  runs = new JsonFileStore(join(dir, 'runs'));
+  runs = new InMemoryStore();
 });
 
 afterEach(async () => {
@@ -79,7 +80,7 @@ describe('#819 correction 1 (01) — at a live question, the repair is register,
   };
 
   it('getWorkflowForRun: a run at gate g-1 whose hex-suffixed workflow has no copy → not registered, the register way, never "created by an agent"', async () => {
-    const workflows = new JsonWorkflowStore(join(dir, 'workflows'));
+    const workflows = new InMemoryWorkflowRegistrar();
     const run = await atGate();
     const err = (await thrown(
       getWorkflowForRun(workflows, run, { retryVerb: 'answer the gate', verb: 'respond' }),

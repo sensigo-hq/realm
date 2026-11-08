@@ -9,10 +9,7 @@
 // renderer tests. Beside each: (a) what turns it red; (b) what it prints on failure (the reply's hint,
 // the completed and failed steps, the handler's received input, the way out) — never an environment.
 import { describe, it, expect } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { advanceRun, executeStep, type StepDispatcher } from './execution-loop.js';
 import { describePending } from './pending.js';
 import { composeWaysAt } from './ways.js';
@@ -24,13 +21,8 @@ import { writtenSnapshot } from './snapshot.js';
 
 const echo: StepDispatcher = async (_name, input) => ({ ...input });
 
-async function withStore<T>(fn: (store: JsonFileStore) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-688-'));
-  try {
-    return await fn(new JsonFileStore(dir));
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
+async function withStore<T>(fn: (store: InMemoryStore) => Promise<T>): Promise<T> {
+  return fn(new InMemoryStore());
 }
 
 /** A raw definition — never through the loader, as a stored or embedded one can be. */
@@ -117,7 +109,7 @@ const NO_INPUT_FIX = {
 
 /** Creates a run of `d`, answers its agent step `answerStep` (when given), returns the fresh record. */
 async function begin(
-  store: JsonFileStore,
+  store: InMemoryStore,
   d: WorkflowDefinition,
   params: Record<string, unknown>,
   registry: ExtensionRegistry,

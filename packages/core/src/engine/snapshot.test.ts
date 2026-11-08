@@ -14,15 +14,12 @@
 // paths, counts and instants — never a record's content.
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadSnapshot, stampOf, writtenSnapshot, type Snapshot } from './snapshot.js';
 import { executeStep } from './execution-loop.js';
-import { JsonFileStore } from '../store/json-file-store.js';
-import { writeTestClockFile } from '../store/test-clock-file.js';
+import { InMemoryStore, settableClock } from '@sensigo/realm-testing';
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 
@@ -157,11 +154,9 @@ describe('#729 PR-0 / #715 (b) — the Snapshot is built in one module', () => {
   });
 
   it('Q2: a post-write reply’s basis.as_of is the write’s reading; its run_version the record as written', async () => {
-    // #715 (b) (01 §C.4): the store's clock decides — a test location's clock file fixes it.
-    const root = await mkdtemp(join(tmpdir(), 'realm-snapshot-729-'));
+    // #715 (b) (01 §C.4): the store's clock decides — a settable clock fixes it.
     const now = new Date('2026-10-16T12:34:56.000Z');
-    await writeTestClockFile(root, now);
-    const store = new JsonFileStore(join(root, 'runs'));
+    const store = new InMemoryStore({ clock: settableClock(now) });
     const d: WorkflowDefinition = {
       id: 'snap',
       name: 'snap',

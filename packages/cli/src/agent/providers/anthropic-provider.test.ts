@@ -11,6 +11,7 @@ import {
 } from './agent-utils.js';
 import { leakedForms } from '../test-support/redaction-oracle.js';
 import type { ToolDefinition } from '../mcp/mcp-extensions.js';
+import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1763,10 +1764,32 @@ describe('AnthropicProvider — the cache request and the request facts (issue #
     const { request_index: _i, request_start: _s, ...rest } = usage![0]!;
     return rest;
   };
+  // Caching 3-M (A-0): these requests have no head (no `cachePrefixChars`), and each records the
+  // parts of what it sent. Every digest is taken here from the last body the SDK received: its
+  // system text (a string under `off`, else one marked block), its submit tool, and the prompt.
+  // None carried strict.
+  const sha256 = (text: string): string => createHash('sha256').update(text).digest('hex');
+  const sentParts = (): Record<string, unknown> => {
+    const calls = mockCreate.mock.calls;
+    const body = calls[calls.length - 1]![0] as { system: unknown; tools: unknown };
+    const system =
+      typeof body.system === 'string'
+        ? body.system
+        : (body.system as Array<{ text: string }>)[0]!.text;
+    return {
+      prefix_parts: {
+        tools: sha256(JSON.stringify(body.tools)),
+        system: sha256(system),
+        prompt: sha256('prompt'),
+      },
+      request_strict_sent: false,
+    };
+  };
 
   // G7 (Anthropic). (a) red when ANTHROPIC_CACHE_TIERS' short lifetime is 3600, when ttl_sent is
-  // true for short, when off writes a lifetime, or when a stated word records `cache_auto`; (b)
-  // prints the recorded request facts.
+  // true for short, when off writes a lifetime, or when a stated word records `cache_auto`; 3-M
+  // A-0: also red when an unsplit request records no parts, a digest of anything but what it sent,
+  // or a marker it did not carry; (b) prints the recorded request facts.
   it('G7 — each stated word writes its B3 row on the record, with no cache_auto', async () => {
     expect(await facts(at('short'))).toEqual({
       cache_requested: 'lifetime',
@@ -1775,6 +1798,8 @@ describe('AnthropicProvider — the cache request and the request facts (issue #
       cache_requested_source: 'stated',
       cache_requested_by: 'realm agent',
       cache_split_offered: true,
+      ...sentParts(),
+      cache_marked: ['system'],
     });
     expect(await facts(at('long'))).toEqual({
       cache_requested: 'lifetime',
@@ -1783,25 +1808,31 @@ describe('AnthropicProvider — the cache request and the request facts (issue #
       cache_requested_source: 'stated',
       cache_requested_by: 'realm agent',
       cache_split_offered: true,
+      ...sentParts(),
+      cache_marked: ['system'],
     });
     expect(await facts(at('off'))).toEqual({
       cache_requested: 'off',
       cache_requested_source: 'stated',
       cache_requested_by: 'realm agent',
       cache_split_offered: true,
+      ...sentParts(),
     });
     // Built with no setting: off, and no source or runner, because none was given.
     expect(await facts(new AnthropicProvider('claude-sonnet-4-5'))).toEqual({
       cache_requested: 'off',
       cache_split_offered: true,
+      ...sentParts(),
     });
   });
 
   // Cell 6 (the lifetime unit): `auto` with each basis records `cache_auto` — whatever it chose,
   // `off` included — and asks for what `chooseCacheLifetime` chose (the short prior for no
   // measurement, the long one for a drive listen started). (a) red when `auto` records no
-  // `cache_auto`, chooses `off` without recording it, or uses the wrong prior; (b) prints the facts
-  // and the capability (test values only).
+  // `cache_auto`, chooses `off` without recording it, or uses the wrong prior; 3-M A-0: also red
+  // when a row records no parts or the `off` row records a marker; (b) prints the facts and the
+  // capability (test values only). Each row's digests are of the last body sent: every row sends the
+  // same system text, submit tool and prompt.
   it('auto — each basis: the choice, its record, and cache_auto (an auto choosing off records both)', async () => {
     const row = async (provider: AnthropicProvider) => ({
       facts: await facts(provider),
@@ -1826,7 +1857,13 @@ describe('AnthropicProvider — the cache request and the request facts (issue #
       await row(at('auto')),
     ]).toEqual([
       {
-        facts: { ...asked(300), ...common, cache_auto: { basis: 'no_measurement' } },
+        facts: {
+          ...asked(300),
+          ...common,
+          cache_auto: { basis: 'no_measurement' },
+          ...sentParts(),
+          cache_marked: ['system'],
+        },
         promptCache: { lifetime_s: 300 },
       },
       {
@@ -1834,6 +1871,8 @@ describe('AnthropicProvider — the cache request and the request facts (issue #
           ...asked(3600),
           ...common,
           cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [] },
+          ...sentParts(),
+          cache_marked: ['system'],
         },
         promptCache: { lifetime_s: 3600 },
       },
@@ -1846,6 +1885,8 @@ describe('AnthropicProvider — the cache request and the request facts (issue #
             gaps_s: [420, 720],
             prices: { from: 'economics' },
           },
+          ...sentParts(),
+          cache_marked: ['system'],
         },
         promptCache: { lifetime_s: 3600 },
       },
@@ -1858,16 +1899,30 @@ describe('AnthropicProvider — the cache request and the request facts (issue #
             gaps_s: [7200, 7200, 7200],
             prices: { from: 'economics' },
           },
+          // `off` sent no marker: no `cache_marked`.
+          ...sentParts(),
         },
         promptCache: 'off',
       },
       {
-        facts: { ...asked(3600), ...common, cache_auto: { basis: 'listen_gaps_unreadable' } },
+        facts: {
+          ...asked(3600),
+          ...common,
+          cache_auto: { basis: 'listen_gaps_unreadable' },
+          ...sentParts(),
+          cache_marked: ['system'],
+        },
         promptCache: { lifetime_s: 3600 },
       },
       // `auto` handed no basis: the short prior, recorded as no measurement
       {
-        facts: { ...asked(300), ...common, cache_auto: { basis: 'no_measurement' } },
+        facts: {
+          ...asked(300),
+          ...common,
+          cache_auto: { basis: 'no_measurement' },
+          ...sentParts(),
+          cache_marked: ['system'],
+        },
         promptCache: { lifetime_s: 300 },
       },
     ]);

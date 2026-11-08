@@ -1,12 +1,9 @@
 // issue #620 PR-C — the use sites U1 (adapter), U2 (handler), U7 (dispatcher): each kind of
 // unrecognised value, plus the hostile throws the old catches could not print.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect } from 'vitest';
 import { executeChain } from './execution-loop.js';
 import type { StepDispatcher } from './execution-loop.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { createDefaultRegistry } from '../extensions/default-registry.js';
 import { REALM_BRAND, brandClass, createRealmBrand } from '../brand.js';
 import { fileURLToPath } from 'node:url';
@@ -53,19 +50,11 @@ const dispatchDef: WorkflowDefinition = {
   steps: { a: { description: 'a', execution: 'agent', depends_on: [] } },
 };
 
-let dir: string;
-beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'realm-u-'));
-});
-afterEach(async () => {
-  await rm(dir, { recursive: true, force: true });
-});
-
 async function run(
   def: WorkflowDefinition,
   thrown: unknown,
 ): Promise<{ code: string | undefined; message: string; details: unknown }> {
-  const store = new JsonFileStore(dir);
+  const store = new InMemoryStore();
   const { record: r } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
   const registry = createDefaultRegistry();
   registry.register('handler', 'h', {

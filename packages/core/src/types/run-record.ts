@@ -524,12 +524,17 @@ export type CacheControlField = (typeof CACHE_CONTROL_FIELDS)[number];
 /**
  * Caching 3-B (A6): what carried a cache marker, or OpenAI's key, on one request: the `system` text
  * and the prompt's head block (Anthropic's markers, and #896 OpenAI's marks on GPT-5.6 and later),
- * or OpenAI's `key`.
+ * or OpenAI's `key`. Caching 3-M (A-0): or the `conversation` so far — the marker Anthropic's tool
+ * main turns put on a copy of the last message (#899).
  */
-export const CACHE_MARKED_PARTS = ['system', 'prompt', 'key'] as const;
+export const CACHE_MARKED_PARTS = ['system', 'prompt', 'key', 'conversation'] as const;
 export type CacheMarkedPart = (typeof CACHE_MARKED_PARTS)[number];
 
-/** Caching 3-B (A6): the SHA-256 of each part of a request's cached start, as sent (64 lowercase hex). */
+/**
+ * Caching 3-B (A6), 3-M (A-0): a SHA-256 for each part of what the request sent (64 lowercase hex):
+ * `system`, and `tools`, `prompt` (the head on a split request, else the prompt as that request sent
+ * it) and `format` where it had them; `cache_marked` says which parts carried a marker.
+ */
 export interface PrefixParts {
   tools?: string;
   system: string;
@@ -539,18 +544,22 @@ export interface PrefixParts {
 
 /**
  * Caching 3-M (piece A-1): where a request's copied predecessor (`UsageRecord.reference`) came from:
- * `run`, the run's own record — the same step's last request there, from an earlier drive. A later
- * piece adds its own member. Normalised at the write: any other word drops the reference.
+ * `run`, the run's own record — the first request of the same step's last call there, from an
+ * earlier drive (piece A-1b). A later piece adds its own member. Normalised at the write: any other
+ * word drops the reference.
  */
 export const CACHE_REFERENCE_SOURCES = ['run'] as const;
 export type CacheReferenceSource = (typeof CACHE_REFERENCE_SOURCES)[number];
 
 /**
  * Caching 3-M (piece A-1): a copy of a request's predecessor — the same step's previous request —
- * made where the predecessor is not the element before it in the same stored list: `from` says where
- * it was found, `request_start` is required, and each other field is the predecessor's own, copied
- * when it had one. `prefix_sha256` is not copied (it equals `prefix_parts.prompt` on both providers).
- * Never a `reference` of its own, never a `request_index` (an index is not identity, #715 (R)).
+ * made where the predecessor is not an earlier entry of the same stored list: the first request of
+ * the step's last call on the run's record (piece A-1b). `from` says where it was found,
+ * `request_start` is required, and each other field is the predecessor's own, copied when it had
+ * one; `cache_requested` says whether it asked the provider to cache (piece A-1b). `prefix_sha256`
+ * is not copied (it equals `prefix_parts.prompt` on both providers). Never a `reference` of its own,
+ * never a `request_index` (an index is not identity, #715 (R)), never a `request_in_call` (the copy
+ * is always a call's first request).
  */
 export type CacheReference = { from: CacheReferenceSource } & Pick<UsageRecord, 'request_start'> &
   Partial<
@@ -560,6 +569,7 @@ export type CacheReference = { from: CacheReferenceSource } & Pick<UsageRecord, 
       | 'provider'
       | 'model'
       | 'endpoint'
+      | 'cache_requested'
       | 'cache_read_input_tokens'
       | 'cache_creation_input_tokens'
       | 'cache_write_tokens'
@@ -684,6 +694,19 @@ export interface UsageRecord {
    */
   request_id?: string;
   /**
+   * Caching 3-M (piece A-1b): this request's place, from 0, among the recorded requests of the one
+   * provider call that made it. A call's first recorded request is 0: a single-shot step's request
+   * and a tool step's first turn. A retry that answered in place of a refused send takes that send's
+   * place (the refused send has no record): 0 when the refused send was the call's first request,
+   * otherwise that turn's place. A tool step's later turns, the JSON retry and a tool step's final
+   * request are 1 and up. A step's attempt is one call; a #217 repair attempt is a new one, starting
+   * at 0. Minted by `realm agent` where a call's usage enters the record (`mintRequestIds`), from the
+   * request's slot in the call's array; normalised where it enters the record (`boundRequestFacts`).
+   * It is not identity (an index is not identity, #715's rule): only its zero is read, to find where
+   * a call begins. Absent on a request recorded before this field existed.
+   */
+  request_in_call?: number;
+  /**
    * Caching 3-B (A6, B2): the SHA-256 of the prompt's cached HEAD as sent (its UTF-8 bytes), as 64
    * lowercase hex characters with no prefix. On OpenAI it is also the cache key. On Anthropic's
    * one-block shape the head is the whole prompt text. The system text's hash is
@@ -692,13 +715,16 @@ export interface UsageRecord {
   prefix_sha256?: string;
   /** Caching 3-B (A6): the head's length as sent, after disclosure, in UTF-16 code units. */
   prefix_chars?: number;
-  /** Caching 3-B (A6): a SHA-256 per part of the request's cached start, as sent. */
+  /** Caching 3-B (A6), 3-M (A-0): a SHA-256 for each part of what the request sent: `system`, and
+   *  `tools`, `prompt` (the head on a split request, else the prompt as that request sent it) and
+   *  `format` where it had them; `cache_marked` says which parts carried a marker. */
   prefix_parts?: PrefixParts;
   /** Caching 3-B (A6): what carried a cache marker or the key on this request; absent after a
    *  remembered drop (nothing carried one). */
   cache_marked?: CacheMarkedPart[];
-  /** Caching 3-B (A6, C5): whether this request carried strict structured output (D3's
-   *  `strict_sent`, renamed: `tool_args.tools[].strict_sent` already uses that word). */
+  /** Caching 3-B (A6, C5): whether this request carried strict structured output or strict tool
+   *  arguments (D3's `strict_sent`, renamed: `tool_args.tools[].strict_sent` already uses that
+   *  word). */
   request_strict_sent?: boolean;
   /** Caching 3-B (A6, E3): the endpoint's refusal of Realm's cache fields, recorded on the request
    *  whose retry without them worked, and on every later request of the drive. */
@@ -709,11 +735,12 @@ export interface UsageRecord {
   /**
    * Caching 3-M (piece A-1): a copy of this request's predecessor, the same step's previous
    * request. Set only on a step's first request in a drive, when its predecessor is on the run's
-   * record (an earlier drive that failed the step, or a step resumed and driven again): `from:
-   * 'run'`. Every other request's predecessor is the element before it in the same stored list, so
-   * nothing is copied for it. It never holds a `reference` of its own, and never `request_index`
-   * (an index is not identity, #715's rule). Minted by `realm agent` (`attachRecordedReference`);
-   * normalised where it enters the record (`boundRequestFacts`).
+   * record (an earlier drive that failed the step, or a step resumed and driven again): the first
+   * request of the step's last call there (piece A-1b), `from: 'run'`. Every other request's
+   * predecessor is an earlier entry of the same stored list, so nothing is copied for it. It never
+   * holds a `reference` of its own, never `request_index` (an index is not identity, #715's rule),
+   * and never `request_in_call` (the copy is always a call's first request). Minted by `realm
+   * agent` (`attachRecordedReference`); normalised where it enters the record (`boundRequestFacts`).
    */
   reference?: CacheReference;
 }

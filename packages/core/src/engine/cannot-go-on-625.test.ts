@@ -4,10 +4,7 @@
 // prints for it are the CLI door's (`cannotGoOnLines`, pinned whole in cli's ways-renderer.test.ts).
 // A cell per branch, and a control for each condition of the state.
 import { describe, it, expect } from 'vitest';
-import { mkdtemp as mkdtempP, rm as rmP } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import {
   cannotGoOnFrom,
   cannotGoOnUntilCorrected,
@@ -20,17 +17,12 @@ import type { WorkflowDefinition, StepDefinition } from '../types/workflow-defin
 import type { RunRecord } from '../types/run-record.js';
 
 async function withRun<T>(fn: (run: RunRecord) => Promise<T>): Promise<T> {
-  const dir = await mkdtempP(join(tmpdir(), 'realm-cannot-go-on-625-'));
-  try {
-    const { record: run } = await new JsonFileStore(dir).create({
-      workflowId: 'c64-wf',
-      workflowVersion: 1,
-      params: {},
-    });
-    return await fn(run);
-  } finally {
-    await rmP(dir, { recursive: true, force: true });
-  }
+  const { record: run } = await new InMemoryStore().create({
+    workflowId: 'c64-wf',
+    workflowVersion: 1,
+    params: {},
+  });
+  return fn(run);
 }
 
 const def = (steps: Record<string, StepDefinition>) =>
