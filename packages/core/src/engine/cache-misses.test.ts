@@ -48,6 +48,8 @@ type Spec = {
   prefix_chars?: number;
   /** `prefix_parts`. */
   parts?: Parts;
+  /** `model`; absent: the provider's usual one; `null`: none recorded (piece A-2a2r). */
+  model?: string | null;
 };
 
 const sha256 = (label: string): string => createHash('sha256').update(label).digest('hex');
@@ -60,7 +62,9 @@ function stored(...specs: Spec[]): Record<string, unknown>[] {
     const r: Record<string, unknown> = {
       request_start: `2026-11-08T05:00:${String(i).padStart(2, '0')}.000Z`,
       request_index: i,
-      model: anthropic ? 'claude-sonnet-5-5' : 'gpt-5.5',
+      ...(s.model === null
+        ? {}
+        : { model: s.model ?? (anthropic ? 'claude-sonnet-5-5' : 'gpt-5.5') }),
       endpoint: s.endpoint ?? 'default',
       ...(s.provider === undefined ? {} : { provider: s.provider }),
       input_tokens: 4 + count(s.read) + count(s.write),
@@ -1093,5 +1097,108 @@ describe('caching 3-M A-2a2 — correction 1: the rules with no cell of their ow
       },
     );
     expect(cacheMissCauses(list), explain(list)).toEqual(['format']);
+  });
+});
+
+describe('caching 3-M A-2a2r — the provider, the address or the model changed', () => {
+  // (a) Drive 2 of a single-shot step with an output schema, on another provider: the request on
+  // OpenAI at its own address (JSON mode on, a format part); its reference on Anthropic through a
+  // gateway (`ANTHROPIC_BASE_URL`), with the submit tool's tools part and no format. Provider,
+  // address and model all differ. Can fail: the address checked before the provider
+  // (endpoint_changed), or the three checked after the parts (tools). Prints each entry.
+  it('another provider: provider_changed, before the address, the model and the parts', () => {
+    const list = againstReference(
+      { ...openaiMissed, parts: { system: 'profile', prompt: 'input', format: 'json_object' } },
+      {
+        ...anthropicWrote,
+        endpoint: 'custom',
+        marked: ['system'],
+        parts: { tools: 'submit', system: 'profile', prompt: 'input' },
+      },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual(['provider_changed']);
+  });
+
+  // (b) Drive 2 at another address, OpenAI on both sides: the request at the default address
+  // (JSON mode on, a format part); its reference through `--base-url` (no format part, and the
+  // gateway names the model its own way). Can fail: the model checked before the address
+  // (model_changed), or the three checked after the parts (format). Prints each entry.
+  it('another address: endpoint_changed, before the model and the parts', () => {
+    const list = againstReference(
+      { ...openaiMissed, parts: { system: 'profile', prompt: 'input', format: 'json_object' } },
+      {
+        ...openaiRead,
+        endpoint: 'custom',
+        model: 'openai/gpt-5.5',
+        parts: { system: 'profile', prompt: 'input' },
+      },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual(['endpoint_changed']);
+  });
+
+  // (c) Inside one list, on a gateway: the second turn was answered by the gateway's fallback
+  // model; every part is the same. Can fail: the model check removed (unexplained). Prints each
+  // entry.
+  it('the gateway answered from another model inside one list: model_changed', () => {
+    const turn: Parts = {
+      tools: 'mcp tools',
+      system: 'profile',
+      prompt: 'input',
+      format: 'json_object',
+    };
+    const list = stored(
+      { ...openaiRead, endpoint: 'custom', in_call: 0, parts: turn },
+      { ...openaiMissed, endpoint: 'custom', in_call: 1, model: 'gpt-5.5-mini', parts: turn },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual([undefined, 'model_changed']);
+  });
+
+  // (d) On a gateway, one side records no model and every part is the same: no model word.
+  // Absent on the reference: its source's response named no model, and the reference copies
+  // `model` only when its source had one. Absent on the request: drive 2's gateway response named
+  // none. Can fail: the test on that side dropped (compared when only the other side records it:
+  // model_changed). Prints each entry.
+  it.each<[string, Spec, Spec]>([
+    ['on the reference', {}, { model: null }],
+    ['on the request', { model: null }, {}],
+  ])('no model recorded %s: unexplained', (_label, nowModel, beforeModel) => {
+    const parts: Parts = { system: 'profile', prompt: 'input' };
+    const list = againstReference(
+      { ...openaiMissed, endpoint: 'custom', parts, ...nowModel },
+      { ...openaiRead, endpoint: 'custom', parts, ...beforeModel },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual(['unexplained']);
+  });
+
+  // (e) Drive 2 ran with another `--model`: against a reference with today's shape (parts, marks,
+  // strict), the same provider and address, every part the same. Can fail: the model compared only
+  // inside one list (unexplained). Prints each entry.
+  it('another --model in drive 2: model_changed', () => {
+    const parts: Parts = { tools: 'submit', system: 'profile', prompt: 'input' };
+    const list = againstReference(
+      { ...anthropicWrote, model: 'claude-opus-5-5', marked: ['system'], parts },
+      { ...anthropicWrote, marked: ['system'], parts },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual(['model_changed']);
+  });
+
+  // Correction 1: drive 2 ran with another `--model` AND the profile was edited in the same gap,
+  // so the system part differs too. The model is checked before every part (design M-D). Can fail:
+  // the model check moved after the parts, or after the cache settings (system). Prints each entry.
+  it('another --model and a profile edit in the same gap: model_changed, before the system text', () => {
+    const list = againstReference(
+      {
+        ...anthropicWrote,
+        model: 'claude-opus-5-5',
+        marked: ['system'],
+        parts: { tools: 'submit', system: 'profile after the edit', prompt: 'input' },
+      },
+      {
+        ...anthropicWrote,
+        marked: ['system'],
+        parts: { tools: 'submit', system: 'profile before the edit', prompt: 'input' },
+      },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual(['model_changed']);
   });
 });
