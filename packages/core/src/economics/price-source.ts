@@ -101,8 +101,9 @@ function fieldOf(entry: unknown, key: string): unknown {
   return (entry as Record<string, unknown>)[key];
 }
 
-/** A counter: absent (`undefined` or `null`) or a finite number ≥ 0; anything else is invalid. */
-function counter(value: unknown): number | undefined | 'invalid' {
+/** A counter: absent (`undefined` or `null`) or a finite number ≥ 0; anything else is invalid.
+ *  Exported inside core for `cache-misses.ts` (caching 3-M A-2a1): the one test of a count. */
+export function counter(value: unknown): number | undefined | 'invalid' {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return 'invalid';
   return value;
