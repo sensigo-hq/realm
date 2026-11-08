@@ -9,7 +9,7 @@ export type Entry = readonly [count: number, cls: ClockReadClass, why: string];
 const SYSTEM_CLOCK =
   'the system clock itself — the one place a store on an ordinary folder reads the wall';
 const REQUEST_START =
-  'request_start: minted in the provider, before any store is in scope (the provider bills on its own day)';
+  "request_start: minted in the provider, before any store is in scope (the provider bills on its own day); beyond that day, compared only with another request's start (the gap before a missed request, on its stated basis; never a safety fact: nothing destructive or order-bearing gates on it)";
 const MONOTONIC = 'a duration on the monotonic clock (elapsed, a budget, a timeout)';
 
 /**

@@ -17,7 +17,8 @@
 // checks), which pass through unchanged.
 //
 // The handle carries the home's run store (unit 12a), its duplicate-webhook memory (B8), its workflow
-// registry (B3), its failed-attempt store and replay store (B7), its trace buffer (B4), and `close()`.
+// registry (B3), its failed-attempt store and replay store (B7), its trace buffer (B4), its purge
+// (PR-2c c9, `home-purge.ts`), and `close()`.
 // A caller that shares an open home checks, once the open has resolved, that the cache still holds it:
 // a `close()` while the caller waited (MA 2, #998) removed it and closed the connection, so the caller
 // looks the home up once more and opens it afresh instead of receiving a closed handle.
@@ -35,6 +36,8 @@ import {
 import { RealmDb } from './connection.js';
 import { SqliteDedupStore } from './dedup-store.js';
 import { SqliteFailedAttemptStore } from './failed-attempt-store.js';
+import { DATABASE_FILE } from './home.js';
+import { purgeHome, type PurgeReport, type PurgeSelection } from './home-purge.js';
 import type { OpenSeams } from './open-file.js';
 import { SqliteReplayStore } from './replay-store.js';
 import { SqliteRunStore } from './run-store.js';
@@ -55,8 +58,8 @@ export interface OpenRealmHomeOptions {
 
 /**
  * An open Realm home: its run store, its duplicate-webhook memory, its workflow registry, its
- * failed-attempt store, its replay store, its trace buffer and `close()`, all on the home's one
- * connection. Later units add its other stores.
+ * failed-attempt store, its replay store, its trace buffer, its purge and `close()`, all on the home's
+ * one connection.
  */
 export interface RealmHome {
   /** The home's run store: creates, reads and lists its runs. */
@@ -82,6 +85,16 @@ export interface RealmHome {
    * in the order they were written. After `close()`, its calls reject.
    */
   readonly traceBufferStore: TraceBufferStore & PerRunArtifactStore;
+  /**
+   * Deletes the runs the caller selected, each with the version it was selected at (PR-2c c9): in
+   * batches, each one write transaction in which every run is judged as the run store's
+   * `deleteAllForRun` judges it and a deletable run's rows go from every store that keeps rows of it;
+   * then the free pages go back to the file system and the write-ahead log is reset. It resolves with
+   * each run's outcome, the bytes the stores deleted and the bytes the store file shrank by, also when
+   * a batch failed or a refusal stopped it (`home-purge.ts`). It never chooses which runs: selection is
+   * the caller's. After `close()`, it rejects.
+   */
+  purge(selection: readonly PurgeSelection[]): Promise<PurgeReport>;
   /**
    * Closes the home's connection; a later `openRealmHome` opens the home afresh. Every caller in this
    * process that opened the home shares this handle, so a `close()` by any of them ends it for all.
@@ -183,6 +196,10 @@ async function lookUp(
       failedAttemptStore: new SqliteFailedAttemptStore(db),
       replayStore: new SqliteReplayStore(db),
       traceBufferStore: new SqliteTraceBufferStore(db),
+      purge(selection: readonly PurgeSelection[]): Promise<PurgeReport> {
+        if (closed) return Promise.reject(new Error(`The Realm home ${home} is closed.`));
+        return purgeHome(db, join(home, DATABASE_FILE), selection);
+      },
       close(): void {
         if (closed) return;
         closed = true;

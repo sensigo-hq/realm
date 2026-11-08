@@ -1,7 +1,9 @@
 // Source-text anti-recurrence guard for the #107 PerRunArtifactStore artifact set (the #123
 // orphan-guard partition pattern — NOT type-reflection). Every `deleteAllForRun` CLASS-METHOD
 // declaration across the whole monorepo must be classified WIRED (and wired, in that exact order,
-// into purge.ts's orchestrator array) or EXCLUDED-with-reason. A future store that adds a
+// into purge.ts's orchestrator array), WIRED THROUGH THE HOME'S PURGE (#616 PR-2c c9: a SQLite
+// store, whose rows of a run the home's purge deletes by the store's own deleter) or
+// EXCLUDED-with-reason. A future store that adds a
 // `deleteAllForRun` and forgets to wire it into the purge orchestrator would otherwise silently
 // leak that store's artifacts on every purge — this test fails loudly on that drift instead.
 import { describe, it, expect } from 'vitest';
@@ -95,11 +97,21 @@ const WIRED_ORDER = ['JsonTraceBufferStore', 'JsonFileFailedAttemptStore'];
 const ANCHOR = 'JsonFileStore';
 const EXCLUDED: Record<string, string> = {
   InMemoryTraceBufferStore: 'test-only in-memory store — never purged (no on-disk artifacts)',
-  // issue #616 PR-1b B7 and B4, and PR-1a unit 14 (SEAMS point 8): the SQLite stores' per-run
-  // deletes exist before purge uses them.
-  SqliteFailedAttemptStore: 'not wired into purge until PR-2c',
-  SqliteRunStore: 'not wired into purge until PR-2c',
-  SqliteTraceBufferStore: 'not wired into purge until PR-2c',
+};
+// #616 PR-2c c9 (SEAMS S15; MA 4's point 5: each store's own code deletes its own rows, called by
+// purge): on a SQLite home, purge hands the selected runs to the home's purge
+// (`store-sqlite/src/home-purge.ts`), which deletes each store's rows of a run in its batch by that
+// store's ONE package-internal deleter — the same function the store's own `deleteAllForRun` calls.
+// These stores are not in purge.ts's array (the JSON stores' path); the home's purge is their wiring.
+const STORE_SQLITE_SRC = join(PACKAGES_DIR, 'store-sqlite', 'src');
+const HOME_PURGE = join(STORE_SQLITE_SRC, 'home-purge.ts');
+const WIRED_THROUGH_HOME_PURGE: Record<string, { file: string; deleter: string }> = {
+  SqliteRunStore: { file: 'run-store.ts', deleter: 'deleteRunIfDeletable' },
+  SqliteTraceBufferStore: { file: 'trace-buffer-store.ts', deleter: 'deleteTraceRowsOfRun' },
+  SqliteFailedAttemptStore: {
+    file: 'failed-attempt-store.ts',
+    deleter: 'deleteFailedAttemptRowsOfRun',
+  },
 };
 
 describe('#107/#184 PerRunArtifactStore.deleteAllForRun — declarer enumeration (anti-recurrence)', () => {
@@ -109,16 +121,23 @@ describe('#107/#184 PerRunArtifactStore.deleteAllForRun — declarer enumeration
     expect(declarers.length).toBeGreaterThan(0);
   });
 
-  it('EVERY deleteAllForRun class-method declarer is classified WIRED, ANCHOR, or EXCLUDED-with-reason', () => {
+  it('EVERY deleteAllForRun class-method declarer is classified WIRED, ANCHOR, WIRED THROUGH THE HOME’S PURGE, or EXCLUDED-with-reason', () => {
     const unclassified = declarers
       .map((d) => d.className)
-      .filter((name) => !WIRED_ORDER.includes(name) && name !== ANCHOR && !(name in EXCLUDED));
+      .filter(
+        (name) =>
+          !WIRED_ORDER.includes(name) &&
+          name !== ANCHOR &&
+          !(name in WIRED_THROUGH_HOME_PURGE) &&
+          !(name in EXCLUDED),
+      );
     expect(
       unclassified,
       `Unclassified deleteAllForRun declarer(s): ${unclassified.join(', ')}. Wire it into ` +
         `purge.ts's artifactStores orchestrator (and list it in WIRED_ORDER), pass it as the ` +
-        `anchorStore param (and set ANCHOR to its name), or document why it is excluded (add it ` +
-        `to EXCLUDED with a reason).`,
+        `anchorStore param (and set ANCHOR to its name), delete its rows in the SQLite home's purge ` +
+        `by its own deleter (and list it in WIRED_THROUGH_HOME_PURGE), or document why it is ` +
+        `excluded (add it to EXCLUDED with a reason).`,
     ).toEqual([]);
   });
 
@@ -134,7 +153,12 @@ describe('#107/#184 PerRunArtifactStore.deleteAllForRun — declarer enumeration
 
   it('no classification entry is stale (every WIRED/ANCHOR/EXCLUDED name still has a declaration)', () => {
     const present = new Set(declarers.map((d) => d.className));
-    for (const name of [...WIRED_ORDER, ANCHOR, ...Object.keys(EXCLUDED)]) {
+    for (const name of [
+      ...WIRED_ORDER,
+      ANCHOR,
+      ...Object.keys(WIRED_THROUGH_HOME_PURGE),
+      ...Object.keys(EXCLUDED),
+    ]) {
       expect(present.has(name), `${name} is classified but no longer has a declaration`).toBe(true);
     }
   });
@@ -182,6 +206,34 @@ describe('#107/#184 PerRunArtifactStore.deleteAllForRun — declarer enumeration
       homeSrc,
       "lib/home.ts must build its run store as the JsonFileStore ('new JsonFileStore(…)')",
     ).toMatch(/\bconst\s+runStore\s*=\s*withTestClockNotice\(\s*new\s+JsonFileStore\(/);
+  });
+
+  it('#616 PR-2c c9: every store WIRED THROUGH THE HOME’S PURGE declares its one deleter, calls it from its own deleteAllForRun, and the home’s purge calls it', () => {
+    const purgeSrc = readFileSync(HOME_PURGE, 'utf8');
+    const calls = (src: string, name: string): number =>
+      [...src.matchAll(new RegExp(`\\b${name}\\(`, 'g'))].length;
+    const wiring = Object.fromEntries(
+      Object.entries(WIRED_THROUGH_HOME_PURGE).map(([store, { file, deleter }]) => {
+        const src = readFileSync(join(STORE_SQLITE_SRC, file), 'utf8');
+        return [
+          store,
+          {
+            declared: src.includes(`export function ${deleter}(`),
+            // The declaration is one match; the store's own deleteAllForRun is the other.
+            calledByItsStore: calls(src, deleter) >= 2,
+            calledByHomePurge: calls(purgeSrc, deleter) > 0,
+          },
+        ];
+      }),
+    );
+    // (1) red when the home's purge stops calling one store's deleter (that store's rows of a purged
+    //     run would be left behind on a SQLite home), when a store's deleter is renamed or no longer
+    //     exported, or when its own deleteAllForRun stops calling it (two copies of the statements);
+    //     (2) prints each store's three answers.
+    const all = { declared: true, calledByItsStore: true, calledByHomePurge: true };
+    expect(wiring).toEqual(
+      Object.fromEntries(Object.keys(WIRED_THROUGH_HOME_PURGE).map((store) => [store, all])),
+    );
   });
 
   it('the TraceBufferStore interface declaration is excluded structurally (ends ";", not "{")', () => {
