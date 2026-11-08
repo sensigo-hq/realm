@@ -569,7 +569,7 @@ const USAGE_DISCLOSURE = {
   reference: {
     surface: 'waived',
     reason:
-      "the predecessor of a drive's first request, read by 3-M's comparison (piece A-2); never operator words",
+      "the predecessor of a drive's first request, read by 3-M's comparison (piece A-2): its counts become a miss line's expected count (A-2b1), never words of its own",
   },
   request_in_call: {
     surface: 'waived',
