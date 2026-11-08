@@ -79,6 +79,8 @@ import type {
   SkipDetail,
   CostView,
   CostFigure,
+  CostMiss,
+  CacheMissCause,
   CostUnrecordedCause,
   AttemptView,
   CacheRequestedEntry,
@@ -830,19 +832,127 @@ function sourcesText(money: Money, recordedModels: readonly string[] | undefined
 }
 
 /**
+ * Caching 3-M A-2b2 — a miss's gap as the line words it. It never reads as equal to or shorter than
+ * a lifetime Realm records (300, 1,800 or 3,600 s) that it exceeded: under 2 minutes, the seconds
+ * rounded up; under 2 hours, whole minutes and the leftover seconds rounded up (60 carries into the
+ * minutes); under 2 days, the nearest hour; else the nearest day.
+ */
+export function gapWords(seconds: number): string {
+  const unit = (n: number, word: string): string => `${String(n)} ${word}${n === 1 ? '' : 's'}`;
+  if (seconds < 120) return unit(Math.ceil(seconds), 'second');
+  if (seconds < 7200) {
+    let minutes = Math.floor(seconds / 60);
+    let rest = Math.ceil(seconds - minutes * 60);
+    if (rest === 60) {
+      minutes += 1;
+      rest = 0;
+    }
+    return rest > 0
+      ? `${unit(minutes, 'minute')} ${unit(rest, 'second')}`
+      : unit(minutes, 'minute');
+  }
+  if (seconds < 172_800) return `about ${unit(Math.round(seconds / 3600), 'hour')}`;
+  return `about ${unit(Math.round(seconds / 86_400), 'day')}`;
+}
+
+/** Caching 3-M A-2b2 — the request a miss is compared with, numbered as the line numbers its own. */
+function predecessorWords(miss: CostMiss): string {
+  const place = miss.derived.predecessor;
+  return place.from === 'list' ? `request ${String(place.at + 1)}` : "an earlier drive's request";
+}
+
+/** A miss's lifetime in words; one no whole-seconds word fits (only another writer's) as seconds. */
+function missLifetimeWords(seconds: number): string {
+  return lifetimeWord(seconds) ?? `${String(seconds)} seconds`;
+}
+
+/**
+ * Caching 3-M A-2b2 — THE sentence for each cause: what differs from the request it is compared
+ * with (`prev`), and who or what could have changed it. Where a cause's sources differ by scope
+ * (inside one list, or against an earlier drive's request), it has one sentence per scope. Only a
+ * pause prints a lifetime, and only a pause or no difference prints the gap. Checked by the build
+ * against the one cause list.
+ */
+const MISS_SENTENCES = {
+  provider_changed: (prev) =>
+    `the provider differs from ${prev} (another --provider, the API key that chose the provider ` +
+    'when none was given, or an o1 model, which has its own provider)',
+  endpoint_changed: (prev) =>
+    `the address moved between the provider's own and another one since ${prev} ` +
+    '(--base-url, ANTHROPIC_BASE_URL or OPENAI_BASE_URL)',
+  model_changed: (prev, miss) =>
+    miss.derived.predecessor.from === 'list'
+      ? `a different model answered than for ${prev} (the endpoint answered from another model)`
+      : `a different model answered than for ${prev} ` +
+        '(another --model, or the endpoint answered from another model)',
+  parts_not_recorded: () =>
+    'the record holds no fingerprint of what one of the two requests sent, so the parts sent ' +
+    'could not be compared',
+  final_request: (prev) =>
+    `Realm's own final request of a tool step sends no tools, so its start differs from what ${prev} cached`,
+  strict_ladder: (prev) => `Realm switched strict output on or off after ${prev} (its own retries)`,
+  strict_changed: (prev) =>
+    `strict output was sent on only one of this request and ${prev} ` +
+    "(--strict-base-url, a workflow edit, or Realm's own retries in either drive)",
+  tools: (prev, miss) =>
+    miss.derived.predecessor.from === 'list'
+      ? `the tools differ from ${prev} (the MCP server listed different tools)`
+      : `the tools differ from ${prev} (the MCP server listed different tools, or the workflow ` +
+        "changed: the step's tools, or on Anthropic its schema, which Realm sends as its answer tool)",
+  system: (prev) =>
+    `the system text differs from ${prev} (the agent profile, the step's schema, or another Realm version)`,
+  repair_feedback: (prev) =>
+    `Realm's own repair feedback, added after a rejected answer, changed the prompt ${prev} cached`,
+  prompt: (prev) =>
+    `the prompt differs from ${prev} ` +
+    "(the step's input, the workflow file, or that drive's repair feedback)",
+  format: (prev) => `the answer format differs from ${prev} (JSON mode moved with --base-url)`,
+  cache_settings: (prev, miss) =>
+    miss.derived.predecessor.from === 'list'
+      ? "Realm stopped sending OpenAI's cache key after the endpoint refused it"
+      : `what was marked for caching differs from ${prev} (--prompt-cache, Realm dropping ` +
+        "OpenAI's cache key after an endpoint refused it, or an edit that moved where the " +
+        "prompt's fixed start ends)",
+  possibly_expired: (prev, miss) => {
+    const { gap_s: gap, lifetime_s: lifetime, lifetime_from: from } = miss.derived;
+    // One function feeds both this cause and its gap (A-2a3), so both are always present here.
+    if (gap === undefined || lifetime === undefined) {
+      return `possibly expired: a pause after ${prev} longer than the cache's lifetime`;
+    }
+    const whose = from === 'asked' ? 'Realm asked for' : 'the provider granted';
+    return (
+      `possibly expired: it started ${gapWords(gap)} after ${prev}, longer than the ` +
+      `${missLifetimeWords(lifetime)} ${whose}`
+    );
+  },
+  unexplained: (prev, miss) =>
+    `nothing the cache covers differs on the record from ${prev}; the provider may have dropped ` +
+    'the entry' +
+    (miss.derived.gap_s !== undefined
+      ? `; it started ${gapWords(miss.derived.gap_s)} after that request`
+      : ''),
+} satisfies Record<CacheMissCause, (prev: string, miss: CostMiss) => string>;
+
+/** Caching 3-M A-2b2 — the sentence a miss line ends in, for its cause and scope. */
+export function missSentence(miss: CostMiss): string {
+  return MISS_SENTENCES[miss.derived.cause](predecessorWords(miss), miss);
+}
+
+/**
  * Caching 3-M A-2b1 — THE one composer of a cost's miss lines, shared by the step's line, each
  * attempt's line and the failure block's `usage:` line: one line per request that missed the
  * cache, in list order, from the cost view's `misses` (worked out in core; nothing here recomputes
- * them). The read count is what the request read: the expected count less the shortfall. A-2b2
- * replaces the bracketed cause word with its sentence.
+ * them). The read count is what the request read: the expected count less the shortfall. A-2b2:
+ * the line ends in its cause's sentence, after a dash.
  */
 function missLines(cost: CostView | undefined): string[] {
   if (cost?.misses === undefined) return [];
   return cost.misses.map((miss) => {
-    const { expected_tokens: expected, shortfall_tokens: shortfall, cause } = miss.derived;
+    const { expected_tokens: expected, shortfall_tokens: shortfall } = miss.derived;
     return (
       `cache miss: request ${String(miss.position + 1)} of ${String(cost.requests)} ` +
-      `read ${String(expected - shortfall)} of ${String(expected)} expected tokens (${cause})`
+      `read ${String(expected - shortfall)} of ${String(expected)} expected tokens — ` +
+      missSentence(miss)
     );
   });
 }
