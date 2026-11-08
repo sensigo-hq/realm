@@ -299,6 +299,84 @@ const SPLIT_VIEW = {
   cache_fields_refused: { refused: 1, of: 2 },
 };
 
+// caching 3-M A-2b1: a request that missed the cache, on a step and on a failed drive. A GPT-5.6
+// tool step (`provider_rules`): its reference is C9's first captured answer (read 0, wrote 4012;
+// plans/issue-896/live-checks/results-gpt-5.6-luna-C9.json); in drive 2, the next day, the first
+// request reads 0 and writes 4012 (missed), the second is C9's second answer (read 4012, wrote 19).
+const MISS_FACTS = {
+  provider: 'openai',
+  model: 'gpt-5.6-luna',
+  endpoint: 'default',
+  cache_requested: 'provider_rules',
+  request_strict_sent: false,
+  prefix_parts: { tools: 'a'.repeat(64), system: 'b'.repeat(64), prompt: 'c'.repeat(64) },
+};
+const MISS_REQUESTS = [
+  {
+    request_index: 0,
+    request_in_call: 0,
+    request_start: '2026-11-08T05:00:00.000Z',
+    ...MISS_FACTS,
+    prompt_tokens: 4015,
+    cache_read_input_tokens: 0,
+    cache_write_tokens: 4012,
+    reference: {
+      from: 'run',
+      request_start: '2026-11-07T05:00:00.000Z',
+      ...MISS_FACTS,
+      cache_read_input_tokens: 0,
+      cache_write_tokens: 4012,
+    },
+  },
+  {
+    request_index: 1,
+    request_in_call: 1,
+    request_start: '2026-11-08T05:00:02.000Z',
+    ...MISS_FACTS,
+    prompt_tokens: 4034,
+    cache_read_input_tokens: 4012,
+    cache_write_tokens: 19,
+  },
+];
+/** The miss response: one step and one failed drive, each with the miss requests. */
+async function missSummary(): Promise<RunStateSummary> {
+  const run = {
+    ...contextThreeRun,
+    id: 'r3m',
+    evidence: [pricedAttempt('miss_step', 'success', MISS_REQUESTS)],
+    drive_failures: {
+      first_failed_at: '2026-11-08T05:01:00.000Z',
+      total: 1,
+      entries: [
+        {
+          at: '2026-11-08T05:01:00.000Z',
+          step: 'miss_step',
+          provider: 'openai',
+          error_class: 'other',
+          message: 'connection reset',
+          elapsed_ms: 1,
+          usage: MISS_REQUESTS,
+        },
+      ],
+    },
+  } as unknown as RunRecord;
+  return handleGetRunState({ run_id: 'r3m', include_steps: true }, { runStore: makeStore(run) });
+}
+/** What the miss requests compose to, on either context. */
+const MISS_VIEW = [
+  {
+    position: 0,
+    derived: {
+      cause: 'unexplained',
+      rule: 'tolerance',
+      expected_tokens: 4012,
+      shortfall_tokens: 4012,
+      predecessor: { from: 'reference' },
+      gap_s: 86400,
+    },
+  },
+];
+
 const moneyStepEarly = {
   step_id: 'money_step',
   kind: 'execution' as const,
@@ -527,6 +605,8 @@ describe('#600 PR 1b (D4) — context 3, get_run_state.steps', () => {
     const mixedMoney = mixed.attempts[1]!.cost!.money!;
     // caching 3-B (A6): the split response.
     const split = (await splitSummary()).steps!['split_step']!.attempts[0]!.cost!;
+    // caching 3-M A-2b1: the miss response.
+    const miss = (await missSummary()).steps!['miss_step']!.attempts[0]!.cost!;
 
     const COST_VIEW = {
       requests: { surface: 'rendered', probe: () => expect(last.requests).toBe(2) },
@@ -667,6 +747,11 @@ describe('#600 PR 1b (D4) — context 3, get_run_state.steps', () => {
       cache_fields_refused: {
         surface: 'rendered',
         probe: () => expect(split.cache_fields_refused).toEqual(SPLIT_VIEW.cache_fields_refused),
+      },
+      // caching 3-M A-2b1: as data, on the miss response.
+      misses: {
+        surface: 'rendered',
+        probe: () => expect(miss.misses).toEqual(MISS_VIEW),
       },
     } satisfies Record<keyof CostView, DisclosureRoute>;
 
@@ -1136,6 +1221,8 @@ describe('#600 PR 1b (D4) — context 4, get_run_state.drive_failure_costs', () 
     const mixedMoney = pricedCosts[1]!.cost!.money!;
     // caching 3-B (A6): the split response's failed drive.
     const splitCost = (await splitSummary()).drive_failure_costs![0]!.cost!;
+    // caching 3-M A-2b1: the miss response's failed drive.
+    const missCost = (await missSummary()).drive_failure_costs![0]!.cost!;
 
     const ELEMENT = {
       at: { surface: 'rendered', probe: () => expect(a.at).toBe(ENTRY_A.at) },
@@ -1266,6 +1353,11 @@ describe('#600 PR 1b (D4) — context 4, get_run_state.drive_failure_costs', () 
         surface: 'rendered',
         probe: () =>
           expect(splitCost.cache_fields_refused).toEqual(SPLIT_VIEW.cache_fields_refused),
+      },
+      // caching 3-M A-2b1: as data, on the miss response's failed drive.
+      misses: {
+        surface: 'rendered',
+        probe: () => expect(missCost.misses).toEqual(MISS_VIEW),
       },
     } satisfies Record<keyof CostView, DisclosureRoute>;
 
