@@ -30,6 +30,17 @@ import {
   type PriceSource,
 } from '../economics/price-source.js';
 import {
+  cacheMissCauses,
+  cacheMissGaps,
+  cacheReadVerdicts,
+  cacheWriteField,
+  numField,
+  type CacheLifetimeSource,
+  type CacheMissCause,
+  type CacheMissRule,
+  type CachePredecessorPlace,
+} from './cache-misses.js';
+import {
   readDrivenBy,
   readGateClaimVerdict,
   readStoredName,
@@ -106,6 +117,36 @@ export interface CostView {
    * Present only when a price source was given and `requests > 0`; never stored.
    */
   money?: Money;
+  /**
+   * Caching 3-M A-2b1 — the requests that missed the cache, one entry per request
+   * `cacheReadVerdicts` calls `missed`, in list order; absent when none missed (including when
+   * none could be compared). Worked out when the run is read, never stored.
+   */
+  misses?: CostMiss[];
+}
+
+/**
+ * Caching 3-M A-2b1 — one request that missed the cache. `derived` is worked out when the run is
+ * read, never stored. Its `cause` is the first difference the record holds between the request
+ * and the one it is compared with, or `possibly_expired` (a pause longer than the entry's
+ * lifetime), or `unexplained` (no difference on the record): never a proven cause. Piece B adds
+ * the provider's own reason beside `derived`, never inside it.
+ */
+export interface CostMiss {
+  /** The request's place in the attempt's (or failed drive's) list, from 0 — never `request_index`. */
+  position: number;
+  derived: {
+    cause: CacheMissCause;
+    rule: CacheMissRule;
+    expected_tokens: number;
+    shortfall_tokens: number;
+    predecessor: CachePredecessorPlace;
+    /** Seconds between the predecessor's start and this request's, when both parse. */
+    gap_s?: number;
+    /** The predecessor's lifetime, present only with `lifetime_from`. */
+    lifetime_s?: number;
+    lifetime_from?: CacheLifetimeSource;
+  };
 }
 
 /** Issue #600 caching PR P — the requests sent to a custom endpoint, or why none records one. */
@@ -295,14 +336,6 @@ export interface StepView {
    * source was given and at least one attempt has priced or unpriced requests.
    */
   total?: Money;
-}
-
-/** Reads a numeric field off an unknown entry, returning `undefined` for anything but a real number
- *  (never coercing `null`, which is one of the two absence spellings a provider's own type allows). */
-function numField(entry: unknown, key: string): number | undefined {
-  if (typeof entry !== 'object' || entry === null) return undefined;
-  const v = (entry as Record<string, unknown>)[key];
-  return typeof v === 'number' ? v : undefined;
 }
 
 /** Reads a numeric field one level down (`cache_creation.ephemeral_5m_input_tokens`), the same way. */
@@ -572,13 +605,33 @@ function addMoney(into: Money, more: Money): void {
   into.net = into.uncached_counterfactual - into.total;
 }
 
-/** `cache_creation_input_tokens`, else `cache_write_tokens` — first present, never summed. Exported
- *  inside core for `cache-misses.ts` (caching 3-M A-2a1), so `cache-misses.ts` adds no third
- *  copy of the rule (`price-source.ts` keeps its own, for prices). */
-export function cacheWriteField(entry: unknown): number | undefined {
-  const a = numField(entry, 'cache_creation_input_tokens');
-  if (a !== undefined) return a;
-  return numField(entry, 'cache_write_tokens');
+/**
+ * Caching 3-M A-2b1 — the requests of one list that missed the cache, composed from the miss
+ * module's three readers (the verdict, the cause, the gap); `undefined` when none missed.
+ */
+function composeMisses(requests: readonly unknown[]): CostMiss[] | undefined {
+  const verdicts = cacheReadVerdicts(requests);
+  const causes = cacheMissCauses(requests);
+  const gaps = cacheMissGaps(requests);
+  const misses: CostMiss[] = [];
+  verdicts.forEach((verdict, position) => {
+    if (verdict.outcome !== 'missed') return;
+    const cause = causes[position];
+    // Every missed request has a cause; a list position without one is skipped, never guessed.
+    if (cause === undefined) return;
+    misses.push({
+      position,
+      derived: {
+        cause,
+        rule: verdict.rule,
+        expected_tokens: verdict.expected_tokens,
+        shortfall_tokens: verdict.shortfall_tokens,
+        predecessor: verdict.predecessor,
+        ...(gaps[position] ?? {}),
+      },
+    });
+  });
+  return misses.length > 0 ? misses : undefined;
 }
 
 /** The one summation rule, shared by every counter this file derives. */
@@ -651,6 +704,9 @@ export function composeCostView(
   if (head !== undefined) view.cache_head = head;
   const refused = composeCacheFieldsRefused(requests);
   if (refused !== undefined) view.cache_fields_refused = refused;
+  // caching 3-M A-2b1: which requests missed the cache, from the one miss rule.
+  const misses = composeMisses(requests);
+  if (misses !== undefined) view.misses = misses;
   if (requests.length > 0) {
     view.endpoints = composeEndpoints(requests);
     const source = deps?.priceSource;

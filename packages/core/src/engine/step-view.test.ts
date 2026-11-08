@@ -1,5 +1,7 @@
 // step-view.test.ts — issue #600 PR 1b (D7): the one place "how do you sum a per-request counter
 // honestly" lives, and the one place a step's cost is classified when there is none to sum.
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
 import {
   composeCostView,
@@ -895,5 +897,244 @@ describe('composeRunCost and StepView.total (issue #600 caching PR P, G5)', () =
       unmeasured: { tool_calling_step: 1, not_measured_by_realm: 1, cost_unreadable: 1 },
     });
     expect(composeRunCost(run)).toBeUndefined();
+  });
+});
+
+// Caching 3-M A-2b1: the cost view carries the requests that missed the cache.
+describe('caching 3-M A-2b1 — CostView.misses', () => {
+  const sha = (c: string): string => c.repeat(64);
+  /** The parts every turn of one call sends (A-0's facts; digests, never text). */
+  const TOOL_PARTS = { tools: sha('a'), system: sha('b'), prompt: sha('c') };
+  /**
+   * live-899's drive_a: the six Anthropic tool turns of one call, counts and stamps as captured
+   * (`plans/llm-prompt-caching/tools-path/live-899/usage.txt` and its run record 48c5e609…). Each
+   * turn reads what the turn before read plus wrote. The capture predates A-0 and A-1b, so each
+   * turn gains its place in the call, the same parts and marks, and `request_strict_sent`.
+   */
+  const LIVE_899 = [
+    { start: '2026-10-29T16:07:28.795Z', prompt: 6901, uncached: 4, read: 0, write: 6897, out: 47 },
+    {
+      start: '2026-10-29T16:07:30.900Z',
+      prompt: 6995,
+      uncached: 2,
+      read: 6897,
+      write: 96,
+      out: 47,
+    },
+    {
+      start: '2026-10-29T16:07:32.286Z',
+      prompt: 7089,
+      uncached: 2,
+      read: 6993,
+      write: 94,
+      out: 47,
+    },
+    {
+      start: '2026-10-29T16:07:33.595Z',
+      prompt: 7183,
+      uncached: 2,
+      read: 7087,
+      write: 94,
+      out: 47,
+    },
+    {
+      start: '2026-10-29T16:07:34.969Z',
+      prompt: 7277,
+      uncached: 2,
+      read: 7181,
+      write: 94,
+      out: 47,
+    },
+    {
+      start: '2026-10-29T16:07:36.282Z',
+      prompt: 7363,
+      uncached: 2,
+      read: 7275,
+      write: 86,
+      out: 11,
+    },
+  ];
+  type Turn = (typeof LIVE_899)[number];
+  const toolTurns = (turns: readonly Turn[]): Record<string, unknown>[] =>
+    turns.map((t, i) => ({
+      request_start: t.start,
+      request_index: i,
+      request_in_call: i,
+      model: 'claude-sonnet-5-5',
+      endpoint: 'default',
+      provider: 'anthropic',
+      prompt_tokens: t.prompt,
+      uncached_input_tokens: t.uncached,
+      output_tokens: t.out,
+      cache_read_input_tokens: t.read,
+      cache_creation_input_tokens: t.write,
+      cache_creation: { ephemeral_5m_input_tokens: t.write, ephemeral_1h_input_tokens: 0 },
+      cache_requested: 'lifetime',
+      cache_lifetime_s: 300,
+      request_strict_sent: false,
+      prefix_parts: TOOL_PARTS,
+      cache_marked: ['system', 'conversation'],
+    }));
+  /**
+   * (b)'s list, constructed from the capture: turn 3's answer asked for five tool calls, run one
+   * after another, about a minute each (`tool_timeout: 60`), so turn 4 starts 420 s after turn 3,
+   * reads 0 and writes 7275 (its prompt, 7277, less its 2 uncached tokens). Turn 5 follows 1.313 s
+   * later as captured and reads 7275 = 0 + 7275: it holds.
+   */
+  const pausedTurns = (): Turn[] =>
+    LIVE_899.map((t, i) =>
+      i === 4
+        ? { ...t, start: '2026-10-29T16:14:33.595Z', read: 0, write: 7275 }
+        : i === 5
+          ? { ...t, start: '2026-10-29T16:14:34.908Z' }
+          : t,
+    );
+  /** What a failing cell prints: each entry's place, start and counts. */
+  const show = (list: readonly Record<string, unknown>[]): string =>
+    list
+      .map(
+        (r, i) =>
+          `#${i} in_call=${String(r['request_in_call'])} start=${String(r['request_start'])} ` +
+          `read=${String(r['cache_read_input_tokens'])} ` +
+          `write=${String(r['cache_creation_input_tokens'] ?? r['cache_write_tokens'])} ` +
+          `reference=${r['reference'] === undefined ? 'none' : 'yes'}`,
+      )
+      .join('\n');
+
+  // 1 (a) The captured six turns all held. Can fail: `misses` always present, empty. Prints the list.
+  it('a list whose every request held has no misses key', () => {
+    const list = toolTurns(LIVE_899);
+    const view = composeCostView(list);
+    expect(view !== undefined && 'misses' in view, show(list)).toBe(false);
+  });
+
+  // 1 (b) Turn 4, 420 s after turn 3's 5-minute write. Can fail: the cause taken from the next
+  // position, or `position` counted from 1. Prints the list.
+  it('a turn after a pause longer than the lifetime: one entry, possibly_expired, at position 4', () => {
+    const list = toolTurns(pausedTurns());
+    expect(composeCostView(list)?.misses, show(list)).toEqual([
+      {
+        position: 4,
+        derived: {
+          cause: 'possibly_expired',
+          rule: 'exact',
+          expected_tokens: 7181,
+          shortfall_tokens: 7181,
+          predecessor: { from: 'list', at: 3 },
+          gap_s: 420,
+          lifetime_s: 300,
+          lifetime_from: 'written',
+        },
+      },
+    ]);
+  });
+
+  // 1 (c) A GPT-5.6 tool step (`provider_rules`, so no lifetime recorded). The reference holds C9's
+  // first captured answer (read 0, wrote 4012; plans/issue-896/live-checks/
+  // results-gpt-5.6-luna-C9.json); drive 2, the next day, reads 0 and writes 4012, then its second
+  // request is C9's second answer (read 4012, wrote 19). Can fail: `rule` hard-coded to `exact`, the
+  // predecessor hard-coded to the list, or the lifetime keys always present. Prints the list.
+  it('a request against an earlier drive under the tolerance: unexplained, the gap and no lifetime', () => {
+    const facts = {
+      provider: 'openai',
+      model: 'gpt-5.6-luna',
+      endpoint: 'default',
+      cache_requested: 'provider_rules',
+      request_strict_sent: false,
+      prefix_parts: TOOL_PARTS,
+    };
+    const list = [
+      {
+        request_start: '2026-11-08T05:00:00.000Z',
+        request_index: 0,
+        request_in_call: 0,
+        ...facts,
+        prompt_tokens: 4015,
+        cache_read_input_tokens: 0,
+        cache_write_tokens: 4012,
+        reference: {
+          from: 'run',
+          request_start: '2026-11-07T05:00:00.000Z',
+          ...facts,
+          cache_read_input_tokens: 0,
+          cache_write_tokens: 4012,
+        },
+      },
+      {
+        request_start: '2026-11-08T05:00:02.000Z',
+        request_index: 1,
+        request_in_call: 1,
+        ...facts,
+        prompt_tokens: 4034,
+        cache_read_input_tokens: 4012,
+        cache_write_tokens: 19,
+      },
+    ];
+    expect(composeCostView(list)?.misses, show(list)).toEqual([
+      {
+        position: 0,
+        derived: {
+          cause: 'unexplained',
+          rule: 'tolerance',
+          expected_tokens: 4012,
+          shortfall_tokens: 4012,
+          predecessor: { from: 'reference' },
+          gap_s: 86400,
+        },
+      },
+    ]);
+  });
+
+  // 1 (d) (b)'s list where turn 2 also read only 1000 and wrote 6087 (constructed: a turn whose
+  // cache lookback reached only an earlier breakpoint, as Anthropic's docs describe, #946); its
+  // prompt stays 7089, so turn 3 holds as captured. Can fail: the entries reversed, or only the
+  // first miss kept. Prints the list.
+  it('two misses in one list: two entries, in list order', () => {
+    const list = toolTurns(
+      pausedTurns().map((t, i) => (i === 2 ? { ...t, read: 1000, write: 6087 } : t)),
+    );
+    expect(composeCostView(list)?.misses, show(list)).toEqual([
+      {
+        position: 2,
+        derived: {
+          cause: 'unexplained',
+          rule: 'exact',
+          expected_tokens: 6993,
+          shortfall_tokens: 5993,
+          predecessor: { from: 'list', at: 1 },
+          gap_s: 1.386,
+          lifetime_s: 300,
+          lifetime_from: 'written',
+        },
+      },
+      {
+        position: 4,
+        derived: {
+          cause: 'possibly_expired',
+          rule: 'exact',
+          expected_tokens: 7181,
+          shortfall_tokens: 7181,
+          predecessor: { from: 'list', at: 3 },
+          gap_s: 420,
+          lifetime_s: 300,
+          lifetime_from: 'written',
+        },
+      },
+    ]);
+  });
+
+  // 4 The import cycle is gone: the miss rule takes nothing from step-view.ts, which takes the
+  // rule from it (#910's precedent, cannot-run-summary-872.test.ts). Can fail: the helpers' move
+  // reverted. Prints the import statements found.
+  it('cache-misses.ts imports nothing from step-view.ts — no import cycle in core', () => {
+    const source = readFileSync(
+      fileURLToPath(new URL('./cache-misses.ts', import.meta.url)),
+      'utf8',
+    )
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1');
+    // Whole statements, so a wrapped import is caught; a type-only import is refused too.
+    const fromStepView = source.match(/import\s[^;]*?from\s*'\.\/step-view\.js'/g) ?? [];
+    expect(fromStepView).toEqual([]);
   });
 });

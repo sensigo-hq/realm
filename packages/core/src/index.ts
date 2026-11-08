@@ -576,6 +576,7 @@ export type {
   CostEndpoints,
   CostCacheHead,
   CostCacheFieldsRefused,
+  CostMiss,
   CostUnrecordedCause,
   AttemptView,
   AnswerView,
@@ -586,6 +587,14 @@ export type {
   MoneySourceTotal,
   RunCost,
 } from './engine/step-view.js';
+// caching 3-M A-2b1: the words a cost view's misses carry (the functions stay inside core).
+export { CACHE_MISS_CAUSES, CACHE_LIFETIME_SOURCES } from './engine/cache-misses.js';
+export type {
+  CacheMissCause,
+  CacheMissRule,
+  CachePredecessorPlace,
+  CacheLifetimeSource,
+} from './engine/cache-misses.js';
 // issue #600 caching PR P: the runner's economics file (format v1), its evaluator, and the port a
 // host prices through — money is derived at read, never stored.
 export {

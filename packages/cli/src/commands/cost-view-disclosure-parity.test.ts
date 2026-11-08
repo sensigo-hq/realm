@@ -521,6 +521,12 @@ const STEP_LINE_COST_VIEW = {
     surface: 'rendered',
     probe: () => expect(SPLIT.stepLine).toContain(`; ${SPLIT_WORDS.refused}`),
   },
+  // caching 3-M A-2b1: on the miss render, the line the carrier prints. Its `rule`, `predecessor`
+  // and gap fields get their words in A-2b2 (no nested registry exists).
+  misses: {
+    surface: 'rendered',
+    probe: () => expect(MISS.stepLine).toContain(MISS_WORDS.line),
+  },
 } satisfies Record<keyof CostView, DisclosureRoute>;
 
 // issue #600 PR 2: each field of one ask, on the step line.
@@ -712,6 +718,51 @@ const OPENAI_OFF_REQUESTS = [
 const OPENAI_OFF_WINDOW =
   'no price file (runner.cache.economics is not set), and no gap was under 27 minutes, so no caching)';
 
+// caching 3-M A-2b1: a fifth render per context, a request that missed the cache. A GPT-5.6 tool
+// step (`provider_rules`): its reference is C9's first captured answer (read 0, wrote 4012;
+// plans/issue-896/live-checks/results-gpt-5.6-luna-C9.json); in drive 2, the next day, the first
+// request reads 0 and writes 4012 (missed), the second is C9's second answer (read 4012, wrote 19).
+const MISS = { stepLine: '', failureLine: '' };
+const MISS_FACTS = {
+  provider: 'openai',
+  model: 'gpt-5.6-luna',
+  endpoint: 'default',
+  cache_requested: 'provider_rules',
+  request_strict_sent: false,
+  prefix_parts: { tools: 'a'.repeat(64), system: 'b'.repeat(64), prompt: 'c'.repeat(64) },
+};
+const MISS_REQUESTS = [
+  {
+    request_index: 0,
+    request_in_call: 0,
+    request_start: '2026-11-08T05:00:00.000Z',
+    ...MISS_FACTS,
+    prompt_tokens: 4015,
+    cache_read_input_tokens: 0,
+    cache_write_tokens: 4012,
+    reference: {
+      from: 'run',
+      request_start: '2026-11-07T05:00:00.000Z',
+      ...MISS_FACTS,
+      cache_read_input_tokens: 0,
+      cache_write_tokens: 4012,
+    },
+  },
+  {
+    request_index: 1,
+    request_in_call: 1,
+    request_start: '2026-11-08T05:00:02.000Z',
+    ...MISS_FACTS,
+    prompt_tokens: 4034,
+    cache_read_input_tokens: 4012,
+    cache_write_tokens: 19,
+  },
+];
+/** The miss line, on either context. */
+const MISS_WORDS = {
+  line: 'cache miss: request 1 of 2 read 0 of 4012 expected tokens (unexplained)',
+};
+
 // issue #600 caching PR P: a second run, rendered with `PRICES`. `gateway_step` is the gateway
 // fixture; `mixed_step` has two attempts (the second with a request per source and one with no
 // model); the three unmeasured attempts and a failed drive no longer on the record feed the run's
@@ -744,6 +795,15 @@ const splitStepRun = {
   in_progress_steps: [],
   claims: undefined,
   evidence: [pricedAttempt('split_step', 'success', 'never_engaged', SPLIT_REQUESTS)],
+  drive_failures: undefined,
+} as unknown as RunRecord;
+// caching 3-M A-2b1: one step whose first request missed the cache.
+const missStepRun = {
+  ...contextOneRun,
+  id: 'run_ctx1m',
+  in_progress_steps: [],
+  claims: undefined,
+  evidence: [pricedAttempt('miss_step', 'success', 'engaged', MISS_REQUESTS)],
   drive_failures: undefined,
 } as unknown as RunRecord;
 const openAiOffStepRun = {
@@ -908,6 +968,7 @@ describe('#600 PR 1b (D4) — context 1, the step line', () => {
     });
     SPLIT.stepLine = await inspectRun('run_ctx1s', makeStore(splitStepRun), workflowStore);
     OPENAI_OFF.stepLine = await inspectRun('run_ctx1o', makeStore(openAiOffStepRun), workflowStore);
+    MISS.stepLine = await inspectRun('run_ctx1m', makeStore(missStepRun), workflowStore);
     for (const registry of [
       STEP_LINE_COST_VIEW,
       STEP_LINE_CACHE_REQUESTED_ENTRY,
@@ -1260,11 +1321,27 @@ const FAILURE_COST_VIEW = {
     surface: 'rendered',
     probe: () => expect(SPLIT.failureLine).toContain(`; ${SPLIT_WORDS.refused}`),
   },
+  // caching 3-M A-2b1: on the miss render's failed drive, beneath its usage line. Its `rule`,
+  // `predecessor` and gap fields get their words in A-2b2 (no nested registry exists).
+  misses: {
+    surface: 'rendered',
+    probe: () => expect(MISS.failureLine).toContain(`      ${MISS_WORDS.line}`),
+  },
 } satisfies Record<keyof CostView, DisclosureRoute>;
 
 // issue #600 caching PR P: three failed drives, rendered with `PRICES` — the gateway fixture, the
 // mixed requests, and one request from the runner's file at its current price.
 // caching 3-B (A6): the split requests on a failed drive.
+// caching 3-M A-2b1: a failed drive whose first request missed the cache.
+const missFailureRun = {
+  ...contextTwoRun,
+  id: 'run_ctx2m',
+  drive_failures: {
+    first_failed_at: ENTRY_A.at,
+    total: 1,
+    entries: [{ ...ENTRY_A, usage: MISS_REQUESTS }],
+  },
+} as unknown as RunRecord;
 const splitFailureRun = {
   ...contextTwoRun,
   id: 'run_ctx2s',
@@ -1430,6 +1507,7 @@ describe('#600 PR 1b (D4) — context 2, the failure block', () => {
       priceSource: PRICES,
     });
     SPLIT.failureLine = await inspectRun('run_ctx2s', makeStore(splitFailureRun), workflowStore);
+    MISS.failureLine = await inspectRun('run_ctx2m', makeStore(missFailureRun), workflowStore);
     OPENAI_OFF.failureLine = await inspectRun(
       'run_ctx2o',
       makeStore(openAiOffFailureRun),
