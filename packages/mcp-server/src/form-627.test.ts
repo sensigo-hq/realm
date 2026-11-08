@@ -479,8 +479,14 @@ describe('#627 W — the form path (cell 21)', () => {
   it(
     'Realm’s own timeout is a non-answer: W-f2 says it stopped waiting, after the form-wait cap',
     async () => {
+      // The form waits the cap LESS the real time the call spent before the form was sent
+      // (`performance.now()`, which fake timers do not touch), and W-f2 says what the form waited. On
+      // a loaded runner that is over half a second and the hint says 29 s (CI: #1040's run
+      // 42453622838). A clock that stands still spends none, so this cell pins the cap itself; that
+      // the call's own time counts against the cap is the injected-clock cell "the per-call budget"
+      // below.
       const s = await session(
-        { formWaitSeconds: 30 },
+        { formWaitSeconds: 30, monotonicNow: () => 0 },
         (req) =>
           new Promise<ElicitReply>((resolve) => {
             req.signal.addEventListener('abort', () => resolve({ action: 'cancel' }));
@@ -740,7 +746,9 @@ describe('#627 W — after the wait: a fresh read, four branches', () => {
   });
 
   it('the wait helper: an unparseable expires_at waits the cap alone and says so on stderr; a due question sends no form', async () => {
-    const s = await session({ formWaitSeconds: 60 });
+    // A clock that stands still: the form waits the cap less the REAL time the call spent before the
+    // form was sent, and on a loaded runner over a second of it left 59 s (the cell above, 29 s).
+    const s = await session({ formWaitSeconds: 60, monotonicNow: () => 0 });
     const { runId, gateId } = await openedElsewhere(s);
     const { record: record } = await s.runStore.get(runId);
     // Correction 2 (1.1): only a gate that declares `on_expiry` has its deadline read by the form path.
@@ -765,7 +773,7 @@ describe('#627 W — after the wait: a fresh read, four branches', () => {
     //     form; (b) prints the wait, the stderr line and the forms sent.
     expect({
       // Correction 2 (1.6): the delay Realm's own timer was armed with.
-      waited: ((t) => t !== undefined && t > 59_000 && t <= 60_000)(waitedMs),
+      waited: waitedMs === 60_000,
       said: lines.some((l) =>
         l.includes('has a deadline this version cannot read; its form waits the cap alone (60 s)'),
       ),
