@@ -112,6 +112,8 @@ export type ErrorCode =
   // an empty one), and a schema step of it that failed (the file at the version read after it).
   | 'STATE_STORE_MIGRATE_REFUSED'
   | 'STATE_STORE_MIGRATE_FAILED'
+  // #616 PR-2c c8a1: a store check refused before anything was opened (no store file; an empty one).
+  | 'STATE_STORE_CHECK_REFUSED'
   | 'STATE_HOME_HOLDS_LEGACY_STORE'
   | 'STATE_RUN_PURGED'
   | 'STATE_RUN_TIMESTAMP_INVALID'
