@@ -6,9 +6,9 @@
 // a command: `realm run import` (c11b) prints the lines, walks folders and sets the exit code.
 //
 // The two documents it reads are Realm's own: a bare run record, and an export bundle
-// (`realm run export`), an object whose `realm_export_version` is a number. Versions 4 and 5 are read
-// (4 lacks only `disclosure`; the `run` is the same); an older one is `legacy`, a newer one
-// `not_a_run`. Everything else that is not a run is `not_a_run`, with what it is. `save()` decides the
+// (`realm run export`), an object whose `realm_export_version` is a number. Only the integers 4 and 5
+// are read (4 lacks only `disclosure`; the `run` is the same); an older integer is `legacy`, a newer
+// one `not_a_run`, and so is a number that is not an integer. Everything else that is not a run is `not_a_run`, with what it is. `save()` decides the
 // rest; its refusals that are the RECORD's own map to a word, by their code and details. Its refusals
 // that are the STORE's own (busy, fenced, full, read-only, a newer file) are a STOP of kind `store`:
 // they are not a file's outcome, and re-running the import is safe. Any other error is a STOP of
@@ -129,9 +129,9 @@ function walLines(wal: unknown): number {
 }
 
 /**
- * A file's notes, in order: the re-derived phase (after `imported`), the values the export hid (every
- * word but `not_a_run`; the longer form on a `diverged` line of the content arm), and what a bundle
- * carries that the import does not take (after `imported` or `unchanged`).
+ * A file's notes, in order: the re-derived phase (after `imported`), the values the export hid (the
+ * longer form on a `diverged` line of the content arm), and what a bundle carries that the import does
+ * not take (after `imported` or `unchanged`). A `not_a_run` line has none: it is built without them.
  */
 function notesFor(
   word: ImportWord,
@@ -139,7 +139,6 @@ function notesFor(
   bundle: Record<string, unknown> | undefined,
   contentArm: boolean,
 ): string[] {
-  if (word === 'not_a_run') return [];
   const notes: string[] = [];
   if (word === 'imported' && record !== undefined) {
     const derived = deriveRunPhase(record as unknown as RunRecord);
@@ -202,7 +201,15 @@ export async function importFile(path: string, home: ImportHome): Promise<Import
   const version = value['realm_export_version'];
   if (typeof version === 'number') {
     bundle = value;
-    // The version comes first: an old bundle is `legacy` whatever it holds.
+    // The version comes first, and only the integers 4 and 5 are read: a number that is not an
+    // integer is none of Realm's versions; an old bundle is `legacy` whatever it holds.
+    if (!Number.isInteger(version)) {
+      return outcome(
+        path,
+        'not_a_run',
+        `an export of version ${version}, which this Realm does not read (it reads 4 and 5)`,
+      );
+    }
     if (version < OLDEST_BUNDLE) {
       return outcome(
         path,

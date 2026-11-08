@@ -127,6 +127,7 @@ async function bundleOf(
     wal?: Record<string, unknown[]>;
     attempts?: number;
     sealed?: boolean;
+    env?: Record<string, string>;
   } = {},
 ): Promise<Record<string, unknown>> {
   const store = new InMemoryStore();
@@ -163,7 +164,7 @@ async function bundleOf(
     },
     new Date(UPDATED),
     buildDisclosureSet({
-      env: {},
+      env: carried.env ?? {},
       declared: { S: DECLARED },
       declaredState: 'resolved',
       audience: 'file',
@@ -257,6 +258,24 @@ describe('#616 PR-2c c11a — check 1: the classification of a file, through to 
       (p) =>
         `not_a_run  ${p}: an export of version 6, written by a later Realm (this one reads 4 and 5)`,
     ],
+    // Only the integers 4 and 5 are read (MA 3's ruling, correction 1): a number that is not an
+    // integer is not a version Realm wrote; `4.0` in the file's text parses to the integer 4.
+    ...([3.5, 4.5, 5.5] as const).map(
+      (n) =>
+        [
+          `a version-${n} bundle`,
+          `v${n}.json`,
+          { realm_export_version: n, run: record({ id: `run-v${n}` }) },
+          (p: string) =>
+            `not_a_run  ${p}: an export of version ${n}, which this Realm does not read (it reads 4 and 5)`,
+        ] as const,
+    ),
+    [
+      'a version-4 bundle written as 4.0',
+      'v4-point-0.json',
+      `{ "realm_export_version": 4.0, "run": ${JSON.stringify(record({ id: 'run-v40' }))} }`,
+      (p) => `imported  ${p}`,
+    ],
     [
       'a bundle without a run',
       'no-run.json',
@@ -297,7 +316,9 @@ describe('#616 PR-2c c11a — check 1: the classification of a file, through to 
     // (1) red when a file is classified by save()'s code alone (`{}` and the no-id rows read
     //     `legacy`), when the version test is `<=` (the version-4 row reads legacy) or comes after the
     //     run test (the version-3 bundle with no run reads "an export without a run"), or when a
-    //     not_a_run line carries the hidden note; (2) prints the line got and the line expected.
+    //     version that is not an integer is read or called old or later (the 3.5, 4.5 and 5.5 rows);
+    //     the two rows with values hidden on a not_a_run line are GROUNDING: no path adds a note to a
+    //     not_a_run line (correction 1); (2) prints the line got and the line expected.
     expect(await lineOf(path, home)).toBe(expected(path));
   });
 
@@ -501,6 +522,117 @@ describe('#616 PR-2c c11a — check 4: the notes', () => {
       `unchanged  ${oneLine}  [wal_not_imported: 1 line]`,
       `imported  ${empty}`,
     ]);
+  });
+
+  // Correction 1 (MA 3's review): what the cells above left unpinned.
+  it("the hidden note counts every kind the export hid: values of the environment, and the patterns' finds", async () => {
+    const { root, home } = await scratch();
+    const env = 'FAKE-ENV-VALUE-c11a';
+    const fromEnv = file(
+      root,
+      'env.realm.json',
+      await bundleOf(record({ id: 'run-env', params: { a: env, b: env } }), {
+        env: { SVC_VALUE: env },
+      }),
+    );
+    const fromPatterns = file(
+      root,
+      'patterns.realm.json',
+      await bundleOf(
+        record({
+          id: 'run-pat',
+          params: { a: 'Bearer FAKEtok9abc', b: 'Bearer FAKEtok9abd', c: 'Bearer FAKEtok9abe' },
+        }),
+      ),
+    );
+    // (1) red when a kind is left out of the sum (environment or pattern); (2) prints both lines.
+    expect([await lineOf(fromEnv, home), await lineOf(fromPatterns, home)]).toEqual([
+      `imported  ${fromEnv}  [exported with 2 values hidden]`,
+      `imported  ${fromPatterns}  [exported with 3 values hidden]`,
+    ]);
+  });
+
+  it('the hidden note, in its short form, is on the version arm, the key arm and a purged run too', async () => {
+    const { root, home } = await scratch(OCT_30);
+    const secret = { ticket: DECLARED, note: DECLARED };
+    await home.runStore.save(
+      record({ id: 'run-v', version: 4, completed_steps: ['a'], params: secret }),
+    );
+    const version = file(
+      root,
+      'version.realm.json',
+      await bundleOf(record({ id: 'run-v', version: 3, params: secret })),
+    );
+    await home.runStore.save(record({ id: 'run-holder', idempotency_key: 'order-8' }));
+    const key = file(
+      root,
+      'key.realm.json',
+      await bundleOf(record({ id: 'run-k2', idempotency_key: 'order-8', params: secret })),
+    );
+    await home.runStore.save(finished({ id: 'run-dp', params: secret }));
+    await home.runStore.deleteAllForRun('run-dp');
+    const purged = file(
+      root,
+      'purged.realm.json',
+      await bundleOf(finished({ id: 'run-dp', params: secret })),
+    );
+    // (1) red when the note is dropped from one of the three; (2) prints the three lines.
+    expect([
+      await lineOf(version, home),
+      await lineOf(key, home),
+      await lineOf(purged, home),
+    ]).toEqual([
+      `diverged  ${version}: the stored run is at version 4; the file is at version 3  [exported with 2 values hidden]`,
+      `diverged  ${key}: the live run run-holder already holds this run's idempotency key  [exported with 2 values hidden]`,
+      `purged  ${purged}: this run was deleted on 2026-10-30  [exported with 2 values hidden]`,
+    ]);
+  });
+
+  it('the write-ahead log lines are counted across every step', async () => {
+    const { root, home } = await scratch();
+    const path = file(
+      root,
+      'two-steps.realm.json',
+      await bundleOf(record({ id: 'run-ws' }), {
+        wal: {
+          ...TWO_WAL_LINES,
+          b: [
+            { ts: 3, entries: [] },
+            { ts: 4, entries: [] },
+            { ts: 5, entries: [] },
+          ],
+        },
+      }),
+    );
+    // (1) red when a step's count replaces the total; (2) prints the line.
+    expect(await lineOf(path, home)).toBe(`imported  ${path}  [wal_not_imported: 5 lines]`);
+  });
+
+  it('the re-derived phase is noted after imported only: not when the run is already stored, nor on a diverged line', async () => {
+    const { root, home } = await scratch();
+    const stale = finished({ id: 'run-st', run_phase: 'running' });
+    await home.runStore.save(stale);
+    const again = file(root, 'stale-again.json', stale);
+    await home.runStore.save(finished({ id: 'run-sv' }));
+    const otherVersion = file(
+      root,
+      'stale-other-version.json',
+      finished({ id: 'run-sv', version: 5, run_phase: 'running' }),
+    );
+    // (1) red when the note is on every word; (2) prints both lines.
+    expect([await lineOf(again, home), await lineOf(otherVersion, home)]).toEqual([
+      `unchanged  ${again}`,
+      `diverged  ${otherVersion}: the stored run is at version 4; the file is at version 5`,
+    ]);
+  });
+
+  it('a bad updated_at is named in the reason', async () => {
+    const { root, home } = await scratch();
+    const path = file(root, 'bad-updated.json', record({ id: 'run-u', updated_at: 'later' }));
+    // (1) red when the reason names one field whatever save() said; (2) prints the line.
+    expect(await lineOf(path, home)).toBe(
+      `legacy  ${path}: updated_at is not in the current time format`,
+    );
   });
 });
 
