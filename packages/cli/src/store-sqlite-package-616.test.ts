@@ -229,7 +229,7 @@ describe('#616 unit 1: the SQLite store package', () => {
   });
 
   it(
-    'the pack ships the built entry and nothing from the test support, the tests or the build info',
+    "the pack ships the built entry and, of the test support, exactly the ./test-support subpath's eight files (c9a); none of the tests or the build info",
     { timeout: 60_000 },
     () => {
       const pkg = join(PACKAGES, 'store-sqlite');
@@ -238,7 +238,9 @@ describe('#616 unit 1: the SQLite store package', () => {
         cpSync(join(pkg, 'package.json'), join(dir, 'package.json'));
         cpSync(join(pkg, 'README.md'), join(dir, 'README.md'));
         cpSync(join(pkg, 'dist'), join(dir, 'dist'), { recursive: true });
-        // The package has no test support or test yet: one of each, where later units put them.
+        // `dist/test-support/` already holds the package's real test support (the ./test-support
+        // entry, its helper and the modules that stay unpublished); a probe beside them, where a later
+        // unit's module would sit, and a test source and a test where later units put them.
         mkdirSync(join(dir, 'dist', 'test-support'), { recursive: true });
         writeFileSync(join(dir, 'dist', 'test-support', 'probe.js'), 'export {};\n');
         mkdirSync(join(dir, 'src', 'test-support'), { recursive: true });
@@ -254,22 +256,33 @@ describe('#616 unit 1: the SQLite store package', () => {
           r.status === 0
             ? (JSON.parse(r.stdout) as [{ files: { path: string }[] }])[0].files.map((f) => f.path)
             : [];
-        // (1) Can it fail: red when `files` in packages/store-sqlite/package.json lets test support
-        //     through (the named break: drop "!dist/**/test-support/**"), ships the build info or the
-        //     source, or stops shipping `dist` (then `dist/index.js` is absent); red too when npm fails.
-        // (2) Prints: npm's exit status and the paths it would pack that should not ship (file names
-        //     only; npm's output holds no secret).
+        // (1) Can it fail: red when `files` in packages/store-sqlite/package.json drops the
+        //     ./test-support subpath's re-include (its eight files missing; #616 PR-2c c9a), widens it
+        //     or drops "!dist/**/test-support/**" (the probe, or the unpublished modules, then ship),
+        //     ships the build info or the source, or stops shipping `dist` (then `dist/index.js` is
+        //     absent); red too when npm fails. (2) Prints: npm's exit status, the test-support paths it
+        //     would pack, and the paths that should not ship (file names only; npm's output holds no
+        //     secret).
         expect({
           status: r.status,
           index: files.includes('dist/index.js'),
-          testSupport: files.filter((f) => f.includes('test-support')),
+          testSupport: files.filter((f) => f.includes('test-support')).sort(),
           tests: files.filter((f) => /\.test\./.test(f)),
           buildInfo: files.filter((f) => f.endsWith('.tsbuildinfo')),
           source: files.filter((f) => f.startsWith('src/')),
         }).toEqual({
           status: 0,
           index: true,
-          testSupport: [],
+          testSupport: [
+            'dist/test-support/foreign-connection.d.ts',
+            'dist/test-support/foreign-connection.d.ts.map',
+            'dist/test-support/foreign-connection.js',
+            'dist/test-support/foreign-connection.js.map',
+            'dist/test-support/index.d.ts',
+            'dist/test-support/index.d.ts.map',
+            'dist/test-support/index.js',
+            'dist/test-support/index.js.map',
+          ],
           tests: [],
           buildInfo: [],
           source: [],
