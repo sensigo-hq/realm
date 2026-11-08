@@ -1,12 +1,9 @@
 // execution-loop's workflow_context_snapshots / extension_identity field-fidelity gates (issue
 // #188, PR-2). Also proves the #119 WARN-never-gate flow is unaffected.
 import { declareReleaseLine } from '../release-line.js';
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect } from 'vitest';
 import { executeStep } from './execution-loop.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type {
   RunStore,
@@ -22,7 +19,7 @@ import type { Clock } from '../utils/clock.js';
 import type { SettlementDelta } from '../types/settlement.js';
 
 /**
- * Delegates every RunStore method to a real, functional JsonFileStore, but reports a SMALLER
+ * Delegates every RunStore method to a real, functional InMemoryStore, but reports a SMALLER
  * (understated) `persistedRunRecordFields` declaration than the truth. This isolates "does the
  * gate fire based on the declaration" from "does the store actually drop the field on write" —
  * the latter is the TCK's FIDELITY_HONESTY job (run-store-fidelity-contract.ts), not this test's.
@@ -40,7 +37,7 @@ class DeclaredFieldsOverrideStore implements RunStore {
   readonly persistedRunRecordFields: ReadonlySet<LoadBearingRunRecordField>;
 
   constructor(
-    private readonly inner: JsonFileStore,
+    private readonly inner: InMemoryStore,
     declaredFields: ReadonlySet<LoadBearingRunRecordField>,
   ) {
     this.persistsClaims = inner.persistsClaims;
@@ -83,14 +80,6 @@ const sampleIdentity: ExtensionIdentityEntry = {
 };
 
 describe('execution-loop — workflow_context_snapshots field-fidelity gate (issue #188)', () => {
-  let dir: string;
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'exec-fidelity-ctx-'));
-  });
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
-  });
-
   const wfWithContext: WorkflowDefinition = {
     id: 'ctx-wf',
     name: 'Ctx WF',
@@ -100,7 +89,7 @@ describe('execution-loop — workflow_context_snapshots field-fidelity gate (iss
   };
 
   it('fires an honest warning when the store does NOT declare workflow_context_snapshots', async () => {
-    const inner = new JsonFileStore(dir);
+    const inner = new InMemoryStore();
     const store = new DeclaredFieldsOverrideStore(
       inner,
       new Set(['capability_blocks', 'extension_identity']),
@@ -123,7 +112,7 @@ describe('execution-loop — workflow_context_snapshots field-fidelity gate (iss
   });
 
   it('stays silent when the store DOES declare workflow_context_snapshots (byte-identical local case)', async () => {
-    const inner = new JsonFileStore(dir);
+    const inner = new InMemoryStore();
     const { record: run } = await inner.create({
       workflowId: 'ctx-wf',
       workflowVersion: 1,
@@ -143,14 +132,6 @@ describe('execution-loop — workflow_context_snapshots field-fidelity gate (iss
 });
 
 describe('execution-loop — extension_identity field-fidelity gate (issue #188)', () => {
-  let dir: string;
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'exec-fidelity-ext-'));
-  });
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
-  });
-
   const plainWf: WorkflowDefinition = {
     id: 'ext-wf',
     name: 'Ext WF',
@@ -159,7 +140,7 @@ describe('execution-loop — extension_identity field-fidelity gate (issue #188)
   };
 
   it('fires an honest warning when the store does NOT declare extension_identity (and a registry identity is present)', async () => {
-    const inner = new JsonFileStore(dir);
+    const inner = new InMemoryStore();
     const store = new DeclaredFieldsOverrideStore(
       inner,
       new Set(['capability_blocks', 'workflow_context_snapshots']),
@@ -185,7 +166,7 @@ describe('execution-loop — extension_identity field-fidelity gate (issue #188)
   });
 
   it('stays silent when the store DOES declare extension_identity (byte-identical local case)', async () => {
-    const inner = new JsonFileStore(dir);
+    const inner = new InMemoryStore();
     const { record: run } = await inner.create({
       workflowId: 'ext-wf',
       workflowVersion: 1,
@@ -207,7 +188,7 @@ describe('execution-loop — extension_identity field-fidelity gate (issue #188)
   });
 
   it('no registry identity at all → no gate, byte-identical to pre-#188 (extension-free runs untouched)', async () => {
-    const inner = new JsonFileStore(dir);
+    const inner = new InMemoryStore();
     const store = new DeclaredFieldsOverrideStore(inner, new Set()); // declares NOTHING
     const { record: run } = await inner.create({
       workflowId: 'ext-wf',
@@ -232,43 +213,38 @@ describe('execution-loop — extension_identity field-fidelity gate (issue #188)
 
 describe('execution-loop — #119 WARN-never-gate is preserved (issue #188)', () => {
   it('a genuine drift warning AND a fidelity-gap warning co-occur, and execution still completes normally', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'exec-fidelity-119-'));
-    try {
-      const inner = new JsonFileStore(dir);
-      const store = new DeclaredFieldsOverrideStore(inner, new Set()); // declares nothing
-      const wf: WorkflowDefinition = {
-        id: 'drift-wf',
-        name: 'Drift WF',
-        version: 1,
-        steps: { work: { description: 'w', execution: 'auto', depends_on: [] } },
-      };
-      const { record: run } = await inner.create({
-        workflowId: 'drift-wf',
-        workflowVersion: 1,
-        params: {},
-      });
+    const inner = new InMemoryStore();
+    const store = new DeclaredFieldsOverrideStore(inner, new Set()); // declares nothing
+    const wf: WorkflowDefinition = {
+      id: 'drift-wf',
+      name: 'Drift WF',
+      version: 1,
+      steps: { work: { description: 'w', execution: 'auto', depends_on: [] } },
+    };
+    const { record: run } = await inner.create({
+      workflowId: 'drift-wf',
+      workflowVersion: 1,
+      params: {},
+    });
 
-      const registry1 = new ExtensionRegistry();
-      registry1.setIdentity(sampleIdentity);
-      const first = await executeStep(store, wf, {
-        runId: run.id,
-        command: 'work',
-        input: {},
-        dispatcher: async () => ({}),
-        registry: registry1,
-      });
-      // First call: fidelity gate fires (store declares nothing); no drift yet (no prior history
-      // to differ from) since the store doesn't retain extension_identity across calls anyway.
-      expect(first.status).toBe('ok');
-      expect(first.warnings.some((w) => w.includes('extension_identity'))).toBe(true);
+    const registry1 = new ExtensionRegistry();
+    registry1.setIdentity(sampleIdentity);
+    const first = await executeStep(store, wf, {
+      runId: run.id,
+      command: 'work',
+      input: {},
+      dispatcher: async () => ({}),
+      registry: registry1,
+    });
+    // First call: fidelity gate fires (store declares nothing); no drift yet (no prior history
+    // to differ from) since the store doesn't retain extension_identity across calls anyway.
+    expect(first.status).toBe('ok');
+    expect(first.warnings.some((w) => w.includes('extension_identity'))).toBe(true);
 
-      // #119's own existing drift-warning behavior (a DIFFERENT registry identity than history)
-      // is exercised elsewhere (extension-identity-append.test.ts) against a store that DOES
-      // persist the field — reconfirm here that execution completing normally (never blocked) is
-      // unaffected by the fidelity gate stacking alongside it.
-      expect(first.run_phase).toBe('completed');
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    // #119's own existing drift-warning behavior (a DIFFERENT registry identity than history)
+    // is exercised elsewhere (extension-identity-append.test.ts) against a store that DOES
+    // persist the field — reconfirm here that execution completing normally (never blocked) is
+    // unaffected by the fidelity gate stacking alongside it.
+    expect(first.run_phase).toBe('completed');
   });
 });

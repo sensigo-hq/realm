@@ -163,32 +163,39 @@ function sidecarStamp(): string {
   return new Date().toISOString();
 }
 
-/** The last element of a stored list of requests, when it is a plain object with a string
- *  `request_start`; otherwise `undefined`. */
-function lastRequestIn(requests: unknown): UsageRecord | undefined {
-  if (!Array.isArray(requests) || requests.length === 0) return undefined;
-  const last: unknown = requests[requests.length - 1];
-  return last !== null &&
-    typeof last === 'object' &&
-    !Array.isArray(last) &&
-    typeof (last as { request_start?: unknown }).request_start === 'string'
-    ? (last as UsageRecord)
-    : undefined;
-}
-
 const isRecordObject = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 
+/** Caching 3-M (piece A-1b): the first request of the last call in a stored list of requests — the
+ *  list's last plain object with a string `request_start` and `request_in_call` 0; `undefined` when
+ *  the list holds none (a list recorded before `request_in_call` existed holds none). */
+function lastCallOpenerIn(requests: unknown): UsageRecord | undefined {
+  if (!Array.isArray(requests)) return undefined;
+  for (let i = requests.length - 1; i >= 0; i -= 1) {
+    const entry: unknown = requests[i];
+    if (
+      isRecordObject(entry) &&
+      typeof entry['request_start'] === 'string' &&
+      entry['request_in_call'] === 0
+    ) {
+      return entry as unknown as UsageRecord;
+    }
+  }
+  return undefined;
+}
+
 /**
- * Caching 3-M (piece A-1) — `step`'s last request on the run's record, read from the record as the
- * drive holds it (no store read): the predecessor of the step's first request in a drive
- * (`attachRecordedReference`). Two candidates: the last request of the step's latest evidence entry
- * whose `diagnostics.cache.requests` is non-empty and ends in a plain object with a string
- * `request_start` (index `e` in `evidence`), and the same for the step's latest drive-failure entry
- * and its `usage`. They are ordered by the record's own order, never by clocks: the failure is the
- * later one when its `evidence_count` (the run's evidence count, read in the write that appended it)
- * is greater than `e`. A drive-failure entry without `evidence_count` (written before #715 (b)) is not
- * a candidate. Entries that are not plain objects are skipped; it never throws.
+ * Caching 3-M (piece A-1) — the first request of `step`'s last call on the run's record (piece
+ * A-1b), read from the record as the drive holds it (no store read): the predecessor of the step's
+ * first request in a drive (`attachRecordedReference`). Two candidates: the last call's first
+ * request in the step's latest evidence entry whose `diagnostics.cache.requests` holds one (a plain
+ * object with a string `request_start` and `request_in_call` 0; index `e` in `evidence`), and the
+ * same for the step's latest drive-failure entry and its `usage`. An entry whose list holds none
+ * (recorded before `request_in_call` existed) is not a candidate. They are ordered by the record's
+ * own order, never by clocks: the failure is the later one when its `evidence_count` (the run's
+ * evidence count, read in the write that appended it) is greater than `e`. A drive-failure entry
+ * without `evidence_count` (written before #715 (b)) is not a candidate. Entries that are not plain
+ * objects are skipped; it never throws.
  */
 function lastRecordedRequest(run: RunRecord | undefined, step: string): UsageRecord | undefined {
   if (!isRecordObject(run)) return undefined;
@@ -201,9 +208,9 @@ function lastRecordedRequest(run: RunRecord | undefined, step: string): UsageRec
       if (!isRecordObject(entry) || entry['step_id'] !== step) continue;
       const diagnostics = entry['diagnostics'];
       const cache = isRecordObject(diagnostics) ? diagnostics['cache'] : undefined;
-      const last = lastRequestIn(isRecordObject(cache) ? cache['requests'] : undefined);
-      if (last === undefined) continue;
-      fromEvidence = last;
+      const opener = lastCallOpenerIn(isRecordObject(cache) ? cache['requests'] : undefined);
+      if (opener === undefined) continue;
+      fromEvidence = opener;
       evidenceIndex = i;
       break;
     }
@@ -219,9 +226,9 @@ function lastRecordedRequest(run: RunRecord | undefined, step: string): UsageRec
       if (!isRecordObject(entry) || entry['step'] !== step) continue;
       const count = entry['evidence_count'];
       if (typeof count !== 'number') continue;
-      const last = lastRequestIn(entry['usage']);
-      if (last === undefined) continue;
-      fromFailure = last;
+      const opener = lastCallOpenerIn(entry['usage']);
+      if (opener === undefined) continue;
+      fromFailure = opener;
       failureCount = count;
       break;
     }
@@ -698,9 +705,10 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
     );
   };
   // Caching 3-M (piece A-1): the predecessor of the driven step's first request in this drive — the
-  // step's last request on the run's record, read from `currentRun` as held at that moment (no store
-  // read; at a step's first call it is the snapshot the engine judged its last reply on) — consulted
-  // only while the step holds no request of this drive (`usageForStep` empty).
+  // first request of the step's last call on the run's record (piece A-1b), read from `currentRun`
+  // as held at that moment (no store read; at a step's first call it is the snapshot the engine
+  // judged its last reply on) — consulted only while the step holds no request of this drive
+  // (`usageForStep` empty).
   const recordedBefore = (step: string): UsageRecord | undefined =>
     usageForStep === undefined || usageForStep.length === 0
       ? lastRecordedRequest(currentRun, step)

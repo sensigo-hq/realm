@@ -237,7 +237,9 @@ export class OpenAIReasoningProvider extends LlmProvider {
       requests.push(
         toUsageRecord(requests.length, requestStart, readOpenAiReasoningUsage(response), {
           ...reasoningRequestFacts(response, client),
-          ...(plan !== undefined ? openAiSplitFacts(body, plan, systemPrompt) : {}),
+          // caching 3-M (A-0): on every request; the prompt part is the step's prompt as given,
+          // never `messages[0]` (the system text folded in) or the retry's answer.
+          ...openAiSplitFacts(body, plan, systemPrompt, prompt),
           ...(this.cacheFields.rejected !== undefined
             ? { cache_controls_rejected: this.cacheFields.rejected }
             : {}),

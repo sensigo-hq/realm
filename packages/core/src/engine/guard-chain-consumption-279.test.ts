@@ -1,6 +1,6 @@
 // guard-chain-consumption-279.test.ts — GUARD_CHAIN_CONSUMPTION (issue #279, increment 2, PR-D,
 // Deliverable 5; design record §6/§8, gate-1 gap-1's forcing test). Five legs through the REAL
-// engine (the chain's guard loop, `advanceRun`) + a REAL JsonFileStore, exercising the chain-consumption table adjudicated
+// engine (the chain's guard loop, `advanceRun`) + a REAL InMemoryStore, exercising the chain-consumption table adjudicated
 // for settle_guard's refusal reasons:
 //   (a) a sibling settles the guard FIRST (same outcome) ⇒ our own attempt returns already_settled
 //       ⇒ the chain ADVANCES, threading result.run, with NO error envelope.
@@ -25,11 +25,10 @@
 // race, a sibling-GUARD race has no second independent entry point that reaches the SAME guard,
 // since a guard only becomes eligible once ALL its deps land), each leg uses a DETERMINISTIC
 // sibling-injecting store wrapper: on the FIRST `settleStep` call matching a declared predicate,
-// it issues ITS OWN direct call (or a raw open_gate) against a SECOND handle onto the SAME
-// underlying JsonFileStore directory — simulating "a sibling already got there first" — BEFORE
-// delegating to the real call. Every predicate outcome this produces (already_settled/
-// settled_outcome_divergence/gate_open_wait) is computed by the REAL, unmocked
-// settlement.ts/JsonFileStore — only the INTERLEAVING is engineered, not the result. This is a
+// it issues ITS OWN direct call (or a raw open_gate) against the SAME wrapped store — simulating
+// "a sibling already got there first" — BEFORE delegating to the real call. Every predicate
+// outcome this produces (already_settled/settled_outcome_divergence/gate_open_wait) is computed by
+// the REAL, unmocked settlement.ts/InMemoryStore — only the INTERLEAVING is engineered, not the result. This is a
 // deliberate divergence from the R3-death test's OWN "no interposition hook" instruction — that
 // constraint is stated ONLY for R3-death's specific mechanism (verbatim from symptom-death-279);
 // GUARD_CHAIN_CONSUMPTION's own record language ("an engine-level guard-chain fixture") calls for
@@ -46,10 +45,7 @@
 // FIRED, so no leg can pass without entering the arm it names.
 import { declareReleaseLine } from '../release-line.js';
 import { describe, it, expect } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { advanceRun, executeChain, submitHumanResponse } from './execution-loop.js';
 import { captureEvidence } from '../evidence/snapshot.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
@@ -64,9 +60,9 @@ import type { Listing, CreateResult, StoreSettlement } from '../store/store-inte
 import type { Clock } from '../utils/clock.js';
 
 /**
- * Delegates every RunStore method to a real, functional JsonFileStore. `settleStep` is
- * intercepted: the FIRST call matching `matches(delta)` triggers `inject()` (a raw call against a
- * SECOND handle on the SAME directory) before delegating to the real settleStep — simulating a
+ * Delegates every RunStore method to a real, functional InMemoryStore. `settleStep` is
+ * intercepted: the FIRST call matching `matches(delta)` triggers `inject()` (a raw call against the
+ * SAME wrapped store) before delegating to the real settleStep — simulating a
  * sibling writer that got there first. Every subsequent call passes straight through.
  */
 class InjectBeforeSettleStore implements RunStore {
@@ -88,7 +84,7 @@ class InjectBeforeSettleStore implements RunStore {
   }
 
   constructor(
-    private readonly inner: JsonFileStore,
+    private readonly inner: InMemoryStore,
     private readonly matches: (delta: SettlementDelta) => boolean,
     private readonly inject: () => Promise<void>,
   ) {
@@ -181,7 +177,7 @@ const defWithFinalizer: WorkflowDefinition = {
  * loop (`advanceRun`) exists for on a `settleStep` store.
  */
 async function leaveGuardEligible(
-  inner: JsonFileStore,
+  inner: InMemoryStore,
   run: RunRecord,
   stepAOutput: Record<string, unknown>,
 ): Promise<RunRecord> {
@@ -214,308 +210,283 @@ function makeGuardEvidence(outcome: 'pass' | 'resolution_error' | 'abort') {
 
 describe('GUARD_CHAIN_CONSUMPTION — the chain-consumption table (issue #279, increment 2, PR-D, design record §6)', () => {
   it('(a) a sibling settles the guard with the SAME outcome FIRST ⇒ already_settled ⇒ the chain ADVANCES, no error envelope', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-gcc-a-'));
-    try {
-      const inner = new JsonFileStore(dir);
-      const { record: run } = await inner.create({
-        workflowId: def.id,
-        workflowVersion: 1,
-        params: {},
-      });
-      const store = new InjectBeforeSettleStore(
-        inner,
-        (d) => d.kind === 'settle_guard' && d.step === 'guard_b',
-        async () => {
-          await inner.settleStep(
-            run.id,
-            {
-              kind: 'settle_guard',
-              step: 'guard_b',
-              outcome: 'pass',
-              evidence: makeGuardEvidence('pass'),
-            },
-            def,
-          );
-        },
-      );
+    const inner = new InMemoryStore();
+    const { record: run } = await inner.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const store = new InjectBeforeSettleStore(
+      inner,
+      (d) => d.kind === 'settle_guard' && d.step === 'guard_b',
+      async () => {
+        await inner.settleStep(
+          run.id,
+          {
+            kind: 'settle_guard',
+            step: 'guard_b',
+            outcome: 'pass',
+            evidence: makeGuardEvidence('pass'),
+          },
+          def,
+        );
+      },
+    );
 
-      await leaveGuardEligible(inner, run, { status: 'open' }); // guard_b's own condition would ALSO pass
-      const result = await advanceRun(store, def, {
-        runId: run.id,
-        command: 'step_a',
-      });
+    await leaveGuardEligible(inner, run, { status: 'open' }); // guard_b's own condition would ALSO pass
+    const result = await advanceRun(store, def, {
+      runId: run.id,
+      command: 'step_a',
+    });
 
-      // (a) red when the guard loop never issues its own settle_guard (the arm is not entered);
-      //     (b) prints true/false.
-      expect(store.fired).toBe(true);
-      expect(result.status).toBe('ok');
-      expect(result.errors).toEqual([]);
-      expect(result.error_code).toBeUndefined();
-      expect(JSON.stringify(result)).not.toContain('STATE_STEP_ALREADY_SETTLED');
-      const { record: finalRun } = await inner.get(run.id);
-      expect(finalRun.completed_steps).toContain('guard_b'); // settled exactly once, by the sibling
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    // (a) red when the guard loop never issues its own settle_guard (the arm is not entered);
+    //     (b) prints true/false.
+    expect(store.fired).toBe(true);
+    expect(result.status).toBe('ok');
+    expect(result.errors).toEqual([]);
+    expect(result.error_code).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain('STATE_STEP_ALREADY_SETTLED');
+    const { record: finalRun } = await inner.get(run.id);
+    expect(finalRun.completed_steps).toContain('guard_b'); // settled exactly once, by the sibling
   });
 
   it('(b) a sibling settles the guard with a DIFFERENT, non-abort outcome FIRST ⇒ settled_outcome_divergence ⇒ the chain ADVANCES + a warning line in the final envelope', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-gcc-b-'));
-    try {
-      const inner = new JsonFileStore(dir);
-      const { record: run } = await inner.create({
-        workflowId: def.id,
-        workflowVersion: 1,
-        params: {},
-      });
-      const store = new InjectBeforeSettleStore(
-        inner,
-        (d) => d.kind === 'settle_guard' && d.step === 'guard_b',
-        async () => {
-          // Sibling settles it as resolution_error — a DIFFERENT membership than our own 'pass'
-          // attempt (step_a.status:'open' makes OUR condition pass).
-          await inner.settleStep(
-            run.id,
-            {
-              kind: 'settle_guard',
-              step: 'guard_b',
-              outcome: 'resolution_error',
-              evidence: makeGuardEvidence('resolution_error'),
-              resolutionError: {
-                condition: "step_a.status == 'open'",
-                unresolvable_path: 'synthetic',
-              },
+    const inner = new InMemoryStore();
+    const { record: run } = await inner.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const store = new InjectBeforeSettleStore(
+      inner,
+      (d) => d.kind === 'settle_guard' && d.step === 'guard_b',
+      async () => {
+        // Sibling settles it as resolution_error — a DIFFERENT membership than our own 'pass'
+        // attempt (step_a.status:'open' makes OUR condition pass).
+        await inner.settleStep(
+          run.id,
+          {
+            kind: 'settle_guard',
+            step: 'guard_b',
+            outcome: 'resolution_error',
+            evidence: makeGuardEvidence('resolution_error'),
+            resolutionError: {
+              condition: "step_a.status == 'open'",
+              unresolvable_path: 'synthetic',
             },
-            def,
-          );
-        },
-      );
+          },
+          def,
+        );
+      },
+    );
 
-      await leaveGuardEligible(inner, run, { status: 'open' }); // OUR own guard evaluation would PASS
-      const result = await advanceRun(store, def, {
-        runId: run.id,
-        command: 'step_a',
-      });
+    await leaveGuardEligible(inner, run, { status: 'open' }); // OUR own guard evaluation would PASS
+    const result = await advanceRun(store, def, {
+      runId: run.id,
+      command: 'step_a',
+    });
 
-      // (a) red when the guard loop never issues its own settle_guard; (b) prints true/false.
-      expect(store.fired).toBe(true);
-      expect(result.status).toBe('ok');
-      expect(result.error_code).toBeUndefined();
-      expect(result.warnings.some((w) => w.includes('guard') && w.includes('diverged'))).toBe(true);
-      const { record: finalRun } = await inner.get(run.id);
-      // The SIBLING's outcome won (persisted) — resolution_error ⇒ failed_steps + terminal 'failed'.
-      expect(finalRun.failed_steps).toContain('guard_b');
-      expect(finalRun.terminal_state).toBe(true);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    // (a) red when the guard loop never issues its own settle_guard; (b) prints true/false.
+    expect(store.fired).toBe(true);
+    expect(result.status).toBe('ok');
+    expect(result.error_code).toBeUndefined();
+    expect(result.warnings.some((w) => w.includes('guard') && w.includes('diverged'))).toBe(true);
+    const { record: finalRun } = await inner.get(run.id);
+    // The SIBLING's outcome won (persisted) — resolution_error ⇒ failed_steps + terminal 'failed'.
+    expect(finalRun.failed_steps).toContain('guard_b');
+    expect(finalRun.terminal_state).toBe(true);
   });
 
   it('(c) OUR OWN attempt is the ABORT leg, but a sibling already settled it differently ⇒ report_to_user + chain-RETURN (the abort was NOT recorded)', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-gcc-c-'));
-    try {
-      const inner = new JsonFileStore(dir);
-      const { record: run } = await inner.create({
-        workflowId: def.id,
-        workflowVersion: 1,
-        params: {},
-      });
-      const store = new InjectBeforeSettleStore(
-        inner,
-        (d) => d.kind === 'settle_guard' && d.step === 'guard_b',
-        async () => {
-          // Sibling settles it as 'pass' — but OUR OWN evaluation (condition fails, step_a.status
-          // 'closed') will attempt 'abort'.
-          await inner.settleStep(
-            run.id,
-            {
-              kind: 'settle_guard',
-              step: 'guard_b',
-              outcome: 'pass',
-              evidence: makeGuardEvidence('pass'),
-            },
-            def,
-          );
-        },
-      );
+    const inner = new InMemoryStore();
+    const { record: run } = await inner.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const store = new InjectBeforeSettleStore(
+      inner,
+      (d) => d.kind === 'settle_guard' && d.step === 'guard_b',
+      async () => {
+        // Sibling settles it as 'pass' — but OUR OWN evaluation (condition fails, step_a.status
+        // 'closed') will attempt 'abort'.
+        await inner.settleStep(
+          run.id,
+          {
+            kind: 'settle_guard',
+            step: 'guard_b',
+            outcome: 'pass',
+            evidence: makeGuardEvidence('pass'),
+          },
+          def,
+        );
+      },
+    );
 
-      await leaveGuardEligible(inner, run, { status: 'closed' }); // OUR OWN guard evaluation aborts
-      const result = await advanceRun(store, def, {
-        runId: run.id,
-        command: 'step_a',
-      });
+    await leaveGuardEligible(inner, run, { status: 'closed' }); // OUR OWN guard evaluation aborts
+    const result = await advanceRun(store, def, {
+      runId: run.id,
+      command: 'step_a',
+    });
 
-      // (a) red when the guard loop never issues its own settle_guard; (b) prints true/false.
-      expect(store.fired).toBe(true);
-      expect(result.status).toBe('error');
-      expect(result.error_code).toBe('STATE_STEP_ALREADY_SETTLED');
-      expect(agentActionFor(result)).toBe('report_to_user');
-      expect(result.errors[0]).toContain('NOT recorded');
-      const { record: finalRun } = await inner.get(run.id);
-      // The SIBLING's 'pass' won — our abort was never recorded.
-      expect(finalRun.completed_steps).toContain('guard_b');
-      expect(finalRun.aborted_at).toBeUndefined();
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    // (a) red when the guard loop never issues its own settle_guard; (b) prints true/false.
+    expect(store.fired).toBe(true);
+    expect(result.status).toBe('error');
+    expect(result.error_code).toBe('STATE_STEP_ALREADY_SETTLED');
+    expect(agentActionFor(result)).toBe('report_to_user');
+    expect(result.errors[0]).toContain('NOT recorded');
+    const { record: finalRun } = await inner.get(run.id);
+    // The SIBLING's 'pass' won — our abort was never recorded.
+    expect(finalRun.completed_steps).toContain('guard_b');
+    expect(finalRun.aborted_at).toBeUndefined();
   });
 
   it("(d) a gate opens on ANOTHER step between the guard's pre-seal snapshot and its own settle ⇒ gate_open_wait ⇒ quiet end-of-pass; the write that resolves the gate then settles the guard", async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-gcc-d-'));
-    try {
-      const inner = new JsonFileStore(dir);
-      const { record: run } = await inner.create({
-        workflowId: defWithRecheck.id,
-        workflowVersion: 1,
-        params: {},
-      });
-      const store = new InjectBeforeSettleStore(
-        inner,
-        (d) => d.kind === 'settle_guard' && d.step === 'guard_b',
-        async () => {
-          // Open a gate on the UNRELATED `gated_step` — claim it first, then open_gate.
-          const { record: claimed } = await inner.claimStep(run.id, 'gated_step', defWithRecheck);
-          await inner.settleStep(
-            run.id,
-            {
-              kind: 'open_gate',
-              step: 'gated_step',
-              claimToken: claimed.claims!['gated_step']!.token!,
-              pendingGate: {
-                gate_id: 'sibling-gate',
-                step_name: 'gated_step',
-                preview: {},
-                choices: ['approve', 'reject'],
-              },
-              evidence: [],
+    const inner = new InMemoryStore();
+    const { record: run } = await inner.create({
+      workflowId: defWithRecheck.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const store = new InjectBeforeSettleStore(
+      inner,
+      (d) => d.kind === 'settle_guard' && d.step === 'guard_b',
+      async () => {
+        // Open a gate on the UNRELATED `gated_step` — claim it first, then open_gate.
+        const { record: claimed } = await inner.claimStep(run.id, 'gated_step', defWithRecheck);
+        await inner.settleStep(
+          run.id,
+          {
+            kind: 'open_gate',
+            step: 'gated_step',
+            claimToken: claimed.claims!['gated_step']!.token!,
+            pendingGate: {
+              gate_id: 'sibling-gate',
+              step_name: 'gated_step',
+              preview: {},
+              choices: ['approve', 'reject'],
             },
-            defWithRecheck,
-          );
-        },
-      );
+            evidence: [],
+          },
+          defWithRecheck,
+        );
+      },
+    );
 
-      // guard_b's OWN condition must be NON-PASS to ever be eligible for gate_open_wait at all
-      // (design record §3: "if fresh.pending_gate !== undefined && delta.outcome !== 'pass'" —
-      // D-2 lets a PASSING guard through even under an open gate; only abort/resolution_error wait).
-      await leaveGuardEligible(inner, run, { status: 'closed' }); // guard_b's OWN condition would ABORT
-      const result = await advanceRun(store, defWithRecheck, {
-        runId: run.id,
-        command: 'step_a',
-      });
+    // guard_b's OWN condition must be NON-PASS to ever be eligible for gate_open_wait at all
+    // (design record §3: "if fresh.pending_gate !== undefined && delta.outcome !== 'pass'" —
+    // D-2 lets a PASSING guard through even under an open gate; only abort/resolution_error wait).
+    await leaveGuardEligible(inner, run, { status: 'closed' }); // guard_b's OWN condition would ABORT
+    const result = await advanceRun(store, defWithRecheck, {
+      runId: run.id,
+      command: 'step_a',
+    });
 
-      // (a) red when the guard loop never issues its own settle_guard; (b) prints true/false.
-      expect(store.fired).toBe(true);
-      // Quiet end-of-pass: guard_b is neither completed/failed/skipped — the chain simply stops
-      // (the gate now blocks everything), no error.
-      expect(result.status).toBe('ok');
-      expect(result.error_code).toBeUndefined();
-      const { record: midRun } = await inner.get(run.id);
-      expect(midRun.completed_steps).not.toContain('guard_b');
-      expect(midRun.failed_steps).not.toContain('guard_b');
-      expect(midRun.skipped_steps).not.toContain('guard_b');
-      expect(midRun.pending_gate?.step_name).toBe('gated_step');
+    // (a) red when the guard loop never issues its own settle_guard; (b) prints true/false.
+    expect(store.fired).toBe(true);
+    // Quiet end-of-pass: guard_b is neither completed/failed/skipped — the chain simply stops
+    // (the gate now blocks everything), no error.
+    expect(result.status).toBe('ok');
+    expect(result.error_code).toBeUndefined();
+    const { record: midRun } = await inner.get(run.id);
+    expect(midRun.completed_steps).not.toContain('guard_b');
+    expect(midRun.failed_steps).not.toContain('guard_b');
+    expect(midRun.skipped_steps).not.toContain('guard_b');
+    expect(midRun.pending_gate?.step_name).toBe('gated_step');
 
-      // Resolve the gate — guard_b becomes eligible again, and (issue #625) the ANSWER'S OWN WRITE
-      // settles it: no gate is in the way any more, so the guard aborts the run per its own
-      // (unchanged) condition right there. The drive of `trigger_recheck` that follows finds the
-      // run already ended and executes nothing; before #625 it was that drive that re-applied the
-      // guard.
-      const resolved = await submitHumanResponse(inner, defWithRecheck, {
-        runId: run.id,
-        gateId: 'sibling-gate',
-        choice: 'approve',
-      });
-      expect(resolved.status).toBe('ok');
-      // (a) red when the answer's write stops settling the guard it unblocks; (b) prints `guards`.
-      expect(resolved.guards).toEqual([{ step: 'guard_b', outcome: 'abort' }]);
-      const finalChain = await executeChain(inner, defWithRecheck, {
-        runId: run.id,
-        command: 'trigger_recheck',
-        input: {},
-        dispatcher: async () => ({}),
-      });
-      expect(finalChain.status).toBe('ok');
-      expect(finalChain.error_code).toBeUndefined();
-      const { record: finalRun } = await inner.get(run.id);
-      expect(finalRun.skipped_steps).toContain('guard_b');
-      expect(finalRun.aborted_at?.step_id).toBe('guard_b');
-      expect(finalRun.terminal_state).toBe(true);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    // Resolve the gate — guard_b becomes eligible again, and (issue #625) the ANSWER'S OWN WRITE
+    // settles it: no gate is in the way any more, so the guard aborts the run per its own
+    // (unchanged) condition right there. The drive of `trigger_recheck` that follows finds the
+    // run already ended and executes nothing; before #625 it was that drive that re-applied the
+    // guard.
+    const resolved = await submitHumanResponse(inner, defWithRecheck, {
+      runId: run.id,
+      gateId: 'sibling-gate',
+      choice: 'approve',
+    });
+    expect(resolved.status).toBe('ok');
+    // (a) red when the answer's write stops settling the guard it unblocks; (b) prints `guards`.
+    expect(resolved.guards).toEqual([{ step: 'guard_b', outcome: 'abort' }]);
+    const finalChain = await executeChain(inner, defWithRecheck, {
+      runId: run.id,
+      command: 'trigger_recheck',
+      input: {},
+      dispatcher: async () => ({}),
+    });
+    expect(finalChain.status).toBe('ok');
+    expect(finalChain.error_code).toBeUndefined();
+    const { record: finalRun } = await inner.get(run.id);
+    expect(finalRun.skipped_steps).toContain('guard_b');
+    expect(finalRun.aborted_at?.step_id).toBe('guard_b');
+    expect(finalRun.terminal_state).toBe(true);
   });
 
   it("(e) [correction] a sibling RAW-settles the guard with the SAME (abort) outcome, terminalizing the run and minting a finalizer PENDING with no drain ⇒ our own already_settled leg's NOOP-drain delivers it, exactly once", async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-gcc-e-'));
-    try {
-      const inner = new JsonFileStore(dir);
-      const { record: run } = await inner.create({
-        workflowId: defWithFinalizer.id,
-        workflowVersion: 1,
-        params: {},
-      });
+    const inner = new InMemoryStore();
+    const { record: run } = await inner.create({
+      workflowId: defWithFinalizer.id,
+      workflowVersion: 1,
+      params: {},
+    });
 
-      let handlerCallCount = 0;
-      const finHandler: StepHandler = {
-        id: 'fin-handler',
-        execute: async () => {
-          handlerCallCount += 1;
-          return { data: {} };
-        },
-      };
-      const registry = new ExtensionRegistry();
-      registry.register('handler', 'fin-handler', finHandler);
+    let handlerCallCount = 0;
+    const finHandler: StepHandler = {
+      id: 'fin-handler',
+      execute: async () => {
+        handlerCallCount += 1;
+        return { data: {} };
+      },
+    };
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'fin-handler', finHandler);
 
-      const store = new InjectBeforeSettleStore(
-        inner,
-        (d) => d.kind === 'settle_guard' && d.step === 'guard_b',
-        async () => {
-          // RAW sibling commit — a bare `store.settleStep` call, bypassing executeChain entirely.
-          // applySettleGuard's abort arm mints the finalizer ledger PENDING as part of terminal
-          // postconditions, but ONLY executeChain/submitHumanResponse ever call drainFinalizers —
-          // a raw store-layer write never does, so "no drain runs" arises naturally, without any
-          // separate lease-refusal interception (unlike 1b's own drain-on-NOOP precedent).
-          await inner.settleStep(
-            run.id,
-            {
-              kind: 'settle_guard',
-              step: 'guard_b',
-              outcome: 'abort',
-              evidence: makeGuardEvidence('abort'),
-              abort: {
-                conditions: [
-                  { condition: "step_a.status == 'open'", resolved_value: 'closed', passed: false },
-                ],
-              },
+    const store = new InjectBeforeSettleStore(
+      inner,
+      (d) => d.kind === 'settle_guard' && d.step === 'guard_b',
+      async () => {
+        // RAW sibling commit — a bare `store.settleStep` call, bypassing executeChain entirely.
+        // applySettleGuard's abort arm mints the finalizer ledger PENDING as part of terminal
+        // postconditions, but ONLY executeChain/submitHumanResponse ever call drainFinalizers —
+        // a raw store-layer write never does, so "no drain runs" arises naturally, without any
+        // separate lease-refusal interception (unlike 1b's own drain-on-NOOP precedent).
+        await inner.settleStep(
+          run.id,
+          {
+            kind: 'settle_guard',
+            step: 'guard_b',
+            outcome: 'abort',
+            evidence: makeGuardEvidence('abort'),
+            abort: {
+              conditions: [
+                { condition: "step_a.status == 'open'", resolved_value: 'closed', passed: false },
+              ],
             },
-            defWithFinalizer,
-          );
-        },
-      );
+          },
+          defWithFinalizer,
+        );
+      },
+    );
 
-      await leaveGuardEligible(inner, run, { status: 'closed' }); // OUR OWN attempt also aborts — same outcome
-      const result = await advanceRun(store, defWithFinalizer, {
-        runId: run.id,
-        command: 'step_a',
-        registry,
-      });
+    await leaveGuardEligible(inner, run, { status: 'closed' }); // OUR OWN attempt also aborts — same outcome
+    const result = await advanceRun(store, defWithFinalizer, {
+      runId: run.id,
+      command: 'step_a',
+      registry,
+    });
 
-      // (a) red when the guard loop never issues its own settle_guard — the NOOP-drain arm this
-      //     leg pins is then never entered; (b) prints true/false.
-      expect(store.fired).toBe(true);
-      expect(result.status).toBe('ok');
-      expect(result.errors).toEqual([]);
-      expect(result.error_code).toBeUndefined();
+    // (a) red when the guard loop never issues its own settle_guard — the NOOP-drain arm this
+    //     leg pins is then never entered; (b) prints true/false.
+    expect(store.fired).toBe(true);
+    expect(result.status).toBe('ok');
+    expect(result.errors).toEqual([]);
+    expect(result.error_code).toBeUndefined();
 
-      const { record: finalRun } = await inner.get(run.id);
-      // Delivered, not merely settled-terminal: the NOOP-leg's drain-on-already_settled clause
-      // recovered the crashed-drain state left by the raw sibling commit.
-      expect(finalRun.finalizer_ledger?.['fin']?.status).toBe('completed');
-      expect(finalRun.completed_steps).toContain('fin');
-      expect(finalRun.evidence.find((e) => e.step_id === 'fin')).toBeDefined();
-      expect(handlerCallCount).toBe(1); // exactly once — never zero, never twice
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    const { record: finalRun } = await inner.get(run.id);
+    // Delivered, not merely settled-terminal: the NOOP-leg's drain-on-already_settled clause
+    // recovered the crashed-drain state left by the raw sibling commit.
+    expect(finalRun.finalizer_ledger?.['fin']?.status).toBe('completed');
+    expect(finalRun.completed_steps).toContain('fin');
+    expect(finalRun.evidence.find((e) => e.step_id === 'fin')).toBeDefined();
+    expect(handlerCallCount).toBe(1); // exactly once — never zero, never twice
   });
 });

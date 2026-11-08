@@ -3,12 +3,9 @@
 // style: each test targets exactly one deliverable — the activation-gate floor law, the
 // enforce-gate/adoption congruence, the three-way honest split, and the settle-time seal decision
 // table (ordering, each outcome branch, detection-counts-only attestation).
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { executeStep } from './execution-loop.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import {
   InMemoryTraceBufferStore,
   SEALED_ARTIFACTS_LIMIT_PER_STEP,
@@ -78,15 +75,9 @@ function trioOnlyStore(runReader: FenceRunReader): {
 }
 
 describe('execution-loop.ts — activation-gate floor law (issue #197 PR-2, design §3)', () => {
-  let store: JsonFileStore;
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-adoption-floor-'));
-    store = new JsonFileStore(dir);
-  });
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+  let store: InMemoryStore;
+  beforeEach(() => {
+    store = new InMemoryStore();
   });
 
   it('a trio-only store (no seal, no carriage) + a nonced claimant ⇒ adopt-all floor + the missing-leg warning fires', async () => {
@@ -157,15 +148,9 @@ describe('execution-loop.ts — activation-gate floor law (issue #197 PR-2, desi
 });
 
 describe('execution-loop.ts — ADOPTION_CONGRUENCE (issue #197 PR-2, design §2)', () => {
-  let store: JsonFileStore;
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-adoption-congruence-'));
-    store = new JsonFileStore(dir);
-  });
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+  let store: InMemoryStore;
+  beforeEach(() => {
+    store = new InMemoryStore();
   });
 
   it('a foreign-nonce-only WAL under trace_schema enforce mode does NOT gate a nonced claimant', async () => {
@@ -201,15 +186,9 @@ describe('execution-loop.ts — ADOPTION_CONGRUENCE (issue #197 PR-2, design §2
 });
 
 describe('execution-loop.ts — the three-way honest split (issue #197 PR-2, design §2/§6)', () => {
-  let store: JsonFileStore;
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-adoption-threeway-'));
-    store = new JsonFileStore(dir);
-  });
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+  let store: InMemoryStore;
+  beforeEach(() => {
+    store = new InMemoryStore();
   });
 
   it('⊥ claimant + bare lines ⇒ buffered_lines_adopted, existing caveat, numerically identical to today', async () => {
@@ -309,15 +288,9 @@ describe('execution-loop.ts — the three-way honest split (issue #197 PR-2, des
 });
 
 describe('execution-loop.ts — settle-time seal decision (issue #197 PR-2, deliverable 1f)', () => {
-  let store: JsonFileStore;
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-adoption-seal-'));
-    store = new JsonFileStore(dir);
-  });
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+  let store: InMemoryStore;
+  beforeEach(() => {
+    store = new InMemoryStore();
   });
 
   it('sealed:true ⇒ the live WAL is retired to a sealed artifact (not deleted), warns "preserved (sealed)", and the seal happens AFTER the settling commit (ordering)', async () => {
@@ -331,11 +304,11 @@ describe('execution-loop.ts — settle-time seal decision (issue #197 PR-2, deli
       writerNonce: 'other-writer',
     });
 
-    // issue #279 (increment 1, PR-B): JsonFileStore declares settleStep — the complete site's
+    // issue #279 (increment 1, PR-B): the store declares settleStep — the complete site's
     // MIGRATED path commits via settleStep, not store.update. Track that instead; the ordering
     // invariant under test (seal strictly AFTER the settling commit) is unchanged by the migration.
     const calls: string[] = [];
-    // `JsonFileStore.settleStep` is a concrete method, so the spy needs no key/value casts: the
+    // `InMemoryStore.settleStep` is a concrete method, so the spy needs no key/value casts: the
     // args and return type are inferred from the real signature.
     const originalSettleStep = store.settleStep.bind(store);
     vi.spyOn(store, 'settleStep').mockImplementation(async (...args) => {
@@ -540,15 +513,9 @@ describe('execution-loop.ts — settle-time seal decision (issue #197 PR-2, deli
 });
 
 describe('execution-loop.ts — half-minted advisory heuristics (issue #197 PR-2 correction, design §6)', () => {
-  let store: JsonFileStore;
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-adoption-half-minted-'));
-    store = new JsonFileStore(dir);
-  });
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+  let store: InMemoryStore;
+  beforeEach(() => {
+    store = new InMemoryStore();
   });
 
   it('heuristic (i) fires: nonced claimant + a WAL containing ONLY bare lines ⇒ the "minted inconsistently" advisory, count matches, no nonce value leaked', async () => {

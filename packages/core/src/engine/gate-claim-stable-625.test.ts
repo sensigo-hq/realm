@@ -14,11 +14,8 @@
 // Each cell asserts (a) the claim is byte-identical before and after — token, holder, since,
 // deadline — AND the question is still open; the operation either refuses or changes something else.
 // Each carries the change that turns it red and what it prints on failure: synthetic ids only.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { InMemoryStore, settableClock } from '@sensigo/realm-testing';
 import { executeStep, submitHumanResponse } from './execution-loop.js';
 import type { StepDispatcher } from './execution-loop.js';
 import { reclaimStep } from './reclaim-step.js';
@@ -27,27 +24,19 @@ import { captureEvidence } from '../evidence/snapshot.js';
 import type { Attributed } from './holder.js';
 import type { ClaimRecord, PendingGate, RunRecord } from '../types/run-record.js';
 import type { StepDefinition, WorkflowDefinition } from '../types/workflow-definition.js';
-import { writeTestClockFile } from '../store/test-clock-file.js';
 
-/** #715 (b) (01 §C.4): a JSON store on a test location: its runs folder sits beside the location's
- *  clock file, set to the host's reading. */
-async function testLocationRuns(prefix: string): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), prefix));
-  await writeTestClockFile(root, new Date());
-  return join(root, 'runs');
+/** #715 (b) (01 §C.4): the store's clock decides what is due — an in-memory store on a settable
+ *  clock, set to the host's reading. */
+function clockedStore(): InMemoryStore {
+  return new InMemoryStore({ clock: settableClock(new Date()) });
 }
 
 const echo: StepDispatcher = async (_step, input) => ({ ...input });
 const PROGRAM: Attributed = { by: 'alice@host', by_source: 'derived', channel: 'agent' };
 
-let dir: string;
-let store: JsonFileStore;
-beforeEach(async () => {
-  dir = await testLocationRuns('realm-gate-claim-stable-625-');
-  store = new JsonFileStore(dir);
-});
-afterEach(async () => {
-  await rm(dir, { recursive: true, force: true });
+let store: InMemoryStore;
+beforeEach(() => {
+  store = clockedStore();
 });
 
 const gateStep = (): StepDefinition => ({

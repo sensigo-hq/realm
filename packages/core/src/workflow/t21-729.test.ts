@@ -13,6 +13,7 @@ import { mkdtemp, rm, writeFile, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JsonWorkflowStore } from './registrar.js';
+import { InMemoryWorkflowRegistrar } from '../test-support/in-memory-registrar.js';
 import { definitionAbsenceOf, getWorkflowForRun } from './registrar.js';
 import { renderDefinitionAbsent } from '../engine/ways.js';
 import { WorkflowError } from '../types/workflow-error.js';
@@ -50,9 +51,12 @@ afterEach(async () => {
 });
 
 /** The thrown error of a definition read on `run`. */
-async function thrown(run: RunRecord): Promise<WorkflowError> {
+async function thrown(
+  run: RunRecord,
+  registrar: Parameters<typeof getWorkflowForRun>[0] = store,
+): Promise<WorkflowError> {
   try {
-    await getWorkflowForRun(store, run, OPTS);
+    await getWorkflowForRun(registrar, run, OPTS);
   } catch (err) {
     if (err instanceof WorkflowError) return err;
     throw err;
@@ -63,7 +67,7 @@ async function thrown(run: RunRecord): Promise<WorkflowError> {
 describe('#729 PR-0 — T-21: the definition is reachable, or the ways say why and how', () => {
   it('not registered (a run from a file): the entry’s own words name why no path exists; the remedy is register, with no path', async () => {
     const run = runOf('my-flow');
-    const err = await thrown(run);
+    const err = await thrown(run, new InMemoryWorkflowRegistrar());
     const absence = definitionAbsenceOf(err, run);
     // (a) red when the arm's old hint is restored (it named `--register`, a flag `realm workflow
     //     run` lacks), or the remedy is lost; (b) prints the code, the cause and booleans.
@@ -88,7 +92,7 @@ describe('#729 PR-0 — T-21: the definition is reachable, or the ways say why a
 
   it('an agent-created copy gone: agent_copy_gone — no source file to register', async () => {
     const run = runOf('summary-0123456789abcdef');
-    const err = await thrown(run);
+    const err = await thrown(run, new InMemoryWorkflowRegistrar());
     // (a) red when the agent arm loses its cause; (b) prints the cause and a boolean.
     expect({
       absence: definitionAbsenceOf(err, run)?.absent,

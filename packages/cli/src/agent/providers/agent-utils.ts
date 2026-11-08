@@ -853,6 +853,7 @@ const REFERENCE_FIELDS = {
   provider: true,
   model: true,
   endpoint: true,
+  cache_requested: true,
   cache_read_input_tokens: true,
   cache_creation_input_tokens: true,
   cache_write_tokens: true,
@@ -871,10 +872,11 @@ const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
 
 /**
  * Caching 3-M (piece A-1) — gives a step's first request in a drive the copy of its predecessor when
- * that predecessor is on the run's record (`recorded`, the step's last request there): `arrived[0]`
- * gains `reference`, `{ from: 'run' }` plus each of `CacheReference`'s fields `recorded` has. Every
- * other request's predecessor is the element before it in the same stored list, so nothing is
- * copied for it. Called on each arriving array after its mint, with `prior` the requests the step
+ * that predecessor is on the run's record (`recorded`, the first request of the step's last call
+ * there, piece A-1b): `arrived[0]` gains `reference`, `{ from: 'run' }` plus each of
+ * `CacheReference`'s fields `recorded` has (never its `request_index` or `request_in_call`). Every
+ * other request's predecessor is an earlier entry of the same stored list, so nothing is copied for
+ * it. Called on each arriving array after its mint, with `prior` the requests the step
  * already holds in this drive (`usageForStep`), at the points where a provider's usage enters the
  * record: the three success returns and the tools and single-shot catches in `run-agent.ts`.
  *
@@ -914,23 +916,27 @@ export function attachRecordedReference(
 /**
  * Issue #715 (R; D6-28, D6-44) — gives every request a provider's answer carried its identity: a
  * new `request_id`, a random UUID (version 4), ALWAYS overwriting any `request_id` the provider's
- * usage held. Called once per arriving array, at the points where a provider's usage enters realm's
- * own records: the three success returns in `run-agent.ts` and the usage a provider attached to a
- * thrown error (`buildEntry`). Never inside `appendRequests` — it re-bases and spreads every entry
- * on every append, so a mint there would give an earlier request a new id each time — never on
- * `usageForStep` or a stored record, and never at a write boundary: one in-memory request is written
- * into more than one record (the step's evidence, a drive-failure entry), and `sameRequest` matches
- * them by this id.
+ * usage held. Caching 3-M (piece A-1b): and its place in the call, `request_in_call` = the entry's
+ * slot in the arriving array (slots count every entry, as `request_index` does), ALWAYS overwriting
+ * any value the provider's usage held. Each arriving array is exactly one provider call's recorded
+ * requests in wire order, so the slot is the place; at a drive failure the throwing call's usage gets
+ * its places the same way. Called once per arriving array, at the points where a provider's usage
+ * enters realm's own records: the three success returns in `run-agent.ts` and the usage a provider
+ * attached to a thrown error (`buildEntry`). Never inside `appendRequests` — it re-bases and spreads
+ * every entry on every append, so a mint there would give an earlier request a new id each time and
+ * count a later call's places over the step's whole list — never on `usageForStep` or a stored
+ * record, and never at a write boundary: one in-memory request is written into more than one record
+ * (the step's evidence, a drive-failure entry), and `sameRequest` matches them by this id.
  *
  * Pure and total, like `stampRequestProvider`: returns new objects and never mutates its input (a
  * frozen input is fine); an entry that is not a plain object (a provider module's `null`) passes
  * through unchanged; an empty array returns an empty array.
  */
 export function mintRequestIds(requests: readonly UsageRecord[]): UsageRecord[] {
-  return requests.map((entry) =>
+  return requests.map((entry, slot) =>
     entry === null || typeof entry !== 'object' || Array.isArray(entry)
       ? entry
-      : { ...entry, request_id: crypto.randomUUID() },
+      : { ...entry, request_id: crypto.randomUUID(), request_in_call: slot },
   );
 }
 

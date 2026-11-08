@@ -69,6 +69,7 @@ export const DOCS_SIDEBAR = [
       'docs/reference/cli/realm-workflow',
       'docs/reference/cli/realm-run-reading',
       'docs/reference/cli/realm-run-acting',
+      'docs/reference/cli/realm-db',
       'docs/reference/cli/realm-agent',
       'docs/reference/cli/realm-listen',
       'docs/reference/cli/realm-mcp-and-serve',

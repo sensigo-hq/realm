@@ -7,6 +7,7 @@ import { shellWord } from '@sensigo/realm';
 import {
   workflowCommands,
   runCommands,
+  dbCommands,
   topLevelCommands,
   installClockErrorSink,
 } from './commands-registry.js';
@@ -25,8 +26,13 @@ for (const cmd of workflowCommands) workflowCmd.addCommand(cmd);
 const runCmd = new Command('run').description('Manage workflow run instances');
 for (const cmd of runCommands) runCmd.addCommand(cmd);
 
+// realm db — maintenance of the store file (#616 PR-2c)
+const dbCmd = new Command('db').description('Maintain the store file');
+for (const cmd of dbCommands) dbCmd.addCommand(cmd);
+
 program.addCommand(workflowCmd);
 program.addCommand(runCmd);
+program.addCommand(dbCmd);
 for (const cmd of topLevelCommands) program.addCommand(cmd);
 
 // issue #427 — `realm run ./my-workflow` is the discoverability trap: `realm run` manages run

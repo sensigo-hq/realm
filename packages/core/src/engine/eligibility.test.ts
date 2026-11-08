@@ -1,9 +1,7 @@
 // Unit tests for findEligibleSteps, triggerRuleSatisfied, evaluateWhenCondition,
 // and deriveRunPhase — the DAG eligibility predicates.
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp, readFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect } from 'vitest';
+import { readFile } from 'node:fs/promises';
 import {
   findEligibleSteps,
   findEligibleGuardSteps,
@@ -16,7 +14,7 @@ import {
   buildEvidenceByStep,
   buildSettlementNamespace,
 } from './eligibility.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import type { WorkflowDefinition, StepDefinition } from '../types/workflow-definition.js';
 import type { RunRecord, PendingGate, EvidenceSnapshot } from '../types/run-record.js';
 
@@ -1237,14 +1235,8 @@ describe('structural guard — skipped_steps grow-sites (issue #111)', () => {
 // ---------------------------------------------------------------------------
 
 describe('claimStep — double-claim prevention', () => {
-  let runDir: string;
-
-  beforeEach(async () => {
-    runDir = await mkdtemp(join(tmpdir(), 'realm-eligibility-'));
-  });
-
   it('first claimStep adds the step to in_progress_steps', async () => {
-    const store = new JsonFileStore(runDir);
+    const store = new InMemoryStore();
     const definition = makeWorkflow({ 'step-a': { depends_on: [] } });
     const { record: run } = await store.create({
       workflowId: 'test-wf',
@@ -1257,7 +1249,7 @@ describe('claimStep — double-claim prevention', () => {
   });
 
   it('second claimStep on the same step throws STATE_STEP_ALREADY_CLAIMED', async () => {
-    const store = new JsonFileStore(runDir);
+    const store = new InMemoryStore();
     const definition = makeWorkflow({ 'step-a': { depends_on: [] } });
     const { record: run } = await store.create({
       workflowId: 'test-wf',
@@ -1273,7 +1265,7 @@ describe('claimStep — double-claim prevention', () => {
   });
 
   it('claimStep on a completed step throws', async () => {
-    const store = new JsonFileStore(runDir);
+    const store = new InMemoryStore();
     const definition = makeWorkflow({ 'step-a': { depends_on: [] } });
     const { record: run } = await store.create({
       workflowId: 'test-wf',

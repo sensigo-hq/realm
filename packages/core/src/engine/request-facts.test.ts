@@ -2,15 +2,12 @@
 // where the record is written. The cells write through a step's evidence (`executeStep` with
 // `stepMeta.usage`, the path `realm agent` takes) and read the STORED record back, never a render.
 // On a failing CI host each cell prints the stored request's name fields: test values only.
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { executeStep } from './execution-loop.js';
 import type { StepDispatcher } from './execution-loop.js';
 import { boundRequestFacts } from './request-facts.js';
 import { NAME_CAP_MARKER, NAME_MAX_LENGTH } from './holder.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { UsageRecord } from '../types/run-record.js';
 
@@ -23,15 +20,9 @@ const DEF: WorkflowDefinition = {
 };
 
 describe('issue #600 PR 2 — request names are bounded on the stored record (A3)', () => {
-  let store: JsonFileStore;
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-request-facts-600-'));
-    store = new JsonFileStore(dir);
-  });
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+  let store: InMemoryStore;
+  beforeEach(() => {
+    store = new InMemoryStore();
   });
 
   /** Writes one request through a step's evidence; returns the stored request's name fields. */
@@ -282,6 +273,7 @@ describe('issue #600 PR 2 — request names are bounded on the stored record (A3
       provider: 'anthropic',
       model: 'claude-x-20260101',
       endpoint: 'default',
+      cache_requested: 'lifetime',
       cache_read_input_tokens: 0,
       cache_creation_input_tokens: 1200,
       cache_write_tokens: 1200,
@@ -310,6 +302,56 @@ describe('issue #600 PR 2 — request names are bounded on the stored record (A3
       { has: true, json: JSON.stringify(withoutParts), prompt_tokens: 10 },
       { has: true, json: JSON.stringify(wellFormed), prompt_tokens: 10 },
       { has: false, json: undefined, prompt_tokens: 10 },
+    ]);
+  });
+
+  // Caching 3-M (piece A-1b), check 4: a request's `request_in_call` from another writer (a provider
+  // module's usage, an older Realm's record) through the engine's write normaliser, read on the
+  // stored record. (a) red when `request_in_call` is not in the normaliser (the four malformed ones
+  // are then stored as written); (b) prints each stored request's place and its other count.
+  it('request_in_call on the stored record: 0 and 3 kept; −1, 1.5, "0" and an unsafe integer dropped alone', async () => {
+    const storedPlace = async (request_in_call: unknown) => {
+      const { record: run } = await store.create({
+        workflowId: DEF.id,
+        workflowVersion: 1,
+        params: {},
+      });
+      const usage = {
+        request_index: 0,
+        request_start: '2026-11-08T00:00:01.000Z',
+        prompt_tokens: 10,
+        request_in_call,
+      } as unknown as UsageRecord;
+      await executeStep(store, DEF, {
+        runId: run.id,
+        command: 'work',
+        input: {},
+        dispatcher: echo,
+        stepMeta: { usage: [usage] },
+      });
+      const request = (await store.get(run.id)).record.evidence[0]!.diagnostics!.cache!
+        .requests[0]!;
+      return {
+        has: Object.hasOwn(request, 'request_in_call'),
+        request_in_call: request.request_in_call,
+        prompt_tokens: request.prompt_tokens,
+      };
+    };
+    const dropped = { has: false, request_in_call: undefined, prompt_tokens: 10 };
+    expect([
+      await storedPlace(0),
+      await storedPlace(3),
+      await storedPlace(-1),
+      await storedPlace(1.5),
+      await storedPlace('0'),
+      await storedPlace(Number.MAX_SAFE_INTEGER + 1),
+    ]).toEqual([
+      { has: true, request_in_call: 0, prompt_tokens: 10 },
+      { has: true, request_in_call: 3, prompt_tokens: 10 },
+      dropped,
+      dropped,
+      dropped,
+      dropped,
     ]);
   });
 

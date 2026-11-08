@@ -571,6 +571,11 @@ const USAGE_DISCLOSURE = {
     reason:
       "the predecessor of a drive's first request, read by 3-M's comparison (piece A-2); never operator words",
   },
+  request_in_call: {
+    surface: 'waived',
+    reason:
+      "the request's place in its provider call: read by the reference lookup and by 3-M's comparison (piece A-2a); never operator words",
+  },
 } satisfies Record<keyof UsageRecord, DisclosureRoute>;
 
 describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader, or says why not', () => {
@@ -594,7 +599,7 @@ describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader,
     }
   });
 
-  it('the registry covers every UsageRecord field, and the waiver set is exactly the eight named above', () => {
+  it('the registry covers every UsageRecord field, and the waiver set is exactly the nine named above', () => {
     expect(Object.keys(USAGE_DISCLOSURE).sort()).toEqual([
       'cache_auto',
       'cache_controls_rejected',
@@ -620,6 +625,7 @@ describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader,
       'provider',
       'reference',
       'request_id',
+      'request_in_call',
       'request_index',
       'request_start',
       'request_strict_sent',
@@ -642,12 +648,15 @@ describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader,
     // `prefix_parts` (digests, never operator words) and `request_strict_sent` (inspect's strict
     // words come from the #311 drop facts), each for 3-M's comparison and the export. Caching 3-M
     // (piece A-1) makes the eighth: `reference`, the copied predecessor A-2's comparison reads.
+    // Piece A-1b makes the ninth: `request_in_call`, the request's place in its provider call,
+    // which the reference lookup and A-2a's comparison read.
     expect(waived).toEqual([
       'cache_split_offered',
       'prefix_parts',
       'prefix_sha256',
       'reference',
       'request_id',
+      'request_in_call',
       'request_index',
       'request_start',
       'request_strict_sent',

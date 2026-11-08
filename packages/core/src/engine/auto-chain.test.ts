@@ -1,11 +1,8 @@
 // Tests for executeChain — automatic chaining through consecutive auto steps.
 // Source: execution-loop.ts
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect } from 'vitest';
 import { executeChain } from './execution-loop.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepDispatcher } from './execution-loop.js';
@@ -95,14 +92,8 @@ const failsDef: WorkflowDefinition = {
 const echoDispatcher: StepDispatcher = async (_step, _input, _run, _signal) => ({});
 
 describe('executeChain', () => {
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-chain-'));
-  });
-
   it('auto-chains 3 auto steps in one call — run ends at completed', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'chain-wf',
       workflowVersion: 1,
@@ -125,7 +116,7 @@ describe('executeChain', () => {
   });
 
   it('stops at an agent step — step-b is NOT executed', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'stop-agent-wf',
       workflowVersion: 1,
@@ -150,7 +141,7 @@ describe('executeChain', () => {
   });
 
   it('chains into trust: human_confirmed — step-b opens gate and returns confirm_required', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'stop-gate-wf',
       workflowVersion: 1,
@@ -172,7 +163,7 @@ describe('executeChain', () => {
   });
 
   it('stops and returns error when a step fails — run is marked failed', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'fail-wf',
       workflowVersion: 1,

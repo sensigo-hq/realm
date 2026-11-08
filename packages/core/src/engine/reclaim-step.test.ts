@@ -1,15 +1,12 @@
 // Tests for reclaimStep — deliberate per-claim wedge recovery (issue #101, Phase 1).
 import { declared } from '../test-support/declared.js';
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { reclaimStep } from './reclaim-step.js';
 import { findEligibleSteps } from './eligibility.js';
 import { classifyInProgressClaims } from './claim-liveness.js';
 import { executeStep } from './execution-loop.js';
 import { RECLAIM_REFUSES_GATE_STEP } from './settlement.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { InMemoryTraceBufferStore } from '../store/trace-buffer-store.js';
 import { checkFenceWithReader } from '../store/fence-predicate.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
@@ -34,16 +31,10 @@ const autoWf: WorkflowDefinition = {
 
 const pastIso = () => new Date(Date.now() - 60_000).toISOString();
 
-describe('reclaimStep — guards and action (JsonFileStore)', () => {
-  let store: JsonFileStore;
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-reclaim-'));
-    store = new JsonFileStore(dir);
-  });
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+describe('reclaimStep — guards and action (InMemoryStore)', () => {
+  let store: InMemoryStore;
+  beforeEach(() => {
+    store = new InMemoryStore();
   });
 
   it('removes a stale claim → the step is eligible again; appends audit evidence; not left settled', async () => {
@@ -415,8 +406,7 @@ describe('reclaimStep — CAS mismatch re-evaluation (Sig-6)', () => {
 // ---------------------------------------------------------------------------
 
 describe('reclaimStep — finalizer-wedge recovery (headline)', () => {
-  let store: JsonFileStore;
-  let dir: string;
+  let store: InMemoryStore;
 
   const finalizerWf: WorkflowDefinition = {
     id: 'wedge-fin-wf',
@@ -434,11 +424,7 @@ describe('reclaimStep — finalizer-wedge recovery (headline)', () => {
   };
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-reclaim-fin-'));
-    store = new JsonFileStore(dir);
-  });
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+    store = new InMemoryStore();
   });
 
   it('a run crashed mid-buildFinalizedSeal (domain pinned, claim_unknown_age) recovers and fires finalizers', async () => {
@@ -508,15 +494,9 @@ const agentReclaimWf: WorkflowDefinition = {
 };
 
 describe('reclaimStep — clearing the stale trace buffer (issue #198)', () => {
-  let store: JsonFileStore;
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-reclaim-wal-'));
-    store = new JsonFileStore(dir);
-  });
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+  let store: InMemoryStore;
+  beforeEach(() => {
+    store = new InMemoryStore();
   });
 
   it("clears the reclaimed step's WAL — a subsequent claim + executeStep adopts NO stale lines (no buffered_lines_adopted caveat)", async () => {
@@ -619,15 +599,9 @@ describe('reclaimStep — clearing the stale trace buffer (issue #198)', () => {
 // ---------------------------------------------------------------------------
 
 describe('reclaimStep — fenced pre-update clear (issue #207 PR-2)', () => {
-  let store: JsonFileStore;
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-reclaim-fenced-'));
-    store = new JsonFileStore(dir);
-  });
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+  let store: InMemoryStore;
+  beforeEach(() => {
+    store = new InMemoryStore();
   });
 
   it('call-order recorder: sealFenced fires BEFORE the update on BOTH the primary and the CAS-retry path (forced first-update STATE_SNAPSHOT_MISMATCH), and warns with the seal outcome (issue #197 PR-2: InMemoryTraceBufferStore now declares seal, so reclaim PRESERVES rather than destroys — see the sibling non-seal-fallback test below for the deleteFenced-drain path this test exercised before #197 PR-1 shipped seal capability)', async () => {

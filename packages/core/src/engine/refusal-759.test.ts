@@ -4,12 +4,9 @@
 // end-to-end that gave the issue its name (AC6). Every reply here is the real engine's. A failure
 // prints codes, counts and key names — never a submitted value.
 import { describe, it, expect } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { executeStep, DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD } from './execution-loop.js';
 import type { StepDispatcher } from './execution-loop.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import { WorkflowError, type ValidationErrorFacts } from '../types/workflow-error.js';
 import type {
@@ -23,8 +20,8 @@ import { agentActionFor } from '../test-support/ways-view.js';
 
 const echo: StepDispatcher = async (_name, input) => ({ ...input });
 
-async function freshStore(): Promise<JsonFileStore> {
-  return new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-759-')));
+async function freshStore(): Promise<InMemoryStore> {
+  return new InMemoryStore();
 }
 
 function def(steps: Record<string, StepDefinition>): WorkflowDefinition {
