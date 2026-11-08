@@ -10,13 +10,16 @@
 // then the verdict that differed.
 import { describe, expect, it } from 'vitest';
 import {
+  cachePredecessor,
   cacheReadVerdicts,
   type CacheNotComparedCause,
   type CacheReadVerdict,
 } from './cache-misses.js';
 
 type Spec = {
-  provider: string;
+  /** A string on every request Realm records; absent or a number only in the cells of a record
+   *  another writer made. */
+  provider?: unknown;
   /** Absent: the list was recorded before Realm recorded where a call begins. */
   in_call?: number;
   /** `cache_requested`; absent: Anthropic's final request, or a gateway-dropped request. */
@@ -38,7 +41,7 @@ function stored(...specs: Spec[]): Record<string, unknown>[] {
       request_index: i,
       model: anthropic ? 'claude-sonnet-5-5' : 'gpt-5.5',
       endpoint: 'default',
-      provider: s.provider,
+      ...(s.provider === undefined ? {} : { provider: s.provider }),
       input_tokens: 4 + count(s.read) + count(s.write),
       output_tokens: 40,
     };
@@ -162,6 +165,47 @@ describe('caching 3-M A-2a1 — repair attempts: three calls in one stored list'
       predecessor: { from: 'list', at: 3 },
     });
   });
+
+  // `cachePredecessor` is what A-2a2 reads. Can fail: it returns the entry before
+  // (`requests[i - 1]`: positions 3 and 5), or the list's first (positions 4 and 5). The positions
+  // are checked first, so the loop cannot pass by checking nothing. Prints the position, the place
+  // its verdict names, and the list.
+  it('cachePredecessor returns the very entry each verdict names, not a copy', () => {
+    const verdicts = cacheReadVerdicts(calls);
+    const named = verdicts.flatMap((v, i) =>
+      (v.outcome === 'held' || v.outcome === 'missed') && v.predecessor.from === 'list'
+        ? [{ i, at: v.predecessor.at }]
+        : [],
+    );
+    expect(
+      named.map((n) => n.i),
+      show(calls),
+    ).toEqual([1, 3, 4, 5]);
+    for (const { i, at } of named) {
+      expect(cachePredecessor(calls, i), `#${i}, its verdict names #${at}\n${show(calls)}`).toBe(
+        calls[at],
+      );
+    }
+  });
+
+  // Can fail, per row: the final request (position 2): the body returns `requests[i - 1]` or the
+  // list's first; position 0: the list's first; `'1'`: the guard on `i` deleted (the record at 1 is
+  // then found). The rows -1, 1.5, NaN and 6 stay green without that guard (the list holds nothing
+  // there): they pin the contract. Prints the `i` with its type, then the list.
+  it.each<[string, number]>([
+    ['the final request, which asked nothing (position 2)', 2],
+    ["a call's first request with no predecessor (position 0)", 0],
+    ['-1', -1],
+    ['1.5', 1.5],
+    ['NaN', Number.NaN],
+    ["the list's length (6)", 6],
+    ["'1', a string", '1' as unknown as number],
+  ])('cachePredecessor gives no record for %s', (_label, i) => {
+    expect(
+      cachePredecessor(calls, i),
+      `i=${String(i)} (${typeof i})\n${show(calls)}`,
+    ).toBeUndefined();
+  });
 });
 
 describe('caching 3-M A-2a1 — the reference a later drive carries', () => {
@@ -221,6 +265,43 @@ describe('caching 3-M A-2a1 — the reference a later drive carries', () => {
       ]);
     },
   );
+
+  /** A later drive's step: one request, judged against the reference it carries. */
+  const laterDrive = (): Record<string, unknown>[] =>
+    stored({
+      provider: A,
+      in_call: 0,
+      asked: 'lifetime',
+      read: 6897,
+      write: 0,
+      reference: reference('lifetime'),
+    });
+
+  // Can fail: `cachePredecessor` returns the entry before (`requests[-1]`: none) or the list's
+  // first (the request itself) instead of its `reference`. The verdict's place is checked first.
+  // Prints the entry with its reference.
+  it('cachePredecessor returns the very reference object the verdict names', () => {
+    const list = laterDrive();
+    expect(cacheReadVerdicts(list)[0], show(list)).toMatchObject({
+      predecessor: { from: 'reference' },
+    });
+    expect(cachePredecessor(list, 0), show(list)).toBe(list[0]?.['reference']);
+  });
+
+  // Can fail: the guard that `requests` is an array removed. `null` and `undefined` then throw
+  // reading `length`; the array-like object (it holds the later drive's request) returns that
+  // request's reference. Prints the input, then the error or the record.
+  it.each<[string, unknown]>([
+    ['null', null],
+    ['undefined', undefined],
+    ['an array-like object holding a request that asked', { 0: laterDrive()[0], length: 1 }],
+  ])('cachePredecessor gives no record when requests is %s', (label, requests) => {
+    const entries =
+      requests === null || requests === undefined ? [] : [(requests as { 0: unknown })[0]];
+    const shown = `requests: ${label}\n${show(entries)}`;
+    expect(() => cachePredecessor(requests, 0), shown).not.toThrow();
+    expect(cachePredecessor(requests, 0), shown).toBeUndefined();
+  });
 });
 
 describe('caching 3-M A-2a1 — a request that asked but is not compared, one cell per cause', () => {
@@ -376,4 +457,35 @@ describe('caching 3-M A-2a1 — a stored list from another writer or an older ve
       { outcome: 'not_compared', cause: 'counts_not_reported' },
     ]);
   });
+});
+
+describe("caching 3-M A-2a1 — who asked: a provider module's request, and a provider that is not a string", () => {
+  // Can fail: the `module:` test removed. The second request is then judged by the tolerance
+  // against the first (missed by 5,000), and the first says no_earlier_request. Prints the list,
+  // then the verdicts.
+  it("a provider module's requests asked nothing, even when they say lifetime", () => {
+    const list = stored(
+      { provider: 'module:foo', in_call: 0, asked: 'lifetime', read: 0, write: 5000 },
+      { provider: 'module:foo', in_call: 1, asked: 'lifetime', read: 0 },
+    );
+    expect(cacheReadVerdicts(list), show(list)).toEqual([
+      { outcome: 'not_asked' },
+      { outcome: 'not_asked' },
+    ]);
+  });
+
+  // Can fail: the string test on `provider` removed, so reading this request throws a TypeError.
+  // One list per case: in one list the first throw would hide the second. Prints the list and the
+  // error, then the verdict.
+  it.each<[string, unknown]>([
+    ['no provider', undefined],
+    ['a numeric provider (5)', 5],
+  ])(
+    'a stored request that says lifetime with %s asked nothing, and is read without a throw',
+    (_label, provider) => {
+      const list = stored({ provider, in_call: 0, asked: 'lifetime' });
+      expect(() => cacheReadVerdicts(list), show(list)).not.toThrow();
+      expect(cacheReadVerdicts(list), show(list)).toEqual([{ outcome: 'not_asked' }]);
+    },
+  );
 });
