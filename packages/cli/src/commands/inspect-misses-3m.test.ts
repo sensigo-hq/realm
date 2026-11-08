@@ -137,7 +137,7 @@ describe('caching 3-M A-2b1 — inspect prints each miss beneath its own attempt
     const lines = await render(twoAttempts());
     const near = around(lines, '     attempt 1/2: ');
     expect(near[1], near.join('\n')).toBe(
-      '       cache miss: request 2 of 2 read 0 of 6897 expected tokens (unexplained)',
+      '       cache miss: request 2 of 2 read 0 of 6897 expected tokens — nothing the cache covers differs on the record from request 1; the provider may have dropped the entry; it started 1 second after that request',
     );
   });
 
@@ -146,7 +146,7 @@ describe('caching 3-M A-2b1 — inspect prints each miss beneath its own attempt
     const lines = await render(twoAttempts());
     const near = around(lines, '     Diagnostics (attempt 2/2): ');
     expect(near[1], near.join('\n')).toBe(
-      '       cache miss: request 2 of 2 read 0 of 5000 expected tokens (unexplained)',
+      '       cache miss: request 2 of 2 read 0 of 5000 expected tokens — nothing the cache covers differs on the record from request 1; the provider may have dropped the entry; it started 1 second after that request',
     );
   });
 
@@ -211,8 +211,8 @@ describe('caching 3-M A-2b1 — inspect prints each miss beneath its own attempt
     ]);
     const near = around(lines, '     Diagnostics: ');
     expect(near.slice(1), near.join('\n')).toEqual([
-      '       cache miss: request 3 of 6 read 1000 of 6993 expected tokens (unexplained)',
-      '       cache miss: request 5 of 6 read 0 of 7181 expected tokens (possibly_expired)',
+      '       cache miss: request 3 of 6 read 1000 of 6993 expected tokens — nothing the cache covers differs on the record from request 2; the provider may have dropped the entry; it started 2 seconds after that request',
+      '       cache miss: request 5 of 6 read 0 of 7181 expected tokens — possibly expired: it started 7 minutes after request 4, longer than the 5 minutes the provider granted',
     ]);
   });
 });
