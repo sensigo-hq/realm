@@ -538,6 +538,43 @@ export interface PrefixParts {
 }
 
 /**
+ * Caching 3-M (piece A-1): where a request's copied predecessor (`UsageRecord.reference`) came from:
+ * `run`, the run's own record — the same step's last request there, from an earlier drive. A later
+ * piece adds its own member. Normalised at the write: any other word drops the reference.
+ */
+export const CACHE_REFERENCE_SOURCES = ['run'] as const;
+export type CacheReferenceSource = (typeof CACHE_REFERENCE_SOURCES)[number];
+
+/**
+ * Caching 3-M (piece A-1): a copy of a request's predecessor — the same step's previous request —
+ * made where the predecessor is not the element before it in the same stored list: `from` says where
+ * it was found, `request_start` is required, and each other field is the predecessor's own, copied
+ * when it had one. `prefix_sha256` is not copied (it equals `prefix_parts.prompt` on both providers).
+ * Never a `reference` of its own, never a `request_index` (an index is not identity, #715 (R)).
+ */
+export type CacheReference = { from: CacheReferenceSource } & Pick<UsageRecord, 'request_start'> &
+  Partial<
+    Pick<
+      UsageRecord,
+      | 'request_id'
+      | 'provider'
+      | 'model'
+      | 'endpoint'
+      | 'cache_read_input_tokens'
+      | 'cache_creation_input_tokens'
+      | 'cache_write_tokens'
+      | 'cache_creation'
+      | 'cache_lifetime_s'
+      | 'cache_ttl_sent'
+      | 'cache_auto'
+      | 'prefix_chars'
+      | 'prefix_parts'
+      | 'cache_marked'
+      | 'request_strict_sent'
+    >
+  >;
+
+/**
  * Caching 3-B (A6, E3, HB7): a custom endpoint answered 400 naming a cache field Realm added, and a
  * retry without the cache fields worked. `proven` is `cache_fields` when the request that worked
  * dropped only the cache fields, `none` when it also dropped strict (#311's ladder ran on the retry's
@@ -669,6 +706,16 @@ export interface UsageRecord {
   /** Caching 3-B (A6, D2): this OpenAI request carried the cache key, a hint, not an ask: beside
    *  `provider_rules`, or (#896) beside the 30-minute ask on GPT-5.6 and later. */
   cache_key_sent?: true;
+  /**
+   * Caching 3-M (piece A-1): a copy of this request's predecessor, the same step's previous
+   * request. Set only on a step's first request in a drive, when its predecessor is on the run's
+   * record (an earlier drive that failed the step, or a step resumed and driven again): `from:
+   * 'run'`. Every other request's predecessor is the element before it in the same stored list, so
+   * nothing is copied for it. It never holds a `reference` of its own, and never `request_index`
+   * (an index is not identity, #715's rule). Minted by `realm agent` (`attachRecordedReference`);
+   * normalised where it enters the record (`boundRequestFacts`).
+   */
+  reference?: CacheReference;
 }
 
 /** Issue #600 — the per-step roll-up plus the per-request detail. */
