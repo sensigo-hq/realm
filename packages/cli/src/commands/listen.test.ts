@@ -2494,8 +2494,15 @@ describe('E2 — early replies reach the sender', () => {
   }, 15_000);
 
   const BIG = 50 * 1024 * 1024;
+  // C4 and C5 ask only that a sender still writing its body gets the reply. The server keeps
+  // reading for `lingerMs` after a refusal and then destroys the socket, and a destroy with unread data
+  // is a reset: a sender that has not read the reply by then sees EPIPE instead (listen.ts, refuse).
+  // The suite's `LINGER` (500 ms) is the window a loaded runner can miss (main's run 42439693129, job
+  // node24-floor: C5 saw EPIPE after 894 ms, and IA 5 saw it too); these two cells wait out a long one,
+  // and the server closes as soon as the sender is done, so they do not take longer.
+  const LONG_LINGER = 10_000;
   it('C4 — http.request writing 50 MiB in 64 KiB chunks, no Content-Length, gets 413 with its JSON', async () => {
-    const { port } = await serve();
+    const { port } = await serve({ lingerMs: LONG_LINGER });
     const got = await inWorker(
       `const { parentPort, workerData } = require('node:worker_threads');
        const http = require('node:http');
@@ -2523,7 +2530,7 @@ describe('E2 — early replies reach the sender', () => {
   }, 30_000);
 
   it('C5 — fetch with a streamed 50 MiB body gets 413 with its JSON', async () => {
-    const { port } = await serve();
+    const { port } = await serve({ lingerMs: LONG_LINGER });
     const got = await inWorker(
       `const { parentPort, workerData } = require('node:worker_threads');
        let sent = 0;
