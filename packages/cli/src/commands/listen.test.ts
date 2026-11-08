@@ -2732,6 +2732,22 @@ describe('E2 — early replies reach the sender', () => {
       }),
       ...over,
     });
+  /**
+   * `slowSpawnDeps`, and the instant its delayed spawn returned: the moment the 202 could first be
+   * written. A cell that asks whether a socket was closed "at once" compares its close with this
+   * instant (an order), not with a number of milliseconds.
+   */
+  const timedSlowSpawnDeps = () => {
+    let writableAt: number | undefined;
+    const deps = makeDeps({
+      spawnAgent: vi.fn(async (): Promise<SpawnResult> => {
+        await sleep(LINGER + 300);
+        writableAt = performance.now();
+        return { pid: 4242 };
+      }),
+    });
+    return { deps, replyWritableAt: () => writableAt };
+  };
   /** A request the route accepts (202). */
   const VALID_ONE =
     `POST /wf HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n` +
@@ -2861,7 +2877,8 @@ describe('E2 — early replies reach the sender', () => {
   }, 15_000);
 
   it('C16 — past 32 requests after a queued refusal, the socket is closed at once', async () => {
-    const { port, closedAt } = await serve({}, slowSpawnDeps());
+    const { deps, replyWritableAt } = timedSlowSpawnDeps();
+    const { port, closedAt } = await serve({}, deps);
     const started = performance.now();
     const s = rawSender(port, VALID_THEN_GET + TINY.repeat(40));
     await waitFor(() => s.state.localPort !== undefined, 2_000);
@@ -2870,20 +2887,27 @@ describe('E2 — early replies reach the sender', () => {
     const afterStart = closed === undefined ? 'still open' : closed - started;
     // Long enough for the 202 (`LINGER` + 300 ms) to have been written, had the socket survived.
     await sleep(LINGER + 600);
+    const writableAt = replyWritableAt();
     // (a) red when the ignoring has no cap (the socket stays open until the replies are written and
-    //     the linger ends, 1300 ms or later); (b) prints the close time after the sender started
-    //     and the statuses (none: a reply not yet sent is lost past the cap, as the docs say). The
-    //     bound is 800 ms: sender and server share one event loop, and timers here run up to about
-    //     1 s late.
+    //     the linger ends: it closes after the reply could be written, or not within the wait); (b)
+    //     prints whether the socket closed before the reply could be written, the close time after
+    //     the sender started and the statuses (none: a reply not yet sent is lost past the cap, as
+    //     the docs say). "At once" is an ORDER, not a number: the socket closed before the delayed
+    //     spawn returned, the moment the 202 could first be written. A bound in milliseconds (800)
+    //     failed on a loaded CI runner (main's run 42435574349: closed at 927.5 ms with no status,
+    //     the cap held), because sender and server share one event loop and everything runs late
+    //     together.
     expect({
-      closedAtOnce: typeof afterStart === 'number' && afterStart <= 800,
+      closedBeforeReplyWritable:
+        closed !== undefined && (writableAt === undefined || closed <= writableAt),
       afterStart,
       statuses: statuses(s.state.raw),
-    }).toEqual({ closedAtOnce: true, afterStart: expect.any(Number), statuses: [] });
+    }).toEqual({ closedBeforeReplyWritable: true, afterStart: expect.any(Number), statuses: [] });
   }, 15_000);
 
   it('C16b — the 33rd request after a queued refusal closes the socket at once: the cap is exactly 32', async () => {
-    const { port, closedAt } = await serve({}, slowSpawnDeps());
+    const { deps, replyWritableAt } = timedSlowSpawnDeps();
+    const { port, closedAt } = await serve({}, deps);
     const started = performance.now();
     const s = rawSender(port, VALID_THEN_GET + TINY.repeat(33));
     await waitFor(() => s.state.localPort !== undefined, 2_000);
@@ -2892,14 +2916,18 @@ describe('E2 — early replies reach the sender', () => {
     const afterStart = closed === undefined ? 'still open' : closed - started;
     // Long enough for the 202 (`LINGER` + 300 ms) to have been written, had the socket survived.
     await sleep(LINGER + 600);
+    const writableAt = replyWritableAt();
     // With C14b's 32 (the replies arrive), this pins the boundary. (a) red when the cap is over 32
     // (the 33rd request is ignored, and the socket stays open until the replies are written and the
-    // linger ends); (b) prints the close time after the sender started and the statuses.
+    // linger ends: it closes after the reply could be written, or not within the wait); (b) prints
+    // whether the socket closed before the reply could be written (an order, as in C16), the close
+    // time after the sender started and the statuses.
     expect({
-      closedAtOnce: typeof afterStart === 'number' && afterStart <= 800,
+      closedBeforeReplyWritable:
+        closed !== undefined && (writableAt === undefined || closed <= writableAt),
       afterStart,
       statuses: statuses(s.state.raw),
-    }).toEqual({ closedAtOnce: true, afterStart: expect.any(Number), statuses: [] });
+    }).toEqual({ closedBeforeReplyWritable: true, afterStart: expect.any(Number), statuses: [] });
   }, 15_000);
 
   it('C15c — a queued refusal written while the one linger slot is taken closes the way Node does', async () => {
