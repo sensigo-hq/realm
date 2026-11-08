@@ -171,9 +171,9 @@ const ZOD_V3_RESTRICTIONS = {
 const TEST_CLOCK_RESTRICTIONS = [
   {
     name: '@sensigo/realm-testing',
-    importNames: ['createTestLocation'],
+    importNames: ['createTestLocation', 'createTestHome'],
     message:
-      'A production module never creates a test location: `createTestLocation` is for tests (#715, D6-52).',
+      'A production module never creates a test location or a test home: `createTestLocation` and `createTestHome` are for tests (#715, D6-52).',
   },
   {
     name: '@sensigo/realm',
