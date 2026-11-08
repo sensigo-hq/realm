@@ -26,6 +26,7 @@ import { mcpCommand } from './commands/mcp.js';
 import { serveCommand } from './commands/serve.js';
 // issue #367 (part 3): `realm run migrate`, run-scoped.
 import { runMigrateCommand } from './commands/run-migrate.js';
+import { runImportCommand } from './commands/run-import.js';
 import { agentCommand } from './commands/agent.js';
 import { webhookCommand } from './commands/webhook.js';
 import { listenCommand } from './commands/listen.js';
@@ -68,6 +69,8 @@ export const runCommands = [
   attemptsCommand,
   drainCommand,
   runMigrateCommand,
+  // #616 PR-2c c11b: `realm run import <path…>`.
+  runImportCommand,
 ];
 
 /** Commands that maintain the store file (realm db <cmd>; #616 PR-2c). */

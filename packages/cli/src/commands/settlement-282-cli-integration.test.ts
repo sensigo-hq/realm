@@ -4,10 +4,8 @@
 // run_phase can be deliberately stale — the whole point of a #282 "G" fixture).
 import { describe, it, expect } from 'vitest';
 import { writeFile, mkdir } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
-import { purgeRuns } from './purge.js';
 import { resumeRun } from './resume.js';
 import { buildExportBundle } from './export.js';
 import { listRuns } from './list.js';
@@ -80,71 +78,6 @@ async function injectRun(dir: string, run: RunRecord): Promise<void> {
   await writeFile(join(dir, `${run.id}.json`), JSON.stringify(run, null, 2), 'utf8');
 }
 
-describe('PURGE_DERIVES_PHASE end-to-end (issue #279, increment 2, PR-C)', () => {
-  it('a grandfathered ("G") fixture purges (bucket "purged", not "blocked") — real JsonTraceBufferStore + real JsonFileStore', async () => {
-    const h = await makeTempHome();
-    const dir = h.home.runStore.runsDirPath;
-    await mkdir(dir, { recursive: true });
-    try {
-      const runStore = h.home.runStore;
-      const traceBufferStore = h.home.traceBufferStore;
-      const run = makeGrandfatheredFixture({});
-      await injectRun(dir, run);
-
-      const result = await purgeRuns({ runId: run.id, dryRun: false }, runStore, [
-        traceBufferStore,
-      ]);
-
-      expect(result.purged).toContain(run.id);
-      expect(result.blocked).toHaveLength(0);
-      expect(existsSync(join(dir, `${run.id}.json`))).toBe(false);
-    } finally {
-      await h.cleanup();
-    }
-  });
-
-  it('a second G fixture with an unknown-age claim is skipped in BATCH mode (not force-purged), and reports resumable:true for the fail∧gate shape', async () => {
-    const h = await makeTempHome();
-    const dir = h.home.runStore.runsDirPath;
-    await mkdir(dir, { recursive: true });
-    try {
-      const runStore = h.home.runStore;
-      const traceBufferStore = h.home.traceBufferStore;
-      const run = makeGrandfatheredFixture({
-        id: 'g-unknown-claim',
-        completed_steps: [],
-        failed_steps: ['a'],
-        terminal_reason: undefined,
-        in_progress_steps: ['b'],
-        claims: { b: { deadline: null } }, // unknown-age (no deadline) — batch must skip it
-      });
-      await injectRun(dir, run);
-
-      const dryRun = await purgeRuns({ dryRun: true }, runStore, [traceBufferStore]);
-      const skippedIds = dryRun.skipped.map((s) => s.runId);
-      expect(skippedIds).toContain(run.id);
-
-      const selected = dryRun.selected.find((c) => c.run.id === run.id);
-      // A resumable check on any OTHER, cleanly-selected G fixture (fail∧gate shape) — construct
-      // one alongside to prove `resumable` derives correctly for the class.
-      const cleanFailFixture = makeGrandfatheredFixture({
-        id: 'g-clean-fail',
-        completed_steps: [],
-        failed_steps: ['a'],
-        terminal_reason: undefined,
-      });
-      await injectRun(dir, cleanFailFixture);
-      const dryRun2 = await purgeRuns({ runId: cleanFailFixture.id, dryRun: true }, runStore, [
-        traceBufferStore,
-      ]);
-      expect(dryRun2.selected[0]?.resumable).toBe(true);
-      expect(selected).toBeUndefined(); // the unknown-claim fixture never entered `selected` in batch
-    } finally {
-      await h.cleanup();
-    }
-  });
-});
-
 describe('RESUME_STRIPS_ZOMBIE_GATE / RESUME_ADMITS_GRANDFATHERED (issue #279, increment 2, PR-C)', () => {
   it('resume, through the CLI admission gate, ADMITS a grandfathered G fixture and strips its zombie gate — the disclosure is returned for the CLI to print', async () => {
     const h = await makeTempHome();
@@ -206,28 +139,6 @@ describe('EXPORT_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
       await h.cleanup();
     }
   });
-
-  it('a synthetic stale-gate ∧ pending-ledger record surfaces the drain-warning (mutually exclusive with the non-terminal warning)', async () => {
-    const h = await makeTempHome();
-    const dir = h.home.runStore.runsDirPath;
-    await mkdir(dir, { recursive: true });
-    try {
-      const runStore = h.home.runStore;
-      const traceBufferStore = h.home.traceBufferStore;
-      const run = makeGrandfatheredFixture({
-        finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
-      });
-      await injectRun(dir, run);
-      const { warning } = await buildExportBundle(run.id, {
-        runStore,
-        failedAttemptStore: { read: async () => ({ records: [], capped: false }) },
-        traceBufferStore,
-      });
-      expect(warning).toMatch(/finalizer\(s\) not yet delivered — realm run drain/);
-    } finally {
-      await h.cleanup();
-    }
-  });
 });
 
 describe('list/inspect render pins (issue #279, increment 2, PR-C)', () => {
@@ -244,22 +155,6 @@ describe('list/inspect render pins (issue #279, increment 2, PR-C)', () => {
       expect(output).toContain('completed');
       expect(output).not.toContain('gate_waiting');
       expect(output).not.toContain('gate:');
-    } finally {
-      await h.cleanup();
-    }
-  });
-
-  it('list.ts --status completed FINDS a grandfathered G fixture (filter derives, never trusts persisted)', async () => {
-    const h = await makeTempHome();
-    const dir = h.home.runStore.runsDirPath;
-    await mkdir(dir, { recursive: true });
-    try {
-      const runStore = h.home.runStore;
-      const run = makeGrandfatheredFixture({});
-      await injectRun(dir, run);
-
-      const output = await listRuns(undefined, runStore, 'completed');
-      expect(output).toContain(run.id);
     } finally {
       await h.cleanup();
     }

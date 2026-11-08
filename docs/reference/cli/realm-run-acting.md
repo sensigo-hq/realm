@@ -2,19 +2,20 @@
 
 <!-- description: Reference for the realm run subcommands that change a run or the store: their arguments, flags, output and exit codes. -->
 
-`realm run` has fifteen subcommands. This page covers the nine that change a run or the store. The six that only read are in [`realm run`: commands that read](realm-run-reading.md). Every output shown came from a run of the command.
+`realm run` has sixteen subcommands. This page covers the ten that change a run or the store. The six that only read are in [`realm run`: commands that read](realm-run-reading.md). Every output shown came from a run of the command.
 
-| Subcommand            | What it does                                                  | Acts when                   |
-| --------------------- | ------------------------------------------------------------- | --------------------------- |
-| [`respond`](#respond) | Answers a gate.                                               | Always                      |
-| [`advance`](#advance) | Runs what a run owes the engine, with no model.               | Always                      |
-| [`resume`](#resume)   | Makes a failed step runnable again.                           | Always                      |
-| [`abandon`](#abandon) | Ends an open run.                                             | Always                      |
-| [`cleanup`](#cleanup) | Abandons every open run that has been idle for a given time.  | Unless `--dry-run` is given |
-| [`reclaim`](#reclaim) | Frees a step that was started and never finished.             | Only with `--force`         |
-| [`drain`](#drain)     | Runs the cleanup steps a finished run still owes.             | Only with `--force`         |
-| [`purge`](#purge)     | Deletes finished runs.                                        | Only with `--force`         |
-| [`migrate`](#migrate) | Records the ending of runs that were written by old versions. | Only with `--force`         |
+| Subcommand            | What it does                                                   | Acts when                   |
+| --------------------- | -------------------------------------------------------------- | --------------------------- |
+| [`respond`](#respond) | Answers a gate.                                                | Always                      |
+| [`advance`](#advance) | Runs what a run owes the engine, with no model.                | Always                      |
+| [`resume`](#resume)   | Makes a failed step runnable again.                            | Always                      |
+| [`abandon`](#abandon) | Ends an open run.                                              | Always                      |
+| [`cleanup`](#cleanup) | Abandons every open run that has been idle for a given time.   | Unless `--dry-run` is given |
+| [`reclaim`](#reclaim) | Frees a step that was started and never finished.              | Only with `--force`         |
+| [`drain`](#drain)     | Runs the cleanup steps a finished run still owes.              | Only with `--force`         |
+| [`purge`](#purge)     | Deletes finished runs.                                         | Only with `--force`         |
+| [`migrate`](#migrate) | Records the ending of runs that were written by old versions.  | Only with `--force`         |
+| [`import`](#import)   | Brings run records and exports from JSON files into the store. | Always                      |
 
 A duration is a whole number followed by `d`, `h` or `m`: `30d`, `6h`, `10m`. A run ID that is not in the store gets `Run not found: <id>` and exit code 1. A run ID whose file cannot be read as a run (empty, not JSON, not a run record, holding another run, in the format of an earlier Realm, or not readable) gets a message naming the file, what is wrong with it and the way out, and exit code 1 (added after version 0.47.0); `purge <id> --force` then deletes nothing, as before.
 
@@ -718,6 +719,51 @@ Residue: 0 terminal run(s) still without a recorded seal arm.
 ```
 
 **Exit code:** 0. 1 if a write failed, or if `--stamp-seals` was not given. 2 only with `--detailed-exitcode`, as described above. A run file that cannot be read as a run, except a copy of a run whose own file reads, is listed in its own group (`<n> run file(s) could not be read and were left untouched:`) with what is wrong with it, and named on standard error with its way out; the residue line counts it apart from the terminal runs (`Residue: <n> terminal run(s) still without a recorded seal arm; <m> run file(s) could not be read.`), and it makes `--detailed-exitcode` give 2 (added after version 0.47.0).
+
+## `import`
+
+```text
+realm run import <path...>
+```
+
+Added after version 0.48.0. Brings Realm's own JSON documents into the store: run records, as the old store kept them in its `runs/` folder, and the files [`realm run export`](realm-run-reading.md#export) writes. Each `<path>` is a file, or a folder whose `.json` files are imported. A folder is read for the `.json` files directly in it, not below it; its other entries are not read, and the command counts them. A run already in the store is never overwritten, and the files you give are never moved, changed or deleted.
+
+Before the store is opened and before any file is read, every `<path>` is looked at. The first one that cannot be imported from is named, and nothing is imported: `Error: <path>: no such file or folder`, `Error: <path>: neither a file nor a folder`, `Error: <path>: no .json files (a folder is read for .json files directly in it, not below it)`, or `Error: <path>: <the system's reason>`. The store's own refusals, such as a home that still holds the old store's folders, are one `Error:` line, and nothing is imported.
+
+Each file gets one line, in the order of the arguments and a folder's files in name order: a word, two spaces, the file, and after a colon why it was not imported.
+
+| Word        | What it means                                                                                                                                                               |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `imported`  | The run was not in the store, and now is.                                                                                                                                   |
+| `unchanged` | The run is in the store with the same content. Nothing was done.                                                                                                            |
+| `diverged`  | The store holds the run at another version, or with other content at its version, or a live run already holds its idempotency key. The stored run is kept.                  |
+| `purged`    | The run was deleted from this store, on the day the line names. It is not brought back.                                                                                     |
+| `legacy`    | A run or an export in a format this Realm does not read: an old `state`-shaped record, a record whose times are not in the current form, or an export older than version 4. |
+| `not_a_run` | Not a run record or an export, or a file that could not be read. The line says which.                                                                                       |
+
+A line ends with notes in square brackets when there is more to say: `run_phase re-derived` when the phase a record carried is not the one its record gives (the store keeps the one it works out), `exported with <n> values hidden` for an export that hid values, and, in this version, `wal_not_imported`, `attempts_not_imported` and `sealed_not_imported` for an export's write-ahead log, failed attempts and sealed artifacts, which are not imported. An export is masked when it is written, and an import takes a file's values as they are: a run imported from an export holds its hidden values, and over the same run already in the store it reads `diverged`. The old store's `<id>.attempts.jsonl` files are not `.json` files: they are not imported.
+
+On a folder holding a run record, an export, a file that is not a run and a note:
+
+```bash
+realm run import ./old-runs
+```
+
+```text
+imported  ./old-runs/2f0c6d1e-4b7a-4c1e-9a3d-5e8f1b2c3d4e.json
+imported  ./old-runs/9b4e2a7c-1d3f-4e5a-8b6c-7d9e0f1a2b3c.realm.json  [wal_not_imported: 1 line]
+not_a_run  ./old-runs/broken.json: neither a run record nor an export (it has no id)
+3 files: 2 imported, 1 not a run.
+Ignored 1 entry that is not a .json file.
+```
+
+After the files' lines, one line counts the files by word; when a folder's entries were not read, one more line counts them.
+
+When the store refuses a write for a reason that is not the file's (it stays busy, its disk is full, it cannot be written), or a file meets an error nothing expects, the import stops at that file. The lines already printed stand, then `Error: stopped at <path>: <message>`, and what to do: `<n> files were not started; run the same command again: runs already imported read unchanged.`, or, for an error nothing expects, its stack and `<n> files were not started; fix or move that file, then run the command again.` No count line is printed.
+
+As in the CLI's other output, a path under your home folder has the home folder's name hidden when the output is piped or logged.
+
+**Exit code:** 0 when every file was `imported` or `unchanged`. 1 when any file was not, when a path is refused, or when the import stopped. Running the same command again is safe: the runs it imported read `unchanged`. A folder that holds runs in an old format exits 1 even when every other file imported: their lines say `legacy`.
 
 ## See also
 
