@@ -4,7 +4,7 @@
 // version holds, a step that rewrites evidence, a second migrator at the same moment: each must leave the
 // file at a version whose schema and rows are exactly that version's.
 //
-// Only version 1 exists, so the cells climb a synthetic ladder built here. Version 1 is core's own entry
+// Only version 1 exists, so the cells climb a synthetic ladder (`test-support/schema-versions.ts`). Version 1 is core's own entry
 // (its schema IS the constant: no cell copies or counts its text); version 2 adds two tables and fills
 // the first; version 3 rebuilds the first table with a new column, the design owner's way (the old table renamed away,
 // the new one created under its final name with its exact text, the rows copied, the old one dropped),
@@ -19,31 +19,8 @@ import { REALM_STORE_SCHEMA, REALM_STORE_VERSIONS, type StoreSchemaVersions } fr
 import { afterEach, describe, expect, it } from 'vitest';
 import { openDatabase, type DatabaseLike } from './driver.js';
 import { EVIDENCE_RECHECK_PAGE, migrateSchema, storedSchemaDifference } from './schema-ladder.js';
-
-const V2_TABLE = 'CREATE TABLE ladder_notes (k TEXT NOT NULL)';
-const V2_TAGS = 'CREATE TABLE ladder_tags (tag TEXT NOT NULL)';
-const V3_TABLE = 'CREATE TABLE ladder_notes (k TEXT NOT NULL, w TEXT)';
-const V3_INDEX = 'CREATE INDEX ladder_notes_by_k ON ladder_notes (k)';
-const STEP_2 = [V2_TABLE, V2_TAGS, "INSERT INTO ladder_notes (k) VALUES ('written by step 2')"];
-const STEP_3 = [
-  'ALTER TABLE ladder_notes RENAME TO ladder_notes_old',
-  V3_TABLE,
-  'INSERT INTO ladder_notes (k) SELECT k FROM ladder_notes_old',
-  'DROP TABLE ladder_notes_old',
-  V3_INDEX,
-];
-const V2_SCHEMA = [...REALM_STORE_SCHEMA, V2_TABLE, V2_TAGS];
-// The rebuilt table keeps its place in the schema's order; in a climbed file it lands after `ladder_tags`.
-const V3_SCHEMA = [...REALM_STORE_SCHEMA, V3_TABLE, V2_TAGS, V3_INDEX];
-
-/** Core's versions, with the synthetic 2 and 3 after them; `step3` replaces version 3's step. */
-function ladder(step3: readonly string[] = STEP_3): StoreSchemaVersions {
-  return new Map([
-    ...REALM_STORE_VERSIONS,
-    [2, { schema: V2_SCHEMA, upgrade: STEP_2 }],
-    [3, { schema: V3_SCHEMA, upgrade: step3 }],
-  ]);
-}
+// The synthetic ladder (versions 2 and 3, their steps and tables), shared with c6's maintenance cells.
+import { ladder, STEP_3, V2_SCHEMA, V3_SCHEMA } from './test-support/schema-versions.js';
 
 const dirs: string[] = [];
 const connections: DatabaseLike[] = [];

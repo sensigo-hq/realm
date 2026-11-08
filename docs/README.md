@@ -60,6 +60,7 @@ Realm is a workflow engine that an AI agent calls. These pages describe Realm as
 - [`realm workflow`](reference/cli/realm-workflow.md)
 - [`realm run`: commands that read](reference/cli/realm-run-reading.md)
 - [`realm run`: commands that act](reference/cli/realm-run-acting.md)
+- [`realm db`](reference/cli/realm-db.md)
 - [`realm agent`](reference/cli/realm-agent.md)
 - [`realm listen`](reference/cli/realm-listen.md)
 - [`realm mcp` and `realm serve`](reference/cli/realm-mcp-and-serve.md)

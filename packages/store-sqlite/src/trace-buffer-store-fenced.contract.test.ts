@@ -7,8 +7,8 @@
 // The adapter writes the runs the store fences against where the store reads them: on a second
 // connection to the home's file (`openForeignConnection`), one `BEGIN IMMEDIATE` + `insertRunRecord`
 // + `COMMIT` per run. The cases this form cannot run come as skips (`skipped: true`), registered
-// with the runner's own skip; each is covered by the store's own suite or by B6 (the table in the
-// prompt, `sqlite-616-b5-fenced-contract-in-transaction.md`). No byte hooks: a byte count computed
+// with the runner's own skip; each is covered by the store's own suite, in the cell that the
+// comment beside it in the skip list below names. No byte hooks: a byte count computed
 // from the store's own rows would restate the store's own formula.
 //
 // Each assertion carries (1) the break that turns it red and (2) what it prints when it fails.
@@ -175,7 +175,8 @@ describe('SqliteTraceBufferStore — the fenced trace-buffer contract, in its ow
       //     (2) prints the skipped cases' names.
       expect(skipped.sort()).toEqual(
         [
-          // FENCE_DATA's racers: covered by B6 (a second process changes the run mid-write).
+          // FENCE_DATA's racers: covered by trace-buffer-store-racers-616.test.ts, its cells "row 1"
+          // to "row 6" (a second process changes the run mid-write).
           `SKIPPED — ${park}: step_open_for_trace RACER (appendFenced)`,
           `SKIPPED — ${park}: run_absent_or_terminal RACER (deleteAllForRunFenced)`,
           `SKIPPED — ${park}: run_at_version RACER (deleteFenced)`,
@@ -189,8 +190,12 @@ describe('SqliteTraceBufferStore — the fenced trace-buffer contract, in its ow
           `SKIPPED — ${held}: MALFORMED while the key is held (a step member on the run-wide method)`,
           // A failing run read: covered by B4's check 7.
           "SKIPPED — an in-transaction store has no injected run read to fail — its own suite must exercise a failing in-transaction run read: deleteAllForRunFenced: a fence run read throwing FsIoError propagates it exactly — never mistaken for deleteIfExists's own failure and wrapped",
-          // The latch laws: B4's checks 1 (NO_SILENT_LOSS) and 6b (CS_OCCUPANCY); B6's
-          // concurrent-writers leg (PER_KEY_INDEPENDENCE).
+          // The latch laws: B4's checks 1 (NO_SILENT_LOSS; CS_OCCUPANCY's read) and 6b
+          // (CS_OCCUPANCY's fenced deletes), and trace-buffer-store-racers-616.test.ts's
+          // deleteAllForRun cell (CS_OCCUPANCY's unfenced per-run delete; the unfenced per-step
+          // delete has no cell, as no real break changes what it does). PER_KEY_INDEPENDENCE cannot
+          // hold on one write lock per file: load-616.test.ts's "append at N writers" cells stand in
+          // (unit 17).
           `SKIPPED — ${latch}: holding the CS: concurrent read/delete/deleteAllForRun neither succeed during occupancy nor corrupt state after release`,
           `SKIPPED — ${latch}: a disjoint-run key completes a full append+read round-trip while another key is latched open`,
           `SKIPPED — ${latch}: a settle (read-then-delete) starting while append is parked adopts the full committed batch`,

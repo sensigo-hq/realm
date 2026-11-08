@@ -8,9 +8,10 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: run
 // and gate ids, file names, printed lines — never a token or an environment.
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, onTestFinished, vi } from 'vitest';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { JsonWorkflowStore, WorkflowError } from '@sensigo/realm';
 import { abandonCommand, emptyReasonRefusal } from './abandon.js';
 import { respondCommand } from './respond.js';
 import { inspectRun } from './inspect.js';
@@ -240,6 +241,47 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
       // walk A6c: schema_version "1", a string
       A6c: await out('a6c', copyOf('a6c', { schema_version: '1' })),
     }).toEqual({ A4b: act, A5b: act, A6c: act });
+  });
+
+  it("#616 PR-2c c5c: a damaged pointer at a gate (no file, no fault — the SQLite registry's) — its own words, never 'Repair it: re-register'", async () => {
+    const { id } = await atGate('wf');
+    // A copy of the SQLite registry's `damagedPointerError` (store-sqlite `workflow-store.ts:73-86`,
+    // private to its module): its code, details and message. Injected through the JSON registry's
+    // `get`, as no command reaches it at the base.
+    const pointer =
+      "The registered copy of workflow 'wf' is missing from the store or is not JSON: something " +
+      'other than Realm changed the database. Register the workflow again from its source; if ' +
+      'this message comes back, restore the database from a backup.';
+    const spy = vi.spyOn(JsonWorkflowStore.prototype, 'get').mockRejectedValue(
+      new WorkflowError(pointer, {
+        code: 'RESOURCE_FORMAT_INVALID',
+        category: 'RESOURCE',
+        agentAction: 'stop',
+        retryable: false,
+        details: { workflowId: 'wf' },
+      }),
+    );
+    onTestFinished(() => spy.mockRestore());
+    const r = await abandon(id);
+    // (a) red when the pointer gets a repair act (the `fault` condition removed: the fork says
+    //     "Repair it: re-register …" and drops the backup clause), the answer line comes back, or the
+    //     record is touched; (b) prints the refusal after core's sentence, and each part.
+    expect({
+      failed: r.failed,
+      unchanged: r.unchanged,
+      tail: r.err.slice(NOT_OPEN(id).length + 1),
+      backup: r.err.includes('restore the database from a backup'),
+      repairIt: r.err.includes('Repair it: re-register'),
+    }).toEqual({
+      failed: true,
+      unchanged: true,
+      tail:
+        `${UNANSWERABLE} ${pointer} This run is waiting on human gate 'approve', which cannot be ` +
+        'answered until its workflow can be read; realm run abandon refuses a run that is waiting ' +
+        'on a gate. Once re-registered, answer the gate.',
+      backup: true,
+      repairIt: false,
+    });
   });
 
   it('#819 follow-up 2 (R2, the audit’s B1): walk A6a and A6b (an older Realm’s copy) and reader B’s newer shape, at a gate — the class’s own remedy, and no "Answer it"', async () => {

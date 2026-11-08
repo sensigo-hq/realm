@@ -36,10 +36,20 @@ import {
 } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
-import { getSystemErrorMessage } from 'node:util';
+import { getSystemErrorMap } from 'node:util';
 import { WorkflowError } from '@sensigo/realm';
 import { readOnlyError } from './connection.js';
 import { VERSION } from './version.js';
+
+/**
+ * The operating system's text for `errno` (`permission denied`), in Node's words. It reads
+ * `getSystemErrorMap` (Node 16), never `getSystemErrorMessage` (Node 22.12): the package must load
+ * on every Node the CLI allows, so that its own loader can refuse a Node without SQLite in one line
+ * instead of the CLI dying at start. An errno Node does not know reads as Node's own text for it.
+ */
+export function systemErrorText(errno: number): string {
+  return getSystemErrorMap().get(errno)?.[1] ?? `Unknown system error ${errno}`;
+}
 
 /** The database file's name in the home. */
 export const DATABASE_FILE = 'realm.db';
@@ -81,7 +91,7 @@ function writing<T>(path: string, op: () => T): T {
   try {
     return op();
   } catch (err) {
-    if (isSystemError(err)) throw readOnlyError(path, getSystemErrorMessage(err.errno));
+    if (isSystemError(err)) throw readOnlyError(path, systemErrorText(err.errno));
     throw err;
   }
 }
@@ -193,7 +203,7 @@ function placeFence(home: string, name: string): void {
         return;
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
-          throw isSystemError(err) ? readOnlyError(target, getSystemErrorMessage(err.errno)) : err;
+          throw isSystemError(err) ? readOnlyError(target, systemErrorText(err.errno)) : err;
         }
       }
       const is = inspect(target);
