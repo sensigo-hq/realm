@@ -108,6 +108,10 @@ export type ErrorCode =
   // that fails SQLite's quick check (the copy kept, the source named as possibly damaged).
   | 'STATE_STORE_BACKUP_REFUSED'
   | 'STATE_STORE_BACKUP_UNVERIFIED'
+  // issue #616 PR-2c c7: `realm db migrate` refused before the open (a home with no store file, or
+  // an empty one), and a schema step of it that failed (the file at the version read after it).
+  | 'STATE_STORE_MIGRATE_REFUSED'
+  | 'STATE_STORE_MIGRATE_FAILED'
   | 'STATE_HOME_HOLDS_LEGACY_STORE'
   | 'STATE_RUN_PURGED'
   | 'STATE_RUN_TIMESTAMP_INVALID'
