@@ -12,12 +12,12 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { lagless } from '../test-support/lag.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome, runIds } from '../test-support/temp-home.js';
 
 const mocks = vi.hoisted(() => ({ question: vi.fn(), close: vi.fn() }));
 vi.mock('node:readline/promises', () => ({
@@ -108,8 +108,6 @@ describe(
     beforeEach(async () => {
       h = await makeTempHome();
       home = h.root;
-      mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
-      mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
       runStore = h.home.runStore;
       workflowStore = h.home.workflowStore;
     });
@@ -555,15 +553,6 @@ describe(
     const logged = (): string[] => logSpy.mock.calls.map((c: unknown[]) => String(c[0]));
     const errored = (): string[] => errSpy.mock.calls.map((c: unknown[]) => String(c[0]));
     const asked = (): string[] => mocks.question.mock.calls.map((c: unknown[]) => String(c[0]));
-    const runIds = (): string[] => {
-      try {
-        return readdirSync(join(home, '.realm', 'runs'))
-          .filter((f) => f.endsWith('.json'))
-          .map((f) => f.replace('.json', ''));
-      } catch {
-        return [];
-      }
-    };
     async function readRecord(id: string) {
       return (await h.home.runStore.get(id)).record;
     }
@@ -632,7 +621,7 @@ describe(
         '    execution: agent',
         '    depends_on: [review]',
       ]);
-      const id = runIds()[0]!;
+      const id = (await runIds(h.home.runStore))[0]!;
       const out = logged();
       const gateLine = out.find((l) => l.startsWith('  ⏸  Gate: review | gate_id: '))!;
       const gateId = gateLine.replace('  ⏸  Gate: review | gate_id: ', '');
@@ -695,7 +684,7 @@ describe(
         {
           asked: asked(),
           refused: errored().some((l) => l.includes("Invalid input for step 'compute'")),
-          phase: (await readRecord(runIds()[0]!)).run_phase,
+          phase: (await readRecord((await runIds(h.home.runStore))[0]!)).run_phase,
           code,
         },
         errored().join('\n'),
@@ -752,7 +741,7 @@ describe(
         '    depends_on: [check]',
         '    preconditions: ["check.ok == true"]',
       ]);
-      const pre = runIds()[0]!;
+      const pre = (await runIds(h.home.runStore))[0]!;
       const preAsked = asked();
       const preErr = errored()
         .flatMap((l) => l.split('\n'))
@@ -766,10 +755,10 @@ describe(
         }),
         code: 1,
       });
-      rmSync(join(home, '.realm', 'runs'), { recursive: true, force: true });
-      // A handler this program lacks.
+      // A handler this program lacks (the run it makes: the one that was not there before).
+      const beforeCap = await runIds(h.home.runStore);
       const capCode = await run(lone('stall-cap', ['    handler: missing_h']));
-      const cap = runIds()[0]!;
+      const cap = (await runIds(h.home.runStore)).find((i) => !beforeCap.includes(i))!;
       // (a) red when the step is asked for, or the stop does not name it and a way out; (b) prints
       //     the prompts, stderr and the exit.
       expect({
@@ -787,12 +776,19 @@ describe(
         ],
         code: 1,
       });
-      rmSync(join(home, '.realm', 'runs'), { recursive: true, force: true });
       // An invalid trust: the loader refuses the file before any run exists, so nothing is asked.
+      const beforeTrust = await runIds(h.home.runStore);
       const trustCode = await run(lone('stall-trust', ['    trust: bogus_value']));
       // (a) red when a step with an invalid trust is asked for, or a run is created for it; (b)
       //     prints the prompts, the runs and stderr.
-      expect({ asked: asked(), runs: runIds(), code: trustCode }, errored().join('\n')).toEqual({
+      expect(
+        {
+          asked: asked(),
+          runs: (await runIds(h.home.runStore)).filter((i) => !beforeTrust.includes(i)),
+          code: trustCode,
+        },
+        errored().join('\n'),
+      ).toEqual({
         asked: [],
         runs: [],
         code: 1,
@@ -821,7 +817,7 @@ describe(
       // Completed.
       mocks.question.mockImplementation(async () => '');
       const completed = await run(agentStep);
-      const beforeAbort = runIds();
+      const beforeAbort = await runIds(h.home.runStore);
       // Another ending: the gate's answer makes the guard abort the run.
       mocks.question.mockImplementation(async (prompt: string) =>
         prompt.startsWith('  Choice ') ? 'hold' : '',
@@ -844,8 +840,9 @@ describe(
         `    abort_unless: ["review.choice == 'ship'"]`,
         '    abort_message: Held.',
       ]);
-      const abortedPhase = (await readRecord(runIds().find((i) => !beforeAbort.includes(i))!))
-        .run_phase;
+      const abortedPhase = (
+        await readRecord((await runIds(h.home.runStore)).find((i) => !beforeAbort.includes(i))!)
+      ).run_phase;
       // Nothing else could run.
       const stalled = await run([
         'id: exit-stall',
@@ -869,7 +866,7 @@ describe(
       // No terminal: the built `realm`, stdin a pipe.
       const project = mkdtempSync(join(tmpdir(), 'realm-625-pin-d-tty-'));
       writeFileSync(join(project, 'workflow.yaml'), [...agentStep, ''].join('\n'));
-      const before = runIds().length;
+      const before = (await runIds(h.home.runStore)).length;
       const noTty = realm(home, ['workflow', 'run', join(project, 'workflow.yaml')], {
         cwd: project,
       });
@@ -884,7 +881,7 @@ describe(
         left,
         leftSaid: leftErr.includes('Prompt cancelled — detached from run'),
         noTty: noTty.code,
-        noRun: runIds().length === before,
+        noRun: (await runIds(h.home.runStore)).length === before,
       }).toEqual({
         completed: 0,
         aborted: 1,
@@ -964,7 +961,7 @@ describe(
         '    description: Note.',
         '    execution: agent',
       ]);
-      const id = runIds()[0]!;
+      const id = (await runIds(h.home.runStore))[0]!;
       const map = errored()
         .join('\n')
         .split('\n')
@@ -1072,7 +1069,7 @@ describe(
       //     names a run only to read its params; each call still starts a new run.
       expect({
         options: runCommand.options.map((o) => o.long),
-        runs: runIds().length,
+        runs: (await runIds(h.home.runStore)).length,
       }).toEqual({
         options: [
           '--params',
@@ -1147,7 +1144,7 @@ describe(
               if (prompt.startsWith('  Choice ')) throw leave();
               return '';
             });
-            const before = new Set(runIds());
+            const before = new Set(await runIds(h.home.runStore));
             const code = await run([
               `id: ${name}`,
               `name: ${name}`,
@@ -1155,7 +1152,7 @@ describe(
               'steps:',
               ...APPROVE(choices),
             ]);
-            const id = runIds().find((r) => !before.has(r))!;
+            const id = (await runIds(h.home.runStore)).find((r) => !before.has(r))!;
             const gate = (await readRecord(id)).pending_gate!.gate_id;
             realm(home, ['workflow', 'register', join(dir, 'workflow.yaml')]);
             const map = mapLines(id);
@@ -1215,7 +1212,7 @@ describe(
           '    description: Fetch.',
           '    execution: auto',
         ]);
-        const id = runIds()[0]!;
+        const id = (await runIds(h.home.runStore))[0]!;
         realm(home, ['workflow', 'register', join(dir, 'workflow.yaml')]);
         const advanced = realm(home, ['run', 'advance', id]);
         const after = await readRecord(id);
@@ -1276,7 +1273,7 @@ describe(
           '    execution: auto',
         ];
         const code = await run(lines);
-        const id = runIds()[0]!;
+        const id = (await runIds(h.home.runStore))[0]!;
         const before = realm(home, ['run', 'advance', id]);
         const registered = realm(home, ['workflow', 'register', join(dir, 'workflow.yaml')]);
         const after = realm(home, ['run', 'advance', id]);
@@ -1322,7 +1319,7 @@ describe(
           '    description: B.',
           '    execution: auto',
         ]);
-        const id = runIds()[0]!;
+        const id = (await runIds(h.home.runStore))[0]!;
         // (a) red when the owed call or the drive is missing, their order changes, or the line under
         //     them counts one command; (b) prints the map.
         expect({ code, map: mapLines(id) }).toEqual({
@@ -1361,7 +1358,7 @@ describe(
           '      properties:',
           '        n: { type: number }',
         ]);
-        const id = runIds()[0]!;
+        const id = (await runIds(h.home.runStore))[0]!;
         // (a) red when the map offers a drive or an owed call for a step no command can run, or
         //     lacks the way out; (b) prints the map.
         expect({ code, map: mapLines(id) }).toEqual({
@@ -1397,7 +1394,7 @@ describe(
         );
         mocks.question.mockImplementation(async () => {
           const store = h.home.runStore;
-          await store.claimStep(runIds()[0]!, 'g', def, {
+          await store.claimStep((await runIds(h.home.runStore))[0]!, 'g', def, {
             by: 'other-b',
             by_source: 'ambient',
             channel: 'advance',
@@ -1413,7 +1410,7 @@ describe(
           '    description: G.',
           '    execution: auto',
         ]);
-        const id = runIds()[0]!;
+        const id = (await runIds(h.home.runStore))[0]!;
         // (a) red when the map offers the drive or discard for a run in another program's hands, or
         //     no `Go on:` line; (b) prints the map.
         expect({ code, map: mapLines(id) }).toEqual({
@@ -1456,7 +1453,7 @@ describe(
           // Another program runs what the engine owes: `g`, then `s`, which fails and ends the run.
           const store = h.home.runStore;
           await advanceRun(store, def, {
-            runId: runIds()[0]!,
+            runId: (await runIds(h.home.runStore))[0]!,
             caller: 'advance',
             registry: other,
             driver: { by: 'other-b', by_source: 'ambient', channel: 'advance' },
@@ -1464,7 +1461,7 @@ describe(
           throw leave();
         });
         const code = await run(yaml);
-        const id = runIds()[0]!;
+        const id = (await runIds(h.home.runStore))[0]!;
         const registered = realm(home, ['workflow', 'register', join(dir, 'workflow.yaml')]);
         const resumed = realm(home, ['run', 'resume', id, '--from', 's']);
         // (a) red when an ended run with a failed step resume takes gets no `Resume:` line, or the
@@ -1502,7 +1499,7 @@ describe(
           '    when:',
           "      - 'run.params.never_true == true'",
         ]);
-        const id = runIds()[0]!;
+        const id = (await runIds(h.home.runStore))[0]!;
         // (a) red when the stall map offers a command with nothing ready; (b) prints the map.
         expect({ code, map: mapLines(id) }).toEqual({
           code: 1,
@@ -1528,8 +1525,6 @@ describe('issue #729 — realm-run-reading.md, `--stuck` names a run that cannot
   beforeEach(async () => {
     h = await makeTempHome();
     home = h.root;
-    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
-    mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
   });
   afterEach(async () => {
     await h.cleanup();

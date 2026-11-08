@@ -6,10 +6,10 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: the
 // record's answer facts — never a token.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome, runIds } from '../test-support/temp-home.js';
 
 const mocks = vi.hoisted(() => ({ question: vi.fn(), close: vi.fn() }));
 vi.mock('node:readline/promises', () => ({
@@ -29,7 +29,6 @@ describe('#627 W — the dev prompt records its route (cell 5, the CLI door’s 
     h = await makeTempHome();
     home = h.root;
     dir = mkdtempSync(join(tmpdir(), 'realm-prompt-627-wf-'));
-    mkdirSync(join(home, '.realm'), { recursive: true });
     savedHome = process.env['HOME'];
     process.env['HOME'] = home;
     // Without this the non-TTY guard refuses before the prompt is reached.
@@ -80,9 +79,7 @@ describe('#627 W — the dev prompt records its route (cell 5, the CLI door’s 
     await runCommand.parseAsync([join(dir, 'workflow.yaml')], { from: 'user' });
 
     // The handle's run store: the home the command opened through HOME.
-    const runs = h.home.runStore.runsDirPath;
-    const files = readdirSync(runs).filter((f) => f.endsWith('.json'));
-    const { record: run } = await h.home.runStore.get(files[0]!.replace('.json', ''));
+    const { record: run } = await h.home.runStore.get((await runIds(h.home.runStore))[0]!);
     const entry = run.evidence.find((e) => e.kind === 'gate_response');
     // (a) red when the prompt's answer drops the route or the principal's absence (it would read
     //     route_not_declared / principal_not_passed); (b) prints the prompt count and both facts.

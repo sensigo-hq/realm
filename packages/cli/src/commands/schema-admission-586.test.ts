@@ -6,7 +6,7 @@
  * REALM_NO_NUDGE, clearProjectExtensionsCache).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { validateCommand } from './validate.js';
@@ -14,6 +14,7 @@ import { registerCommand } from './register.js';
 import { agentCommand } from './agent.js';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
+import { makeTempHome, runIds, type TempHome } from '../test-support/temp-home.js';
 
 const MALFORMED = `id: sa-wf
 name: SA WF
@@ -56,9 +57,9 @@ steps:
 `;
 
 describe('#586 schema admission — the CLI surfaces', () => {
+  let h: TempHome & { readonly root: string };
   let home: string;
   let dir: string;
-  let wfDir: string;
   let originalHome: string | undefined;
   let savedNoNudge: string | undefined;
   let logSpy: ReturnType<typeof vi.spyOn>;
@@ -66,12 +67,11 @@ describe('#586 schema admission — the CLI surfaces', () => {
   let errSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     clearProjectExtensionsCache();
-    home = mkdtempSync(join(tmpdir(), 'realm-586-cli-'));
+    h = await makeTempHome();
+    home = h.root;
     dir = mkdtempSync(join(tmpdir(), 'realm-586-wf-'));
-    wfDir = join(home, '.realm', 'workflows');
-    mkdirSync(wfDir, { recursive: true });
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     savedNoNudge = process.env['REALM_NO_NUDGE'];
@@ -84,12 +84,12 @@ describe('#586 schema admission — the CLI surfaces', () => {
     }) as never);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (originalHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = originalHome;
     if (savedNoNudge === undefined) delete process.env['REALM_NO_NUDGE'];
     else process.env['REALM_NO_NUDGE'] = savedNoNudge;
-    rmSync(home, { recursive: true, force: true });
+    await h.cleanup();
     rmSync(dir, { recursive: true, force: true });
     vi.restoreAllMocks();
   });
@@ -137,7 +137,7 @@ describe('#586 schema admission — the CLI surfaces', () => {
     await expect(registerCommand.parseAsync([file], { from: 'user' })).rejects.toThrow(
       'process.exit',
     );
-    expect(readdirSync(wfDir)).toEqual([]);
+    expect(await h.home.workflowStore.list()).toEqual([]);
     expect(out(errSpy)).toContain("'params_schema' is not a valid JSON Schema");
   });
 
@@ -192,19 +192,15 @@ describe('#586 schema admission — the CLI surfaces', () => {
   it('validate --registered refuses a PLANTED malformed stored copy', async () => {
     // The grandfathered population: a copy registered before this release keeps RUNNING, and the
     // pre-upgrade audit is what tells the operator about it.
-    writeFileSync(
-      join(wfDir, 'planted.json'),
-      JSON.stringify({
-        id: 'planted',
-        name: 'Planted',
-        version: 1,
-        schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
-        origin: 'human',
-        params_schema: { type: 'banana' },
-        steps: { a: { description: 'a', execution: 'agent' } },
-      }),
-      'utf8',
-    );
+    await h.home.workflowStore.register({
+      id: 'planted',
+      name: 'Planted',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      origin: 'human',
+      params_schema: { type: 'banana' },
+      steps: { a: { description: 'a', execution: 'agent' } },
+    } as never);
     await expect(
       validateCommand.parseAsync(['--registered', 'planted'], { from: 'user' }),
     ).rejects.toThrow('process.exit');
@@ -218,19 +214,15 @@ describe('#586 schema admission — the CLI surfaces', () => {
   });
 
   it('validate --registered renders a stored copy\u2019s ADVISORY uncited — no source file, no line', async () => {
-    writeFileSync(
-      join(wfDir, 'planted-union.json'),
-      JSON.stringify({
-        id: 'planted-union',
-        name: 'Planted Union',
-        version: 1,
-        schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
-        origin: 'human',
-        params_schema: { type: 'object', properties: { a: { type: ['string', 'number'] } } },
-        steps: { a: { description: 'a', execution: 'agent' } },
-      }),
-      'utf8',
-    );
+    await h.home.workflowStore.register({
+      id: 'planted-union',
+      name: 'Planted Union',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      origin: 'human',
+      params_schema: { type: 'object', properties: { a: { type: ['string', 'number'] } } },
+      steps: { a: { description: 'a', execution: 'agent' } },
+    } as never);
     await validateCommand.parseAsync(['--registered', 'planted-union'], { from: 'user' });
     const warned = out(warnSpy);
     expect(warned).toContain("'params_schema' compiles, but Ajv warns:");
@@ -292,12 +284,6 @@ describe('#586 schema admission — the CLI surfaces', () => {
     );
     expect(errored).not.toContain('Invalid input for step');
     expect(exitSpy).toHaveBeenCalledWith(1);
-    let runFiles: string[];
-    try {
-      runFiles = readdirSync(join(home, '.realm', 'runs'));
-    } catch {
-      runFiles = [];
-    }
-    expect(runFiles.filter((f) => f.endsWith('.json'))).toEqual([]);
+    expect(await runIds(h.home.runStore)).toEqual([]);
   }
 });

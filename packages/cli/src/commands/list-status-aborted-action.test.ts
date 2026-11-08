@@ -20,11 +20,10 @@
 // longer exists; the default resolves at CONSTRUCTION time (drain.ts's header has the full
 // account). Historicized here only — this file's dynamic-import-in-beforeAll idiom stays.
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, mkdir } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import type { Command } from 'commander';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
+let h: TempHome & { readonly root: string };
 let home: string;
 let originalHome: string | undefined;
 let listCommand: Command;
@@ -35,8 +34,8 @@ describe('realm run list --status aborted (issue #289) — action-level', () => 
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
   beforeAll(async () => {
-    home = await mkdtemp(join(tmpdir(), 'list-status-aborted-cli-'));
-    await mkdir(join(home, '.realm', 'runs'), { recursive: true });
+    h = await makeTempHome();
+    home = h.root;
     originalHome = process.env['HOME'];
     process.env['HOME'] = home; // set before list.js's own first '@sensigo/realm' import, below
     ({ listCommand } = await import('./list.js'));
@@ -45,7 +44,7 @@ describe('realm run list --status aborted (issue #289) — action-level', () => 
   afterAll(async () => {
     if (originalHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = originalHome;
-    await rm(home, { recursive: true, force: true });
+    await h.cleanup();
   });
 
   beforeEach(() => {

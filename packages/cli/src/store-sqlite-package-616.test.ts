@@ -1,6 +1,5 @@
 // store-sqlite-package-616.test.ts — issue #616 PR-1a unit 1: the package `@sensigo/realm-store-sqlite`
-// (`packages/store-sqlite`) exists, stays unpublished, and the repo's checks that watch every
-// package already see it.
+// (`packages/store-sqlite`) exists, and the repo's checks that watch every package already see it.
 //
 // HOME: the cli package, as the source censuses (`commands/clock-census-715b.test.ts`): cli's test
 // task waits for every package's build, so an edit in any package re-hashes it.
@@ -51,8 +50,6 @@ interface PackageList {
 
 const QUOTED = /'([a-z][a-z-]*)(?:\/src)?'/g;
 const WORD = /([a-z][a-z-]*)/g;
-const UNPUBLISHED =
-  'private until the change that publishes it (issue #616): this list holds the published packages';
 const NOT_INSTALLED =
   'no package depends on it until the change that wires it in (issue #616): a project installs no copy of it';
 
@@ -158,14 +155,8 @@ const LISTS: readonly PackageList[] = [
     list: /for p in ([a-z -]+); do/g,
     count: 1,
     name: WORD,
-    leavesOut: { 'store-sqlite': UNPUBLISHED },
   },
-  {
-    file: 'scripts/test/pin-deps.test.mjs',
-    list: /for \(const dir of \[('core', [^\]]*)\]\)/g,
-    count: 6,
-    leavesOut: { 'store-sqlite': UNPUBLISHED },
-  },
+  // scripts/test/pin-deps.test.mjs keeps no list by hand since c13a: PD1 reads the published set from the tree.
   {
     file: 'packages/cli/src/multi-copy/layout.ts',
     list: /const PACKAGES: Record<PackageKey, \{ dir: string; name: string \}> = \{([\s\S]*?)\n\};/g,

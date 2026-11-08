@@ -307,8 +307,6 @@ describe('#729 PR-3 — export v5', () => {
     const h = await makeTempHome();
     homes.push(h);
     const home = h.root;
-    const runs = join(home, '.realm', 'runs');
-    mkdirSync(runs, { recursive: true });
     // A run whose workflow copy cannot be read: the declared secrets are unknown (load_failed).
     const { record: run } = await h.home.runStore.create({
       workflowId: 'not-registered',
@@ -384,8 +382,6 @@ describe('#729 PR-3 — inspect prints one receipt line', () => {
     const h = await makeTempHome();
     homes.push(h);
     const home = h.root;
-    const runs = join(home, '.realm', 'runs');
-    mkdirSync(runs, { recursive: true });
     const project = join(root, 'project');
     mkdirSync(project);
     manifest(project, MANIFEST, `SVC_TOKEN=${SECRET}\n`);
@@ -491,8 +487,6 @@ describe('#729 PR-3 correction 1 (F28) — inspect shows a guard abort', () => {
     const h = await makeTempHome();
     homes.push(h);
     const home = h.root;
-    const runs = join(home, '.realm', 'runs');
-    mkdirSync(runs, { recursive: true });
     const def = {
       ...definitionAt(undefined),
       id: 'guard-729',
@@ -1162,7 +1156,6 @@ async function damagedCopyWithRecordedManifest(): Promise<{ home: string; runId:
   homes.push(h);
   const home = h.root;
   const project = join(root, 'project');
-  mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
   mkdirSync(project);
   manifest(project, MANIFEST, `SVC_TOKEN=${SECRET}\n`);
   const workflows = h.home.workflowStore;
@@ -1509,7 +1502,6 @@ async function withheldRun(
   homes.push(h);
   const home = h.root;
   const project = join(root, `project-${state}${plainOutputs ? '-plain' : ''}${tag}`);
-  mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
   mkdirSync(project);
   manifest(project, MANIFEST, `SVC_TOKEN=${SECRET}\n`);
   const definition = definitionAt(state === 'no_manifest' ? undefined : project, {
@@ -1856,7 +1848,6 @@ async function endedRuns(
   homes.push(h);
   const home = h.root;
   const project = join(root, `project-ended-${state}-${endedCount}`);
-  mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
   mkdirSync(project);
   manifest(project, MANIFEST, `SVC_TOKEN=${SECRET}\n`);
   await h.home.workflowStore.register(definitionAt(project, { id: 'ended-729' }));
@@ -1918,7 +1909,6 @@ async function diffRuns3(output: string): Promise<{
   homes.push(h);
   const home = h.root;
   const project = join(root, `project-diff-${output.length}`);
-  mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
   mkdirSync(project);
   manifest(project, MANIFEST, `SVC_TOKEN=${SECRET}\n`);
   const definition = definitionAt(project, { id: 'diff-729' });
@@ -1984,7 +1974,6 @@ describe('#729 PR-3 correction 4 — the read commands and the two un-read surfa
     const h = await makeTempHome();
     homes.push(h);
     const home = h.root;
-    mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
     const store = h.home.runStore;
     const { record: run } = await store.create({
       workflowId: 'held-729',
@@ -2020,6 +2009,8 @@ describe('#729 PR-3 correction 4 — the read commands and the two un-read surfa
     const h = await makeTempHome();
     homes.push(h);
     const home = h.root;
+    // Kept (#616 PR-2c c0, R5 (i)): the sidecar is appended to before any run is written, and the
+    // attempt store's `append` makes no folder.
     mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
     const sidecarOnly = randomUUID();
     await failedAttemptHolding(h, sidecarOnly);

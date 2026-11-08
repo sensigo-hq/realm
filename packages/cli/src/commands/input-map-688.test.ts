@@ -7,7 +7,7 @@
 // run-cannot-go-on-625.test.ts). Beside each assertion: (a) what turns it red; (b) what it prints on
 // failure (the prompts asked, the printed lines, the exit code) — never an environment.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,6 +19,7 @@ vi.mock('node:readline/promises', () => ({
 
 import { runCommand } from './run.js';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
+import { makeTempHome, runIds, type TempHome } from '../test-support/temp-home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const flat = (t: string): string => t.replace(/\s+/g, ' ');
@@ -55,6 +56,7 @@ const SHAPE_B = [
 ].join('\n');
 
 describe('#688 — realm workflow run stops on a mapped step whose built input does not fit', () => {
+  let h: TempHome & { readonly root: string };
   let home: string;
   let dir: string;
   let savedHome: string | undefined;
@@ -62,11 +64,11 @@ describe('#688 — realm workflow run stops on a mapped step whose built input d
   let errSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     clearProjectExtensionsCache();
-    home = mkdtempSync(join(tmpdir(), 'realm-688-run-home-'));
+    h = await makeTempHome();
+    home = h.root;
     dir = mkdtempSync(join(tmpdir(), 'realm-688-run-wf-'));
-    mkdirSync(join(home, '.realm'), { recursive: true });
     savedHome = process.env['HOME'];
     process.env['HOME'] = home;
     savedTTY = process.stdin.isTTY;
@@ -79,12 +81,12 @@ describe('#688 — realm workflow run stops on a mapped step whose built input d
     }) as never);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (savedTTY === undefined) delete (process.stdin as { isTTY?: boolean }).isTTY;
     else process.stdin.isTTY = savedTTY;
     if (savedHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = savedHome;
-    rmSync(home, { recursive: true, force: true });
+    await h.cleanup();
     rmSync(dir, { recursive: true, force: true });
     mocks.question.mockReset();
     vi.restoreAllMocks();
@@ -92,10 +94,7 @@ describe('#688 — realm workflow run stops on a mapped step whose built input d
 
   const errored = (): string[] => errSpy.mock.calls.map((c: unknown[]) => String(c[0]));
   const asked = (): string[] => mocks.question.mock.calls.map((c: unknown[]) => String(c[0]));
-  const runId = (): string =>
-    readdirSync(join(home, '.realm', 'runs'))
-      .filter((f) => f.endsWith('.json'))[0]!
-      .replace('.json', '');
+  const runId = async (): Promise<string> => (await runIds(h.home.runStore))[0]!;
 
   async function run(text: string): Promise<number> {
     writeFileSync(join(dir, 'workflow.yaml'), text, 'utf8');
@@ -130,7 +129,7 @@ describe('#688 — realm workflow run stops on a mapped step whose built input d
       lines: [
         '\nWorkflow stalled: nothing else can run.',
         "'publish' cannot run (input_schema): Invalid input for step 'publish': the input must have required property 'text'.",
-        `Run ${runId()} stays open (phase 'running'): for 'publish', correct its input_map or its input_schema and register the workflow again; then, after a fix, realm run advance ${runId()} — or end it: realm run abandon ${runId()}`,
+        `Run ${await runId()} stays open (phase 'running'): for 'publish', correct its input_map or its input_schema and register the workflow again; then, after a fix, realm run advance ${await runId()} — or end it: realm run abandon ${await runId()}`,
       ],
     });
   });

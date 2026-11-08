@@ -11,7 +11,7 @@
 // so a renderer composing over the raw gate shows the fake there. Every value is a fake. Each
 // assertion names (a) the change that turns it red and (b) what it prints when it fails.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -42,7 +42,7 @@ import {
   writerTally,
   writerTestSeams,
 } from '../output/writer.js';
-import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome, runIds } from '../test-support/temp-home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 const FAKE = 'FAKE-DECLARED-PR4-0729';
@@ -107,7 +107,6 @@ beforeEach(async () => {
   clearProjectExtensionsCache();
   h = await makeTempHome();
   home = h.root;
-  mkdirSync(join(home, '.realm'), { recursive: true });
   savedHome = process.env['HOME'];
   process.env['HOME'] = home;
   savedTTY = process.stdin.isTTY;
@@ -164,9 +163,7 @@ async function workflowRun(
     rmSync(dir, { recursive: true, force: true });
   }
   const runs = h.home.runStore;
-  const id = readdirSync(join(home, '.realm', 'runs'))
-    .filter((f) => f.endsWith('.json'))[0]!
-    .replace('.json', '');
+  const id = (await runIds(h.home.runStore))[0]!;
   return (await runs.get(id)).record;
 }
 

@@ -1,7 +1,6 @@
 // Integration tests for MCP tool business logic — tests handle* functions directly.
 import { declared } from '../test-support/declared.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { JsonFileStore, WorkflowError, ExtensionRegistry } from '@sensigo/realm';
@@ -85,11 +84,9 @@ afterEach(async () => {
 
 describe('mcp tool handlers', () => {
   let h: TempHome;
-  let runDir: string;
 
   beforeEach(async () => {
     h = await makeTempHome();
-    runDir = h.stores.runStore.runsDirPath;
   });
   afterEach(async () => {
     await h.cleanup();
@@ -467,9 +464,8 @@ describe('mcp tool handlers', () => {
   });
 
   it('handleStartRun resolves a filesystem auto step using the default built-in registry', async () => {
-    // Write a temp file to read.
-    const tempFilePath = join(runDir, 'test-input.txt');
-    mkdirSync(runDir, { recursive: true });
+    // Write a temp file to read: a scratch file in the helper's own root, outside the store.
+    const tempFilePath = join(h.root!, 'test-input.txt');
     await writeFile(tempFilePath, 'hello from filesystem adapter');
 
     const filesystemDef: WorkflowDefinition = {

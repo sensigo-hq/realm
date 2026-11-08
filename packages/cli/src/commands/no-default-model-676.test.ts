@@ -6,16 +6,7 @@
 // port — so a red build never sends a request to a real provider. Every command is stopped if it
 // has not exited after 20 s, so a red build leaves no server running.
 import { spawn, type ChildProcess } from 'node:child_process';
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { once } from 'node:events';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -23,7 +14,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { startAnthropicStub } from '../agent/test-support/anthropic-stub.js';
-import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome, runIds } from '../test-support/temp-home.js';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 const ANTHROPIC_LIST = 'https://platform.claude.com/docs/en/models/overview';
@@ -203,10 +194,9 @@ async function notFoundStub(options: { hold?: boolean } = {}): Promise<{
   return { server, url: `http://127.0.0.1:${port}`, models, systems, release };
 }
 
-function runFiles(): string[] {
-  const dir = join(home, '.realm', 'runs');
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir).filter((f) => f.endsWith('.json'));
+/** The runs on the handle's home, by id, read through its store (#616 PR-2c, c0). */
+async function runFiles(): Promise<string[]> {
+  return runIds(h.home.runStore);
 }
 
 /** The fields E5 reads from the one run record (`drive_failures` is written only after the 404). */
@@ -215,11 +205,11 @@ interface E5Record {
   drive_failures?: { entries?: Array<{ declared_per_attempt_ms?: number }> };
 }
 
-/** The one run record: the only `*.json` directly under the runs folder (temp files end `.tmp`). */
-function readOnlyRun(): E5Record | undefined {
-  const files = runFiles();
-  if (files.length !== 1) return undefined;
-  return JSON.parse(readFileSync(join(home, '.realm', 'runs', files[0]!), 'utf8')) as E5Record;
+/** The one run record, read through the handle's store: undefined unless the home holds exactly one. */
+async function readOnlyRun(): Promise<E5Record | undefined> {
+  const ids = await runFiles();
+  if (ids.length !== 1) return undefined;
+  return (await h.home.runStore.get(ids[0]!)).record as unknown as E5Record;
 }
 
 /** Whether a process with this pid exists (`kill(pid, 0)` does not throw). */
@@ -233,9 +223,9 @@ function isAlive(pid: number): boolean {
 }
 
 /** Polls `done` every 50 ms until it holds or `ms` pass; returns whether it held. */
-async function waitUntil(done: () => boolean, ms: number): Promise<boolean> {
+async function waitUntil(done: () => boolean | Promise<boolean>, ms: number): Promise<boolean> {
   const deadline = Date.now() + ms;
-  while (!done()) {
+  while (!(await done())) {
     if (Date.now() >= deadline) return false;
     await new Promise((r) => setTimeout(r, 50));
   }
@@ -252,7 +242,7 @@ describe('realm agent refuses without --model, before any run (issue #676)', () 
     );
     expect(r.code).toBe(1);
     expect(r.stderr.trim()).toBe(`Error: ${ONLY_ANTHROPIC} Nothing was started.`);
-    expect(runFiles()).toEqual([]);
+    expect(await runFiles()).toEqual([]);
   }, 30_000);
 
   it('E2 --run-id of an existing run, no --model → "If run <id> exists, it was not changed.", the run file unchanged', async () => {
@@ -262,8 +252,7 @@ describe('realm agent refuses without --model, before any run (issue #676)', () 
       workflowVersion: 1,
       params: {},
     });
-    const file = join(home, '.realm', 'runs', `${run.id}.json`);
-    const before = readFileSync(file);
+    const before = JSON.stringify((await store.get(run.id)).record);
     const r = await runCli(
       ['agent', '--run-id', run.id],
       env({ ANTHROPIC_API_KEY: 'k-676', ANTHROPIC_BASE_URL: CLOSED_PORT }),
@@ -273,7 +262,7 @@ describe('realm agent refuses without --model, before any run (issue #676)', () 
       `Error: ${ONLY_ANTHROPIC} If run ${run.id} exists, it was not changed.`,
     );
     expect(r.stderr).not.toContain('Nothing was started.');
-    expect(readFileSync(file).equals(before)).toBe(true);
+    expect(JSON.stringify((await store.get(run.id)).record) === before).toBe(true);
   }, 30_000);
 
   it('E2b --run-id of a run that does not exist, no --model → the same ending, which does not say the run exists; no run file', async () => {
@@ -285,7 +274,7 @@ describe('realm agent refuses without --model, before any run (issue #676)', () 
     expect(r.stderr.trim()).toBe(
       `Error: ${ONLY_ANTHROPIC} If run no-such-run-676 exists, it was not changed.`,
     );
-    expect(runFiles()).toEqual([]);
+    expect(await runFiles()).toEqual([]);
   }, 30_000);
 
   it("E7 --model '' → the same refusal as a missing --model, no run file", async () => {
@@ -295,7 +284,7 @@ describe('realm agent refuses without --model, before any run (issue #676)', () 
     );
     expect(r.code).toBe(1);
     expect(r.stderr.trim()).toBe(`Error: ${ONLY_ANTHROPIC} Nothing was started.`);
-    expect(runFiles()).toEqual([]);
+    expect(await runFiles()).toEqual([]);
   }, 30_000);
 
   it("E7 --model '   ' → the same refusal as a missing --model, no run file", async () => {
@@ -305,7 +294,7 @@ describe('realm agent refuses without --model, before any run (issue #676)', () 
     );
     expect(r.code).toBe(1);
     expect(r.stderr.trim()).toBe(`Error: ${ONLY_ANTHROPIC} Nothing was started.`);
-    expect(runFiles()).toEqual([]);
+    expect(await runFiles()).toEqual([]);
   }, 30_000);
 
   it('E6 --provider anthropic --model m with only OPENAI_API_KEY → the key refusal, no run file', async () => {
@@ -319,7 +308,7 @@ describe('realm agent refuses without --model, before any run (issue #676)', () 
     );
     expect(r.code).toBe(1);
     expect(r.stderr.trim()).toBe(`Error: ${ANTHROPIC_KEY_MISSING} Nothing was started.`);
-    expect(runFiles()).toEqual([]);
+    expect(await runFiles()).toEqual([]);
   }, 30_000);
 });
 
@@ -342,9 +331,9 @@ describe('the model-not-found sentence, against a local stand-in (issue #676)', 
       );
       expect(stub.models).toContain('claude-does-not-exist');
 
-      const files = runFiles();
+      const files = await runFiles();
       expect(files).toHaveLength(1);
-      const run = JSON.parse(readFileSync(join(home, '.realm', 'runs', files[0]!), 'utf8')) as {
+      const run = (await h.home.runStore.get(files[0]!)).record as unknown as {
         drive_failures?: {
           entries: Array<{ error_class: string; last_observed_status?: number; message: string }>;
         };
@@ -375,7 +364,7 @@ describe('realm listen requires --model and checks no API key (issue #676)', () 
     );
     expect(r.code).toBe(1);
     expect(r.stderr.trim()).toBe(LISTEN_ANTHROPIC);
-    expect(existsSync(join(home, '.realm', 'workflows'))).toBe(false);
+    expect((await h.home.workflowStore.list()).length > 0).toBe(false);
   }, 30_000);
 
   it('E4b no --provider, no --model, no key at all → the no---provider line (refused for the model, never a key)', async () => {
@@ -385,7 +374,7 @@ describe('realm listen requires --model and checks no API key (issue #676)', () 
     );
     expect(r.code).toBe(1);
     expect(r.stderr.trim()).toBe(LISTEN_NO_PROVIDER);
-    expect(existsSync(join(home, '.realm', 'workflows'))).toBe(false);
+    expect((await h.home.workflowStore.list()).length > 0).toBe(false);
   }, 30_000);
 
   it("E7 listen --model '' → the no---provider line; nothing registered", async () => {
@@ -395,7 +384,7 @@ describe('realm listen requires --model and checks no API key (issue #676)', () 
     );
     expect(r.code).toBe(1);
     expect(r.stderr.trim()).toBe(LISTEN_NO_PROVIDER);
-    expect(existsSync(join(home, '.realm', 'workflows'))).toBe(false);
+    expect((await h.home.workflowStore.list()).length > 0).toBe(false);
   }, 30_000);
 
   it('E4c no key in listen’s own environment, ANTHROPIC_API_KEY only in the workflow folder’s .env → listen starts', async () => {
@@ -480,12 +469,12 @@ describe('realm listen requires --model and checks no API key (issue #676)', () 
       await waitUntil(() => stub.models.includes('m-676'), 20_000);
       // At the hit, the stand-in has not answered, so the agent is waiting on it. The record and the
       // check are read with no await in between.
-      pid = readOnlyRun()?.agent_pid;
+      pid = (await readOnlyRun())?.agent_pid;
       const aliveAtHit = pid !== undefined && isAlive(pid);
       stub.release();
-      let record = readOnlyRun();
-      await waitUntil(() => {
-        record = readOnlyRun();
+      let record = await readOnlyRun();
+      await waitUntil(async () => {
+        record = await readOnlyRun();
         return (
           record?.drive_failures?.entries?.[0] !== undefined && pid !== undefined && !isAlive(pid)
         );
@@ -518,7 +507,7 @@ describe('realm listen requires --model and checks no API key (issue #676)', () 
       // writing under the removed temp folder.
       stub.release();
       try {
-        pid ??= readOnlyRun()?.agent_pid;
+        pid ??= (await readOnlyRun())?.agent_pid;
       } catch {
         /* keep going */
       }
@@ -548,7 +537,7 @@ describe('realm listen --prompt-cache reaches the agent it starts (issue #600 PR
   /** Posts one webhook, then waits until `done` holds and the agent the record names has exited. */
   async function oneWebhook(
     listen: { port: number; output: () => string },
-    done: () => boolean,
+    done: () => boolean | Promise<boolean>,
   ): Promise<void> {
     const res = await fetch(`http://127.0.0.1:${listen.port}/hook-676`, {
       method: 'POST',
@@ -558,7 +547,7 @@ describe('realm listen --prompt-cache reaches the agent it starts (issue #600 PR
     });
     expect(res.status, listen.output()).toBe(202);
     expect(await waitUntil(done, 20_000), listen.output()).toBe(true);
-    const pid = readOnlyRun()?.agent_pid;
+    const pid = (await readOnlyRun())?.agent_pid;
     if (pid !== undefined && !(await waitUntil(() => !isAlive(pid), 10_000))) {
       try {
         process.kill(pid, 'SIGKILL');
@@ -664,9 +653,9 @@ describe('realm listen --prompt-cache reaches the agent it starts (issue #600 PR
         ],
         env({ ANTHROPIC_API_KEY: 'k-600', ANTHROPIC_BASE_URL: stub.baseUrl }),
       );
-      const stored = () =>
+      const stored = async () =>
         (
-          readOnlyRun() as
+          (await readOnlyRun()) as
             | {
                 evidence?: Array<{
                   diagnostics?: { cache?: { requests?: Array<Record<string, unknown>> } };
@@ -674,8 +663,8 @@ describe('realm listen --prompt-cache reaches the agent it starts (issue #600 PR
               }
             | undefined
         )?.evidence?.[0]?.diagnostics?.cache?.requests?.[0];
-      await oneWebhook(listen, () => stored() !== undefined);
-      const request = stored()!;
+      await oneWebhook(listen, async () => (await stored()) !== undefined);
+      const request = (await stored())!;
       expect(
         {
           cache_requested: request['cache_requested'],
@@ -747,9 +736,9 @@ describe('the re-attach command repeats the flags the CLI was given (issue #676 
       env({ ANTHROPIC_API_KEY: 'k-676', ANTHROPIC_BASE_URL: CLOSED_PORT }),
     );
     expect(r.code).toBe(1);
-    const files = runFiles();
+    const files = await runFiles();
     expect(files).toHaveLength(1);
-    const runId = files[0]!.replace(/\.json$/, '');
+    const runId = files[0]!;
     const line = r.stderr.split('\n').find((l) => l.startsWith("⚠ Step 'publish' is blocked:"));
     expect(line).toBe(
       "⚠ Step 'publish' is blocked: handler 'publish_answer' is not registered in this runner. " +
@@ -796,7 +785,7 @@ describe('the re-attach command repeats the flags the CLI was given (issue #676 
       env({ ANTHROPIC_API_KEY: 'k-600', ANTHROPIC_BASE_URL: CLOSED_PORT }),
     );
     expect(r.code).toBe(1);
-    const runId = runFiles()[0]!.replace(/\.json$/, '');
+    const runId = (await runFiles())[0]!;
     const line = r.stderr.split('\n').find((l) => l.startsWith("⚠ Step 'publish' is blocked:"));
     expect(line).toBe(
       "⚠ Step 'publish' is blocked: handler 'publish_answer' is not registered in this runner. " +

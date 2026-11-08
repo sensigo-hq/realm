@@ -10,7 +10,7 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,6 +31,7 @@ import { runCommand } from './run.js';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
 import { runAgent } from '../agent/run-agent.js';
 import { LlmProvider } from '../agent/providers/llm-provider.js';
+import { makeTempHome, runIds, type TempHome } from '../test-support/temp-home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 
@@ -41,6 +42,7 @@ function claim(page: string, sentence: string): void {
 }
 
 describe('#625 PR-2a, F16 — realm workflow run: engine work owed is not a stall (G1-R1)', () => {
+  let h: TempHome & { readonly root: string };
   let home: string;
   let dir: string;
   let savedHome: string | undefined;
@@ -48,11 +50,11 @@ describe('#625 PR-2a, F16 — realm workflow run: engine work owed is not a stal
   let errSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     clearProjectExtensionsCache();
-    home = mkdtempSync(join(tmpdir(), 'realm-f16-home-'));
+    h = await makeTempHome();
+    home = h.root;
     dir = mkdtempSync(join(tmpdir(), 'realm-f16-wf-'));
-    mkdirSync(join(home, '.realm'), { recursive: true });
     savedHome = process.env['HOME'];
     process.env['HOME'] = home;
     savedTTY = process.stdin.isTTY;
@@ -65,12 +67,12 @@ describe('#625 PR-2a, F16 — realm workflow run: engine work owed is not a stal
     }) as never);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (savedTTY === undefined) delete (process.stdin as { isTTY?: boolean }).isTTY;
     else process.stdin.isTTY = savedTTY;
     if (savedHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = savedHome;
-    rmSync(home, { recursive: true, force: true });
+    await h.cleanup();
     rmSync(dir, { recursive: true, force: true });
     mocks.question.mockReset();
     vi.restoreAllMocks();
@@ -85,9 +87,7 @@ describe('#625 PR-2a, F16 — realm workflow run: engine work owed is not a stal
       if (!(err instanceof Error) || err.message !== 'process.exit') throw err;
       code = Number(exitSpy.mock.calls[0]?.[0]);
     }
-    const id = readdirSync(join(home, '.realm', 'runs'))
-      .filter((f) => f.endsWith('.json'))[0]!
-      .replace('.json', '');
+    const id = (await runIds(h.home.runStore))[0]!;
     const err = errSpy.mock.calls
       .map((c: unknown[]) => String(c[0]))
       .join('\n')

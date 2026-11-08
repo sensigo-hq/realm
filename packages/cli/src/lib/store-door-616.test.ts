@@ -55,6 +55,12 @@ const ALLOWED_TESTS: Record<string, Array<{ file: string; sites: number; subject
         "one cell: the fence judged against the trace buffer's OWN reader, an anchor stub (the door wires the run store as reader)",
     },
     {
+      file: 'multi-copy/multi-copy.test.ts',
+      sites: 11,
+      subject:
+        "two copies of core on one home: the release-line law; its constructions through each copy's namespace ARE the subject; PR-3",
+    },
+    {
       file: 'lib/dedup-store.test.ts',
       sites: 5,
       subject:
@@ -104,16 +110,16 @@ const ALLOWED_TESTS: Record<string, Array<{ file: string; sites: number; subject
         "`JsonTraceBufferStore`'s own cells: a stub reader, a refused non-reader, a missing folder, a broken folder; PR-3 deletes the class",
     },
     {
+      file: 'offered-baseline-627.test.ts',
+      sites: 2,
+      subject:
+        "cell 3: W's and the baseline's servers each on stores from their OWN build (the baseline exports no opener); skipped without REALM_627_BASELINE; c10b",
+    },
+    {
       file: 'release-line-hand-offs.test.ts',
       sites: 2,
       subject:
         "H3: the class refuses a run reader with no release line or another release's, the whole messages; PR-3",
-    },
-    {
-      file: 'server.test.ts',
-      sites: 1,
-      subject:
-        'the #188 seam: a fresh trace buffer on the same runs folder with a throwing reader proves the WAL was consumed; PR-3',
     },
     {
       file: 'tools/failed-attempt-telemetry.test.ts',
@@ -234,9 +240,11 @@ const ALLOWED_TESTS: Record<string, Array<{ file: string; sites: number; subject
 };
 
 /** A construction of one of the six store classes; the failed-attempt class under both its names
- *  (PR-1b renamed `FailedAttemptStore` to `JsonFileFailedAttemptStore`). */
+ *  (PR-1b renamed `FailedAttemptStore` to `JsonFileFailedAttemptStore`). A name reached through a
+ *  namespace (`new core.JsonFileStore(`, `new cliCore.JsonFileStore(`) is a construction too (#616
+ *  PR-2c, c0): the scan missed 15 of them in three files. A subclass's own name is not matched. */
 const CONSTRUCTION =
-  /\bnew\s+(JsonFileStore|JsonWorkflowStore|FailedAttemptStore|JsonFileFailedAttemptStore|JsonFileReplayStore|FileDedupStore|JsonTraceBufferStore)\s*\(/;
+  /\bnew\s+(?:[A-Za-z_$][\w$]*\.)?(JsonFileStore|JsonWorkflowStore|FailedAttemptStore|JsonFileFailedAttemptStore|JsonFileReplayStore|FileDedupStore|JsonTraceBufferStore)\s*\(/;
 
 /** Every non-test, non-declaration .ts source file under a package's src/ (purge-guard's walk). */
 function sourceFiles(pkg: string): string[] {
