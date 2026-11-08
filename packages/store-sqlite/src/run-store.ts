@@ -78,7 +78,11 @@ import {
   type StoreSettlement,
   type WorkflowDefinition,
 } from '@sensigo/realm';
-import { deleteFailure, isOwnStatementFailure } from './artifact-delete-failure.js';
+import {
+  deleteFailure,
+  isOwnStatementFailure,
+  type RowsDeleted,
+} from './artifact-delete-failure.js';
 import { REALM_STORE_SQLITE_BRAND } from './brand.js';
 import { VerifyInconclusive, type RealmDb } from './connection.js';
 import type { DatabaseLike } from './driver.js';
@@ -255,7 +259,7 @@ function idOf(value: unknown): string | undefined {
 
 /** The store's name in a delete failure, and the artifact it names (the shared rule). */
 const STORE = 'SqliteRunStore';
-const ARTIFACT = 'runs';
+export const ARTIFACT = 'runs';
 
 /** What a deletion's body did: its receipt, and the instant it stamped (none when it deleted nothing). */
 interface Deletion {
@@ -297,6 +301,70 @@ function verifyDeleted(db: DatabaseLike, runId: string, deletion: Deletion): boo
   if (deletion.at === undefined) return true;
   const row = db.prepare('SELECT purged_at FROM purged_ids WHERE id = ?').get(runId);
   return row !== undefined && String(row['purged_at']) === deletion.at;
+}
+
+/** What {@link deleteRunIfDeletable} found and did. */
+export type RunDeletionOutcome =
+  /** No run by that id: nothing written. */
+  | { readonly kind: 'absent' }
+  /** A refusal in unit 14's words: nothing written. */
+  | { readonly kind: 'refused'; readonly error: WorkflowError }
+  /** Deleted, stamped `at`: its receipt, and its check by content. */
+  | ({ readonly kind: 'deleted'; readonly at: string } & RowsDeleted);
+
+/** What {@link deleteRunIfDeletable} is given besides the run. */
+export interface RunDeletionOptions {
+  /** The version the caller selected the run at: a run at another version is refused. */
+  readonly expectVersion?: number | undefined;
+  /** The deletion's stamp, as ISO text: asked for only once the run is found deletable. */
+  readonly stamp: () => string;
+  /** Runs one of the deletion's own statements (the run's read, the measure and the deletion). */
+  readonly statement: <R>(run: () => R) => R;
+}
+
+/**
+ * Unit 14's deletion of run `runId` inside the caller's `BEGIN IMMEDIATE` (#616 PR-2c c9: this
+ * store's `deleteAllForRun` and the home's purge both call it). The run is read under the write lock
+ * and judged in unit 14's order, BEFORE any of its rows go: absent; `expectVersion` given and the
+ * stored version not it (core's `STATE_SNAPSHOT_MISMATCH`); a derived phase that is not terminal, or
+ * a `terminal_state` that is not true (`STATE_RUN_BUSY`, `no_longer_terminal`); a finalizer still
+ * `pending` (`STATE_RUN_BUSY`, `drain_pending`). A refusal is returned, not thrown, and writes nothing.
+ * Otherwise `stamp()` is called once, and the run's rows go ({@link deleteRunRows}, its tombstone
+ * stamped with it); the receipt is {@link storedBytesOfRun} of the run before. Synchronous; reads no
+ * clock of its own; a failure of its statements is thrown unmapped, through `statement`.
+ */
+export function deleteRunIfDeletable(
+  db: DatabaseLike,
+  runId: string,
+  options: RunDeletionOptions,
+): RunDeletionOutcome {
+  const run = options.statement(() => readRunInTransaction(db, runId));
+  if (run === null) return { kind: 'absent' };
+  const { expectVersion } = options;
+  if (expectVersion !== undefined && run.version !== expectVersion) {
+    return { kind: 'refused', error: versionConflictError(runId, expectVersion, run.version) };
+  }
+  if (!TERMINAL_PHASES.has(deriveRunPhase(run)) || run.terminal_state !== true) {
+    return { kind: 'refused', error: deleteRefusal(runId, 'no_longer_terminal') };
+  }
+  const pendingFinalizer = Object.entries(run.finalizer_ledger ?? {}).find(
+    ([, entry]) => entry.status === 'pending',
+  );
+  if (pendingFinalizer !== undefined) {
+    return { kind: 'refused', error: deleteRefusal(runId, 'drain_pending') };
+  }
+  const at = options.stamp();
+  const bytes = options.statement(() => {
+    const measured = storedBytesOfRun(db, runId);
+    deleteRunRows(db, runId, at);
+    return measured;
+  });
+  return {
+    kind: 'deleted',
+    at,
+    bytes,
+    gone: (check) => verifyDeleted(check, runId, { bytes_deleted: bytes, at }),
+  };
 }
 
 /**
@@ -837,25 +905,15 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
       const deletion = await this.#db.immediate(
         (db): Deletion => {
           ownStatementFailed = false;
-          const run = statement(() => readRunInTransaction(db, runId));
-          if (run === null) return { bytes_deleted: 0 };
-          if (options?.expectVersion !== undefined && run.version !== options.expectVersion) {
-            throw versionConflictError(runId, options.expectVersion, run.version);
-          }
-          if (!TERMINAL_PHASES.has(deriveRunPhase(run)) || run.terminal_state !== true) {
-            throw deleteRefusal(runId, 'no_longer_terminal');
-          }
-          const pendingFinalizer = Object.entries(run.finalizer_ledger ?? {}).find(
-            ([, entry]) => entry.status === 'pending',
-          );
-          if (pendingFinalizer !== undefined) throw deleteRefusal(runId, 'drain_pending');
-          const at = takeRawReading(this.clock).toISOString();
-          const bytes = statement(() => {
-            const measured = storedBytesOfRun(db, runId);
-            deleteRunRows(db, runId, at);
-            return measured;
+          const judged = deleteRunIfDeletable(db, runId, {
+            expectVersion: options?.expectVersion,
+            // The one reading, under the write lock, once the run is found deletable.
+            stamp: () => takeRawReading(this.clock).toISOString(),
+            statement,
           });
-          return { bytes_deleted: bytes, at };
+          if (judged.kind === 'absent') return { bytes_deleted: 0 };
+          if (judged.kind === 'refused') throw judged.error;
+          return { bytes_deleted: judged.bytes, at: judged.at };
         },
         (db, deletion) => verifyDeleted(db, runId, deletion),
         { takesReading: false },
