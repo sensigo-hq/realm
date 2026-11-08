@@ -280,7 +280,8 @@ describe('#616 PR-2c c6 — realm db backup, on the built CLI', { timeout: 120_0
       copyFileSync(copy, join(newHome, 'realm.db'));
       const again = join(base, 'again.db');
       const r = realm(['db', 'backup', again], newRoot);
-      const bytes = statSync(again).size;
+      // The copy's size, read only when the run made one: a refused run prints its own line below.
+      const bytes = r.code === 0 ? statSync(again).size : 0;
       // (1) red when the copy is not one Realm's open accepts in a home of its own (it is then
       //     refused, one Error line), or the first backup failed; (2) prints both runs.
       expect({ first: first.code, r }).toEqual({
