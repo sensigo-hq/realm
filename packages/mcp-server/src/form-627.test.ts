@@ -14,8 +14,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   ExtensionRegistry,
-  JsonFileStore,
   JsonWorkflowStore,
+  declareReleaseLine,
   advanceRun,
   loadWorkflowFromString,
   submitHumanResponse,
@@ -40,6 +40,41 @@ import { McpDoor } from './door.js';
 import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
 import { makeTempHome, type ServerExtras, type TempHome } from './test-support/temp-home.js';
 
+/** #616 PR-2c (c0, R10): a run store that forwards every verb to `inner`, the ones in `over` replaced —
+ *  a double that intercepts a verb without a second store on the home's folder. It declares this
+ *  realm's release line, as every store realm runs against must. */
+function delegating(inner: RunStore, over: Partial<RunStore>): RunStore {
+  const store = {
+    get clock() {
+      return inner.clock;
+    },
+    persistsClaims: inner.persistsClaims,
+    persistedRunRecordFields: inner.persistedRunRecordFields,
+    create: (o: Parameters<RunStore['create']>[0]) => inner.create(o),
+    get: (id: string) => inner.get(id),
+    update: (r: Parameters<RunStore['update']>[0]) => inner.update(r),
+    list: (w?: string) => inner.list(w),
+    claimStep: (...a: Parameters<RunStore['claimStep']>) => inner.claimStep(...a),
+    settleStep: ((...a: unknown[]) =>
+      (inner.settleStep as (...x: unknown[]) => unknown)(...a)) as RunStore['settleStep'],
+    stampSeal: (...a: Parameters<NonNullable<RunStore['stampSeal']>>) => inner.stampSeal!(...a),
+    ...over,
+  } as RunStore;
+  declareReleaseLine(store);
+  return store;
+}
+
+/** A store over the handle's whose answer's settle fails; opening the gate goes through. */
+function failingSettle(inner: RunStore): RunStore {
+  return delegating(inner, {
+    settleStep: (async (...args: unknown[]) => {
+      if ((args[1] as { kind: string }).kind === 'settle_gate')
+        throw new Error('the store is full');
+      return (inner.settleStep as (...x: unknown[]) => ReturnType<RunStore['settleStep']>)(...args);
+    }) as RunStore['settleStep'],
+  });
+}
+
 // #715 (b) 04 §D (B4): no cell here waits on the real clock for a question to expire. The run store a
 // cell opens sits at a TEST LOCATION (`located`), and `passes(ms)` moves the clock of every location
 // the cell opened, in place of a real sleep; the in-process server (or a spawned child) reads that
@@ -47,7 +82,7 @@ import { makeTempHome, type ServerExtras, type TempHome } from './test-support/t
 const OPENED: TestLocation[] = [];
 async function located(dir: string): Promise<string> {
   // A second server on the same folder in one cell shares its location (and its clock).
-  const open = OPENED.find((l) => l.runsDir === join(dir, 'runs'));
+  const open = OPENED.find((l) => l.root === dir);
   if (open !== undefined) return open.runsDir;
   const loc = await createTestLocation({ start: new Date(), root: dir });
   OPENED.push(loc);
@@ -115,15 +150,15 @@ async function session(
   handler: Handler = async () => ({ action: 'decline' }),
   timeout?: number,
   // Correction 1: a workflow of the cell's own, and a store of its own (B5's failing settle).
-  own: { yaml?: string; runStore?: (dir: string) => JsonFileStore; located?: true } = {},
+  own: { yaml?: string; runStore?: (inner: RunStore) => RunStore; located?: true } = {},
 ): Promise<Session> {
   // With `located`, the location first and the handle on it; else a home of the session's own. A
-  // cell's own run store (a subclass) is built on the handle's home and passed after the spread.
+  // cell's own run store (a wrapper over the handle's, #616 PR-2c c0) is passed after the spread.
   const dir = own.located === true ? await mkdtemp(join(tmpdir(), 'realm-form-627-')) : undefined;
   if (dir !== undefined) await located(dir);
   const h = dir !== undefined ? await makeTempHome({ home: dir }) : await makeTempHome();
   handles.push(h);
-  const runStore = own.runStore?.(h.path) ?? h.stores.runStore;
+  const runStore = own.runStore?.(h.stores.runStore) ?? h.stores.runStore;
   const workflowStore = h.stores.workflowStore;
   const def = loadWorkflowFromString(own.yaml ?? WORKFLOW(timeout));
   await workflowStore.register(def);
@@ -400,16 +435,17 @@ describe('#627 W — the form path (cell 21)', () => {
       // them: the form reaches the client late (the server's reads before it are slow), so the
       // handler's 61 s wait is armed 100 ms of real time after the advance; and the answer's settle
       // takes 300 ms of real time (the store's write).
-      class SlowSettle extends JsonFileStore {
-        override async settleStep(
-          ...args: Parameters<JsonFileStore['settleStep']>
-        ): ReturnType<JsonFileStore['settleStep']> {
-          if (args[1].kind === 'settle_gate') {
-            await new Promise<void>((r) => REAL_SET_TIMEOUT(r, 300));
-          }
-          return super.settleStep(...args);
-        }
-      }
+      const slowSettle = (inner: RunStore): RunStore =>
+        delegating(inner, {
+          settleStep: (async (...args: unknown[]) => {
+            if ((args[1] as { kind: string }).kind === 'settle_gate') {
+              await new Promise<void>((r) => REAL_SET_TIMEOUT(r, 300));
+            }
+            return (inner.settleStep as (...x: unknown[]) => ReturnType<RunStore['settleStep']>)(
+              ...args,
+            );
+          }) as RunStore['settleStep'],
+        });
       const s = await session(
         {},
         async () => {
@@ -418,7 +454,7 @@ describe('#627 W — the form path (cell 21)', () => {
           return { action: 'accept', content: { choice: 'reject' } };
         },
         undefined,
-        { runStore: (dir) => new SlowSettle(join(dir, 'runs')) },
+        { runStore: slowSettle },
       );
       const { runId, gateId } = await openedElsewhere(s);
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
@@ -1093,20 +1129,12 @@ describe('#627 W correction 1 — the form path', () => {
   });
 
   it('B5: an accepted form whose settle fails counts as came back', async () => {
-    class FailingSettle extends JsonFileStore {
-      // Only the answer's settle fails; opening the gate goes through.
-      override async settleStep(
-        ...args: Parameters<JsonFileStore['settleStep']>
-      ): ReturnType<JsonFileStore['settleStep']> {
-        if (args[1].kind === 'settle_gate') throw new Error('the store is full');
-        return super.settleStep(...args);
-      }
-    }
+    // Only the answer's settle fails; opening the gate goes through.
     const s = await session(
       {},
       async () => ({ action: 'accept', content: { choice: 'approve' } }),
       undefined,
-      { runStore: (dir) => new FailingSettle(join(dir, 'runs')) },
+      { runStore: failingSettle },
     );
     const { runId, gateId } = await openedElsewhere(s);
     await s.call('present_question', { run_id: runId, gate_id: gateId }).catch(() => undefined);
@@ -1377,24 +1405,23 @@ describe('#627 W correction 2 — the form path', () => {
       release = r;
     });
     let holdNext = false;
-    class SlowPollStore extends JsonFileStore {
-      override async get(
-        ...args: Parameters<JsonFileStore['get']>
-      ): ReturnType<JsonFileStore['get']> {
-        if (holdNext) {
-          holdNext = false;
-          await held;
-        }
-        return super.get(...args);
-      }
-      override async settleStep(
-        ...args: Parameters<JsonFileStore['settleStep']>
-      ): ReturnType<JsonFileStore['settleStep']> {
-        const r = await super.settleStep(...args);
-        if (args[1].kind === 'settle_gate') release();
-        return r;
-      }
-    }
+    const slowPoll = (inner: RunStore): RunStore =>
+      delegating(inner, {
+        get: async (id: string) => {
+          if (holdNext) {
+            holdNext = false;
+            await held;
+          }
+          return inner.get(id);
+        },
+        settleStep: (async (...args: unknown[]) => {
+          const r = await (
+            inner.settleStep as (...x: unknown[]) => ReturnType<RunStore['settleStep']>
+          )(...args);
+          if ((args[1] as { kind: string }).kind === 'settle_gate') release();
+          return r;
+        }) as RunStore['settleStep'],
+      });
     const s = await session(
       {},
       async () => {
@@ -1403,7 +1430,7 @@ describe('#627 W correction 2 — the form path', () => {
         return { action: 'accept', content: { choice: 'approve' } };
       },
       undefined,
-      { runStore: (dir) => new SlowPollStore(join(dir, 'runs')) },
+      { runStore: slowPoll },
     );
     const { runId, gateId } = await openedElsewhere(s);
     await s.call('present_question', { run_id: runId, gate_id: gateId });
@@ -1598,19 +1625,11 @@ describe('#627 W correction 2 — the form path', () => {
   });
 
   it('1.4b (d): an accepted answer whose write failed → "could not be written", the question still waiting', async () => {
-    class FailingSettle extends JsonFileStore {
-      override async settleStep(
-        ...args: Parameters<JsonFileStore['settleStep']>
-      ): ReturnType<JsonFileStore['settleStep']> {
-        if (args[1].kind === 'settle_gate') throw new Error('the store is full');
-        return super.settleStep(...args);
-      }
-    }
     const s = await session(
       {},
       async () => ({ action: 'accept', content: { choice: 'approve' } }),
       undefined,
-      { runStore: (dir) => new FailingSettle(join(dir, 'runs')) },
+      { runStore: failingSettle },
     );
     const { runId, gateId } = await openedElsewhere(s);
     const reply = await s.call('present_question', { run_id: runId, gate_id: gateId });

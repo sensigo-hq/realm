@@ -6,8 +6,6 @@
 // not module load (drain.ts's header has the full account). This file's ordering idiom stays;
 // historicized here only.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
 import { resumeCommand } from './resume.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
@@ -22,8 +20,6 @@ describe('resume wedge e2e (issue #279, increment 1, PR-B, verification item 4)'
   beforeEach(async () => {
     h = await makeTempHome();
     home = h.root;
-    await mkdir(join(home, '.realm', 'runs'), { recursive: true });
-    await mkdir(join(home, '.realm', 'workflows'), { recursive: true });
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});

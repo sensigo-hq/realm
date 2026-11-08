@@ -7,15 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -42,7 +34,7 @@ import {
   type RunRecord,
   type WorkflowDefinition,
 } from '@sensigo/realm';
-import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome, runIds } from '../test-support/temp-home.js';
 
 const mocks = vi.hoisted(() => ({ question: vi.fn(), close: vi.fn() }));
 vi.mock('node:readline/promises', () => ({
@@ -659,7 +651,6 @@ describe(`${READING_PAGE} — export`, () => {
     const h = await makeTempHome();
     try {
       const home = h.root;
-      mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
       // A run whose workflow copy cannot be read: its declared secrets are unknown.
       const { record: run } = await h.home.runStore.create({
         workflowId: 'not-registered',
@@ -1976,7 +1967,6 @@ async function c3Run(
   homes.push(handle);
   const home = handle.root;
   const project = join(base, `project-${state}-${c3Count}`);
-  mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
   mkdirSync(project);
   writeFileSync(join(project, 'realm.yaml'), C3_MANIFEST);
   writeFileSync(join(project, '.env'), `SVC_TOKEN=${DECLARED}\n`);
@@ -2386,7 +2376,6 @@ async function c4Ended(
   homes.push(handle);
   const home = handle.root;
   const project = join(base, `project-c4-${state}-${c4Count}`);
-  mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
   mkdirSync(project);
   writeFileSync(join(project, 'realm.yaml'), C3_MANIFEST);
   writeFileSync(join(project, '.env'), `SVC_TOKEN=${DECLARED}\n`);
@@ -2930,10 +2919,18 @@ describe('#729 PR-3 correction 4 — the pages this correction changes', () => {
 
 describe('#729 PR-3 correction 5 — the new sentences, executed on the built realm', () => {
   let base: string;
+  /** #616 PR-2c (c0, R4): handles on the cells' child homes, to read what the built realm wrote. */
+  const c5Homes: TempHome[] = [];
+  const c5Handle = async (home: string): Promise<TempHome> => {
+    const t = await makeTempHome({ home: join(home, '.realm') });
+    c5Homes.push(t);
+    return t;
+  };
   beforeEach(() => {
     base = mkdtempSync(join(tmpdir(), 'realm-docs-c5-'));
   });
-  afterEach(() => {
+  afterEach(async () => {
+    for (const t of c5Homes.splice(0)) await t.cleanup();
     rmSync(base, { recursive: true, force: true });
   });
   /** The built CLI, piped, from `cwd` (default: outside any project), in `home`. */
@@ -2964,7 +2961,7 @@ describe('#729 PR-3 correction 5 — the new sentences, executed on the built re
   }
 
   /** `realm agent --workflow` from the project: the run is created and never runs a step. */
-  function c5Started(home: string, proj: string): string {
+  async function c5Started(home: string, proj: string): Promise<string> {
     cli(
       home,
       ['agent', '--workflow', 'workflows/wf/workflow.yaml', '--model', 'anthropic:fake-c5'],
@@ -2973,44 +2970,41 @@ describe('#729 PR-3 correction 5 — the new sentences, executed on the built re
         ANTHROPIC_API_KEY: 'fake-c5-key',
       },
     );
-    const runs = join(home, '.realm', 'runs');
-    const file = readdirSync(runs).find((f) => f.endsWith('.json'));
-    if (file === undefined) throw new Error('fixture: no run was created');
-    return file.slice(0, -'.json'.length);
+    const [id] = await runIds((await c5Handle(home)).home.runStore);
+    if (id === undefined) throw new Error('fixture: no run was created');
+    return id;
   }
 
-  it("the CHANGELOG: a run's phase prints whole on every command, also where a variable or a declared value holds the same word", () => {
+  it("the CHANGELOG: a run's phase prints whole on every command, also where a variable or a declared value holds the same word", async () => {
     claim(
       CHANGELOG,
       "A run's phase prints whole on every command, also where a variable or a declared value holds the same word.",
     );
     // A variable: `resume` refuses a completed run, naming its phase.
     const home = join(base, 'home-var');
-    mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
     const at = '2026-01-01T00:00:00.000Z';
-    writeFileSync(
-      join(home, '.realm', 'runs', 'c5-done.json'),
-      JSON.stringify({
-        id: 'c5-done',
-        workflow_id: 'c5wf',
-        workflow_version: 1,
-        completed_steps: ['a'],
-        in_progress_steps: [],
-        failed_steps: [],
-        skipped_steps: [],
-        skip_details: {},
-        claims: {},
-        run_phase: 'completed',
-        version: 1,
-        params: {},
-        evidence: [],
-        created_at: at,
-        updated_at: at,
-        terminal_state: true,
-        terminal_reason: 'Workflow completed.',
-        sealed_by: { arm: 'complete' },
-      }),
-    );
+    await (
+      await c5Handle(home)
+    ).home.runStore.save({
+      id: 'c5-done',
+      workflow_id: 'c5wf',
+      workflow_version: 1,
+      completed_steps: ['a'],
+      in_progress_steps: [],
+      failed_steps: [],
+      skipped_steps: [],
+      skip_details: {},
+      claims: {},
+      run_phase: 'completed',
+      version: 1,
+      params: {},
+      evidence: [],
+      created_at: at,
+      updated_at: at,
+      terminal_state: true,
+      terminal_reason: 'Workflow completed.',
+      sealed_by: { arm: 'complete' },
+    } as RunRecord);
     const resumed = cli(home, ['run', 'resume', 'c5-done', '--from', 'a'], base, {
       STATUS_X: 'completed',
     });
@@ -3099,7 +3093,7 @@ describe('#729 PR-3 correction 5 — the new sentences, executed on the built re
     ]);
   });
 
-  it("run-record-and-export.md: when a program that loaded a project creates the run, its first identity entry carries `origin: 'start'` and names the project's manifest when it has one; drift is judged from the other entries only", () => {
+  it("run-record-and-export.md: when a program that loaded a project creates the run, its first identity entry carries `origin: 'start'` and names the project's manifest when it has one; drift is judged from the other entries only", async () => {
     // #729 PR-3 correction 6 (C6-4): the sentence qualified. Its four arms and the cells that
     // execute them: the manifest named — this cell (and start-identity-c5-729 "`realm agent
     // --workflow`"); an entry naming none — start-identity-c5-729 "C6-1 (3)"; no entry from a creator
@@ -3111,10 +3105,8 @@ describe('#729 PR-3 correction 5 — the new sentences, executed on the built re
       "When a program that loaded a project creates the run, its first identity entry carries `origin: 'start'` and names the project's manifest when it has one; a creator with no loaded project, or a store that does not keep `extension_identity`, writes none. Drift is judged from the other entries only (added after version 0.47.1).",
     );
     const { home, proj } = c5Project(C5_DECLARED);
-    const runId = c5Started(home, proj);
-    const record = JSON.parse(
-      readFileSync(join(home, '.realm', 'runs', `${runId}.json`), 'utf8'),
-    ) as RunRecord;
+    const runId = await c5Started(home, proj);
+    const { record } = await (await c5Handle(home)).home.runStore.get(runId);
     const advanced = cli(home, ['run', 'advance', runId]);
     const fit = advanced.stdout.split('\n').find((l) => l.startsWith('This program:')) ?? '';
     // (a) red when the run is born with no start entry, or its manifest unnamed, or the start entry
@@ -3131,14 +3123,14 @@ describe('#729 PR-3 correction 5 — the new sentences, executed on the built re
     });
   }, 120_000);
 
-  it('the CHANGELOG: when a program that loaded a project creates a run, the run records its manifest, or that it has none, so a run that never ran a step is withheld too', () => {
+  it('the CHANGELOG: when a program that loaded a project creates a run, the run records its manifest, or that it has none, so a run that never ran a step is withheld too', async () => {
     // #729 PR-3 correction 6 (C6-4): the clause qualified, as the record page's sentence.
     claim(
       CHANGELOG,
       "When a program that loaded a project creates a run, the run records that project's manifest, or that it has none (a creator with no loaded project, or a store that does not keep the record, writes nothing), so a run that never ran a step is withheld too.",
     );
     const { home, proj } = c5Project(C5_DECLARED);
-    const runId = c5Started(home, proj);
+    const runId = await c5Started(home, proj);
     cli(home, ['run', 'abandon', runId, '--reason', `key ${C5_DECLARED}`]);
     rmSync(join(proj, 'realm.yaml'));
     const out = cli(home, ['run', 'inspect', runId]).stdout.split('\n');

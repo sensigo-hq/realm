@@ -22,7 +22,6 @@ describe('#819 U2 — a copy with no steps, on the CLI', () => {
     h = await makeTempHome();
     home = h.root;
     wfDir = join(home, '.realm', 'workflows');
-    await mkdir(join(home, '.realm', 'runs'), { recursive: true });
     await mkdir(wfDir, { recursive: true });
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;

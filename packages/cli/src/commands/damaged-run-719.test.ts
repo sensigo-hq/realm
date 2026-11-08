@@ -2,6 +2,8 @@
 // command down. Every cell runs the BUILT CLI with a scratch HOME, on a real JSON store in it.
 // Failure output is exit codes and stderr/stdout lines of fixtures that hold no secret; the leak
 // cell asserts a boolean.
+import { randomUUID } from 'node:crypto';
+import type { RunRecord } from '@sensigo/realm';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync, symlinkSync } from 'node:fs';
@@ -53,12 +55,36 @@ async function readableRun(): Promise<string> {
   return run.id;
 }
 
-/** A readable run of workflow `w`, with `over` written into its file. */
+/** A readable run of workflow `w` with `over` in its record, through the store (#616 PR-2c, c0): an
+ *  `over` the writes can produce through `update`; a terminal run with no recorded seal arm — a legacy
+ *  document `update` refuses (STATE_SEAL_UNSTAMPED) — built by hand and saved under a fresh id. */
 async function runWith(over: Record<string, unknown>): Promise<string> {
+  const store = h.home.runStore;
+  if (over['terminal_state'] === true && over['sealed_by'] === undefined) {
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    await store.save({
+      id,
+      workflow_id: 'w',
+      workflow_version: 1,
+      completed_steps: [],
+      in_progress_steps: [],
+      failed_steps: [],
+      skipped_steps: [],
+      run_phase: 'running',
+      version: 0,
+      params: {},
+      evidence: [],
+      created_at: now,
+      updated_at: now,
+      terminal_state: false,
+      ...over,
+    } as RunRecord);
+    return id;
+  }
   const id = await readableRun();
-  const file = join(runs, `${id}.json`);
-  const rec = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
-  writeFileSync(file, JSON.stringify({ ...rec, ...over }, null, 2));
+  const { record } = await store.get(id);
+  await store.update({ ...record, ...over } as RunRecord);
   return id;
 }
 
@@ -135,20 +161,14 @@ describe('issue #719 — realm run list: the readable runs on stdout, each damag
 
 describe('issue #719 — the commands that act on runs act on the readable ones and name the rest', () => {
   /** A registered copy of workflow `w` whose step `s` is idempotent (for `reclaim --all`). */
-  const registerW = () => {
-    const dir = join(home, '.realm', 'workflows');
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(
-      join(dir, 'w.json'),
-      JSON.stringify({
-        id: 'w',
-        name: 'w',
-        version: 1,
-        schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
-        steps: { s: { description: 'S.', execution: 'auto', idempotent: true } },
-      }),
-    );
-  };
+  const registerW = () =>
+    h.home.workflowStore.register({
+      id: 'w',
+      name: 'w',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: { s: { description: 'S.', execution: 'auto', idempotent: true } },
+    } as never);
   const DONE = {
     terminal_state: true,
     run_phase: 'completed',
@@ -182,7 +202,7 @@ describe('issue #719 — the commands that act on runs act on the readable ones 
     [
       'reclaim --all',
       async () => {
-        registerW();
+        await registerW();
         return runWith({
           in_progress_steps: ['s'],
           claims: { s: { deadline: '2020-01-01T00:00:00.000Z' } },

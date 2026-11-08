@@ -9,7 +9,6 @@
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   JsonFileStore,
@@ -94,6 +93,7 @@ const inputWayOut = (id: string, deps: boolean): string =>
 
 async function stores(located = false): Promise<{
   home: string;
+  path: string;
   runs: JsonFileStore;
   workflows: JsonWorkflowStore;
   clock?: TestLocation['clock'];
@@ -109,6 +109,7 @@ async function stores(located = false): Promise<{
   const h = loc !== undefined ? await makeTempHome({ home: loc.root }) : made;
   return {
     home: made.root,
+    path: h.path,
     runs: h.home.runStore,
     workflows: h.home.workflowStore,
     ...(loc !== undefined ? { clock: loc.clock } : {}),
@@ -365,7 +366,7 @@ describe('#625 PR-2a, C64 — the census: drain, resume and the sweeper name the
   }, 60000);
 
   it("listen's sweeper: an expiry that leaves the run unable to go on logs `cannot_go_on` (the step, then the way out); the control (an agent step ready) logs none", async () => {
-    const { runs, workflows, cleanup } = await stores();
+    const { path, runs, workflows, cleanup } = await stores();
     try {
       const stuck = wf('c64-sweep', { decide: gate(true), compute: needsN(['decide']) });
       const ready = wf('c64-sweep-ctl', {
@@ -384,8 +385,8 @@ describe('#625 PR-2a, C64 — the census: drain, resume and the sweeper name the
         error: () => {},
       };
       // #715 (b): the store's clock decides — the same folder reopened as a test location an hour on.
-      await writeTestClockFile(dirname(runs.runsDirPath), new Date(Date.now() + 3_600_000));
-      const reopened = await makeTempHome({ home: dirname(runs.runsDirPath) });
+      await writeTestClockFile(path, new Date(Date.now() + 3_600_000));
+      const reopened = await makeTempHome({ home: path });
       try {
         await sweepExpiredGates({
           runStore: reopened.home.runStore,

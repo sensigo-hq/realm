@@ -22,7 +22,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION, JsonFileStore, executeStep } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { attachOptionValueGuard, looksLikeFlag } from './option-value-guard.js';
-import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome, runIds } from '../test-support/temp-home.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DIST_CLI = join(HERE, '..', '..', 'dist', 'index.js');
@@ -179,7 +179,7 @@ describe('#920 C-1 — `--model` refuses a word that starts with `-` (the built 
     expect(looksLikeFlag('-'), "a lone '-'").toBe(false);
   }, 30_000);
 
-  it('3. each of the five commands refuses `--model <a flag of its own>` and does nothing', () => {
+  it('3. each of the five commands refuses `--model <a flag of its own>` and does nothing', async () => {
     // (a) red when any one of the five is left out of the guarded table (that command then runs: it
     // registers, watches, starts a run or a server, or fails with another message); (b) prints each.
     const dir = retryProject();
@@ -214,12 +214,8 @@ describe('#920 C-1 — `--model` refuses a word that starts with `-` (the built 
     const shown = Object.values(runs)
       .map((r) => r.shown)
       .join(' | ');
-    const registered = existsSync(join(home, '.realm', 'workflows'))
-      ? readdirSync(join(home, '.realm', 'workflows'))
-      : [];
-    const runFiles = existsSync(join(home, '.realm', 'runs'))
-      ? readdirSync(join(home, '.realm', 'runs')).filter((f) => f.endsWith('.json'))
-      : [];
+    const registered = (await h.home.workflowStore.list()).map((w) => w.id);
+    const runFiles = await runIds(h.home.runStore);
     expect(
       {
         codes: Object.fromEntries(Object.entries(runs).map(([k, r]) => [k, r.code])),
@@ -506,8 +502,6 @@ describe('#920 C-2 — the other 19 options, one command family each (the built 
   }, 20_000);
   /** A live run of a one-step workflow, made in this HOME's store; returns the store and its id. */
   async function liveRun(): Promise<{ runs: JsonFileStore; id: string }> {
-    mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
-    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
     const runs = h.home.runStore;
     const def = {
       id: 'live',
@@ -527,8 +521,6 @@ describe('#920 C-2 — the other 19 options, one command family each (the built 
 
   /** A run waiting at an open question (`confirm`, choices approve/reject, not expired). */
   async function atOpenQuestion(): Promise<{ runs: JsonFileStore; id: string; gate: string }> {
-    mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
-    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
     const runs = h.home.runStore;
     const def = {
       id: 'asked',

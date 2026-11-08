@@ -20,7 +20,12 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import type { JsonFileFailedAttemptStore, JsonFileStore, JsonWorkflowStore } from '@sensigo/realm';
+import type {
+  JsonFileFailedAttemptStore,
+  JsonFileStore,
+  JsonWorkflowStore,
+  RunStore,
+} from '@sensigo/realm';
 import { openMcpHome } from '../home.js';
 import type { RealmMcpServerOptions } from '../server.js';
 import type { JsonTraceBufferStore } from '../json-trace-buffer-store.js';
@@ -85,4 +90,20 @@ export async function makeTempHome(options?: { home: string }): Promise<TempHome
       }
     },
   };
+}
+
+/** #616 PR-2c (c0): how many runs `store` holds, read through the store — never by counting files in
+ *  its folder. The one place a test counts runs: c4 rewrites this body to `scan()`, and c10a's SQLite
+ *  handle answers it the same way. */
+export async function runCount(store: Pick<RunStore, 'list'>): Promise<number> {
+  return (await store.list()).snapshots.length;
+}
+
+/** #616 PR-2c (c0): the ids of the runs `store` holds, ascending, read through the store. Sorted here,
+ *  so a store whose listing comes back in another order (c4's `scan()`, the SQLite rows) changes no
+ *  caller. */
+export async function runIds(store: Pick<RunStore, 'list'>): Promise<string[]> {
+  return (await store.list()).snapshots
+    .map((s) => s.record.id)
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
