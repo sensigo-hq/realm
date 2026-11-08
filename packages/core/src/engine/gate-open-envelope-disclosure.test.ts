@@ -1,12 +1,9 @@
 // gate-open-envelope-disclosure.test.ts — issue #291, Deliverable 7 [F-A2-6]: the gate-open
 // envelope's `gate` field carries `expires_at` + `first_reminder_due_at` at the exact moment the
 // gate opens — no separate get_run_state round-trip needed to see the deadline.
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect } from 'vitest';
 import { executeStep } from './execution-loop.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepDispatcher } from './execution-loop.js';
 
@@ -32,13 +29,8 @@ function defWithGate(
 }
 
 describe('gate-open envelope disclosure (issue #291, [F-A2-6])', () => {
-  let dir: string;
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-gate-open-envelope-'));
-  });
-
   it('carries expires_at when timeout_seconds is declared', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const def = defWithGate({ timeout_seconds: 300, on_expiry: 'abort' });
     const { record: run } = await store.create({
       workflowId: def.id,
@@ -59,7 +51,7 @@ describe('gate-open envelope disclosure (issue #291, [F-A2-6])', () => {
   });
 
   it('carries first_reminder_due_at when reminder_seconds is declared', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const def = defWithGate({ reminder_seconds: 120 });
     const { record: run } = await store.create({
       workflowId: def.id,
@@ -79,7 +71,7 @@ describe('gate-open envelope disclosure (issue #291, [F-A2-6])', () => {
   });
 
   it('neither field present for a plain gate with no timeout/reminder', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const def = defWithGate(
       undefined as unknown as NonNullable<WorkflowDefinition['steps'][string]['gate']>,
     );

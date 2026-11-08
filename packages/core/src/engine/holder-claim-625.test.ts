@@ -1,13 +1,10 @@
 // holder-claim-625.test.ts — issue #625 (the holder slice, PR-H): the NAME half. Who took a step is
 // written on its claim, in the claim's own write, and kept on the evidence of the work it did.
 //
-// Through the REAL engine and a REAL JsonFileStore: no mocked chain. Each assertion carries (a) the
+// Through the REAL engine and a REAL InMemoryStore: no mocked chain. Each assertion carries (a) the
 // change that turns it red and (b) what it prints on failure — synthetic names only.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { declareReleaseLine } from '../release-line.js';
 import {
   advanceRun,
@@ -33,14 +30,9 @@ const DRIVER: Attributed = { by: 'alice@host', by_source: 'derived', channel: 'a
 const OTHER: Attributed = { by: 'REALM-OP', by_source: 'ambient', channel: 'drain' };
 const DROPPED = 'this run store did not record who took the step';
 
-let dir: string;
-let store: JsonFileStore;
-beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'realm-holder-claim-625-'));
-  store = new JsonFileStore(dir);
-});
-afterEach(async () => {
-  await rm(dir, { recursive: true, force: true });
+let store: InMemoryStore;
+beforeEach(() => {
+  store = new InMemoryStore();
 });
 
 function oneAgentStep(extra: Partial<StepDefinition> = {}): WorkflowDefinition {
@@ -181,7 +173,7 @@ describe('driven_by — the program whose code did the work, on the entries wher
       properties: { category: { type: 'string' } },
     };
     for (const mode of ['default', 'fail'] as const) {
-      const sub = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-holder-vx-')));
+      const sub = new InMemoryStore();
       const def = oneAgentStep({
         output_schema: schema,
         ...(mode === 'default'
@@ -336,9 +328,9 @@ class ThreeArgForwarderStore implements RunStore {
   static {
     declareReleaseLine(this);
   }
-  readonly persistedRunRecordFields: JsonFileStore['persistedRunRecordFields'];
+  readonly persistedRunRecordFields: InMemoryStore['persistedRunRecordFields'];
   constructor(
-    private readonly inner: JsonFileStore,
+    private readonly inner: InMemoryStore,
     readonly persistsClaims: boolean,
   ) {
     this.persistedRunRecordFields = inner.persistedRunRecordFields;
@@ -358,7 +350,7 @@ class ThreeArgForwarderStore implements RunStore {
   claimStep(runId: string, stepName: string, definition: WorkflowDefinition) {
     return this.inner.claimStep(runId, stepName, definition);
   }
-  settleStep: JsonFileStore['settleStep'] = (...args) => this.inner.settleStep(...args);
+  settleStep: InMemoryStore['settleStep'] = (...args) => this.inner.settleStep(...args);
 }
 
 describe('the dropped-claimant warning — advisory only', () => {

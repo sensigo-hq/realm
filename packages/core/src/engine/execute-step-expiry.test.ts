@@ -3,27 +3,21 @@
 // gate's frozen disposition BEFORE the eligibility check — potentially un-blocking the very step
 // being requested (level-triggering).
 import { describe, it, expect } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore, settableClock, type SettableClock } from '@sensigo/realm-testing';
 import { executeStep } from './execution-loop.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepDispatcher } from './execution-loop.js';
-import { writeTestClockFile } from '../store/test-clock-file.js';
 
-/** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
- *  runs folder sits beside the location's clock file (first set to the host's reading), which
- *  `setClockOf` rewrites. */
-async function testLocationRuns(prefix: string): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), prefix));
-  await writeTestClockFile(root, new Date());
-  return join(root, 'runs');
+/** #715 (b) (01 §C.4): the store's clock decides what is due — an in-memory store on a settable
+ *  clock, first set to the host's reading, which `setClockOf` moves. */
+function clockedStore(): InMemoryStore {
+  return new InMemoryStore({ clock: settableClock(new Date()) });
 }
 async function setClockOf(store: object, t: Date): Promise<void> {
-  const runsDir = (store as { runsDirPath?: string }).runsDirPath;
-  if (runsDir === undefined) throw new Error('setClockOf: this store is not a JSON store');
-  await writeTestClockFile(dirname(runsDir), t);
+  const clock = (store as { clock?: Partial<SettableClock> }).clock ?? {};
+  if (typeof clock.set !== 'function')
+    throw new Error('setClockOf: this store has no settable clock');
+  await clock.set(t);
 }
 
 const echoDispatcher: StepDispatcher = async (_name, input) => ({ ...input });
@@ -53,19 +47,13 @@ function defWithGateThenDownstream(
   };
 }
 
-async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await testLocationRuns('realm-execute-step-expiry-');
-  try {
-    return await fn(dir);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
+async function withStore<T>(fn: (store: InMemoryStore) => Promise<T>): Promise<T> {
+  return fn(clockedStore());
 }
 
 describe('executeStep — pre-refusal enact-then-proceed (issue #291)', () => {
   it('settle_default: an execute_step attempt on the DOWNSTREAM step enacts the expired gate first, then succeeds directly', async () => {
-    await withDir(async (dir) => {
-      const store = new JsonFileStore(dir);
+    await withStore(async (store) => {
       const def = defWithGateThenDownstream({
         timeout_seconds: 1,
         on_expiry: 'settle_default',
@@ -109,8 +97,7 @@ describe('executeStep — pre-refusal enact-then-proceed (issue #291)', () => {
   });
 
   it('abort: an execute_step attempt on the downstream step observes the expired gate, enacts abort, and reports NOT_ELIGIBLE against the now-terminal run', async () => {
-    await withDir(async (dir) => {
-      const store = new JsonFileStore(dir);
+    await withStore(async (store) => {
       const def = defWithGateThenDownstream({ timeout_seconds: 1, on_expiry: 'abort' });
       const { record: run } = await store.create({
         workflowId: def.id,
@@ -154,8 +141,7 @@ describe('executeStep — pre-refusal enact-then-proceed (issue #291)', () => {
   });
 
   it('finding-only mode: execute_step on a sibling never enacts anything (no on_expiry) — stays blocked, undisturbed', async () => {
-    await withDir(async (dir) => {
-      const store = new JsonFileStore(dir);
+    await withStore(async (store) => {
       const def = defWithGateThenDownstream({ timeout_seconds: 1 }); // no on_expiry
       const { record: run } = await store.create({
         workflowId: def.id,
@@ -187,8 +173,7 @@ describe('executeStep — pre-refusal enact-then-proceed (issue #291)', () => {
   });
 
   it('a non-expired gate never triggers enactment — the downstream step stays blocked, unaffected', async () => {
-    await withDir(async (dir) => {
-      const store = new JsonFileStore(dir);
+    await withStore(async (store) => {
       const def = defWithGateThenDownstream({
         timeout_seconds: 600,
         on_expiry: 'settle_default',

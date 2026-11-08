@@ -1,8 +1,5 @@
 // Tests for precondition evaluator — evaluatePrecondition, checkPreconditions, and evaluateAllPreconditions.
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect } from 'vitest';
 import {
   evaluatePrecondition,
   checkPreconditions,
@@ -12,7 +9,7 @@ import {
   preconditionRefusal,
 } from './precondition.js';
 import { executeStep, executeChain } from './execution-loop.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 
 describe('evaluatePrecondition', () => {
@@ -77,12 +74,6 @@ describe('checkPreconditions', () => {
 });
 
 describe('executeStep blocks when precondition fails', () => {
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-precond-'));
-  });
-
   it('returns status: blocked with suggestion when precondition is unmet', async () => {
     const preconditionDef: WorkflowDefinition = {
       id: 'precond-wf',
@@ -103,7 +94,7 @@ describe('executeStep blocks when precondition fails', () => {
       },
     };
 
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'precond-wf',
       workflowVersion: 1,
@@ -159,7 +150,7 @@ describe('executeStep blocks when precondition fails', () => {
       },
     };
 
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'precond-email-wf',
       workflowVersion: 1,
@@ -403,12 +394,6 @@ describe('evaluateGuardConditions', () => {
 // issue #154 — full end-to-end proof: a real guard-triggered abort stores the bounded/scrubbed
 // value in the durable RunRecord's aborted_at.conditions (not just in the pure evaluator's return).
 describe('guard abort — aborted_at.conditions is bounded end-to-end (issue #154)', () => {
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-guard-bound-'));
-  });
-
   it('a guard condition with an email-bearing LHS stores the scrubbed value in aborted_at.conditions', async () => {
     const guardDef: WorkflowDefinition = {
       id: 'guard-bound-wf',
@@ -429,7 +414,7 @@ describe('guard abort — aborted_at.conditions is bounded end-to-end (issue #15
       },
     };
 
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'guard-bound-wf',
       workflowVersion: 1,
@@ -454,11 +439,6 @@ describe('guard abort — aborted_at.conditions is bounded end-to-end (issue #15
 // #729 PR-3 (RECORD 01 #17; D1 D12): a guard's evaluated conditions leave its `output_summary` for
 // its step's diagnostics; `{aborted, abort_message}` stay, and so does `aborted_at.conditions`.
 describe("#729 PR-3 — a guard's conditions live in its diagnostics", () => {
-  let dir: string;
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-guard-diag-'));
-  });
-
   const def = (expected: string): WorkflowDefinition => ({
     id: 'guard-diag-wf',
     name: 'Guard Diagnostics',
@@ -480,7 +460,7 @@ describe("#729 PR-3 — a guard's conditions live in its diagnostics", () => {
     ['pass', 'ok', false],
   ] as const) {
     it(`${arm}: output_summary holds {aborted, abort_message?} only; diagnostics.guard_conditions holds the conditions`, async () => {
-      const store = new JsonFileStore(dir);
+      const store = new InMemoryStore();
       const { record: run } = await store.create({
         workflowId: 'guard-diag-wf',
         workflowVersion: 1,

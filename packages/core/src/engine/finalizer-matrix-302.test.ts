@@ -7,10 +7,7 @@
 // `update()`, deliberately — this test drives the actual production function instead). #715 (b): the
 // legacy `buildFinalizedSeal` dormancy-path cell is gone with the path (`settleStep` is required).
 import { describe, it, expect } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { applyResume } from './apply-resume.js';
 import { selectFinalizers } from './settlement.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
@@ -57,119 +54,114 @@ describe('selectFinalizers string-form / set-form API compat (issue #302, S2 pin
 
 describe('second-epoch witness through the REAL applyResume (issue #302, M1 pin, end-to-end)', () => {
   it('resuming step "a" (via the production applyResume) leaves a DIFFERENT finalizer\'s own prior self-failure in failed_steps — the second complete seal still fires completed_with_failed_steps', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-cwfs-resume-'));
-    try {
-      const store = new JsonFileStore(dir);
-      const def: WorkflowDefinition = {
-        id: 'cwfs-resume-wf',
-        name: 'CWFS resume fixture',
-        version: 1,
-        steps: {
-          a: { description: 'a', execution: 'agent', depends_on: [] },
-          onFail: { description: 'of', execution: 'finalizer', on_outcome: 'fail' },
-          fin: {
-            description: 'fin',
-            execution: 'finalizer',
-            on_outcome: 'completed_with_failed_steps',
-          },
+    const store = new InMemoryStore();
+    const def: WorkflowDefinition = {
+      id: 'cwfs-resume-wf',
+      name: 'CWFS resume fixture',
+      version: 1,
+      steps: {
+        a: { description: 'a', execution: 'agent', depends_on: [] },
+        onFail: { description: 'of', execution: 'finalizer', on_outcome: 'fail' },
+        fin: {
+          description: 'fin',
+          execution: 'finalizer',
+          on_outcome: 'completed_with_failed_steps',
         },
-      };
-      const { record: run } = await store.create({
-        workflowId: def.id,
-        workflowVersion: 1,
-        params: {},
-      });
-      const { record: claimed } = await store.claimStep(run.id, 'a', def);
-      const token = claimed.claims!['a']!.token!;
+      },
+    };
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const { record: claimed } = await store.claimStep(run.id, 'a', def);
+    const token = claimed.claims!['a']!.token!;
 
-      const failedA = await store.settleStep!(
-        run.id,
-        {
-          kind: 'settle_step',
-          step: 'a',
-          outcome: 'fail',
-          claimToken: token,
-          evidence: [],
-          failureMessage: 'x',
+    const failedA = await store.settleStep!(
+      run.id,
+      {
+        kind: 'settle_step',
+        step: 'a',
+        outcome: 'fail',
+        claimToken: token,
+        evidence: [],
+        failureMessage: 'x',
+      },
+      def,
+    );
+    if (!failedA.applied) throw new Error('fixture setup: expected fail(a) to apply');
+    expect(failedA.run.finalizer_ledger?.['onFail']?.status).toBe('pending');
+
+    // The prior epoch's finalizer self-failure: onFail itself fails (unresumable).
+    const leaseToken = 'lease-1';
+    const leased = await store.settleStep!(
+      run.id,
+      { kind: 'lease_finalizer', finalizer: 'onFail', leaseToken, leaseSeconds: 60 },
+      def,
+    );
+    if (!leased.applied) throw new Error('fixture setup: expected lease(onFail) to apply');
+    const marked = await store.settleStep!(
+      run.id,
+      {
+        kind: 'mark_finalizer',
+        finalizer: 'onFail',
+        leaseToken,
+        result: 'failed',
+        evidence: {
+          step_id: 'onFail',
+          started_at: '2026-01-01T00:00:00.000Z',
+          completed_at: '2026-01-01T00:00:01.000Z',
+          duration_ms: 1,
+          input_summary: {},
+          output_summary: {},
+          status: 'error',
+          evidence_hash: 'x',
         },
-        def,
-      );
-      if (!failedA.applied) throw new Error('fixture setup: expected fail(a) to apply');
-      expect(failedA.run.finalizer_ledger?.['onFail']?.status).toBe('pending');
+      },
+      def,
+    );
+    if (!marked.applied) throw new Error('fixture setup: expected mark(onFail, failed) to apply');
+    expect(marked.run.failed_steps.sort()).toEqual(['a', 'onFail']);
 
-      // The prior epoch's finalizer self-failure: onFail itself fails (unresumable).
-      const leaseToken = 'lease-1';
-      const leased = await store.settleStep!(
-        run.id,
-        { kind: 'lease_finalizer', finalizer: 'onFail', leaseToken, leaseSeconds: 60 },
-        def,
-      );
-      if (!leased.applied) throw new Error('fixture setup: expected lease(onFail) to apply');
-      const marked = await store.settleStep!(
-        run.id,
-        {
-          kind: 'mark_finalizer',
-          finalizer: 'onFail',
-          leaseToken,
-          result: 'failed',
-          evidence: {
-            step_id: 'onFail',
-            started_at: '2026-01-01T00:00:00.000Z',
-            completed_at: '2026-01-01T00:00:01.000Z',
+    // REAL applyResume — resumes ONLY 'a'. 'onFail' is a DIFFERENT step name, so applyResume's
+    // own `failed_steps.filter((s) => s !== stepName)` leaves it in place, verbatim — no
+    // hand-shaping, this is the actual production filter.
+    const { record: snapshot } = await store.get(run.id);
+    const { run: resumedDraft, voided } = applyResume(snapshot, 'a', def);
+    expect(voided).toEqual([]); // onFail was already 'failed', not 'pending' — nothing to void
+    expect(resumedDraft.failed_steps).toEqual(['onFail']);
+    expect(resumedDraft.terminal_state).toBe(false);
+    const { record: resumed } = await store.update(resumedDraft);
+    expect(resumed.finalizer_ledger?.['onFail']?.status).toBe('failed'); // untouched by resume
+
+    // Second epoch: re-claim + complete 'a'. This epoch's OWN failed_steps contribution is
+    // NOTHING — the only scar is onFail's prior-epoch self-failure.
+    const { record: reclaimed } = await store.claimStep(run.id, 'a', def);
+    const reToken = reclaimed.claims!['a']!.token!;
+    const reCompleted = await store.settleStep!(
+      run.id,
+      {
+        kind: 'settle_step',
+        step: 'a',
+        outcome: 'complete',
+        claimToken: reToken,
+        evidence: [
+          {
+            step_id: 'a',
+            started_at: '2026-01-01T00:00:02.000Z',
+            completed_at: '2026-01-01T00:00:03.000Z',
             duration_ms: 1,
             input_summary: {},
             output_summary: {},
-            status: 'error',
-            evidence_hash: 'x',
+            status: 'success',
+            evidence_hash: 'y',
           },
-        },
-        def,
-      );
-      if (!marked.applied) throw new Error('fixture setup: expected mark(onFail, failed) to apply');
-      expect(marked.run.failed_steps.sort()).toEqual(['a', 'onFail']);
-
-      // REAL applyResume — resumes ONLY 'a'. 'onFail' is a DIFFERENT step name, so applyResume's
-      // own `failed_steps.filter((s) => s !== stepName)` leaves it in place, verbatim — no
-      // hand-shaping, this is the actual production filter.
-      const { record: snapshot } = await store.get(run.id);
-      const { run: resumedDraft, voided } = applyResume(snapshot, 'a', def);
-      expect(voided).toEqual([]); // onFail was already 'failed', not 'pending' — nothing to void
-      expect(resumedDraft.failed_steps).toEqual(['onFail']);
-      expect(resumedDraft.terminal_state).toBe(false);
-      const { record: resumed } = await store.update(resumedDraft);
-      expect(resumed.finalizer_ledger?.['onFail']?.status).toBe('failed'); // untouched by resume
-
-      // Second epoch: re-claim + complete 'a'. This epoch's OWN failed_steps contribution is
-      // NOTHING — the only scar is onFail's prior-epoch self-failure.
-      const { record: reclaimed } = await store.claimStep(run.id, 'a', def);
-      const reToken = reclaimed.claims!['a']!.token!;
-      const reCompleted = await store.settleStep!(
-        run.id,
-        {
-          kind: 'settle_step',
-          step: 'a',
-          outcome: 'complete',
-          claimToken: reToken,
-          evidence: [
-            {
-              step_id: 'a',
-              started_at: '2026-01-01T00:00:02.000Z',
-              completed_at: '2026-01-01T00:00:03.000Z',
-              duration_ms: 1,
-              input_summary: {},
-              output_summary: {},
-              status: 'success',
-              evidence_hash: 'y',
-            },
-          ],
-        },
-        def,
-      );
-      if (!reCompleted.applied) throw new Error('expected re-complete(a) to apply');
-      expect(reCompleted.run.finalizer_ledger?.['fin']?.status).toBe('pending');
-      expect(reCompleted.run.finalizer_ledger?.['onFail']?.status).toBe('failed'); // never re-selected
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+        ],
+      },
+      def,
+    );
+    if (!reCompleted.applied) throw new Error('expected re-complete(a) to apply');
+    expect(reCompleted.run.finalizer_ledger?.['fin']?.status).toBe('pending');
+    expect(reCompleted.run.finalizer_ledger?.['onFail']?.status).toBe('failed'); // never re-selected
   });
 });

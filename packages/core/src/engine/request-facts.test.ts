@@ -2,15 +2,12 @@
 // where the record is written. The cells write through a step's evidence (`executeStep` with
 // `stepMeta.usage`, the path `realm agent` takes) and read the STORED record back, never a render.
 // On a failing CI host each cell prints the stored request's name fields: test values only.
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { executeStep } from './execution-loop.js';
 import type { StepDispatcher } from './execution-loop.js';
 import { boundRequestFacts } from './request-facts.js';
 import { NAME_CAP_MARKER, NAME_MAX_LENGTH } from './holder.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { UsageRecord } from '../types/run-record.js';
 
@@ -23,15 +20,9 @@ const DEF: WorkflowDefinition = {
 };
 
 describe('issue #600 PR 2 — request names are bounded on the stored record (A3)', () => {
-  let store: JsonFileStore;
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-request-facts-600-'));
-    store = new JsonFileStore(dir);
-  });
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+  let store: InMemoryStore;
+  beforeEach(() => {
+    store = new InMemoryStore();
   });
 
   /** Writes one request through a step's evidence; returns the stored request's name fields. */

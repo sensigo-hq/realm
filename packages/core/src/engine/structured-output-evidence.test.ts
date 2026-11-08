@@ -1,11 +1,12 @@
 // structured-output-evidence.test.ts — issue #236, Deliverable 6: the diagnostics.structured_output
 // disclosure at the real dispatch-loop evidence-capture site, the external-agent stamp, and the
 // evidence round-trip through a real store (the cloud-punch-list TCK note's own local proof).
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, onTestFinished } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { executeStep } from './execution-loop.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { JsonFileStore } from '../store/json-file-store.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepDispatcher } from './execution-loop.js';
@@ -42,16 +43,10 @@ const plainDef: WorkflowDefinition = {
 const echoDispatcher: StepDispatcher = async (_step, input) => ({ ...input, category: 'billing' });
 
 describe('structured_output evidence disclosure (issue #236, Deliverable 6)', () => {
-  let store: JsonFileStore;
-  let dir: string;
+  let store: InMemoryStore;
 
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-so-evidence-'));
-    store = new JsonFileStore(dir);
-  });
-
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+  beforeEach(() => {
+    store = new InMemoryStore();
   });
 
   it('a real meta from stepMeta.structuredOutput flows verbatim into diagnostics.structured_output', async () => {
@@ -117,6 +112,11 @@ describe('structured_output evidence disclosure (issue #236, Deliverable 6)', ()
   });
 
   it('evidence round-trip: the structured_output field survives a real persist + read through JsonFileStore', async () => {
+    // A JSON store of its own (c1a-2, R8): a persist and a read through JsonFileStore is this cell's
+    // subject; the describe's store is in memory.
+    const dir = await mkdtemp(join(tmpdir(), 'realm-so-evidence-'));
+    onTestFinished(() => rm(dir, { recursive: true, force: true }));
+    const store = new JsonFileStore(dir);
     const { record: run } = await store.create({
       workflowId: declaredDef.id,
       workflowVersion: 1,

@@ -1,12 +1,9 @@
 // Tests for human gate mechanics — trust: human_confirmed pauses execution at a gate,
 // Source: execution-loop.ts
 // and submitHumanResponse advances the run after a valid human choice.
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect } from 'vitest';
 import { executeStep, submitHumanResponse } from './execution-loop.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepDispatcher } from './execution-loop.js';
 
@@ -42,14 +39,8 @@ const echoDispatcher: StepDispatcher = async (_name, input, _run, _signal) => ({
 const agentDispatcher: StepDispatcher = async () => ({ extracted_text: 'hello' });
 
 describe('human gate', () => {
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-gate-'));
-  });
-
   it('trust: human_confirmed step opens gate after dispatcher runs', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'auto-gate-wf',
       workflowVersion: 1,
@@ -77,7 +68,7 @@ describe('human gate', () => {
   });
 
   it('agent step with trust: human_confirmed exposes agent output as gate preview', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'agent-gate-wf',
       workflowVersion: 1,
@@ -97,7 +88,7 @@ describe('human gate', () => {
   });
 
   it('submitHumanResponse with valid choice advances state', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'auto-gate-wf',
       workflowVersion: 1,
@@ -126,7 +117,7 @@ describe('human gate', () => {
   });
 
   it('submitHumanResponse with wrong gate_id returns error', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'auto-gate-wf',
       workflowVersion: 1,
@@ -147,7 +138,7 @@ describe('human gate', () => {
     });
 
     expect(result.status).toBe('error');
-    // issue #279 (increment 2, PR-D): on the migrated path (JsonFileStore declares settleStep),
+    // issue #279 (increment 2, PR-D): on the migrated path (the store declares settleStep),
     // an unknown/superseded gateId is settle_gate's own `gate_mismatch` refusal — the design
     // record's uniform text for "no live gate matches this id", collapsing the legacy path's
     // separate "no open gate at all" / "gate ID mismatch" texts into one.
@@ -157,7 +148,7 @@ describe('human gate', () => {
   });
 
   it('submitHumanResponse with invalid choice returns error', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'auto-gate-wf',
       workflowVersion: 1,
@@ -182,7 +173,7 @@ describe('human gate', () => {
   });
 
   it('submitHumanResponse records a gate_response evidence entry', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'auto-gate-wf',
       workflowVersion: 1,

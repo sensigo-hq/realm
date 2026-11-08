@@ -1,11 +1,8 @@
 // gate-mint-freeze.test.ts — issue #291, Deliverable 2: PendingGate's enforce/notify clock
 // fields are frozen at the gate-open mint (execution-loop.ts), never re-derived later.
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect } from 'vitest';
 import { executeStep } from './execution-loop.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepDispatcher } from './execution-loop.js';
 
@@ -29,14 +26,8 @@ function defWithGate(gate: WorkflowDefinition['steps'][string]['gate']): Workflo
 }
 
 describe('gate mint-freeze (issue #291)', () => {
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-gate-freeze-'));
-  });
-
   it('a gate with no gate: block at all mints with none of the new fields (byte-identical to pre-#291)', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const def = defWithGate(undefined);
     const { record: run } = await store.create({
       workflowId: def.id,
@@ -59,7 +50,7 @@ describe('gate mint-freeze (issue #291)', () => {
   });
 
   it('timeout_seconds freezes expires_at = opened_at + timeout_seconds, exactly', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const def = defWithGate({ timeout_seconds: 300, on_expiry: 'abort' });
     const { record: run } = await store.create({
       workflowId: def.id,
@@ -87,7 +78,7 @@ describe('gate mint-freeze (issue #291)', () => {
   });
 
   it('timeout_seconds WITHOUT on_expiry freezes expires_at alone — finding-only mode, legal', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const def = defWithGate({ timeout_seconds: 120 });
     const { record: run } = await store.create({
       workflowId: def.id,
@@ -107,7 +98,7 @@ describe('gate mint-freeze (issue #291)', () => {
   });
 
   it('on_expiry: settle_default freezes default_choice alongside', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const def = defWithGate({
       timeout_seconds: 60,
       on_expiry: 'settle_default',
@@ -131,7 +122,7 @@ describe('gate mint-freeze (issue #291)', () => {
   });
 
   it('reminder_seconds freezes with reminder_max DEFAULTED to 3 when the author declared none', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const def = defWithGate({ reminder_seconds: 90 });
     const { record: run } = await store.create({
       workflowId: def.id,
@@ -153,7 +144,7 @@ describe('gate mint-freeze (issue #291)', () => {
   });
 
   it('reminder_max freezes the AUTHORED value verbatim when declared (never silently overridden)', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const def = defWithGate({ reminder_seconds: 90, reminder_max: 7 });
     const { record: run } = await store.create({
       workflowId: def.id,
@@ -171,7 +162,7 @@ describe('gate mint-freeze (issue #291)', () => {
   });
 
   it('a later definition re-registration/edit never applies to an already-opened gate — the record is the sole source', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const originalDef = defWithGate({
       timeout_seconds: 60,
       on_expiry: 'settle_default',

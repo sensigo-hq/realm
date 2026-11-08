@@ -1,13 +1,9 @@
 // submit-expiry-wins.test.ts — issue #291, SUBMIT_EXPIRY_WINS law family: a late
 // submitHumanResponse call against an expired-unresolved gate is honestly composed against
 // whatever the enforce clock actually enacted. #715 (b): one store path (the legacy CAS path is
-// gone), and the store's clock — a test location's clock file — decides when the answer arrives.
+// gone), and the store's clock — a settable clock — decides when the answer arrives.
 import { describe, it, expect } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { JsonFileStore } from '../store/json-file-store.js';
-import { writeTestClockFile } from '../store/test-clock-file.js';
+import { InMemoryStore, settableClock, type SettableClock } from '@sensigo/realm-testing';
 import { executeStep, submitHumanResponse } from './execution-loop.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepDispatcher } from './execution-loop.js';
@@ -36,24 +32,18 @@ function defWithGate(
 /** #715 (b): the instant the store's clock starts at — the gate opens then. */
 const START = new Date('2026-03-01T00:00:00.000Z');
 
-async function withDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), 'realm-submit-expiry-'));
-  try {
-    // #715 (b): a test location — the store's clock is this folder's clock file.
-    await writeTestClockFile(dir, START);
-    return await fn(dir);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
+async function withClock<T>(fn: (clock: SettableClock) => Promise<T>): Promise<T> {
+  // #715 (b): the store's clock is a settable clock, first at START.
+  return fn(settableClock(START));
 }
 
-/** A JSON store on the test location `dir` (its runs beside the clock file). */
-const makeStore = (dir: string): JsonFileStore => new JsonFileStore(join(dir, 'runs'));
+/** An in-memory store on `clock`. */
+const makeStore = (clock: SettableClock): InMemoryStore => new InMemoryStore({ clock });
 
 describe('submitHumanResponse — SUBMIT_EXPIRY_WINS', () => {
   it('same-choice cell: the F12-pinned string, status ok, choice NOT double-attributed to the human', async () => {
-    await withDir(async (dir) => {
-      const store = makeStore(dir);
+    await withClock(async (clock) => {
+      const store = makeStore(clock);
       const def = defWithGate({
         timeout_seconds: 1,
         on_expiry: 'settle_default',
@@ -73,7 +63,7 @@ describe('submitHumanResponse — SUBMIT_EXPIRY_WINS', () => {
       const gate = (await store.get(run.id)).record.pending_gate!;
       const future = new Date(new Date(gate.expires_at!).getTime() + 1000);
 
-      await writeTestClockFile(dir, future);
+      await clock.set(future);
 
       const envelope = await submitHumanResponse(store, def, {
         runId: run.id,
@@ -102,8 +92,8 @@ describe('submitHumanResponse — SUBMIT_EXPIRY_WINS', () => {
   });
 
   it('conflict cell: a DIFFERENT late choice gets an honest refusal naming the timeout-settled winner', async () => {
-    await withDir(async (dir) => {
-      const store = makeStore(dir);
+    await withClock(async (clock) => {
+      const store = makeStore(clock);
       const def = defWithGate({
         choices: ['approve', 'reject'],
         timeout_seconds: 1,
@@ -124,7 +114,7 @@ describe('submitHumanResponse — SUBMIT_EXPIRY_WINS', () => {
       const gate = (await store.get(run.id)).record.pending_gate!;
       const future = new Date(new Date(gate.expires_at!).getTime() + 1000);
 
-      await writeTestClockFile(dir, future);
+      await clock.set(future);
 
       const envelope = await submitHumanResponse(store, def, {
         runId: run.id,
@@ -140,8 +130,8 @@ describe('submitHumanResponse — SUBMIT_EXPIRY_WINS', () => {
   });
 
   it('abort cell: the THIRD discriminated run_terminal variant — "expired ... aborted ... NOT recorded"', async () => {
-    await withDir(async (dir) => {
-      const store = makeStore(dir);
+    await withClock(async (clock) => {
+      const store = makeStore(clock);
       const def = defWithGate({ timeout_seconds: 1, on_expiry: 'abort' });
       const { record: run } = await store.create({
         workflowId: def.id,
@@ -157,7 +147,7 @@ describe('submitHumanResponse — SUBMIT_EXPIRY_WINS', () => {
       const gate = (await store.get(run.id)).record.pending_gate!;
       const future = new Date(new Date(gate.expires_at!).getTime() + 1000);
 
-      await writeTestClockFile(dir, future);
+      await clock.set(future);
 
       const envelope = await submitHumanResponse(store, def, {
         runId: run.id,
@@ -184,8 +174,8 @@ describe('submitHumanResponse — SUBMIT_EXPIRY_WINS', () => {
   });
 
   it('finding-only mode: a late response ALWAYS resolves normally — never refused, however overdue', async () => {
-    await withDir(async (dir) => {
-      const store = makeStore(dir);
+    await withClock(async (clock) => {
+      const store = makeStore(clock);
       const def = defWithGate({ timeout_seconds: 1 }); // no on_expiry — finding-only
       const { record: run } = await store.create({
         workflowId: def.id,
@@ -201,7 +191,7 @@ describe('submitHumanResponse — SUBMIT_EXPIRY_WINS', () => {
       const gate = (await store.get(run.id)).record.pending_gate!;
       const wayLate = new Date(new Date(gate.expires_at!).getTime() + 999_999_000);
 
-      await writeTestClockFile(dir, wayLate);
+      await clock.set(wayLate);
 
       const envelope = await submitHumanResponse(store, def, {
         runId: run.id,
@@ -222,8 +212,8 @@ describe('submitHumanResponse — SUBMIT_EXPIRY_WINS', () => {
   });
 
   it('a response BEFORE expiry resolves normally, unaffected by a future expires_at', async () => {
-    await withDir(async (dir) => {
-      const store = makeStore(dir);
+    await withClock(async (clock) => {
+      const store = makeStore(clock);
       const def = defWithGate({
         timeout_seconds: 600,
         on_expiry: 'settle_default',

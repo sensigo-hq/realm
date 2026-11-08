@@ -10,10 +10,7 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 // Whole-message pins (the per-member rule).
 import { describe, it, expect } from 'vitest';
-import { mkdtemp as mkdtempP, rm as rmP } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { executeChain, executeStep } from './execution-loop.js';
 import { AGENT_PRE_CLAIM_REFUSALS, describePending, stepsThatCannotRun } from './pending.js';
 import {
@@ -30,13 +27,8 @@ import { writtenSnapshot } from './snapshot.js';
 
 const echo: StepDispatcher = async (_name, input) => ({ ...input });
 
-async function withStore<T>(fn: (store: JsonFileStore) => Promise<T>): Promise<T> {
-  const dir = await mkdtempP(join(tmpdir(), 'realm-agent-refused-625-'));
-  try {
-    return await fn(new JsonFileStore(dir));
-  } finally {
-    await rmP(dir, { recursive: true, force: true });
-  }
+async function withStore<T>(fn: (store: InMemoryStore) => Promise<T>): Promise<T> {
+  return fn(new InMemoryStore());
 }
 
 function def(steps: Record<string, StepDefinition>): WorkflowDefinition {
@@ -58,7 +50,7 @@ const PRE_REFUSAL = (step: string): string =>
 const TRUST_REFUSAL =
   "'trust: \"bogus_value\"' is not a recognized value — the engine will refuse this step at dispatch (VALIDATION_TRUST_VALUE). Accepts auto, human_confirmed, human_reviewed — correct the value and 'realm workflow register <path>'.";
 
-async function freshRun(store: JsonFileStore, d: WorkflowDefinition) {
+async function freshRun(store: InMemoryStore, d: WorkflowDefinition) {
   const { record: run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
   return run;
 }
