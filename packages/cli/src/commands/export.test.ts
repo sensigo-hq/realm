@@ -11,22 +11,22 @@ import { join } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import { buildExportBundle, resolveExportPath } from './export.js';
 import {
-  JsonFileStore,
-  JsonFileFailedAttemptStore,
   buildFailedAttemptRecord,
   serializeFailedAttemptLine,
   FsIoError,
   WorkflowError,
+  type FailedAttemptStore,
+  type RunStore,
+  type TraceBufferStore,
 } from '@sensigo/realm';
 import { composeRunCost, type PriceSource, type RunRecord } from '@sensigo/realm';
-import { JsonTraceBufferStore } from '@sensigo/realm-mcp';
 import { makeTempHome } from '../test-support/temp-home.js';
 
 async function makeStores(): Promise<{
   dir: string;
-  runStore: JsonFileStore;
-  failedAttemptStore: JsonFileFailedAttemptStore;
-  traceBufferStore: JsonTraceBufferStore;
+  runStore: RunStore;
+  failedAttemptStore: FailedAttemptStore;
+  traceBufferStore: TraceBufferStore;
   cleanup: () => Promise<void>;
 }> {
   const h = await makeTempHome();
@@ -69,7 +69,7 @@ function makeRun(overrides: Partial<RunRecord> & { id?: string }): RunRecord {
   };
 }
 
-async function appendSidecarLine(store: JsonFileFailedAttemptStore, runId: string): Promise<void> {
+async function appendSidecarLine(store: FailedAttemptStore, runId: string): Promise<void> {
   const rec = buildFailedAttemptRecord({
     run_id: runId,
     workflow_id: 'wf-1',

@@ -24,7 +24,7 @@ vi.mock('node:readline/promises', () => ({
 }));
 
 import { runCommand, setQuestionWatchIntervalForTests, setInFlightWatchForTests } from './run.js';
-import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
+import { createTestHome, type TestHome } from '@sensigo/realm-testing';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
 import { quotedForTerminal } from '../lib/holder-render.js';
 import { lagless } from '../test-support/lag.js';
@@ -196,12 +196,12 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
    * (`pastDue()`); this process's own expiry timer waits on the store's clock, so it fires then.
    * (C146's race cells below keep the real clock, with their reason.)
    */
-  let location: TestLocation | undefined;
+  let location: TestHome | undefined;
   /** #616 PR-2b: a second handle on the location, opened after it (a store takes its clock when it
    *  is opened); the home's own handle keeps the cleanup. */
   let located: TempHome | undefined;
   async function locate(): Promise<void> {
-    location = await createTestLocation({ start: new Date(), root: h.path });
+    location = await createTestHome({ start: new Date(), root: h.path });
     located = await makeTempHome({ home: h.path });
   }
   /** The stores a cell's sites use: the location's handle once `locate()` made one, else the home's. */
@@ -1396,12 +1396,14 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
     );
 
     it('C179: another process takes the agent step between the loop’s read and the prompt’s claim — said as taken, no prompt; the loop waits for it', async () => {
-      const { JsonFileStore } = await import('@sensigo/realm');
-      const original = JsonFileStore.prototype.claimStep;
+      // The prototype the handle's instance has: the command opens its own handle through the door,
+      // so a spy on `h.home.runStore` would intercept nothing (c10a-2a).
+      const proto = Object.getPrototypeOf(h.home.runStore) as CliHome['runStore'];
+      const original = proto.claimStep;
       let raced = false;
       // The other process's claim lands first, in the moment before this prompt's own claim.
-      vi.spyOn(JsonFileStore.prototype, 'claimStep').mockImplementation(async function (
-        this: InstanceType<typeof JsonFileStore>,
+      vi.spyOn(proto, 'claimStep').mockImplementation(async function (
+        this: CliHome['runStore'],
         ...args: Parameters<typeof original>
       ) {
         const [id, step, def, claimant] = args;
@@ -1809,13 +1811,14 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
         }
         return '';
       });
-      const { JsonFileStore } = await import('@sensigo/realm');
-      const original = JsonFileStore.prototype.get;
+      // The prototype the handle's instance has (as C179's spy).
+      const proto = Object.getPrototypeOf(h.home.runStore) as CliHome['runStore'];
+      const original = proto.get;
       let fired = false;
       // The first read 1.5 s (the watch) after the answer is the watch's last: it returns the record
       // it read, and the other process completes `sleep` before that read's caller sees it.
-      vi.spyOn(JsonFileStore.prototype, 'get').mockImplementation(async function (
-        this: InstanceType<typeof JsonFileStore>,
+      vi.spyOn(proto, 'get').mockImplementation(async function (
+        this: CliHome['runStore'],
         ...args: Parameters<typeof original>
       ) {
         const r = await original.apply(this, args);

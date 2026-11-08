@@ -10,7 +10,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFile, readFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { JsonFileStore } from '@sensigo/realm';
 import type { RunRecord, RunStore, SealArm } from '@sensigo/realm';
 import {
   migrateStampSeals,
@@ -20,10 +19,11 @@ import {
 } from './run-migrate.js';
 import { doubleClock, noSettle } from '../test-support/snapshot-double.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import type { CliHome } from '../lib/home.js';
 
 let h: TempHome;
 let dir: string;
-let store: JsonFileStore;
+let store: CliHome['runStore'];
 
 beforeEach(async () => {
   h = await makeTempHome();

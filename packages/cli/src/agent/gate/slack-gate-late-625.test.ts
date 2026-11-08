@@ -17,7 +17,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { JsonFileStore, executeStep, expiryCarriedOutLine } from '@sensigo/realm';
+import { executeStep, expiryCarriedOutLine, type RunStore } from '@sensigo/realm';
 import type { PendingGate, WorkflowDefinition } from '@sensigo/realm';
 import { handleBidirectionalGate } from './slack-gate-notifier.js';
 import { startSlackGateServer } from './slack-gate-server.js';
@@ -85,7 +85,7 @@ function gated(id: string, onExpiry: 'settle_default' | 'abort'): WorkflowDefini
 
 describe('#625 PR-2a, C146 — a late Slack answer that carried out the expiry says so, once, in the thread and the terminal', () => {
   let h: TempHome;
-  let store: JsonFileStore;
+  let store: RunStore;
   let fetchSpy: ReturnType<typeof vi.fn>;
   let logSpy: ReturnType<typeof vi.spyOn>;
 
