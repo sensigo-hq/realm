@@ -2,7 +2,8 @@
 // what the request before it left in the provider's cache, worked out when the record is read
 // (n8n's way), from what the records hold. Piece A-2a2: for a request that missed, the first
 // difference on the record between it and its predecessor; piece A-2a2r: a change of provider,
-// address or model, checked first (pieces A-2a2s and A-2a3 add causes). Showing it is A-2b.
+// address or model, checked first; piece A-2a2s: Realm's own changes (piece A-2a3 adds a cause).
+// Showing it is A-2b.
 //
 // Pure: no clock, no I/O, no store. Total: it never throws on a stored list, whatever another
 // writer or an older version put in it. Not exported from core's index: it has no public shape
@@ -222,6 +223,16 @@ export const CACHE_MISS_CAUSES = [
   /** The request or its predecessor has no `prefix_parts` on the record (another writer's request,
    *  or one written before Realm recorded the parts), so no part could be compared. */
   'parts_not_recorded',
+  /** Inside one call, the request sent no tools where the request before it did: Realm's own
+   *  final request, which OpenAI is sent once a tool step has used up its tool calls. */
+  'final_request',
+  /** Inside one list, whether strict output was sent differs, in either direction: Realm's own
+   *  strict-output ladder moved it (#236, #311, #313, the sticky drop). */
+  'strict_ladder',
+  /** Against an earlier drive's request, whether strict output was sent differs; the record cannot
+   *  tell whether Realm or the operator changed it (`--strict-base-url`, a workflow edit, or the
+   *  earlier drive's ladder). */
+  'strict_changed',
   /** The tools part differs: inside one list the MCP server listed different tools between
    *  attempts; against an earlier drive's request also a workflow edit (on Anthropic a schema edit
    *  changes the submit tool). */
@@ -230,6 +241,10 @@ export const CACHE_MISS_CAUSES = [
    *  of the step's instructions, or another Realm version's base text; Realm never changes it
    *  within a drive. */
   'system',
+  /** Inside one list, a later call's first request carries Realm's own repair feedback after the
+   *  prompt, where that moves what was cached: the prompt or the conversation is marked on both, or
+   *  both are `provider_rules` and the earlier request's write is reported (GPT-5.6 and later). */
+  'repair_feedback',
   /** The prompt part differs where both requests had it cached, against an earlier drive's request:
    *  from the step's input, the workflow file (every drive re-loads it), or that drive's repair
    *  feedback (the earlier request can be a repair attempt's first request). */
@@ -283,6 +298,25 @@ function split(side: Entry): boolean {
 }
 
 /**
+ * Piece A-2a2s: whether repair feedback, appended after the prompt, moves what was cached. It does
+ * where both sides mark the prompt or the conversation, or where both are `provider_rules` and the
+ * earlier request's write is reported: GPT-5.6 and later cache to the end of the latest message,
+ * which the feedback extends, while earlier models place their breakpoints from the start.
+ */
+function feedbackMoves(now: Entry, before: Entry): boolean {
+  const marksPrompt = (side: Entry): boolean => {
+    const marked = marks(side);
+    return marked.has('prompt') || marked.has('conversation');
+  };
+  return (
+    (marksPrompt(now) && marksPrompt(before)) ||
+    (now['cache_requested'] === 'provider_rules' &&
+      before['cache_requested'] === 'provider_rules' &&
+      reported(cacheWriteField(before)) !== undefined)
+  );
+}
+
+/**
  * Behaviour 3 for the missed request at `i`, whose predecessor came `from` the list or its
  * reference. Both sides asked (A-2a1's predecessor rule returns only a request that asked), so
  * tools, system and format lie inside what both asked to be cached; the prompt is checked per side.
@@ -311,18 +345,41 @@ function causeAt(
   if (!plainObject(nowParts) || !plainObject(beforeParts)) return 'parts_not_recorded';
   const differs = (part: keyof PrefixParts): boolean =>
     digest(nowParts, part) !== digest(beforeParts, part);
+  // Piece A-2a2s: Realm's own changes are named only inside one list, where the record can tell
+  // them from the operator's. A later turn is in the same call as its predecessor; a call's first
+  // request is not.
+  const laterTurn = (placeInCall(now) ?? 0) > 0;
+  if (
+    from === 'list' &&
+    laterTurn &&
+    digest(beforeParts, 'tools') !== undefined &&
+    digest(nowParts, 'tools') === undefined
+  ) {
+    return 'final_request';
+  }
+  const strictNow = now['request_strict_sent'];
+  const strictBefore = before['request_strict_sent'];
+  const strictDiffers =
+    typeof strictNow === 'boolean' &&
+    typeof strictBefore === 'boolean' &&
+    strictNow !== strictBefore;
+  if (from === 'list' && strictDiffers) return 'strict_ladder';
+  if (from === 'reference' && strictDiffers) return 'strict_changed';
   if (differs('tools')) return 'tools';
   if (differs('system')) return 'system';
-  // Inside one list a prompt difference can come only from repair feedback (A-2a2s names it).
+  const promptCompared = promptInside(now) && promptInside(before) && split(now) === split(before);
+  // Inside one list a prompt difference is Realm's repair feedback, named where it moves what was
+  // cached; any other prompt difference there names nothing.
   if (
-    from === 'reference' &&
-    promptInside(now) &&
-    promptInside(before) &&
-    split(now) === split(before) &&
-    differs('prompt')
+    from === 'list' &&
+    !laterTurn &&
+    promptCompared &&
+    differs('prompt') &&
+    feedbackMoves(now, before)
   ) {
-    return 'prompt';
+    return 'repair_feedback';
   }
+  if (from === 'reference' && promptCompared && differs('prompt')) return 'prompt';
   if (differs('format')) return 'format';
   if (!sameSet(marks(now), marks(before))) return 'cache_settings';
   return 'unexplained';
