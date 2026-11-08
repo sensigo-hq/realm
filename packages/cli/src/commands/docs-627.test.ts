@@ -863,7 +863,7 @@ describe('#627 W correction 1 — the claims F asks for', () => {
     );
   });
 
-  it('F7: the CHANGELOG’s upgrade sentence for a store shared with 0.47.0 (skew-627 cell 6(b) pins the residual)', () => {
+  it('F7: the CHANGELOG’s upgrade sentence for a store shared with 0.47.0, kept as the 0.48.0 record (its behaviour pin left with skew-627 in c10a-1a: a 0.47.0 Realm cannot open the SQLite store)', () => {
     claim(
       'CHANGELOG.md',
       "A store shared with version 0.47.0: its `realm run advance` prints the program that recorded an answer as the run's `Last recorded driver:`, because this version stamps `driven_by` on answers and 0.47.0 does not skip them; 0.46.0 is unaffected.",

@@ -3,15 +3,33 @@
 // (n8n's way), from what the records hold. Piece A-2a2: for a request that missed, the first
 // difference on the record between it and its predecessor; piece A-2a2r: a change of provider,
 // address or model, checked first; piece A-2a2s: Realm's own changes; piece A-2a3: a pause longer
-// than the entry's lifetime, and the gap and lifetime behind it. Showing it is A-2b.
+// than the entry's lifetime, and the gap and lifetime behind it. Piece A-2b1: the cost view
+// carries them (`CostView.misses`, composed in step-view.ts).
 //
 // Pure: no clock, no I/O, no store. Total: it never throws on a stored list, whatever another
-// writer or an older version put in it. Not exported from core's index: it has no public shape
-// until A-2b.
+// writer or an older version put in it. Its types and cause list are exported from core's index
+// (A-2b1); its functions are not. It imports nothing from step-view.ts, which imports from it.
 import { counter } from '../economics/price-source.js';
 import type { CacheRequest, PrefixParts } from '../types/run-record.js';
 import { parseStamp } from './instants.js';
-import { cacheWriteField } from './step-view.js';
+
+/** Reads a numeric field off an unknown entry, returning `undefined` for anything but a real number
+ *  (never coercing `null`, which is one of the two absence spellings a provider's own type allows).
+ *  Here so step-view.ts imports it from this file, never the reverse (A-2b1: no import cycle). */
+export function numField(entry: unknown, key: string): number | undefined {
+  if (typeof entry !== 'object' || entry === null) return undefined;
+  const v = (entry as Record<string, unknown>)[key];
+  return typeof v === 'number' ? v : undefined;
+}
+
+/** `cache_creation_input_tokens`, else `cache_write_tokens` — first present, never summed. Here so
+ *  the miss rule and step-view.ts's cost view share one copy of the rule, and step-view.ts imports
+ *  it from this file (A-2b1: no import cycle); `price-source.ts` keeps its own, for prices. */
+export function cacheWriteField(entry: unknown): number | undefined {
+  const a = numField(entry, 'cache_creation_input_tokens');
+  if (a !== undefined) return a;
+  return numField(entry, 'cache_write_tokens');
+}
 
 /** What `cacheReadVerdicts` says of one request. */
 export const CACHE_READ_OUTCOMES = [
