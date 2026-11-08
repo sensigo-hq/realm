@@ -11,11 +11,8 @@
 // file built for it (another process opens a question first) is no longer a stop.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { advanceRun, executeChain, executeStep } from './execution-loop.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type { StepDefinition, WorkflowDefinition } from '../types/workflow-definition.js';
@@ -56,16 +53,10 @@ function boomRegistry(): ExtensionRegistry {
   return registry;
 }
 
-let dir: string;
-let store: JsonFileStore;
+let store: InMemoryStore;
 
-beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'realm-676-stopped-'));
-  store = new JsonFileStore(dir);
-});
-
-afterEach(async () => {
-  await rm(dir, { recursive: true, force: true });
+beforeEach(() => {
+  store = new InMemoryStore();
 });
 
 async function newRun(workflowId: string): Promise<string> {
@@ -184,7 +175,7 @@ describe('stopped_step names the step a non-ok reply belongs to', () => {
       },
     };
     let armed = false;
-    class OtherProcessOpensAGate extends JsonFileStore {
+    class OtherProcessOpensAGate extends InMemoryStore {
       override async get(id: string): Promise<Snapshot> {
         if (armed) {
           armed = false;
@@ -193,7 +184,10 @@ describe('stopped_step names the step a non-ok reply belongs to', () => {
         return super.get(id);
       }
     }
-    const racing = new OtherProcessOpensAGate(dir);
+    // One store: the cell's `store` is the subclass, so the run `newRun` creates, the racing write
+    // and the last read are on one instance; the race is the engine's, not a second handle's.
+    store = new OtherProcessOpensAGate();
+    const racing = store;
     const runId = await newRun(def.id);
     const reply = await advanceRun(racing, def, {
       runId,

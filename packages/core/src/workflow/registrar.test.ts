@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JsonWorkflowStore, getWorkflowForRun } from './registrar.js';
+import { InMemoryWorkflowRegistrar } from '../test-support/in-memory-registrar.js';
 import type { RunRecord } from '../types/run-record.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { WorkflowRegistrar } from './registrar.js';
@@ -156,7 +157,7 @@ describe('getWorkflowForRun (issue #456)', () => {
 
   it('C15 the wrapped throw preserves the CONTRACT — code, agentAction, retryable', async () => {
     await expect(
-      getWorkflowForRun(store, makeRun({ workflow_id: 'nonexistent' }), {
+      getWorkflowForRun(new InMemoryWorkflowRegistrar(), makeRun({ workflow_id: 'nonexistent' }), {
         retryVerb: 're-attach',
         verb: 're-attach',
       }),

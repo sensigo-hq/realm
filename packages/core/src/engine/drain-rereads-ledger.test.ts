@@ -18,10 +18,7 @@
 // round-trip a snapshot implementation would make that a re-reading one would not.
 import { declareReleaseLine } from '../release-line.js';
 import { describe, it, expect } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { executeStep } from './execution-loop.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type { RunStore, CreateRunOptions } from '../store/store-interface.js';
@@ -33,7 +30,7 @@ import type { Snapshot } from './snapshot.js';
 import type { Listing, CreateResult, StoreSettlement } from '../store/store-interface.js';
 import type { Clock } from '../utils/clock.js';
 
-/** Delegates everything to a real JsonFileStore, counting `settleStep` calls per finalizer name
+/** Delegates everything to a real InMemoryStore, counting `settleStep` calls per finalizer name
  *  (lease + mark both count) — the observable proxy for "did drainFinalizers even ATTEMPT this
  *  entry", independent of its outcome. */
 class CountingStore implements RunStore {
@@ -48,7 +45,7 @@ class CountingStore implements RunStore {
   readonly settleStepCallsByFinalizer = new Map<string, number>();
   readonly persistsClaims: boolean;
 
-  constructor(private readonly inner: JsonFileStore) {
+  constructor(private readonly inner: InMemoryStore) {
     this.persistsClaims = inner.persistsClaims;
   }
 
@@ -84,86 +81,81 @@ class CountingStore implements RunStore {
 
 describe('drainFinalizers re-derives pending-by-rank from fresh state every iteration (issue #279, increment 1, PR-B, verification item 6, probe b — DRAIN_REREADS_LEDGER)', () => {
   it('a finalizer resolved by a concurrent actor DURING the pass is never leased — zero settleStep calls for it', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'realm-drain-reread-'));
-    try {
-      const inner = new JsonFileStore(dir);
-      const store = new CountingStore(inner);
+    const inner = new InMemoryStore();
+    const store = new CountingStore(inner);
 
-      const def: WorkflowDefinition = {
-        id: 'drain-reread-wf',
-        name: 'Drain reread WF',
-        version: 1,
-        steps: {
-          work: { description: 'w', execution: 'agent', depends_on: [] },
-          // Declaration order fixes mint rank: fin0 → rank 0, fin1 → rank 1.
-          fin0: {
-            description: 'f0',
-            execution: 'finalizer',
-            on_outcome: 'always',
-            handler: 'fin0-handler',
-          },
-          fin1: {
-            description: 'f1',
-            execution: 'finalizer',
-            on_outcome: 'always',
-            handler: 'fin1-handler',
-          },
+    const def: WorkflowDefinition = {
+      id: 'drain-reread-wf',
+      name: 'Drain reread WF',
+      version: 1,
+      steps: {
+        work: { description: 'w', execution: 'agent', depends_on: [] },
+        // Declaration order fixes mint rank: fin0 → rank 0, fin1 → rank 1.
+        fin0: {
+          description: 'f0',
+          execution: 'finalizer',
+          on_outcome: 'always',
+          handler: 'fin0-handler',
         },
-      };
-      const { record: run } = await store.create({
-        workflowId: def.id,
-        workflowVersion: 1,
-        params: {},
-      });
-
-      const registry = new ExtensionRegistry();
-      // fin0's handler stands in for a CONCURRENT operator: while fin0 is executing (after this
-      // drain pass has already leased it, but before fin1 has been looked at), it directly voids
-      // fin1 on the SAME store — exactly what an external `--void fin1` would do mid-pass.
-      const fin0Handler: StepHandler = {
-        id: 'fin0-handler',
-        execute: async () => {
-          const { record: mid } = await inner.get(run.id);
-          await inner.update({
-            ...mid,
-            finalizer_ledger: {
-              ...mid.finalizer_ledger,
-              fin1: { status: 'voided', rank: mid.finalizer_ledger?.['fin1']?.rank ?? 1 },
-            },
-          });
-          return { data: {} };
+        fin1: {
+          description: 'f1',
+          execution: 'finalizer',
+          on_outcome: 'always',
+          handler: 'fin1-handler',
         },
-      };
-      const fin1Handler: StepHandler = {
-        id: 'fin1-handler',
-        execute: async () => ({ data: {} }),
-      };
-      registry.register('handler', 'fin0-handler', fin0Handler);
-      registry.register('handler', 'fin1-handler', fin1Handler);
+      },
+    };
+    const { record: run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
 
-      // Settle 'work' — mints BOTH fin0 (rank 0) and fin1 (rank 1) as pending, transitions the run
-      // terminal, and (per D1) auto-drains post-commit.
-      const result = await executeStep(store, def, {
-        runId: run.id,
-        command: 'work',
-        input: {},
-        dispatcher: async () => ({}),
-        registry,
-      });
-      expect(result.status).toBe('ok');
+    const registry = new ExtensionRegistry();
+    // fin0's handler stands in for a CONCURRENT operator: while fin0 is executing (after this
+    // drain pass has already leased it, but before fin1 has been looked at), it directly voids
+    // fin1 on the SAME store — exactly what an external `--void fin1` would do mid-pass.
+    const fin0Handler: StepHandler = {
+      id: 'fin0-handler',
+      execute: async () => {
+        const { record: mid } = await inner.get(run.id);
+        await inner.update({
+          ...mid,
+          finalizer_ledger: {
+            ...mid.finalizer_ledger,
+            fin1: { status: 'voided', rank: mid.finalizer_ledger?.['fin1']?.rank ?? 1 },
+          },
+        });
+        return { data: {} };
+      },
+    };
+    const fin1Handler: StepHandler = {
+      id: 'fin1-handler',
+      execute: async () => ({ data: {} }),
+    };
+    registry.register('handler', 'fin0-handler', fin0Handler);
+    registry.register('handler', 'fin1-handler', fin1Handler);
 
-      const { record: finalRun } = await inner.get(run.id);
-      // fin0 genuinely ran (leased + marked): exactly one lease + one mark = 2 calls.
-      expect(store.settleStepCallsByFinalizer.get('fin0')).toBe(2);
-      // fin1 was voided DURING fin0's execution — a fresh-derivation drain never attempts to
-      // lease it at all (pendingByRank, re-read after fin0's mark, no longer lists it as pending).
-      // Under a pass-start-snapshot mutation this would instead be >=1 (a wasted lease attempt
-      // refused as `ledger_not_pending`).
-      expect(store.settleStepCallsByFinalizer.get('fin1')).toBeUndefined();
-      expect(finalRun.finalizer_ledger?.['fin1']?.status).toBe('voided'); // never overwritten back
-      expect(finalRun.finalizer_ledger?.['fin0']?.status).toBe('completed');
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    // Settle 'work' — mints BOTH fin0 (rank 0) and fin1 (rank 1) as pending, transitions the run
+    // terminal, and (per D1) auto-drains post-commit.
+    const result = await executeStep(store, def, {
+      runId: run.id,
+      command: 'work',
+      input: {},
+      dispatcher: async () => ({}),
+      registry,
+    });
+    expect(result.status).toBe('ok');
+
+    const { record: finalRun } = await inner.get(run.id);
+    // fin0 genuinely ran (leased + marked): exactly one lease + one mark = 2 calls.
+    expect(store.settleStepCallsByFinalizer.get('fin0')).toBe(2);
+    // fin1 was voided DURING fin0's execution — a fresh-derivation drain never attempts to
+    // lease it at all (pendingByRank, re-read after fin0's mark, no longer lists it as pending).
+    // Under a pass-start-snapshot mutation this would instead be >=1 (a wasted lease attempt
+    // refused as `ledger_not_pending`).
+    expect(store.settleStepCallsByFinalizer.get('fin1')).toBeUndefined();
+    expect(finalRun.finalizer_ledger?.['fin1']?.status).toBe('voided'); // never overwritten back
+    expect(finalRun.finalizer_ledger?.['fin0']?.status).toBe('completed');
   });
 });
