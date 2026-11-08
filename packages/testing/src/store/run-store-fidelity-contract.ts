@@ -115,6 +115,7 @@ const TCK_REFERENCE = {
   provider: 'tck-reference-provider',
   model: 'tck-reference-model-2025-12-31',
   endpoint: 'custom',
+  cache_requested: 'provider_rules',
   cache_read_input_tokens: 1234,
   cache_creation_input_tokens: 567,
   cache_write_tokens: 89,
@@ -144,7 +145,8 @@ const TCK_REFERENCE = {
  * adds the request's identity, `request_id`: a fixed UUID no store default could produce. Caching
  * 3-B adds the split's seven facts: digests, a count, closed words and booleans, the objects in the
  * shape with the most keys. Caching 3-M (piece A-1) adds `reference`, the copy of a request's
- * predecessor: `TCK_REFERENCE`, every one of its fields.
+ * predecessor: `TCK_REFERENCE`, every one of its fields. Piece A-1b adds `request_in_call`, the
+ * request's place in its provider call: a place other than 0, which no store default could produce.
  */
 const TCK_REQUEST_FACTS: Required<
   Pick<
@@ -168,6 +170,7 @@ const TCK_REQUEST_FACTS: Required<
     | 'cache_controls_rejected'
     | 'cache_key_sent'
     | 'reference'
+    | 'request_in_call'
   >
 > = {
   model: 'tck-model-2026-01-01',
@@ -207,6 +210,8 @@ const TCK_REQUEST_FACTS: Required<
   },
   cache_key_sent: true,
   reference: TCK_REFERENCE,
+  // caching 3-M (piece A-1b): the request's place in its call
+  request_in_call: 7,
 };
 
 /** The program the holder laws name — a synthetic label, never a real host or user. */
