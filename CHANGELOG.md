@@ -119,6 +119,7 @@ All notable changes to this project are documented here.
   the time of the deletion sets the field; set for a store with no `deleteAllForRun`, the
   `READS_ONE_READING` case fails.
 - `InMemoryStore` (in `@sensigo/realm-testing`) gains `seed(record)`: a test plants a run record as given, replacing any stored run of its id — a fixture channel, never an import (#616).
+- **`@sensigo/realm-store-sqlite` is published** from this release on, with the other packages: the SQLite-backed stores — runs, duplicate-webhook ids, workflow definitions, failed attempts, replays and trace buffers — in one `realm.db` file in the Realm home. You do not install it yourself. (#616)
 
 ### Changed
 

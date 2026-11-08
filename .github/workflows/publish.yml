@@ -83,7 +83,7 @@ jobs:
       - name: Restore dist (tar preserves packages/<pkg>/dist exactly)
         run: |
           tar -xzf dist.tar.gz
-          for p in core mcp-server testing cli; do
+          for p in core store-sqlite mcp-server testing cli; do
             test -d "packages/$p/dist" || { echo "::error::packages/$p/dist missing after artifact restore"; exit 1; }
           done
       - name: Assert id-token IS present before any publish (pre-flight — avoids a partial release from a token failure)
@@ -103,6 +103,12 @@ jobs:
       # development (prerelease) version. A real publish still passes no tag, so it goes to latest.
       - name: Publish @sensigo/realm
         working-directory: packages/core
+        run: |
+          decision="$(node ../../scripts/publish-guard.mjs)"
+          if [ "$decision" = skip ]; then exit 0; fi
+          npm publish --provenance --ignore-scripts ${{ env.DRY_RUN == 'true' && '--dry-run --tag dry-run' || '' }}
+      - name: Publish @sensigo/realm-store-sqlite
+        working-directory: packages/store-sqlite
         run: |
           decision="$(node ../../scripts/publish-guard.mjs)"
           if [ "$decision" = skip ]; then exit 0; fi
