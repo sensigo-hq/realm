@@ -10,7 +10,13 @@ import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateCommand } from './validate.js';
-import { CURRENT_WORKFLOW_SCHEMA_VERSION, RUNTIME_ONLY_WORKFLOW_KEYS } from '@sensigo/realm';
+import {
+  CURRENT_WORKFLOW_SCHEMA_VERSION,
+  JsonWorkflowStore,
+  RUNTIME_ONLY_WORKFLOW_KEYS,
+  WorkflowError,
+  storedCopyFaultError,
+} from '@sensigo/realm';
 import { CONTEXT_DEPENDENT_CHECKS } from '../lib/admission-context.js';
 
 describe('validate --registered (issue #427)', () => {
@@ -337,6 +343,51 @@ describe('validate --registered (issue #427)', () => {
     );
     expect(text).not.toContain('Registered workflows:'); // the not-found pointer, C21
     expect(text).not.toContain('    at ');
+  });
+
+  // -------------------------------------------------------------------------------------------
+  // #616 PR-2c c5c — a refusal whose copy has no file (a database's row; injected here through the
+  // JSON registry's `get`, as no command reaches one at the base): no registry-entry line — on the
+  // SQLite registry such a copy makes `workflow list` fail, so it counts nothing under "could not be
+  // read" — and no file to remove.
+  const REREGISTER =
+    're-register the workflow from its source (realm workflow register <path-to-workflow>)';
+
+  it('c5c state 2: a damaged copy with no file prints its error and the re-register act alone', async () => {
+    const err = storedCopyFaultError('wf', { kind: 'not_a_workflow', fault: 'no_steps' });
+    vi.spyOn(JsonWorkflowStore.prototype, 'get').mockRejectedValue(err);
+    await expect(
+      validateCommand.parseAsync(['--registered', 'wf'], { from: 'user' }),
+    ).rejects.toThrow('process.exit');
+    // (a) red when the registry-entry line is printed for a refusal with no file, or when the
+    //     pathless branch is removed ("; if it was never registered from a source, remove the file
+    //     (rm ) instead."); (b) prints every line.
+    expect(out()).toBe(`Error: ${err.message}\nTo repair: ${REREGISTER}.`);
+  });
+
+  it('c5c state 3: the damaged pointer (no file, no fault) prints its own words alone', async () => {
+    // A copy of the SQLite registry's `damagedPointerError` (store-sqlite `workflow-store.ts:73-86`,
+    // private to its module): its code, details and message.
+    const err = new WorkflowError(
+      "The registered copy of workflow 'wf' is missing from the store or is not JSON: something " +
+        'other than Realm changed the database. Register the workflow again from its source; if ' +
+        'this message comes back, restore the database from a backup.',
+      {
+        code: 'RESOURCE_FORMAT_INVALID',
+        category: 'RESOURCE',
+        agentAction: 'stop',
+        retryable: false,
+        details: { workflowId: 'wf' },
+      },
+    );
+    vi.spyOn(JsonWorkflowStore.prototype, 'get').mockRejectedValue(err);
+    await expect(
+      validateCommand.parseAsync(['--registered', 'wf'], { from: 'user' }),
+    ).rejects.toThrow('process.exit');
+    // (a) red when the registry-entry line is printed for a refusal with no file, or when the
+    //     pointer gets a repair act (the `fault` condition removed: "To repair: re-register …");
+    //     (b) prints every line.
+    expect(out()).toBe(`Error: ${err.message}`);
   });
 
   // -------------------------------------------------------------------------------------------
