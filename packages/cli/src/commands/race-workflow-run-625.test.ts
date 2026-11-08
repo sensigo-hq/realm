@@ -165,7 +165,7 @@ describe('#625 PR-2a, F7 — realm workflow run reads core’s classifier', () =
       hook.__f7WorkflowRunRace = async (id: string) => {
         raced = true;
         const def = core.loadWorkflowFromFile(join(dir, 'workflow.yaml'));
-        const store = new core.JsonFileStore();
+        const store = h.home.runStore;
         if (kase === 'abandon') {
           await core.abandonRun(store, id, 'another program');
           return;
@@ -300,7 +300,7 @@ describe('#625 PR-2a, F7 — realm workflow run reads core’s classifier', () =
           );
           // another process opens `ask`'s question while `note`'s prompt waits
           void runId().then((id) =>
-            core.executeStep(new core.JsonFileStore(), def, {
+            core.executeStep(h.home.runStore, def, {
               runId: id,
               command: 'ask',
               input: {},
