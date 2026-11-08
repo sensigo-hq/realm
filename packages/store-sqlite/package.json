@@ -18,6 +18,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./test-support": {
+      "import": "./dist/test-support/index.js",
+      "types": "./dist/test-support/index.d.ts"
     }
   },
   "engines": {
@@ -41,6 +45,8 @@
     "dist",
     "!dist/tsconfig.tsbuildinfo",
     "!dist/**/test-support/**",
+    "dist/test-support/index.*",
+    "dist/test-support/foreign-connection.*",
     "README.md"
   ]
 }
