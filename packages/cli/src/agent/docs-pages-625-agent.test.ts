@@ -930,8 +930,6 @@ describe(
       const made = await makeTempHome();
       h = made;
       home = made.root;
-      mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
-      mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
       return { runStore: made.home.runStore, workflowStore: made.home.workflowStore };
     }
 

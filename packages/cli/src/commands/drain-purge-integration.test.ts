@@ -17,9 +17,6 @@
 // longer exists; the default resolves at CONSTRUCTION time (drain.ts's header has the full
 // account). Historicized here only — this file's explicit-store approach is unaffected either way.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
-import { existsSync } from 'node:fs';
 import { drainFinalizers, captureEvidence, DRAIN_LEASE_MAX } from '@sensigo/realm';
 import { runDrainAction, type DrainRuntimeDeps } from './drain.js';
 import { purgeRuns } from './purge.js';
@@ -29,12 +26,9 @@ const DEPS: DrainRuntimeDeps = { drainFinalizers, captureEvidence, drainLeaseMax
 
 describe('purge ⟷ drain recovery closure (issue #279, increment 1, PR-B, verification item 3)', () => {
   let h: TempHome;
-  let runsDir: string;
 
   beforeEach(async () => {
     h = await makeTempHome();
-    runsDir = h.home.runStore.runsDirPath;
-    await mkdir(runsDir, { recursive: true });
   });
 
   afterEach(async () => {
@@ -61,13 +55,13 @@ describe('purge ⟷ drain recovery closure (issue #279, increment 1, PR-B, verif
     // 1. purge (dry-run) reports it, but does not delete.
     const dryRunResult = await purgeRuns({ runId: run.id, dryRun: true }, anchorStore, []);
     expect(dryRunResult.selected.length + dryRunResult.skipped.length).toBeGreaterThan(0);
-    expect(existsSync(join(runsDir, `${run.id}.json`))).toBe(true);
+    await expect(anchorStore.get(run.id)).resolves.toMatchObject({ record: { id: run.id } });
 
     // 2. purge --force (dryRun:false) STILL refuses — drain_pending is not force-bypassable.
     const forcedResult = await purgeRuns({ runId: run.id, dryRun: false }, anchorStore, []);
     expect(forcedResult.blocked).toHaveLength(1);
     expect(forcedResult.blocked[0]?.reason).toContain('drain_pending');
-    expect(existsSync(join(runsDir, `${run.id}.json`))).toBe(true); // survives intact
+    await expect(anchorStore.get(run.id)).resolves.toMatchObject({ record: { id: run.id } }); // survives intact
 
     // 3. Operator voids the finalizer via `runDrainAction` (the same logic `realm run drain
     // --void` wires, driven directly against the explicit anchorStore — no $HOME involved).
@@ -78,6 +72,6 @@ describe('purge ⟷ drain recovery closure (issue #279, increment 1, PR-B, verif
     // 4. purge --force now proceeds — no pending entries left.
     const finalResult = await purgeRuns({ runId: run.id, dryRun: false }, anchorStore, []);
     expect(finalResult.purged).toContain(run.id);
-    expect(existsSync(join(runsDir, `${run.id}.json`))).toBe(false);
+    await expect(anchorStore.get(run.id)).rejects.toMatchObject({ code: 'STATE_RUN_NOT_FOUND' });
   });
 });

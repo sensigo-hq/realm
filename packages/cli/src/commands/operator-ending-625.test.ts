@@ -7,7 +7,7 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -66,8 +66,6 @@ describe('#625 PR-2a, F2 — the CLI on a run an operator ended', { timeout: 60_
   beforeEach(async () => {
     h = await makeTempHome();
     home = h.root;
-    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
-    mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
     runStore = h.home.runStore;
     workflowStore = h.home.workflowStore;
   });

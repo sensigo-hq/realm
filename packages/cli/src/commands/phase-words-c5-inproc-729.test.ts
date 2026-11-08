@@ -3,19 +3,11 @@
 // holding the phase word, and the cell reads what the writer would show of the line on stdout. Each
 // cell's break is the span removed at its line (the red-first log names it).
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { makeTempHome } from '../test-support/temp-home.js';
 
 const mocks = vi.hoisted(() => ({ question: vi.fn(), close: vi.fn() }));
@@ -446,8 +438,8 @@ describe('#729 PR-3 correction 5 (J-2) — `realm workflow run` prints the phase
   ): Promise<{ code: number; out: string[]; err: string[]; entries: string[][] }> {
     clearProjectExtensionsCache();
     const scratch = mkdtempSync(join(tmpdir(), 'realm-c5-run-'));
-    const home = join(scratch, 'home');
-    mkdirSync(join(home, '.realm'), { recursive: true });
+    const h = await makeTempHome();
+    const home = h.root;
     // The workflow's folder is its project root (no package.json above it): its realm.yaml is the
     // one the run loads.
     const project = scratch;
@@ -483,23 +475,16 @@ describe('#729 PR-3 correction 5 (J-2) — `realm workflow run` prints the phase
     } finally {
       // J-5: each run's identity entries, `<origin>:<manifest file name or none>`, read before
       // the scratch folder goes.
-      const runsDir = join(home, '.realm', 'runs');
-      entries = existsSync(runsDir)
-        ? readdirSync(runsDir)
-            .filter((f) => f.endsWith('.json'))
-            .map((f) =>
-              (
-                (JSON.parse(readFileSync(join(runsDir, f), 'utf8')) as RunRecord)
-                  .extension_identity ?? []
-              ).map(
-                (e) => `${e.origin ?? 'execution'}:${e.manifest?.path.split('/').at(-1) ?? 'none'}`,
-              ),
-            )
-        : [];
+      entries = (await h.home.runStore.list()).snapshots.map((s) =>
+        (s.record.extension_identity ?? []).map(
+          (e) => `${e.origin ?? 'execution'}:${e.manifest?.path.split('/').at(-1) ?? 'none'}`,
+        ),
+      );
       vi.restoreAllMocks();
       mocks.question.mockReset();
       if (savedTTY === undefined) delete (process.stdin as { isTTY?: boolean }).isTTY;
       else process.stdin.isTTY = savedTTY;
+      await h.cleanup();
       rmSync(scratch, { recursive: true, force: true });
     }
     const shownLines = (lines: string[]): string[] =>
@@ -822,8 +807,8 @@ describe("#729 PR-3 correction 5 (J-2) — `realm listen`'s log lines carry the 
         dispatcher: async () => ({}),
       });
       // #715 (b): the store's clock decides — the same folder reopened as a test location an hour on.
-      await writeTestClockFile(dirname(runs.runsDirPath), new Date(Date.now() + 3_600_000));
-      const reopened = await makeTempHome({ home: dirname(runs.runsDirPath) });
+      await writeTestClockFile(h.path, new Date(Date.now() + 3_600_000));
+      const reopened = await makeTempHome({ home: h.path });
       try {
         await sweepExpiredGates({
           runStore: reopened.home.runStore,

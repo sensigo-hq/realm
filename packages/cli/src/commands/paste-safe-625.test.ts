@@ -90,8 +90,6 @@ describe('#625 PR-2a, F6 — a printed command is safe to paste', { timeout: 60_
     home = h.root;
     T = mkdtempSync(join(tmpdir(), 'realm-paste-625-t-'));
     bin = join(home, 'bin');
-    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
-    mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
     mkdirSync(bin);
     writeFileSync(join(bin, 'realm'), `#!/bin/sh\nexec "${process.execPath}" "${CLI}" "$@"\n`);
     chmodSync(join(bin, 'realm'), 0o755);

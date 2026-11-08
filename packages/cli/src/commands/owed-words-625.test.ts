@@ -66,6 +66,7 @@ async function stores() {
   const h = await makeTempHome();
   return {
     home: h.root,
+    path: h.path,
     runs: h.home.runStore,
     workflows: h.home.workflowStore,
     cleanup: () => h.cleanup(),
@@ -468,7 +469,7 @@ describe('#625 PR-2a — inspect names each engine step that cannot run', () => 
 
 describe("#625 PR-2a — listen's sweeper names the owed steps an expiry leaves", () => {
   it('the enacted-expiry log line gains `owed`', async () => {
-    const { runs, workflows, cleanup } = await stores();
+    const { path, runs, workflows, cleanup } = await stores();
     try {
       const d = wf('sweep-owed-wf', {
         confirm: {
@@ -504,8 +505,8 @@ describe("#625 PR-2a — listen's sweeper names the owed steps an expiry leaves"
         error: () => {},
       };
       // #715 (b): the store's clock decides — the same folder reopened as a test location an hour on.
-      await writeTestClockFile(dirname(runs.runsDirPath), new Date(Date.now() + 3_600_000));
-      const reopened = await makeTempHome({ home: dirname(runs.runsDirPath) });
+      await writeTestClockFile(path, new Date(Date.now() + 3_600_000));
+      const reopened = await makeTempHome({ home: path });
       try {
         await sweepExpiredGates({
           runStore: reopened.home.runStore,

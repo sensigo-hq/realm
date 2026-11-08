@@ -4,11 +4,10 @@
 // prints the line it built: no environment, header or key.
 import { describe, expect, it, vi } from 'vitest';
 import { spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { RunRecord } from '@sensigo/realm';
 import { startAnthropicStub } from './test-support/anthropic-stub.js';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import {
@@ -20,6 +19,7 @@ import {
 import { lifetimeText, promptCacheStartLine, type ResolvedPromptCache } from './prompt-cache.js';
 import { runAgent } from './run-agent.js';
 import { LlmProvider, type ProviderCapabilities } from './providers/llm-provider.js';
+import { makeTempHome, runIds } from '../test-support/temp-home.js';
 
 const agent = (tools?: string[]): StepDefinition =>
   ({ description: 'S.', execution: 'agent', ...(tools ? { tools } : {}) }) as StepDefinition;
@@ -330,6 +330,7 @@ describe('the drive start line (issue #600, D1; the lifetime unit — B8)', () =
 describe('the start line and the record agree when auto chooses against its prior (issue #600, cell 8)', () => {
   it('a listen child given gaps 10,10,10,7200,7200 asks for 5 minutes, says 5 minutes, and records 300 (red: the start line from the prior, or the record from the prior)', async () => {
     const root = mkdtempSync(join(tmpdir(), 'realm-600-cross-'));
+    const h = await makeTempHome();
     const stub = await startAnthropicStub({
       finalContent: { summary: 'ok' },
       answeredModel: 'claude-x-20260101',
@@ -341,8 +342,7 @@ describe('the start line and the record agree when auto chooses against its prio
       },
     });
     try {
-      const home = join(root, 'home');
-      mkdirSync(home);
+      const home = h.root;
       writeFileSync(
         join(root, 'workflow.yaml'),
         'id: cross-600\nname: Cross 600\nversion: 1\nsteps:\n  ask:\n    description: Answer.\n    execution: agent\n',
@@ -412,9 +412,7 @@ describe('the start line and the record agree when auto chooses against its prio
           resolve(out);
         });
       });
-      const runs = join(home, '.realm', 'runs');
-      const file = readdirSync(runs).find((f) => f.endsWith('.json'))!;
-      const record = JSON.parse(readFileSync(join(runs, file), 'utf8')) as RunRecord;
+      const { record } = await h.home.runStore.get((await runIds(h.home.runStore))[0]!);
       const request = record.evidence[0]!.diagnostics!.cache!.requests[0]!;
       const startLine = stdout.split('\n').find((l) => l.startsWith('Caching:')) ?? '';
       const words = /fixed instructions and the stable start of its prompt for (.+?) \(/.exec(
@@ -440,6 +438,7 @@ describe('the start line and the record agree when auto chooses against its prio
       });
     } finally {
       await stub.close();
+      await h.cleanup();
       rmSync(root, { recursive: true, force: true });
     }
   }, 30_000);

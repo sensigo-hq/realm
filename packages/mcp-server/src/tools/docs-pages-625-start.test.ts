@@ -8,7 +8,7 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -73,8 +73,6 @@ async function home(): Promise<string> {
   const t = await makeTempHome();
   handles.push(t);
   const h = t.root;
-  mkdirSync(join(t.path, 'workflows'), { recursive: true });
-  mkdirSync(t.stores.runStore.runsDirPath, { recursive: true });
   writeFileSync(
     join(h, 'p.mjs'),
     [

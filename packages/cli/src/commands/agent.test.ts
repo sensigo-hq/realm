@@ -4,15 +4,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import {
-  existsSync,
-  mkdtempSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  writeFileSync,
-  rmSync,
-} from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { InMemoryStore } from '@sensigo/realm-testing';
@@ -21,7 +13,7 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   submitHumanResponse,
 } from '@sensigo/realm';
-import type { WorkflowDefinition, WorkflowRegistrar, PendingGate, RunRecord } from '@sensigo/realm';
+import type { WorkflowDefinition, WorkflowRegistrar, PendingGate } from '@sensigo/realm';
 import { runAgent } from '../agent/run-agent.js';
 import type { AgentDeps, AgentRunOptions } from '../agent/run-agent.js';
 import { LlmProvider } from '../agent/providers/llm-provider.js';
@@ -32,6 +24,7 @@ import {
   serializeToolResult,
   setAdditionalRedactionValues,
 } from '../agent/providers/agent-utils.js';
+import { makeTempHome, runIds } from '../test-support/temp-home.js';
 
 // issue #600 PR 2: resolveProvider takes an options object; the caching setting is required.
 const TEST_PROMPT_CACHE = { value: 'short', source: 'runner_default', by: 'realm agent' } as const;
@@ -656,7 +649,6 @@ describe('agentCommand — `Error loading extensions:` (issue #465)', () => {
   beforeEach(() => {
     // Scratch $HOME for the store handles the action constructs before loading (the #285 idiom).
     home = mkdtempSync(join(tmpdir(), 'realm-agent-ext-home-'));
-    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     // The provider-key guard runs BEFORE the workflow is loaded (the #425 cells' precondition);
@@ -750,9 +742,16 @@ describe('realm agent --cache-gaps and --prompt-cache auto (issue #600, the life
         resolve({ code, stdout, stderr });
       });
     });
-  const runFiles = (root: string): string[] => {
-    const dir = join(root, 'home', '.realm', 'runs');
-    return existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.json')) : [];
+  /** #616 PR-2c (c0, R4): a handle on the child's home, `<root>/home/.realm`, to read through the
+   *  store what the child `realm agent` recorded there. */
+  const childHome = (root: string) => makeTempHome({ home: join(root, 'home', '.realm') });
+  const runFiles = async (root: string): Promise<string[]> => {
+    const child = await childHome(root);
+    try {
+      return await runIds(child.home.runStore);
+    } finally {
+      await child.cleanup();
+    }
   };
   const ONE_STEP =
     'id: gaps-600\nname: Gaps 600\nversion: 1\nsteps:\n  ask:\n    description: Answer.\n    execution: agent\n';
@@ -806,7 +805,7 @@ describe('realm agent --cache-gaps and --prompt-cache auto (issue #600, the life
       expect({
         created: { code: created.code, stderr: created.stderr.trim() },
         attached: { code: attached.code, stderr: attached.stderr.trim() },
-        runs: runFiles(root),
+        runs: await runFiles(root),
         requests: requests(),
       }).toEqual({
         created: {
@@ -842,10 +841,11 @@ describe('realm agent --cache-gaps and --prompt-cache auto (issue #600, the life
         ],
         baseUrl,
       );
-      const files = runFiles(root);
-      const record = JSON.parse(
-        readFileSync(join(root, 'home', '.realm', 'runs', files[0] ?? 'none'), 'utf8'),
-      ) as RunRecord;
+      const child = await childHome(root);
+      const files = await runIds(child.home.runStore);
+      const { record } = await child.home.runStore
+        .get(files[0] ?? 'none')
+        .finally(() => child.cleanup());
       const request = record.evidence[0]!.diagnostics!.cache!.requests[0]!;
       expect({
         code: r.code,
