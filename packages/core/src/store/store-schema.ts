@@ -78,6 +78,17 @@ export const REALM_STORE_SCHEMA: readonly string[] = [
   // Every column the choice of a key's holder reads (`rerun_of`: a finished run another run of its key
   // superseded does not hold the key, unit 15a).
   `CREATE INDEX runs_by_key ON runs (workflow_id, key_hash, terminal_state, created_at, id, rerun_of)`,
+  // The scan's filters (#616 PR-2c c3; design §6), each walked in id order under `INDEXED BY`:
+  // `workflow` with `updated_since`, and `workflow` alone (a prefix).
+  `CREATE INDEX runs_by_workflow_updated ON runs (workflow_id, id, updated_at)`,
+  // `workflow` with `created_since`.
+  `CREATE INDEX runs_by_workflow_created ON runs (workflow_id, id, created_at)`,
+  // `updated_since` alone: a range filter over an index led by id.
+  `CREATE INDEX runs_by_updated ON runs (id, updated_at)`,
+  // `created_since` alone.
+  `CREATE INDEX runs_by_created ON runs (id, created_at)`,
+  // `terminal`: an equality filter over the column and id.
+  `CREATE INDEX runs_by_terminal ON runs (terminal_state, id)`,
   // An update of the record moves its version by exactly one. Scoped to the record, so the re-stamp of
   // the phase index (which sets only run_phase and phase_version) needs no bump.
   `CREATE TRIGGER runs_version_fence BEFORE UPDATE OF record ON runs

@@ -20,7 +20,6 @@ npm install -g @sensigo/realm-cli
 | `watch`    | Watch a workflow directory and re-register on changes |
 | `run`      | Start a workflow run                                  |
 | `test`     | Run workflow tests                                    |
-| `migrate`  | Apply schema migrations to stored runs                |
 
 ### realm run \<command\>
 

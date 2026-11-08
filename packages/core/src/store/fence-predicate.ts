@@ -22,8 +22,9 @@ import { brandClass, REALM_BRAND } from '../brand.js';
 import { assertReleaseLine } from '../release-line.js';
 
 /**
- * The five facts a fenced trace-buffer operation can be conditioned on (issue #616 PR-0). Derived
- * from every fenced call site on `60a21eb` — one member per former guard.
+ * The four facts a fenced trace-buffer operation can be conditioned on (issue #616 PR-0). Derived
+ * from every fenced call site on `60a21eb` — one member per former guard; the fifth, `gc`'s
+ * `run_absent`, left with that command (#616 PR-2c).
  *
  * A member is a condition on the fenced method's OWN target and never names a target of its own:
  * the run is always the method's `runId`, and the two step members (`step_open_for_trace`,
@@ -41,8 +42,6 @@ import { assertReleaseLine } from '../release-line.js';
  *   own pre-lock read:
  *   it is the `run_version` the `run_not_found` refusal reports (there is no run to read a version
  *   from once the run is gone) — the former guard closed over the same value.
- * - `run_absent` — `realm run gc`'s resurrect fence (`deleteAllForRunFenced`): the run no longer
- *   exists.
  * - `run_absent_or_terminal` — `realm run purge`'s trace-buffer fence (`deleteAllForRunFenced`): the
  *   run no longer exists, or its DERIVED phase is terminal.
  * - `run_at_version` — reclaim's version fence (`deleteFenced`, `sealFenced`): the run's `version`
@@ -53,7 +52,6 @@ import { assertReleaseLine } from '../release-line.js';
  */
 export type FencePredicate =
   | { kind: 'step_open_for_trace'; run_version: number }
-  | { kind: 'run_absent' }
   | { kind: 'run_absent_or_terminal' }
   | { kind: 'run_at_version'; version: number }
   | { kind: 'step_not_in_progress' };
@@ -65,7 +63,6 @@ export type FencePredicateKind = FencePredicate['kind'];
  *  and `isStepScopedFence` are derived from it. */
 export const FENCE_TARGETS_STEP = {
   step_open_for_trace: true,
-  run_absent: false,
   run_absent_or_terminal: false,
   run_at_version: false,
   step_not_in_progress: true,
@@ -94,7 +91,6 @@ export function isStepScopedFence(fence: FencePredicate): fence is StepScopedFen
  *  naming one that does not exist) fails to compile. */
 export const FENCE_PREDICATE_KINDS = Object.keys({
   step_open_for_trace: true,
-  run_absent: true,
   run_absent_or_terminal: true,
   run_at_version: true,
   step_not_in_progress: true,
@@ -110,7 +106,6 @@ export const FENCE_PREDICATE_KINDS = Object.keys({
  */
 export const FENCE_REQUIRES_RUN: Readonly<Record<FencePredicateKind, boolean>> = {
   step_open_for_trace: false,
-  run_absent: false,
   run_absent_or_terminal: false,
   run_at_version: true,
   step_not_in_progress: true,
@@ -215,16 +210,6 @@ export function runNotFoundError(runId: string): WorkflowError {
   });
 }
 
-function runResurrectedError(runId: string): WorkflowError {
-  return new WorkflowError(`Run '${runId}' exists again — no longer an orphan`, {
-    code: 'STATE_RUN_RESURRECTED',
-    category: 'STATE',
-    agentAction: 'report_to_user',
-    retryable: false,
-    details: { runId },
-  });
-}
-
 /** The reason purge reports for a run resumed since it was selected (issue #715 (a): one sentence,
  *  shared by this fence's refusal and purge's own classification of a version refusal). */
 export function noLongerTerminalReason(runId: string): string {
@@ -263,7 +248,6 @@ function stepStillInProgressError(runId: string, stepId: string): WorkflowError 
  *  `satisfies` checks each listed field exists on its member. */
 const FENCE_FIELDS = {
   step_open_for_trace: ['run_version'],
-  run_absent: [],
   run_absent_or_terminal: [],
   run_at_version: ['version'],
   step_not_in_progress: [],
@@ -289,7 +273,7 @@ function describeNonFence(value: unknown): string {
     : 'an object with a non-string kind';
 }
 
-/** The refusal for a value outside the five members — a plain-JavaScript caller's, or one
+/** The refusal for a value outside the four members — a plain-JavaScript caller's, or one
  *  still passing the guard callback these methods took before issue #616. */
 function notAFencePredicateError(value: unknown): WorkflowError {
   return new WorkflowError(
@@ -453,10 +437,6 @@ function evaluateChecked(
         );
       }
       return;
-    }
-    case 'run_absent': {
-      if (run === null) return;
-      throw runResurrectedError(runId);
     }
     case 'run_absent_or_terminal': {
       if (run === null) return;

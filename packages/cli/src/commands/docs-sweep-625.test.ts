@@ -95,14 +95,14 @@ describe(
       return run.id;
     }
 
-    it('realm-run-acting.md, realm-run-reading.md: realm run has seventeen subcommands, eleven that act, each in the table; advance has its synopsis', () => {
+    it('realm-run-acting.md, realm-run-reading.md: realm run has fifteen subcommands, nine that act, each in the table; advance has its synopsis', () => {
       claim(
         'docs/reference/cli/realm-run-acting.md',
-        '`realm run` has seventeen subcommands. This page covers the eleven that change a run or the store.',
+        '`realm run` has fifteen subcommands. This page covers the nine that change a run or the store.',
       );
       claim(
         'docs/reference/cli/realm-run-reading.md',
-        '`realm run` has seventeen subcommands. This page covers the six that only read: they change no run. The other eleven are in',
+        '`realm run` has fifteen subcommands. This page covers the six that only read: they change no run. The other nine are in',
       );
       const help = realm(['run', '--help']).out;
       const commands = help
@@ -116,8 +116,8 @@ describe(
       // (a) red when a subcommand is added or removed without the pages, or advance's synopsis
       //     drifts from its usage; (b) prints what --help lists.
       expect([commands.length, rows.length, rows.every((r) => commands.includes(r))]).toEqual([
-        17,
-        11,
+        15,
+        9,
         true,
       ]);
       expect(usage).toBe('Usage: realm run advance [options] <run-id>');

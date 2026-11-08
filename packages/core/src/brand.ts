@@ -2,8 +2,8 @@
 // project's own `@sensigo/realm`, and a copy nested under `@sensigo/realm-cli`, `@sensigo/realm-mcp`
 // or `@sensigo/realm-testing`. Each copy has its own classes, so `err instanceof WorkflowError` is
 // false for an error another copy made — and realm's own code, branching on that, quietly behaves
-// differently (a handler's retryable error is not retried; a provider module is refused; a gc,
-// purge or reclaim misreads a refusal).
+// differently (a handler's retryable error is not retried; a provider module is refused; a purge
+// or reclaim misreads a refusal).
 //
 // The mark lets copies of the SAME release recognise each other's objects. Every class a realm
 // package exports carries, on its prototype, an object naming the package, the version and the

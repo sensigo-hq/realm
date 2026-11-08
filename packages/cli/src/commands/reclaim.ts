@@ -20,7 +20,7 @@ import { openCliHome } from '../lib/home.js';
  * precedent above) because the `.action` handler hard-wires a real `JsonFileStore` and is not
  * unit-reachable; this function IS. `✓` marks the one MUTATING outcome (`reclaimed`); every other
  * outcome — including the new `no_active_claim` — gets the NEUTRAL glyph `•` (the house
- * informational bullet: gc.ts:463, purge.ts:419, reclaim.ts's own dry-run listing above). The
+ * informational bullet: purge.ts:419, reclaim.ts's own dry-run listing above). The
  * `no_active_claim` message text is EXACT (never "still eligible" — unverifiable without the
  * definition, which this command does not load).
  */

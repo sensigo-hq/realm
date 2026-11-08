@@ -20,7 +20,7 @@ export interface GuardedOption {
 }
 
 /**
- * The options whose value is refused when it is a flag-like word typed as the next word (25). Keyed by
+ * The options whose value is refused when it is a flag-like word typed as the next word (24). Keyed by
  * the leaf command's name (a command parsed on its own has no parent, so a path cannot be read) and
  * the long flag. Each takes any word without a check of its own (the census, `plans/issue-920/census/`).
  * `option-value-guard-classes.test.ts` holds the other class: the options that already refuse such a
@@ -33,9 +33,9 @@ export const GUARDED_OPTIONS: readonly GuardedOption[] = [
   { command: 'watch', option: '--model' },
   { command: 'agent', option: '--model' },
   { command: 'listen', option: '--model' },
-  // C-2: the other options that take any word without a check of their own (20). Each accepts the word
-  // and goes on, and a dropped flag changes what the command does (`reconcile --workflow --dry-run`
-  // writes; `drain <id> --extensions-module --force` drains nothing) or its message misleads.
+  // C-2: the other options that take any word without a check of their own (19). Each accepts the word
+  // and goes on, and a dropped flag changes what the command does (`purge --workflow --force` is a
+  // silent dry run; `drain <id> --extensions-module --force` drains nothing) or its message misleads.
   { command: 'run', option: '--project' }, // realm workflow run
   { command: 'agent', option: '--project' },
   { command: 'agent', option: '--params' },
@@ -53,7 +53,6 @@ export const GUARDED_OPTIONS: readonly GuardedOption[] = [
   { command: 'list', option: '--workflow' }, // realm run list
   { command: 'reclaim', option: '--workflow' },
   { command: 'purge', option: '--workflow' },
-  { command: 'reconcile', option: '--workflow' },
   { command: 'export', option: '--out' },
   { command: 'respond', option: '--project' },
   { command: 'advance', option: '--project' },

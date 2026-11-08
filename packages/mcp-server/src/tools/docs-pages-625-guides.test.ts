@@ -824,10 +824,10 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     ]);
   });
 
-  it('error-codes.md: 108 codes defined — 93 raised, 15 that nothing raises', () => {
+  it('error-codes.md: 107 codes defined — 92 raised, 15 that nothing raises', () => {
     claim(
       'docs/reference/error-codes.md',
-      'This page lists all 108 codes that Realm defines: the 93 it raises, with when each is raised and what it tells the caller to do, and the 15 that nothing raises.',
+      'This page lists all 107 codes that Realm defines: the 92 it raises, with when each is raised and what it tells the caller to do, and the 15 that nothing raises.',
     );
     // #616 unit 3: the "nothing raises" block's own header, whose count the units that first raise
     // these codes change (the list's length is checked below, as `unraised`). (1) red when the
@@ -886,8 +886,8 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       unraisedWritten: listedUnraised.filter(written),
       raisedNowhere: listedRaised.filter((c) => !written(c)),
     }).toEqual({
-      defined: 108,
-      raised: 93,
+      defined: 107,
+      raised: 92,
       unraised: 15,
       cover: [...defined].sort(),
       unraisedWritten: [],
@@ -904,7 +904,7 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     // (2) prints the row.
     claim(
       'docs/reference/error-codes.md',
-      '| `STATE_RUN_DIVERGED` | An imported run conflicts with a stored one: another version of the same run, the same version of it with other content, or an idempotency key owned by another open run. | `report_to_user` | No |',
+      '| `STATE_RUN_DIVERGED` | An imported run conflicts with a stored one: another version of the same run, or an idempotency key owned by another open run. The SQLite store also refuses the same version of a run with other content (the JSON store takes it as already imported), and refuses a key owned by an open run only for an imported run that is itself open (the JSON store refuses an ended one too). | `report_to_user` | No |',
     );
   });
 
@@ -914,7 +914,7 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     // the row no longer says it; (2) prints the row.
     claim(
       'docs/reference/error-codes.md',
-      '| `STATE_RUN_PURGED` | A write tried to create a run id that was deleted earlier; a purged run is never created again. An import of such a run is refused with a message that names when it was deleted. | `report_to_user` | No |',
+      '| `STATE_RUN_PURGED` | A write tried to create a run id that was deleted earlier; a purged run is never created again. The SQLite store refuses an import of such a run with a message that names when it was deleted. | `report_to_user` | No |',
     );
   });
 
@@ -924,7 +924,7 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     // the row.
     claim(
       'docs/reference/error-codes.md',
-      "| `STATE_RUN_TIMESTAMP_INVALID` | An imported run's `created_at` or `updated_at` is not a timestamp of the form `2026-11-05T12:00:00.000Z`. The message names the field; nothing is imported. | `report_to_user` | No |",
+      '| `STATE_RUN_TIMESTAMP_INVALID` | The SQLite store refuses an imported run whose `created_at` or `updated_at` is not a timestamp of the form `2026-11-05T12:00:00.000Z`. The message names the field; nothing is imported. | `report_to_user` | No |',
     );
   });
 
@@ -935,7 +935,7 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     // (2) prints the clause.
     claim(
       'docs/reference/error-codes.md',
-      'An import of something that is not a run record in the current format is refused with it too; that message names no file. | `report_to_user` | No |',
+      'The SQLite store refuses an import of something that is not a run record in the current format with it too; that message names no file. | `report_to_user` | No |',
     );
   });
 

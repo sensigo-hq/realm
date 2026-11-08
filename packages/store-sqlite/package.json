@@ -1,14 +1,16 @@
 {
   "name": "@sensigo/realm-store-sqlite",
   "version": "0.48.1-dev.0",
-  "description": "SQLite-backed stores for Realm. Not yet released: a later change wires them in.",
+  "publishConfig": {
+    "access": "public"
+  },
+  "description": "SQLite-backed stores for Realm: runs, duplicate-webhook ids, workflow definitions, failed attempts, replays and trace buffers, in one realm.db file in the Realm home.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/sensigo-hq/realm.git"
   },
   "homepage": "https://realmengine.dev",
-  "private": true,
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

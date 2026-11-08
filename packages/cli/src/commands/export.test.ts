@@ -1,5 +1,5 @@
 // Tests for export.ts — realm run export (issue #159), the read-only evidence-preserving
-// companion to purge. Mirrors purge.test.ts/gc.test.ts's style: the exported LOGIC
+// companion to purge. Mirrors purge.test.ts's style: the exported LOGIC
 // (buildExportBundle, resolveExportPath) is tested directly against real stores over a real,
 // isolated tmp directory (NEVER `~/.realm/runs` or cwd's real files) — no console/exit-code
 // assertions (that thin formatting layer isn't unit-tested here either, per precedent).

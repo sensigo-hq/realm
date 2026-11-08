@@ -19,18 +19,19 @@ primary channel.
 ## Supported versions
 
 realm is pre-1.0 (`0.x`). Only the **latest published version** on npm (across
-`@sensigo/realm`, `@sensigo/realm-cli`, `@sensigo/realm-mcp`, `@sensigo/realm-testing`) receives
+`@sensigo/realm`, `@sensigo/realm-cli`, `@sensigo/realm-mcp`, `@sensigo/realm-testing`, `@sensigo/realm-store-sqlite`) receives
 security fixes. There is no back-porting to older minor versions and no long-term-support (LTS)
 track — upgrading to the latest release is the supported path to a fix.
 
 ## Scope
 
-This policy covers the four published npm packages in this repository:
+This policy covers the five published npm packages in this repository:
 
 - `@sensigo/realm` (core engine)
 - `@sensigo/realm-cli`
 - `@sensigo/realm-mcp`
 - `@sensigo/realm-testing`
+- `@sensigo/realm-store-sqlite` (the SQLite store)
 
 ## How we triage dependency advisories
 

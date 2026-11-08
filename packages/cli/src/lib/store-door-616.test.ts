@@ -1,8 +1,8 @@
 // store-door-616.test.ts — issue #616 PR-2a, unit (iii): the law that every store a host builds comes
 // through its one door. A source scan, table-driven by package: each row names the only files of that
 // package allowed to construct one of the six store classes. The CLI's row is the door
-// (`lib/home.ts`) and the two commands 2c deletes (`run gc`, `run reconcile`), which keep their own
-// constructions until then; unit (ii-b) added the MCP package's row. Before this unit the CLI built its
+// (`lib/home.ts`) alone, since 2c removed the two commands that kept their own constructions; unit
+// (ii-b) added the MCP package's row. Before this unit the CLI built its
 // stores by hand in 60 places in 27 files, so a command could build one of them on a folder its
 // other stores do not read (the #188 mixed-wiring class).
 //
@@ -17,11 +17,11 @@ import { fileURLToPath } from 'node:url';
 // packages/cli/src/lib → packages/
 const PACKAGES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
-/** Package → the files (relative to its src/) allowed to construct a store: the package's opener
- *  (and, for the CLI, the two commands 2c deletes). The test helpers under `src/test-support/`, which
+/** Package → the files (relative to its src/) allowed to construct a store: the package's opener.
+ *  The test helpers under `src/test-support/`, which
  *  the walker reads as non-test source, build none (#616 PR-2b, b3). */
 const ALLOWED: Record<string, string[]> = {
-  cli: ['lib/home.ts', 'commands/gc.ts', 'commands/reconcile.ts'],
+  cli: ['lib/home.ts'],
   // #616 PR-2a (ii-b): the `realm-mcp` program's opener; the library and its tools build none.
   'mcp-server': ['home.ts'],
 };
@@ -29,20 +29,10 @@ const ALLOWED: Record<string, string[]> = {
 /** Test files allowed to construct a store, each with how many constructions it holds and its
  *  subject. Every other test file opens its stores through the package's test helper
  *  (`makeTempHome`, #616 PR-2b). The count keeps the list exact: a routed file that constructs again
- *  is a stray, a listed file that grows one is red. 2c deletes gc's rows with the command; PR-3 the
- *  rest with the classes, the mcp-server rows (b3) among them. */
+ *  is a stray, a listed file that grows one is red. 2c deleted gc's rows with the command; PR-3
+ *  deletes the rest with the classes, the mcp-server rows (b3) among them. */
 const ALLOWED_TESTS: Record<string, Array<{ file: string; sites: number; subject: string }>> = {
   cli: [
-    {
-      file: 'commands/gc-heal-composition.test.ts',
-      sites: 1,
-      subject: "gc's heal composition on the default path; deleted with `run gc` in 2c",
-    },
-    {
-      file: 'commands/gc.test.ts',
-      sites: 47,
-      subject: '`realm run gc`, deleted in 2c (design §1.2)',
-    },
     {
       file: 'commands/lazy-home-resolution-285.test.ts',
       sites: 1,
@@ -173,7 +163,8 @@ function isConstruction(line: string): boolean {
 /** How many constructions one line holds, by the same rule: every match of `CONSTRUCTION` on the line
  *  (a global copy of the pattern). The test table counts constructions, not lines, because its counts
  *  equal `plans/issue-616/pr2b/count-sites.mjs`'s rows and a second construction added to a counted
- *  line must turn it red (`gc.test.ts` builds two stores on one line in places); the source table is
+ *  line must turn it red (`gc.test.ts`, removed in 2c, built two stores on one line in places); the
+ *  source table is
  *  unit (iii)'s and keeps counting lines (MA 1's ruling, MA1-2B2-18). */
 function constructionsOn(line: string): number {
   const code = line.replace(/(['"`])(?:\\.|(?!\1)[^\\])*\1/g, '""');

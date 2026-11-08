@@ -206,9 +206,9 @@ function readCountOf(
 
 const REFUSAL_CODE = 'STATE_RUN_BUSY';
 
-/** A fence that PASSES on every fresh TCK key: `run_absent`, and the TCK never creates a run for a
- *  key unless a case does so explicitly. */
-const PASSING_FENCE: RunScopedFencePredicate = { kind: 'run_absent' };
+/** A fence that PASSES on every fresh TCK key: `run_absent_or_terminal`, which an absent run passes,
+ *  and the TCK never creates a run for a key unless a case does so explicitly. */
+const PASSING_FENCE: RunScopedFencePredicate = { kind: 'run_absent_or_terminal' };
 
 /** A fence that REFUSES with a typed, populated-category `WorkflowError` (`STATE_RUN_BUSY`,
  *  retryable): `run_absent_or_terminal` over a live run the TCK creates for `runId`. Deliberately a
@@ -1128,12 +1128,6 @@ const FENCE_MEMBER_CELLS = {
       ABSENT,
     ],
     methods: () => ['appendFenced'],
-  },
-  run_absent: {
-    fence: () => ({ kind: 'run_absent' }),
-    trueStates: [ABSENT],
-    falseStates: [{ label: 'the run exists again', run: (runId) => fenceTestRun(runId) }],
-    methods: () => ['deleteAllForRunFenced'],
   },
   run_absent_or_terminal: {
     fence: () => ({ kind: 'run_absent_or_terminal' }),
