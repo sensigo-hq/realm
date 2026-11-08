@@ -1,7 +1,5 @@
 // Tests for replayRun, parseOverride, and saveReplay business logic.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { replayRun, parseOverride, saveReplay, replayCommand } from './replay.js';
 import type {
   ReplayStore,
@@ -442,7 +440,6 @@ describe('replayCommand — a workflow-absent run carries the remedy (issue #456
   beforeEach(async () => {
     h = await makeTempHome();
     home = h.root;
-    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});

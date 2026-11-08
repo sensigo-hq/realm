@@ -18,6 +18,7 @@ import {
   type WorkflowError,
 } from '@sensigo/realm';
 import { runFixtureTests } from '@sensigo/realm-testing';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..', '..', '..');
@@ -71,11 +72,14 @@ const reading = (field: 'when' | 'preconditions' | 'abort_unless', leaf: string)
 
 let home: string;
 let work: string;
-beforeEach(() => {
+let h: TempHome;
+beforeEach(async () => {
   home = mkdtempSync(join(tmpdir(), 'realm-933-home-'));
   work = mkdtempSync(join(tmpdir(), 'realm-933-work-'));
+  h = await makeTempHome({ home: join(home, '.realm') });
 });
-afterEach(() => {
+afterEach(async () => {
+  await h.cleanup();
   rmSync(home, { recursive: true, force: true });
   rmSync(work, { recursive: true, force: true });
 });
@@ -301,7 +305,7 @@ describe('issue #933 — conditions.md: a precondition or a guard reads only wha
 });
 
 describe('issue #933 — the CHANGELOG entry', () => {
-  it('the entry: what is refused, the remedies, `when`’s new words for the `context.resources` form, and `validate --registered` on a copy registered before', () => {
+  it('the entry: what is refused, the remedies, `when`’s new words for the `context.resources` form, and `validate --registered` on a copy registered before', async () => {
     claim(
       CHANGELOG,
       "**BREAKING — a precondition or a guard (`abort_unless`) whose path starts outside the workflow's steps is refused when the workflow file is loaded (issue #933).** That covers a path on the run (`run`, `run.params.…`, `run.id`), the `input_map` form `context.resources.…`, and a name that is no step of the workflow. Such a check could never be read: the step stayed blocked, or the guard failed the run. Each refusal says what to write instead. For the run's input, declare it in `params_schema` to refuse a run that does not fit, or, on a step that depends on another, put the condition under `when` to skip it. A `when` that uses the `context.resources.…` form now says how to write the path, in place of telling you to add `context` to `depends_on`. A copy registered before this version keeps running as registered; `realm workflow validate --registered <id>` shows whether it would now be refused.",
@@ -331,28 +335,23 @@ describe('issue #933 — the CHANGELOG entry', () => {
     expect(
       when.map((e) => [e.includes('depends_on'), e.includes("Write it as 'classify.ok'")]),
     ).toEqual([[false, true]]);
-    // A copy registered before this version, written straight into the store (the new build will
-    // not register it). (a) red when `validate --registered` does not show the refusal, or exits 0;
-    // (b) prints its exit and whether the refusal is in its output.
-    const wfDir = join(home, '.realm', 'workflows');
-    mkdirSync(wfDir, { recursive: true });
-    writeFileSync(
-      join(wfDir, 'old-copy.json'),
-      JSON.stringify({
-        id: 'old-copy',
-        name: 'old-copy',
-        version: 1,
-        schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
-        steps: {
-          c: {
-            description: 'C.',
-            execution: 'agent',
-            preconditions: ['run.params.ok == true'],
-          },
+    // A copy registered before this version, planted through the registry's `register()`, which
+    // admits nothing (the new build's `realm workflow register` would refuse it). (a) red when
+    // `validate --registered` does not show the refusal, or exits 0; (b) prints its exit and
+    // whether the refusal is in its output.
+    await h.home.workflowStore.register({
+      id: 'old-copy',
+      name: 'old-copy',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        c: {
+          description: 'C.',
+          execution: 'agent',
+          preconditions: ['run.params.ok == true'],
         },
-      }),
-      'utf8',
-    );
+      },
+    } as never);
     const r = realm(['workflow', 'validate', '--registered', 'old-copy']);
     expect({
       code: r.code,

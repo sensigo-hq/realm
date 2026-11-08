@@ -10,7 +10,7 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -68,7 +68,6 @@ describe('#625 PR-2a, C146/C147 — a late `realm run respond` says which call c
     h = await makeTempHome();
     home = h.root;
     project = mkdtempSync(join(tmpdir(), 'realm-625-c146-project-'));
-    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
     savedHome = process.env['HOME'];
     process.env['HOME'] = home;
     runStore = h.home.runStore;
