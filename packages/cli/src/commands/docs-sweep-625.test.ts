@@ -15,7 +15,7 @@ import { advanceRunFromShell, runAdvanceCommand } from './run-advance.js';
 import {
   ExtensionRegistry,
   JsonFileStore,
-  JsonWorkflowStore,
+  type RealmWorkflowRegistrar,
   declareReleaseLine,
   advanceRun,
   createDefaultRegistry,
@@ -82,7 +82,7 @@ describe(
     let h: TempHome & { readonly root: string };
     let home: string;
     let runStore: JsonFileStore;
-    let workflowStore: JsonWorkflowStore;
+    let workflowStore: RealmWorkflowRegistrar;
 
     beforeEach(async () => {
       h = await makeTempHome();

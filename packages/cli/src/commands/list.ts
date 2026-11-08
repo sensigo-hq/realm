@@ -287,9 +287,10 @@ export type StuckDefinitionProbe =
  *                          `JsonFileStore` and its real `runsDirPath` getter) constructs this and
  *                          passes it in; `undefined` means best-effort skip — no cause attribution
  *                          — never a crash. `listRuns` never constructs one itself.
- * @param workflowProbe     issue #558 PR-T: the `--stuck` definition probe (memoised per workflow
- *                          id by the caller, which holds the registrar); see
- *                          {@link StuckDefinitionProbe}. `undefined` ⇒ zero findings, no footer.
+ * @param workflowProbe     issue #558 PR-T: the `--stuck` definition probe (the caller holds the
+ *                          registrar); see {@link StuckDefinitionProbe}. #616 PR-2c c5b: awaited
+ *                          once per distinct workflow id, one after another, before any run is
+ *                          judged. `undefined` ⇒ zero findings, no footer.
  * @param listing           issue #719 (R15): the whole listing (`listRunsDiagnosed`), when the
  *                          caller has read it — then `store.list()` is not called, so one damaged
  *                          run file never hides the rest. When damaged files exist and no
@@ -304,7 +305,7 @@ export async function listRuns(
   stuck?: boolean,
   idleThresholdMs?: number,
   failedAttemptStore?: FailedAttemptStore,
-  workflowProbe?: (workflowId: string) => StuckDefinitionProbe | undefined,
+  workflowProbe?: (workflowId: string) => Promise<StuckDefinitionProbe | undefined>,
   listing?: RunListing,
 ): Promise<string> {
   const snapshots = (listing ?? (await store.list(workflowId))).snapshots;
@@ -321,6 +322,14 @@ export async function listRuns(
   // issue #558 PR-T (review fold C4): copies over the listing cap, by workflow id — the footer.
   const uninspected = new Map<string, { bytes: number; capBytes: number; runs: number }>();
   if (stuck === true) {
+    // #616 PR-2c c5b: the probe is awaited once per distinct workflow id, one call after another,
+    // before any run is judged; each run's judgement reads its id's answer.
+    const probes = new Map<string, StuckDefinitionProbe | undefined>();
+    if (workflowProbe !== undefined) {
+      for (const id of new Set(runs.map((r) => r.workflow_id))) {
+        probes.set(id, await workflowProbe(id));
+      }
+    }
     filtered = runs.filter((r) => {
       // issue #221: classifyRunHealth is the SAME shared predicate get_run_state/inspect (the
       // OTHER two READ surfaces) derive from — no drift. issue #729: with the definition the probe
@@ -332,7 +341,7 @@ export async function listRuns(
       // issue #558 PR-T: the 7th parameter (the #219 injection precedent) — `listRuns` holds no
       // registrar, so the --stuck action constructs the probe and passes it; `undefined` ⇒ zero
       // `definition_unresolvable` findings, never a crash.
-      const probed = workflowProbe?.(r.workflow_id);
+      const probed = probes.get(r.workflow_id);
       if (probed !== undefined && 'uninspected' in probed) {
         const entry = uninspected.get(r.workflow_id) ?? { ...probed.uninspected, runs: 0 };
         entry.runs += 1;
@@ -607,45 +616,43 @@ export const listCommand = new Command('list')
       const failedAttemptStore = opts.stuck === true ? home.failedAttemptStore : undefined;
 
       // issue #558 PR-T — the --stuck probe closure. The 4 MB parse cap lives HERE and NOWHERE
-      // else: `get()` stays uncapped (#552's door B, its Resolution). Memoised per workflow id
-      // per invocation — a hundred runs of one workflow cost one probe.
-      let workflowProbe: ((workflowId: string) => StuckDefinitionProbe | undefined) | undefined;
+      // else: `get()` stays uncapped (#552's door B, its Resolution). #616 PR-2c c5b: the registry
+      // reads under the cap (`getCapped`, either registry); `listRuns` calls this once per workflow.
+      let workflowProbe: ((workflowId: string) => Promise<StuckDefinitionProbe>) | undefined;
       if (opts.stuck === true) {
-        const { WorkflowError, probeClassToError, STUCK_DEFINITION_PARSE_CAP_BYTES } =
-          await import('@sensigo/realm');
+        const { WorkflowError, STUCK_DEFINITION_PARSE_CAP_BYTES } = await import('@sensigo/realm');
         const wfStore = home.workflowStore;
-        const memo = new Map<string, StuckDefinitionProbe | undefined>();
-        workflowProbe = (workflowId: string) => {
-          if (memo.has(workflowId)) return memo.get(workflowId);
-          let result: StuckDefinitionProbe | undefined;
-          const probed = wfStore.probe(workflowId);
-          if (!probed.ok) {
-            const err = probeClassToError(probed, workflowId);
-            result = { code: err.code, message: err.message, class: probed.class };
-          } else if (probed.bytes > STUCK_DEFINITION_PARSE_CAP_BYTES) {
-            // Zero bytes read. A #557 bomb is NAMED by its size, never parsed — and never JUDGED:
-            // an unread copy is a check that did not run, not a broken copy (the fresh walk
-            // executed a VALID 5 MB copy listed as `definition_unresolvable` with `realm run
+        workflowProbe = async (workflowId: string): Promise<StuckDefinitionProbe> => {
+          try {
+            const read = await wfStore.getCapped(workflowId, STUCK_DEFINITION_PARSE_CAP_BYTES);
+            // Over the cap: zero bytes parsed. A #557 bomb is NAMED by its size, never parsed — and
+            // never JUDGED: an unread copy is a check that did not run, not a broken copy (the fresh
+            // walk executed a VALID 5 MB copy listed as `definition_unresolvable` with `realm run
             // abandon` as its remedy). `listRuns` turns this into the stderr footer, not a row.
-            result = {
-              uninspected: { bytes: probed.bytes, capBytes: STUCK_DEFINITION_PARSE_CAP_BYTES },
-            };
-          } else {
-            try {
-              // issue #729: the parse is kept — the classifier judges the run's ways with it.
-              result = { definition: wfStore.getSync(workflowId) };
-            } catch (err) {
-              // Narrowed with `instanceof` — never duck-typed on `err.code` (house rule). A
-              // non-WorkflowError escape (a TOCTOU remnant) is reported, never a crash.
-              if (err instanceof WorkflowError) {
-                // The class slot on the --stuck line holds a WORD for every class (executed: a
-                // corrupt copy rendered `(RESOURCE_FORMAT_INVALID)` beside `(missing)`) — the
-                // parse and legacy classes carry no probe class, so the closure names them.
-                // The probe class is read through core's `probeClassOf` (review fold R1) — one
-                // reader of that slot, never a second hand-narrowing.
-                const word =
-                  probeClassOf(err) ??
-                  (err.code === 'RESOURCE_FORMAT_INVALID'
+            // issue #729: a read copy is kept — the classifier judges the run's ways with it.
+            return 'over' in read
+              ? {
+                  uninspected: {
+                    bytes: read.over.bytes,
+                    capBytes: STUCK_DEFINITION_PARSE_CAP_BYTES,
+                  },
+                }
+              : { definition: read.definition };
+          } catch (err) {
+            // Narrowed with `instanceof` — never duck-typed on `err.code` (house rule). A
+            // non-WorkflowError escape (a TOCTOU remnant) is reported, never a crash.
+            if (err instanceof WorkflowError) {
+              // The class slot on the --stuck line holds a WORD for every class (executed: a
+              // corrupt copy rendered `(RESOURCE_FORMAT_INVALID)` beside `(missing)`) — the
+              // parse and legacy classes carry no probe class, so the closure names them.
+              // The probe class is read through core's `probeClassOf` (review fold R1) — one
+              // reader of that slot, never a second hand-narrowing. #616 PR-2c c5b: a workflow that
+              // is not registered is `missing` on either registry (the JSON registry's probe class).
+              const word =
+                probeClassOf(err) ??
+                (err.code === 'STATE_WORKFLOW_NOT_FOUND'
+                  ? 'missing'
+                  : err.code === 'RESOURCE_FORMAT_INVALID'
                     ? 'corrupt'
                     : err.code === 'STATE_LEGACY_FORMAT'
                       ? 'legacy'
@@ -653,22 +660,18 @@ export const listCommand = new Command('list')
                         err.code === 'STATE_NEWER_FORMAT'
                         ? 'newer'
                         : undefined);
-                result = {
-                  code: err.code,
-                  message: err.message,
-                  ...(word !== undefined ? { class: word } : {}),
-                };
-              } else {
-                result = {
-                  code: 'ENGINE_INTERNAL',
-                  message: err instanceof Error ? err.message : String(err),
-                  class: 'unknown',
-                };
-              }
+              return {
+                code: err.code,
+                message: err.message,
+                ...(word !== undefined ? { class: word } : {}),
+              };
             }
+            return {
+              code: 'ENGINE_INTERNAL',
+              message: err instanceof Error ? err.message : String(err),
+              class: 'unknown',
+            };
           }
-          memo.set(workflowId, result);
-          return result;
         };
       }
 

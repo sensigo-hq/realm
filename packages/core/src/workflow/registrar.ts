@@ -564,7 +564,27 @@ export interface WorkflowRegistrar {
    * nothing more (`listWorkflowsDiagnosed`).
    */
   listWithDiagnostics?(): Promise<RegistryListing>;
+  /**
+   * #616 PR-2c c5b: the copy, read under a size cap (`realm run list --stuck`'s). It resolves to
+   * `{ definition }`, the definition `get` gives, for a copy whose stored size is at most
+   * `capBytes`, and to `{ over: { bytes } }` for a larger one, without parsing or judging anything.
+   * Otherwise it rejects with exactly the refusal `get(workflowId)` gives for that copy. The size is
+   * the stored copy's size in bytes, judged before anything is read as JSON. `get` itself is never
+   * capped (#552).
+   */
+  getCapped?(workflowId: string, capBytes: number): Promise<CappedRead>;
 }
+
+/** #616 PR-2c c5b: what `WorkflowRegistrar.getCapped` resolves to. */
+export type CappedRead = { definition: WorkflowDefinition } | { over: { bytes: number } };
+
+/**
+ * #616 PR-2c c5b: a registrar with every optional member (c5a's `listWithDiagnostics` and
+ * `getCapped`), as Realm's own registries — the JSON registry and the SQLite registry — are. Realm's
+ * homes carry this type, so a command that needs a member never meets a registrar without it.
+ */
+export type RealmWorkflowRegistrar = WorkflowRegistrar &
+  Required<Pick<WorkflowRegistrar, 'listWithDiagnostics' | 'getCapped'>>;
 
 /**
  * #616 PR-2c c5a: a registrar as Realm's hosts list it (`realm workflow list`, MCP `list_workflows`):
@@ -603,7 +623,7 @@ export function unreadableById(
 /**
  * Stores WorkflowDefinition objects as JSON files at ~/.realm/workflows/{id}.json.
  */
-export class JsonWorkflowStore implements WorkflowRegistrar {
+export class JsonWorkflowStore implements RealmWorkflowRegistrar {
   private readonly dir: string;
 
   constructor(baseDir?: string) {
@@ -673,15 +693,27 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
     return { ok: true, bytes: st.size };
   }
 
+  /**
+   * #616 PR-2c c5b: `WorkflowRegistrar.getCapped` on a registry of files — the probe, the file's size
+   * from the probe, then the synchronous read. A probe failure rejects with `probeClassToError`'s
+   * refusal, as `get` does; a file over `capBytes` answers its size with no byte read.
+   */
+  async getCapped(workflowId: string, capBytes: number): Promise<CappedRead> {
+    const probed = this.probe(workflowId);
+    if (!probed.ok) throw probeClassToError(probed, workflowId);
+    if (probed.bytes > capBytes) return { over: { bytes: probed.bytes } };
+    return { definition: this.getSync(workflowId) };
+  }
+
   async get(workflowId: string): Promise<WorkflowDefinition> {
     return this.getSync(workflowId);
   }
 
   /**
-   * issue #558 PR-T — `get()`'s body, synchronously. `get()` awaits nothing; the `--stuck` probe
-   * closure classifies inside a synchronous filter and must reuse this EXACT policy (parse →
-   * root → legacy) so a corrupt, null-root or legacy copy speaks with one voice on every surface
-   * rather than through a second, drifting re-derivation.
+   * issue #558 PR-T — `get()`'s body, synchronously. `get()` awaits nothing; `getCapped` (the
+   * `--stuck` read, #616 PR-2c c5b) reuses this EXACT policy (parse → root → legacy) so a corrupt,
+   * null-root or legacy copy speaks with one voice on every surface rather than through a second,
+   * drifting re-derivation.
    */
   getSync(workflowId: string): WorkflowDefinition {
     const filePath = join(this.dir, `${workflowId}.json`);

@@ -167,13 +167,13 @@ describe('the --stuck label law (issue #558 PR-T)', () => {
         undefined,
         undefined,
         f.probe === true
-          ? () => ({
+          ? async () => ({
               code: 'STATE_WORKFLOW_UNREADABLE',
               message: 'the registered copy could not be read (EACCES: /x.json)',
               class: 'unreadable',
             })
           : f.definition !== undefined
-            ? () => ({ definition: f.definition! })
+            ? async () => ({ definition: f.definition! })
             : undefined,
       );
       expect(out, `kind ${f.kind} must be SELECTED by --stuck`).toContain('run-abc123');
@@ -213,7 +213,7 @@ describe('the --stuck label law (issue #558 PR-T)', () => {
       true,
       undefined,
       undefined,
-      () => ({
+      async () => ({
         code: 'RESOURCE_FORMAT_INVALID',
         message: "the registered copy of 'test-workflow' is not parseable JSON: ...",
         class: 'parse',
@@ -412,10 +412,22 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
       true,
       undefined,
       undefined,
-      () => ({ code: 'ENGINE_INTERNAL', message: 'boom' }),
+      async () => ({ code: 'ENGINE_INTERNAL', message: 'boom' }),
     );
     expect(out).toContain('definition_unresolvable (unknown) (realm run inspect run-abc123)');
     expect(out).not.toContain('ENGINE_INTERNAL');
+  });
+
+  it('#616 PR-2c c5b: a run whose workflow is not registered reads `definition_unresolvable (missing)` — the not-found word, on the real registry', async () => {
+    await plantRun('run-ghost', 'wf-ghost');
+    await listCommand.parseAsync(['--stuck', '--older-than', '0m'], { from: 'user' });
+    // (a) red when the not-found refusal is given no word (the line reads `(unknown)`); (b) prints
+    //     the run's line.
+    expect(
+      out()
+        .split('\n')
+        .find((l) => l.includes('run-ghost')),
+    ).toContain('definition_unresolvable (missing) (realm run inspect run-ghost)');
   });
 
   it('LAW-g a GATE-WAITING run with an unreadable copy IS selected, and its label points at inspect (review fold C13; since R9 every live run does — the walk found abandon as the only offered act destroyed a repairable run)', async () => {

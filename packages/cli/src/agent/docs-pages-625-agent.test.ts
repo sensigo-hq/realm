@@ -21,7 +21,7 @@ import {
   executeChain,
   executeStep,
   JsonFileStore,
-  JsonWorkflowStore,
+  type RealmWorkflowRegistrar,
   loadWorkflowFromString,
   submitHumanResponse,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
@@ -926,7 +926,10 @@ describe(
       if (h !== undefined) await h.cleanup();
     });
 
-    async function fresh(): Promise<{ runStore: JsonFileStore; workflowStore: JsonWorkflowStore }> {
+    async function fresh(): Promise<{
+      runStore: JsonFileStore;
+      workflowStore: RealmWorkflowRegistrar;
+    }> {
       const made = await makeTempHome();
       h = made;
       home = made.root;
