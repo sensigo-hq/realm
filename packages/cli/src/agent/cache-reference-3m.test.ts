@@ -426,3 +426,83 @@ describe('caching 3-M A-1 — a failed first call on a re-attached drive', () =>
     });
   }
 });
+
+describe('caching 3-M A-1 — a re-attached drive on a step that declares strict structured output', () => {
+  it('check 1 on a strict step (S2): its first request carries the drive failure’s request as `reference`', async () => {
+    const store = new InMemoryStore();
+    const def = workflow('single', { structured_output: 'strict' });
+    const failed = await drive(store, def, [{ throw: true, usage: [billed(1, 2000)] }]);
+    const before = lastFailureRequests(failed.run, 'draft')[0]!;
+    const again = await drive(
+      store,
+      def,
+      [{ output: { status: 'OK' }, usage: [billed(5, 2010)] }],
+      failed.run.id,
+    );
+    const entry = again.run.evidence.filter((e) => e.step_id === 'draft').at(-1);
+    const [first] = entry?.diagnostics?.cache?.requests ?? [];
+    // `strict` is the fixture: on a single-shot step only the strict branch (S2) writes the
+    // structured-output disclosure, so `requested: true` says this call went through S2.
+    // (a) red when S2 does not attach the reference, or when the call stops reaching S2; (b) prints
+    //     the disclosure's `requested`, the id and the reference.
+    expect({
+      strict: entry?.diagnostics?.structured_output?.requested,
+      first: idAndReference(first),
+    }).toEqual({
+      strict: true,
+      first: { id: expect.any(String), reference: referenceTo(before) },
+    });
+  });
+});
+
+/** Two single-shot agent steps: `draft`, then `review`, which depends on it; `OK` passes each. */
+function twoSteps(): WorkflowDefinition {
+  const output_schema = {
+    type: 'object',
+    properties: { status: { type: 'string', enum: ['OK'] } },
+    required: ['status'],
+  };
+  return {
+    id: 'reference-3m-two-steps',
+    name: 'reference 3-M, two steps',
+    version: 1,
+    schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+    steps: {
+      draft: { description: 'Draft', execution: 'agent', output_schema },
+      review: { description: 'Review', execution: 'agent', depends_on: ['draft'], output_schema },
+    },
+  } as unknown as WorkflowDefinition;
+}
+
+describe('caching 3-M A-1 — a multi-step run: the copy comes from the same step', () => {
+  it('the same step only: after a drive failed the first step, the re-attached drive’s first request on that step references it, and the second step’s first request carries none', async () => {
+    const store = new InMemoryStore();
+    const def = twoSteps();
+    const failed = await drive(store, def, [{ throw: true, usage: [billed(1, 2000)] }]);
+    const before = lastFailureRequests(failed.run, 'draft')[0]!;
+    const again = await drive(
+      store,
+      def,
+      [
+        { output: { status: 'OK' }, usage: [billed(5, 2010)] },
+        { output: { status: 'OK' }, usage: [billed(8, 2040)] },
+      ],
+      failed.run.id,
+    );
+    const [draftFirst] = lastEvidenceRequests(again.run, 'draft');
+    const [reviewFirst] = lastEvidenceRequests(again.run, 'review');
+    // (a) red when the lookup stops matching the step on the evidence entries (the second step gets
+    //     the first step's settled request) or on the drive failures (it gets the first step's
+    //     failed request); `review`'s id says its request is there, so its `undefined` is not an
+    //     absent request; (b) prints the calls made, the ids and the references.
+    expect({
+      calls: again.calls,
+      draft: idAndReference(draftFirst),
+      review: idAndReference(reviewFirst),
+    }).toEqual({
+      calls: 2,
+      draft: { id: expect.any(String), reference: referenceTo(before) },
+      review: { id: expect.any(String), reference: undefined },
+    });
+  });
+});

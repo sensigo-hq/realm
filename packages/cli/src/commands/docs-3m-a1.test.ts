@@ -30,7 +30,8 @@ const RECORD_PAGE = 'docs/reference/run-record-and-export.md';
 describe('caching 3-M A-1 — the record page says what `reference` holds and when', () => {
   it('when a request carries one', () => {
     // `cache-reference-3m.test.ts` check 1 (a re-attach after a drive failure), check 4 (both
-    // catches), check 2 (a resumed step); "whichever was written last": check 3 and its mirror.
+    // catches), check 2 (a resumed step); "whichever was written last": check 3 and its mirror;
+    // "the same step's": the cell "the same step only".
     claim(
       RECORD_PAGE,
       "A step's first request in a drive can also carry a `reference` (added after version 0.48.0): a copy of the same step's last request on the run's record, made by an earlier drive.",
