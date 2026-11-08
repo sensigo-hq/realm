@@ -838,6 +838,9 @@ export { getWorkflowForRun, definitionAbsenceOf } from './workflow/registrar.js'
 // a registrar through, and the id arm's entry builder (the SQLite registry's).
 export { listWorkflowsDiagnosed, unreadableById } from './workflow/registrar.js';
 export type {
+  // #616 PR-2c c5b: the capped read's answer, and the registrar type Realm's homes carry.
+  CappedRead,
+  RealmWorkflowRegistrar,
   RegistryListing,
   UnreadableRegistryEntry,
   UnreadableFileEntry,

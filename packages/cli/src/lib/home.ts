@@ -12,6 +12,7 @@ import {
   JsonWorkflowStore,
   realmHomePath,
   withTestClockNotice,
+  type RealmWorkflowRegistrar,
 } from '@sensigo/realm';
 import { JsonTraceBufferStore } from '@sensigo/realm-mcp';
 import { JsonFileReplayStore } from '../store/replay-store.js';
@@ -25,9 +26,10 @@ export interface CliHome {
    *  its first read (`this store runs on a test clock, now <instant>`, #715 (b)). */
   readonly runStore: JsonFileStore;
   /** The workflow registry, under `<path>/workflows`: built on its first use, never at the open
-   *  (its constructor creates that folder). The class, not the interface: three commands use its
-   *  extras (the listing with diagnostics, the probe, the synchronous read) until 2c. */
-  readonly workflowStore: JsonWorkflowStore;
+   *  (its constructor creates that folder). #616 PR-2c c5b: typed as core's registrar with every
+   *  optional member (the listing with diagnostics, the capped read), as Realm's own registries are:
+   *  `--stuck` needs no fallback, and its size cap can never be silently absent. */
+  readonly workflowStore: RealmWorkflowRegistrar;
   /** The trace buffer, under `<path>/runs`; its fence reader is THIS home's run store. */
   readonly traceBufferStore: JsonTraceBufferStore;
   /** The failed-attempt records, under `<path>/runs` (the #188 co-location contract). The one place
@@ -72,7 +74,7 @@ export async function openCliHome(options: { home?: string } = {}): Promise<CliH
   return {
     path,
     runStore,
-    get workflowStore(): JsonWorkflowStore {
+    get workflowStore(): RealmWorkflowRegistrar {
       workflowStore ??= new JsonWorkflowStore(join(path, 'workflows'));
       return workflowStore;
     },

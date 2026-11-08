@@ -27,7 +27,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   JsonFileStore,
-  JsonWorkflowStore,
+  type RealmWorkflowRegistrar,
   drainFinalizers,
   captureEvidence,
   DRAIN_LEASE_MAX,
@@ -171,7 +171,7 @@ describe('isBatchActionable', () => {
 describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store injection, no $HOME reliance', () => {
   let h: TempHome;
   let store: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let workflowStore: RealmWorkflowRegistrar;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
@@ -709,7 +709,7 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
   let h: TempHome;
   let dir: string;
   let store: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let workflowStore: RealmWorkflowRegistrar;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;

@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  CURRENT_WORKFLOW_SCHEMA_VERSION,
   legacyCopyError,
   loadWorkflowFromFile,
   loadWorkflowFromString,
@@ -1061,6 +1062,73 @@ describe('#616 PR-2c c5a — the listing names every current copy it cannot read
     expect({ value: got.value, error: String(got.error) }).toEqual({
       value: undefined,
       error: 'Error: disk I/O error (SQLite error 10)',
+    });
+  });
+});
+
+describe('#616 PR-2c c5b — getCapped: the current copy read under a size cap, in bytes, before anything is judged', () => {
+  const BIG_CAP = 1_000_000;
+
+  it('(a) a readable copy under the cap: `{ definition }`, the definition `get` gives', async () => {
+    const o = await open();
+    await o.home.workflowStore.register(workflow('wf', ['a']));
+    // (1) red when the capped read answers anything else for a copy under the cap; (2) prints both.
+    expect(await o.home.workflowStore.getCapped('wf', BIG_CAP)).toEqual({
+      definition: await o.home.workflowStore.get('wf'),
+    });
+  });
+
+  it('(b) over the cap in bytes, under it in characters, and a later-format copy: `{ over: { bytes } }`, the UTF-8 length, never judged', async () => {
+    const o = await open();
+    const copy = {
+      id: 'big',
+      name: 'Big',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION + 1,
+      steps: {},
+      note: 'é中'.repeat(50),
+    };
+    await o.home.workflowStore.register(copy as never);
+    const text = JSON.stringify(copy);
+    const bytes = Buffer.byteLength(text, 'utf8');
+    expect(bytes).toBeGreaterThan(text.length);
+    // (1) red when the size is read in characters (it is not over a cap of `text.length`, so the copy
+    //     is judged and rejects STATE_NEWER_FORMAT), or when the copy is judged before the size
+    //     test; (2) prints what the read settled with.
+    expect(await settle(o.home.workflowStore.getCapped('big', text.length))).toEqual({
+      value: { over: { bytes } },
+    });
+  });
+
+  it("(c) a cap equal to the copy's bytes: `{ definition }` — over means larger", async () => {
+    const o = await open();
+    const def = workflow('wf', ['a']);
+    await o.home.workflowStore.register(def);
+    const bytes = Buffer.byteLength(JSON.stringify(def), 'utf8');
+    // (1) red when the comparison is `>=`; (2) prints what the read answered.
+    expect(await o.home.workflowStore.getCapped('wf', bytes)).toEqual({ definition: def });
+  });
+
+  it("(d) a workflow never registered: rejects with `get`'s not-found refusal", async () => {
+    const o = await open();
+    const capped = await settle(o.home.workflowStore.getCapped('ghost', BIG_CAP));
+    const plain = await settle(o.home.workflowStore.get('ghost'));
+    // (1) red when the refusal is answered as `over` or `definition`; (2) prints both refusals.
+    expect({ value: capped.value, refusal: refusal(capped.error) }).toEqual({
+      value: undefined,
+      refusal: refusal(plain.error),
+    });
+  });
+
+  it("(e) a damaged copy (check 5c's seed): rejects with `get`'s refusal", async () => {
+    const o = await open();
+    foreignRegister(await foreign(o), 'odd', '{"id":"odd"}', readingAt(9));
+    const capped = await settle(o.home.workflowStore.getCapped('odd', BIG_CAP));
+    const plain = await settle(o.home.workflowStore.get('odd'));
+    // (1) red when the refusal is answered as `over` or `definition`; (2) prints both refusals.
+    expect({ value: capped.value, refusal: refusal(capped.error) }).toEqual({
+      value: undefined,
+      refusal: refusal(plain.error),
     });
   });
 });

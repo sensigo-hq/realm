@@ -9,7 +9,7 @@
 import { declared } from '../test-support/declared.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, writeFile, mkdir, chmod } from 'node:fs/promises';
-import { readFileSync, chmodSync } from 'node:fs';
+import { readFileSync, chmodSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -932,4 +932,34 @@ describe('correction 2 (3.1) — the way on from a copy Realm cannot read is adm
       });
     },
   );
+});
+
+// #616 PR-2c c5b: the JSON registry's `getCapped`, called directly. The cap is an argument, so the
+// cells use the file's own size: at the cap the copy is read, one byte under it the size is answered.
+// Through `realm run list --stuck`, over the cap is pinned by stuck-label-law's CAP1 and CAP3.
+describe('getCapped — the JSON registry reads a copy under a size cap (#616 PR-2c c5b)', () => {
+  /** A copy `get` reads (`makeDefinition`'s array of steps is a damaged copy). */
+  const readable = {
+    id: ID,
+    name: ID,
+    version: 1,
+    schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+    steps: { one: { description: 'one', execution: 'agent' } },
+  } as unknown as WorkflowDefinition;
+
+  it("a cap equal to the file's size: `{ definition }`, the definition `get` gives", async () => {
+    await store.register(readable);
+    // (a) red when the comparison is `>=`; (b) prints what the read answered.
+    expect(await store.getCapped(ID, statSync(file).size)).toEqual({
+      definition: await store.get(ID),
+    });
+  });
+
+  it("one byte under the file's size: `{ over: { bytes } }`, the file's size", async () => {
+    await store.register(readable);
+    const size = statSync(file).size;
+    // (a) red when `bytes` is taken from the cap, or when the copy is read anyway; (b) prints what
+    //     the read answered.
+    expect(await store.getCapped(ID, size - 1)).toEqual({ over: { bytes: size } });
+  });
 });

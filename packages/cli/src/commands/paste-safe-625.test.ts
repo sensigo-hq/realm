@@ -23,7 +23,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   JsonFileStore,
-  JsonWorkflowStore,
+  type RealmWorkflowRegistrar,
   executeStep,
   describePending,
   oneOf,
@@ -83,7 +83,7 @@ describe('#625 PR-2a, F6 — a printed command is safe to paste', { timeout: 60_
   let T: string;
   let bin: string;
   let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let workflowStore: RealmWorkflowRegistrar;
 
   beforeEach(async () => {
     h = await makeTempHome();

@@ -13,7 +13,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   JsonFileStore,
-  JsonWorkflowStore,
+  type RealmWorkflowRegistrar,
   abandonRun,
   createDefaultRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
@@ -61,7 +61,7 @@ describe('#625 PR-2a, F2 — the CLI on a run an operator ended', { timeout: 60_
   let h: TempHome & { readonly root: string };
   let home: string;
   let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let workflowStore: RealmWorkflowRegistrar;
 
   beforeEach(async () => {
     h = await makeTempHome();
