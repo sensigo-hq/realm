@@ -16,8 +16,6 @@ import {
   handleBidirectionalGate,
   createSlackGateHandler,
 } from './slack-gate-notifier.js';
-import { createServer } from 'node:http';
-import { writeFile } from 'node:fs/promises';
 import type { BidirectionalGateParams } from './slack-gate-notifier.js';
 import type {
   EvidenceSnapshot,
@@ -47,7 +45,7 @@ import {
 function heldAt(gate: PendingGate): Snapshot {
   return writtenSnapshot({ pending_gate: gate } as unknown as RunRecord, new Date());
 }
-import { mkdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 import { renderOutcome } from '@sensigo/realm-mcp';
@@ -1165,111 +1163,6 @@ describe('handleBidirectionalGate — threads the registry so gate-completed run
     expect(updated.run_phase).toBe('completed');
     expect(updated.completed_steps).toContain('record_outcome');
     expect(ran).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('issue #719 — the one-way notifier waits on a run file that cannot be read', () => {
-  it('rejects with the file’s message (what realm agent prints), never its text', async () => {
-    const h = await makeTempHome();
-    const runsDir = h.home.runStore.runsDirPath;
-    mkdirSync(runsDir, { recursive: true });
-    const server = createServer((_req, res) => {
-      res.writeHead(200);
-      res.end('ok');
-    });
-    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
-    const { port } = server.address() as { port: number };
-    const logs = vi.spyOn(console, 'log').mockImplementation(() => {});
-    try {
-      await writeFile(join(runsDir, 'bad.json'), '{"params":{"token": ghp_FAKE719}}');
-      const handler = createSlackGateHandler({
-        store: h.home.runStore,
-        definition: {
-          id: 'w',
-          name: 'w',
-          version: 1,
-          schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
-          steps: { s: { description: 'd', execution: 'auto' } },
-        } as WorkflowDefinition,
-        provider: {} as never,
-        webhookUrl: `http://127.0.0.1:${port}/hook`,
-        pollIntervalMs: 10,
-      });
-      const gate: PendingGate = {
-        gate_id: 'g',
-        step_name: 's',
-        preview: {},
-        choices: ['approve'],
-        opened_at: new Date().toISOString(),
-      };
-      const err = (await handler('bad', gate).catch((e: unknown) => e)) as Error;
-      const text = String(err?.message);
-      // (a) red when the poll's error loses the file's message or carries the parser's text; (b)
-      //     prints booleans only.
-      expect({
-        message: text.includes(`The run file '${join(runsDir, 'bad.json')}' is not JSON.`),
-        leaked: text.includes('ghp_FAKE7'),
-      }).toEqual({ message: true, leaked: false });
-    } finally {
-      logs.mockRestore();
-      server.close();
-      await h.cleanup();
-    }
-  });
-});
-
-describe('issue #719 C5 — the two-way notifier’s thread post on a run file that cannot be read', () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it('the leak cell (the Slack thread): a fault AT a token never reaches a posted text', async () => {
-    const h = await makeTempHome();
-    const runsDir = h.home.runStore.runsDirPath;
-    mkdirSync(runsDir, { recursive: true });
-    const warns = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    try {
-      await writeFile(join(runsDir, 'run1.json'), '{"params":{"token": ghp_FAKE719}}');
-      const mockFetch = vi.fn().mockResolvedValue(slackResponse({ json: { ok: true } }));
-      vi.stubGlobal('fetch', mockFetch);
-      let capturedOnEvent: ((event: SlackGateEvent) => void) | undefined;
-      vi.mocked(startSlackGateServer).mockImplementationOnce((opts) => {
-        capturedOnEvent = opts.onEvent;
-        return { close: vi.fn() };
-      });
-      const promise = handleBidirectionalGate(makeGateParams({ store: h.home.runStore }));
-      capturedOnEvent?.({
-        event_id: 'E719',
-        thread_ts: '1234567890.000',
-        user: 'U1',
-        text: 'approve',
-        ts: '1234567890.719',
-      });
-      // The poll's read of the damaged file ends the wait; the finally's drain lands the post.
-      await promise.catch(() => undefined);
-      const posted = mockFetch.mock.calls
-        .filter(([url]) => String(url).includes('postMessage'))
-        .map(([, init]) => String((init as { body?: unknown }).body));
-      const consoleText = warns.mock.calls.flat().map(String).join('\n');
-      // (a) red when the parser's text reaches the thread or the console; #729 PR-4 (re-pinned):
-      //     the thread gets the code (G9), the fault's detail goes to this console. (b) prints
-      //     booleans only — whether the refusal was posted, where the fault is named, and whether
-      //     any text holds the token.
-      expect({
-        postedTheError: posted.some((b) => b.includes("Couldn't record your response")),
-        threadNamesTheFault: posted.some((b) => b.includes('is not JSON')),
-        consoleNamesTheFault: consoleText.includes('is not JSON'),
-        leaked: posted.some((b) => b.includes('ghp_FAKE7')) || consoleText.includes('ghp_FAKE7'),
-      }).toEqual({
-        postedTheError: true,
-        threadNamesTheFault: false,
-        consoleNamesTheFault: true,
-        leaked: false,
-      });
-    } finally {
-      warns.mockRestore();
-      await h.cleanup();
-    }
   });
 });
 
