@@ -7,7 +7,7 @@
 // the scratch folder written `<dir>`; the values printed are the test's own (fake key, fixture
 // names), never the environment.
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { connect, createServer, type AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -174,7 +174,7 @@ describe('issues #944, #949 — realm listen refuses a bad option value when the
         code: r.code,
         err: r.err,
         out: r.out,
-        registered: existsSync(join(home, '.realm', 'workflows')),
+        registered: (await h.home.workflowStore.list()).length > 0,
       }).toEqual({
         code: 1,
         err: [refusal(flags, pair[1], sentence)],
@@ -247,8 +247,6 @@ describe('issue #944 — the sweeper waits the seconds it is given', () => {
   // (a) red when the interval is taken as milliseconds (the first line comes at once) or the
   // sweeper never runs; (b) prints the delay and the run's lines.
   it('realm listen --sweep-expired-gates 6: no sweep line in the first 3 s after the start line, one afterwards', async () => {
-    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
-    mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
     const runStore = h.home.runStore;
     const workflowStore = h.home.workflowStore;
     const def = loadWorkflowFromString(

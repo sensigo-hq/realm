@@ -3,7 +3,7 @@
 // (a live run, a terminal run) that reach the view through different definition sources.
 import { declared } from '../test-support/declared.js';
 import { describe, it, expect } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -412,10 +412,8 @@ describe('#600 caching PR P (G12) — get_run_state money', () => {
   // claude-sonnet-5-5.
   it("createRealmMcpServer with no provider: the installed list only, every figure saying 'no economics file is configured on this server'", async () => {
     const h = await makeTempHome();
-    const dir = h.stores.runStore.runsDirPath;
-    mkdirSync(dir, { recursive: true });
     const record = run('claude-sonnet-5-5', { provider: 'anthropic' });
-    writeFileSync(join(dir, `${record.id}.json`), JSON.stringify(record), 'utf8');
+    await h.stores.runStore.save(record);
     const server = createRealmMcpServer({
       ...h.stores,
       workflowStore: workflowStore(),

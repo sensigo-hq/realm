@@ -13,7 +13,7 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,7 +28,7 @@ import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
 import { quotedForTerminal } from '../lib/holder-render.js';
 import { lagless } from '../test-support/lag.js';
-import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome, runIds } from '../test-support/temp-home.js';
 import type { CliHome } from '../lib/home.js';
 
 /** C163: (a) red when gates.md no longer holds the sentence these cells pin, word for word; (b) prints it. */
@@ -177,10 +177,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
     if (preview === -1) throw new Error(`the prompt never showed a gate:\n${lines.join('\n')}`);
     return lines.slice(preview + 1);
   };
-  const runId = (): string =>
-    readdirSync(h.home.runStore.runsDirPath)
-      .filter((f) => f.endsWith('.json'))[0]!
-      .replace('.json', '');
+  const runId = async (): Promise<string> => (await runIds(h.home.runStore))[0]!;
   const gateId = (): string => {
     const line = logged().find((l) => l.startsWith('  ⏸  Gate: confirm | gate_id: '));
     if (line === undefined) throw new Error('the prompt never printed the gate id');
@@ -189,7 +186,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
 
   /** The stored record, read through the cell's handle on the scratch home. */
   async function readRecord() {
-    return (await stores().runStore.get(runId())).record;
+    return (await stores().runStore.get(await runId())).record;
   }
 
   /**
@@ -511,7 +508,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
           workflowYaml({ id: 'prompt-625-c158-other', finish: true }),
         );
         const reply = await submitHumanResponse(stores().runStore, def, {
-          runId: runId(),
+          runId: await runId(),
           gateId: gateId(),
           choice: 'approve',
           caller: 'respond',
@@ -657,7 +654,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
                 workflowYaml({ id: 'prompt-625-c165', finish: true, finishAuto: true }),
               );
               await executeStep(stores().runStore, def, {
-                runId: runId(),
+                runId: await runId(),
                 command: 'finish',
                 input: { done: true },
                 dispatcher: async () => ({ done: true }),
@@ -701,7 +698,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
             workflowYaml({ id: 'prompt-625-c165-late', finish: true, finishAuto: true }),
           );
           await executeStep(stores().runStore, def, {
-            runId: runId(),
+            runId: await runId(),
             command: 'finish',
             input: { done: true },
             dispatcher: async () => ({ done: true }),
@@ -718,7 +715,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       const out = logged();
       // (a) red when the ended run's refusal prints ✓ (with `hash: n/a`); (b) prints stdout.
       expect(out.filter((l) => l.startsWith('  Not run here: '))).toEqual([
-        `  Not run here: Run '${runId()}' is already terminal (completed); no steps executed.\n`,
+        `  Not run here: Run '${await runId()}' is already terminal (completed); no steps executed.\n`,
       ]);
       expect(out.filter((l) => l.includes('hash: n/a'))).toEqual([]);
       expect([stepPrompts, code]).toEqual([1, 0]);
@@ -765,13 +762,13 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
                   const def = loadWorkflowFromString(
                     workflowYaml({ id: 'prompt-625-c165-hold', finish: true, finishAuto: true }),
                   );
-                  await store.claimStep(runId(), 'finish', def, {
+                  await store.claimStep(await runId(), 'finish', def, {
                     by: 'other-terminal',
                     by_source: 'stated',
                     channel: 'agent',
                   });
                 } else {
-                  await abandonRun(store, runId());
+                  await abandonRun(store, await runId());
                 }
               })();
             });
@@ -804,17 +801,18 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
           // C173: (a) red when a step held for the whole watch is not named with its way out, or the
           //     run is not handed back; (b) prints stderr and the exit code.
           // C188: handed back at the held step, never "stalled".
+          const heldRun = await runId();
           expect([
             errored().filter((l) => l.startsWith('• Step ')),
             errored().some((l) =>
-              l.startsWith(`Stopped waiting — detached from run '${runId()}' at step 'finish'`),
+              l.startsWith(`Stopped waiting — detached from run '${heldRun}' at step 'finish'`),
             ),
             code,
           ]).toEqual([
             [
               expect.stringMatching(
                 new RegExp(
-                  `^• Step 'finish' has been in flight since .+, taken by other-terminal \\(as stated, via agent\\); the record has not changed for 2s\\. If the program that took it is gone: realm run reclaim ${runId()} --step finish --force$`,
+                  `^• Step 'finish' has been in flight since .+, taken by other-terminal \\(as stated, via agent\\); the record has not changed for 2s\\. If the program that took it is gone: realm run reclaim ${await runId()} --step finish --force$`,
                 ),
               ),
             ],
@@ -900,7 +898,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
                 const { loadWorkflowFromString, executeStep } = await import('@sensigo/realm');
                 const def = loadWorkflowFromString(withLast('prompt-625-c173'));
                 await executeStep(stores().runStore, def, {
-                  runId: runId(),
+                  runId: await runId(),
                   command: 'finish',
                   input: {},
                   dispatcher: async () => {
@@ -1045,7 +1043,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
             stores().runStore,
             loadWorkflowFromString(workflowYaml({ id: 'prompt-625-c179', finish: true })),
             {
-              runId: runId(),
+              runId: await runId(),
               command: 'finish',
               input: { by: 'other' },
               dispatcher: async () => {
@@ -1066,7 +1064,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
             // #715 (b) (03 §B.2 A1): the claim's age through the one formatter, its instant beside it.
             inspect:
               /^\s*finish: taken by .+, via run\), \d+s ago \(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\)$/m.test(
-                show(['run', 'inspect', runId()]),
+                show(['run', 'inspect', await runId()]),
               ),
             stuck: show(['run', 'list', '--stuck']).includes('finish=claim_unknown_age'),
           };
@@ -1301,7 +1299,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
             void (async () => {
               // `realm run reclaim --force`'s effect: the claim and the in-flight mark removed.
               const store = stores().runStore;
-              const { record: record } = await store.get(runId());
+              const { record: record } = await store.get(await runId());
               const { finish: _gone, ...claims } = record.claims ?? {};
               await store.update({ ...record, in_progress_steps: [], claims });
             })();
@@ -1358,13 +1356,13 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
           const store = stores().runStore;
           if (kind === 'agent') {
             // The prompt's claim is removed first (as `realm run reclaim --force` would) …
-            const { record: record } = await store.get(runId());
+            const { record: record } = await store.get(await runId());
             const { finish: _gone, ...claims } = record.claims ?? {};
             await store.update({ ...record, in_progress_steps: [], claims });
           }
           // … then another process runs the step, before the typed answer reaches the engine.
           const r = await executeStep(store, loadWorkflowFromString(yaml), {
-            runId: runId(),
+            runId: await runId(),
             command: 'finish',
             input: { by: 'other' },
             dispatcher: async () => ({ by: 'other' }),
@@ -1521,7 +1519,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       for (const step of steps) {
         settled.push(
           executeStep(stores().runStore, def, {
-            runId: runId(),
+            runId: await runId(),
             command: step,
             input: {},
             dispatcher: async () => {
@@ -1552,7 +1550,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       if ((await store.list()).every((w) => w.id !== def.id)) await store.register(def);
       const { spawnSync } = await import('node:child_process');
       const cli = join(dirname(fileURLToPath(import.meta.url)), '../../dist/index.js');
-      const r = spawnSync(process.execPath, [cli, 'run', 'advance', runId()], {
+      const r = spawnSync(process.execPath, [cli, 'run', 'advance', await runId()], {
         cwd: home,
         env: {
           PATH: process.env['PATH'] ?? '',
@@ -1562,14 +1560,15 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
         },
         encoding: 'utf8',
       });
+      const advanced = await runId();
       return `${r.stdout}${r.stderr}`
         .split('\n')
         .filter((l) => l !== '')
-        .map((l) => l.split(runId()).join('<run>'));
+        .map((l) => l.split(advanced).join('<run>'));
     }
 
     /** The page's screen of the hand-back (realm-workflow.md), its values put in place. */
-    function pageScreen(since: string, watchWords: string): string[] {
+    function pageScreen(since: string, watchWords: string, run: string): string[] {
       const text = readFileSync(
         join(
           dirname(fileURLToPath(import.meta.url)),
@@ -1587,7 +1586,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
         .map((l) =>
           l
             .split(PAGE_RUN)
-            .join(runId())
+            .join(run)
             .split(PAGE_SINCE)
             .join(since)
             .split('mihai@host (from the OS user, via advance)')
@@ -1645,7 +1644,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
         code,
       }).toEqual({
         asked: ['Agent'],
-        err: pageScreen(since, '2s'),
+        err: pageScreen(since, '2s', await runId()),
         code: 1,
       });
       expect(errored().filter((l) => /stalled|Drive it|Discard/.test(l))).toEqual([]);
@@ -1717,7 +1716,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
           tail: after.slice(-tail.length),
         }).toEqual({
           handBack: [
-            `Stopped waiting — detached from run '${runId()}' at step 'sleep' (phase: running). The run is saved.`,
+            `Stopped waiting — detached from run '${await runId()}' at step 'sleep' (phase: running). The run is saved.`,
           ],
           code: 1,
           tail: [...tail],
@@ -1881,9 +1880,9 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       }).toEqual({
         inFlight: ['sleep', 'nap'],
         handBack: [
-          `Stopped waiting — detached from run '${runId()}' at steps 'sleep', 'nap' (phase: running). The run is saved.`,
-          `  Go on:     once 'sleep', 'nap' are no longer in flight, realm run advance ${runId()}`,
-          `  Inspect:   realm run inspect ${runId()}`,
+          `Stopped waiting — detached from run '${await runId()}' at steps 'sleep', 'nap' (phase: running). The run is saved.`,
+          `  Go on:     once 'sleep', 'nap' are no longer in flight, realm run advance ${await runId()}`,
+          `  Inspect:   realm run inspect ${await runId()}`,
         ],
         code: 1,
       });

@@ -6,16 +6,7 @@
 // from outside the project. Each cell's break is named beside it (the red-first log runs it).
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -50,7 +41,6 @@ beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'realm-c5-j5-'));
   h = await makeTempHome();
   home = h.root;
-  mkdirSync(join(home, '.realm'), { recursive: true });
   proj = join(root, 'proj');
 });
 afterEach(async () => {
@@ -126,13 +116,9 @@ function project(opts: {
   return 'c5j5';
 }
 
-/** Every run record in HOME's store. */
-function records(): RunRecord[] {
-  const dir = join(home, '.realm', 'runs');
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir)
-    .filter((f) => f.endsWith('.json'))
-    .map((f) => JSON.parse(readFileSync(join(dir, f), 'utf8')) as RunRecord);
+/** Every run record in HOME's store, read through the handle (#616 PR-2c, c0). */
+async function records(): Promise<RunRecord[]> {
+  return (await h.home.runStore.list()).snapshots.map((s) => s.record);
 }
 
 /** A record's identity entries, as `<origin>:<manifest path, relative to the project, or none>`. */
@@ -172,14 +158,14 @@ const runIdOf = (reply: string): string =>
 
 describe('#729 PR-3 correction 5 (J-5) — each creator writes the start entry with the run', () => {
   // The break for every cell here: `startIdentityEntry` returns `undefined` (→ no entry — red).
-  it('`realm agent --workflow` (a project with a manifest)', () => {
+  it('`realm agent --workflow` (a project with a manifest)', async () => {
     project({ manifest: true });
     realm(['agent', '--workflow', 'workflows/wf/workflow.yaml', '--model', 'anthropic:fake-c5'], {
       cwd: proj,
       env: { ANTHROPIC_API_KEY: 'fake-c5-key' },
     });
     // (b) prints each record's entries (origins and manifest paths).
-    expect(records().map(entriesOf)).toEqual([['start:<proj>/realm.yaml']]);
+    expect((await records()).map(entriesOf)).toEqual([['start:<proj>/realm.yaml']]);
   }, 60_000);
 
   it("the door's `start_run` and `start_run_batch`", async () => {
@@ -189,7 +175,7 @@ describe('#729 PR-3 correction 5 (J-5) — each creator writes the start entry w
       await call('start_run_batch', { workflow_id: id, items: [{ params: {} }] });
     });
     // (b) prints each record's entries.
-    expect(records().map(entriesOf)).toEqual([
+    expect((await records()).map(entriesOf)).toEqual([
       ['start:<proj>/realm.yaml'],
       ['start:<proj>/realm.yaml'],
     ]);
@@ -201,7 +187,10 @@ describe('#729 PR-3 correction 5 (J-5) — each creator writes the start entry w
     );
     // (a) red when a creator with no loaded project writes an entry; (b) prints whether a run was
     //     made and its entries.
-    expect({ made: runIdOf(reply) !== '<no run_id>', entries: records().map(entriesOf) }).toEqual({
+    expect({
+      made: runIdOf(reply) !== '<no run_id>',
+      entries: (await records()).map(entriesOf),
+    }).toEqual({
       made: true,
       entries: [[]],
     });
@@ -278,14 +267,17 @@ describe("#729 PR-3 correction 5 (J-5), correction 6 (C6-1) — R41's marker nev
     );
     writeFileSync(join(proj, '.env'), `SVC_TOKEN=${value}\n`);
   };
-  /** The run's record rewritten with `entries` (the sanctioned legacy channel). */
-  const seedEntries = (runId: string, entries: (list: ExtensionIdentityEntry[]) => unknown[]) => {
-    const file = join(home, '.realm', 'runs', `${runId}.json`);
-    const run = JSON.parse(readFileSync(file, 'utf8')) as RunRecord;
-    writeFileSync(
-      file,
-      JSON.stringify({ ...run, extension_identity: entries(run.extension_identity ?? []) }),
-    );
+  /** The run's record rewritten with `entries`, through the store (#616 PR-2c, c0): an update that
+   *  keeps the run's seal arm. */
+  const seedEntries = async (
+    runId: string,
+    entries: (list: ExtensionIdentityEntry[]) => unknown[],
+  ): Promise<void> => {
+    const { record: run } = await h.home.runStore.get(runId);
+    await h.home.runStore.update({
+      ...run,
+      extension_identity: entries(run.extension_identity ?? []),
+    } as RunRecord);
   };
   /** A start-only run of a project with code and no realm.yaml (the door's `start_run`), abandoned. */
   const startOnly = async (reason: string): Promise<{ runId: string; copy: string }> => {
@@ -332,7 +324,7 @@ describe("#729 PR-3 correction 5 (J-5), correction 6 (C6-1) — R41's marker nev
     const { runId } = await startOnly('held for c5');
     // (a) red when the proof is not read where the root holds no realm.yaml (`declared values
     //     resolved` without its cause); (b) prints the read and the record's entries.
-    expect({ entries: records().map(entriesOf), read: read(runId) }).toEqual({
+    expect({ entries: (await records()).map(entriesOf), read: read(runId) }).toEqual({
       entries: [['start:none']],
       read: {
         receipt: 'Disclosure: declared values resolved (no manifest)',
@@ -356,7 +348,7 @@ describe("#729 PR-3 correction 5 (J-5), correction 6 (C6-1) — R41's marker nev
 
   it('C6-1 (5): a start entry that records a capture error adds no cause word; its damaged-copy twin withholds', async () => {
     const { runId, copy } = await startOnly('held for c6');
-    seedEntries(runId, (list) => list.map((e) => ({ ...e, error: 'capture failed' })));
+    await seedEntries(runId, (list) => list.map((e) => ({ ...e, error: 'capture failed' })));
     const intact = read(runId);
     writeFileSync(copy, 'not json');
     const damaged = read(runId);
@@ -422,7 +414,10 @@ describe("#729 PR-3 correction 5 (J-5), correction 6 (C6-1) — R41's marker nev
 
   it('C6-1 (7, control): the newest entry an execution entry naming no manifest → `declared values resolved`, as before', async () => {
     const { runId } = await startOnly('held for c6');
-    seedEntries(runId, (list) => [...list, ...list.map(({ origin: _origin, ...rest }) => rest)]);
+    await seedEntries(runId, (list) => [
+      ...list,
+      ...list.map(({ origin: _origin, ...rest }) => rest),
+    ]);
     // (a) red when an execution entry is read as the proof (`resolved (no manifest)`); (b) prints the
     //     read.
     expect(read(runId)).toEqual({

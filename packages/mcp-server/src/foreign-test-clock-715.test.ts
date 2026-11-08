@@ -23,7 +23,7 @@ let home = '';
 beforeAll(async () => {
   scratch = mkdtempSync(join(tmpdir(), 'realm-mcp-c6-'));
   const made = join(scratch, 'made-here', '.realm');
-  mkdirSync(join(made, 'runs'), { recursive: true });
+  mkdirSync(made, { recursive: true });
   await writeTestClockFile(made, new Date('2033-01-02T03:04:05.000Z'));
   home = join(scratch, 'home');
   cpSync(made, join(home, '.realm'), { recursive: true });

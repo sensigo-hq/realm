@@ -90,7 +90,6 @@ beforeAll(async () => {
   h = await makeTempHome();
   home = h.root;
   project = join(root, 'project');
-  mkdirSync(join(home, '.realm'), { recursive: true });
   mkdirSync(project);
   // The declared tier: the project's `.env`, named by its manifest.
   const declared: Record<string, string> = Object.fromEntries([
@@ -248,9 +247,12 @@ async function mcpReads(client: Client): Promise<string> {
 }
 
 describe('#729 PR-3 — no canary leaves any door', () => {
-  it('the sources hold every canary (non-vacuity): the run files carry them raw', () => {
-    const files = [gateRun, failedRun].map((id) =>
-      readFileSync(join(home, '.realm', 'runs', `${id}.json`), 'utf8'),
+  it('the sources hold every canary (non-vacuity): the run files carry them raw', async () => {
+    // #616 PR-2c (c0): each record read through the handle that wrote it, as its JSON text.
+    const files = await Promise.all(
+      [gateRun, failedRun].map(async (id) =>
+        JSON.stringify((await h.home.runStore.get(id)).record),
+      ),
     );
     // The prompt's canaries reach the model only; the webhook's arrive with listen's request (its
     // own cell checks they reach the stored run).
@@ -448,7 +450,6 @@ describe('#729 PR-3 — no canary leaves any door', () => {
     const ciHome = ciH.root;
     const work = join(root, 'work-0729');
     const workspace = join(root, 'ws-0729');
-    mkdirSync(join(ciHome, '.realm'), { recursive: true });
     mkdirSync(work);
     const CI_CANARY = 'FAKECANCIENV0729';
     const values = {
@@ -615,7 +616,7 @@ describe('#729 PR-3 — no canary leaves any door', () => {
       }),
     });
     await executeChain(store, abortDef, { runId: run.id, command: 'h', input: {}, registry });
-    const raw = readFileSync(join(home, '.realm', 'runs', `${run.id}.json`), 'utf8');
+    const raw = JSON.stringify((await store.get(run.id)).record);
     const mcp = await overStdio(async (client) => {
       await client.callTool({
         name: 'get_run_state',
@@ -664,7 +665,7 @@ describe('#729 PR-3 — no canary leaves any door', () => {
     const said = cli(['run', 'export', run.id, '--out', out], env, root);
     const exported = readFileSync(out, 'utf8');
     const inspected = cli(['run', 'inspect', run.id], env, root);
-    const raw = readFileSync(join(home, '.realm', 'runs', `${run.id}.json`), 'utf8');
+    const raw = JSON.stringify((await store.get(run.id)).record);
     const holds = (bytes: string) =>
       [LOAD_ENV, LOAD_ANCH, LOAD_NAME].filter((c) => bytes.includes(c)).length;
     // Non-vacuity: the record holds the three raw, and the export carries the entry's error.

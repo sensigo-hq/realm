@@ -12,11 +12,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import {
-  CURRENT_WORKFLOW_SCHEMA_VERSION,
-  type RunRecord,
-  type WorkflowDefinition,
-} from '@sensigo/realm';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION, type WorkflowDefinition } from '@sensigo/realm';
 import { startAnthropicStub, type AnthropicStub } from '../agent/test-support/anthropic-stub.js';
 import { startOpenAiStub, type OpenAiStub } from '../agent/test-support/openai-stub.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
@@ -84,7 +80,7 @@ afterAll(async () => {
 async function deployment(
   name: string,
   opts: { realmYaml?: string; prices?: string },
-): Promise<{ home: string; proj: string; runId: string; pricesPath: string }> {
+): Promise<{ home: string; proj: string; runId: string; pricesPath: string; h: TempHome }> {
   const base = join(root, name);
   const h = await makeTempHome();
   homes.push(h);
@@ -112,7 +108,7 @@ async function deployment(
     workflowVersion: 1,
     params: {},
   });
-  return { home, proj, runId: run.id, pricesPath };
+  return { home, proj, runId: run.id, pricesPath, h };
 }
 
 const NAMES_PRICES = 'version: 1\nrunner:\n  cache:\n    economics: prices.json\n';
@@ -120,7 +116,7 @@ const NAMES_PRICES = 'version: 1\nrunner:\n  cache:\n    economics: prices.json\
 /** Drives `realm agent` once and reads back what it sent, recorded and printed. */
 async function drive(
   name: string,
-  d: { home: string; proj: string; runId: string; pricesPath: string },
+  d: { home: string; proj: string; runId: string; pricesPath: string; h: TempHome },
   args: string[],
 ): Promise<{
   code: number | null;
@@ -162,9 +158,7 @@ async function drive(
     });
   });
   const sent = anthropic.requests.slice(before);
-  const record = JSON.parse(
-    readFileSync(join(d.home, '.realm', 'runs', `${d.runId}.json`), 'utf8'),
-  ) as RunRecord;
+  const { record } = await d.h.home.runStore.get(d.runId);
   const request = record.evidence[0]?.diagnostics?.cache?.requests?.[0];
   const reads = existsSync(readLog) ? readFileSync(readLog, 'utf8').split('\n') : [];
   return {

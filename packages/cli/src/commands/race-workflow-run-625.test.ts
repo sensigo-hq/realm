@@ -12,7 +12,7 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,6 +24,7 @@ vi.mock('node:readline/promises', () => ({
 
 import { runCommand, setInFlightWatchForTests } from './run.js';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
+import { makeTempHome, runIds, type TempHome } from '../test-support/temp-home.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const WORKFLOW_PAGE = 'docs/reference/cli/realm-workflow.md';
@@ -76,6 +77,7 @@ const EXT = `export default {
 `;
 
 describe('#625 PR-2a, F7 — realm workflow run reads core’s classifier', () => {
+  let h: TempHome & { readonly root: string };
   let home: string;
   let dir: string;
   let savedHome: string | undefined;
@@ -84,11 +86,11 @@ describe('#625 PR-2a, F7 — realm workflow run reads core’s classifier', () =
   let errSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     clearProjectExtensionsCache();
-    home = mkdtempSync(join(tmpdir(), 'realm-f7-wfrun-home-'));
+    h = await makeTempHome();
+    home = h.root;
     dir = mkdtempSync(join(tmpdir(), 'realm-f7-wfrun-wf-'));
-    mkdirSync(join(home, '.realm'), { recursive: true });
     savedHome = process.env['HOME'];
     process.env['HOME'] = home;
     savedTTY = process.stdin.isTTY;
@@ -101,13 +103,13 @@ describe('#625 PR-2a, F7 — realm workflow run reads core’s classifier', () =
     }) as never);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     hook.__f7WorkflowRunRace = undefined;
     if (savedTTY === undefined) delete (process.stdin as { isTTY?: boolean }).isTTY;
     else process.stdin.isTTY = savedTTY;
     if (savedHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = savedHome;
-    rmSync(home, { recursive: true, force: true });
+    await h.cleanup();
     rmSync(dir, { recursive: true, force: true });
     mocks.question.mockReset();
     vi.restoreAllMocks();
@@ -115,10 +117,7 @@ describe('#625 PR-2a, F7 — realm workflow run reads core’s classifier', () =
 
   const logged = (): string[] => logSpy.mock.calls.map((c: unknown[]) => String(c[0]));
   const errored = (): string[] => errSpy.mock.calls.map((c: unknown[]) => String(c[0]));
-  const runId = (): string =>
-    readdirSync(join(home, '.realm', 'runs'))
-      .filter((f) => f.endsWith('.json'))[0]!
-      .replace('.json', '');
+  const runId = async (): Promise<string> => (await runIds(h.home.runStore))[0]!;
 
   /** Runs `realm workflow run <file>`; returns the exit code (0 for a natural return). */
   async function run(yaml: string): Promise<number> {
@@ -166,7 +165,7 @@ describe('#625 PR-2a, F7 — realm workflow run reads core’s classifier', () =
       hook.__f7WorkflowRunRace = async (id: string) => {
         raced = true;
         const def = core.loadWorkflowFromFile(join(dir, 'workflow.yaml'));
-        const store = new core.JsonFileStore();
+        const store = h.home.runStore;
         if (kase === 'abandon') {
           await core.abandonRun(store, id, 'another program');
           return;
@@ -187,9 +186,10 @@ describe('#625 PR-2a, F7 — realm workflow run reads core’s classifier', () =
       } finally {
         restore();
       }
+      const id = await runId();
       const out = logged().map((l) =>
         l
-          .split(runId())
+          .split(id)
           .join('<run>')
           .replace(/ (at|since) \S+Z/g, ' $1 <t>'),
       );
@@ -238,9 +238,10 @@ describe('#625 PR-2a, F7 — realm workflow run reads core’s classifier', () =
       restore();
       spy.mockRestore();
     }
+    const id = await runId();
     const out = logged().map((l) =>
       l
-        .split(runId())
+        .split(id)
         .join('<run>')
         .replace(/ (at|since) \S+Z/g, ' $1 <t>'),
     );
@@ -298,13 +299,15 @@ describe('#625 PR-2a, F7 — realm workflow run reads core’s classifier', () =
             { once: true },
           );
           // another process opens `ask`'s question while `note`'s prompt waits
-          void core.executeStep(new core.JsonFileStore(), def, {
-            runId: runId(),
-            command: 'ask',
-            input: {},
-            dispatcher: async () => ({}),
-            driver: OTHER,
-          });
+          void runId().then((id) =>
+            core.executeStep(h.home.runStore, def, {
+              runId: id,
+              command: 'ask',
+              input: {},
+              dispatcher: async () => ({}),
+              driver: OTHER,
+            }),
+          );
         });
       }
       if (prompt.startsWith('  Choice ')) return Promise.resolve('ok');

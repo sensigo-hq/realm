@@ -20,15 +20,8 @@ import {
   takeReading,
   writtenSnapshot,
 } from '@sensigo/realm';
-import type {
-  RunStore,
-  RunRecord,
-  CreateRunOptions,
-  WorkflowDefinition,
-  FenceRunReader,
-} from '@sensigo/realm';
+import type { RunStore, RunRecord, CreateRunOptions, WorkflowDefinition } from '@sensigo/realm';
 import { createRealmMcpServer } from './server.js';
-import { JsonTraceBufferStore } from './json-trace-buffer-store.js';
 import type { FailedAttemptStoreLike } from './tools/start-run.js';
 import type {
   Snapshot,
@@ -238,7 +231,7 @@ async function connectClient(
 
 describe('createRealmMcpServer — RunStore injection seam (issue #188, PR-1)', () => {
   describe('local default — byte-identical to pre-#188 behavior', () => {
-    it('a JsonFileStore run store (no artifact stores injected) derives co-located artifact stores from runsDirPath — append_trace → execute_step round-trips a WAL', async () => {
+    it('the four stores from one home, spread into the server: append_trace → execute_step round-trips a WAL', async () => {
       const h = await makeTempHome();
       try {
         const workflowStore = h.stores.workflowStore;
@@ -267,22 +260,10 @@ describe('createRealmMcpServer — RunStore injection seam (issue #188, PR-1)', 
 
         // execute_step's own MCP response deliberately strips evidence/data (agents are
         // directed to get_run_state instead) — so the round-trip proof is that the WAL was
-        // actually ADOPTED and cleared, not merely ignored. A fresh JsonTraceBufferStore
-        // pointed at the SAME runDir (as the co-located derivation would have used internally)
-        // reads empty ONLY if the derivation genuinely pointed there and execute_step consumed it.
+        // actually ADOPTED and cleared, not merely ignored: the home's own trace store, the one
+        // the server was handed, reads it empty only if execute_step consumed it (#616 PR-2c, c0).
         expect(execEnvelope['status']).toBe('ok');
-        // issue #616 PR-0, D2 — `read()` is unfenced; a throwing reader makes an unexpected fence
-        // call fail loudly rather than silently.
-        const neverRead: FenceRunReader = declared({
-          get: async () => {
-            throw new Error('fence unexpectedly evaluated');
-          },
-        });
-        const verifyTraceBufferStore = new JsonTraceBufferStore(
-          h.stores.runStore.runsDirPath,
-          neverRead,
-        );
-        const remaining = await verifyTraceBufferStore.read(runId, 'step-agent');
+        const remaining = await h.stores.traceBufferStore.read(runId, 'step-agent');
         expect(remaining).toHaveLength(0);
       } finally {
         await h.cleanup();

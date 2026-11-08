@@ -6,7 +6,7 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -16,15 +16,40 @@ import {
   ExtensionRegistry,
   JsonFileStore,
   JsonWorkflowStore,
+  declareReleaseLine,
   advanceRun,
   createDefaultRegistry,
   executeChain,
   executeStep,
   loadWorkflowFromString,
 } from '@sensigo/realm';
-import type { WorkflowDefinition } from '@sensigo/realm';
+import type { RunStore, WorkflowDefinition } from '@sensigo/realm';
 import { lagless } from '../test-support/lag.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+
+/** #616 PR-2c (c0, R10): a run store that forwards every verb to `inner`, the ones in `over` replaced —
+ *  a double that intercepts a verb without a second store on the home's folder. It declares this
+ *  realm's release line, as every store realm runs against must. */
+function delegating(inner: RunStore, over: Partial<RunStore>): RunStore {
+  const store = {
+    get clock() {
+      return inner.clock;
+    },
+    persistsClaims: inner.persistsClaims,
+    persistedRunRecordFields: inner.persistedRunRecordFields,
+    create: (o: Parameters<RunStore['create']>[0]) => inner.create(o),
+    get: (id: string) => inner.get(id),
+    update: (r: Parameters<RunStore['update']>[0]) => inner.update(r),
+    list: (w?: string) => inner.list(w),
+    claimStep: (...a: Parameters<RunStore['claimStep']>) => inner.claimStep(...a),
+    settleStep: ((...a: unknown[]) =>
+      (inner.settleStep as (...x: unknown[]) => unknown)(...a)) as RunStore['settleStep'],
+    stampSeal: (...a: Parameters<NonNullable<RunStore['stampSeal']>>) => inner.stampSeal!(...a),
+    ...over,
+  } as RunStore;
+  declareReleaseLine(store);
+  return store;
+}
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../../../..');
@@ -62,8 +87,6 @@ describe(
     beforeEach(async () => {
       h = await makeTempHome();
       home = h.root;
-      mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
-      mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
       runStore = h.home.runStore;
       workflowStore = h.home.workflowStore;
     });
@@ -648,24 +671,22 @@ describe(
           '',
         ].join('\n'),
       );
-      class RacingStore extends JsonFileStore {
-        raced = false;
-        override async claimStep(
-          ...args: Parameters<JsonFileStore['claimStep']>
-        ): ReturnType<JsonFileStore['claimStep']> {
+      const inner = h.home.runStore;
+      let raced = false;
+      const racing = delegating(inner, {
+        claimStep: async (...args: Parameters<RunStore['claimStep']>) => {
           const [id, step, d, claimant] = args;
-          if (!this.raced && step === 'fin') {
-            this.raced = true;
-            await super.claimStep(id, step, d, {
+          if (!raced && step === 'fin') {
+            raced = true;
+            await inner.claimStep(id, step, d, {
               by: 'other-terminal',
               by_source: 'stated',
               channel: 'agent',
             });
           }
-          return super.claimStep(id, step, d, claimant);
-        }
-      }
-      const racing = new RacingStore(join(home, '.realm', 'runs'));
+          return inner.claimStep(id, step, d, claimant);
+        },
+      });
       await workflowStore.register(def);
       const { record: run } = await racing.create({
         workflowId: def.id,
@@ -860,8 +881,6 @@ describe('issue #729 — operate-runs.md: `--stuck` lists the runs that need som
   beforeEach(async () => {
     h = await makeTempHome();
     home = h.root;
-    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
-    mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
   });
   afterEach(async () => {
     await h.cleanup();

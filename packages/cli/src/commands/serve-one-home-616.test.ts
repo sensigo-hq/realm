@@ -9,6 +9,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'node:http';
+import type { RunStore } from '@sensigo/realm';
 import { fileURLToPath } from 'node:url';
 
 const recorded = vi.hoisted(() => ({ options: [] as Array<Record<string, unknown>> }));
@@ -25,6 +26,7 @@ vi.mock('@sensigo/realm-mcp', async (importOriginal) => {
 
 // Imported AFTER the mock so serve.ts binds the recording factory.
 import { startHttpMcpServer } from './serve.js';
+import { makeTempHome } from '../test-support/temp-home.js';
 
 const STORES = ['workflowStore', 'runStore', 'traceBufferStore', 'failedAttemptStore'] as const;
 
@@ -73,12 +75,37 @@ describe('#616 PR-2a (iii) A1 — realm serve shares one home across every serve
       await closeServer(server);
     }
     const [startup, ...perRequest] = recorded.options;
-    const runStore = startup?.['runStore'] as { runsDirPath?: string } | undefined;
+    // #616 PR-2c (c0, R7): the startup stores are THIS HOME's, proved by what they read — a run created
+    // through a handle on HOME's realm home is one the startup run store finds, and a fresh home of its
+    // own does not hold it.
+    const onHome = await makeTempHome({ home: join(home, '.realm') });
+    const elsewhere = await makeTempHome();
+    let readsThisHome: boolean;
+    let freshHome: string | undefined;
+    try {
+      const { record } = await onHome.home.runStore.create({
+        workflowId: 'serve-one-home-616',
+        workflowVersion: 1,
+        params: {},
+      });
+      readsThisHome = await (startup?.['runStore'] as RunStore).get(record.id).then(
+        () => true,
+        () => false,
+      );
+      freshHome = await elsewhere.home.runStore.get(record.id).then(
+        () => 'found',
+        (e: { code?: string }) => e.code,
+      );
+    } finally {
+      await elsewhere.cleanup();
+      await onHome.cleanup();
+    }
     // (1) red when a server is built with stores of its own — the door opened inside the request
     //     handler, or any of the four left out so the library derives a fresh one per request — or
     //     when the startup stores are not this HOME's;
     // (2) prints, per store, whether every per-request server got the startup server's object, the
-    //     servers built, the request statuses, and the startup run store's folder.
+    //     servers built, the request statuses, whether the startup run store reads a run made on
+    //     this HOME, and what a fresh home of its own answers for that run.
     expect({
       statuses,
       servers: recorded.options.length,
@@ -88,7 +115,8 @@ describe('#616 PR-2a (iii) A1 — realm serve shares one home across every serve
           startup?.[s] !== undefined && perRequest.every((o) => o[s] === startup[s]),
         ]),
       ),
-      runsDir: runStore?.runsDirPath,
+      readsThisHome,
+      freshHome,
     }).toEqual({
       statuses: [200, 200],
       servers: 3,
@@ -98,7 +126,8 @@ describe('#616 PR-2a (iii) A1 — realm serve shares one home across every serve
         traceBufferStore: true,
         failedAttemptStore: true,
       },
-      runsDir: join(home, '.realm', 'runs'),
+      readsThisHome: true,
+      freshHome: 'STATE_RUN_NOT_FOUND',
     });
   }, 30_000);
 });

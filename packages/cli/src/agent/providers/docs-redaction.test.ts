@@ -311,7 +311,6 @@ describe(`${TOOLS_PAGE} — what realm agent replaces (GHSA-gxfq)`, () => {
           },
         },
       } as unknown as WorkflowDefinition;
-      const runsDir = h.home.runStore.runsDirPath;
       const store = h.home.runStore;
       const workflowStore = h.home.workflowStore;
       await workflowStore.register(definition);
@@ -334,7 +333,7 @@ describe(`${TOOLS_PAGE} — what realm agent replaces (GHSA-gxfq)`, () => {
         .filter((b) => (b as { type?: unknown }).type === 'tool_result')
         .map((b) => JSON.stringify((b as { content?: unknown }).content ?? ''))
         .join(' ');
-      const runFile = JSON.parse(readFileSync(join(runsDir, `${runId}.json`), 'utf8')) as RunRecord;
+      const runFile = (await store.get(runId)).record;
       const out = join(h.root, 'bundle.json');
       // #729 PR-3: export masks with what it knows; the value is in its environment here, and the
       // run has no project (so its declared secrets are unknown, which the flag accepts).

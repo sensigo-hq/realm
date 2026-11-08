@@ -9,11 +9,11 @@
 // lines, never a value.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { execFile } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome, runIds } from '../test-support/temp-home.js';
 
 const mocks = vi.hoisted(() => ({ question: vi.fn(), close: vi.fn() }));
 vi.mock('node:readline/promises', () => ({
@@ -77,7 +77,6 @@ describe(
       h = await makeTempHome();
       home = h.root;
       dir = mkdtempSync(join(tmpdir(), 'realm-729-e1j-wf-'));
-      mkdirSync(join(home, '.realm'), { recursive: true });
       savedHome = process.env['HOME'];
       process.env['HOME'] = home;
       // Without this the non-TTY guard refuses before the loop.
@@ -104,15 +103,6 @@ describe(
 
     const errored = (): string[] => errSpy.mock.calls.map((c: unknown[]) => String(c[0]));
     const runsDir = () => join(home, '.realm', 'runs');
-    const runIds = (): string[] => {
-      try {
-        return readdirSync(runsDir())
-          .filter((f) => f.endsWith('.json'))
-          .map((f) => f.replace('.json', ''));
-      } catch {
-        return [];
-      }
-    };
     const abortError = () =>
       Object.assign(new Error('The operation was aborted'), {
         name: 'AbortError',
@@ -158,7 +148,7 @@ describe(
         }
         // Another terminal purged the run while this prompt sat open (the #291 race the fresh
         // read exists for): the record is gone before the cancel.
-        id = runIds()[0];
+        id = (await runIds(h.home.runStore))[0];
         rmSync(join(runsDir(), `${id}.json`), { force: true });
         // The text the store itself gives for the vanished record — the line must carry it as is.
         storeMessage = await h.home.runStore
@@ -189,7 +179,7 @@ describe(
         if (!prompt.startsWith('  Agent output')) {
           throw new Error(`fixture: an unexpected prompt: ${prompt}`);
         }
-        id = runIds()[0];
+        id = (await runIds(h.home.runStore))[0];
         rmSync(join(runsDir(), `${id}.json`), { force: true });
         storeMessage = await h.home.runStore
           .get(id!)
