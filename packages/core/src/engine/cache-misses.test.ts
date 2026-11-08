@@ -972,3 +972,123 @@ describe('caching 3-M A-2a2 — only a request that missed gets a cause, and it 
     ]);
   });
 });
+
+describe('caching 3-M A-2a2 — correction 1: the rules with no cell of their own', () => {
+  const conversation = ['system', 'conversation'];
+
+  // Group 1 (a): a step re-driven after an upgrade. Its reference is a copy of the run's earlier
+  // record, written by 0.48.0: `provider`, `cache_requested` and the counts, no `prefix_parts` (and
+  // no `request_strict_sent`, unset on both sides here). Can fail: the predecessor-side object test
+  // removed (it throws reading the parts), or the word changed (`unexplained`). Prints the list
+  // and the error, then the cause.
+  it('a reference written before Realm recorded the parts: parts_not_recorded', () => {
+    const list = againstReference(
+      {
+        provider: A,
+        asked: 'lifetime',
+        read: 0,
+        write: 6897,
+        marked: ['system'],
+        parts: { tools: 'submit', system: 'profile', prompt: 'input' },
+      },
+      { provider: A, asked: 'lifetime', read: 0, write: 6897 },
+    );
+    expect(() => cacheMissCauses(list), explain(list)).not.toThrow();
+    expect(cacheMissCauses(list), explain(list)).toEqual(['parts_not_recorded']);
+  });
+
+  // Group 1 (b): inside one list, a missed request written by another writer, with no
+  // `prefix_parts`, after a request that has them. Can fail: the request-side object test removed
+  // (it throws reading the parts), or the word changed. Prints the list and the error, then the
+  // causes.
+  it('a missed request that records no parts: parts_not_recorded', () => {
+    const list = stored(
+      {
+        ...anthropicWrote,
+        in_call: 0,
+        marked: conversation,
+        parts: { tools: 'mcp tools', system: 'profile', prompt: 'input' },
+      },
+      { ...anthropicWrote, in_call: 1, marked: conversation },
+    );
+    expect(() => cacheMissCauses(list), explain(list)).not.toThrow();
+    expect(cacheMissCauses(list), explain(list)).toEqual([undefined, 'parts_not_recorded']);
+  });
+
+  // Group 2: against a reference, an Anthropic tool step whose MCP server listed no tools in one
+  // of the two drives: the tools part is on one side only. Can fail: a part missing on one side
+  // ignored for the tools (a later cause: unexplained). Prints each entry.
+  it.each<[string, Parts, Parts]>([
+    [
+      'the request sent tools and its reference none',
+      { tools: 'mcp tools', system: 'profile', prompt: 'input' },
+      { system: 'profile', prompt: 'input' },
+    ],
+    [
+      'its reference sent tools and the request none',
+      { system: 'profile', prompt: 'input' },
+      { tools: 'mcp tools', system: 'profile', prompt: 'input' },
+    ],
+  ])('%s: tools', (_label, now, before) => {
+    const list = againstReference(
+      { ...anthropicWrote, marked: conversation, parts: now },
+      { ...anthropicWrote, marked: conversation, parts: before },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual(['tools']);
+  });
+
+  // Group 3: against a reference, an Anthropic tool step (the prompt lies inside on both, neither
+  // split) where a workflow edit added the prompt to the step, or removed it: the prompt part is
+  // on one side only. Can fail: a part missing on one side ignored for the prompt (unexplained).
+  // Prints each entry.
+  it.each<[string, Parts, Parts]>([
+    [
+      'the edit added the prompt',
+      { tools: 'mcp tools', system: 'profile', prompt: 'input' },
+      { tools: 'mcp tools', system: 'profile' },
+    ],
+    [
+      'the edit removed the prompt',
+      { tools: 'mcp tools', system: 'profile' },
+      { tools: 'mcp tools', system: 'profile', prompt: 'input' },
+    ],
+  ])('%s: prompt', (_label, now, before) => {
+    const list = againstReference(
+      { ...anthropicWrote, marked: conversation, parts: now },
+      { ...anthropicWrote, marked: conversation, parts: before },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual(['prompt']);
+  });
+
+  // Group 4 (a): against a reference, OpenAI before GPT-5.6 on a gateway (`provider_rules`, not
+  // strict). JSON mode moved with `--base-url` between the drives, so the format part is on the
+  // earlier side only, and the prompt also differs (inside on both, neither split). Can fail: the
+  // format checked before the prompt (format). Prints each entry.
+  it('the format on one side and the prompt different: prompt, before the format', () => {
+    const list = againstReference(
+      { ...openaiMissed, endpoint: 'custom', parts: { system: 'profile', prompt: 'input B' } },
+      {
+        ...openaiRead,
+        endpoint: 'custom',
+        parts: { system: 'profile', prompt: 'input A', format: 'json_object' },
+      },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual(['prompt']);
+  });
+
+  // Group 4 (b): the same move of JSON mode, and a setting stated on the gateway in the earlier
+  // drive only, so the key went out there alone; the prompt is the same. Can fail: the cache
+  // settings checked before the format (cache_settings). Prints each entry.
+  it('the format on one side and the marks different: format, before the cache settings', () => {
+    const list = againstReference(
+      { ...openaiMissed, endpoint: 'custom', parts: { system: 'profile', prompt: 'input' } },
+      {
+        ...openaiRead,
+        endpoint: 'custom',
+        marked: ['key'],
+        parts: { system: 'profile', prompt: 'input', format: 'json_object' },
+      },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual(['format']);
+  });
+});
