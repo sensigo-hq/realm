@@ -1,5 +1,5 @@
 // The multi-copy layout (issue #620 PR-B): builds, in a temp folder and from the BUILT `dist`
-// folders of the four packages, the install shapes npm produces when one project holds more than
+// folders of the five packages, the install shapes npm produces when one project holds more than
 // one copy of realm — then lets a test import, spawn and measure each copy on its own.
 //
 // This file is test support. It is NOT compiled into the package (`src/multi-copy/**` is excluded
@@ -12,6 +12,8 @@
 //   project/node_modules/@sensigo/realm        the PROJECT's core
 //   project/node_modules/@sensigo/realm-cli    the project's realm-cli (its `./agent` entry)
 //   cli/node_modules/@sensigo/realm-cli        the command that runs, with its OWN nested core
+//                                              and its nested realm-store-sqlite, which loads
+//                                              that same core
 //   cli/node_modules/@sensigo/realm-mcp        … with its own nested core
 //   cli/node_modules/@sensigo/realm-testing    … with its own nested core
 //   other/node_modules/@sensigo/realm          the same files one patch ahead ("another release")
@@ -29,13 +31,14 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 /** The repository root: this file is `packages/cli/src/multi-copy/layout.ts`. */
 export const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 
-type PackageKey = 'core' | 'cli' | 'mcp' | 'testing';
+type PackageKey = 'core' | 'cli' | 'mcp' | 'testing' | 'store';
 
 const PACKAGES: Record<PackageKey, { dir: string; name: string }> = {
   core: { dir: 'core', name: '@sensigo/realm' },
   cli: { dir: 'cli', name: '@sensigo/realm-cli' },
   mcp: { dir: 'mcp-server', name: '@sensigo/realm-mcp' },
   testing: { dir: 'testing', name: '@sensigo/realm-testing' },
+  store: { dir: 'store-sqlite', name: '@sensigo/realm-store-sqlite' },
 };
 
 /** One installed copy: its folder, and the version its `dist/version.js` reports. */
@@ -60,6 +63,8 @@ export interface Layout {
   cli: {
     cli: Copy;
     cliCore: Copy;
+    /** The command's store package, beside its core: it loads the command's core. */
+    cliStore: Copy;
     mcp: Copy;
     mcpCore: Copy;
     testing: Copy;
@@ -190,6 +195,9 @@ export async function buildLayout(): Promise<Layout> {
   const cliTree = join(root, 'cli');
   const cliCli = await base('cli', cliTree);
   const cliCliCore = await base('core', cliCli.dir);
+  // The CLI depends on the store package (#616 PR-2c c6): it sits beside the command's core, so it
+  // loads that same core, as npm leaves a CLI and its store when both pin one core.
+  const cliCliStore = await base('store', cliCli.dir);
   const cliMcp = await base('mcp', cliTree);
   const cliMcpCore = await base('core', cliMcp.dir);
   const cliTesting = await base('testing', cliTree);
@@ -218,6 +226,7 @@ export async function buildLayout(): Promise<Layout> {
     cli: {
       cli: cliCli,
       cliCore: cliCliCore,
+      cliStore: cliCliStore,
       mcp: cliMcp,
       mcpCore: cliMcpCore,
       testing: cliTesting,
