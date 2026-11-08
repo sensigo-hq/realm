@@ -180,6 +180,15 @@ function damagePage13(file: string): void {
   }
 }
 
+/**
+ * Whether the file someone else made at `path` is still as they made it: `as made`, or its size
+ * (never its bytes: replaced, it would be a whole store file in the failure's output).
+ */
+function asMade(path: string, theirs: string): string {
+  const now = readFileSync(path);
+  return now.equals(Buffer.from(theirs)) ? 'as made' : `replaced (${now.length} bytes)`;
+}
+
 /** A fault at the copy's one statement on the store's connection. */
 function atVacuum(error: () => Error, also?: () => void): Fault {
   return {
@@ -703,10 +712,10 @@ describe('#616 PR-2c c6 correction — a failed copy is one refusal, and nothing
     const reason = 'a file already exists there';
     // (1) red when the copy is published by a rename (it replaces the file that appeared) or the
     //     publish does not refuse an existing name, or when the temporary file is left; (2) prints
-    //     the refusal, the file's text and what was left beside it.
+    //     the refusal, whether the file is as made (or its size) and what was left beside it.
     expect({
       refused: await refusal(m.backup(target)),
-      text: readFileSync(target, 'utf8'),
+      file: asMade(target, theirs),
       left: leftovers(target),
     }).toEqual({
       refused: {
@@ -714,7 +723,7 @@ describe('#616 PR-2c c6 correction — a failed copy is one refusal, and nothing
         message: `Cannot back up the store to ${target}: ${reason}. Realm never replaces a file; name a path where nothing exists.`,
         details: { path: target, reason },
       },
-      text: theirs,
+      file: 'as made',
       left: [],
     });
   });
@@ -763,10 +772,10 @@ describe('#616 PR-2c c6 correction — a failed copy is one refusal, and nothing
     });
     const reason = 'a file already exists there';
     // (1) red when the look before the rename is removed (the rename replaces the file); (2)
-    //     prints the refusal, the file's text and what was left beside it.
+    //     prints the refusal, whether the file is as made (or its size) and what was left beside it.
     expect({
       refused: await refusal(m.backup(target)),
-      text: readFileSync(target, 'utf8'),
+      file: asMade(target, theirs),
       left: leftovers(target),
     }).toEqual({
       refused: {
@@ -774,7 +783,7 @@ describe('#616 PR-2c c6 correction — a failed copy is one refusal, and nothing
         message: `Cannot back up the store to ${target}: ${reason}. Realm never replaces a file; name a path where nothing exists.`,
         details: { path: target, reason },
       },
-      text: theirs,
+      file: 'as made',
       left: [],
     });
   });
