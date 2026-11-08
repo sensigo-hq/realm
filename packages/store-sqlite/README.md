@@ -28,6 +28,7 @@ Replays are saved and read by id; a store failure is reported as itself, never a
 ## The trace buffer
 
 The trace buffer keeps one row per line, in append order, and a step's read waits for a write in flight.
+A fenced write checks the run inside its own write: when another writer is changing the run at that moment, the write waits for that change, then checks the run as it now stands, so it is refused with the fence's own error and writes nothing when the run no longer passes, and goes ahead when it does.
 
 ## Concurrent writers
 
