@@ -318,13 +318,13 @@ The clock of a store opened at a [test location](environment-and-files.md#the-cl
 
 Every time Realm reads is one of five classes. A store's clock gives the first three; the last two never come from it. `CLOCK_READ_CLASSES` holds the five, with these words (added after version 0.48.0):
 
-| Class      | The time                                                                                                                                                                 |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `write`    | An instant a write records on the run (`updated_at`, a claim's deadline, an opened question's `opened_at`): the store's reading, taken once inside the write.            |
-| `read`     | The instant every statement about a record a read returns is judged at (`as_of`): the store's reading, taken before the load.                                            |
-| `event`    | An instant the engine records with what happened (a step's start and end, a drive failure, a guard's evidence): the store's clock, read where it happens.                |
-| `outside`  | An instant compared with nothing on a run (a log line, a signature window, `Retry-After`, a price day): the host's clock, each read named in the census with its reason. |
-| `duration` | A duration (elapsed time, a budget, a timeout): the monotonic clock, never compared with an instant.                                                                     |
+| Class      | The time                                                                                                                                                                                                                             |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `write`    | An instant a write records on the run (`updated_at`, a claim's deadline, an opened question's `opened_at`): the store's reading, taken once inside the write.                                                                        |
+| `read`     | The instant every statement about a record a read returns is judged at (`as_of`): the store's reading, taken before the load.                                                                                                        |
+| `event`    | An instant the engine records with what happened (a step's start and end, a drive failure, a guard's evidence): the store's clock, read where it happens.                                                                            |
+| `outside`  | An instant compared with no instant the store's clock gave (a log line, a signature window, `Retry-After`, a price day, a request's start compared with another's): the host's clock, each read named in the census with its reason. |
+| `duration` | A duration (elapsed time, a budget, a timeout): the monotonic clock, never compared with an instant.                                                                                                                                 |
 
 Realm's own tests list every time its code reads, each under one class with its reason, and fail when a read is not listed. A reply's `as_of` is the instant every statement about time in the reply was judged at. It is not when the run last changed: two replies about a run that did not change carry different `as_of`s when they were judged at different times.
 

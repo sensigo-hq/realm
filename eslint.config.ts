@@ -296,7 +296,7 @@ const clockPlugin = {
           },
         ],
         messages: {
-          read: "A clock read outside a run store's clock: read the store's clock (`store.clock.now()`), or — for an instant compared with nothing on a run — name the site in the clock census as `outside` with its reason (#715 (b), 04 §B).",
+          read: "A clock read outside a run store's clock: read the store's clock (`store.clock.now()`), or — for an instant compared with no instant the store's clock gave — name the site in the clock census as `outside` with its reason (#715 (b), 04 §B).",
           dflt: 'A clock-reading parameter default: the caller passes the instant (#715 (b), 04 §B).',
         },
       },

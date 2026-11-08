@@ -13,6 +13,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
   cacheMissCauses,
+  cacheMissGaps,
   cachePredecessor,
   cacheReadVerdicts,
   type CacheNotComparedCause,
@@ -38,7 +39,8 @@ type Spec = {
   // Piece A-2a2's facts; each is absent unless a cell sets it.
   /** `endpoint`, the client's kind; absent: `default`. */
   endpoint?: string;
-  /** Anthropic's `cache_lifetime_s` on a `lifetime` request; absent: 300. */
+  /** `cache_lifetime_s` on a `lifetime` request: Anthropic's, absent 300; on another provider
+   *  written only when set (OpenAI's explicit lifetime, 1,800; piece A-2a3). */
   lifetime_s?: number;
   /** `request_strict_sent`. */
   strict?: boolean;
@@ -50,6 +52,8 @@ type Spec = {
   parts?: Parts;
   /** `model`; absent: the provider's usual one; `null`: none recorded (piece A-2a2r). */
   model?: string | null;
+  /** `request_start`; absent: one second apart from 05:00:00Z, by position (piece A-2a3). */
+  start?: string;
 };
 
 const sha256 = (label: string): string => createHash('sha256').update(label).digest('hex');
@@ -60,7 +64,7 @@ function stored(...specs: Spec[]): Record<string, unknown>[] {
     const anthropic = s.provider === 'anthropic';
     const count = (v: unknown): number => (typeof v === 'number' ? v : 0);
     const r: Record<string, unknown> = {
-      request_start: `2026-11-08T05:00:${String(i).padStart(2, '0')}.000Z`,
+      request_start: s.start ?? `2026-11-08T05:00:${String(i).padStart(2, '0')}.000Z`,
       request_index: i,
       ...(s.model === null
         ? {}
@@ -72,7 +76,9 @@ function stored(...specs: Spec[]): Record<string, unknown>[] {
     };
     const lifetime = s.lifetime_s ?? 300;
     if (s.asked !== undefined) r['cache_requested'] = s.asked;
-    if (anthropic && s.asked === 'lifetime') r['cache_lifetime_s'] = lifetime;
+    if (s.asked === 'lifetime' && (anthropic || s.lifetime_s !== undefined)) {
+      r['cache_lifetime_s'] = lifetime;
+    }
     if (s.read !== undefined) r['cache_read_input_tokens'] = s.read;
     if (s.write !== undefined) {
       r[anthropic ? 'cache_creation_input_tokens' : 'cache_write_tokens'] = s.write;
@@ -544,7 +550,9 @@ function referenceOf(spec: Spec): Record<string, unknown> {
     output_tokens: _output,
     ...kept
   } = stored(spec)[0] ?? {};
-  return { from: 'run', ...kept, request_start: '2026-11-08T04:00:00.000Z' };
+  // One second before the list's first entry (piece A-2a3): within every lifetime, so no earlier
+  // cell's answer turns on the pause; a cell about the pause sets `start` itself.
+  return { from: 'run', ...kept, request_start: spec.start ?? '2026-11-08T04:59:59.000Z' };
 }
 
 /** A later drive's step: one request, `now`, judged against its reference, `before`. */
@@ -573,6 +581,8 @@ function explain(list: readonly unknown[]): string {
       `asked=${String(r['cache_requested'])}`,
       `marked=${JSON.stringify(r['cache_marked'])}`,
       `lifetime_s=${String(r['cache_lifetime_s'])}`,
+      `start=${String(r['request_start'])}`,
+      `creation=${JSON.stringify(r['cache_creation'])}`,
       `strict=${String(r['request_strict_sent'])}`,
       `prefix_chars=${String(r['prefix_chars'])}`,
       `read=${JSON.stringify(r['cache_read_input_tokens'])}`,
@@ -1404,5 +1414,178 @@ describe("caching 3-M A-2a2s — Realm's own changes: the final request, the str
     };
     const list = stored({ ...shot, in_call: 0 }, { ...shot, in_call: 0 });
     expect(cacheMissCauses(list), explain(list)).toEqual([undefined, 'unexplained']);
+  });
+});
+
+describe('caching 3-M A-2a3 — possibly expired: the pause and the lifetime the entry was granted', () => {
+  const luna = 'gpt-5.6-luna';
+  const conversation = ['system', 'conversation'];
+  const parts: Parts = { tools: 'submit', system: 'profile', prompt: 'input' };
+
+  /**
+   * 1 (a)'s list, inside one list: an Anthropic tool step with `tool_timeout: 60`. Turn 0 wrote
+   * with a 5-minute split. Its answer took about two minutes and asked for five tool calls, run one
+   * after another, about a minute each (no one MCP call outlives 60 s), so turn 1, stamped when
+   * sent, starts 420.25 s later and reads 0. Turn 2 reads what turn 1 wrote (held); the final
+   * request asked nothing.
+   */
+  const toolStep = (): Record<string, unknown>[] => {
+    const turn: Spec = {
+      ...anthropicWrote,
+      marked: conversation,
+      parts: { tools: 'mcp tools', system: 'profile', prompt: 'input' },
+    };
+    return stored(
+      { ...turn, in_call: 0, start: '2026-11-08T05:00:00.000Z' },
+      { ...turn, in_call: 1, read: 0, write: 7000, start: '2026-11-08T05:07:00.250Z' },
+      { ...turn, in_call: 2, read: 7000, write: 50, start: '2026-11-08T05:07:20.000Z' },
+      { provider: A, in_call: 3, read: 7050, write: 0, start: '2026-11-08T05:07:40.000Z' },
+    );
+  };
+
+  // 1 (a) Can fail: expiry judged only against the reference (unexplained), the gap rounded (420),
+  // or the asked lifetime read before the split (`asked`). Prints each entry with its start.
+  it('a turn 420.25 s after a 5-minute write: possibly_expired, judged on the written 300 s', () => {
+    const list = toolStep();
+    expect(cacheMissCauses(list)[1], explain(list)).toBe('possibly_expired');
+    expect(cacheMissGaps(list)[1], explain(list)).toEqual({
+      gap_s: 420.25,
+      lifetime_s: 300,
+      lifetime_from: 'written',
+    });
+  });
+
+  // 1 (b) Asked and granted 1 hour: the reference's split shows a 1-hour write; drive 2 started
+  // twenty minutes later. Can fail: a 1-hour write read as 300 s, or the gap compared in
+  // milliseconds (each gives possibly_expired). Prints each entry.
+  it('twenty minutes after a 1-hour write: unexplained, judged on the written 3,600 s', () => {
+    const hour: Spec = { ...anthropicWrote, lifetime_s: 3600, marked: ['system'], parts };
+    const list = againstReference(
+      { ...hour, start: '2026-11-08T05:00:00.000Z' },
+      { ...hour, start: '2026-11-08T04:40:00.000Z' },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual(['unexplained']);
+    expect(cacheMissGaps(list), explain(list)).toEqual([
+      { gap_s: 1200, lifetime_s: 3600, lifetime_from: 'written' },
+    ]);
+  });
+
+  // 1 (c) A reference that only read (its split 0 and 0) and asked 5 minutes. Drive 2, ten minutes
+  // later, asked 1 hour (`auto` chose the long lifetime this drive: its split a 1-hour write) and
+  // read 0. Can fail: a split of 0 and 0 read as "no lifetime" (unexplained) or as `written`, or
+  // the lifetime read from the request (3,600: unexplained). Prints each entry.
+  it('a reference that only read: possibly_expired, judged on the 300 s it asked for', () => {
+    const list = againstReference(
+      {
+        ...anthropicWrote,
+        lifetime_s: 3600,
+        marked: ['system'],
+        parts,
+        start: '2026-11-08T05:00:00.000Z',
+      },
+      {
+        ...anthropicWrote,
+        read: 6897,
+        write: 0,
+        marked: ['system'],
+        parts,
+        start: '2026-11-08T04:50:00.000Z',
+      },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual(['possibly_expired']);
+    expect(cacheMissGaps(list), explain(list)).toEqual([
+      { gap_s: 600, lifetime_s: 300, lifetime_from: 'asked' },
+    ]);
+  });
+
+  // 1 (d) A GPT-5.6 single-shot step at OpenAI's own address (explicit: `cache_lifetime_s` 1,800,
+  // no split). The reference's counts are C1's captured first answer (read 0, wrote 3,930;
+  // results-gpt-5.6-luna.json); drive 2, forty-five minutes later, reads 0 and writes 3,930. Can
+  // fail: a write without a split read as "no lifetime" (unexplained). Prints each entry.
+  it('forty-five minutes after an explicit 30-minute ask: possibly_expired, judged on 1,800 s', () => {
+    const explicit: Spec = {
+      provider: O,
+      model: luna,
+      asked: 'lifetime',
+      lifetime_s: 1800,
+      read: 0,
+      write: 3930,
+      strict: false,
+      marked: ['system'],
+      parts: { system: 'profile', prompt: 'input', format: 'json_object' },
+    };
+    const list = againstReference(
+      { ...explicit, start: '2026-11-08T05:00:00.000Z' },
+      { ...explicit, start: '2026-11-08T04:15:00.000Z' },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual(['possibly_expired']);
+    expect(cacheMissGaps(list), explain(list)).toEqual([
+      { gap_s: 2700, lifetime_s: 1800, lifetime_from: 'asked' },
+    ]);
+  });
+
+  // 1 (e) A GPT-5.6 tool step (`provider_rules`, so no lifetime recorded). The reference's counts
+  // are C9's captured first answer (read 0, wrote 4,012; results-gpt-5.6-luna-C9.json); drive 2,
+  // the next day, reads 0 and writes 4,012. Can fail: a lifetime assumed for `provider_rules`
+  // (OpenAI's 30 minutes: possibly_expired). Prints each entry.
+  it('a day after a provider_rules request: unexplained, with the gap and no lifetime', () => {
+    const tool: Spec = {
+      provider: O,
+      model: luna,
+      asked: 'provider_rules',
+      read: 0,
+      write: 4012,
+      strict: false,
+      parts: { tools: 'mcp tools', system: 'profile', prompt: 'input', format: 'json_object' },
+    };
+    const list = againstReference(
+      { ...tool, start: '2026-11-08T05:00:00.000Z' },
+      { ...tool, start: '2026-11-07T05:00:00.000Z' },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual(['unexplained']);
+    expect(cacheMissGaps(list), explain(list)).toEqual([{ gap_s: 86400 }]);
+  });
+
+  // 2 (a) The order: against a reference a day later, an Anthropic step whose prompt edit removed
+  // its fixed start. Drive 1 was split (`system` and `prompt` marked), drive 2 is not (`system`
+  // only), so the prompt is not compared and the marks differ; the gap still carries the day. Can
+  // fail: possibly_expired checked before cache_settings. Prints each entry.
+  it('the marks differ a day later: cache_settings, before possibly_expired', () => {
+    const list = againstReference(
+      {
+        ...anthropicWrote,
+        marked: ['system'],
+        parts: { tools: 'submit', system: 'profile', prompt: 'whole prompt' },
+        start: '2026-11-08T05:00:00.000Z',
+      },
+      {
+        ...anthropicWrote,
+        marked: ['system', 'prompt'],
+        prefix_chars: 40,
+        parts: { tools: 'submit', system: 'profile', prompt: 'head' },
+        start: '2026-11-07T05:00:00.000Z',
+      },
+    );
+    expect(cacheMissCauses(list), explain(list)).toEqual(['cache_settings']);
+    expect(cacheMissGaps(list), explain(list)).toEqual([
+      { gap_s: 86400, lifetime_s: 300, lifetime_from: 'written' },
+    ]);
+  });
+
+  // 3 Only a request that missed carries a gap: 1 (a)'s list, its held turn 2 and its final
+  // request (which asked nothing). Can fail: a gap given to every request with a predecessor (the
+  // held turn gets one). Prints each entry.
+  it('a held request and one that did not ask carry no gap', () => {
+    const list = toolStep();
+    const gaps = cacheMissGaps(list);
+    expect(cacheReadVerdicts(list)[2]?.outcome, explain(list)).toBe('held');
+    expect(gaps[2], explain(list)).toBeUndefined();
+    expect(gaps[3], explain(list)).toBeUndefined();
+  });
+
+  // 3 A step that called no model has no list. GROUNDING: mapped over `cacheReadVerdicts`, which
+  // already gives `[]` there.
+  it('requests that is not an array gives no gaps', () => {
+    expect(cacheMissGaps(undefined), 'requests: undefined').toEqual([]);
   });
 });
