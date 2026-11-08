@@ -18,7 +18,10 @@ import {
   executeStep,
   loadWorkflowFromString,
 } from '@sensigo/realm';
-import type { WorkflowDefinition } from '@sensigo/realm';
+import type { RunRecord, WorkflowDefinition } from '@sensigo/realm';
+import { openRealmHome } from '@sensigo/realm-store-sqlite';
+import { InMemoryStore } from '@sensigo/realm-testing';
+import { buildExportBundle } from './export.js';
 import { lagless } from '../test-support/lag.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
@@ -2485,6 +2488,237 @@ describe(
           put(block(PAGE, "Run '7d2e9b14"), { '7d2e9b14-5a3c-4f81-b0e6-93c4a1f2d857': id }),
         );
       });
+    });
+  },
+);
+
+// #616 PR-2c c11b: `realm run import <path…>` (the `## import` section). The crown runs the BUILT
+// `realm` on a scratch SQLite home (seeded through the store package's own open, then closed) with the
+// fixtures outside it, and holds the page's block to the run's real output; every other sentence of the
+// section is quoted word for word, with the cell (here or in `run-import-616.test.ts`) that executes it.
+describe(
+  '#616 PR-2c c11b — realm run import: the page, on the built CLI',
+  { timeout: 120_000 },
+  () => {
+    const BARE = '2f0c6d1e-4b7a-4c1e-9a3d-5e8f1b2c3d4e';
+    const BUNDLED = '9b4e2a7c-1d3f-4e5a-8b6c-7d9e0f1a2b3c';
+    let homeRoot = '';
+    let work = '';
+    beforeEach(() => {
+      homeRoot = realpathSync(mkdtempSync(join(tmpdir(), 'realm-c11b-home-')));
+      work = realpathSync(mkdtempSync(join(tmpdir(), 'realm-c11b-work-')));
+    });
+    afterEach(() => {
+      rmSync(homeRoot, { recursive: true, force: true });
+      rmSync(work, { recursive: true, force: true });
+    });
+
+    /** A live run in the record's own shape. */
+    const run = (id: string): RunRecord => ({
+      id,
+      workflow_id: 'wf-import',
+      workflow_version: 1,
+      completed_steps: [],
+      in_progress_steps: [],
+      failed_steps: [],
+      skipped_steps: [],
+      run_phase: 'running',
+      version: 3,
+      params: { ticket: 'T-1' },
+      evidence: [],
+      created_at: '2026-11-01T10:00:00.000Z',
+      updated_at: '2026-11-01T10:10:00.000Z',
+      terminal_state: false,
+    });
+
+    /** The built `realm` in `work`, HOME the scratch home's root; its code and two streams. */
+    const realm = (args: string[]): { code: number | null; out: string; err: string } => {
+      const r = spawnSync(process.execPath, [CLI, ...args], {
+        cwd: work,
+        env: { PATH: process.env['PATH'] ?? '', HOME: homeRoot, REALM_NO_NUDGE: '1' },
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 60_000,
+        killSignal: 'SIGKILL',
+      });
+      return { code: r.status, out: r.stdout ?? '', err: r.stderr ?? '' };
+    };
+
+    it("the crown: a folder holding a run record, an export, a file that is not a run and a note — the lines, the counts, exit 1; again unchanged, exit 1; the two good files alone exit 0, twice; the page's block is this run", async () => {
+      const seeded = await openRealmHome({ home: join(homeRoot, '.realm') });
+      await seeded.runStore.create({
+        workflowId: 'triage',
+        workflowVersion: 1,
+        params: {},
+        extensionIdentity: [],
+      });
+      seeded.close();
+      const store = new InMemoryStore();
+      store.seed(run(BUNDLED));
+      const { bundle } = await buildExportBundle(
+        BUNDLED,
+        {
+          runStore: store,
+          failedAttemptStore: { read: async () => ({ records: [], capped: false }) },
+          traceBufferStore: { readAllForRun: async () => ({ a: [{ ts: 1, entries: [] }] }) },
+        },
+        new Date('2026-11-01T10:20:00.000Z'),
+      );
+      for (const folder of ['old-runs', 'good']) {
+        mkdirSync(join(work, folder));
+        writeFileSync(join(work, folder, `${BARE}.json`), JSON.stringify(run(BARE)));
+        writeFileSync(join(work, folder, `${BUNDLED}.realm.json`), JSON.stringify(bundle));
+      }
+      writeFileSync(join(work, 'old-runs', 'broken.json'), '{}');
+      writeFileSync(join(work, 'old-runs', 'notes.txt'), 'the old store, moved out of ~/.realm');
+      const first = realm(['run', 'import', './old-runs']);
+      const again = realm(['run', 'import', './old-runs']);
+      const good = realm(['run', 'import', './good']);
+      const goodAgain = realm(['run', 'import', './good']);
+      const lines = (t: string): string[] => t.split('\n').filter((l) => l !== '');
+      // (1) red when the exit code ignores the words (always 0), when a re-run is not `unchanged`, or
+      //     when the page's block is not this run's output; (2) prints each run's code and lines.
+      expect({
+        first: { code: first.code, out: lines(first.out), err: first.err },
+        again: { code: again.code, out: lines(again.out) },
+        good: { code: good.code, out: lines(good.out) },
+        goodAgain: goodAgain.code,
+      }).toEqual({
+        first: { code: 1, out: put(block(PAGE, 'Ignored 1 entry'), {}), err: '' },
+        again: {
+          code: 1,
+          out: [
+            `unchanged  ./old-runs/${BARE}.json`,
+            `unchanged  ./old-runs/${BUNDLED}.realm.json  [wal_not_imported: 1 line]`,
+            'not_a_run  ./old-runs/broken.json: neither a run record nor an export (it has no id)',
+            '3 files: 2 unchanged, 1 not a run.',
+            'Ignored 1 entry that is not a .json file.',
+          ],
+        },
+        good: {
+          code: 0,
+          out: [
+            `unchanged  ./good/${BARE}.json`,
+            `unchanged  ./good/${BUNDLED}.realm.json  [wal_not_imported: 1 line]`,
+            '2 files: 2 unchanged.',
+          ],
+        },
+        goodAgain: 0,
+      });
+      claim(PAGE, 'realm run import ./old-runs');
+      claim(
+        PAGE,
+        'On a folder holding a run record, an export, a file that is not a run and a note:',
+      );
+    });
+
+    it('realm run --help names the command, and its help names its argument', () => {
+      const help = flat(realm(['run', '--help']).out);
+      const own = flat(realm(['run', 'import', '--help']).out);
+      // (1) red when the command is not registered, or its words change; (2) prints whether each
+      //     help holds its line (Commander wraps the text: it is compared with its spaces folded).
+      expect({
+        listed: help.includes(
+          'import <path...> Import run records and exports from JSON files into the store',
+        ),
+        argument: own.includes('path run record or export files, or folders of them'),
+      }).toEqual({ listed: true, argument: true });
+    });
+
+    it("the section's sentences, each with the cell that executes it", () => {
+      // The table row and the synopsis: the help cell above; the run pages' counts: docs-sweep-625.
+      claim(
+        PAGE,
+        '| [`import`](#import) | Brings run records and exports from JSON files into the store. | Always |',
+      );
+      claim(PAGE, 'realm run import <path...>');
+      // run-import-616.test.ts, "discovery": a folder's .json files, not below it; the others counted.
+      claim(
+        PAGE,
+        'Each `<path>` is a file, or a folder whose `.json` files are imported. A folder is read for the `.json` files directly in it, not below it; its other entries are not read, and the command counts them.',
+      );
+      // The crown (a re-run reads unchanged; the files untouched): this file.
+      claim(
+        PAGE,
+        'A run already in the store is never overwritten, and the files you give are never moved, changed or deleted.',
+      );
+      // run-import-616.test.ts, "the refusals come before anything is opened or read".
+      claim(
+        PAGE,
+        "Before the store is opened and before any file is read, every `<path>` is looked at. The first one that cannot be imported from is named, and nothing is imported: `Error: <path>: no such file or folder`, `Error: <path>: neither a file nor a folder`, `Error: <path>: no .json files (a folder is read for .json files directly in it, not below it)`, or `Error: <path>: <the system's reason>`.",
+      );
+      // run-import-616.test.ts, "a home that still holds the old store's folders".
+      claim(
+        PAGE,
+        "The store's own refusals, such as a home that still holds the old store's folders, are one `Error:` line, and nothing is imported.",
+      );
+      // run-import-616.test.ts, "discovery" (the order); the crown (the line's shape).
+      claim(
+        PAGE,
+        "Each file gets one line, in the order of the arguments and a folder's files in name order: a word, two spaces, the file, and after a colon why it was not imported.",
+      );
+      // run-import-core-616.test.ts (c11a), checks 1-4: each word's cases.
+      claim(PAGE, '| `imported`  | The run was not in the store, and now is.');
+      claim(
+        PAGE,
+        '| `unchanged` | The run is in the store with the same content. Nothing was done.',
+      );
+      claim(
+        PAGE,
+        '| `diverged`  | The store holds the run at another version, or with other content at its version, or a live run already holds its idempotency key. The stored run is kept.',
+      );
+      claim(
+        PAGE,
+        '| `purged`    | The run was deleted from this store, on the day the line names. It is not brought back.',
+      );
+      claim(
+        PAGE,
+        '| `legacy`    | A run or an export in a format this Realm does not read: an old `state`-shaped record, a record whose times are not in the current form, or an export older than version 4.',
+      );
+      claim(
+        PAGE,
+        '| `not_a_run` | Not a run record or an export, or a file that could not be read. The line says which.',
+      );
+      // run-import-core-616.test.ts (c11a), check 4: the notes; the crown: `wal_not_imported`.
+      claim(
+        PAGE,
+        "A line ends with notes in square brackets when there is more to say: `run_phase re-derived` when the phase a record carried is not the one its record gives (the store keeps the one it works out), `exported with <n> values hidden` for an export that hid values, and, in this version, `wal_not_imported`, `attempts_not_imported` and `sealed_not_imported` for an export's write-ahead log, failed attempts and sealed artifacts, which are not imported.",
+      );
+      // run-import-core-616.test.ts (c11a), check 4: a masked bundle over its unmasked run is diverged.
+      claim(
+        PAGE,
+        "An export is masked when it is written, and an import takes a file's values as they are: a run imported from an export holds its hidden values, and over the same run already in the store it reads `diverged`.",
+      );
+      // run-import-616.test.ts, "discovery" (only `.json` names are read).
+      claim(
+        PAGE,
+        "The old store's `<id>.attempts.jsonl` files are not `.json` files: they are not imported.",
+      );
+      // The crown: the count line and the line for the entries not read.
+      claim(
+        PAGE,
+        "After the files' lines, one line counts the files by word; when a folder's entries were not read, one more line counts them.",
+      );
+      // run-import-616.test.ts, "the stop, the summary and the exit code".
+      claim(
+        PAGE,
+        "When the store refuses a write for a reason that is not the file's (it stays busy, its disk is full, it cannot be written), or a file meets an error nothing expects, the import stops at that file. The lines already printed stand, then `Error: stopped at <path>: <message>`, and what to do: `<n> files were not started; run the same command again: runs already imported read unchanged.`, or, for an error nothing expects, its stack and `<n> files were not started; fix or move that file, then run the command again.` No count line is printed.",
+      );
+      // run-import-616.test.ts, "piped paths".
+      claim(
+        PAGE,
+        "As in the CLI's other output, a path under your home folder has the home folder's name hidden when the output is piped or logged.",
+      );
+      // The crown (exit 1 with a not_a_run file, 0 when every file is unchanged); run-import-616.test.ts
+      // (a refusal, a stop: 1).
+      claim(
+        PAGE,
+        '**Exit code:** 0 when every file was `imported` or `unchanged`. 1 when any file was not, when a path is refused, or when the import stopped. Running the same command again is safe: the runs it imported read `unchanged`. A folder that holds runs in an old format exits 1 even when every other file imported: their lines say `legacy`.',
+      );
+      claim(
+        'CHANGELOG.md',
+        "- **`realm run import <path…>` brings Realm's JSON run records and exports into the SQLite store:** one line per file (`imported`, `unchanged`, `diverged`, `purged`, `legacy`, `not_a_run`), a run already stored is never overwritten, and the exit code is 1 when any file was not imported (#616).",
+      );
     });
   },
 );

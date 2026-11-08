@@ -127,6 +127,7 @@ All notable changes to this project are documented here.
 - **Two error codes for it: `STATE_STORE_BACKUP_REFUSED`** (a path inside the home, where anything exists, or that cannot be created; a home with no store file, or an empty one; a copy that fails or cannot be written, with nothing left at the path) **and `STATE_STORE_BACKUP_UNVERIFIED`** (the copy fails the quick check; the copy is kept and the store file named as possibly damaged) (#616).
 - **`realm db migrate --backup <path> | --no-backup` upgrades the store file**: a backup first (or none, stated), then each pending schema step in its own transaction, checked, one line each, stopping at the first failure with the file at the last completed version; then every run stamped by another phase derivation re-stamped with the current one, and the count said (#616).
 - **Two error codes for it: `STATE_STORE_MIGRATE_REFUSED`** (a home with no store file, or an empty one; nothing is created or copied) **and `STATE_STORE_MIGRATE_FAILED`** (a schema step failed; the line names the version the file is at, and the backup's path when one was made) (#616).
+- **`realm run import <path…>` brings Realm's JSON run records and exports into the SQLite store:** one line per file (`imported`, `unchanged`, `diverged`, `purged`, `legacy`, `not_a_run`), a run already stored is never overwritten, and the exit code is 1 when any file was not imported (#616).
 
 ### Changed
 
