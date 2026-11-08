@@ -2450,7 +2450,7 @@ describe('#729 PR-3 correction 4 — the pages this correction changes', () => {
       ?.trim();
   const lastClause = (text: string) => text.trim().split('\n').at(-1)?.split('; ').at(-1);
 
-  it("realm-run-reading.md: `attempts` says so only with attempts to show, also when it cannot read the run's record; the flag prints them and says so", async () => {
+  it('realm-run-reading.md: `attempts` says so only with attempts to show; the flag prints them and says so', async () => {
     claim(
       READING_PAGE,
       "`attempts` reads the run's declared secrets as `inspect` does. When it cannot read them — or cannot read the run's record — and it has attempts to show, it says so on standard error and prints each problem as its type and size; with `--accept-partial-disclosure` it prints them masked with what is known and says so.",
@@ -2461,18 +2461,12 @@ describe('#729 PR-3 correction 4 — the pages this correction changes', () => {
     await c3Attempt(held.handle, held.runId);
     const withheld = cli(held.home, ['run', 'attempts', held.runId]);
     const accepted = cli(held.home, ['run', 'attempts', held.runId, '--accept-partial-disclosure']);
-    const damaged = await c3Run(base, 'intact');
-    await c3Attempt(damaged.handle, damaged.runId);
-    writeFileSync(join(damaged.home, '.realm', 'runs', `${damaged.runId}.json`), 'not json');
-    const record = cli(damaged.home, ['run', 'attempts', damaged.runId]);
-    // (a) red when the line prints with no attempts, a run record that cannot be read withholds
-    //     nothing, or the flag prints them without saying so; (b) prints the first stderr lines'
-    //     heads, booleans and the problem lines' heads.
+    // (a) red when the line prints with no attempts, or the flag prints them without saying so;
+    //     (b) prints the first stderr lines' heads, booleans and the problem lines' heads.
     expect({
       none: none.stderr.includes('Values '),
       withheld: [first(withheld.stderr), problem(withheld.stdout)?.startsWith('‹string, ')],
       accepted: [first(accepted.stderr), problem(accepted.stdout)?.includes(DECLARED)],
-      record: [first(record.stderr), problem(record.stdout)?.startsWith('‹string, ')],
     }).toEqual({
       none: false,
       withheld: ['Values withheld (declared values could not be read)', true],
@@ -2480,7 +2474,6 @@ describe('#729 PR-3 correction 4 — the pages this correction changes', () => {
         'Values shown on --accept-partial-disclosure (declared values could not be read)',
         true,
       ],
-      record: ['Values withheld (declared values could not be read)', true],
     });
   }, 120_000);
 

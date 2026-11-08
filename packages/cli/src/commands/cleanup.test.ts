@@ -1,22 +1,23 @@
 // Tests for the cleanupRuns function — CLI cleanup command logic.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, writeFile, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { cleanupRuns, cleanupCommand } from './cleanup.js';
-import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
-import type { RunRecord, RunStore } from '@sensigo/realm';
+import { createTestHome, type TestHome } from '@sensigo/realm-testing';
+import { deriveRunPhase, type RunRecord, type RunStore } from '@sensigo/realm';
 import { v4 as uuidv4 } from 'uuid';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
-/** Write a RunRecord directly to the store dir, bypassing store.create/update timestamps. */
-async function injectRun(dir: string, run: RunRecord): Promise<void> {
-  await writeFile(join(dir, `${run.id}.json`), JSON.stringify(run, null, 2), 'utf8');
+/** Save a RunRecord through the store's `save`, bypassing create/update timestamps (#616 PR-2c,
+ *  c10a-2b): the store keeps `version` and `updated_at` and derives `run_phase`. */
+async function injectRun(store: TempHome['home']['runStore'], run: RunRecord): Promise<void> {
+  await store.save(run);
 }
 
 function makeRun(overrides: Partial<RunRecord> & { id?: string }): RunRecord {
   const id = overrides.id ?? uuidv4();
-  return {
+  const record: RunRecord = {
     id,
     workflow_id: 'test-wf',
     workflow_version: 1,
@@ -33,19 +34,19 @@ function makeRun(overrides: Partial<RunRecord> & { id?: string }): RunRecord {
     terminal_state: false,
     ...overrides,
   };
+  // The phase the store derives at save, computed last: a fixture plants no label by hand.
+  return { ...record, run_phase: deriveRunPhase(record) };
 }
 
-// #715 (b) (04 §D, D6-24): each cell's "now" is a TEST LOCATION's clock — the JSON store opened on
-// its `runs/` reads its time from the location's clock file — never a faked global `Date` (a faked
-// Date would also fake the lock library's staleness test; `test-time-715b.test.ts`).
+// #715 (b) (04 §D, D6-24): each cell's "now" is a TEST HOME's clock — the store opened on its root
+// reads its time from the home's clock file — never a faked global `Date` (a faked Date would also
+// fake the lock library's staleness test; `test-time-715b.test.ts`).
 describe('cleanupRuns', () => {
-  let dir: string;
-  let loc: TestLocation;
+  let loc: TestHome;
   let h: TempHome;
 
   beforeEach(async () => {
-    loc = await createTestLocation({ start: '2024-06-01T12:00:00Z' });
-    dir = loc.runsDir;
+    loc = await createTestHome({ start: '2024-06-01T12:00:00Z' });
     h = await makeTempHome({ home: loc.root });
   });
 
@@ -60,7 +61,7 @@ describe('cleanupRuns', () => {
 
     const oldTime = new Date(now.getTime() - 2 * 86_400_000).toISOString(); // 2 days ago
     const run = makeRun({ updated_at: oldTime });
-    await injectRun(dir, run);
+    await injectRun(h.home.runStore, run);
 
     const store = h.home.runStore;
     const { affected } = await cleanupRuns({ olderThan: '1d' }, store);
@@ -80,7 +81,7 @@ describe('cleanupRuns', () => {
 
     const recentTime = new Date(now.getTime() - 30 * 60_000).toISOString(); // 30 minutes ago
     const run = makeRun({ updated_at: recentTime });
-    await injectRun(dir, run);
+    await injectRun(h.home.runStore, run);
 
     const store = h.home.runStore;
     const { affected } = await cleanupRuns({ olderThan: '1h' }, store);
@@ -97,7 +98,7 @@ describe('cleanupRuns', () => {
 
     const oldTime = new Date(now.getTime() - 2 * 86_400_000).toISOString();
     const run = makeRun({ updated_at: oldTime });
-    await injectRun(dir, run);
+    await injectRun(h.home.runStore, run);
 
     const store = h.home.runStore;
     const { affected } = await cleanupRuns({ olderThan: '1d', dryRun: true }, store);
@@ -120,7 +121,7 @@ describe('cleanupRuns', () => {
       run_phase: 'completed',
       terminal_state: true,
     });
-    await injectRun(dir, terminalRun);
+    await injectRun(h.home.runStore, terminalRun);
 
     const store = h.home.runStore;
     const { affected } = await cleanupRuns({ olderThan: '1d' }, store);
@@ -148,7 +149,7 @@ describe('cleanupRuns', () => {
         opened_at: oldTime,
       },
     });
-    await injectRun(dir, gateRun);
+    await injectRun(h.home.runStore, gateRun);
 
     const store = h.home.runStore;
     const { affected } = await cleanupRuns({ olderThan: '1d' }, store);
@@ -164,7 +165,7 @@ describe('cleanupRuns', () => {
     await loc.clock.set(now);
     const oldTime = new Date(now.getTime() - 2 * 86_400_000).toISOString();
     const idle = makeRun({ updated_at: oldTime, run_phase: 'running' });
-    await injectRun(dir, idle);
+    await injectRun(h.home.runStore, idle);
 
     const store = h.home.runStore;
     await cleanupRuns({ olderThan: '1d' }, store);
@@ -182,7 +183,7 @@ describe('cleanupRuns', () => {
     // A running run that already accumulated a failed step — without the authoritative marker this
     // would derive to 'failed' on cleanup's update().
     const run = makeRun({ updated_at: oldTime, run_phase: 'running', failed_steps: ['step_a'] });
-    await injectRun(dir, run);
+    await injectRun(h.home.runStore, run);
 
     const store = h.home.runStore;
     const { affected } = await cleanupRuns({ olderThan: '1d' }, store);
@@ -205,7 +206,7 @@ describe('cleanupRuns', () => {
       in_progress_steps: ['analyze'],
       claims: { analyze: { deadline: null } },
     });
-    await injectRun(dir, run);
+    await injectRun(h.home.runStore, run);
 
     const store = h.home.runStore;
     const { affected } = await cleanupRuns({ olderThan: '1d' }, store);
@@ -223,7 +224,7 @@ describe('cleanupRuns', () => {
     const now = new Date('2024-06-01T12:00:00Z');
     await loc.clock.set(now);
     const run = makeRun({ updated_at: new Date(now.getTime() - 2 * 86_400_000).toISOString() });
-    await injectRun(dir, run);
+    await injectRun(h.home.runStore, run);
     const store = h.home.runStore;
     // Another writer lands between the sweep's read and its seal.
     const moving = new Proxy(store, {
@@ -264,9 +265,13 @@ describe('cleanupRuns', () => {
     const now = new Date();
     const oldTime = new Date(now.getTime() - 2 * 86_400_000).toISOString();
     const home = await mkdtemp(join(tmpdir(), 'realm-cleanup-home-'));
-    const runsDir = join(home, '.realm', 'runs');
-    await mkdir(runsDir, { recursive: true });
-    await injectRun(runsDir, makeRun({ updated_at: oldTime }));
+    // Seeded through a handle on HOME's store, closed before the command opens its own.
+    const child = await makeTempHome({ home: join(home, '.realm') });
+    try {
+      await injectRun(child.home.runStore, makeRun({ updated_at: oldTime }));
+    } finally {
+      await child.cleanup();
+    }
     const originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});

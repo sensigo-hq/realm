@@ -11,19 +11,11 @@
 //
 // The pty journey itself is the reviewer's crown, never a suite cell (the #426 precedent).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import {
-  mkdtempSync,
-  mkdirSync,
-  writeFileSync,
-  rmSync,
-  readdirSync,
-  readFileSync,
-  unlinkSync,
-} from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { RunRecord, PendingView, WorkflowDefinition } from '@sensigo/realm';
-import { describePending, owedList } from '@sensigo/realm';
+import { describePending, owedList, sealRunLevel } from '@sensigo/realm';
 import { runCommands, topLevelCommands } from '../commands-registry.js';
 import { makeTempHome, type TempHome, runIds } from '../test-support/temp-home.js';
 
@@ -408,7 +400,6 @@ steps:
   });
 
   const stderr = (): string => errSpy.mock.calls.map((c: unknown[]) => shown(c[0])).join('\n');
-  const runsDir = (): string => join(home, '.realm', 'runs');
 
   it('c POSITIVE — the map is composed from a FRESH read, and names the real step', async () => {
     // The question plants a pending gate on the stored record BEFORE rejecting, so the state the
@@ -515,9 +506,15 @@ steps:
     // a record purged from another terminal while this one waits. Without the degradation arm
     // the new cancel path crashes with exactly the stack this feature removes.
     mocks.question.mockImplementation(async () => {
-      for (const f of readdirSync(runsDir()).filter((x) => x.endsWith('.json'))) {
-        unlinkSync(join(runsDir(), f));
-      }
+      // The other terminal's purge, through the store (#616 PR-2c, c10a-2b): the run sealed, then
+      // its record deleted, so the command's fresh read says `Run not found`.
+      const store = h.home.runStore;
+      const id = (await runIds(store))[0]!;
+      const { record } = await store.get(id);
+      await store.update(
+        sealRunLevel(record, 'abandon_requested', 'Purged elsewhere.', new Date()),
+      );
+      await store.deleteAllForRun(id);
       throw Object.assign(new Error('Aborted with Ctrl+D'), { code: 'ABORT_ERR' });
     });
 

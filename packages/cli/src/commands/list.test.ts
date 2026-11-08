@@ -1,7 +1,7 @@
 // Tests for listRuns business logic.
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { mkdir, writeFile, chmod } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { listRuns, renderCauseSegment, listCommand } from './list.js';
@@ -975,16 +975,29 @@ describe('--stuck cause attribution end-to-end via listRuns (issue #219)', () =>
 
   it('I/O failure is visible, not silent: an unreadable sidecar renders "cause: unavailable" for ITS run only, never conflated with absence, and the rest of the list still completes', async () => {
     const h = await makeTempHome();
-    const dir = h.home.runStore.runsDirPath;
-    await mkdir(dir, { recursive: true });
     const brokenRunId = 'run-cause-ioerror-broken';
     const okRunId = 'run-cause-ioerror-ok';
-    const sidecarPath = join(dir, `${brokenRunId}.attempts.jsonl`);
     try {
       const brokenRun = makeIdleStuckRun({ id: brokenRunId });
       const okRun = makeIdleStuckRun({ id: okRunId });
 
-      const fas = h.home.failedAttemptStore;
+      const real = h.home.failedAttemptStore;
+      // #616 PR-2c, c10a-2b: a double over the handle's attempt store — its `read` of the broken run
+      // fails (a non-ENOENT failure, as an unreadable record does); the ok run's read is the real one.
+      const fas = new Proxy(real, {
+        get(target, prop) {
+          if (prop === 'read') {
+            return async (...a: Parameters<typeof target.read>) =>
+              a[0] === brokenRunId
+                ? Promise.reject(
+                    Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }),
+                  )
+                : target.read(...a);
+          }
+          const v = Reflect.get(target, prop, target) as unknown;
+          return typeof v === 'function' ? (v as (...x: unknown[]) => unknown).bind(target) : v;
+        },
+      });
       const rec = buildFailedAttemptRecord({
         run_id: okRunId,
         workflow_id: 'test-workflow',
@@ -995,11 +1008,9 @@ describe('--stuck cause attribution end-to-end via listRuns (issue #219)', () =>
         params: {},
         trace_entry_count: 0,
       });
-      await fas.append(okRunId, serializeFailedAttemptLine({ ...rec }).line); // a normal, readable sidecar
-      await writeFile(sidecarPath, `${serializeFailedAttemptLine({ ...rec }).line}\n`, 'utf8');
-      // Deny read on the ONE sidecar — never run as root in this repo's CI/dev environment, so
-      // this genuinely denies access rather than being silently bypassed (gc.test.ts precedent).
-      await chmod(sidecarPath, 0o000);
+      // The JSON `list()` makes `runs/`, which the JSON attempt store's `append` does not (nothing on SQLite).
+      await h.home.runStore.list();
+      await real.append(okRunId, serializeFailedAttemptLine({ ...rec }).line); // a normal, readable record
 
       const store = makeStore([brokenRun, okRun]);
       const result = await listRuns(undefined, store, undefined, true, undefined, fas);
@@ -1015,7 +1026,6 @@ describe('--stuck cause attribution end-to-end via listRuns (issue #219)', () =>
       expect(okLine).toContain('rejected: 1× (classify: VALIDATION_OUTPUT_SCHEMA)');
       expect(okLine).not.toContain('cause: unavailable');
     } finally {
-      await chmod(sidecarPath, 0o600).catch(() => {});
       await h.cleanup();
     }
   });

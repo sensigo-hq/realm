@@ -2,7 +2,6 @@
 // store-wide expired-gate sweeper. sweepExpiredGates is exercised directly (pure I/O
 // orchestration) — no HTTP server needed. #715 (b): the store's clock decides (a settable clock at NOW).
 import { describe, it, expect, vi } from 'vitest';
-import { mkdirSync, chmodSync } from 'node:fs';
 import { InMemoryStore, settableClock } from '@sensigo/realm-testing';
 import { listing } from '../test-support/snapshot-double.js';
 import { WorkflowError, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
@@ -237,70 +236,76 @@ describe('sweepExpiredGates (issue #291, Deliverable 4f)', () => {
   });
 });
 
-describe('issue #719 — a sweeper pass that fails is logged (a real JSON store)', () => {
-  const asRoot = typeof process.getuid === 'function' && process.getuid() === 0;
-  it.skipIf(asRoot)(
-    'a runs folder that cannot be read: `listen: sweeper pass failed`, naming the folder and its way out (the docs row, C2)',
-    async () => {
-      const h = await makeTempHome();
-      const runsDir = h.home.runStore.runsDirPath;
-      mkdirSync(runsDir, { recursive: true });
-      const errors: Array<{ msg: string; data: unknown }> = [];
-      const logger: Logger = {
-        ...silentLogger,
-        error: (msg: string, data?: unknown) => errors.push({ msg, data }),
+describe('issue #719 — a sweeper pass that fails is logged', () => {
+  it('a sweeper pass whose listing the store refuses: `listen: sweeper pass failed`, with the store’s error, and listen keeps running', async () => {
+    const h = await makeTempHome();
+    const errors: Array<{ msg: string; data: unknown }> = [];
+    const logger: Logger = {
+      ...silentLogger,
+      error: (msg: string, data?: unknown) => errors.push({ msg, data }),
+    };
+    // #616 PR-2c, c10a-2b: a double over the handle's run store whose listing rejects — both verbs
+    // the sweep may call (`listWithDiagnostics` where the store has it, as the JSON store does;
+    // `list` otherwise), with one Realm error.
+    const err = new WorkflowError('The store could not list the runs: a fake refusal.', {
+      code: 'ENGINE_STORE_FAILED',
+      category: 'ENGINE',
+      agentAction: 'stop',
+      retryable: false,
+    });
+    const runStore = new Proxy(h.home.runStore, {
+      get(target, prop) {
+        if (prop === 'listWithDiagnostics' || prop === 'list') {
+          return async (): Promise<never> => Promise.reject(err);
+        }
+        const v = Reflect.get(target, prop, target) as unknown;
+        return typeof v === 'function' ? (v as (...x: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    const tick = vi.spyOn(global, 'setInterval');
+    let handle: Awaited<ReturnType<typeof startListen>> | undefined;
+    try {
+      const deps: ListenDeps = {
+        workflowStore: makeWorkflowStore([]) as unknown as ListenDeps['workflowStore'],
+        runStore,
+        dedupStoreFor: () => ({
+          check: async () => false,
+          record: async () => {},
+          cleanup: async () => {},
+        }),
+        spawnAgent: async () => ({ pid: 1 }),
+        logger,
       };
-      const tick = vi.spyOn(global, 'setInterval');
-      let handle: Awaited<ReturnType<typeof startListen>> | undefined;
-      try {
-        const deps: ListenDeps = {
-          workflowStore: makeWorkflowStore([]) as unknown as ListenDeps['workflowStore'],
-          runStore: h.home.runStore,
-          dedupStoreFor: () => ({
-            check: async () => false,
-            record: async () => {},
-            cleanup: async () => {},
-          }),
-          spawnAgent: async () => ({ pid: 1 }),
-          logger,
-        };
-        handle = await startListen(
-          new Map<string, WorkflowEntry>(),
-          {
-            port: 0,
-            host: '127.0.0.1',
-            bodyTimeoutMs: 5000,
-            maxBodyBytes: 1_048_576,
-            maxConcurrent: 20,
-            sweepExpiredGatesIntervalMs: 60_000,
-          },
-          deps,
-        );
-        const fire = tick.mock.calls.find(([, ms]) => ms === 60_000)?.[0] as
-          (() => void) | undefined;
-        chmodSync(runsDir, 0o000);
-        fire?.();
-        await vi.waitFor(() => expect(errors.length).toBe(1));
-        chmodSync(runsDir, 0o700);
-        const error = String((errors[0]?.data as { error?: unknown } | undefined)?.error);
-        // (a) red when the line, the folder or its way out is not as the docs row says; (b) prints
-        //     the message and booleans only (the error is a path and fixed words).
-        expect({
-          msg: errors[0]?.msg,
-          folder: error.includes(`The runs folder '${runsDir}' cannot be read (EACCES).`),
-          wayOut: error.includes(
-            'Give this user read access to it (or, if it does not exist yet, write access to ' +
-              'the folder that holds it); nothing in it was changed.',
-          ),
-        }).toEqual({ msg: 'listen: sweeper pass failed', folder: true, wayOut: true });
-      } finally {
-        chmodSync(runsDir, 0o700);
-        tick.mockRestore();
-        if (handle !== undefined) await handle.shutdown('test-cleanup');
-        await h.cleanup();
-      }
-    },
-  );
+      handle = await startListen(
+        new Map<string, WorkflowEntry>(),
+        {
+          port: 0,
+          host: '127.0.0.1',
+          bodyTimeoutMs: 5000,
+          maxBodyBytes: 1_048_576,
+          maxConcurrent: 20,
+          sweepExpiredGatesIntervalMs: 60_000,
+        },
+        deps,
+      );
+      const fire = tick.mock.calls.find(([, ms]) => ms === 60_000)?.[0] as (() => void) | undefined;
+      fire?.();
+      await vi.waitFor(() => expect(errors.length).toBe(1));
+      // The server lived through the failed pass: it shuts down cleanly.
+      await handle.shutdown('test-cleanup');
+      handle = undefined;
+      // (a) red when the failed pass is not logged, or logged without the store's error; (b) prints
+      //     the message and the logged error.
+      expect({
+        msg: errors[0]?.msg,
+        error: (errors[0]?.data as { error?: unknown } | undefined)?.error,
+      }).toEqual({ msg: 'listen: sweeper pass failed', error: String(err) });
+    } finally {
+      tick.mockRestore();
+      if (handle !== undefined) await handle.shutdown('test-cleanup');
+      await h.cleanup();
+    }
+  });
 });
 
 describe('#715 (b) 03 §A.4 — the sweeper waits for a gate’s expiry on the store’s clock', () => {

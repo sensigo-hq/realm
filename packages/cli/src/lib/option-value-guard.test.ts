@@ -5,15 +5,7 @@
 // that turns it red and (b) what it prints: the command, its exit code and the first line of its
 // standard error, scratch paths written `<dir>` — never an environment value.
 import { spawnSync } from 'node:child_process';
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -412,7 +404,7 @@ describe('#920 C-2 — the other 19 options, one command family each (the built 
     );
   }, 20_000);
 
-  it('workflow run <dir> --project --params: refused before the run starts', () => {
+  it('workflow run <dir> --project --params: refused before the run starts', async () => {
     const dir = retryProject();
     refusedBy(
       realm(['workflow', 'run', dir, '--project', '--params']),
@@ -420,7 +412,8 @@ describe('#920 C-2 — the other 19 options, one command family each (the built 
       '--project',
       '--params',
     );
-    expect(existsSync(join(home, '.realm', 'runs')), 'no runs folder made').toBe(false);
+    // #616 PR-2c, c10a-2b: through the store, not a folder (a fence FILE stands there at the flip).
+    expect(await runIds(h.home.runStore), 'no run made').toEqual([]);
   }, 20_000);
 
   it('run purge --older-than 0m --workflow --force: refused (it was a silent dry run)', () => {
@@ -438,7 +431,7 @@ describe('#920 C-2 — the other 19 options, one command family each (the built 
     expect(readdirSync(base).includes('--accept-partial-disclosure'), r.shown).toBe(false);
   }, 20_000);
 
-  it('agent --project --register: refused, no run made', () => {
+  it('agent --project --register: refused, no run made', async () => {
     const dir = retryProject();
     const r = realm([
       'agent',
@@ -452,7 +445,7 @@ describe('#920 C-2 — the other 19 options, one command family each (the built 
       '--register',
     ]);
     refusedBy(r, '--project <dir>', '--project', '--register');
-    expect(existsSync(join(home, '.realm', 'runs')), r.shown).toBe(false);
+    expect(await runIds(h.home.runStore), r.shown).toEqual([]);
   }, 20_000);
 
   it('mcp --extensions-module --check: refused at once, the server is not started', () => {
