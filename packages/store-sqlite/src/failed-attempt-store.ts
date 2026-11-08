@@ -23,14 +23,18 @@ import {
   type FailedAttemptRecord,
   type FailedAttemptStore,
 } from '@sensigo/realm';
-import { deleteFailure, isOwnStatementFailure } from './artifact-delete-failure.js';
+import {
+  deleteFailure,
+  isOwnStatementFailure,
+  type RowsDeleted,
+} from './artifact-delete-failure.js';
 import { REALM_STORE_SQLITE_BRAND } from './brand.js';
 import type { RealmDb } from './connection.js';
 import type { DatabaseLike } from './driver.js';
 
 /** The store's name in a delete failure, and the artifact it names. */
 const STORE = 'SqliteFailedAttemptStore';
-const ARTIFACT = 'failed_attempts';
+export const ARTIFACT = 'failed_attempts';
 
 /** A run's stored size: each line's UTF-8 length plus one, summed (0 for a run with no rows). */
 function storedSize(db: DatabaseLike, runId: string): number {
@@ -48,18 +52,28 @@ interface Row {
   readonly line: string;
 }
 
-/** What one delete saw and removed: the rows by content, and their stored size. */
-interface Deleted {
-  readonly rows: readonly Row[];
-  readonly bytes: number;
-}
-
 /** True when `runId` holds a row with this `seq` and this exact line. */
 function holds(db: DatabaseLike, runId: string, row: Row): boolean {
   const stored = db
     .prepare('SELECT line FROM failed_attempts WHERE run_id = ? AND seq = ?')
     .get(runId, row.seq);
   return stored !== undefined && stored['line'] === row.line;
+}
+
+/**
+ * Deletes run `runId`'s rows in the caller's write transaction (#616 PR-2c c9: this store's
+ * `deleteAllForRun` and the home's purge both call it): reads them, measures their stored size (the
+ * figure `statAllForRun` reports, so a preview equals the receipt) and deletes them; its check is
+ * true when no row it saw remains. Synchronous; reads no clock; throws what SQLite throws, unmapped.
+ */
+export function deleteFailedAttemptRowsOfRun(db: DatabaseLike, runId: string): RowsDeleted {
+  const rows: Row[] = db
+    .prepare('SELECT seq, line FROM failed_attempts WHERE run_id = ?')
+    .all(runId)
+    .map((r) => ({ seq: Number(r['seq']), line: String(r['line']) }));
+  const bytes = storedSize(db, runId);
+  db.prepare('DELETE FROM failed_attempts WHERE run_id = ?').run(runId);
+  return { bytes, gone: (check) => rows.every((row) => !holds(check, runId, row)) };
 }
 
 /**
@@ -147,16 +161,10 @@ export class SqliteFailedAttemptStore implements FailedAttemptStore {
     let ownStatementFailed = false;
     try {
       const deleted = await this.#db.immediate(
-        (db): Deleted => {
+        (db): RowsDeleted => {
           ownStatementFailed = false;
           try {
-            const rows = db
-              .prepare('SELECT seq, line FROM failed_attempts WHERE run_id = ?')
-              .all(runId)
-              .map((r) => ({ seq: Number(r['seq']), line: String(r['line']) }));
-            const bytes = storedSize(db, runId);
-            db.prepare('DELETE FROM failed_attempts WHERE run_id = ?').run(runId);
-            return { rows, bytes };
+            return deleteFailedAttemptRowsOfRun(db, runId);
           } catch (err) {
             // A busy answer is the primitive's to wait for and retry, not this delete's failure.
             ownStatementFailed = isOwnStatementFailure(err);
@@ -164,7 +172,7 @@ export class SqliteFailedAttemptStore implements FailedAttemptStore {
           }
         },
         // Landed when no row it saw remains.
-        (db, result) => result.rows.every((row) => !holds(db, runId, row)),
+        (db, result) => result.gone(db),
       );
       return { bytes_deleted: deleted.bytes };
     } catch (err) {

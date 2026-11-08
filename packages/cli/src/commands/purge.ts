@@ -46,6 +46,7 @@ import {
   noLongerTerminalReason,
   resumeWay,
 } from '@sensigo/realm';
+import type { PurgeReport, PurgeSelection } from '@sensigo/realm-store-sqlite';
 import { parseDuration } from '../lib/parse-duration.js';
 import { listRunsDiagnosed, unreadableRunLines } from './list.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
@@ -162,7 +163,20 @@ export interface PurgeRunsResult {
   blocked: Array<{ runId: string; reason: string }>;
   /** Populated only when `dryRun` is false: deletion genuinely failed. */
   failed: Array<{ runId: string; error: string }>;
+  /**
+   * #616 PR-2c c9: set only when a SQLite home's purge deleted the runs (`dryRun` false, a `purge`
+   * given): the bytes the store file shrank by on disk (a floor: pages still in the write-ahead log
+   * do not show), and whether its checkpoint answered busy (another process was using the file, so
+   * the log was not reset).
+   */
+  store_file?: { reclaimed_bytes: number; checkpoint_busy: boolean };
 }
+
+/**
+ * #616 PR-2c c9: a SQLite home's purge (`RealmHome.purge`): it deletes the runs it is handed, each at
+ * the version it was selected at, judging each one itself, and reports what it did.
+ */
+export type HomePurge = (selection: readonly PurgeSelection[]) => Promise<PurgeReport>;
 
 export interface PurgeRunsOptions {
   /** Single-run mode: the run to purge. Mutually exclusive with `olderThan`. */
@@ -214,7 +228,10 @@ async function resumableOf(
 
 /**
  * Selects eligible run(s) (single `runId` or a batch aged past `olderThan`), reports bytes and
- * resumability, and — when `dryRun` is false — deletes them. Deletion is anchor-structural (issue
+ * resumability, and — when `dryRun` is false — deletes them. #616 PR-2c c9: given `purge` (a SQLite
+ * home's), the selected runs are deleted by it instead, each with the version it was selected at, and
+ * its report is routed as below ({@link purgeThroughHome}); `artifactStores` then serve the preview's
+ * stats only. Without it (the JSON stores), deletion is anchor-structural (issue
  * #184): every `artifactStores` entry (non-anchor stores only) must succeed BEFORE
  * `anchorStore.deleteAllForRun` — the `JsonFileStore` run file — is ever called, and only on
  * total success. Any throw before that point leaves the anchor (and therefore the run) intact —
@@ -230,8 +247,9 @@ async function resumableOf(
 export async function purgeRuns(
   options: PurgeRunsOptions,
   anchorStore: Pick<RunStore, 'get' | 'list'> &
-    PerRunArtifactStore & { readonly runsDirPath: string },
+    PerRunArtifactStore & { readonly runsDirPath?: string },
   artifactStores: PerRunArtifactStore[],
+  purge?: HomePurge,
 ): Promise<PurgeRunsResult> {
   const dryRun = options.dryRun ?? true;
   const runsDir = anchorStore.runsDirPath;
@@ -280,12 +298,15 @@ export async function purgeRuns(
   }
 
   // One readdir up front (batch or single) → passed as dirEntries to every store, so a batch of N
-  // runs costs O(readdir) once, not O(N × readdir) per JsonTraceBufferStore glob scan.
-  let dirEntries: string[];
-  try {
-    dirEntries = await readdir(runsDir);
-  } catch {
-    dirEntries = [];
+  // runs costs O(readdir) once, not O(N × readdir) per JsonTraceBufferStore glob scan. #616 PR-2c
+  // c9: only for a store with a runs folder (a SQLite home has none, and its stores ignore it).
+  let dirEntries: string[] = [];
+  if (runsDir !== undefined) {
+    try {
+      dirEntries = await readdir(runsDir);
+    } catch {
+      dirEntries = [];
+    }
   }
 
   const selected: PurgeCandidate[] = [];
@@ -327,6 +348,7 @@ export async function purgeRuns(
     failed: [],
   };
   if (dryRun) return result;
+  if (purge !== undefined) return purgeThroughHome(result, anchorStore, purge);
 
   for (const { run } of selected) {
     // Accumulated as each store reports, so a run that is refused PART-WAY still knows what was
@@ -425,6 +447,65 @@ export async function purgeRuns(
   }
 
   return result;
+}
+
+/**
+ * #616 PR-2c c9: the selected runs deleted by a SQLite home's purge, its report routed as the per-store
+ * loop above routes the same errors: a run purged → `purged` with its stores' bytes; gone before its
+ * batch read it → `already_purged`; refused because it changed since selection
+ * (`STATE_SNAPSHOT_MISMATCH`) → re-read and worded by {@link changedSinceSelected}; refused
+ * `STATE_RUN_BUSY` (`no_longer_terminal`, `drain_pending`) → `blocked` with its reason; a failed batch
+ * → `failed`. A purge a refusal stopped carries it for every run it did not attempt, routed the same
+ * way. Nothing frees part of a run here, so `partial_frees` stays empty. The store file's shrink and
+ * its checkpoint's answer go to `store_file`.
+ */
+async function purgeThroughHome(
+  result: PurgeRunsResult,
+  anchorStore: Pick<RunStore, 'get'>,
+  purge: HomePurge,
+): Promise<PurgeRunsResult> {
+  const report = await purge(
+    result.selected.map(({ run }) => ({ runId: run.id, version: run.version })),
+  );
+  for (const run of report.runs) {
+    if (run.outcome === 'purged') {
+      result.purged.push(run.runId);
+      result.freed_bytes[run.runId] = run.bytes_deleted;
+    } else if (run.outcome === 'already_gone') {
+      result.already_purged.push(run.runId);
+    } else if (
+      run.outcome === 'blocked' &&
+      run.error instanceof WorkflowError &&
+      run.error.code === 'STATE_SNAPSHOT_MISMATCH'
+    ) {
+      const outcome = await changedSinceSelected(anchorStore, run.runId, false);
+      if (outcome.kind === 'already_purged') result.already_purged.push(run.runId);
+      else if (outcome.kind === 'failed')
+        result.failed.push({ runId: run.runId, error: outcome.error });
+      else result.blocked.push({ runId: run.runId, reason: outcome.reason });
+    } else {
+      routeRefusal(result, run.runId, run.error);
+    }
+  }
+  for (const runId of report.stopped?.not_attempted ?? []) {
+    routeRefusal(result, runId, report.stopped?.error);
+  }
+  const checkpoint = report.checkpoint;
+  result.store_file = {
+    reclaimed_bytes: report.file_bytes_reclaimed,
+    checkpoint_busy: checkpoint !== undefined && 'busy' in checkpoint && checkpoint.busy !== 0,
+  };
+  return result;
+}
+
+/** A refused or failed run of a SQLite home's purge: `STATE_RUN_BUSY` → `blocked` with its reason, else `failed`. */
+function routeRefusal(result: PurgeRunsResult, runId: string, err: unknown): void {
+  if (err instanceof WorkflowError && err.code === 'STATE_RUN_BUSY') {
+    const reason = err.details['reason'];
+    result.blocked.push({ runId, reason: typeof reason === 'string' ? reason : err.message });
+  } else {
+    result.failed.push({ runId, error: err instanceof Error ? err.message : String(err) });
+  }
 }
 
 /** The subset of the fenced trio purge actually calls (issue #207 PR-2) — a store-shape check,
@@ -563,10 +644,24 @@ export function printPurgeReport(result: PurgeRunsResult, dryRun: boolean): void
   // runs that were fully purged".
   const freedBytes = result.purged.reduce((sum, id) => sum + (result.freed_bytes[id] ?? 0), 0);
 
+  // #616 PR-2c c9: on a SQLite home, the store file's shrink, then what the purge cannot reach.
+  const storeFile = result.store_file;
+  const shrank =
+    storeFile === undefined ? '' : `; realm.db shrank by ${formatBytes(storeFile.reclaimed_bytes)}`;
   console.log(
-    `Purged ${result.purged.length}/${result.selected.length} run(s) (${formatBytes(freedBytes)} freed, store-reported). ` +
+    `Purged ${result.purged.length}/${result.selected.length} run(s) (${formatBytes(freedBytes)} freed, store-reported${shrank}). ` +
       `${result.already_purged.length} already gone, ${result.blocked.length} blocked, ${result.failed.length} failed.`,
   );
+  if (storeFile !== undefined && result.purged.length > 0) {
+    console.log('Copies of the deleted runs in backups made before this purge are not touched.');
+  }
+  if (storeFile?.checkpoint_busy === true) {
+    console.log(
+      "realm.db's log was not reset: another process was using it. The space is returned at a later " +
+        'checkpoint; the deleted text may stay readable in realm.db-wal until a later purge resets ' +
+        'the log.',
+    );
+  }
   for (const c of result.selected) {
     if (c.overriddenClaimStep !== undefined) {
       console.log(`  ⚠ ${c.run.id}: ${overriddenClaimPhrase(c.overriddenClaimStep, false)}`);

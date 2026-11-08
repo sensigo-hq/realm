@@ -20,7 +20,7 @@ export interface GuardedOption {
 }
 
 /**
- * The options whose value is refused when it is a flag-like word typed as the next word (24). Keyed by
+ * The options whose value is refused when it is a flag-like word typed as the next word (25). Keyed by
  * the leaf command's name (a command parsed on its own has no parent, so a path cannot be read) and
  * the long flag. Each takes any word without a check of its own (the census, `plans/issue-920/census/`).
  * `option-value-guard-classes.test.ts` holds the other class: the options that already refuse such a
@@ -33,7 +33,7 @@ export const GUARDED_OPTIONS: readonly GuardedOption[] = [
   { command: 'watch', option: '--model' },
   { command: 'agent', option: '--model' },
   { command: 'listen', option: '--model' },
-  // C-2: the other options that take any word without a check of their own (19). Each accepts the word
+  // C-2: the other options that take any word without a check of their own (20). Each accepts the word
   // and goes on, and a dropped flag changes what the command does (`purge --workflow --force` is a
   // silent dry run; `drain <id> --extensions-module --force` drains nothing) or its message misleads.
   { command: 'run', option: '--project' }, // realm workflow run
@@ -59,6 +59,8 @@ export const GUARDED_OPTIONS: readonly GuardedOption[] = [
   { command: 'abandon', option: '--reason' }, // realm run abandon
   { command: 'respond', option: '--by' }, // realm run respond
   { command: 'reclaim', option: '--step' }, // realm run reclaim
+  // #616 PR-2c c7: `realm db migrate --backup --no-backup` would take the flag as the copy's path.
+  { command: 'migrate', option: '--backup' }, // realm db migrate
 ];
 
 /** A string of two or more characters that starts with `-` (Commander's option-looking token). A lone
@@ -68,7 +70,7 @@ export function looksLikeFlag(word: string): boolean {
 }
 
 /** The root command's raw arguments (a subcommand's own `rawArgs` is empty). */
-function rootRawArgs(command: Command): readonly string[] {
+export function rootRawArgs(command: Command): readonly string[] {
   let root = command;
   while (root.parent !== null && root.parent !== undefined) root = root.parent;
   return (root as unknown as { rawArgs?: string[] }).rawArgs ?? [];

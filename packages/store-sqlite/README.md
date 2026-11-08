@@ -4,13 +4,13 @@ SQLite-backed stores for Realm: runs, duplicate-webhook ids, workflow definition
 
 ## Opening a home
 
-`openRealmHome({ home, clock })` opens a Realm home and resolves to a handle with `runStore`, `dedupStoreFor`, `workflowStore`, `failedAttemptStore`, `replayStore`, `traceBufferStore` and `close()`. Callers in one process that open the same home share one handle and one connection, so a `close()` by any of them ends it for all.
+`openRealmHome({ home, clock })` opens a Realm home and resolves to a handle with `runStore`, `dedupStoreFor`, `workflowStore`, `failedAttemptStore`, `replayStore`, `traceBufferStore`, `purge` and `close()`. Callers in one process that open the same home share one handle and one connection, so a `close()` by any of them ends it for all.
 
 ## The store file
 
 Realm keeps run records in one SQLite file, `realm.db`, in the Realm home. Never delete, move or replace `realm.db` or its side files `realm.db-wal` and `realm.db-shm` while a Realm process is running.
 
-Text of a deleted run may stay readable in `realm.db`'s free pages and in `realm.db-wal` until the file is vacuumed and checkpointed (purge, a later unit, does both).
+Text of a deleted run may stay readable in `realm.db`'s free pages and in `realm.db-wal` until the file is vacuumed and checkpointed (the home's purge does both when no other process is using the file).
 
 One exception to Realm stamping every time itself: a run deleted by SQL outside Realm is stamped with SQLite's own clock.
 

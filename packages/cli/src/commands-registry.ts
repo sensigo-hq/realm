@@ -30,6 +30,7 @@ import { agentCommand } from './commands/agent.js';
 import { webhookCommand } from './commands/webhook.js';
 import { listenCommand } from './commands/listen.js';
 import { dbBackupCommand } from './commands/db-backup.js';
+import { dbMigrateCommand } from './commands/db-migrate.js';
 import { setClockErrorSink } from '@sensigo/realm';
 import { attachWriterHook } from './output/writer.js';
 import { attachOptionValueGuard } from './lib/option-value-guard.js';
@@ -70,7 +71,7 @@ export const runCommands = [
 ];
 
 /** Commands that maintain the store file (realm db <cmd>; #616 PR-2c). */
-export const dbCommands = [dbBackupCommand];
+export const dbCommands = [dbBackupCommand, dbMigrateCommand];
 
 /** Top-level commands not nested under a subgroup. */
 export const topLevelCommands = [

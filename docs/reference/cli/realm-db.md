@@ -1,12 +1,13 @@
 # `realm db`
 
-<!-- description: Reference for realm db backup, which copies the store file to a new file and checks the copy: its argument, output, exit codes, and how to restore a copy. -->
+<!-- description: Reference for realm db backup, which copies the store file to a new file and checks the copy, and realm db migrate, which upgrades the store file after a backup: their arguments, output, exit codes, and how to restore a copy. -->
 
-`realm db` acts on the store file, `realm.db` in the Realm home (`~/.realm`), never on a run. It has one subcommand.
+`realm db` acts on the store file, `realm.db` in the Realm home (`~/.realm`), never on a run. It has two subcommands.
 
-| Subcommand          | What it does                                                               |
-| ------------------- | -------------------------------------------------------------------------- |
-| [`backup`](#backup) | Copies the store file to a new file outside the home, and checks the copy. |
+| Subcommand            | What it does                                                               |
+| --------------------- | -------------------------------------------------------------------------- |
+| [`backup`](#backup)   | Copies the store file to a new file outside the home, and checks the copy. |
+| [`migrate`](#migrate) | Upgrades the store file to this Realm's schema version, after a backup.    |
 
 ## `backup`
 
@@ -49,6 +50,49 @@ Restoring is done by hand, never by a command. Stop every Realm process that use
 - the copy fails for another reason: `Cannot back up the store to <path>: <the reason>. Nothing was written at <path>.`
 
 These refusals have the code [`STATE_STORE_BACKUP_REFUSED`](../error-codes.md). Two cases leave a copy at `<path>` and still exit 1. When the copy fails the quick check, [`STATE_STORE_BACKUP_UNVERIFIED`](../error-codes.md): `SQLite's quick check of the copy at <path> failed: <SQLite's first line>. The store file <home>/realm.db it was copied from may be damaged. The copy was kept at <path>.` The copy is kept, so that it can be looked at. When the copy was published but its folder could not be flushed, `STATE_STORE_BACKUP_REFUSED`: `Cannot back up the store to <path>: the copy was made and published, but its folder could not be flushed: <the reason>. Check the copy before you rely on it.`
+
+## `migrate`
+
+`realm db migrate --backup <path>` or `realm db migrate --no-backup`
+
+Upgrades the store file to the schema version this Realm writes. Stop every Realm process that uses the home first: each schema step takes the store's write lock.
+
+One of the two flags is required:
+
+- `--backup <path>`: a copy of the store file, made by [`realm db backup`](#backup) before anything changes, with all of its rules: outside the home, and where nothing exists yet.
+- `--no-backup`: no copy. Use it when you already have one, or when you accept the risk.
+
+The command works in this order:
+
+1. With `--backup <path>`, it makes the copy and prints `realm db backup`'s line. When the copy cannot be made, or fails SQLite's quick check, the command stops there: nothing is migrated.
+2. It runs each pending schema step in its own transaction. A step checks that the file's schema is then exactly that version's, and that every evidence entry still matches its stored hash, before it moves the file's version. It prints one line per step.
+3. It stops at the first step that fails. The file is then at the last version it completed, and the line says which version that is. Run the command again once the cause is fixed: it continues from there.
+4. It re-stamps the phase index. Each run's phase is stored beside it, with a stamp of the code that worked it out. When an upgrade changes that code, the command works out each such run's phase again from its record and stores it with the current stamp, so that listings by phase use the index again. It changes no run record.
+
+```bash
+realm db migrate --backup ./realm-before-upgrade.db
+```
+
+It prints one line per step:
+
+`Migrated <home>/realm.db from schema version <v> to <v+1>: <s> statement(s) ran, the schema matches version <v+1>'s, <e> evidence entries match their stored hashes.`
+
+or, when the file is already at this Realm's version:
+
+`<home>/realm.db is already at schema version <n>; no schema step to run.`
+
+and then:
+
+`Re-stamped the phase index of <k> run(s) with the current derivation.`
+
+**Exit code:** 0 when every step ran, or none was pending, and the re-stamp finished. 1 when the command refuses or a step fails, with one `Error:` line on standard error:
+
+- neither flag: `Provide --backup <path> (a copy of the store file, made before anything changes) or --no-backup.`; both: `Cannot combine --backup with --no-backup. Use one or the other.` Nothing is opened.
+- the home has no store file: `There is no store file at <home>/realm.db to migrate.`; an empty one: `<home>/realm.db holds no store yet: there is nothing to migrate.` These have the code [`STATE_STORE_MIGRATE_REFUSED`](../error-codes.md); nothing is created or copied.
+- the store file cannot be opened (not a Realm store, damaged, written by a newer Realm, or older than any version this Realm can upgrade): the store's own message. Nothing is copied or migrated.
+- the copy cannot be made, or fails the quick check: `realm db backup`'s refusals, above.
+- a step fails, [`STATE_STORE_MIGRATE_FAILED`](../error-codes.md): `The step from schema version <v> to <v+1> failed: <the reason>. <home>/realm.db is at schema version <v>; nothing of the step is in it. Run the command again once the cause is fixed.` When the file is found at a higher version after the failure, the step is in it: `The step from schema version <v> to <v+1> failed: <the reason>. <home>/realm.db is at schema version <n>: the step is in it. Run the command again to continue from there.` Either line ends, when a copy was made, with ` The backup made before the step is at <path>.`
+- another writer holds the store for longer than its wait during the re-stamp: the re-stamp line with the number of runs re-stamped so far, then `The store was busy for <s> s: another writer held it. Nothing was written. Try again.`
 
 ## See also
 

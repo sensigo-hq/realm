@@ -145,6 +145,12 @@ export interface RealmDbOptions {
   readonly reopen: () => DatabaseLike;
   /** How long a call waits for a busy store, in milliseconds; {@link DEFAULT_BUSY_BUDGET_MS} if left out. */
   readonly budgetMs?: number;
+  /**
+   * The schema version the connection was opened under (the open's, which its seams can set; SEAMS
+   * IA-2C6-11): every transaction refuses a file at a higher one. Core's
+   * `REALM_STORE_SCHEMA_VERSION` if left out.
+   */
+  readonly schemaVersion?: number;
 }
 
 /** The shape of an error Node's SQLite throws: `code` is always `ERR_SQLITE_ERROR`. */
@@ -449,6 +455,8 @@ export class InProcessLock {
 export class RealmDb {
   /** The clock every reading is taken from. */
   readonly clock: Clock;
+  /** The schema version the connection was opened under: a file at a higher one is refused. */
+  readonly schemaVersion: number;
   /** The in-process lock, shared with the COMMIT outcome protocol (unit 9). */
   readonly lock = new InProcessLock();
   #db: DatabaseLike;
@@ -479,6 +487,7 @@ export class RealmDb {
     this.clock = options.clock;
     this.#reopen = options.reopen;
     this.#budgetMs = options.budgetMs ?? DEFAULT_BUSY_BUDGET_MS;
+    this.schemaVersion = options.schemaVersion ?? REALM_STORE_SCHEMA_VERSION;
   }
 
   /** Runs `body` with no transaction: the open's pragmas, checkpoints, a copy of the file. */
@@ -866,10 +875,13 @@ export class RealmDb {
     this.#nested = undefined;
   }
 
-  /** The first statement of every transaction: a file a newer Realm migrated is refused. */
+  /**
+   * The first statement of every transaction: a file at a version above the one the connection was
+   * opened under (a newer Realm migrated it) is refused, naming both versions.
+   */
   #refuseNewerSchema(db: DatabaseLike): void {
     const version = Number(db.prepare('PRAGMA user_version').get()?.['user_version']);
-    if (version > REALM_STORE_SCHEMA_VERSION) throw versionNewerError(version);
+    if (version > this.schemaVersion) throw versionNewerError(version, this.schemaVersion);
   }
 
   /** A call that was refused inside this transaction fails the transaction too. */
