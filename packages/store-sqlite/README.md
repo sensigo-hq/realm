@@ -39,3 +39,7 @@ Writers take turns on one lock. A write that cannot get its turn within 5 second
 Realm refuses a home on a network drive or on a filesystem it does not recognise, including WSL's `/mnt/c`, because SQLite's write-ahead log does not work there. Set `REALM_STORE_FS=local` to use such a folder anyway.
 
 The store uses Node's built-in SQLite, which Node 22 labels as in development and Node 24.15.0 and later as a release candidate. Realm needs Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later: the releases that carry the fix for SQLite's WAL-reset bug.
+
+## Test support
+
+`@sensigo/realm-store-sqlite/test-support` exports one function, `openForeignConnection(home)`: a second, raw connection on a home's `realm.db`, opened through the package's one loader, for tests that need a hostile writer or reader beside the store (a held lock, a foreign write, a raised schema version). It is test support, not a production API, and it may change with any release.
