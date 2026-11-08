@@ -126,11 +126,8 @@ describe(
     }
     const inspect = (id: string): string[] => realm(home, ['run', 'inspect', id]).out;
 
-    it('line 5: the other nine subcommands are on the acting page — --help lists 15, the acting table 9, this one 6', () => {
-      claim(
-        RD_PAGE,
-        'The other nine are in [`realm run`: commands that act](realm-run-acting.md).',
-      );
+    it('line 5: the other ten subcommands are on the acting page — --help lists 16, the acting table 10, this one 6', () => {
+      claim(RD_PAGE, 'The other ten are in [`realm run`: commands that act](realm-run-acting.md).');
       const help = realm(home, ['run', '--help']).out;
       const commands = help
         .slice(help.findIndex((l) => l === 'Commands:') + 1)
@@ -144,13 +141,13 @@ describe(
       const acting = rows('docs/reference/cli/realm-run-acting.md');
       const reading = rows(RD_PAGE);
       // (a) red when a subcommand is added, removed or moved without the pages saying so, or the
-      //     acting page holds other than nine; (b) prints both pages' tables and what --help lists.
+      //     acting page holds other than ten; (b) prints both pages' tables and what --help lists.
       expect({
         acting: acting.length,
         reading: reading.length,
         all: [...acting, ...reading].sort(),
       }).toEqual({
-        acting: 9,
+        acting: 10,
         reading: 6,
         all: [...commands].sort(),
       });
