@@ -521,8 +521,9 @@ const STEP_LINE_COST_VIEW = {
     surface: 'rendered',
     probe: () => expect(SPLIT.stepLine).toContain(`; ${SPLIT_WORDS.refused}`),
   },
-  // caching 3-M A-2b1: on the miss render, the line the carrier prints. Its `rule`, `predecessor`
-  // and gap fields get their words in A-2b2 (no nested registry exists).
+  // caching 3-M A-2b1: on the miss render, the line the carrier prints. A-2b2 words its
+  // `predecessor`, gap and lifetime on that line; its `rule` has none there (A-2b3's docs name both
+  // rules). No nested registry exists.
   misses: {
     surface: 'rendered',
     probe: () => expect(MISS.stepLine).toContain(MISS_WORDS.line),
@@ -760,7 +761,7 @@ const MISS_REQUESTS = [
 ];
 /** The miss line, on either context. */
 const MISS_WORDS = {
-  line: 'cache miss: request 1 of 2 read 0 of 4012 expected tokens (unexplained)',
+  line: "cache miss: request 1 of 2 read 0 of 4012 expected tokens — nothing the cache covers differs on the record from an earlier drive's request; the provider may have dropped the entry; it started about 24 hours after that request",
 };
 
 // issue #600 caching PR P: a second run, rendered with `PRICES`. `gateway_step` is the gateway
@@ -1321,8 +1322,9 @@ const FAILURE_COST_VIEW = {
     surface: 'rendered',
     probe: () => expect(SPLIT.failureLine).toContain(`; ${SPLIT_WORDS.refused}`),
   },
-  // caching 3-M A-2b1: on the miss render's failed drive, beneath its usage line. Its `rule`,
-  // `predecessor` and gap fields get their words in A-2b2 (no nested registry exists).
+  // caching 3-M A-2b1: on the miss render's failed drive, beneath its usage line, the whole line.
+  // A-2b2 words its `predecessor`, gap and lifetime on that line; its `rule` has none there (A-2b3's
+  // docs name both rules). No nested registry exists.
   misses: {
     surface: 'rendered',
     probe: () => expect(MISS.failureLine).toContain(`      ${MISS_WORDS.line}`),
