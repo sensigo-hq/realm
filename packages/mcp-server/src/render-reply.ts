@@ -2553,6 +2553,8 @@ export const DOOR_FACTS = {
   } satisfies FactProducers<typeof LIST_WORKFLOWS_TABLE, Merged<ListWorkflowsResult>>,
   list_workflows_unreadable: {
     file: 'path_fact',
+    // #616 PR-2c c5a: the id arm's name for the workflow (the SQLite registry's entries).
+    workflow_id: 'author_literal',
     class: 'enum',
     errno: 'enum',
     repair: 'command_span',

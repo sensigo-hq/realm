@@ -58,6 +58,10 @@ export interface MapClass {
 /** A class table: one row per key. Concrete tables are written `satisfies Record<keyof T, DisclosureClass>`. */
 export type ClassTable = Readonly<Record<string, DisclosureClass>>;
 
+/** Every key of every member of a union: a table over a union's entries is written
+ *  `satisfies Record<KeysOfUnion<T>, DisclosureClass>`, so a key of any arm left out fails `tsc`. */
+export type KeysOfUnion<T> = T extends unknown ? keyof T : never;
+
 /**
  * #729 PR-3 correction 4 (I-9b, R43'): which row each digest row of a table derives from — a digest
  * of content the law hid anything inside is shown as its shape on every audience (a short value's

@@ -188,7 +188,7 @@ Takes no parameters.
 }
 ```
 
-`unreadable` lists registered copies that could not be read, each with the reason.
+`unreadable` lists registered copies that could not be read, each with the reason: named by `file` from a registry of files, by `workflow_id` from the SQLite registry (added after version 0.48.0).
 
 ## `get_workflow_protocol`
 

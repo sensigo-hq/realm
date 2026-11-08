@@ -482,6 +482,74 @@ export function repairActFor(err: WorkflowError): RepairAct | undefined {
  */
 export const STUCK_DEFINITION_PARSE_CAP_BYTES = 4 * 1024 * 1024;
 
+/**
+ * #616 PR-2c c5a: the classes a registry of files (the JSON registry) gives a registered copy it
+ * cannot read — the FILE arm's eight: what the probe finds before any byte is read (`missing`: the
+ * file went between the directory read and the probe; `unreadable`: an OS error reading it;
+ * `not_a_file`: a directory where the file belongs; `empty`; `registry_broken`: the registry directory
+ * itself) and what the read finds (`parse`: not JSON, or JSON that fails the checker; `newer`: a later
+ * version of Realm registered it; `legacy`: an older one did).
+ */
+export type FileUnreadableClass = ProbeFailureClass | 'parse' | 'newer' | 'legacy';
+
+/**
+ * #616 PR-2c c5a: the classes a registry with no files (the SQLite registry) gives — the ID arm's
+ * three: `legacy` (an older version of Realm registered it), `newer` (a later one did) and `parse`: a
+ * copy that is not JSON or fails the checker, or a damaged pointer row (no copy under the pointer, or
+ * one that is not JSON text), whose entry has no `repair` because its reason names the remedy.
+ */
+export type IdUnreadableClass = 'legacy' | 'newer' | 'parse';
+
+/** #616 PR-2c c5a: a registered copy a registry of files could not read, named by its file. */
+export interface UnreadableFileEntry {
+  /** The registry file (its basename), or the registry directory for `registry_broken`. */
+  file: string;
+  /** Never on this arm. */
+  workflow_id?: never;
+  class: FileUnreadableClass;
+  /** issue #558 PR-T — present only for the OS-error classes; `workflow list`'s per-class sentence
+   *  names it. Absent for `parse`, `empty` and `not_a_file` (a directory is not an OS error —
+   *  fabricating an errno is a false statement about the operating system). */
+  errno?: string;
+  /** The store's own sentence for the failure. */
+  reason: string;
+  /** issue #558 PR-T (review fold R5) — the repair ACT for this entry's class (`repairActFor`), so both
+   *  listings — `workflow list --json` and the MCP `list_workflows` — name it. Absent only for a class
+   *  with no act. */
+  repair?: string;
+}
+
+/** #616 PR-2c c5a: a registered copy a registry with no files (the SQLite registry) could not read,
+ *  named by its workflow's id. Never carries `file` or `errno`: no file holds it, and no class on this
+ *  arm is an OS error. */
+export interface UnreadableIdEntry {
+  /** The registered workflow's id. */
+  workflow_id: string;
+  /** Never on this arm. */
+  file?: never;
+  /** Never on this arm. */
+  errno?: never;
+  class: IdUnreadableClass;
+  /** The refusal a read of this workflow gives (`get(id)` throws it), its message. */
+  reason: string;
+  /** The repair act for that refusal (`repairActFor`); absent when the reason names its own way out. */
+  repair?: string;
+}
+
+/** #616 PR-2c c5a: a registered copy a listing could not read. Each entry carries exactly one of
+ *  `file` (the file arm) and `workflow_id` (the id arm); all of one registrar's entries are of one arm. */
+export type UnreadableRegistryEntry = UnreadableFileEntry | UnreadableIdEntry;
+
+/** #616 PR-2c c5a: what a registrar's diagnostic listing returns. */
+export interface RegistryListing {
+  /** Every registered workflow it could read. */
+  workflows: WorkflowDefinition[];
+  /** Every registered copy it could not read, each its own entry. */
+  unreadable: UnreadableRegistryEntry[];
+  /** Registry files whose stored id differs from their file name (a registry of files only). */
+  mismatched: Array<{ file: string; id: string }>;
+}
+
 export interface WorkflowRegistrar {
   /** Persist a WorkflowDefinition under its id, overwriting any previous registration. */
   register(definition: WorkflowDefinition): Promise<void>;
@@ -489,6 +557,47 @@ export interface WorkflowRegistrar {
   get(workflowId: string): Promise<WorkflowDefinition>;
   /** List all registered workflows. */
   list(): Promise<WorkflowDefinition[]>;
+  /**
+   * #616 PR-2c c5a: everything `list()` returns, plus each registered copy it cannot read, by file or
+   * by workflow id (all of one registrar's entries are of one arm). A registrar that can hold a copy
+   * it cannot read implements it. A host given a registrar without it lists what `list()` returns, and
+   * nothing more (`listWorkflowsDiagnosed`).
+   */
+  listWithDiagnostics?(): Promise<RegistryListing>;
+}
+
+/**
+ * #616 PR-2c c5a: a registrar as Realm's hosts list it (`realm workflow list`, MCP `list_workflows`):
+ * through its `listWithDiagnostics` when it has one, else `list()`'s workflows with nothing more to
+ * say — the run store's `listRunsDiagnosed` precedent (#719 B3).
+ */
+export async function listWorkflowsDiagnosed(
+  registrar: Pick<WorkflowRegistrar, 'list' | 'listWithDiagnostics'>,
+): Promise<RegistryListing> {
+  if (typeof registrar.listWithDiagnostics === 'function') return registrar.listWithDiagnostics();
+  return { workflows: await registrar.list(), unreadable: [], mismatched: [] };
+}
+
+/**
+ * #616 PR-2c c5a: the id arm's entry for a registered copy a registry with no files refused on read,
+ * classed by the refusal's code, its `reason` and `repair` by the one rule the JSON listing uses
+ * (`reasonAndRepair`). `undefined` for a refusal that is not about the copy: the caller rethrows it.
+ */
+export function unreadableById(
+  workflowId: string,
+  err: WorkflowError,
+): UnreadableIdEntry | undefined {
+  const cls: IdUnreadableClass | undefined =
+    err.code === 'STATE_LEGACY_FORMAT'
+      ? 'legacy'
+      : err.code === 'STATE_NEWER_FORMAT'
+        ? 'newer'
+        : err.code === 'RESOURCE_FORMAT_INVALID'
+          ? 'parse'
+          : undefined;
+  return cls === undefined
+    ? undefined
+    : { workflow_id: workflowId, class: cls, ...reasonAndRepair(err) };
 }
 
 /**
@@ -511,8 +620,8 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
 
   /**
    * issue #558 PR-T — classify a registry read BEFORE any bytes are read. CONCRETE (off the
-   * `WorkflowRegistrar` interface, the `listWithDiagnostics` precedent): no other implementation
-   * has to grow a method for a legibility surface only realm's own fs store can answer.
+   * `WorkflowRegistrar` interface): no other implementation has to grow a method for a legibility
+   * surface only realm's own fs store can answer.
    *
    * The registry directory is checked FIRST, and its `ENOENT` is carved out to `missing`: a fresh
    * HOME has no registry, and telling a first-time user their registry is unreadable is a lie.
@@ -646,35 +755,17 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
    * resolving a workflow by id resolves by FILENAME, such an entry is reachable under a name
    * this list would not print. Disclosed rather than corrected.
    *
-   * Additive and CONCRETE: `WorkflowRegistrar` is untouched, so no other implementation has to
-   * grow a method to satisfy a read surface only the CLI uses.
+   * #616 PR-2c c5a: `WorkflowRegistrar`'s optional member, the file arm of its entries (a `newer`
+   * copy, #627 W correction 1 C3, parses and this version refuses it at read, W-r2, so it is listed
+   * with W-r2's reason, never as readable).
    */
   async listWithDiagnostics(): Promise<{
     workflows: WorkflowDefinition[];
-    unreadable: Array<{
-      file: string;
-      /** `newer` (#627 W correction 1, C3): a copy a later Realm registered — it parses, and this
-       *  version refuses it at read (W-r2), so it is listed here with W-r2's reason, never as readable. */
-      class: ProbeFailureClass | 'parse' | 'newer' | 'legacy';
-      /** issue #558 PR-T — present only for the OS-error classes; `workflow list`'s per-class
-       *  sentence names it. Absent for `parse`, `empty` and `not_a_file` (a directory is not an
-       *  OS error — fabricating an errno is a false statement about the operating system). */
-      errno?: string;
-      reason: string;
-      /** issue #558 PR-T (review fold R5) — the repair ACT for this entry's class (`repairActFor`),
-       *  so both listings — `workflow list --json` and the MCP `list_workflows` — name it. Absent
-       *  only for a class with no act. */
-      repair?: string;
-    }>;
+    unreadable: UnreadableFileEntry[];
     mismatched: Array<{ file: string; id: string }>;
   }> {
     const workflows: WorkflowDefinition[] = [];
-    const unreadable: Array<{
-      file: string;
-      class: ProbeFailureClass | 'parse' | 'newer' | 'legacy';
-      errno?: string;
-      reason: string;
-    }> = [];
+    const unreadable: UnreadableFileEntry[] = [];
     const mismatched: Array<{ file: string; id: string }> = [];
     // issue #558 PR-T: an unreadable registry DIRECTORY is a diagnostic, never a throw out of
     // this method (main crashed `workflow list` with a stack trace at readdirSync).
