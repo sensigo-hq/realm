@@ -50,8 +50,6 @@ interface PackageList {
 
 const QUOTED = /'([a-z][a-z-]*)(?:\/src)?'/g;
 const WORD = /([a-z][a-z-]*)/g;
-const NOT_INSTALLED =
-  'no package depends on it until the change that wires it in (issue #616): a project installs no copy of it';
 
 /** The lists of packages the repo's checks keep by hand (the query of #616 unit 1). */
 const LISTS: readonly PackageList[] = [
@@ -162,14 +160,12 @@ const LISTS: readonly PackageList[] = [
     list: /const PACKAGES: Record<PackageKey, \{ dir: string; name: string \}> = \{([\s\S]*?)\n\};/g,
     count: 1,
     name: /dir: '([a-z-]+)'/g,
-    leavesOut: { 'store-sqlite': NOT_INSTALLED },
   },
   {
     file: 'packages/cli/src/multi-copy/multi-copy.test.ts',
     list: /packages\/\(((?:[a-z-]+\|)+[a-z-]+)\)\/\(dist\|src\)\//g,
     count: 1,
     name: WORD,
-    leavesOut: { 'store-sqlite': NOT_INSTALLED },
   },
 ];
 

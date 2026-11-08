@@ -169,3 +169,36 @@ describe('caching 3-B C3 — the re-sends and the strict body', () => {
     }).toEqual({ strict: true, head: HEAD, strictSent: true, tools: true });
   });
 });
+
+// Caching 3-M (A-0): a single-shot request with no head (a step with no `prompt:`) records the parts
+// of what it sent; its prompt part is the prompt as that request sent it, so the JSON retry's (the
+// prompt with the reminder, one message) differs from the first request's — Realm's own change.
+describe('caching 3-M A-0 — a single-shot request with no head (check 4, Anthropic)', () => {
+  it('the request and its JSON retry record the parts of what each sent, and no split facts', async () => {
+    answers = ['not json at all', '{"x":"b"}'];
+    const { usage } = await provider().callStepWithMeta(PROMPT);
+    const systemText = (b: Body): string => (b.system as Array<{ text: string }>)[0]!.text;
+    const view = (r: NonNullable<typeof usage>[number], i: number) => ({
+      request: i,
+      parts: r.prefix_parts,
+      split: [r.prefix_sha256, r.prefix_chars],
+      marked: r.cache_marked,
+      strict: r.request_strict_sent,
+    });
+    // (a) red when the single-shot site still records the parts only with a head, or when the
+    //     retry's prompt part is the step prompt rather than the text it sent; (b) prints each
+    //     request's index and facts.
+    expect(usage!.map(view)).toEqual(
+      sent.map((b, i) => ({
+        request: i,
+        parts: {
+          system: sha256(systemText(b)),
+          prompt: sha256(b.messages[0]!.content as string),
+        },
+        split: [undefined, undefined],
+        marked: ['system'],
+        strict: false,
+      })),
+    );
+  });
+});
