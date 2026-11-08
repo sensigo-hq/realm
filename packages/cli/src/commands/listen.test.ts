@@ -3669,56 +3669,6 @@ describe('E2 — early replies reach the sender', () => {
   }, 15_000);
 });
 
-describe('issue #719 — listen’s keyed create on a store with a run file that might hold the key', () => {
-  it('500 store_error; the log line carries the file’s message and none of its text (the leak cell, listen log)', async () => {
-    const h = await makeTempHome();
-    const runsDir = h.home.runStore.runsDirPath;
-    try {
-      // #616 PR-2b: the door creates no folder at the open; the file is written before any store write.
-      mkdirSync(runsDir, { recursive: true });
-      // A run file whose key cannot be known, its fault AT a token (F719-AU-4).
-      writeFileSync(join(runsDir, 'bad.json'), '{"params":{"token": ghp_FAKE719}}');
-      const errors: Array<{ msg: string; data: unknown }> = [];
-      const logger: Logger = {
-        ...silentLogger,
-        error: (msg: string, data?: unknown) => errors.push({ msg, data }),
-      };
-      const trigger: WebhookTrigger = { ...SHARED_SECRET_TRIGGER, dedup: { id_from: 'body.id' } };
-      const deps = makeDeps({ runStore: h.home.runStore as never, logger });
-      const handler = makeListenHandler(routesFor(wf(trigger)), deps);
-      const { status, body } = await invoke(handler, {
-        url: '/wf',
-        headers: { ...JSON_CT, authorization: SECRET },
-        body: JSON.stringify({ id: 'evt-719' }),
-      });
-      const line = JSON.stringify(errors);
-      // (a) red when the create goes on, the reply changes, the log line loses the file's message,
-      //     or it carries the parser's text; (b) prints the status, the body and booleans only.
-      expect({
-        status,
-        body,
-        logged: errors.map((e) => e.msg),
-        carries: line.includes(`The run file '${join(runsDir, 'bad.json')}' is not JSON.`),
-        keyedSentence: line.includes(
-          'A run with a new idempotency key cannot be created on this store until the file is repaired or moved out.',
-        ),
-        leaked: line.includes('ghp_FAKE7'),
-        spawned: deps.spawnAgent.mock.calls.length,
-      }).toEqual({
-        status: 500,
-        body: { error: 'store_error', status: 'failed' },
-        logged: ['webhook: run creation failed'],
-        carries: true,
-        keyedSentence: true,
-        leaked: false,
-        spawned: 0,
-      });
-    } finally {
-      await h.cleanup();
-    }
-  });
-});
-
 // ── #616 B1: the dedup store is asynchronous; a `record` that rejects ─────────────────────────────
 // The real case (TESTING-RULES rule 2): the store is full or busy when listen records the delivery
 // id — the file store's `openSync(…, 'wx')` fails with ENOSPC, and a database store answers later

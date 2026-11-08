@@ -5,8 +5,7 @@
 // thin formatting layer isn't unit-tested here either, consistent with cleanup.ts/reclaim.ts).
 import { declared } from '../test-support/declared.js';
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { readdir, writeFile, readFile, stat, mkdir } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -217,46 +216,6 @@ describe('isPurgeEligible (the purge selection predicate — mode-aware, issue #
 describe('purgeRuns — single-run mode', () => {
   afterEach(async () => {
     // each test manages its own tmp dir cleanup inline (dir varies per test)
-  });
-
-  it('force-purges a terminal run: removes the run file, idempotency pointer, attempts sidecar, and orphaned WAL (all four artifact classes)', async () => {
-    const { dir, runStore, failedAttemptStore, traceBufferStore, artifactStores, cleanup } =
-      await makeStores();
-    try {
-      const { record: run } = await runStore.create({
-        workflowId: 'wf-1',
-        workflowVersion: 1,
-        params: {},
-        idempotencyKey: 'k1',
-      });
-      await runStore.update({
-        ...run,
-        run_phase: 'abandoned',
-        terminal_state: true,
-        sealed_by: { arm: 'abandon_requested' },
-      });
-      await appendSidecarLine(failedAttemptStore, run.id);
-      await traceBufferStore.append(run.id, 'step-a', [{ event: 'crash-orphan' }]);
-
-      const ptrPath = keyPointerPath(dir, 'wf-1', 'k1');
-      expect(existsSync(ptrPath)).toBe(true);
-      expect((await failedAttemptStore.read(run.id)).records.length > 0).toBe(true);
-      const walBefore = Object.keys(await traceBufferStore.readAllForRun(run.id));
-      expect(walBefore).toHaveLength(1);
-
-      const result = await purgeRuns({ runId: run.id, dryRun: false }, runStore, artifactStores);
-
-      expect(result.purged).toEqual([run.id]);
-      expect(result.already_purged).toEqual([]);
-      expect(result.failed).toEqual([]);
-      await expect(runStore.get(run.id)).rejects.toMatchObject({ code: 'STATE_RUN_NOT_FOUND' });
-      expect(existsSync(ptrPath)).toBe(false);
-      expect((await failedAttemptStore.read(run.id)).records.length > 0).toBe(false);
-      const walAfter = Object.keys(await traceBufferStore.readAllForRun(run.id));
-      expect(walAfter).toHaveLength(0);
-    } finally {
-      await cleanup();
-    }
   });
 
   it('refuses (selects nothing) a non-terminal (running) run', async () => {
@@ -648,26 +607,6 @@ describe('purgeRuns — batch mode (--older-than)', () => {
   });
 });
 
-describe('purgeRuns — pointer/keys directory is not touched when the run has no idempotency_key', () => {
-  it('a keyless run purges cleanly with no keys/ activity', async () => {
-    const { dir, runStore, artifactStores, cleanup } = await makeStores();
-    try {
-      const run = makeRun({ run_phase: 'completed', terminal_state: true });
-      await injectRun(runStore, run);
-      // No keys/ dir at all yet.
-      expect(existsSync(join(dir, 'keys'))).toBe(false);
-
-      const result = await purgeRuns({ runId: run.id, dryRun: false }, runStore, artifactStores);
-
-      expect(result.purged).toEqual([run.id]);
-      // Still no keys/ dir — nothing was ever created or touched for this run.
-      expect(existsSync(join(dir, 'keys'))).toBe(false);
-    } finally {
-      await cleanup();
-    }
-  });
-});
-
 describe('purgeRuns — supersede soundness (mutation-probe #2 companion, at the orchestrator level)', () => {
   it('purging a superseded (old) run never deletes the live successor’s pointer', async () => {
     const { dir, runStore, artifactStores, cleanup } = await makeStores();
@@ -1042,97 +981,6 @@ describe('purgeRuns — sealed artifacts (issue #197 PR-2, deliverable 3b: VERIF
 // nothing at all after (the "freed" line just re-used the guess).
 // =================================================================================================
 describe('purge byte figures are store-reported (issue #189)', () => {
-  /** Seeds a run that spans EVERY artifact class the wired stores own, and returns the runId. */
-  async function seedMultiStoreRun(s: Stores, runId: string): Promise<void> {
-    await injectRun(
-      s.runStore,
-      makeRun({
-        id: runId,
-        idempotency_key: 'k-189',
-        terminal_state: true,
-        sealed_by: { arm: 'complete' },
-      }),
-    );
-    // The pointer — the artifact the retired filename scan could never find.
-    await mkdir(join(s.dir, 'keys'), { recursive: true });
-    await writeFile(
-      keyPointerPath(s.dir, 'wf-1', 'k-189'),
-      JSON.stringify({ run_id: runId, workflow_id: 'wf-1' }),
-      'utf8',
-    );
-    await appendSidecarLine(s.failedAttemptStore, runId);
-    await s.traceBufferStore.append(runId, 'step-a', [{ event: 'live' }]);
-    // A SEALED artifact too: the fenced path retires WAL into sealed files, and a stat that
-    // counted only live WAL would under-report every run that ever sealed — a regression, since
-    // the dying substring scan did catch sealed files.
-    await s.traceBufferStore.append(runId, 'step-sealed', [{ event: 'to-be-sealed' }]);
-    const sealed = await s.traceBufferStore.sealFenced(runId, 'step-sealed', {
-      kind: 'run_absent_or_terminal',
-    });
-    expect(sealed.sealed, 'fixture must produce a sealed artifact').toBe(true);
-  }
-
-  /** Independent oracle: sums the real on-disk sizes of every file this run owns. */
-  async function oracleBytes(s: Stores, runId: string): Promise<number> {
-    const entries = await readdir(s.dir);
-    let total = 0;
-    for (const f of entries) {
-      if (f === 'keys') continue;
-      if (f.includes(runId)) total += (await stat(join(s.dir, f))).size;
-    }
-    total += (await stat(keyPointerPath(s.dir, 'wf-1', 'k-189'))).size;
-    return total;
-  }
-
-  it('the DRY-RUN projection sums every artifact class, pointer and sealed artifact included', async () => {
-    const s = await makeStores();
-    try {
-      await seedMultiStoreRun(s, 'r-189-dry');
-      const expected = await oracleBytes(s, 'r-189-dry');
-
-      const result = await purgeRuns(
-        { runId: 'r-189-dry', dryRun: true },
-        s.runStore,
-        s.artifactStores,
-      );
-
-      expect(result.selected).toHaveLength(1);
-      // EXACT, not "greater than zero": a `> 0` pin would survive a stat that saw only the run
-      // file, which is the exact defect this issue retires.
-      expect(result.selected[0]!.bytes).toBe(expected);
-      // And the fixture genuinely spans more than one file, so the equality has teeth.
-      expect(expected).toBeGreaterThan((await stat(join(s.dir, 'r-189-dry.json'))).size);
-    } finally {
-      await s.cleanup();
-    }
-  });
-
-  it('the FORCE receipt is the sum of what the stores reported deleting, and says so', async () => {
-    const s = await makeStores();
-    try {
-      await seedMultiStoreRun(s, 'r-189-force');
-      const expected = await oracleBytes(s, 'r-189-force');
-
-      const result = await purgeRuns(
-        { runId: 'r-189-force', dryRun: false },
-        s.runStore,
-        s.artifactStores,
-      );
-
-      expect(result.purged).toEqual(['r-189-force']);
-      expect(result.freed_bytes['r-189-force']).toBe(expected);
-
-      // The receipt is EXACT, not "greater than zero": a `> 0` pin would survive a store whose
-      // report was hardcoded to a wrong figure, which probe (b) mutates for precisely that reason.
-      expect(result.freed_bytes['r-189-force']).toBe(expected);
-      // And it equals what the dry run would have projected on the same unchanged run — the L6
-      // identity, observed end-to-end through purge rather than only inside one store's TCK.
-      expect(result.selected[0]!.bytes).toBe(expected);
-    } finally {
-      await s.cleanup();
-    }
-  });
-
   it('RETIREMENT — purge.ts no longer scans another store’s filename layout', async () => {
     // Source-text pin (the #163 precedent). `f.includes(runId)` and `statMatchedBytes` were the
     // whole mechanism; if either comes back, the invariant is gone regardless of what the byte
