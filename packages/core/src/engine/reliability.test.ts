@@ -1,11 +1,7 @@
 // Tests for step-level timeout, retry, pending state, and failure-terminal guarantees.
 // Source: execution-loop.ts
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, vi } from 'vitest';
 import { executeStep } from './execution-loop.js';
-import { JsonFileStore } from '../store/json-file-store.js';
 // #715 (b) (04 §D): C3/C4a/C4b keep their faked Date and timers (#573's pins MUST stay faked) on an
 // in-memory store — a store with no file lock, so a faked Date cannot make a lock look stale.
 import { InMemoryStore } from '@sensigo/realm-testing';
@@ -138,14 +134,8 @@ function makeNonRetryableError(): WorkflowError {
 }
 
 describe('reliability', () => {
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-reliability-'));
-  });
-
   it('timeout fires — step returns error and run is marked failed', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'timeout-wf',
       workflowVersion: 1,
@@ -171,7 +161,7 @@ describe('reliability', () => {
   });
 
   it('step without timeout completes normally', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'no-timeout-wf',
       workflowVersion: 1,
@@ -193,7 +183,7 @@ describe('reliability', () => {
   });
 
   it('retry succeeds on 2nd attempt — evidence has 2 entries with attempt numbers', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'retry-wf',
       workflowVersion: 1,
@@ -224,7 +214,7 @@ describe('reliability', () => {
   });
 
   it('retry exhaustion — returns STEP_RETRY_EXHAUSTED and run is marked failed', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'retry-wf',
       workflowVersion: 1,
@@ -254,7 +244,7 @@ describe('reliability', () => {
   });
 
   it('non-retryable error — dispatcher called exactly once and run is failed', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'retry-wf',
       workflowVersion: 1,
@@ -281,7 +271,7 @@ describe('reliability', () => {
   });
 
   it('double-claim: two concurrent executeStep calls on the same step — second is blocked', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'no-timeout-wf',
       workflowVersion: 1,
@@ -336,7 +326,7 @@ describe('reliability', () => {
   });
 
   it('pending state is written to the store while dispatcher is running', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'no-timeout-wf',
       workflowVersion: 1,
@@ -375,7 +365,7 @@ describe('reliability', () => {
   });
 
   it('failed run is marked terminal — terminal_state is true', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'no-timeout-wf',
       workflowVersion: 1,
@@ -398,7 +388,7 @@ describe('reliability', () => {
   });
 
   it('AbortSignal is aborted when timeout fires', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'timeout-wf',
       workflowVersion: 1,
@@ -427,7 +417,7 @@ describe('reliability', () => {
   });
 
   it('LOAD-BEARING (A3 blocking-fix): auto step in a finalizer-bearing workflow still times out', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'timeout-finalizer-wf',
       workflowVersion: 1,
@@ -459,7 +449,7 @@ describe('reliability', () => {
   });
 
   it('a timeout on a step WITH a retry: block still fails terminally — consumes no retry attempt', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'timeout-retry-wf',
       workflowVersion: 1,
@@ -490,7 +480,7 @@ describe('reliability', () => {
   });
 
   it('issue A3: evidence surfaces effective_timeout_seconds — the default when undeclared', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'no-timeout-wf',
       workflowVersion: 1,
@@ -511,7 +501,7 @@ describe('reliability', () => {
   });
 
   it('issue A3: evidence surfaces effective_timeout_seconds — the declared value when present', async () => {
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'explicit-timeout-wf',
       workflowVersion: 1,
@@ -556,7 +546,7 @@ describe('reliability', () => {
         },
       },
     };
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'optional-retry-wf',
       workflowVersion: 1,
@@ -595,7 +585,7 @@ describe('reliability', () => {
         },
       },
     };
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'rate-limited-retry-wf',
       workflowVersion: 1,
@@ -689,7 +679,7 @@ describe('reliability', () => {
       },
     };
 
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: 'rate-limit-integration-wf',
       workflowVersion: 1,
@@ -728,12 +718,6 @@ function makeRateLimitedError(retryAfterSeconds: number): WorkflowError {
 }
 
 describe('issue #140 — retryable timeout + total-time cap', () => {
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-cap-140-'));
-  });
-
   it('two-laws OPTED: on_timeout retry consumes a normal (shared) retry attempt — timeout, timeout, then success', async () => {
     // timeout_seconds:0.05 (50ms), retry max_attempts:3/fixed/base_delay_ms:10 — same numbers as
     // the pre-existing unopted-law fixture (timeoutWithRetryDef) — default cap = 3*0.05+2*0.01 =
@@ -753,7 +737,7 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
         },
       },
     };
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -806,7 +790,7 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
         },
       },
     };
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -852,7 +836,7 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
         },
       },
     };
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -902,7 +886,7 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
         },
       },
     };
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -954,7 +938,7 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
         },
       },
     };
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -1008,7 +992,7 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
         },
       },
     };
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -1065,7 +1049,7 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
         },
       },
     };
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -1117,7 +1101,7 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
         },
       },
     };
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -1175,7 +1159,7 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
         },
       },
     };
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -1219,7 +1203,7 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
         },
       },
     };
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -1272,7 +1256,7 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
         },
       },
     };
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -1318,7 +1302,7 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
         },
       },
     };
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -1377,7 +1361,7 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
         },
       },
     };
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -1427,7 +1411,7 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
         },
       },
     };
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -1467,7 +1451,7 @@ describe('issue #140 — retryable timeout + total-time cap', () => {
         },
       },
     };
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -1517,7 +1501,7 @@ steps:
       backoff: fixed
       base_delay_ms: 1000
 `);
-    const store = new JsonFileStore(dir);
+    const store = new InMemoryStore();
     const { record: run } = await store.create({
       workflowId: def.id,
       workflowVersion: 1,
@@ -1565,7 +1549,7 @@ steps:
           },
         },
       };
-      const store = new JsonFileStore(dir);
+      const store = new InMemoryStore();
       const { record: run } = await store.create({
         workflowId: def.id,
         workflowVersion: 1,
@@ -1592,7 +1576,7 @@ steps:
     }, 15_000); // deflake #371: two real-store attempts under full-suite parallel load — tighter than the 5s global
 
     it("an attempt that runs OUT its full bound exhausts the cap with no retry (HANG_A: uncapped-per-attempt, HANG_EQ: cap equals timeout — 'bounded', never 'clipped', at equality)", async () => {
-      const store = new JsonFileStore(dir);
+      const store = new InMemoryStore();
 
       // HANG_A: timeout 2s / cap 1s / max 3 — attempt 1 hangs, the cap (not the per-attempt
       // timeout) is what fires first.
@@ -1689,7 +1673,7 @@ steps:
           },
         },
       };
-      const store = new JsonFileStore(dir);
+      const store = new InMemoryStore();
       const { record: run } = await store.create({
         workflowId: def.id,
         workflowVersion: 1,
@@ -1727,7 +1711,7 @@ steps:
       base_delay_ms: 10
       total_timeout_seconds: 50
 `);
-      const store = new JsonFileStore(dir);
+      const store = new InMemoryStore();
       const { record: run } = await store.create({
         workflowId: def.id,
         workflowVersion: 1,
@@ -1747,12 +1731,6 @@ steps:
   });
 
   describe('issue #573 — the cap boundary is truthful by construction', () => {
-    let dir: string;
-
-    beforeEach(async () => {
-      dir = await mkdtemp(join(tmpdir(), 'realm-cap-573-'));
-    });
-
     // Copies of the file's `hang` dispatcher and the `:1589` cell's HANG_A/HANG_EQ definitions —
     // NOT shared by reference (those are locally scoped inside that `it` callback and cannot be
     // imported; these are fresh literals with the same field values).
@@ -1801,7 +1779,7 @@ steps:
     };
 
     it('C1 — a frozen short read exhausts the cap by construction, not by comparing clocks after the fact (HANG_A; the red-first) (issue #573)', async () => {
-      const store = new JsonFileStore(dir);
+      const store = new InMemoryStore();
       const { record: run } = await store.create({
         workflowId: hangA573.id,
         workflowVersion: 1,
@@ -1849,7 +1827,7 @@ steps:
     }, 15_000);
 
     it('C2 — the budget is read once, not twice a tick apart: no phantom clip at equality (HANG_EQ) (issue #573)', async () => {
-      const store = new JsonFileStore(dir);
+      const store = new InMemoryStore();
       const { record: run } = await store.create({
         workflowId: hangEq573.id,
         workflowVersion: 1,
@@ -2029,7 +2007,7 @@ steps:
     }, 15_000);
 
     it('C5 — a clipped later attempt records whole-millisecond evidence (issue #573: the budget is floored before it bounds an attempt)', async () => {
-      const store = new JsonFileStore(dir);
+      const store = new InMemoryStore();
       const def: WorkflowDefinition = {
         id: 'w573-domain-wf',
         name: 'W573 Domain',

@@ -3,12 +3,9 @@
 // set / design record §5 letter map exactly, for mechanical diffing against mutation probes.
 import { declared } from '../test-support/declared.js';
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { executeStep, DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD } from './execution-loop.js';
 import type { StepDispatcher } from './execution-loop.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { writtenSnapshot } from './snapshot.js';
 import { InMemoryTraceBufferStore } from '../store/trace-buffer-store.js';
 import { WorkflowError, type ValidationErrorFacts } from '../types/workflow-error.js';
@@ -50,12 +47,9 @@ const INVALID_OUTPUT = {}; // missing 'category' — fails output_schema
 const VALID_OUTPUT = { category: 'ok' };
 
 describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
-  let store: JsonFileStore;
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-vx-test-'));
-    store = new JsonFileStore(dir);
+  let store: InMemoryStore;
+  beforeEach(() => {
+    store = new InMemoryStore();
   });
 
   it('(a) bump-and-report: a counted, non-terminal rejection reports the PRE-write version, and the count IS persisted', async () => {
@@ -435,14 +429,14 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
   });
 
   it("(k) store honesty advisory: a store not declaring 'validation_rejections' draws the softened durability warning on a counted rejection", async () => {
-    class UndeclaredFieldStore extends JsonFileStore {
+    class UndeclaredFieldStore extends InMemoryStore {
       override readonly persistedRunRecordFields: ReadonlySet<LoadBearingRunRecordField> = new Set([
         'capability_blocks',
         'workflow_context_snapshots',
         'extension_identity',
       ]); // deliberately mirrors the pre-#220 3-member set — validation_rejections NOT declared
     }
-    const undeclaredStore = new UndeclaredFieldStore(dir);
+    const undeclaredStore = new UndeclaredFieldStore();
     const def = makeDef();
     const { record: run } = await undeclaredStore.create({
       workflowId: def.id,
@@ -499,14 +493,17 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
     // A wrapper whose get() bumps the real store on EVERY call as a side effect (but returns the
     // pre-bump snapshot) — this forces BOTH the first CAS (keyed on Step 1's snapshot) AND the
     // retry's own CAS (keyed on the retry's own snapshot) to lose to a "concurrent" writer.
-    class DoubleFailureStore extends JsonFileStore {
-      override async get(runId: string): Promise<Snapshot> {
-        const { record: rec, at } = await super.get(runId);
-        await super.update({ ...rec });
-        return writtenSnapshot(rec, at);
-      }
-    }
-    const doubleFailureStore = new DoubleFailureStore(dir);
+    // One store (c1a-2: chain-stopped-step-676 F7's other arm, pending-625's shape): `store`'s own get
+    // double-fails for the first call and is restored for the following one, in place of a second
+    // handle on one folder.
+    const plainGet = InMemoryStore.prototype.get.bind(store);
+    const plainUpdate = InMemoryStore.prototype.update.bind(store);
+    store.get = async (runId: string): Promise<Snapshot> => {
+      const { record: rec, at } = await plainGet(runId);
+      await plainUpdate({ ...rec });
+      return writtenSnapshot(rec, at);
+    };
+    const doubleFailureStore = store;
     const def = makeDef();
     const { record: run } = await doubleFailureStore.create({
       workflowId: def.id,
@@ -526,6 +523,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
     expect(envelope.warnings?.join(' ')).toContain('rejection count not persisted');
 
     // The double-failure attempt left the real stored count untouched (both its writes lost).
+    delete (store as { get?: unknown }).get;
     const { record: afterDoubleFailure } = await store.get(run.id);
     expect(afterDoubleFailure.validation_rejections?.['draft'] ?? 0).toBe(0);
 
@@ -676,13 +674,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
   describe('(q) retry-countability, TWO-WITNESS', () => {
     it('(q1) abandon-mid-count ⇒ NO post-terminal write (the CAS-failure retry drops and swallows once the fresh record is terminal)', async () => {
       const def = makeDef();
-      const { record: run } = await store.create({
-        workflowId: def.id,
-        workflowVersion: 1,
-        params: {},
-      });
-
-      class AbandonMidCountStore extends JsonFileStore {
+      class AbandonMidCountStore extends InMemoryStore {
         private triggered = false;
         override async get(runId: string): Promise<Snapshot> {
           const { record: rec, at } = await super.get(runId);
@@ -700,7 +692,16 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
           return writtenSnapshot(rec, at);
         }
       }
-      const abandonStore = new AbandonMidCountStore(dir);
+      // One store (c1a-2: chain-stopped-step-676 F7's arm A): the cell's `store` is the subclass, so
+      // the run, the racing write and the last read are on one instance, not a second handle.
+      store = new AbandonMidCountStore();
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
+
+      const abandonStore = store;
 
       const envelope = await executeStep(abandonStore, def, {
         runId: run.id,
@@ -724,20 +725,10 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
       // together (the lone step settling always terminates a single-step run), masking whichever
       // one a mutant dropped.
       const def = makeDef({}, { other: { description: 'Other', execution: 'auto' } });
-      const { record: run } = await store.create({
-        workflowId: def.id,
-        workflowVersion: 1,
-        params: {},
-      });
-
-      let validSettleEnvelope: Awaited<ReturnType<typeof executeStep>> | undefined;
-      class ConcurrentValidSettleStore extends JsonFileStore {
+      class ConcurrentValidSettleStore extends InMemoryStore {
         private triggered = false;
-        constructor(
-          runsDir: string,
-          private def: WorkflowDefinition,
-        ) {
-          super(runsDir);
+        constructor(private def: WorkflowDefinition) {
+          super();
         }
         override async get(runId: string): Promise<Snapshot> {
           const { record: rec, at } = await super.get(runId);
@@ -756,7 +747,17 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
           return writtenSnapshot(rec, at);
         }
       }
-      const concurrentStore = new ConcurrentValidSettleStore(dir, def);
+      // One store (c1a-2: chain-stopped-step-676 F7's arm A): the cell's `store` is the subclass, so
+      // the run, the concurrent settle and the last read are on one instance, not a second handle.
+      store = new ConcurrentValidSettleStore(def);
+      const { record: run } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
+      });
+
+      let validSettleEnvelope: Awaited<ReturnType<typeof executeStep>> | undefined;
+      const concurrentStore = store;
 
       const rejectingEnvelope = await executeStep(concurrentStore, def, {
         runId: run.id,

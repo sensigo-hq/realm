@@ -4,9 +4,6 @@
 // Letter labels match the design record's §5 pin set (aa, bb, ff) for mechanical diffing against
 // mutation probes.
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
   executeStep,
   executeChain,
@@ -14,7 +11,7 @@ import {
   DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD,
 } from './execution-loop.js';
 import type { StepDispatcher } from './execution-loop.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 
 const echoDispatcher: StepDispatcher = async (_step, input) => ({ ...input });
@@ -29,12 +26,9 @@ const INVALID_OUTPUT = {}; // missing 'category' — fails output_schema
 const VALID_OUTPUT = { category: 'ok' };
 
 describe('issue #220 §4c (PR-3) — $settlement namespace, end-to-end', () => {
-  let store: JsonFileStore;
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-settlement-test-'));
-    store = new JsonFileStore(dir);
+  let store: InMemoryStore;
+  beforeEach(() => {
+    store = new InMemoryStore();
   });
 
   describe('(aa) when-branch flips eligibility on $settlement', () => {

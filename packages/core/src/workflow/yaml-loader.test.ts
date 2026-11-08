@@ -9,7 +9,7 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
 } from './yaml-loader.js';
 import { WorkflowError } from '../types/workflow-error.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { advanceRun } from '../engine/execution-loop.js';
 import { validateRunParams } from '../validation/input-schema.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
@@ -2858,25 +2858,20 @@ describe('issue #933 — a precondition or a guard whose path starts outside the
     const definition = loadWorkflowFromString(
       afterStart('auto', 'when', "run.params.mode == 'go'"),
     );
-    const dir = mkdtempSync(join(tmpdir(), 'realm-933-when-'));
-    try {
-      const store = new JsonFileStore(dir);
-      const { record: run } = await store.create({
-        workflowId: definition.id,
-        workflowVersion: 1,
-        params: { mode: 'stop' },
-      });
-      await advanceRun(store, definition, { runId: run.id });
-      const { record: after } = await store.get(run.id);
-      expect({
-        skipped: after.skipped_steps,
-        why: after.skip_details?.['s']?.kind,
-        completed: after.completed_steps,
-        phase: after.run_phase,
-      }).toEqual({ skipped: ['s'], why: 'when_false', completed: ['start'], phase: 'completed' });
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    const store = new InMemoryStore();
+    const { record: run } = await store.create({
+      workflowId: definition.id,
+      workflowVersion: 1,
+      params: { mode: 'stop' },
+    });
+    await advanceRun(store, definition, { runId: run.id });
+    const { record: after } = await store.get(run.id);
+    expect({
+      skipped: after.skipped_steps,
+      why: after.skip_details?.['s']?.kind,
+      completed: after.completed_steps,
+      phase: after.run_phase,
+    }).toEqual({ skipped: ['s'], why: 'when_false', completed: ['start'], phase: 'completed' });
   });
 
   // T9, the `params_schema` remedy: the T2 workflow with `amount` declared (`maximum: 1000`) and its

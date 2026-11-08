@@ -8,10 +8,7 @@
 // `attemptError === null` conjunct, and stamping `settled_by_default` on the `exhausted` arm too)
 // leave the pre-existing suite fully green, because no core cell anywhere asserts
 // `settled_by_default` on a diagnostics snapshot at all. These two cells are what actually pins it.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
   executeStep,
   executeChain,
@@ -20,7 +17,7 @@ import {
 } from './execution-loop.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import { deriveDefaultedSteps } from './defaulted-steps.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { StepDispatcher } from './execution-loop.js';
 import type { WorkflowDefinition, StepDefinition } from '../types/workflow-definition.js';
@@ -71,16 +68,9 @@ function usage(overrides: Partial<UsageRecord> = {}): UsageRecord {
 }
 
 describe('issue #600 PR 1a — StepDiagnostics.cache: mint discrimination + absence + derivation', () => {
-  let store: JsonFileStore;
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-sd-cache-'));
-    store = new JsonFileStore(dir);
-  });
-
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+  let store: InMemoryStore;
+  beforeEach(() => {
+    store = new InMemoryStore();
   });
 
   describe('D3(b) — the two discriminating cells', () => {
@@ -499,16 +489,9 @@ describe('issue #600 PR 1a — correction 2: null is an absence, and both-direct
 // agent's OUTPUT is documented (`docs/reference/yaml-schema.md`, "The bare `auto` step"); copying
 // its usage or tool calls is not — they describe the calls THIS step made, and it made none.
 describe("#600 — a chained step never inherits the driven step's usage or tool calls", () => {
-  let store: JsonFileStore;
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-sd-chain-'));
-    store = new JsonFileStore(dir);
-  });
-
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+  let store: InMemoryStore;
+  beforeEach(() => {
+    store = new InMemoryStore();
   });
 
   // agent `draft` → auto `finish` (a handler) → bare auto `wrap` (no handler, service or gate).

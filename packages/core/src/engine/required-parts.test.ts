@@ -2,10 +2,7 @@
 // REAL entry with a store that records every use, so a check that sits below a read, or an entry
 // that hands no parts, turns the cell red. Failure output is the error's code and details (option
 // names and type words only) and the store calls — never a value.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect } from 'vitest';
 import {
   executeStep,
   executeEngineStep,
@@ -19,7 +16,7 @@ import { abandonRun } from './abandon-run.js';
 import { reclaimStep } from './reclaim-step.js';
 import { getWorkflowForRun } from '../workflow/registrar.js';
 import { declareReleaseLine } from '../release-line.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import type { EngineEntry } from '../admission.js';
 import type { RunStore } from '../store/store-interface.js';
 import type { RunRecord } from '../types/run-record.js';
@@ -384,15 +381,8 @@ describe('issue #719 A2 (R1) — the dispatcher is required exactly for the step
   });
 
   describe('guard: a command that names no step is left to the unknown-step reply', () => {
-    let dir: string;
-    beforeEach(async () => {
-      dir = await mkdtemp(join(tmpdir(), 'realm-719-parts-'));
-    });
-    afterEach(async () => {
-      await rm(dir, { recursive: true, force: true });
-    });
     it('blocked, as before', async () => {
-      const store = new JsonFileStore(dir);
+      const store = new InMemoryStore();
       const { record: run } = await store.create({
         workflowId: 'w',
         workflowVersion: 1,

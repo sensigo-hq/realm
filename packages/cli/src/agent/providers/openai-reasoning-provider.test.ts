@@ -1,11 +1,12 @@
 // openai-reasoning-provider.test.ts — Tests for OpenAIReasoningProvider.
 // All tests mock the openai package — no real API calls are made.
+import { createHash } from 'node:crypto';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import OpenAI from 'openai';
 import { OpenAIReasoningProvider } from './openai-reasoning-provider.js';
 import { OPENAI_DEFAULT_BASE_URL } from './openai-provider.js';
 import { ToolCapableLlmProvider, resolveProvider } from './llm-provider.js';
-import { setAdditionalRedactionValues } from './agent-utils.js';
+import { buildSystemPrompt, setAdditionalRedactionValues } from './agent-utils.js';
 import { leakedForms } from '../test-support/redaction-oracle.js';
 
 // issue #600 PR 2: resolveProvider takes an options object; the caching setting is required.
@@ -492,12 +493,21 @@ describe('OpenAIReasoningProvider — the request facts (issue #600 PR 2)', () =
     mockCreate.mockReset();
   });
 
-  // G7 (o1). (a) red when o1 does not write provider_rules; (b) prints the facts.
+  // G7 (o1). (a) red when o1 does not write provider_rules; 3-M A-0: also red when an unsplit
+  // request records no parts, or a prompt part other than the step's prompt (o1 folds the system
+  // text into its one message, so the parts are of the system text and the prompt it was given);
+  // (b) prints the facts.
   it('G7 — provider_rules and cache_split_offered false; no lifetime fields', async () => {
     mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":"a"}'));
     const { usage } = await new OpenAIReasoningProvider('o1-mini').callStepWithMeta('prompt');
     const { request_index: _i, request_start: _s, ...rest } = usage![0]!;
-    expect(rest).toEqual({ cache_requested: 'provider_rules', cache_split_offered: false });
+    const sha256 = (text: string): string => createHash('sha256').update(text).digest('hex');
+    expect(rest).toEqual({
+      cache_requested: 'provider_rules',
+      cache_split_offered: false,
+      prefix_parts: { system: sha256(buildSystemPrompt()), prompt: sha256('prompt') },
+      request_strict_sent: false,
+    });
     expect(JSON.stringify(mockCreate.mock.calls[0]![0])).not.toContain('cache');
   });
 

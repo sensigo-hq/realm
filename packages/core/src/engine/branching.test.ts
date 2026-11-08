@@ -2,12 +2,9 @@
 // Source: execution-loop.ts
 // fan-out eligibility, and gate-response flow.
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { executeStep, executeChain, submitHumanResponse } from './execution-loop.js';
 import { findEligibleSteps } from './eligibility.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { WorkflowError } from '../types/workflow-error.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
@@ -119,12 +116,10 @@ function makeAutoRecoveryWorkflow(): WorkflowDefinition {
 }
 
 describe('trigger_rule: all_failed — recovery after step failure', () => {
-  let dir: string;
-  let store: JsonFileStore;
+  let store: InMemoryStore;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-branch-'));
-    store = new JsonFileStore(dir);
+    store = new InMemoryStore();
   });
 
   it('step fails → recovery step is eligible, normal continuation is NOT', async () => {
@@ -219,10 +214,6 @@ describe('trigger_rule: all_failed — recovery after step failure', () => {
     expect(finalRun.run_phase).toBe('completed');
     expect(finalRun.completed_steps).toContain('auto_recover');
   });
-
-  it('cleanup', async () => {
-    await rm(dir, { recursive: true, force: true });
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -263,12 +254,10 @@ function makeWhenRoutingWorkflow(): WorkflowDefinition {
 }
 
 describe('when condition routing', () => {
-  let dir: string;
-  let store: JsonFileStore;
+  let store: InMemoryStore;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-when-'));
-    store = new JsonFileStore(dir);
+    store = new InMemoryStore();
   });
 
   it('confidence=high → step_high eligible, step_low NOT eligible', async () => {
@@ -392,10 +381,6 @@ describe('when condition routing', () => {
     expect(finalRun.completed_steps).toContain('step_a');
     expect(finalRun.completed_steps).toContain('step_low');
   });
-
-  it('cleanup', async () => {
-    await rm(dir, { recursive: true, force: true });
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -403,12 +388,10 @@ describe('when condition routing', () => {
 // ---------------------------------------------------------------------------
 
 describe('fan-out: multiple steps eligible simultaneously', () => {
-  let dir: string;
-  let store: JsonFileStore;
+  let store: InMemoryStore;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-fanout-'));
-    store = new JsonFileStore(dir);
+    store = new InMemoryStore();
   });
 
   it('after step-a completes, both step-b and step-c are eligible', async () => {
@@ -441,10 +424,6 @@ describe('fan-out: multiple steps eligible simultaneously', () => {
     expect(eligible).toContain('step-c');
     expect(eligible).toHaveLength(2);
   });
-
-  it('cleanup', async () => {
-    await rm(dir, { recursive: true, force: true });
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -472,12 +451,10 @@ const autoGateDef: WorkflowDefinition = {
 };
 
 describe('gate-response flow', () => {
-  let dir: string;
-  let store: JsonFileStore;
+  let store: InMemoryStore;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-gate-'));
-    store = new JsonFileStore(dir);
+    store = new InMemoryStore();
   });
 
   it('approve advances run — confirm moves to completed_steps, post-approve is eligible', async () => {
@@ -549,9 +526,5 @@ describe('gate-response flow', () => {
     const { record: finalRun } = await store.get(run.id);
     expect(finalRun.completed_steps).toContain('confirm');
     expect(finalRun.run_phase).toBe('completed');
-  });
-
-  it('cleanup', async () => {
-    await rm(dir, { recursive: true, force: true });
   });
 });

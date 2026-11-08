@@ -2,25 +2,16 @@
 // the engine hands back, privately, the snapshot it judged its reply on (`judgedSnapshotOf`), so a
 // host judges THAT snapshot and never reads the run again. Cells (i) (a settle interposed between the
 // engine's load and the reply, and a replayed request), (iii) (a copy carries nothing) and the core
-// half of (iv) (one load by the engine). Every store is a JSON store on a test location whose clock
-// file says the instant (core cannot import the testing package).
+// half of (iv) (one load by the engine). Every store is an in-memory store on a settable clock that
+// says the instant.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
 import { inspect } from 'node:util';
-import { JsonFileStore } from '../store/json-file-store.js';
-import { writeTestClockFile } from '../store/test-clock-file.js';
+import { InMemoryStore, settableClock, type SettableClock } from '@sensigo/realm-testing';
 import { advanceRun, executeStep } from './execution-loop.js';
 import { attachJudged, judgedSnapshotOf, type Snapshot } from './snapshot.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
-
-const roots: string[] = [];
-afterEach(async () => {
-  for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
-});
 
 /** A unique value put in the run's `params` — a record field no engine reply carries. */
 const SENTINEL = 'SENTINEL-715B-JUDGED-0b9f';
@@ -39,11 +30,11 @@ const ONE: WorkflowDefinition = {
 const T0 = new Date('2026-10-30T10:00:00.000Z');
 
 /**
- * A JSON store whose NEXT `get`, once armed, is followed by another process's write — a `seal_run`
+ * An in-memory store whose NEXT `get`, once armed, is followed by another writer's write — a `seal_run`
  * that ends the run — before the read returns: a settle interposed between the engine's load and
  * its reply. Counts every `get`.
  */
-class InterposingStore extends JsonFileStore {
+class InterposingStore extends InMemoryStore {
   gets = 0;
   private interpose: ((snap: Snapshot) => Promise<void>) | undefined;
   arm(write: (snap: Snapshot) => Promise<void>): void {
@@ -59,11 +50,9 @@ class InterposingStore extends JsonFileStore {
   }
 }
 
-async function location(t: Date): Promise<{ root: string; store: InterposingStore }> {
-  const root = await mkdtemp(join(tmpdir(), 'realm-715b-judged-'));
-  roots.push(root);
-  await writeTestClockFile(root, t);
-  return { root, store: new InterposingStore(join(root, 'runs')) };
+async function location(t: Date): Promise<{ clock: SettableClock; store: InterposingStore }> {
+  const clock = settableClock(t);
+  return { clock, store: new InterposingStore({ clock }) };
 }
 
 async function created(store: InterposingStore): Promise<string> {
@@ -76,7 +65,7 @@ async function created(store: InterposingStore): Promise<string> {
 }
 
 /** Another process ends the run at the version the engine just read (its own write). */
-const sealedBy = (store: JsonFileStore) => async (snap: Snapshot) => {
+const sealedBy = (store: InMemoryStore) => async (snap: Snapshot) => {
   await store.settleStep(snap.record.id, {
     kind: 'seal_run',
     arm: 'abandon_requested',
@@ -118,7 +107,7 @@ describe('#715 (b) Amendment 4 (i) — the reply is judged on ONE snapshot, the 
     // (a) red when the snapshot handed back is not the one the basis was built from (basisOf noting
     //     another snapshot), or when a reply carries the snapshot of an earlier call; (b) prints the
     //     instants and versions of both replies.
-    const { root, store } = await location(T0);
+    const { clock, store } = await location(T0);
     const runId = await created(store);
     const call = () =>
       executeStep(store, ONE, {
@@ -129,7 +118,7 @@ describe('#715 (b) Amendment 4 (i) — the reply is judged on ONE snapshot, the 
       });
     const first = await call();
     // The same request again, a minute later on the store's clock: the step is settled.
-    await writeTestClockFile(root, new Date(T0.getTime() + 60_000));
+    await clock.set(new Date(T0.getTime() + 60_000));
     const replay = await call();
     const one = judgedSnapshotOf(first);
     const two = judgedSnapshotOf(replay);
@@ -165,18 +154,18 @@ const THREE: WorkflowDefinition = {
   },
 } as WorkflowDefinition;
 
-/** A store whose clock file moves one second forward before every read; it keeps each read's `at`. */
-class SteppingReadStore extends JsonFileStore {
+/** A store whose clock moves one second forward before every read; it keeps each read's `at`. */
+class SteppingReadStore extends InMemoryStore {
   readonly readAts: Date[] = [];
   constructor(
-    private readonly root: string,
+    private readonly stepping: SettableClock,
     private t: number,
   ) {
-    super(join(root, 'runs'));
+    super({ clock: stepping });
   }
   override async get(runId: string): Promise<Snapshot> {
     this.t += 1_000;
-    await writeTestClockFile(this.root, new Date(this.t));
+    await this.stepping.set(new Date(this.t));
     const snap = await super.get(runId);
     this.readAts.push(snap.at);
     return snap;
@@ -188,10 +177,7 @@ describe('#715 (b) 02 §A.2, D6-17 — the advance loop judges each record at it
     // (a) red when the loop keeps judging the records it re-reads at its entry's reading (the reply's
     //     as_of is then the first read's, a record judged before its own last write); (b) prints the
     //     reply's as_of and run_version, the readings of the first and the last read, and the steps run.
-    const root = await mkdtemp(join(tmpdir(), 'realm-715b-loop-'));
-    roots.push(root);
-    await writeTestClockFile(root, T0);
-    const store = new SteppingReadStore(root, T0.getTime());
+    const store = new SteppingReadStore(settableClock(T0), T0.getTime());
     const { record } = await store.create({ workflowId: THREE.id, workflowVersion: 1, params: {} });
     store.readAts.length = 0;
     const reply = await advanceRun(store, THREE, { runId: record.id });
@@ -217,7 +203,7 @@ describe('#715 (b) 01 §C.4, D6-17 — a reply about a record the call just wrot
     // (a) red when the step's reply judges the record its settle wrote at the reading of the call's
     //     earlier load (as_of a minute before the record's own updated_at); (b) prints the reply's
     //     as_of, the record's updated_at and the two instants.
-    const { root, store } = await location(T0);
+    const { clock, store } = await location(T0);
     const runId = await created(store);
     const later = new Date(T0.getTime() + 60_000);
     const reply = await executeStep(store, ONE, {
@@ -226,7 +212,7 @@ describe('#715 (b) 01 §C.4, D6-17 — a reply about a record the call just wrot
       input: {},
       // The work: a minute passes on the store's clock between the load and the settle.
       dispatcher: async (_c, input) => {
-        await writeTestClockFile(root, later);
+        await clock.set(later);
         return input;
       },
     });

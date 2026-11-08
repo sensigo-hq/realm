@@ -3,12 +3,9 @@
 // identity appends + surfaces an envelope advisory warn; CAS losers retry once then
 // log-and-drop; extension-free runs never gain the field.
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { executeStep } from './execution-loop.js';
 import { judgeProgramFit } from './pending.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
@@ -63,12 +60,9 @@ function registryWithIdentity(entry: ExtensionIdentityEntry): ExtensionRegistry 
 }
 
 describe('execution loop — extension identity lazy append-on-change', () => {
-  let store: JsonFileStore;
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-ident-append-'));
-    store = new JsonFileStore(dir);
+  let store: InMemoryStore;
+  beforeEach(() => {
+    store = new InMemoryStore();
   });
 
   afterEach(() => {
@@ -294,10 +288,10 @@ describe('execution loop — extension identity lazy append-on-change', () => {
 // manifest reference included). Drift is judged from EXECUTION entries only — the start entry is
 // never a baseline — so the drift judgement behaves as before the start entry existed.
 describe('#729 PR-3 correction 5 (J-5) — the start entry is never a drift baseline', () => {
-  let store: JsonFileStore;
+  let store: InMemoryStore;
 
   beforeEach(async () => {
-    store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-ident-start-')));
+    store = new InMemoryStore();
   });
 
   async function bornWith(entry: ExtensionIdentityEntry): Promise<string> {

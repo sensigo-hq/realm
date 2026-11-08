@@ -13,10 +13,7 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect } from 'vitest';
-import { mkdtemp as mkdtempP, rm as rmP } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { executeChain, executeEngineStep, executeStep } from './execution-loop.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { StepDispatcher } from './execution-loop.js';
@@ -36,13 +33,8 @@ function claimDoc625(page: string, sentence: string): void {
   );
 }
 
-async function withStore<T>(fn: (store: JsonFileStore) => Promise<T>): Promise<T> {
-  const dir = await mkdtempP(join(tmpdir(), 'realm-engine-step-625-'));
-  try {
-    return await fn(new JsonFileStore(dir));
-  } finally {
-    await rmP(dir, { recursive: true, force: true });
-  }
+async function withStore<T>(fn: (store: InMemoryStore) => Promise<T>): Promise<T> {
+  return fn(new InMemoryStore());
 }
 
 function def(steps: Record<string, StepDefinition>): WorkflowDefinition {
@@ -54,7 +46,7 @@ const REFUSAL = (step: string, kind: string): string =>
 
 /** Calls executeEngineStep and returns what it threw (or `undefined` with the reply it returned). */
 async function refusalOf(
-  store: JsonFileStore,
+  store: InMemoryStore,
   d: WorkflowDefinition,
   runId: string,
   step: string,

@@ -10,9 +10,6 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
 import {
   advanceRun,
   executeChain,
@@ -23,29 +20,23 @@ import {
 import { describePending, openQuestionOf } from './pending.js';
 import { admitWay, composeWaysAt, type WayOn } from './ways.js';
 import { writtenSnapshot } from './snapshot.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore, settableClock, type SettableClock } from '@sensigo/realm-testing';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { EngineReply } from '../types/response-envelope.js';
 import { agentActionFor, nextCalls, proofOf } from '../test-support/ways-view.js';
-import { writeTestClockFile } from '../store/test-clock-file.js';
 import { zOf } from '../test-support/instant.js';
 
-/** #715 (b) (01 §C.4): the store's clock decides what is due — a JSON store on a test location: its
- *  runs folder sits beside the location's clock file (first set to the host's reading), which
- *  `setClockOf` rewrites. */
-async function testLocationRuns(prefix: string): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), prefix));
-  await writeTestClockFile(root, new Date());
-  return join(root, 'runs');
-}
-async function clockedJsonStore(prefix: string): Promise<JsonFileStore> {
-  return new JsonFileStore(await testLocationRuns(prefix));
+/** #715 (b) (01 §C.4): the store's clock decides what is due — an in-memory store on a settable
+ *  clock, first set to the host's reading, which `setClockOf` moves. */
+function clockedStore(): InMemoryStore {
+  return new InMemoryStore({ clock: settableClock(new Date()) });
 }
 async function setClockOf(store: object, t: Date): Promise<void> {
-  const runsDir = (store as { runsDirPath?: string }).runsDirPath;
-  if (runsDir === undefined) throw new Error('setClockOf: this store is not a JSON store');
-  await writeTestClockFile(dirname(runsDir), t);
+  const clock = (store as { clock?: Partial<SettableClock> }).clock ?? {};
+  if (typeof clock.set !== 'function')
+    throw new Error('setClockOf: this store has no settable clock');
+  await clock.set(t);
 }
 
 /** `q` (a question), then `after` (a bare `auto` step). `timeout`/`onExpiry` as given. */
@@ -109,9 +100,9 @@ function respondsOf(reply: EngineReply): WayOn[] {
 }
 
 describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named everywhere', () => {
-  let store: JsonFileStore;
+  let store: InMemoryStore;
   beforeEach(async () => {
-    store = await clockedJsonStore('realm-oq-625-');
+    store = clockedStore();
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -501,7 +492,7 @@ describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named ever
       new Date((await store.get(runId)).record.pending_gate!.expires_at!).getTime() + 5_000,
     );
     const real = store.settleStep!.bind(store);
-    const failing = Object.create(store) as JsonFileStore;
+    const failing = Object.create(store) as InMemoryStore;
     failing.settleStep = async (id, delta, def) => {
       if (delta.kind === 'expire_gate') throw new Error('store says no');
       return real(id, delta, def);

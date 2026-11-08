@@ -467,3 +467,55 @@ describe('caching 3-B E3 (MA2-3B-IA1-12) — a request sent without the cache fi
     });
   });
 });
+
+// Caching 3-M (A-0, check 3): after a gateway refused the cache fields mid-loop, the turn sent again
+// without them records the parts of what it sent and no `cache_marked`: the marks are read off the
+// body sent, never off the setting.
+describe('caching 3-M A-0 — a turn sent without markers records the parts and no marks', () => {
+  it('the tool step: the turn before the refusal records its two marks; the turn after records none', async () => {
+    const tool = {
+      id: 'srv:t',
+      serverId: 'srv',
+      name: 't',
+      description: 'A tool',
+      inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+    };
+    script = [
+      {
+        model: 'claude-test-1',
+        content: [{ type: 'tool_use', id: 'toolu_1', name: 't', input: {} }],
+        stop_reason: 'tool_use',
+        usage: {
+          input_tokens: 10,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+          output_tokens: 1,
+        },
+      },
+      err400('messages.2.content.0.tool_result.cache_control: Extra inputs are not permitted'),
+      anthropicAnswer('{"x":"a"}'),
+    ];
+    const r = await anthropic('custom').callStepWithTools(
+      PROMPT,
+      [tool],
+      (async () => ({ content: [{ type: 'text', text: 'ok' }] })) as never,
+      {},
+    );
+    // (a) red when `cache_marked` is read off the setting or the inputs rather than the body sent
+    //     (the turn after the refusal would say it marked two parts); (b) prints whether each
+    //     request carried a marker, and each record's marks and part names.
+    expect({
+      marked: sent.map(marked),
+      recorded: r.usage!.map((u) => [u.cache_marked, Object.keys(u.prefix_parts ?? {}).sort()]),
+    }).toEqual({
+      marked: [true, true, false],
+      recorded: [
+        [
+          ['system', 'conversation'],
+          ['prompt', 'system', 'tools'],
+        ],
+        [undefined, ['prompt', 'system', 'tools']],
+      ],
+    });
+  });
+});

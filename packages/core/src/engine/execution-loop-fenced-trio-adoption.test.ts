@@ -4,12 +4,9 @@
 // persist-gate, the removed capability-block delete, the pre-claim read envelope, and the
 // post-claim read's compensating un-claim (including its version-mismatch stop branch and audit
 // entry).
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { executeStep } from './execution-loop.js';
-import { JsonFileStore } from '../store/json-file-store.js';
+import { InMemoryStore } from '@sensigo/realm-testing';
 import { InMemoryTraceBufferStore } from '../store/trace-buffer-store.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
@@ -54,15 +51,9 @@ function stubTraceBufferStore(overrides: Partial<TraceBufferStore>): TraceBuffer
 }
 
 describe('execution-loop.ts — fenced-trio call-site adoption (issue #207 PR-2)', () => {
-  let store: JsonFileStore;
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'realm-fenced-adoption-'));
-    store = new JsonFileStore(dir);
-  });
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+  let store: InMemoryStore;
+  beforeEach(() => {
+    store = new InMemoryStore();
   });
 
   // ── :1857-equivalent — success-settle WAL cleanup wrap ──────────────────────────────────────
@@ -107,12 +98,12 @@ describe('execution-loop.ts — fenced-trio call-site adoption (issue #207 PR-2)
     await traceBufferStore.append(run.id, 'step-agent', [{ event: 'pre_failure_line' }]);
     const deleteSpy = vi.spyOn(traceBufferStore, 'delete');
 
-    // issue #279 (increment 1, PR-B): JsonFileStore declares settleStep — the fail site's
+    // issue #279 (increment 1, PR-B): the store declares settleStep — the fail site's
     // MIGRATED path settles via settleStep, not store.update. A settleStep throw returns an
     // error envelope BEFORE the WAL-cleanup section is ever reached (it lives inside the
     // applied:true branch only), so the same persist-gate invariant holds under the new
     // mechanism: WAL cleanup never fires when the settle itself never committed.
-    // `JsonFileStore.settleStep` is a concrete method — spied directly, no key/value casts.
+    // `InMemoryStore.settleStep` is a concrete method — spied directly, no key/value casts.
     const settleStepSpy = vi
       .spyOn(store, 'settleStep')
       .mockRejectedValue(new Error('simulated persist failure'));

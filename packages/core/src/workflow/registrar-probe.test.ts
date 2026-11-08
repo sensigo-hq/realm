@@ -24,6 +24,7 @@ import {
   repairActFor,
   probeClassOf,
 } from './registrar.js';
+import { InMemoryWorkflowRegistrar } from '../test-support/in-memory-registrar.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import { admitWay, type WaysContext } from '../engine/ways.js';
 import { writtenSnapshot } from '../engine/snapshot.js';
@@ -401,7 +402,7 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
 
   it('C-c terminalOk:true suppresses the terminal conjunct — the SEVEN sites whose happy path IS terminal keep their remedy', async () => {
     await shape.rm();
-    const err = (await getWorkflowForRun(store, TERMINAL, {
+    const err = (await getWorkflowForRun(new InMemoryWorkflowRegistrar(), TERMINAL, {
       retryVerb: 'resume again',
       verb: 'resume',
       terminalOk: true,
@@ -529,8 +530,9 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
   });
 
   it('C-f the suffix heuristic: an agent-shaped id gets the no-source sentence, a plain id gets the T-21 sentence (#729 PR-0; was the #456 hedge), and a HUMAN id carrying a 16-hex suffix gets the agent one too (a SHAPE heuristic, stated)', async () => {
+    const registrar = new InMemoryWorkflowRegistrar();
     const agent = (await getWorkflowForRun(
-      store,
+      registrar,
       makeRun({ workflow_id: 'dynamic-0123456789abcdef' }),
       RESPOND,
     ).catch((e: unknown) => e)) as WorkflowError;
@@ -541,7 +543,7 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
     );
 
     const plain = (await getWorkflowForRun(
-      store,
+      registrar,
       makeRun({ workflow_id: 'plain-wf' }),
       RESPOND,
     ).catch((e: unknown) => e)) as WorkflowError;
@@ -556,7 +558,7 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
     // human-registered id that happens to end in 16 hex chars is told the agent story. Pinned so
     // the trade-off is a decision on the record and not an accident.
     const lookalike = (await getWorkflowForRun(
-      store,
+      registrar,
       makeRun({ workflow_id: 'my-report-0123456789abcdef' }),
       RESPOND,
     ).catch((e: unknown) => e)) as WorkflowError;
