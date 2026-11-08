@@ -16,10 +16,10 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import {
-  JsonFileStore,
   executeStep,
   deriveRunPhase,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
+  type RunStore,
 } from '@sensigo/realm';
 import type { PendingGate, StepDefinition, WorkflowDefinition } from '@sensigo/realm';
 import { handleBidirectionalGate } from './slack-gate-notifier.js';
@@ -71,7 +71,7 @@ function gateThenGuard(id: string, more?: Record<string, StepDefinition>): Workf
 
 describe('issue #625 — the Slack notifier after an answer whose write settled a guard', () => {
   let h: TempHome;
-  let store: JsonFileStore;
+  let store: RunStore;
   let fetchSpy: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {

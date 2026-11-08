@@ -26,7 +26,6 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  JsonFileStore,
   type RealmWorkflowRegistrar,
   drainFinalizers,
   captureEvidence,
@@ -34,6 +33,7 @@ import {
   ExtensionRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   abandonRun,
+  type RunStore,
 } from '@sensigo/realm';
 import type { RunRecord, WorkflowDefinition } from '@sensigo/realm';
 import {
@@ -170,7 +170,7 @@ describe('isBatchActionable', () => {
 
 describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store injection, no $HOME reliance', () => {
   let h: TempHome;
-  let store: JsonFileStore;
+  let store: RunStore;
   let workflowStore: RealmWorkflowRegistrar;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errSpy: ReturnType<typeof vi.spyOn>;
@@ -708,7 +708,7 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
 describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
   let h: TempHome;
   let dir: string;
-  let store: JsonFileStore;
+  let store: RunStore;
   let workflowStore: RealmWorkflowRegistrar;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errSpy: ReturnType<typeof vi.spyOn>;

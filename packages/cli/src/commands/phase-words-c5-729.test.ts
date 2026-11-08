@@ -14,10 +14,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
-  JsonFileStore,
   advanceRun,
   executeStep,
   type WorkflowDefinition,
+  type RunStore,
 } from '@sensigo/realm';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
@@ -423,7 +423,7 @@ describe('#729 PR-3 correction 5 (J-2) — `realm run respond` prints the phase 
   async function question(
     expired: boolean,
     withAfter: boolean,
-  ): Promise<{ def: WorkflowDefinition; runId: string; gateId: string; runs: JsonFileStore }> {
+  ): Promise<{ def: WorkflowDefinition; runId: string; gateId: string; runs: RunStore }> {
     const def = await registered({
       confirm: {
         description: 'Confirm.',

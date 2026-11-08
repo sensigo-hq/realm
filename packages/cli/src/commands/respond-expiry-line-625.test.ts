@@ -15,12 +15,12 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
   type RealmWorkflowRegistrar,
   advanceRun,
   executeStep,
   expiryCarriedOutLine,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
+  type RunStore,
 } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { respondCommand } from './respond.js';
@@ -57,7 +57,7 @@ describe('#625 PR-2a, C146/C147 — a late `realm run respond` says which call c
   let home: string;
   let project: string;
   let savedHome: string | undefined;
-  let runStore: JsonFileStore;
+  let runStore: RunStore;
   let workflowStore: RealmWorkflowRegistrar;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errSpy: ReturnType<typeof vi.spyOn>;

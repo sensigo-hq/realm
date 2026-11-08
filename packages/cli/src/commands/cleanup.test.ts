@@ -4,9 +4,8 @@ import { mkdtemp, writeFile, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { cleanupRuns, cleanupCommand } from './cleanup.js';
-import { JsonFileStore } from '@sensigo/realm';
 import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
-import type { RunRecord } from '@sensigo/realm';
+import type { RunRecord, RunStore } from '@sensigo/realm';
 import { v4 as uuidv4 } from 'uuid';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
@@ -275,7 +274,7 @@ describe('cleanupRuns', () => {
     const moving = new Proxy(store, {
       get(target, prop) {
         if (prop === 'settleStep') {
-          return async (...a: Parameters<JsonFileStore['settleStep']>) => {
+          return async (...a: Parameters<RunStore['settleStep']>) => {
             const { record } = await target.get(run.id);
             await target.update(record);
             return target.settleStep(...a);

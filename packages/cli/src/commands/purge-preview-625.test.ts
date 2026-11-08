@@ -11,11 +11,11 @@ import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
   abandonRun,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type RunRecord,
   type WorkflowDefinition,
+  type RunStore,
 } from '@sensigo/realm';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
@@ -46,7 +46,7 @@ describe(
   () => {
     let h: TempHome & { readonly root: string };
     let home: string;
-    let runStore: JsonFileStore;
+    let runStore: RunStore;
 
     beforeEach(async () => {
       h = await makeTempHome();

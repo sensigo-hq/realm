@@ -6,7 +6,7 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { JsonFileStore, executeStep, submitHumanResponse } from '@sensigo/realm';
+import { executeStep, submitHumanResponse, type RunStore } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { handleBidirectionalGate } from './slack-gate-notifier.js';
 import { LlmProvider } from '../providers/llm-provider.js';
@@ -40,7 +40,7 @@ const DEF: WorkflowDefinition = {
 
 describe('#715 (b) §D.3 — a reminder send writes nothing to the run', () => {
   let h: TempHome;
-  let store: JsonFileStore;
+  let store: RunStore;
   let fetchSpy: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {

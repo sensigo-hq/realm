@@ -11,12 +11,12 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  JsonFileStore,
   type RealmWorkflowRegistrar,
   ExtensionRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type StepDefinition,
   type WorkflowDefinition,
+  type RunStore,
 } from '@sensigo/realm';
 
 const mocks = vi.hoisted(() => ({ question: vi.fn(), close: vi.fn() }));
@@ -69,7 +69,7 @@ const ADVANCE_CHAINED = (id: string): string[] => [
 async function stores(): Promise<{
   h: TempHome;
   home: string;
-  runs: JsonFileStore;
+  runs: RunStore;
   workflows: RealmWorkflowRegistrar;
 }> {
   const h = await makeTempHome();

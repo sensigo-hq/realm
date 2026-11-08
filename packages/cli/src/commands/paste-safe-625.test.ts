@@ -22,7 +22,6 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
   type RealmWorkflowRegistrar,
   executeStep,
   describePending,
@@ -31,6 +30,7 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type RunRecord,
   type WorkflowDefinition,
+  type RunStore,
 } from '@sensigo/realm';
 import { renderDetachMap } from './run.js';
 import { CLI_COMMANDS, NO_DRIVE_FLAGS } from './ways-renderer.js';
@@ -82,7 +82,7 @@ describe('#625 PR-2a, F6 — a printed command is safe to paste', { timeout: 60_
   let home: string;
   let T: string;
   let bin: string;
-  let runStore: JsonFileStore;
+  let runStore: RunStore;
   let workflowStore: RealmWorkflowRegistrar;
 
   beforeEach(async () => {

@@ -14,7 +14,6 @@ import { fileURLToPath } from 'node:url';
 import { advanceRunFromShell, runAdvanceCommand } from './run-advance.js';
 import {
   ExtensionRegistry,
-  JsonFileStore,
   type RealmWorkflowRegistrar,
   declareReleaseLine,
   advanceRun,
@@ -81,7 +80,7 @@ describe(
   () => {
     let h: TempHome & { readonly root: string };
     let home: string;
-    let runStore: JsonFileStore;
+    let runStore: RunStore;
     let workflowStore: RealmWorkflowRegistrar;
 
     beforeEach(async () => {
