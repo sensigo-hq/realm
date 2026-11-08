@@ -5,7 +5,7 @@ import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { WorkflowError } from '@sensigo/realm';
+import { WorkflowError, storedCopyFaultError } from '@sensigo/realm';
 import { inspectRun } from './inspect.js';
 import { classBError } from '../agent/providers/agent-utils.js';
 import { computeExtensionIdentity, sha256HexOf } from '../extensions/extension-identity.js';
@@ -1056,6 +1056,27 @@ describe('run_health rendering (issue #221)', () => {
         '<path-to-workflow>), then inspect again; if it was never registered from a source, ' +
         'remove the file (rm /x/wf.json) instead.)',
     );
+  });
+
+  it('#616 PR-2c c5c: a damaged copy with NO file (a database row) — the re-register act alone, no file to remove', async () => {
+    const run = makeRun([makeSnapshot('step_one')]);
+    const err = storedCopyFaultError('test-workflow', {
+      kind: 'not_a_workflow',
+      fault: 'no_steps',
+    });
+    const result = await inspectRun('run_test1', makeRunStore(run), throwingStore(err));
+    // (a) red when core's pathless branch is reverted: "; if it was never registered from a source,
+    //     remove the file (rm ) instead." reaches the parenthetical, and its "rm " is printed as a
+    //     command; (b) prints the parenthetical's line and whether an `rm` is on the screen.
+    expect({
+      line: result.split('\n').find((l) => l.startsWith('(showing run record only')),
+      rm: /\brm\b/.test(result),
+    }).toEqual({
+      line:
+        `(showing run record only — ${err.message}. To repair: re-register the workflow from ` +
+        'its source (realm workflow register <path-to-workflow>), then inspect again.)',
+      rm: false,
+    });
   });
 
   it('D5-3 a LEGACY record says legacy and keeps the store\u2019s own re-register remedy', async () => {

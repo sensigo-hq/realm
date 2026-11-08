@@ -898,6 +898,7 @@ describe('11 — the layout is what it claims to be', () => {
         layout.file(layout.cli.cli, 'dist/agent/index.js'),
         layout.file(layout.cli.cli, 'dist/commands/purge.js'),
         layout.file(layout.cli.cliCore, 'dist/index.js'),
+        layout.file(layout.cli.cliStore, 'dist/index.js'),
         layout.file(layout.cli.mcp, 'dist/index.js'),
         layout.file(layout.cli.mcpCore, 'dist/index.js'),
         layout.file(layout.cli.testing, 'dist/index.js'),
@@ -908,7 +909,7 @@ describe('11 — the layout is what it claims to be', () => {
       ];
       const resolved = await recordResolvedFiles(layout, entries);
       const workspace = new RegExp(
-        `^${pathToFileURL(REPO_ROOT).href.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(packages/(core|cli|mcp-server|testing)/(dist|src)/|node_modules/@sensigo/)`,
+        `^${pathToFileURL(REPO_ROOT).href.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(packages/(core|cli|mcp-server|testing|store-sqlite)/(dist|src)/|node_modules/@sensigo/)`,
       );
       expect(resolved.filter((url) => workspace.test(url))).toEqual([]);
       const inside = pathToFileURL(layout.root).href;

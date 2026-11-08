@@ -9,7 +9,12 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect } from 'vitest';
 import type { Command } from 'commander';
-import { runCommands, topLevelCommands, workflowCommands } from '../commands-registry.js';
+import {
+  dbCommands,
+  runCommands,
+  topLevelCommands,
+  workflowCommands,
+} from '../commands-registry.js';
 
 /** Every command under `group`, nested ones included, as `<group> <name> …`. */
 function commandsOf(group: string, commands: readonly Command[]): Array<[string, Command]> {
@@ -24,6 +29,7 @@ describe('#715 (b) Amendment 5 — the CLI commands that print JSON', () => {
     const all = [
       ...commandsOf('workflow', workflowCommands),
       ...commandsOf('run', runCommands),
+      ...commandsOf('db', dbCommands),
       ...commandsOf('', topLevelCommands),
     ];
     const withJson = new Set(
