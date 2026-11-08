@@ -2,14 +2,15 @@
 // what the request before it left in the provider's cache, worked out when the record is read
 // (n8n's way), from what the records hold. Piece A-2a2: for a request that missed, the first
 // difference on the record between it and its predecessor; piece A-2a2r: a change of provider,
-// address or model, checked first; piece A-2a2s: Realm's own changes (piece A-2a3 adds a cause).
-// Showing it is A-2b.
+// address or model, checked first; piece A-2a2s: Realm's own changes; piece A-2a3: a pause longer
+// than the entry's lifetime, and the gap and lifetime behind it. Showing it is A-2b.
 //
 // Pure: no clock, no I/O, no store. Total: it never throws on a stored list, whatever another
 // writer or an older version put in it. Not exported from core's index: it has no public shape
 // until A-2b.
 import { counter } from '../economics/price-source.js';
 import type { CacheRequest, PrefixParts } from '../types/run-record.js';
+import { parseStamp } from './instants.js';
 import { cacheWriteField } from './step-view.js';
 
 /** What `cacheReadVerdicts` says of one request. */
@@ -258,10 +259,16 @@ export const CACHE_MISS_CAUSES = [
    *  edit that moves where the prompt's fixed start ends; inside one list only Realm's gateway rule
    *  dropping OpenAI's key. A lifetime-only change is not one: on Anthropic it reads in full. */
   'cache_settings',
+  /** The pause between the two requests' starts was longer than the lifetime the entry was granted
+   *  or asked for. "Possibly", because the record cannot see a later read of the entry, a
+   *  single-shot request is stamped before its retries, and the provider may keep an entry longer:
+   *  never a proven expiry. */
+  'possibly_expired',
   /** None of the causes above applies. The record cannot see a split request's cached tail under
    *  `provider_rules` (it has no digest), a move between two custom addresses (`endpoint` is only
-   *  a kind), the conversation after the prompt (tool results), or the provider evicting the
-   *  entry. */
+   *  a kind), the conversation after the prompt (tool results), or the provider evicting the entry
+   *  within its lifetime, or after a pause of any length where the predecessor records no lifetime
+   *  (`provider_rules`). */
   'unexplained',
 ] as const;
 export type CacheMissCause = (typeof CACHE_MISS_CAUSES)[number];
@@ -314,6 +321,64 @@ function feedbackMoves(now: Entry, before: Entry): boolean {
       before['cache_requested'] === 'provider_rules' &&
       reported(cacheWriteField(before)) !== undefined)
   );
+}
+
+/** Where the lifetime a gap is judged on came from (piece A-2a3): the predecessor's granted
+ *  split, or the lifetime it asked for. */
+export const CACHE_LIFETIME_SOURCES = ['written', 'asked'] as const;
+export type CacheLifetimeSource = (typeof CACHE_LIFETIME_SOURCES)[number];
+
+/**
+ * The gap before a missed request and the lifetime it is judged on (piece A-2a3): `gap_s` is the
+ * seconds between the predecessor's start and the request's, not rounded; the lifetime fields are
+ * present only when the predecessor records a lifetime.
+ */
+export type CacheMissGap =
+  { gap_s: number } | { gap_s: number; lifetime_s: number; lifetime_from: CacheLifetimeSource };
+
+/**
+ * The lifetime the predecessor's entry was granted or asked for: a 5-minute write above 0 first (when
+ * a request writes both, the entry ending at its last marker lives 5 minutes), then a 1-hour write
+ * above 0, then its `cache_lifetime_s` above 0 (a request that only read, or a write with no
+ * split); else none, as for every `provider_rules` request.
+ */
+function lifetimeOf(
+  before: Entry,
+): { lifetime_s: number; lifetime_from: CacheLifetimeSource } | undefined {
+  const split = before['cache_creation'];
+  if (plainObject(split)) {
+    const fiveMinutes = reported(split['ephemeral_5m_input_tokens']);
+    if (fiveMinutes !== undefined && fiveMinutes > 0) {
+      return { lifetime_s: 300, lifetime_from: 'written' };
+    }
+    const oneHour = reported(split['ephemeral_1h_input_tokens']);
+    if (oneHour !== undefined && oneHour > 0) {
+      return { lifetime_s: 3600, lifetime_from: 'written' };
+    }
+  }
+  const asked = before['cache_lifetime_s'];
+  if (typeof asked === 'number' && Number.isFinite(asked) && asked > 0) {
+    return { lifetime_s: asked, lifetime_from: 'asked' };
+  }
+  return undefined;
+}
+
+/**
+ * The gap between the predecessor's start and the request's, with the predecessor's lifetime:
+ * known only when both stamps parse and the difference is above 0. The one rule behind both
+ * `possibly_expired` and `cacheMissGaps`.
+ */
+function missGap(now: Entry, before: Entry): CacheMissGap | undefined {
+  const nowStart = now['request_start'];
+  const beforeStart = before['request_start'];
+  if (typeof nowStart !== 'string' || typeof beforeStart !== 'string') return undefined;
+  const nowMs = parseStamp(nowStart);
+  const beforeMs = parseStamp(beforeStart);
+  if (nowMs === undefined || beforeMs === undefined) return undefined;
+  const gap_s = (nowMs - beforeMs) / 1000;
+  if (!(gap_s > 0)) return undefined;
+  const lifetime = lifetimeOf(before);
+  return lifetime === undefined ? { gap_s } : { gap_s, ...lifetime };
 }
 
 /**
@@ -382,6 +447,10 @@ function causeAt(
   if (from === 'reference' && promptCompared && differs('prompt')) return 'prompt';
   if (differs('format')) return 'format';
   if (!sameSet(marks(now), marks(before))) return 'cache_settings';
+  const gap = missGap(now, before);
+  if (gap !== undefined && 'lifetime_s' in gap && gap.gap_s > gap.lifetime_s) {
+    return 'possibly_expired';
+  }
   return 'unexplained';
 }
 
@@ -394,4 +463,22 @@ export function cacheMissCauses(requests: unknown): (CacheMissCause | undefined)
   return cacheReadVerdicts(requests).map((verdict, i) =>
     verdict.outcome === 'missed' ? causeAt(requests, i, verdict.predecessor.from) : undefined,
   );
+}
+
+/**
+ * One entry per entry of `requests`, in the list's order (piece A-2a3): for a request
+ * `cacheReadVerdicts` calls `missed` whose gap is known, the gap and the lifetime it was judged on,
+ * whatever its cause; for every other, `undefined`. `[]` when `requests` is not an array.
+ *
+ * The gap's basis is the verdict's predecessor: inside one list it is one drive's clock; against
+ * the reference it is two drives' clocks, possibly two hosts'. Across drives the gap is never a
+ * safety fact: nothing destructive or order-bearing gates on it.
+ */
+export function cacheMissGaps(requests: unknown): (CacheMissGap | undefined)[] {
+  if (!Array.isArray(requests)) return [];
+  return cacheReadVerdicts(requests).map((verdict, i) => {
+    if (verdict.outcome !== 'missed') return undefined;
+    const before = cachePredecessor(requests, i);
+    return before === undefined ? undefined : missGap(requests[i] as Entry, before);
+  });
 }
