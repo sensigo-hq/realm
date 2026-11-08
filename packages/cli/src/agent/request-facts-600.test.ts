@@ -173,6 +173,7 @@ describe("a failed drive's usage is bounded before the write (issue #600 PR 2, A
         ...request({ request_index: 1 }),
         provider: 'module:p.mjs',
         request_id: expect.any(String),
+        request_in_call: 1,
       },
     ]);
   });
