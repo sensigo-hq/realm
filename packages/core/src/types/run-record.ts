@@ -532,8 +532,9 @@ export type CacheMarkedPart = (typeof CACHE_MARKED_PARTS)[number];
 
 /**
  * Caching 3-B (A6), 3-M (A-0): a SHA-256 for each part of what the request sent (64 lowercase hex):
- * `system`, and `tools`, `prompt` (the head on a split request, else the prompt as that request sent
- * it) and `format` where it had them; `cache_marked` says which parts carried a marker.
+ * `system`, and `tools`, `prompt` (the first characters Realm cut as the head on a split request,
+ * even when it went out whole; else the prompt as that request sent it) and `format` where it had
+ * them; `cache_marked` says which parts carried a marker.
  */
 export interface PrefixParts {
   tools?: string;
@@ -716,11 +717,13 @@ export interface UsageRecord {
   /** Caching 3-B (A6): the head's length as sent, after disclosure, in UTF-16 code units. */
   prefix_chars?: number;
   /** Caching 3-B (A6), 3-M (A-0): a SHA-256 for each part of what the request sent: `system`, and
-   *  `tools`, `prompt` (the head on a split request, else the prompt as that request sent it) and
-   *  `format` where it had them; `cache_marked` says which parts carried a marker. */
+   *  `tools`, `prompt` (the first characters Realm cut as the head on a split request, even when it
+   *  went out whole; else the prompt as that request sent it) and `format` where it had them;
+   *  `cache_marked` says which parts carried a marker. */
   prefix_parts?: PrefixParts;
-  /** Caching 3-B (A6): what carried a cache marker or the key on this request; absent after a
-   *  remembered drop (nothing carried one). */
+  /** Caching 3-B (A6): what carried a cache marker or the key on this request. Absent when nothing
+   *  did: under `--prompt-cache off`, after the endpoint refused the cache fields, on Anthropic's
+   *  tool-loop final request, and on an OpenAI request that carried neither a mark nor the key. */
   cache_marked?: CacheMarkedPart[];
   /** Caching 3-B (A6, C5): whether this request carried strict structured output or strict tool
    *  arguments (D3's `strict_sent`, renamed: `tool_args.tools[].strict_sent` already uses that

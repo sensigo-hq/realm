@@ -16,9 +16,10 @@
 // through a function value it cannot resolve.
 //
 // One opener: no module of the package opens a connection on a file through the loader
-// (`openDatabase` with anything but `':memory:'`) except the open (unit 7b's `open-file.ts`), which
-// `OPENERS` below names; the scan also sees the open's own call, so it cannot go blind. The schema
-// ladder's in-memory reference database is allowed anywhere.
+// (`openDatabase` with anything but `':memory:'`) except the open (unit 7b's `open-file.ts`) and the
+// maintenance entry's open of the copy it made (c6's `maintenance.ts`), which `OPENERS` below names;
+// the scan also sees their own calls, so it cannot go blind. The schema ladder's in-memory
+// reference database is allowed anywhere.
 //
 // Each assertion carries (1) the break that turns it red and (2) what it prints when it fails.
 import { readdirSync, statSync } from 'node:fs';
@@ -34,6 +35,8 @@ const LOADER = 'src/driver.ts';
 const OPENERS: Record<string, string> = {
   'src/open-file.ts':
     'the one open (unit 7b): it checks the file before any use and sets up a new one, and its reopen opens the same file again',
+  'src/maintenance.ts':
+    'the maintenance entry (c6): it opens the COPY it just made — a file no process holds — to convert and check it, never realm.db',
 };
 
 function productionFiles(dir: string, out: string[] = []): string[] {
@@ -249,7 +252,10 @@ describe('#616 unit 7a — the source laws of the open', () => {
     //     the open's calls, and the count of in-memory opens.
     expect({ opens, admitted, memorySeen: memory > 0 }).toEqual({
       opens: [],
-      admitted: ['src/open-file.ts: openDatabase(path)'],
+      admitted: [
+        'src/maintenance.ts: openDatabase(temporary)',
+        'src/open-file.ts: openDatabase(path)',
+      ],
       memorySeen: true,
     });
   });

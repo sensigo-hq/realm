@@ -4,13 +4,14 @@
 // double only needs to implement that faithfully; every other method throws if reached, proving
 // it never is (mirrors get-run-state-fidelity-gate.test.ts's own double).
 import { declared } from '../test-support/declared.js';
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { chmod } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   JsonWorkflowStore,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   DEFAULT_IDLE_THRESHOLD_MS,
+  storedCopyFaultError,
 } from '@sensigo/realm';
 import type { RunRecord, RunStore, WorkflowDefinition } from '@sensigo/realm';
 import { handleGetRunState } from './get-run-state.js';
@@ -283,6 +284,32 @@ describe('get_run_state — definition_unresolvable carries the composed sentenc
       expect(f?.reason).not.toContain('cannot be read (STATE_');
     } finally {
       await chmod(file, 0o644);
+      await h.cleanup();
+    }
+  });
+
+  it('#616 PR-2c c5c: a damaged copy with NO file (a database row) — the finding names the re-register act alone, never a file to remove', async () => {
+    const h = await makeTempHome();
+    try {
+      const ws = h.stores.workflowStore;
+      const err = storedCopyFaultError('wf', { kind: 'not_a_workflow', fault: 'no_steps' });
+      vi.spyOn(ws, 'get').mockRejectedValue(err);
+      const summary = await handleGetRunState(
+        { run_id: 'r1' },
+        { runStore: makeFullFidelityStore(makeRun()), workflowStore: ws },
+      );
+      const f = summary.run_health?.find((x) => x.kind === 'definition_unresolvable');
+      // (a) red when core's pathless branch is reverted: "; if it was never registered from a
+      //     source, remove the file (rm ) instead." ends the finding the agent polls; (b) prints the
+      //     status and the finding's reason.
+      expect({ status: summary.next_actions_status, reason: f?.reason }).toEqual({
+        status: 'workflow_unresolved',
+        reason:
+          `${err.message}. To end the run: realm run abandon r1. To repair: re-register the ` +
+          'workflow from its source (realm workflow register <path-to-workflow>), then retry.',
+      });
+    } finally {
+      vi.restoreAllMocks();
       await h.cleanup();
     }
   });

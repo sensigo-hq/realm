@@ -3,16 +3,39 @@
 // trace. npm, pip and Cargo do this at one catch at their entry, and keep the stack for unexpected
 // errors; so does this.
 //
-// The list has TWO members: a run store opened on a copy of a test location, and a home that cannot be
-// used (#616 PR-2a (i): HOME empty or not an absolute path, or no home at all). Every other error keeps
-// escaping loud, a `WorkflowError` included — "bugs stay loud" (`validate.ts`, #123); the writer's
-// fatal handler prints those with their stack. The code is read from the error's fields, never by
-// `instanceof`: the CLI and the library it loads can be separate copies.
+// The list: a run store opened on a copy of a test location; a home that cannot be used (#616 PR-2a
+// (i): HOME empty or not an absolute path, or no home at all); and the refusals of `realm db backup`
+// (#616 PR-2c c6) — its own two and those of the store's open that its maintenance entry can meet.
+// Every other error keeps escaping loud, a `WorkflowError` included — "bugs stay loud" (`validate.ts`,
+// #123); the writer's fatal handler prints those with their stack. The code is read from the error's
+// fields, never by `instanceof`: the CLI and the library it loads can be separate copies.
 
 /** The codes printed as one line. Each is a refusal an operator meets and can act on from its text. */
 const EXPECTED_CODES: ReadonlySet<string> = new Set([
   'STATE_TEST_CLOCK_FOREIGN',
   'STATE_HOME_UNUSABLE',
+  // `realm db backup`: a target inside the home, where anything exists, or that cannot be created;
+  // a home with no store file, or an empty one.
+  'STATE_STORE_BACKUP_REFUSED',
+  // `realm db backup`: the copy fails SQLite's quick check; the store file may be damaged.
+  'STATE_STORE_BACKUP_UNVERIFIED',
+  // The store's open, through the maintenance entry: this Node has no usable built-in SQLite.
+  'STATE_STORE_DRIVER_UNAVAILABLE',
+  // The store's open: the home is on a network or unrecognised filesystem.
+  'STATE_STORE_FILESYSTEM_REFUSED',
+  // The store's open: the home still holds the old JSON store's folders.
+  'STATE_HOME_HOLDS_LEGACY_STORE',
+  // The store's open: the home, or the store file, cannot be written.
+  'STATE_STORE_READONLY',
+  // The store's open: the file is not a Realm store this Realm can use (not SQLite, damaged, other
+  // settings).
+  'STATE_STORE_SETTINGS_REFUSED',
+  // The store's open: the file's tables are not what Realm writes for its version.
+  'STATE_STORE_SCHEMA_TAMPERED',
+  // The store's open: the file is older than any version this Realm holds a schema for.
+  'STATE_STORE_VERSION_OLDER',
+  // The store's open: a newer Realm migrated the file.
+  'STATE_STORE_VERSION_NEWER',
 ]);
 
 /**
