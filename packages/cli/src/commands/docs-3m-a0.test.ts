@@ -57,13 +57,16 @@ describe('caching 3-M A-0 — the record page', () => {
     );
   });
 
-  it('the cache_marked row: conversation, and the OpenAI request that carried neither', () => {
+  it('the cache_marked row: conversation, the tool-loop final request, and the OpenAI request that carried neither', () => {
+    // #896's words stay whole at the head of the list (`docs-896.test.ts` quotes them).
     // `conversation`: `anthropic-provider-tools-cache-899.test.ts` check 2 and core
     // `split-facts-3b.test.ts`; absent after a refusal: `gateway-rule-3b.test.ts` check 3; absent on
-    // an OpenAI request with neither: `openai-cache-key-3b.test.ts` check 4.
+    // the tool-loop final request: `anthropic-provider-tools-cache-899.test.ts` M5 (its body carries
+    // no `cache_control`) and check 2 (it records none); absent on an OpenAI request with neither:
+    // `openai-cache-key-3b.test.ts` check 4.
     claim(
       RECORD_PAGE,
-      "What carried a cache marker or the cache key: `system`, `prompt` (Anthropic, and OpenAI on GPT-5.6 and later), `conversation` (Anthropic's tool turns: the marker on the conversation so far) or `key` (OpenAI). Absent when nothing did: under `--prompt-cache off`, after the endpoint refused the cache fields, and on an OpenAI request that carried neither a mark nor the key.",
+      "What carried a cache marker or the cache key: `system`, `prompt` (Anthropic, and OpenAI on GPT-5.6 and later) or `key` (OpenAI), and on Anthropic's tool turns `conversation` (the marker on the conversation so far). Absent when nothing did: under `--prompt-cache off`, after the endpoint refused the cache fields, on Anthropic's tool-loop final request, and on an OpenAI request that carried neither a mark nor the key.",
     );
   });
 
