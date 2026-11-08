@@ -6,6 +6,7 @@ import {
   chooseAutoLifetime,
   keptCacheGaps,
   normalizeCacheAuto,
+  normalizeResponseId,
   type AutoPriceInput,
   type CacheAuto,
   type CacheAutoPrices,
@@ -168,6 +169,22 @@ function userContentWithHead(
     ],
     headSent: head,
   };
+}
+
+/**
+ * Caching 3-M (piece B1) — the id of Anthropic's answer as the request records it: `response_id`,
+ * kept only when it passes core's one check (`normalizeResponseId`). Called at both push sites
+ * (`makeRequest`, and the tool loop's `bounded`, which every turn, retry and the final extraction
+ * return through), so every request on the record, and B2's read of the drive's own list, sees
+ * only a checked id.
+ */
+function responseIdFacts(response: unknown): Partial<UsageRecord> {
+  const raw =
+    typeof response === 'object' && response !== null
+      ? (response as Record<string, unknown>)['id']
+      : undefined;
+  const id = normalizeResponseId(raw);
+  return id !== undefined ? { response_id: id } : {};
 }
 
 /**
@@ -691,7 +708,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
 
   /**
    * Issue #610 — what the tool loop's FINAL EXTRACTION records about itself: the response's
-   * `model`, the endpoint, and that Anthropic reports a lifetime split. No cache ask: that request
+   * `model`, the endpoint, and that Anthropic reports a lifetime split (and, added where it is
+   * pushed, the answer's `response_id`, caching 3-M B1). No cache ask: that request
    * carries no cache marker (issue #899), so any ask written here would be false. The main turns
    * record {@link requestFacts}. Never `provider`: `realm agent` stamps that. Caching 3-B (E3;
    * MA2-3B-IA1-12): also what a request sent without the cache fields records, after an endpoint
@@ -883,6 +901,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
           ...(this.cacheFields.rejected !== undefined
             ? { cache_controls_rejected: this.cacheFields.rejected }
             : {}),
+          // caching 3-M (piece B1): the answer's id, checked.
+          ...responseIdFacts(response),
         }),
       );
       return {
@@ -1098,7 +1118,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     // recorded. The record is pushed the instant the answer arrives, before any code reads it: a
     // throw while reading must not lose what was billed. A request that fails on the wire has no
     // record, as on the single-shot path. Issue #899: `facts` is what that request records about
-    // itself — a main turn what it asked to cache, the final extraction no ask.
+    // itself — a main turn what it asked to cache, the final extraction no ask. Caching 3-M (piece
+    // B1): every request pushed here also records its answer's checked id.
     const bounded = async (
       body: Rec,
       facts: (response: unknown, client: unknown) => Partial<UsageRecord>,
@@ -1107,12 +1128,10 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       const requestStart = new Date().toISOString();
       const response = await send(body);
       requests.push(
-        toUsageRecord(
-          requests.length,
-          requestStart,
-          readAnthropicUsage(response),
-          facts(response, client),
-        ),
+        toUsageRecord(requests.length, requestStart, readAnthropicUsage(response), {
+          ...facts(response, client),
+          ...responseIdFacts(response),
+        }),
       );
       return response;
     };

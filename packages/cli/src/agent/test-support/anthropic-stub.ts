@@ -123,6 +123,24 @@ interface HistoryMessage {
   content?: unknown;
 }
 
+/** Base62's digits, in the order Anthropic's ids use them. */
+const BASE62 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+
+/**
+ * Caching 3-M (piece B1) — a real-shaped answer id for the stub's `count`th request: `msg_01` and
+ * 22 base62 characters (every captured Anthropic id has this shape), so each request records its
+ * own answer's id and no two answers share one.
+ */
+export function stubAnswerId(count: number): string {
+  let n = count;
+  let digits = '';
+  do {
+    digits = BASE62.charAt(n % 62) + digits;
+    n = Math.floor(n / 62);
+  } while (n > 0);
+  return `msg_01${digits.padStart(22, '0')}`;
+}
+
 /**
  * Starts the stub on an ephemeral port. Always `close()` it in a `finally` — a leaked listener
  * keeps the vitest worker alive past the test.
@@ -205,7 +223,8 @@ export async function startAnthropicStub(options: AnthropicStubOptions): Promise
       };
 
       const payload = {
-        id: 'msg_1',
+        // caching 3-M (piece B1): a distinct id per request, from its count.
+        id: stubAnswerId(requests.length),
         type: 'message',
         role: 'assistant',
         ...(options.answeredModel === null

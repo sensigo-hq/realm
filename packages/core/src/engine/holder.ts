@@ -106,8 +106,10 @@ export const NAME_MAX_LENGTH = 200;
 /** The house marker for a name cut at the read bound (the shape of `capText`'s). */
 export const NAME_CAP_MARKER = '…[truncated]';
 
+/** The house control set: C0, DEL and C1. Exported inside core (caching 3-M B1's `response_id`
+ *  check), not from core's index. */
 // eslint-disable-next-line no-control-regex
-const CONTROL_CHAR = /[\u0000-\u001f\u007f-\u009f]/;
+export const CONTROL_CHAR = /[\u0000-\u001f\u007f-\u009f]/;
 const CHANNEL_RULE = /^[a-z0-9_-]{1,64}$/;
 
 /** The three words a refusal of a stated name gives as its reason, used verbatim everywhere. */

@@ -576,6 +576,12 @@ const USAGE_DISCLOSURE = {
     reason:
       "the request's place in its provider call: read by the reference lookup and by 3-M's comparison (piece A-2a); never operator words",
   },
+  // caching 3-M (piece B1): the provider's answer id.
+  response_id: {
+    surface: 'waived',
+    reason:
+      'No reader renders it: B2 will send it back to Anthropic as the earlier message when it asks why a request missed the cache.',
+  },
 } satisfies Record<keyof UsageRecord, DisclosureRoute>;
 
 describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader, or says why not', () => {
@@ -599,7 +605,7 @@ describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader,
     }
   });
 
-  it('the registry covers every UsageRecord field, and the waiver set is exactly the nine named above', () => {
+  it('the registry covers every UsageRecord field, and the waiver set is exactly the ten named above', () => {
     expect(Object.keys(USAGE_DISCLOSURE).sort()).toEqual([
       'cache_auto',
       'cache_controls_rejected',
@@ -629,6 +635,7 @@ describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader,
       'request_index',
       'request_start',
       'request_strict_sent',
+      'response_id',
       'uncached_input_tokens',
     ]);
     const waived = Object.entries(USAGE_DISCLOSURE)
@@ -649,7 +656,8 @@ describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader,
     // words come from the #311 drop facts), each for 3-M's comparison and the export. Caching 3-M
     // (piece A-1) makes the eighth: `reference`, the copied predecessor A-2's comparison reads.
     // Piece A-1b makes the ninth: `request_in_call`, the request's place in its provider call,
-    // which the reference lookup and A-2a's comparison read.
+    // which the reference lookup and A-2a's comparison read. Piece B1 makes the tenth:
+    // `response_id`, the provider's answer id, which no reader renders until B2 sends it back.
     expect(waived).toEqual([
       'cache_split_offered',
       'prefix_parts',
@@ -660,6 +668,7 @@ describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader,
       'request_index',
       'request_start',
       'request_strict_sent',
+      'response_id',
     ]);
   });
 });

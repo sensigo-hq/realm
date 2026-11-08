@@ -14,7 +14,7 @@
 // one shape, and each field inside it obeys the rule that field obeys on the request itself. Piece
 // A-1b: a request's `request_in_call`, its place in its provider call, is kept as a non-negative
 // safe integer or dropped.
-import { readStoredName } from './holder.js';
+import { CONTROL_CHAR, readStoredName } from './holder.js';
 import { normalizeCacheAuto } from '../economics/cache-lifetime.js';
 import {
   CACHE_CONTROL_FIELDS,
@@ -47,7 +47,8 @@ const NAME_FIELDS = [
  * is, or deleted. Caching 3-M (piece A-1): `reference` is kept only when its `from` is a word of
  * `CACHE_REFERENCE_SOURCES` and its `request_start` a string, or deleted whole; inside it, each
  * copied field passes the rule it passes here and is dropped alone when it fails, and any other key
- * (a `reference`, a `request_index`, a `request_in_call`) is dropped.
+ * (a `reference`, a `request_index`, a `request_in_call`) is dropped. Caching 3-M (piece B1):
+ * `response_id` is kept only when it passes `normalizeResponseId`, or deleted.
  * Every other field, and every entry that is not an object (a `null`, a number), passes through
  * unchanged. Total: it never throws, because it runs inside `recordDriveFailure`'s fence, where a
  * throw loses the record. It returns new objects; the input is not changed.
@@ -79,6 +80,24 @@ function boundFields(out: Record<string, unknown>): Record<string, unknown> {
     else out[field] = kept;
   }
   return out;
+}
+
+/** The longest answer id kept: pydantic-ai's bound on the id it sends back. */
+const RESPONSE_ID_MAX_CHARS = 256;
+
+/**
+ * Caching 3-M (piece B1) — the one check a request's `response_id` passes, at the provider adapter
+ * and at the write gate (`boundRequestFacts`): a string that starts `msg_`, is at most 256
+ * characters and holds no character of the house control set; anything else is `undefined`, so
+ * it is dropped with no marker. An id that fails would fail the request it is later sent back in.
+ */
+export function normalizeResponseId(value: unknown): string | undefined {
+  return typeof value === 'string' &&
+    value.startsWith('msg_') &&
+    value.length <= RESPONSE_ID_MAX_CHARS &&
+    !CONTROL_CHAR.test(value)
+    ? value
+    : undefined;
 }
 
 /** A SHA-256 as Realm writes it: 64 lowercase hex characters, no prefix. */
@@ -191,4 +210,5 @@ const SPLIT_FACT_NORMALIZERS: readonly [string, (value: unknown) => unknown][] =
   ['cache_key_sent', (v) => (v === true ? true : undefined)],
   ['reference', normalizeReference],
   ['request_in_call', nonNegativeSafeInteger],
+  ['response_id', normalizeResponseId],
 ];
