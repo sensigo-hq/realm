@@ -97,7 +97,6 @@ describe('the `x-` extension namespace — CLI disclosure (issue #559)', () => {
     dir = mkdtempSync(join(tmpdir(), 'realm-559-'));
     h = await makeTempHome();
     home = h.root;
-    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -313,35 +312,31 @@ describe('the `x-` extension namespace — CLI disclosure (issue #559)', () => {
   });
 
   it('the tail ORDER cell: not-run + extension + strict all compose, in that order', async () => {
-    // A hand-planted stored record (the `register`-writes shape, issue #553's own fixture idiom):
+    // A stored record planted through the registry's `register()` (issue #553's own fixture idiom):
     // source_dir/trust_root point at a tree that is then removed, so the project-extensions
     // check declares itself not-run; a top-level x-a key carries the extension clause; a
     // 'warn'-grade retry sub-key typo supplies the --strict-failing warning. All three fire on
     // one --registered --strict run, in the mandated order: not-run; extension; warning-strict.
     const tree = mkdtempSync(join(tmpdir(), 'realm-559-tree-'));
     mkdirSync(join(tree, 'wf'), { recursive: true });
-    writeFileSync(
-      join(home, '.realm', 'workflows', 'order-wf.json'),
-      JSON.stringify({
-        id: 'order-wf',
-        name: 'Order',
-        version: 1,
-        schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
-        origin: 'human',
-        'x-a': 1,
-        source_dir: join(tree, 'wf'),
-        trust_root: join(tree, 'wf'),
-        steps: {
-          s: {
-            description: 'd',
-            execution: 'auto',
-            timeout_seconds: 60,
-            retry: { max_attempts: 3, backoff: 'fixed', base_delay_ms: 10, bogus_retry_key: 1 },
-          },
+    await h.home.workflowStore.register({
+      id: 'order-wf',
+      name: 'Order',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      origin: 'human',
+      'x-a': 1,
+      source_dir: join(tree, 'wf'),
+      trust_root: join(tree, 'wf'),
+      steps: {
+        s: {
+          description: 'd',
+          execution: 'auto',
+          timeout_seconds: 60,
+          retry: { max_attempts: 3, backoff: 'fixed', base_delay_ms: 10, bogus_retry_key: 1 },
         },
-      }),
-      'utf8',
-    );
+      },
+    } as never);
     rmSync(tree, { recursive: true, force: true });
 
     await expect(

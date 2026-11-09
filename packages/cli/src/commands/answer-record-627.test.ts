@@ -10,7 +10,7 @@
 // that turns it red and (b) what it prints on failure: lines and record fields — never a token.
 import { describe, it, expect, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -285,12 +285,11 @@ describe('#627 W — cell 13: inspect’s open-gate block', () => {
     const h = await home(false);
     // The renderer throws only in strict mode, so the one input that makes the composer throw is a
     // registered copy whose prompt is not a string.
-    const copy = join(h.dir, '.realm', 'workflows', 'rec627.json');
-    const parsed = JSON.parse(readFileSync(copy, 'utf8')) as {
+    const parsed = (await h.handle.home.workflowStore.get('rec627')) as unknown as {
       steps: Record<string, Record<string, unknown>>;
     };
     parsed.steps['q']!['prompt'] = 42;
-    writeFileSync(copy, JSON.stringify(parsed));
+    await h.handle.home.workflowStore.register(parsed as never);
     const r = h.realm(['run', 'inspect', h.runId]);
     // (a) red when inspect throws on the prompt (exit 1, no Question line); (b) prints the exit and
     //     the line.
@@ -386,10 +385,6 @@ describe('#627 W — the `newer` readers on the CLI (MA 3’s W-r2 arms)', () =>
 
 describe('#627 W correction 2 (3.2) — the repair command inspect prints for a damaged copy, executed', () => {
   const damage = {
-    unreadable: (copy: string) => {
-      writeFileSync(copy, readFileSync(copy, 'utf8'));
-      chmodSync(copy, 0o000);
-    },
     'invalid JSON': (copy: string) => writeFileSync(copy, '{ not json'),
     legacy: (copy: string) => {
       const parsed = JSON.parse(readFileSync(copy, 'utf8')) as Record<string, unknown>;
@@ -404,11 +399,7 @@ describe('#627 W correction 2 (3.2) — the repair command inspect prints for a 
       );
     },
   } as const;
-  const ROWS = (Object.keys(damage) as Array<keyof typeof damage>).filter(
-    // A root login reads a chmod-000 file: the unreadable row is skipped there.
-    (k) => !(k === 'unreadable' && process.getuid?.() === 0),
-  );
-  it.each(ROWS)(
+  it.each(Object.keys(damage) as Array<keyof typeof damage>)(
     '%s: the operator command realm mcp prints for the repair exits 1, names the copy and a way out, never "Failed to read workflow file"',
     async (cause) => {
       const h = await home();

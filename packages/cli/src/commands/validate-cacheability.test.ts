@@ -12,6 +12,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 const CLI_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DIST_CLI = join(CLI_DIR, 'dist', 'index.js');
 const EXAMPLES = join(CLI_DIR, '..', '..', 'examples');
@@ -19,11 +20,14 @@ const ex = (name: string): string => join(EXAMPLES, name);
 
 let home: string;
 let base: string;
-beforeEach(() => {
+let h: TempHome;
+beforeEach(async () => {
   home = mkdtempSync(join(tmpdir(), 'realm-pr5-home-'));
   base = mkdtempSync(join(tmpdir(), 'realm-pr5-'));
+  h = await makeTempHome({ home: join(home, '.realm') });
 });
-afterEach(() => {
+afterEach(async () => {
+  await h.cleanup();
   rmSync(home, { recursive: true, force: true });
   rmSync(base, { recursive: true, force: true });
 });
@@ -1226,12 +1230,11 @@ describe('--json (C5; C3.6)', { timeout: 60_000 }, () => {
   });
 });
 
-/** A registered copy's file in the scratch registry, read and rewritten as JSON (D1's cells). */
-function editCopy(id: string, edit: (copy: Record<string, unknown>) => void): void {
-  const file = join(home, '.realm', 'workflows', `${id}.json`);
-  const copy = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+/** A registered copy, read from the scratch registry and registered again as edited (D1's cells). */
+async function editCopy(id: string, edit: (copy: Record<string, unknown>) => void): Promise<void> {
+  const copy = (await h.home.workflowStore.get(id)) as unknown as Record<string, unknown>;
   edit(copy);
-  writeFileSync(file, JSON.stringify(copy, null, 2));
+  await h.home.workflowStore.register(copy as never);
 }
 
 describe(
@@ -1295,10 +1298,10 @@ describe(
 
     // A copy shaped like one create_workflow made (origin agent, no trust_root): the reason differs,
     // the words do not. Break: the clause quotes the reason again (`no trust_root recorded …`).
-    it('G-3 (5): a create_workflow-shaped copy with --model: the same clause', () => {
+    it('G-3 (5): a create_workflow-shaped copy with --model: the same clause', async () => {
       const dir = project({ workflow: oneStep('agentmade') });
       expect(realm(['workflow', 'register', dir]).code).toBe(0);
-      editCopy('agentmade', (copy) => {
+      await editCopy('agentmade', (copy) => {
         copy['origin'] = 'agent';
         delete copy['trust_root'];
       });
@@ -1494,10 +1497,10 @@ describe(
     // `trust_root`. Break: the swap removed (no folder is recorded, so nothing else supplies the text:
     // each profile step is sized without it). (a) red when a line differs from register's, the
     // economics clause is missing with --model, or an `ℹ` note prints; (b) prints the lines.
-    it('G-1 (5): a copy shaped like one from before v0.14: sized as register sized it; with --model the G-3 clause; no note', () => {
+    it('G-1 (5): a copy shaped like one from before v0.14: sized as register sized it; with --model the G-3 clause; no note', async () => {
       const dir = twoProfiles();
       const registered = registerLines(dir);
-      editCopy('twoprof', (copy) => {
+      await editCopy('twoprof', (copy) => {
         delete copy['source_dir'];
         delete copy['trust_root'];
       });
@@ -1583,7 +1586,7 @@ describe(
     // WITHOUT its profile and no row prints. (a) red when the row is not on `second` alone, or `--json`
     // marks another step; (b) prints the lines and the causes. (2) A folder gone with the text stored
     // prints no row: "G-1 (1)" pins it.
-    it("G-2 (1): the copy lacks one profile's text, the folder present: the row on that step only; `--json` marks only it", () => {
+    it("G-2 (1): the copy lacks one profile's text, the folder present: the row on that step only; `--json` marks only it", async () => {
       const dir = project({
         workflow:
           'id: twoprof\nname: twoprof\nversion: 1\nsteps:\n' +
@@ -1596,7 +1599,7 @@ describe(
         },
       });
       expect(realm(['workflow', 'register', dir]).code).toBe(0);
-      editCopy('twoprof', (copy) => {
+      await editCopy('twoprof', (copy) => {
         delete (copy['resolved_profiles'] as Record<string, unknown>)['b'];
       });
       const lines = cacheLines(realm(['workflow', 'validate', '--registered', 'twoprof']).stdout);
@@ -1703,9 +1706,9 @@ describe(
 
     // (4) Breaks: read the stored entry unguarded (it throws after the lines: the exit code shows it),
     // or compare against nothing (`b` then named).
-    it("G-5 (4): the copy lacks `b`'s text, the folder present: G-2's row on b's steps, `b` in no note", () => {
+    it("G-5 (4): the copy lacks `b`'s text, the folder present: G-2's row on b's steps, `b` in no note", async () => {
       drift();
-      editCopy('drift', (copy) => {
+      await editCopy('drift', (copy) => {
         delete (copy['resolved_profiles'] as Record<string, unknown>)['b'];
       });
       const v = validate();
@@ -1720,9 +1723,9 @@ describe(
     });
 
     // (5) Break: read the raw stored map unguarded (it throws when `resolved_profiles` is absent).
-    it('G-5 (5): the copy holds no `resolved_profiles` at all, the folder present: no crash, every profile step the row, no note', () => {
+    it('G-5 (5): the copy holds no `resolved_profiles` at all, the folder present: no crash, every profile step the row, no note', async () => {
       drift();
-      editCopy('drift', (copy) => {
+      await editCopy('drift', (copy) => {
         delete copy['resolved_profiles'];
       });
       const v = validate();
@@ -1735,9 +1738,9 @@ describe(
     });
 
     // (6) Break: compare `content_hash` instead of the text (the stored entry has none).
-    it('G-5 (6): a stored entry with `content` but no `content_hash`, the file unchanged: no note', () => {
+    it('G-5 (6): a stored entry with `content` but no `content_hash`, the file unchanged: no note', async () => {
       drift();
-      editCopy('drift', (copy) => {
+      await editCopy('drift', (copy) => {
         delete (copy['resolved_profiles'] as Record<string, Record<string, unknown>>)['a']![
           'content_hash'
         ];
@@ -1791,9 +1794,9 @@ describe(
     // (10) The copy's recorded `source_dir` is `C:\x`, not an absolute path here: the audit resolves it
     // against the shell's working folder, where a same-named DECOY holds a different `a.md`. Break: drop
     // the absolute-path guard (the decoy's file is then compared: a note).
-    it("G-5 (10): a recorded folder `C:\\x` with a decoy in the working folder: no note, the copy's sizes", () => {
+    it("G-5 (10): a recorded folder `C:\\x` with a decoy in the working folder: no note, the copy's sizes", async () => {
       const { dir, registered } = drift();
-      editCopy('drift', (copy) => {
+      await editCopy('drift', (copy) => {
         copy['source_dir'] = 'C:\\x';
       });
       const decoy = join(base, 'C:\\x');

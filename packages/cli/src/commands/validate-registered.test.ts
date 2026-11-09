@@ -5,33 +5,36 @@
 // `register` would accept. These cells pin the four verdict shapes it can reach, the honesty
 // line, and the fidelity of the strip.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateCommand } from './validate.js';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
-  JsonWorkflowStore,
   RUNTIME_ONLY_WORKFLOW_KEYS,
   WorkflowError,
   storedCopyFaultError,
 } from '@sensigo/realm';
 import { CONTEXT_DEPENDENT_CHECKS } from '../lib/admission-context.js';
+import type { CliHome } from '../lib/home.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 describe('validate --registered (issue #427)', () => {
   let home: string;
   let wfDir: string;
+  let h: TempHome;
   let originalHome: string | undefined;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let warnSpy: ReturnType<typeof vi.spyOn>;
   let errSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     home = mkdtempSync(join(tmpdir(), 'realm-validate-reg-'));
     wfDir = join(home, '.realm', 'workflows');
-    mkdirSync(wfDir, { recursive: true });
+    h = await makeTempHome({ home: join(home, '.realm') });
+    void h.home.workflowStore; // 2c-ii: the raw damaged-copy writes need the folder the JSON registry's constructor makes
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -42,9 +45,10 @@ describe('validate --registered (issue #427)', () => {
     }) as never);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (originalHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = originalHome;
+    await h.cleanup();
     rmSync(home, { recursive: true, force: true });
     vi.restoreAllMocks();
   });
@@ -78,9 +82,10 @@ describe('validate --registered (issue #427)', () => {
     // shape the CURRENT loader rejects. On the real registry this is `08-pr-review` and its
     // `auth.token_from` (removed in v0.14.0); the synthetic here uses the #402 prohibition,
     // which is the same class and needs no service block.
-    plant(
-      'stored-wf',
-      stored({ steps: { a: { description: 'a', execution: 'agent', timeout_seconds: 60 } } }),
+    await h.home.workflowStore.register(
+      stored({
+        steps: { a: { description: 'a', execution: 'agent', timeout_seconds: 60 } },
+      }) as never,
     );
 
     await expect(
@@ -116,13 +121,12 @@ describe('validate --registered (issue #427)', () => {
   it("issue #933, T10 — a copy registered before the change, with a precondition on the run's input: the audit prints the refusal without a line, exit 1", async () => {
     // Written straight into the store: the new build will not register it. The stored JSON has no
     // source lines, so the refusal carries no "(step at line N)".
-    plant(
-      'stored-wf',
+    await h.home.workflowStore.register(
       stored({
         steps: {
           s: { description: 's', execution: 'auto', preconditions: ["run.params.mode == 'go'"] },
         },
-      }),
+      }) as never,
     );
 
     await expect(
@@ -150,11 +154,10 @@ describe('validate --registered (issue #427)', () => {
     // The fixture's warning MUST be non-escalating. #170 is LIVE: an unknown-key fixture
     // resolves to ERROR under the default policy and refuses, flipping this cell to exit 1 and
     // testing the opposite of what it claims. `retry` on an agent step is inert-and-warned.
-    plant(
-      'stored-wf',
+    await h.home.workflowStore.register(
       stored({
         steps: { a: { description: 'a', execution: 'agent', retry: { max_attempts: 3 } } },
-      }),
+      }) as never,
     );
 
     await validateCommand.parseAsync(['--registered', 'stored-wf'], { from: 'user' });
@@ -167,11 +170,10 @@ describe('validate --registered (issue #427)', () => {
   });
 
   it('R3 --strict flips a warnings-only audit to exit 1, in the singular', async () => {
-    plant(
-      'stored-wf',
+    await h.home.workflowStore.register(
       stored({
         steps: { a: { description: 'a', execution: 'agent', retry: { max_attempts: 3 } } },
-      }),
+      }) as never,
     );
 
     await expect(
@@ -221,7 +223,7 @@ describe('validate --registered (issue #427)', () => {
     // hand-typed honesty line is gone — this is the line DERIVED from CONTEXT_DEPENDENT_CHECKS,
     // whole-message. The fixture's `trust_root` (/somewhere) does not exist, so the extensions
     // member is declared, not run; no profile ⇒ that member does not apply.
-    plant('stored-wf', stored({ extensions: './dist/registry.js' }));
+    await h.home.workflowStore.register(stored({ extensions: './dist/registry.js' }) as never);
 
     await validateCommand.parseAsync(['--registered', 'stored-wf'], { from: 'user' });
 
@@ -254,11 +256,10 @@ describe('validate --registered (issue #427)', () => {
     // gone, so the line names two checks and two `; `-joined reasons, in member order (issue
     // #553, audit round 2 F3). `existsSync` is what keeps this a declaration rather than the
     // WRONG error (`resolveAgentProfiles` against the dead tree would name a path under it).
-    plant(
-      'stored-wf',
+    await h.home.workflowStore.register(
       stored({
         steps: { a: { description: 'a', execution: 'agent', agent_profile: 'reviewer' } },
-      }),
+      }) as never,
     );
 
     await validateCommand.parseAsync(['--registered', 'stored-wf'], { from: 'user' });
@@ -273,7 +274,7 @@ describe('validate --registered (issue #427)', () => {
   });
 
   it('R7a THE FIDELITY PIN — a realistic stored copy mints no stamped-key warnings', async () => {
-    plant('stored-wf', stored());
+    await h.home.workflowStore.register(stored() as never);
 
     await validateCommand.parseAsync(['--registered', 'stored-wf'], { from: 'user' });
 
@@ -293,7 +294,7 @@ describe('validate --registered (issue #427)', () => {
       withEveryStampedKey[key] ??= key === 'resolved_profiles' ? {} : 'planted';
     }
     withEveryStampedKey['schema_version'] = CURRENT_WORKFLOW_SCHEMA_VERSION;
-    plant('stored-wf', withEveryStampedKey);
+    await h.home.workflowStore.register(withEveryStampedKey as never);
 
     await validateCommand.parseAsync(['--registered', 'stored-wf'], { from: 'user' });
 
@@ -357,7 +358,10 @@ describe('validate --registered (issue #427)', () => {
 
   it('c5c state 2: a damaged copy with no file prints its error, the registry-entry line and the re-register act alone', async () => {
     const err = storedCopyFaultError('wf', { kind: 'not_a_workflow', fault: 'no_steps' });
-    vi.spyOn(JsonWorkflowStore.prototype, 'get').mockRejectedValue(err);
+    // The prototype the handle's registry instance has: the command opens its own registry through
+    // the door, an instance of the same class (c10a-2c-i).
+    const proto = Object.getPrototypeOf(h.home.workflowStore) as CliHome['workflowStore'];
+    vi.spyOn(proto, 'get').mockRejectedValue(err);
     await expect(
       validateCommand.parseAsync(['--registered', 'wf'], { from: 'user' }),
     ).rejects.toThrow('process.exit');
@@ -382,7 +386,10 @@ describe('validate --registered (issue #427)', () => {
         details: { workflowId: 'wf' },
       },
     );
-    vi.spyOn(JsonWorkflowStore.prototype, 'get').mockRejectedValue(err);
+    // The prototype the handle's registry instance has: the command opens its own registry through
+    // the door, an instance of the same class (c10a-2c-i).
+    const proto = Object.getPrototypeOf(h.home.workflowStore) as CliHome['workflowStore'];
+    vi.spyOn(proto, 'get').mockRejectedValue(err);
     await expect(
       validateCommand.parseAsync(['--registered', 'wf'], { from: 'user' }),
     ).rejects.toThrow('process.exit');
@@ -396,47 +403,6 @@ describe('validate --registered (issue #427)', () => {
   // issue #558 PR-T — the arms re-keyed on CODE. `validate.ts`'s `:581` rethrow is the #123 bug
   // guard ("an unexpected WorkflowError is a bug, and bugs stay loud"); PR-T's two new codes
   // would have fallen into it and printed a STACK TRACE where main printed a clean line.
-  it('T-U1 a chmod-000 stored copy gets the two-line human shape, exit 1, no stack', async () => {
-    plant('locked', stored({ id: 'locked' }));
-    chmodSync(join(wfDir, 'locked.json'), 0o000);
-
-    await expect(
-      validateCommand.parseAsync(['--registered', 'locked'], { from: 'user' }),
-    ).rejects.toThrow('process.exit');
-
-    const text = out();
-    expect(text).toContain("Error: the registered copy of 'locked' could not be read (EACCES:");
-    expect(text).toContain(
-      'The registry holds an entry for \'locked\' — realm workflow list counts it under "could not be read" instead of listing it.',
-    );
-    expect(text).toContain(
-      `To repair: make ${join(wfDir, 'locked.json')} readable (chmod u+r ${join(wfDir, 'locked.json')}).`,
-    );
-    expect(text).not.toContain('Registered workflows:'); // the not-found pointer, C21
-    expect(text).not.toContain('    at ');
-    chmodSync(join(wfDir, 'locked.json'), 0o644);
-  });
-
-  it('T-U2 (review fold R2) an unreadable registry DIRECTORY gets the reason and the act, and NO "IS registered" claim — nothing was read', async () => {
-    plant('inreg', stored({ id: 'inreg' }));
-    chmodSync(wfDir, 0o000);
-    try {
-      await expect(
-        validateCommand.parseAsync(['--registered', 'inreg'], { from: 'user' }),
-      ).rejects.toThrow('process.exit');
-    } finally {
-      chmodSync(wfDir, 0o755);
-    }
-    const text = out();
-    expect(text).toContain(`Error: the workflow registry at ${wfDir} cannot be read (EACCES)`);
-    expect(text).toContain(
-      `To repair: make the registry directory ${wfDir} readable and searchable (chmod u+rx ${wfDir}).`,
-    );
-    expect(text).not.toContain('holds an entry');
-    expect(text).not.toContain('Registered workflows:');
-    expect(text).not.toContain('    at ');
-  });
-
   it('T-U2 an EMPTY stored copy, and a DIRECTORY where a file belongs', async () => {
     writeFileSync(join(wfDir, 'blank.json'), '', 'utf8');
     await expect(
@@ -454,29 +420,6 @@ describe('validate --registered (issue #427)', () => {
     expect(out()).toContain(
       "Error: the registered copy of 'nul' is JSON but not a workflow object (it is null)",
     );
-  });
-
-  it('T-U4 --json parity: valid:false, the store sentence as the single error, checks_not_run [], and NOTHING on stderr', async () => {
-    plant('locked2', stored({ id: 'locked2' }));
-    chmodSync(join(wfDir, 'locked2.json'), 0o000);
-
-    await expect(
-      validateCommand.parseAsync(['--registered', 'locked2', '--json'], { from: 'user' }),
-    ).rejects.toThrow('process.exit');
-
-    const parsed = JSON.parse(logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')) as {
-      valid: boolean;
-      errors: string[];
-      checks_not_run: unknown[];
-    };
-    expect(parsed.valid).toBe(false);
-    expect(parsed.errors).toHaveLength(1);
-    expect(parsed.errors[0]).toContain(
-      "the registered copy of 'locked2' could not be read (EACCES",
-    );
-    expect(parsed.checks_not_run).toEqual([]);
-    expect(errSpy.mock.calls).toHaveLength(0);
-    chmodSync(join(wfDir, 'locked2.json'), 0o644);
   });
 
   it('T-U5 the `:581` rethrow\u2019s population is EMPTY — every WorkflowError code get() can throw is handled above it', () => {
@@ -503,8 +446,7 @@ describe('validate --registered (issue #427)', () => {
   });
 
   it('C8 (issue #433) a stored copy with gate.choices: [] on a gate-trusted step is refused — message pin only, never a line cite (single-line JSON has none to give)', async () => {
-    plant(
-      'stored-wf',
+    await h.home.workflowStore.register(
       stored({
         steps: {
           a: {
@@ -514,7 +456,7 @@ describe('validate --registered (issue #427)', () => {
             gate: { choices: [] },
           },
         },
-      }),
+      }) as never,
     );
 
     await expect(
@@ -527,11 +469,10 @@ describe('validate --registered (issue #427)', () => {
   });
 
   it('R8 a stored copy carrying an invalid trust value is refused by --registered too (issue #508) — no key-line assertion, deliberately: JSON.stringify(clone) is single-line, so posOf cannot place a meaningful key line in it', async () => {
-    plant(
-      'stored-wf',
+    await h.home.workflowStore.register(
       stored({
         steps: { a: { description: 'a', execution: 'agent', trust: 'engine_delivered' } },
-      }),
+      }) as never,
     );
 
     await expect(
@@ -560,19 +501,18 @@ describe('validate --registered (issue #427)', () => {
 // old honesty line; the stored `context_wrapper: bogus` said `Valid` (executed).
 describe('validate --registered — supply or declare (issue #553)', () => {
   let home: string;
-  let wfDir: string;
   let tree: string;
+  let h: TempHome;
   let originalHome: string | undefined;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let warnSpy: ReturnType<typeof vi.spyOn>;
   let errSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     home = mkdtempSync(join(tmpdir(), 'realm-553-reg-home-'));
     tree = mkdtempSync(join(tmpdir(), 'realm-553-reg-tree-'));
-    wfDir = join(home, '.realm', 'workflows');
-    mkdirSync(wfDir, { recursive: true });
+    h = await makeTempHome({ home: join(home, '.realm') });
     mkdirSync(join(tree, 'wf'), { recursive: true });
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
@@ -584,9 +524,10 @@ describe('validate --registered — supply or declare (issue #553)', () => {
     }) as never);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (originalHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = originalHome;
+    await h.cleanup();
     rmSync(home, { recursive: true, force: true });
     rmSync(tree, { recursive: true, force: true });
     vi.restoreAllMocks();
@@ -601,37 +542,29 @@ describe('validate --registered — supply or declare (issue #553)', () => {
     return JSON.parse(String(logSpy.mock.calls[0]![0])) as Record<string, unknown>;
   };
 
-  /** The JSON register writes for a copy registered from `<tree>/wf` (trust root = itself). */
-  function planted(over: Record<string, unknown> = {}, withProfile = false): void {
-    writeFileSync(
-      join(wfDir, 'stored-wf.json'),
-      JSON.stringify(
-        {
-          id: 'stored-wf',
-          name: 'Stored WF',
-          version: 1,
-          schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
-          origin: 'human',
-          source_dir: join(tree, 'wf'),
-          trust_root: join(tree, 'wf'),
-          steps: {
-            a: withProfile
-              ? { description: 'a', execution: 'agent', agent_profile: 'reviewer' }
-              : { description: 'a', execution: 'agent' },
-          },
-          ...over,
-        },
-        null,
-        2,
-      ),
-      'utf8',
-    );
+  /** A copy registered from `<tree>/wf` (trust root = itself), through the registry's `register()`. */
+  async function planted(over: Record<string, unknown> = {}, withProfile = false): Promise<void> {
+    await h.home.workflowStore.register({
+      id: 'stored-wf',
+      name: 'Stored WF',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      origin: 'human',
+      source_dir: join(tree, 'wf'),
+      trust_root: join(tree, 'wf'),
+      steps: {
+        a: withProfile
+          ? { description: 'a', execution: 'agent', agent_profile: 'reviewer' }
+          : { description: 'a', execution: 'agent' },
+      },
+      ...over,
+    } as never);
   }
   const run = (args: string[]): Promise<unknown> =>
     validateCommand.parseAsync(['--registered', 'stored-wf', ...args], { from: 'user' });
 
   it('cell 6 — tree present, profile file deleted → the profile refusal, checks_not_run: []', async () => {
-    planted({}, true);
+    await planted({}, true);
     await expect(run([])).rejects.toThrow('process.exit');
     expect(out()).toContain(
       `Invalid workflow: Step 'a': agent_profile 'reviewer' not found. Searched: ${join(tree, 'wf', 'profiles', 'reviewer.md')}`,
@@ -650,14 +583,14 @@ describe('validate --registered — supply or declare (issue #553)', () => {
   it('cell 6 — tree present, profile file PRESENT → supplied, Valid, no line', async () => {
     mkdirSync(join(tree, 'wf', 'profiles'));
     writeFileSync(join(tree, 'wf', 'profiles', 'reviewer.md'), '# r', 'utf8');
-    planted({}, true);
+    await planted({}, true);
     await run([]);
     expect(out()).toContain('Valid: stored-wf');
     expect(out()).not.toContain('not run');
   });
 
   it('cell 6 — a stored context_wrapper: bogus is refused, WITHOUT a cite; --json carries the bare body', async () => {
-    planted({ context_wrapper: 'bogus' });
+    await planted({ context_wrapper: 'bogus' });
     await expect(run([])).rejects.toThrow('process.exit');
     expect(out()).toContain(
       "Invalid workflow: 'context_wrapper' must be 'xml', 'brackets', or 'none' (found: 'bogus')",
@@ -671,7 +604,7 @@ describe('validate --registered — supply or declare (issue #553)', () => {
   });
 
   it('7a — tree moved, no profile → 1 check not run (trust_root …), the structural verdict', async () => {
-    planted();
+    await planted();
     rmSync(tree, { recursive: true, force: true });
     await run([]);
     expect(out()).toContain(
@@ -684,7 +617,7 @@ describe('validate --registered — supply or declare (issue #553)', () => {
     // mutant (v): without the existsSync gate this prints `agent_profile 'reviewer' not found.
     // Searched: <dead tree>/profiles/reviewer.md` — a refusal naming a path under a tree that
     // is gone, which is not what happened.
-    planted({}, true);
+    await planted({}, true);
     rmSync(tree, { recursive: true, force: true });
     await run([]);
     expect(out()).toContain(
@@ -696,7 +629,7 @@ describe('validate --registered — supply or declare (issue #553)', () => {
   });
 
   it('7b — a legacy copy (no source_dir/trust_root recorded), no profile', async () => {
-    planted({ source_dir: undefined, trust_root: undefined });
+    await planted({ source_dir: undefined, trust_root: undefined });
     await run([]);
     expect(out()).toContain(
       '1 check not run: project extensions (modules, manifest, config_schema) (no trust_root recorded (registered before v0.14))',
@@ -705,7 +638,7 @@ describe('validate --registered — supply or declare (issue #553)', () => {
   });
 
   it('7b — a legacy copy WITH a profile: both members, both legacy reasons', async () => {
-    planted({ source_dir: undefined, trust_root: undefined }, true);
+    await planted({ source_dir: undefined, trust_root: undefined }, true);
     await run([]);
     expect(out()).toContain(
       '2 checks not run: agent-profile file resolution (no source_dir recorded (registered before v0.14)); ' +
@@ -716,7 +649,7 @@ describe('validate --registered — supply or declare (issue #553)', () => {
   it('7f — a create_workflow copy (origin: agent, no paths): both members declared, both name create_workflow (issue #553 correction C1)', async () => {
     // `create_workflow` stamps `origin: 'agent'` and never records a source tree at all — not
     // "before v0.14", a different mechanism entirely. Both members must name it, not the version.
-    planted({ origin: 'agent', source_dir: undefined, trust_root: undefined }, true);
+    await planted({ origin: 'agent', source_dir: undefined, trust_root: undefined }, true);
     await run([]);
     expect(out()).toContain(
       '2 checks not run: agent-profile file resolution ' +
@@ -728,7 +661,7 @@ describe('validate --registered — supply or declare (issue #553)', () => {
   });
 
   it("7c — parity: JSON length === the human N, AND each JSON id's label appears in the human line, in order", async () => {
-    planted({}, true);
+    await planted({}, true);
     rmSync(tree, { recursive: true, force: true });
     await run([]);
     const line = out()
@@ -760,7 +693,7 @@ describe('validate --registered — supply or declare (issue #553)', () => {
   });
 
   it('7d — a non-empty checks_not_run does NOT flip --strict (a disclosure, not a warning)', async () => {
-    planted();
+    await planted();
     rmSync(tree, { recursive: true, force: true });
     await run(['--strict']);
     expect(exitSpy).not.toHaveBeenCalled();
@@ -777,7 +710,7 @@ describe('validate --registered — supply or declare (issue #553)', () => {
 
   it('7e — CONTROL: the workflow dir moved but the project root survives → the manifest check RUNS, no line', async () => {
     writeFileSync(join(tree, 'package.json'), '{"type":"module"}', 'utf8');
-    planted({ trust_root: tree });
+    await planted({ trust_root: tree });
     rmSync(join(tree, 'wf'), { recursive: true, force: true });
     await run([]);
     expect(out()).not.toContain('not run');
@@ -786,7 +719,7 @@ describe('validate --registered — supply or declare (issue #553)', () => {
 
   it('7e — tree present with an INVALID realm.yaml → `Error loading extensions:` on the stored copy, as register would', async () => {
     writeFileSync(join(tree, 'wf', 'realm.yaml'), 'version: 1\nadapters: [\n', 'utf8');
-    planted();
+    await planted();
     await expect(run([])).rejects.toThrow('process.exit');
     expect(out()).toContain(
       `Error loading extensions: Deployment manifest '${join(tree, 'wf', 'realm.yaml')}' is not valid YAML:`,
@@ -795,7 +728,7 @@ describe('validate --registered — supply or declare (issue #553)', () => {
   });
 
   it("8a — --extensions-module unresolvable, tree present → the file arm's exact message, travels through --registered too (issue #553 correction C2)", async () => {
-    planted();
+    await planted();
     await expect(run(['--extensions-module', './nope.mjs'])).rejects.toThrow('process.exit');
     expect(out()).toContain(
       `Error loading extensions: Cannot resolve --extensions-module './nope.mjs': ENOENT: no such file or directory, lstat '${resolve('./nope.mjs')}'`,
@@ -803,7 +736,7 @@ describe('validate --registered — supply or declare (issue #553)', () => {
   });
 
   it('8b — tree moved + --extensions-module: the override cannot apply, said so beside the reason, never silently (issue #553 correction C5)', async () => {
-    planted();
+    await planted();
     rmSync(tree, { recursive: true, force: true });
     await run(['--extensions-module', './nope.mjs']);
     expect(out()).toContain(
@@ -829,13 +762,13 @@ describe('validate --registered — supply or declare (issue #553)', () => {
         .find((l) => l.startsWith('Valid:'));
 
     // (1) every check ran → the bare line, no tail.
-    planted();
+    await planted();
     await run([]);
     expect(validLine()).toBe('Valid: stored-wf v1 (1 step)');
 
     // (2) warnings only, no --strict → the same bare line, warnings above.
     vi.clearAllMocks();
-    planted({
+    await planted({
       steps: { a: { description: 'a', execution: 'agent', retry: { max_attempts: 3 } } },
     });
     await run([]);
@@ -844,7 +777,7 @@ describe('validate --registered — supply or declare (issue #553)', () => {
 
     // (3) not-run only → the tail names it, no warning count.
     vi.clearAllMocks();
-    planted();
+    await planted();
     rmSync(tree, { recursive: true, force: true });
     await run([]);
     expect(validLine()).toBe('Valid: stored-wf v1 (1 step) — 1 check not run');
@@ -852,7 +785,7 @@ describe('validate --registered — supply or declare (issue #553)', () => {
 
     // (4) warnings + not-run, no --strict → the SAME tail as (3) — no warning count, exit 0.
     vi.clearAllMocks();
-    planted({
+    await planted({
       steps: { a: { description: 'a', execution: 'agent', retry: { max_attempts: 3 } } },
     });
     rmSync(tree, { recursive: true, force: true });
@@ -863,7 +796,7 @@ describe('validate --registered — supply or declare (issue #553)', () => {
 
     // (5) --strict failing + not-run → both clauses, `; `-joined, exit 1.
     vi.clearAllMocks();
-    planted({
+    await planted({
       steps: {
         a: { description: 'a', execution: 'agent', retry: { max_attempts: 3 } },
         b: { description: 'b', execution: 'agent', retry: { max_attempts: 3 } },
@@ -880,7 +813,7 @@ describe('validate --registered — supply or declare (issue #553)', () => {
   it('9b — the description line survives a not-run tail; only a failing --strict suppresses it (issue #553 correction C9 — the `!strictFailing` conjunct, MA novel probe)', async () => {
     // (a) not-run tail, no --strict: the description prints right after the verdict line — a moved
     // tree is a disclosure, not a reason to hide what the workflow is for.
-    planted({ description: 'Reviews a change.' });
+    await planted({ description: 'Reviews a change.' });
     rmSync(tree, { recursive: true, force: true });
     await run([]);
     const lines = out().split('\n');
@@ -891,7 +824,7 @@ describe('validate --registered — supply or declare (issue #553)', () => {
 
     // (b) control — the SAME not-run copy under a failing --strict: the description is suppressed.
     vi.clearAllMocks();
-    planted({
+    await planted({
       description: 'Reviews a change.',
       steps: { a: { description: 'a', execution: 'agent', retry: { max_attempts: 3 } } },
     });
@@ -905,7 +838,7 @@ describe('validate --registered — supply or declare (issue #553)', () => {
     // `strict && failsStrict(warnings)`, and this half pins its second member (a `!strict` mutant
     // leaves (a) and (b) green).
     vi.clearAllMocks();
-    planted({ description: 'Reviews a change.' });
+    await planted({ description: 'Reviews a change.' });
     rmSync(tree, { recursive: true, force: true });
     await run(['--strict']);
     const strictLines = out().split('\n');

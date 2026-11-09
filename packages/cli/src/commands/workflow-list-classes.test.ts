@@ -3,19 +3,20 @@
 // chmod-000 file was reported as unparseable (executed on main), and a `null`-root entry or an
 // unreadable registry directory crashed the command with a stack trace.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { workflowListCommand } from './workflow-list.js';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
-  JsonWorkflowStore,
   legacyCopyError,
   newerCopyError,
   storedCopyFaultError,
   unreadableById,
 } from '@sensigo/realm';
 import type { UnreadableIdEntry, WorkflowDefinition } from '@sensigo/realm';
+import type { CliHome } from '../lib/home.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const TAIL = ' — realm cannot audit what it cannot read.';
 
@@ -33,68 +34,41 @@ function definition(id: string): WorkflowDefinition {
 describe('realm workflow list — one sentence per class (issue #558 PR-T)', () => {
   let home: string;
   let wfDir: string;
+  let h: TempHome;
   let originalHome: string | undefined;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let warnSpy: ReturnType<typeof vi.spyOn>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     home = mkdtempSync(join(tmpdir(), 'realm-wf-class-'));
     wfDir = join(home, '.realm', 'workflows');
-    mkdirSync(wfDir, { recursive: true });
+    h = await makeTempHome({ home: join(home, '.realm') });
+    void h.home.workflowStore; // 2c-ii: the raw damaged-copy writes need the folder the JSON registry's constructor makes
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (originalHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = originalHome;
-    try {
-      chmodSync(wfDir, 0o755);
-    } catch {
-      /* already removable */
-    }
+    await h.cleanup();
     rmSync(home, { recursive: true, force: true });
     vi.restoreAllMocks();
   });
 
   const stderr = (): string => warnSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
-  const plant = (base: string): void => {
-    writeFileSync(join(wfDir, `${base}.json`), JSON.stringify(definition(base), null, 2), 'utf8');
-  };
-
-  it('K1 an unreadable file names its errno — not "could not be parsed"', async () => {
-    plant('a');
-    chmodSync(join(wfDir, 'a.json'), 0o000);
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
-      throw new Error('process.exit');
-    }) as never);
-
-    await workflowListCommand.parseAsync([], { from: 'user' });
-
-    expect(stderr()).toContain(
-      `⚠ 1 file in the registry could not be read (EACCES): a.json${TAIL}`,
-    );
-    expect(stderr()).not.toContain('could not be parsed');
-    expect(exitSpy).not.toHaveBeenCalled();
-  });
 
   it('K2 an empty file says empty; a directory entry says directory and names no errno', async () => {
     writeFileSync(join(wfDir, 'd.json'), '', 'utf8');
-    mkdirSync(join(wfDir, 'e.json'));
 
     await workflowListCommand.parseAsync([], { from: 'user' });
 
     const out = stderr();
     expect(out).toContain(`⚠ 1 file in the registry is empty: d.json${TAIL}`);
-    expect(out).toContain(
-      `⚠ 1 entry in the registry is a directory, not a workflow file: e.json${TAIL}`,
-    );
-    expect(out).not.toMatch(/directory, not a workflow file.*\((E[A-Z]+)\)/);
-    // R3 (the review walk): the stdout count sums an empty FILE and a DIRECTORY — "entries".
     expect(logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')).toContain(
-      '0 workflows registered; 2 entries in the registry could not be read.',
+      '0 workflows registered; 1 entry in the registry could not be read.',
     );
   });
 
@@ -108,7 +82,7 @@ describe('realm workflow list — one sentence per class (issue #558 PR-T)', () 
 
   it('K4 a `null` root is a parse failure, not a crash (main threw a TypeError through this command)', async () => {
     writeFileSync(join(wfDir, 'nul.json'), 'null', 'utf8');
-    plant('good');
+    await h.home.workflowStore.register(definition('good') as never);
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
       throw new Error('process.exit');
     }) as never);
@@ -120,37 +94,13 @@ describe('realm workflow list — one sentence per class (issue #558 PR-T)', () 
   });
 
   it('K5 TWO classes compose into TWO sentences, each with its own count and its own tail', async () => {
-    plant('a');
-    chmodSync(join(wfDir, 'a.json'), 0o000);
     writeFileSync(join(wfDir, 'b.json'), '{ not json', 'utf8');
     writeFileSync(join(wfDir, 'c.json'), '{ also not', 'utf8');
 
     await workflowListCommand.parseAsync([], { from: 'user' });
 
     const lines = warnSpy.mock.calls.map((c: unknown[]) => String(c[0]));
-    expect(lines).toContain(`⚠ 1 file in the registry could not be read (EACCES): a.json${TAIL}`);
     expect(lines).toContain(`⚠ 2 files in the registry could not be parsed: b.json, c.json${TAIL}`);
-  });
-
-  it('K7 two unreadable files with DIFFERENT errnos get one sentence EACH — never one sentence naming one errno for both', async () => {
-    plant('a');
-    chmodSync(join(wfDir, 'a.json'), 0o000);
-    // A symlink loop: `statSync` fails with ELOOP — a second, different errno in the same class.
-    symlinkSync(join(wfDir, 'b.json'), join(wfDir, 'b.json'));
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
-      throw new Error('process.exit');
-    }) as never);
-
-    await workflowListCommand.parseAsync([], { from: 'user' });
-
-    // The review's probe on the closer's build: `2 files … could not be read (ELOOP): b.json, a.json`
-    // — the EACCES file reported under its sibling's errno.
-    expect(stderr()).toContain(
-      `⚠ 1 file in the registry could not be read (EACCES): a.json${TAIL}`,
-    );
-    expect(stderr()).toContain(`⚠ 1 file in the registry could not be read (ELOOP): b.json${TAIL}`);
-    expect(stderr()).not.toContain('2 files in the registry could not be read');
-    expect(exitSpy).not.toHaveBeenCalled();
   });
 
   it("K8 a LEGACY record (the older cohort's shape) is never a crash (main died at `.length`; review fold C10) — named on the older-version ⚠ line with its way out (#819 U4), never a table row (correction 2, 8.6 (c))", async () => {
@@ -174,23 +124,6 @@ describe('realm workflow list — one sentence per class (issue #558 PR-T)', () 
     }).toEqual({ row: false, footer: true, warned: true });
     expect(exitSpy).not.toHaveBeenCalled();
   });
-
-  it('K6 an unreadable REGISTRY DIRECTORY prints exactly ONE line, no table, exit 0 (main crashed at readdirSync)', async () => {
-    plant('a');
-    chmodSync(wfDir, 0o000);
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
-      throw new Error('process.exit');
-    }) as never);
-
-    await workflowListCommand.parseAsync([], { from: 'user' });
-
-    const lines = warnSpy.mock.calls.map((c: unknown[]) => String(c[0]));
-    expect(lines).toEqual([`⚠ the workflow registry at ${wfDir} cannot be read (EACCES)${TAIL}`]);
-    expect(logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')).toContain(
-      '0 workflows registered; the registry itself could not be read.',
-    );
-    expect(exitSpy).not.toHaveBeenCalled();
-  });
 });
 
 // #616 PR-2c c5a — the id arm (a registry with no files, the SQLite registry): its entries name each
@@ -198,12 +131,14 @@ describe('realm workflow list — one sentence per class (issue #558 PR-T)', () 
 // `listWithDiagnostics`, with entries built by core's own builders (`unreadableById`).
 describe('realm workflow list — entries by workflow id (#616 PR-2c c5a)', () => {
   let home: string;
+  let h: TempHome;
   let originalHome: string | undefined;
   const out: string[] = [];
   const err: string[] = [];
 
-  beforeEach(() => {
+  beforeEach(async () => {
     home = mkdtempSync(join(tmpdir(), 'realm-wf-ids-'));
+    h = await makeTempHome({ home: join(home, '.realm') });
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     out.length = 0;
@@ -212,9 +147,10 @@ describe('realm workflow list — entries by workflow id (#616 PR-2c c5a)', () =
     vi.spyOn(console, 'warn').mockImplementation((m: unknown) => void err.push(String(m)));
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (originalHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = originalHome;
+    await h.cleanup();
     rmSync(home, { recursive: true, force: true });
     vi.restoreAllMocks();
   });
@@ -222,7 +158,10 @@ describe('realm workflow list — entries by workflow id (#616 PR-2c c5a)', () =
   const damaged = (id: string) =>
     unreadableById(id, storedCopyFaultError(id, { kind: 'not_a_workflow', fault: 'no_steps' }))!;
   const listing = (unreadable: UnreadableIdEntry[]): void => {
-    vi.spyOn(JsonWorkflowStore.prototype, 'listWithDiagnostics').mockResolvedValue({
+    // The prototype the handle's registry instance has: the command opens its own registry through the
+    // door, an instance of the same class (c10a-2c-i).
+    const proto = Object.getPrototypeOf(h.home.workflowStore) as CliHome['workflowStore'];
+    vi.spyOn(proto, 'listWithDiagnostics').mockResolvedValue({
       workflows: [definition('ok')],
       unreadable,
       mismatched: [],

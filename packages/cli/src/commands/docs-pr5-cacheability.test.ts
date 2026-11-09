@@ -26,6 +26,7 @@ import {
   priceFromEconomics,
 } from '@sensigo/realm';
 import { ANTHROPIC_TOOL_TEXT_TOKENS } from '../agent/providers/request-layout.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..', '..', '..');
@@ -63,11 +64,14 @@ const SPAWN_HEAVY = 160_000;
 
 let home: string;
 let base: string;
-beforeEach(() => {
+let h: TempHome;
+beforeEach(async () => {
   home = mkdtempSync(join(tmpdir(), 'realm-pr5-docs-home-'));
   base = mkdtempSync(join(tmpdir(), 'realm-pr5-docs-'));
+  h = await makeTempHome({ home: join(home, '.realm') });
 });
-afterEach(() => {
+afterEach(async () => {
+  await h.cleanup();
   rmSync(home, { recursive: true, force: true });
   rmSync(base, { recursive: true, force: true });
 });
@@ -116,12 +120,11 @@ function project(opts: {
   }
   return dir;
 }
-/** A registered copy's file in the scratch registry, read and rewritten as JSON (D1). */
-function editCopy(id: string, edit: (copy: Record<string, unknown>) => void): void {
-  const file = join(home, '.realm', 'workflows', `${id}.json`);
-  const copy = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+/** A registered copy, read from the scratch registry and registered again as edited (D1). */
+async function editCopy(id: string, edit: (copy: Record<string, unknown>) => void): Promise<void> {
+  const copy = (await h.home.workflowStore.get(id)) as unknown as Record<string, unknown>;
   edit(copy);
-  writeFileSync(file, JSON.stringify(copy, null, 2));
+  await h.home.workflowStore.register(copy as never);
 }
 const economics = (model: string, min?: number): string =>
   [
@@ -548,7 +551,7 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: SPAWN
   // The table of reasons: each row's words, from the condition its row names. Break: a row's words
   // or its condition changed. (a) red when a line does not end with its row's words; (b) prints
   // each line's ending.
-  it('no verdict: each reason in the table, from its condition', () => {
+  it('no verdict: each reason in the table, from its condition', async () => {
     claim(WORKFLOW_PAGE, '**No verdict.** When no minimum is known, the line says why:');
     const ending = (econ: string | null | undefined, model?: string): string => {
       const dir = project({
@@ -604,7 +607,7 @@ describe('realm-workflow.md, "The cache lines": the sentences', { timeout: SPAWN
       cacheLines(realm(['workflow', 'validate', '--registered', 'gone-tree', ...flags]).stdout);
     const flagless = lines([]);
     const withModel = lines(['--provider', 'anthropic', '--model', 'm']);
-    editCopy('gone-tree', (copy) => {
+    await editCopy('gone-tree', (copy) => {
       delete copy['resolved_profiles'];
     });
     const noText = lines([]);
@@ -1318,7 +1321,7 @@ describe(
     // the wire"). (a) red when the page drops a sentence, the old words return, or the sizes stop
     // following the file; (b) prints the page's sentence, or the lines, the scratch folder written
     // `<dir>`.
-    it('F-10: the row, what to do, and where the --registered sizes come from', () => {
+    it('F-10: the row, what to do, and where the --registered sizes come from', async () => {
       // D1 (G-4): the row's meaning and what to do, where the sizes come from, and the note. Each runs:
       // the row in "no verdict: each reason in the table" (a copy with no text for the profile); the
       // sizes from the stored text in validate-cacheability "G-1 (1)", "G-1 (2)"; the note, its line
@@ -1358,9 +1361,9 @@ describe(
         files: { 'profiles/p.md': 'You are careful.' },
       });
       expect(realm(['workflow', 'register', dir]).code).toBe(0);
-      const stored = (): number =>
+      const stored = async (): Promise<number> =>
         (
-          JSON.parse(readFileSync(join(home, '.realm', 'workflows', 'moved.json'), 'utf8')) as {
+          (await h.home.workflowStore.get('moved')) as unknown as {
             resolved_profiles: Record<string, { content: string }>;
           }
         ).resolved_profiles['p']!.content.length;
@@ -1381,7 +1384,7 @@ describe(
       const reason = 'source_dir <dir>/proj no longer exists';
       expect(
         {
-          held: stored(),
+          held: await stored(),
           row: out.find((l) => l.startsWith('cache: with_profile ')),
           // Correction 3 (I-4): both folders are gone, so two checks are left out: the line starts
           // `2 checks not run: ` exactly (a `2 check not run:` stays red).
