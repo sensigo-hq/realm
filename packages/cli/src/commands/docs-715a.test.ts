@@ -351,7 +351,7 @@ describe('#715 (a) — the docs sentences', () => {
     // ways-renderer.test.ts's and render-reply.test.ts's c10a-4c cells: each door's way out for a
     // copy with no file; answer-record-627.test.ts runs the printed command on a SQLite home.
     claimChangelog(
-      "**A damaged registered copy sends the operator to `realm workflow validate --registered <id>`** in the CLI's and the MCP server's way out, also when the copy has no file (the SQLite store's copies); only a copy that is not there says `realm workflow register <file>`. (#616)",
+      "**A damaged registered copy sends the operator to `realm workflow validate --registered <id>`** in the MCP server's way out (the operator's command on `realm mcp`'s and `realm serve`'s person line), also when the copy has no file (the SQLite store's copies); only a copy that is not there says `realm workflow register <file>`. (#616)",
     );
   });
 
