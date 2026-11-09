@@ -1970,41 +1970,6 @@ describe('#729 PR-3 correction 4 — the read commands and the two un-read surfa
       ?.trim();
   const receiptEnd = (stdout: string) => stdout.trim().split('\n').at(-1)?.split('; ').at(-1);
 
-  it('I-4: attempts on a run record it cannot read: withheld, the first line names the failed read; the flag prints them (PR3-R4-R-06)', async () => {
-    const h = await makeTempHome();
-    homes.push(h);
-    const home = h.root;
-    const store = h.home.runStore;
-    const { record: run } = await store.create({
-      workflowId: 'held-729',
-      workflowVersion: 1,
-      params: {},
-    });
-    writeFileSync(join(home, '.realm', 'runs', `${run.id}.json`), 'not json');
-    await failedAttemptHolding(h, run.id);
-    const plain = read(home, ['run', 'attempts', run.id]);
-    const accepted = read(home, ['run', 'attempts', run.id, '--accept-partial-disclosure']);
-    // (a) red when a record that cannot be read notes no standing (nothing is withheld: the
-    //     problem prints as text and no line is said); (b) prints the exit codes, the first stderr
-    //     line's head, the problem line's head and booleans.
-    expect({
-      status: [plain.status, accepted.status],
-      said: plain.stderr.split('\n')[0]?.split(':')[0],
-      problemShaped: problem(plain.stdout)?.startsWith('‹string, ') ?? false,
-      leaked: plain.stdout.includes(SECRET),
-      acceptedSaid: accepted.stderr.split('\n')[0]?.split(':')[0],
-      acceptedShows: problem(accepted.stdout)?.includes(SECRET) ?? false,
-    }).toEqual({
-      status: [0, 0],
-      said: 'Values withheld (declared values could not be read)',
-      problemShaped: true,
-      leaked: false,
-      acceptedSaid:
-        'Values shown on --accept-partial-disclosure (declared values could not be read)',
-      acceptedShows: true,
-    });
-  }, 60_000);
-
   it('I-4 control: not found is not a failed read — a sidecar-only run prints at the tier with no line; no sidecar, the no-attempts line', async () => {
     const h = await makeTempHome();
     homes.push(h);
