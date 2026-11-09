@@ -2,8 +2,6 @@
 // names (a) the change that turns it red and (b) what it prints on failure — booleans, counts,
 // receipt fields and key lists, never a canary.
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   compileDisclosure,
@@ -830,8 +828,11 @@ describe('#729 PR-3 correction 2 — the door', () => {
     handles.push(h);
     const workflowStore = h.stores.workflowStore;
     await workflowStore.register(FLOW);
-    // A registered copy that is not JSON: its reason (a diagnostic copy) names its id.
-    await writeFile(join(h.path, 'workflows', `${DECLARED}.json`), 'not json');
+    // A damaged registered copy (no steps): its reason (a diagnostic copy) names its id.
+    await workflowStore.register({
+      id: DECLARED,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+    } as WorkflowDefinition);
     const server = createRealmMcpServer({
       ...h.stores,
       disclosureProvider,
@@ -849,7 +850,9 @@ describe('#729 PR-3 correction 2 — the door', () => {
     // Non-vacuity: the unreadable copy is listed.
     // (a) red when the list's base set is taken before the workflows' reads (the value the read
     //     added is not in it: the reason shows it); (b) prints the shown reason (a marker).
-    expect(reason).toBe("the registered copy of '[REDACTED]' is not JSON");
+    expect(reason).toBe(
+      "the registered copy of '[REDACTED]' is JSON but not a workflow object (its steps is not an object)",
+    );
   });
 });
 

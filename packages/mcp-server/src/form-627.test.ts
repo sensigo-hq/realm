@@ -14,7 +14,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   ExtensionRegistry,
-  JsonWorkflowStore,
   declareReleaseLine,
   advanceRun,
   loadWorkflowFromString,
@@ -24,6 +23,7 @@ import {
   type Outcome,
   type RunStore,
 } from '@sensigo/realm';
+import type { WorkflowRegistrar } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -37,7 +37,7 @@ import {
   type FormDeps,
 } from './form-path.js';
 import { McpDoor } from './door.js';
-import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
+import { createTestHome, type TestHome } from '@sensigo/realm-testing';
 import { makeTempHome, type ServerExtras, type TempHome } from './test-support/temp-home.js';
 
 /** #616 PR-2c (c0, R10): a run store that forwards every verb to `inner`, the ones in `over` replaced —
@@ -79,14 +79,11 @@ function failingSettle(inner: RunStore): RunStore {
 // cell opens sits at a TEST LOCATION (`located`), and `passes(ms)` moves the clock of every location
 // the cell opened, in place of a real sleep; the in-process server (or a spawned child) reads that
 // clock from the location's file.
-const OPENED: TestLocation[] = [];
-async function located(dir: string): Promise<string> {
+const OPENED: TestHome[] = [];
+async function located(dir: string): Promise<void> {
   // A second server on the same folder in one cell shares its location (and its clock).
-  const open = OPENED.find((l) => l.root === dir);
-  if (open !== undefined) return open.runsDir;
-  const loc = await createTestLocation({ start: new Date(), root: dir });
-  OPENED.push(loc);
-  return loc.runsDir;
+  if (OPENED.some((l) => l.root === dir)) return;
+  OPENED.push(await createTestHome({ start: new Date(), root: dir }));
 }
 async function passes(ms: number): Promise<void> {
   for (const loc of OPENED) await loc.clock.advance(ms);
@@ -128,7 +125,7 @@ interface Session {
   server: McpServer;
   call: (name: string, args: Reply, signal?: AbortSignal) => Promise<Reply>;
   runStore: RunStore;
-  workflowStore: JsonWorkflowStore;
+  workflowStore: WorkflowRegistrar;
   elicited: () => number;
   /** How many requests the SERVER cancelled on the wire (a withdrawn form). */
   withdrawn: () => number;

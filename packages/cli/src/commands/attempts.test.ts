@@ -125,6 +125,17 @@ describe('realm run attempts (CLI command)', () => {
     await attemptsCommand.parseAsync([nextRunId()], { from: 'user' });
     expect(logged()).toContain('No failed attempts recorded');
   });
+
+  it('shows the capped note when the attempts reached their ceiling', async () => {
+    const runId = nextRunId();
+    const { FAILED_ATTEMPT_SIDECAR_MAX_BYTES } = await import('@sensigo/realm');
+    await seedAttempt(runId); // one valid record first
+    // #616 PR-2c c10a-4a: through the store: a line of the ceiling's size, which the reader skips.
+    await h.home.failedAttemptStore.append(runId, 'z'.repeat(FAILED_ATTEMPT_SIDECAR_MAX_BYTES));
+    await attemptsCommand.parseAsync([runId], { from: 'user' });
+    // (a) red when the note is dropped; (b) prints the output.
+    expect(logged().toLowerCase()).toContain('ceiling');
+  });
 });
 
 // issue #759 (Part F): the table prints EVERY entry a record holds (core's LINES) and `and N more`

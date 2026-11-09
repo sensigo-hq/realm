@@ -128,6 +128,14 @@ function judge(
   }
 }
 
+/**
+ * A stored workflow version's hash: the lowercase hex sha256 of its text's UTF-8 bytes. The register's
+ * own rule; `realm db check` recomputes it (#616 PR-2c c8b2).
+ */
+export function workflowVersionHash(text: string): string {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
 /** Core's registrar on a Realm home's database (see the module comment). */
 export class SqliteWorkflowStore implements RealmWorkflowRegistrar {
   readonly #db: RealmDb;
@@ -146,7 +154,7 @@ export class SqliteWorkflowStore implements RealmWorkflowRegistrar {
   async register(definition: WorkflowDefinition): Promise<void> {
     const id = definition.id;
     const text = JSON.stringify(definition);
-    const hash = createHash('sha256').update(text, 'utf8').digest('hex');
+    const hash = workflowVersionHash(text);
     await this.#db.immediate(
       (db, reading): Registered => {
         const pointer = db.prepare(POINTER).get(id) as { current_hash: unknown } | undefined;

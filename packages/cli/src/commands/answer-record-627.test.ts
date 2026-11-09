@@ -23,6 +23,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { answererPhrase, renderAnswerLine } from '../lib/holder-render.js';
 import { answererClause } from './respond.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { plantRegistryRow } from '../test-support/plant-registry-row.js';
 
 const CLI = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 
@@ -387,6 +388,9 @@ describe('#627 W correction 2 (3.2) — the repair command inspect prints for a 
     ...((await h.handle.home.workflowStore.get(h.def.id)) as unknown as Record<string, unknown>),
   });
   const damage = {
+    // #616 PR-2c c10a-4a: the pointer arm, planted on a foreign connection (the child opens it afresh).
+    'not JSON': async (h: Home) =>
+      plantRegistryRow(h.handle.path, { id: h.def.id, text: '{ not json' }),
     legacy: async (h: Home) => {
       const parsed = await stored(h);
       delete parsed['schema_version'];

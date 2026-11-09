@@ -17,13 +17,13 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   ARGS,
-  JsonWorkflowStore,
   advanceRun,
   formatInstantWords,
   loadWorkflowFromString,
   type EngineReply,
   type RunStore,
 } from '@sensigo/realm';
+import type { WorkflowRegistrar } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import {
@@ -79,7 +79,7 @@ interface Session {
   ) => Promise<{ isError?: boolean; content: Array<{ text: string }> }>;
   tools: () => Promise<string[]>;
   runStore: RunStore;
-  workflowStore: JsonWorkflowStore;
+  workflowStore: WorkflowRegistrar;
   listChanged: () => number;
   elicited: () => number;
 }

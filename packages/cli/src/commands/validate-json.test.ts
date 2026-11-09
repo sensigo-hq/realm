@@ -28,6 +28,7 @@ import type { LoaderWarning } from '@sensigo/realm';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
 
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { plantRegistryRow } from '../test-support/plant-registry-row.js';
 // =================================================================================================
 // U1 — the severity normalizer's ONLY honest pin (unit-level; no fixture can produce this input —
 // every mint site in the tree already resolves severity at construction, so minted ≡ effective
@@ -708,6 +709,29 @@ steps:
       expect(errors[0]).toContain('registered with an older version of Realm');
       expect(exitSpy).toHaveBeenCalledWith(1);
     }, 20_000);
+
+    it('a stored copy that is not JSON (the pointer arm, #616 PR-2c c10a-4a): errors[0] is the store sentence, exit 1 (J9)', async () => {
+      await plantRegistryRow(h.path, { id: 'broken', text: '{ not json' });
+      await expect(
+        validateCommand.parseAsync(['--registered', 'broken', '--json'], { from: 'user' }),
+      ).rejects.toThrow('process.exit');
+      const result = parseJson();
+      const errors = result['errors'] as string[];
+      // (a) red when the arm's words change, or it is reported as valid; (b) prints the reply's
+      //     fields and the exit.
+      expect({
+        valid: result['valid'],
+        id: result['workflow_id'],
+        first: errors[0],
+        exit: exitSpy.mock.calls[0]?.[0],
+      }).toEqual({
+        valid: false,
+        id: 'broken',
+        first:
+          "The registered copy of workflow 'broken' is missing from the store or is not JSON: something other than Realm changed the database. Register the workflow again from its source; if this message comes back, restore the database from a backup.",
+        exit: 1,
+      });
+    }, 20_000);
   });
 
   // ===============================================================================================
@@ -1165,6 +1189,13 @@ steps:
         {
           name: 'J8 registered not-found',
           setup: () => ['--registered', 'no-such-wf-j10'],
+        },
+        {
+          name: 'J9 registered corrupt-JSON',
+          setup: async () => {
+            await plantRegistryRow(h.path, { id: 'broken-j10', text: '{ not json' });
+            return ['--registered', 'broken-j10'];
+          },
         },
         {
           name: 'J8b registered legacy',

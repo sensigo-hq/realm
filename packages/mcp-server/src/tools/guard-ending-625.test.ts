@@ -10,13 +10,13 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   executeStep,
   applyResume,
   type StepDefinition,
   type WorkflowDefinition,
 } from '@sensigo/realm';
+import type { RunStore } from '@sensigo/realm';
 import { handleAdvanceRun } from './advance-run.js';
 import { handleExecuteStep } from './execute-step.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
@@ -120,7 +120,7 @@ describe('#625 PR-2a, F13 — the loop’s own guard ending carries guards and e
     const racing = new Proxy(runStore, {
       get(target, prop) {
         if (prop === 'settleStep') {
-          return async (...a: Parameters<NonNullable<JsonFileStore['settleStep']>>) => {
+          return async (...a: Parameters<NonNullable<RunStore['settleStep']>>) => {
             const r = await target.settleStep!(...a);
             if (a[1].kind === 'settle_step' && a[1].step === 'x' && !wroteP) {
               wroteP = true;
