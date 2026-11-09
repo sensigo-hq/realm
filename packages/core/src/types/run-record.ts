@@ -688,12 +688,22 @@ export interface UsageRecord {
    * time, a count, an index or a version — and it guards one decision: whether a call is attached to
    * a drive-failure entry or is already on the step's record (`callsAlreadyRecorded`). It does not
    * de-duplicate the cost totals a reader computes. It is NOT a provider's request id (`request-id`,
-   * `x-request-id`, an SDK's `_request_id`) and NOT Temporal's request de-dupe id; a provider's own
-   * id, if ever kept, gets its own field. Absent on a record written by an earlier process, or by a
-   * host that embeds the engine and records usage itself: no reader derives anything from it, and
-   * `sameRequest` answers `false` for such a record.
+   * `x-request-id`, an SDK's `_request_id`) and NOT Temporal's request de-dupe id; the id of a
+   * provider's answer is `response_id`; a provider's request id is not kept. Absent on a record
+   * written by an earlier process, or by a host that embeds the engine and records usage itself: no
+   * reader derives anything from it, and `sameRequest` answers `false` for such a record.
    */
   request_id?: string;
+  /**
+   * Caching 3-M (piece B1) — the id of the provider's answer to this request (Anthropic's `msg_…`),
+   * kept for piece B2, which will name the earlier message when it asks Anthropic about a cache
+   * miss. It is not Realm's `request_id` (identity), and not a provider's request id. Kept only when
+   * it passes `normalizeResponseId` (it starts `msg_`, is at most 256 characters and holds no
+   * control character), at the adapter and again where the record is written. Absent for OpenAI's
+   * requests, for an answer that carried none, and for an id that fails the check; a provider
+   * module's own `response_id` obeys the same check.
+   */
+  response_id?: string;
   /**
    * Caching 3-M (piece A-1b): this request's place, from 0, among the recorded requests of the one
    * provider call that made it. A call's first recorded request is 0: a single-shot step's request

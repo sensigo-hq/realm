@@ -203,6 +203,198 @@ describe('#616 PR-2c c11b — discovery (in-process)', () => {
   });
 });
 
+/** Every file under `folder` with its size, modification time, inode and bytes' hash, and the listing itself. */
+function fingerprint(folder: string): string {
+  const names = readdirSync(folder, { recursive: true, encoding: 'utf8' }).sort();
+  return JSON.stringify(
+    names.map((name) => {
+      const path = join(folder, name);
+      const s = statSync(path);
+      return s.isFile()
+        ? [
+            name,
+            s.size,
+            s.mtimeMs,
+            s.ino,
+            createHash('sha256').update(readFileSync(path)).digest('hex'),
+          ]
+        : [name, 'folder'];
+    }),
+  );
+}
+
+// What the page says of the command, each claim with the cell that fails when it stops being true
+// (added in the review of #1067: the first cells did not pin these, and their comments said they did).
+describe('#616 PR-2c c11b — what the page promises about what is read, in what order, and what is left alone', () => {
+  it('the files you give are never moved, changed or deleted: every file, its size, modification time, inode and bytes, and the folders’ listings, are the same after', async () => {
+    put('fixtures/runs/a.json', record('run-keep-a'));
+    put('fixtures/runs/notes.txt', 'keep me');
+    put('fixtures/runs/old.attempts.jsonl', '{"a":1}\n');
+    put('fixtures/single.json', record('run-keep-s'));
+    put('fixtures/bad.json', '[]');
+    const before = fingerprint(join(root, 'fixtures'));
+    const r = await imported([
+      join(root, 'fixtures', 'single.json'),
+      join(root, 'fixtures', 'runs'),
+      join(root, 'fixtures', 'bad.json'),
+    ]);
+    // (1) red when the command deletes, renames, rewrites or touches a file it was given (or leaves a
+    //     file beside it); (2) prints the code and both fingerprints.
+    expect({ code: r.code, same: fingerprint(join(root, 'fixtures')) === before }).toEqual({
+      code: 1,
+      same: true,
+    });
+  });
+
+  it('only names ending in exactly .json are read: .attempts.jsonl, .jsonl, .json.bak and .JSON are counted, not read', async () => {
+    const dir = join(root, 'runs');
+    put('runs/a.json', record('run-n-a'));
+    for (const name of ['old.attempts.jsonl', 'c.jsonl', 'b.json.bak', 'D.JSON']) {
+      put(`runs/${name}`, record(`run-n-${name}`));
+    }
+    const r = await imported([dir]);
+    // (1) red when the name test is a match anywhere in the name (`.attempts.jsonl`, `.jsonl` and
+    //     `.json.bak` are read) or ignores case (`D.JSON` is read); (2) prints the lines and the code.
+    expect(r).toEqual({
+      out: [
+        `imported  ${dir}/a.json`,
+        '1 file: 1 imported.',
+        'Ignored 4 entries that are not .json files.',
+      ],
+      err: [],
+      opens: 1,
+      code: 0,
+    });
+  });
+
+  it('a folder’s files come in the order of their names by character code (10.json before 2.json, B.json before a.json, é.json last), not by a locale', async () => {
+    const dir = join(root, 'runs');
+    for (const name of ['2.json', 'é.json', 'a.json', '10.json', 'z.json', 'B.json']) {
+      put(`runs/${name}`, record(`run-s-${name}`));
+    }
+    const r = await imported([dir]);
+    // (1) red when the names are sorted by a locale comparison (`a.json` before `B.json`, `é.json`
+    //     before `z.json`) or taken in the order the system lists them; (2) prints the lines.
+    expect(r.out.map((line) => line.replace(`${dir}/`, ''))).toEqual([
+      'imported  10.json',
+      'imported  2.json',
+      'imported  B.json',
+      'imported  a.json',
+      'imported  z.json',
+      'imported  é.json',
+      '6 files: 6 imported.',
+    ]);
+  });
+
+  it('paths are imported in the order given, not sorted and not reversed', async () => {
+    const c = put('args/c.json', record('run-o-c'));
+    const a = put('args/a.json', record('run-o-a'));
+    const b = put('args/b.json', record('run-o-b'));
+    const r = await imported([c, a, b]);
+    // (1) red when the arguments are sorted or reversed (a palindrome of arguments could not tell);
+    //     (2) prints the lines.
+    expect(r.out).toEqual([
+      `imported  ${c}`,
+      `imported  ${a}`,
+      `imported  ${b}`,
+      '3 files: 3 imported.',
+    ]);
+  });
+
+  it('a link given as an argument counts as what it points at: a link to a file is imported, a link to a folder is read', async () => {
+    const real = put('elsewhere/real.json', record('run-k-r'));
+    put('elsewhere/dir/x.json', record('run-k-x'));
+    const fileLink = join(root, 'file-link.json');
+    symlinkSync(real, fileLink);
+    const folderLink = join(root, 'folder-link');
+    symlinkSync(join(root, 'elsewhere', 'dir'), folderLink);
+    const r = await imported([fileLink, folderLink]);
+    // (1) red when the arguments are looked at without following a link (`lstat`: both refused as
+    //     "neither a file nor a folder"); (2) prints the lines, the opens and the code.
+    expect(r).toEqual({
+      out: [`imported  ${fileLink}`, `imported  ${folderLink}/x.json`, '2 files: 2 imported.'],
+      err: [],
+      opens: 1,
+      code: 0,
+    });
+  });
+
+  it('a folder given with trailing slashes names its files with one slash', async () => {
+    const dir = join(root, 'runs');
+    put('runs/a.json', record('run-t-a'));
+    const r = await imported([`${dir}///`]);
+    // (1) red when one trailing slash is taken off (the file is named `dir///a.json`) or none; (2)
+    //     prints the lines.
+    expect(r.out).toEqual([`imported  ${dir}/a.json`, '1 file: 1 imported.']);
+  });
+
+  it('a path holding a newline and an escape sequence is one escaped line in a refusal and in a stop', async () => {
+    const odd = join(root, 'a\nb\u001b[31m');
+    mkdirSync(odd);
+    const refused = await imported([odd]);
+    const file = put('x\ny.json', record('run-ctl'));
+    const out: string[] = [];
+    const err: string[] = [];
+    const code = await runImport([file], {
+      openHome: async () =>
+        stubbedHome({
+          'run-ctl': () =>
+            typed(
+              'STATE_RUN_BUSY',
+              'The store was busy for 5 s: another writer held it. Nothing was written. Try again.',
+            ),
+        }),
+      out: (line) => out.push(line),
+      err: (line) => err.push(line),
+    });
+    // (1) red when a path is printed raw in the refusal or in the stop line (a second line, a raw
+    //     escape character); (2) prints both runs' lines.
+    expect({ refused: refused.err, stop: { out, err, code } }).toEqual({
+      refused: [
+        `Error: ${root}/a\\nb\\u001b[31m: no .json files (a folder is read for .json files directly in it, not below it)`,
+      ],
+      stop: {
+        out: [],
+        err: [
+          `Error: stopped at ${root}/x\\ny.json: The store was busy for 5 s: another writer held it. Nothing was written. Try again.`,
+          'Run the same command again: runs already imported read unchanged.',
+        ],
+        code: 1,
+      },
+    });
+  });
+
+  it('an unexpected error whose message is empty never has its stack printed raw: one line, with no line break in it', async () => {
+    const dir = join(root, 'runs');
+    put('runs/a.json', record('run-empty'));
+    const err: string[] = [];
+    const code = await runImport([dir], {
+      openHome: async () => stubbedHome({ 'run-empty': () => new Error('') }),
+      out: () => undefined,
+      err: (line) => err.push(line),
+    });
+    // The stack does not hold the (empty) message, so it is shown escaped and bounded as ONE line
+    // (here `‹<n> characters, not kept›`: a stack is longer than the bound). Each `err` call is one
+    // line the command writes: a raw stack in one call would print as several lines.
+    // (1) red when the stack that does not hold the message is printed as it is (a call whose text
+    //     holds line breaks and frame lines); (2) prints the code, the first and last lines, the
+    //     number of lines and how many hold a line break.
+    expect({
+      code,
+      first: err[0],
+      lines: err.length,
+      withLineBreak: err.filter((line) => line.includes('\n')).length,
+      last: err[err.length - 1],
+    }).toEqual({
+      code: 1,
+      first: `Error: stopped at ${dir}/a.json: `,
+      lines: 3,
+      withLineBreak: 0,
+      last: 'Fix or move that file, then run the command again.',
+    });
+  });
+});
+
 describe('#616 PR-2c c11b — the refusals come before anything is opened or read', () => {
   it.each([
     ['a missing path', () => join(root, 'nope'), 'no such file or folder'],
@@ -223,6 +415,23 @@ describe('#616 PR-2c c11b — the refusals come before anything is opened or rea
         return join(root, 'empty-ish');
       },
       'no .json files (a folder is read for .json files directly in it, not below it)',
+    ],
+    // A stat failure that is not "absent" is refused in the system's words (the page: `Error: <path>:
+    // <the system's reason>`). Red when every stat failure says "no such file or folder", or when the
+    // error's own text is printed.
+    [
+      'a path through a file (a stat failure that is not "absent")',
+      () => `${put('plain.json', record('run-pf'))}/`,
+      'not a directory',
+    ],
+    [
+      'a link that points at itself (a second stat failure)',
+      () => {
+        const loop = join(root, 'loop.json');
+        symlinkSync(loop, loop);
+        return loop;
+      },
+      'too many symbolic links encountered',
     ],
   ] as const)('%s', async (_, make, reason) => {
     const good = put('good.json', record('run-g'));
@@ -305,6 +514,32 @@ describe('#616 PR-2c c11b — the stop, the summary and the exit code', () => {
     ['e.json', IMPORTED],
     ['f.json', IMPORTED],
   ];
+  /**
+   * One failing word beside one imported file, each word on its own: the exit code is judged word by
+   * word, so an exit rule that forgets one word (a folder whose only bad file is `diverged` exits 0)
+   * is red here, not only when all four words are present (the page: "1 when any file was not").
+   */
+  const alone = (
+    word: string,
+    answer: (() => unknown) | 'not a run',
+    line: string,
+    named: string,
+  ): readonly [string, (dir: string) => Row] => [
+    `a ${word} file beside an imported one: exit 1`,
+    (d) => ({
+      files: [
+        ['a.json', IMPORTED],
+        ['b.json', answer],
+      ],
+      out: [
+        `imported  ${d}/a.json`,
+        `${word}  ${d}/b.json: ${line}`,
+        `2 files: 1 imported, 1 ${named}.`,
+      ],
+      err: [],
+      code: 1,
+    }),
+  ];
   const rows: ReadonlyArray<readonly [string, (dir: string) => Row]> = [
     [
       'every file imported',
@@ -365,6 +600,25 @@ describe('#616 PR-2c c11b — the stop, the summary and the exit code', () => {
         code: 1,
       }),
     ],
+    alone(
+      'diverged',
+      () => typed('STATE_RUN_DIVERGED', 'diverged', { localVersion: 3, incomingVersion: 4 }),
+      'the stored run is at version 3; the file is at version 4',
+      'diverged',
+    ),
+    alone(
+      'purged',
+      () => typed('STATE_RUN_PURGED', 'purged', { purged_at: '2026-10-30T09:15:00.000Z' }),
+      'this run was deleted on 2026-10-30',
+      'purged',
+    ),
+    alone(
+      'legacy',
+      () => typed('STATE_LEGACY_FORMAT', 'legacy'),
+      'not in the current run format',
+      'legacy',
+    ),
+    alone('not_a_run', 'not a run', 'not a run: it is not an object', 'not a run'),
     [
       'a store STOP after two files, three left',
       (d) => ({
@@ -499,8 +753,9 @@ describe('#616 PR-2c c11b — the stop, the summary and the exit code', () => {
     }, []);
     // (1) red when the next file is started after a STOP, a zero count is printed, `unchanged` is
     //     counted as a failure, the stop's message is printed raw (a second line, or a forged frame
-    //     printed), the not-started sentence is another, or the summary follows a STOP; (2) prints
-    //     the two streams and the code.
+    //     printed), the not-started sentence is another, the summary follows a STOP, or the exit rule
+    //     forgets one failing word (one row for each of the four, alone beside an imported file);
+    //     (2) prints the two streams and the code.
     expect({ out, err: errShown, code, forged: err.includes('    at forged (x.js:1:1)') }).toEqual({
       out: row.out,
       err: row.err,
@@ -515,7 +770,7 @@ describe('#616 PR-2c c11b — on the built CLI', { timeout: 120_000 }, () => {
   // summary last. It is not the acceptance check of a `process.exit(code)` break: on the built CLI here
   // that break does not turn it red (measured: a shell pipe to `(sleep 1; cat)` and a reader that
   // pauses 1-5 s, 3,000 and 15,000 files; why is not explained). The action sets `process.exitCode`.
-  it('piped output is not cut: a slow reader still gets the summary line last', async () => {
+  it('GROUNDING, not the acceptance check of a `process.exit` break: a slow reader still gets every line, the summary last', async () => {
     const files = 1_000;
     const name = 'x'.repeat(180);
     mkdirSync(join(root, 'many'));
