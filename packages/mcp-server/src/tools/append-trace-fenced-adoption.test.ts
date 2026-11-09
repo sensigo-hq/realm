@@ -6,20 +6,15 @@
 // unlocked path regardless of capability (D3 §2: unchanged, no advisory either way).
 import { declareReleaseLine } from '@sensigo/realm';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import {
-  JsonFileStore,
-  JsonWorkflowStore,
-  InMemoryTraceBufferStore,
-  CURRENT_WORKFLOW_SCHEMA_VERSION,
-} from '@sensigo/realm';
+import { InMemoryTraceBufferStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import type {
   WorkflowDefinition,
   AppendResult,
   BufferedEntry,
   AgentTraceEntry,
   TraceBufferStore,
+  RunStore,
+  WorkflowRegistrar,
 } from '@sensigo/realm';
 import { handleAppendTrace, resetUnfencedTraceStoreWarnings } from './append-trace.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
@@ -90,17 +85,15 @@ class LegacyOnlyTraceBufferStore {
 
 describe('append_trace fenced-trio adoption — behavioral spy (issue #207 PR-2)', () => {
   let h: TempHome;
-  let workflowDir: string;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
 
   beforeEach(async () => {
     h = await makeTempHome();
-    workflowDir = join(h.path, 'workflows');
     runStore = h.stores.runStore;
     workflowStore = h.stores.workflowStore;
     const def = makeWorkflowDef();
-    await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
+    await h.stores.workflowStore.register(def);
     resetUnfencedTraceStoreWarnings();
   });
   afterEach(async () => {

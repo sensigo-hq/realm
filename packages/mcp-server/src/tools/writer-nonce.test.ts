@@ -5,15 +5,13 @@
 // values), and the #208 capacityWarning re-home onto the whole-file scope.
 import { declared } from '../test-support/declared.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import {
-  JsonFileStore,
-  JsonWorkflowStore,
-  InMemoryTraceBufferStore,
-  CURRENT_WORKFLOW_SCHEMA_VERSION,
+import { InMemoryTraceBufferStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
+import type {
+  WorkflowDefinition,
+  TraceBufferStore,
+  RunStore,
+  WorkflowRegistrar,
 } from '@sensigo/realm';
-import type { WorkflowDefinition, TraceBufferStore } from '@sensigo/realm';
 import { handleAppendTrace } from './append-trace.js';
 import { handleExecuteStep } from './execute-step.js';
 import { handleGetRunState } from './get-run-state.js';
@@ -34,20 +32,18 @@ function makeWorkflowDef(): WorkflowDefinition {
 
 describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
   let h: TempHome;
-  let workflowDir: string;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
   let traceBufferStore: InMemoryTraceBufferStore;
 
   beforeEach(async () => {
     h = await makeTempHome();
-    workflowDir = join(h.path, 'workflows');
     runStore = h.stores.runStore;
     workflowStore = h.stores.workflowStore;
     traceBufferStore = new InMemoryTraceBufferStore(runStore);
 
     const def = makeWorkflowDef();
-    await writeFile(join(workflowDir, `${def.id}.json`), JSON.stringify(def, null, 2), 'utf8');
+    await h.stores.workflowStore.register(def);
   });
 
   afterEach(async () => {

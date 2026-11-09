@@ -4,12 +4,11 @@
 // the server's registry), and start_run_batch's per-entry next_actions.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   ExtensionRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type WorkflowDefinition,
 } from '@sensigo/realm';
+import type { RunStore, WorkflowRegistrar } from '@sensigo/realm';
 import { handleStartRun } from './start-run.js';
 import { handleStartRunBatch } from './start-run-batch.js';
 import { handleGetRunState } from './get-run-state.js';
@@ -51,8 +50,8 @@ const handlerDef: WorkflowDefinition = {
 
 describe('#625 PR-2a — the owed call over the MCP handlers', () => {
   let h: TempHome;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
   beforeEach(async () => {
     h = await makeTempHome();
     runStore = h.stores.runStore;
@@ -339,7 +338,7 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
     });
     const realClaim = runStore.claimStep.bind(runStore);
     let first = true;
-    runStore.claimStep = async (...args: Parameters<JsonFileStore['claimStep']>) => {
+    runStore.claimStep = async (...args: Parameters<RunStore['claimStep']>) => {
       if (first) {
         first = false;
         await realClaim(args[0], args[1], args[2], {
@@ -634,8 +633,8 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
 
 describe('#872 (a) — the hand-back hint and engine_runnable.requirement over the MCP handlers', () => {
   let h: TempHome;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
   beforeEach(async () => {
     h = await makeTempHome();
     runStore = h.stores.runStore;

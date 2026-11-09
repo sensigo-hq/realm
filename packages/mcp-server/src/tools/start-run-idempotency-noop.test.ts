@@ -1,8 +1,8 @@
 // Issue-2 headline regression: re-encountering a TERMINAL aborted run through a permanent
 // idempotency key must be a clean no-op — start_run / start_run_batch must NOT re-drive or un-abort it.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { JsonFileStore, JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
-import type { WorkflowDefinition, RunRecord } from '@sensigo/realm';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
+import type { WorkflowDefinition, RunRecord, RunStore, WorkflowRegistrar } from '@sensigo/realm';
 import { handleStartRun } from './start-run.js';
 import { handleStartRunBatch } from './start-run-batch.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
@@ -29,8 +29,8 @@ const IDEMPOTENCY_KEY = 'cs1-live-12345';
 
 describe('start_run / start_run_batch on a terminal aborted run (idempotency no-op)', () => {
   let h: TempHome;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
 
   beforeEach(async () => {
     h = await makeTempHome();

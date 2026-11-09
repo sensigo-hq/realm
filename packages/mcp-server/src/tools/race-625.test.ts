@@ -10,8 +10,6 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   ExtensionRegistry,
   abandonRun,
@@ -21,6 +19,7 @@ import {
   type StepDefinition,
   type WorkflowDefinition,
 } from '@sensigo/realm';
+import type { RunStore, WorkflowRegistrar } from '@sensigo/realm';
 import { handleAdvanceRun } from './advance-run.js';
 import { handleExecuteStep } from './execute-step.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
@@ -64,8 +63,8 @@ const DEF_NO_X: WorkflowDefinition = {
 
 describe('#625 PR-2a, F7 — MCP advance_run and execute_step reply from the record after a race', () => {
   let h: TempHome;
-  let store: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let store: RunStore;
+  let workflowStore: WorkflowRegistrar;
   beforeEach(async () => {
     h = await makeTempHome();
     store = h.stores.runStore;
@@ -106,7 +105,7 @@ describe('#625 PR-2a, F7 — MCP advance_run and execute_step reply from the rec
           };
         }
         if (prop === 'claimStep' && moment === 'claim') {
-          return async (...a: Parameters<JsonFileStore['claimStep']>) => {
+          return async (...a: Parameters<RunStore['claimStep']>) => {
             if (a[1] === 's' && !fired) {
               fired = true;
               await act(a[0]);
@@ -247,7 +246,7 @@ describe('#625 PR-2a, F7 — MCP advance_run and execute_step reply from the rec
     const racing = new Proxy(store, {
       get(target, prop) {
         if (prop === 'claimStep') {
-          return async (...a: Parameters<JsonFileStore['claimStep']>) => {
+          return async (...a: Parameters<RunStore['claimStep']>) => {
             if (a[1] === 's' && settledA && !fired) {
               fired = true;
               // another program ends the run at the chained step's claim
@@ -257,7 +256,7 @@ describe('#625 PR-2a, F7 — MCP advance_run and execute_step reply from the rec
           };
         }
         if (prop === 'settleStep') {
-          return async (...a: Parameters<NonNullable<JsonFileStore['settleStep']>>) => {
+          return async (...a: Parameters<NonNullable<RunStore['settleStep']>>) => {
             const res = await target.settleStep!(...a);
             if (a[1].kind === 'settle_step' && a[1].step === 'a') settledA = true;
             return res;
