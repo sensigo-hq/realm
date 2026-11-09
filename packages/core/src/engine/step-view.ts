@@ -147,6 +147,12 @@ export interface CostMiss {
     lifetime_s?: number;
     lifetime_from?: CacheLifetimeSource;
   };
+  /**
+   * Caching 3-M A-2b3 — what this miss cost more than reading what was expected, in US dollars,
+   * unrounded, at the runner's economics file's rates. Absent unless that file prices both the
+   * request and the full read. Worked out when the run is read; never stored.
+   */
+  extra_usd?: number;
 }
 
 /** Issue #600 caching PR P — the requests sent to a custom endpoint, or why none records one. */
@@ -606,10 +612,68 @@ function addMoney(into: Money, more: Money): void {
 }
 
 /**
- * Caching 3-M A-2b1 — the requests of one list that missed the cache, composed from the miss
- * module's three readers (the verdict, the cause, the gap); `undefined` when none missed.
+ * Caching 3-M A-2b3 — below this a difference is not a cost: equal rates leave float noise near
+ * 1e-17, and the smallest real figure is about 1e-8.
  */
-function composeMisses(requests: readonly unknown[]): CostMiss[] | undefined {
+const MISS_COST_FLOOR_USD = 1e-12;
+
+/**
+ * Caching 3-M A-2b3 — the stored request as if it had read `shortfall` tokens more, and written that
+ * many fewer: in whichever write counter it uses, and, when it has a split, from the 5-minute write
+ * first and then the 1-hour write, so the split still adds up. What the writes cannot cover comes
+ * out of the uncached part, which a price works out from the prompt, the read and the write. All
+ * it edits is a copy or a new object, `cache_creation` included: nothing stored changes.
+ */
+function asFullRead(request: unknown, shortfall: number): Record<string, unknown> {
+  const copy: Record<string, unknown> = { ...(request as Record<string, unknown>) };
+  copy['cache_read_input_tokens'] = (numField(request, 'cache_read_input_tokens') ?? 0) + shortfall;
+  const fallen = Math.min(shortfall, cacheWriteField(request) ?? 0);
+  for (const key of ['cache_creation_input_tokens', 'cache_write_tokens']) {
+    const written = numField(request, key);
+    if (written === undefined) continue;
+    copy[key] = written - fallen;
+    break;
+  }
+  const w5m = nestedNumField(request, 'cache_creation', 'ephemeral_5m_input_tokens');
+  const w1h = nestedNumField(request, 'cache_creation', 'ephemeral_1h_input_tokens');
+  if (w5m !== undefined || w1h !== undefined) {
+    const from5m = Math.min(fallen, w5m ?? 0);
+    copy['cache_creation'] = {
+      ephemeral_5m_input_tokens: (w5m ?? 0) - from5m,
+      ephemeral_1h_input_tokens: (w1h ?? 0) - (fallen - from5m),
+    };
+  }
+  return copy;
+}
+
+/**
+ * Caching 3-M A-2b3 — what a miss cost more than a full read, or `undefined` unless the runner's own
+ * file prices both sides and the difference is a cost. The same request priced twice, through the
+ * port every other figure uses, so both sides sit at the request's own tier and date.
+ */
+function missExtraUsd(
+  request: unknown,
+  shortfall: number,
+  source: PriceSource,
+): number | undefined {
+  const actual = priceRequest(request, source);
+  const fullRead = priceRequest(asFullRead(request, shortfall), source);
+  if (!('priced' in actual) || !('priced' in fullRead)) return undefined;
+  if (actual.priced_by.source_class !== 'economics') return undefined;
+  if (fullRead.priced_by.source_class !== 'economics') return undefined;
+  const extra = actual.priced.total - fullRead.priced.total;
+  return extra > MISS_COST_FLOOR_USD ? extra : undefined;
+}
+
+/**
+ * Caching 3-M A-2b1 — the requests of one list that missed the cache, composed from the miss
+ * module's three readers (the verdict, the cause, the gap); `undefined` when none missed. A-2b3:
+ * with a price source, each also carries what it cost when the runner's own file prices it.
+ */
+function composeMisses(
+  requests: readonly unknown[],
+  source: PriceSource | undefined,
+): CostMiss[] | undefined {
   const verdicts = cacheReadVerdicts(requests);
   const causes = cacheMissCauses(requests);
   const gaps = cacheMissGaps(requests);
@@ -619,6 +683,10 @@ function composeMisses(requests: readonly unknown[]): CostMiss[] | undefined {
     const cause = causes[position];
     // Every missed request has a cause; a list position without one is skipped, never guessed.
     if (cause === undefined) return;
+    const extra =
+      source !== undefined
+        ? missExtraUsd(requests[position], verdict.shortfall_tokens, source)
+        : undefined;
     misses.push({
       position,
       derived: {
@@ -629,6 +697,7 @@ function composeMisses(requests: readonly unknown[]): CostMiss[] | undefined {
         predecessor: verdict.predecessor,
         ...(gaps[position] ?? {}),
       },
+      ...(extra !== undefined ? { extra_usd: extra } : {}),
     });
   });
   return misses.length > 0 ? misses : undefined;
@@ -664,7 +733,8 @@ function sumFigure(
  * The per-request detail, composed into one roll-up. Returns `undefined` only for a non-array
  * `requests` — an empty array yields `{ requests: 0 }`, a fact distinct from absence (D1 rule 6).
  * With `deps.priceSource` (issue #600 caching PR P), each request is priced through core's checks
- * (`priceRequest`) and the view carries `money`; with none, no `money` key is written.
+ * (`priceRequest`) and the view carries `money`, and a miss the runner's own file prices carries
+ * `extra_usd` (caching 3-M A-2b3); with none, neither key is written.
  */
 export function composeCostView(
   requests: unknown,
@@ -705,7 +775,7 @@ export function composeCostView(
   const refused = composeCacheFieldsRefused(requests);
   if (refused !== undefined) view.cache_fields_refused = refused;
   // caching 3-M A-2b1: which requests missed the cache, from the one miss rule.
-  const misses = composeMisses(requests);
+  const misses = composeMisses(requests, deps?.priceSource);
   if (misses !== undefined) view.misses = misses;
   if (requests.length > 0) {
     view.endpoints = composeEndpoints(requests);

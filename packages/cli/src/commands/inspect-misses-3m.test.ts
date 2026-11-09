@@ -3,6 +3,7 @@
 // names its real case, the change that turns it red, and prints the rendered lines around the
 // attempt's line (counts only; no record holds prompt text or a digest that prints).
 import { describe, it, expect } from 'vitest';
+import { priceFromEconomics, type PriceSource } from '@sensigo/realm';
 import type { RunRecord } from '@sensigo/realm';
 import { inspectRun } from './inspect.js';
 import { listing, snap } from '../test-support/snapshot-double.js';
@@ -215,5 +216,142 @@ describe('caching 3-M A-2b1 — inspect prints each miss beneath its own attempt
       '       cache miss: request 3 of 6 read 1000 of 6993 expected tokens — nothing the cache covers differs on the record from request 2; the provider may have dropped the entry; it started 2 seconds after that request',
       '       cache miss: request 5 of 6 read 0 of 7181 expected tokens — possibly expired: it started 7 minutes after request 4, longer than the 5 minutes the provider granted',
     ]);
+  });
+});
+
+// Caching 3-M A-2b3: the miss line says what the miss cost, when the runner's own economics file
+// prices it. The list is live-899's drive_a with turn 4 started 420 s after turn 3 and re-writing
+// the entry (constructed; A-2b1's core list). The rates are the documented example's
+// (docs/reference/cache-economics.md). A line with no figure is pinned above.
+describe('caching 3-M A-2b3 — the miss line says what the miss cost', () => {
+  const SOURCE: PriceSource = {
+    price: (q) =>
+      priceFromEconomics(
+        {
+          version: 1,
+          currency: 'USD',
+          models: {
+            'claude-sonnet-5-5': {
+              prices: [
+                {
+                  per_million_tokens: {
+                    input: 2,
+                    output: 10,
+                    cache_read: 0.1,
+                    cache_write_5m: 2.5,
+                    cache_write_1h: 4,
+                  },
+                },
+              ],
+            },
+          },
+        },
+        q.model,
+        q.at,
+        q.usage,
+      ),
+  };
+  const REQUESTS = [
+    { start: '2026-10-29T16:07:28.795Z', prompt: 6901, uncached: 4, read: 0, write: 6897, out: 47 },
+    {
+      start: '2026-10-29T16:07:30.900Z',
+      prompt: 6995,
+      uncached: 2,
+      read: 6897,
+      write: 96,
+      out: 47,
+    },
+    {
+      start: '2026-10-29T16:07:32.286Z',
+      prompt: 7089,
+      uncached: 2,
+      read: 6993,
+      write: 94,
+      out: 47,
+    },
+    {
+      start: '2026-10-29T16:07:33.595Z',
+      prompt: 7183,
+      uncached: 2,
+      read: 7087,
+      write: 94,
+      out: 47,
+    },
+    { start: '2026-10-29T16:14:33.595Z', prompt: 7277, uncached: 2, read: 0, write: 7275, out: 47 },
+    {
+      start: '2026-10-29T16:14:34.908Z',
+      prompt: 7363,
+      uncached: 2,
+      read: 7275,
+      write: 86,
+      out: 11,
+    },
+  ].map((t, i) => turn(i, t));
+  const LINE =
+    'cache miss: request 5 of 6 read 0 of 7181 expected tokens — possibly expired: it started 7 minutes after request 4, longer than the 5 minutes the provider granted; this miss cost about $0.0172 more than a full read (your economics file)';
+
+  /** The rendered lines of `run`, priced with the runner's file. */
+  async function renderPriced(run: Record<string, unknown>): Promise<string[]> {
+    const record = {
+      id: 'run_miss',
+      workflow_id: 'wf',
+      workflow_version: 1,
+      completed_steps: [],
+      in_progress_steps: [],
+      failed_steps: [],
+      skipped_steps: [],
+      version: 1,
+      params: {},
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+      ...run,
+    } as unknown as RunRecord;
+    const out = await inspectRun(
+      'run_miss',
+      { get: async () => snap(record), list: async () => listing([record]) } as never,
+      workflowStore,
+      { priceSource: SOURCE },
+    );
+    return out.split('\n');
+  }
+
+  // A completed step that missed. Can fail: the clause not printed, or the figure unrounded.
+  it('a step: the line ends with what the miss cost', async () => {
+    const lines = await renderPriced({
+      completed_steps: ['classify'],
+      run_phase: 'completed',
+      terminal_state: true,
+      evidence: [attempt('classify', 'success', '2026-10-29T16:07:28.000Z', REQUESTS)],
+    });
+    const near = around(lines, '     Diagnostics: ');
+    expect(near[1], near.join('\n')).toBe(`       ${LINE}`);
+  });
+
+  // A drive that failed after the miss: the failure block, a second print site of the one composer.
+  // Can fail: the clause added at the step line only.
+  it('a failed drive: the line beneath its usage line carries the clause too', async () => {
+    const at = '2026-10-29T16:15:00.000Z';
+    const lines = await renderPriced({
+      run_phase: 'running',
+      terminal_state: false,
+      evidence: [],
+      drive_failures: {
+        first_failed_at: at,
+        total: 1,
+        entries: [
+          {
+            at,
+            step: 'classify',
+            provider: 'anthropic',
+            error_class: 'api_status',
+            message: 'rate limited by upstream',
+            elapsed_ms: 1200,
+            usage: REQUESTS,
+          },
+        ],
+      },
+    });
+    const near = around(lines, `  ${at}  classify  anthropic`);
+    expect(near[2], near.join('\n')).toBe(`      ${LINE}`);
   });
 });
