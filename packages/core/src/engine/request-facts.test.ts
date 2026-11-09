@@ -296,12 +296,20 @@ describe('issue #600 PR 2 — request names are bounded on the stored record (A3
       }),
       await storedReference({ ...wellFormed, reference: { ...wellFormed }, request_index: 3 }),
       await storedReference({}),
+      // Caching 3-M C1, check 6: another run's copy is kept. (a) red when the word is not in the
+      // constant (the normaliser drops the reference whole); (b) prints it.
+      await storedReference({ ...wellFormed, from: 'earlier_run' }),
     ]).toEqual([
       { has: true, json: JSON.stringify(wellFormed), prompt_tokens: 10 },
       { has: false, json: undefined, prompt_tokens: 10 },
       { has: true, json: JSON.stringify(withoutParts), prompt_tokens: 10 },
       { has: true, json: JSON.stringify(wellFormed), prompt_tokens: 10 },
       { has: false, json: undefined, prompt_tokens: 10 },
+      {
+        has: true,
+        json: JSON.stringify({ ...wellFormed, from: 'earlier_run' }),
+        prompt_tokens: 10,
+      },
     ]);
   });
 

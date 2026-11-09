@@ -1,31 +1,23 @@
 // cleanup command — marks idle non-terminal runs as abandoned.
 import { Command } from 'commander';
-import type { RunStore, RunRecord, UnreadableRunFileEntry } from '@sensigo/realm';
+import type { RunStore, RunRecord } from '@sensigo/realm';
 import { isIdleForCleanup } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
-import { listRunsDiagnosed, unreadableRunLines } from './list.js';
 import { openCliHome } from '../lib/home.js';
 
 /**
  * List all non-terminal runs idle for longer than `olderThan` and mark them abandoned.
- * @param options  `olderThan` is a duration string; `dryRun` skips writes; `onUnreadable` (issue
- *                 #719) is told the run files that could not be read as runs — not acted on.
+ * @param options  `olderThan` is a duration string; `dryRun` skips writes.
  * @param runStore Store holding run records.
  * @returns The list of affected runs.
  */
 export async function cleanupRuns(
-  options: {
-    olderThan: string;
-    dryRun?: boolean;
-    onUnreadable?: (entries: UnreadableRunFileEntry[]) => void;
-  },
+  options: { olderThan: string; dryRun?: boolean },
   runStore: RunStore,
 ): Promise<{ affected: RunRecord[] }> {
   const threshold = parseDuration(options.olderThan);
-  // issue #719 (B3): act on the readable runs; a damaged run file is reported, never acted on.
   // #715 (b) (D-26, D6-41): each run is judged at its OWN snapshot's reading.
-  const { snapshots: all, unreadable } = await listRunsDiagnosed(runStore);
-  if (unreadable.length > 0) options.onUnreadable?.(unreadable);
+  const { snapshots: all } = await runStore.list();
 
   const affected: RunRecord[] = [];
   for (const snapshot of all) {
@@ -70,20 +62,7 @@ export const cleanupCommand = new Command('cleanup')
     // #616 PR-2a (iii): the one door, opened once.
     const runStore = (await openCliHome()).runStore;
     try {
-      const { affected } = await cleanupRuns(
-        {
-          ...opts,
-          onUnreadable: (entries) => {
-            for (const line of unreadableRunLines(
-              entries,
-              '; realm run cleanup did not act on them.',
-            )) {
-              console.error(line);
-            }
-          },
-        },
-        runStore,
-      );
+      const { affected } = await cleanupRuns(opts, runStore);
       const n = affected.length;
       if (opts.dryRun ?? false) {
         console.log(`Would mark ${n} run(s) as abandoned.`);
