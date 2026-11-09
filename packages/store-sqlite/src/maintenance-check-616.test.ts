@@ -903,7 +903,7 @@ describe('#616 PR-2c c8a3 — check 4: still refused in check mode, no handle', 
     async () => {
       const home = await storeHome();
       lock(home, 0o644, 0o755);
-      const got = await refusal(openMaintenance({ home, verb: 'check' }));
+      const got = await refusal(openMaintenance({ home, verb: 'check' }, {}));
       // (1) red when check mode does not ask whether the folder can be searched (the old-store
       //     guard's lstat then fails with a raw EACCES; the write half asked too is the 0555 cell's
       //     break); (2) prints the refusal.
