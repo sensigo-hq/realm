@@ -500,6 +500,13 @@ describe('#872 (b1) correction 1 HC4 (H4) — get_run_state’s run lists are cu
 
 // ─── HC6: the envelope's lists, and eligible_steps ───────────────────────────────────────────────
 
+/**
+ * How long one MCP request may take in these cells. The SDK's client gives a request 60 s unless the
+ * call says otherwise (`DEFAULT_REQUEST_TIMEOUT_MSEC`), while the cells below budget up to 240 s: the
+ * 450-step `start_run` timed out at 60 s on a loaded machine, though the cell's own budget was far off.
+ */
+const CALL_TIMEOUT_MS = 240_000;
+
 /** A JSON-file store pair and an MCP client on a server with `registry` (when given). */
 async function door(registry?: ExtensionRegistry) {
   const h = await makeTempHome();
@@ -513,7 +520,9 @@ async function door(registry?: ExtensionRegistry) {
   const client = new Client({ name: 'hc6-872', version: '0' });
   await Promise.all([server.connect(st), client.connect(ct)]);
   const call = async (name: string, args: Reply): Promise<{ size: number; json: Reply }> => {
-    const raw = (await client.callTool({ name, arguments: args })) as {
+    const raw = (await client.callTool({ name, arguments: args }, undefined, {
+      timeout: CALL_TIMEOUT_MS,
+    })) as {
       content: Array<{ text: string }>;
     };
     return { size: raw.content[0]!.text.length, json: JSON.parse(raw.content[0]!.text) as Reply };
