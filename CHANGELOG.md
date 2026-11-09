@@ -26,6 +26,7 @@ All notable changes to this project are documented here.
 - **`realm run inspect` adds a line under a step's cost for each request that missed the cache.** The line names the first difference on the record, a pause longer than the entry's lifetime, or that the record shows no difference (never a proven cause), and what the miss cost when your economics file prices it. (#600)
 - **Core exports `CostMiss`, `CacheMissCause`, `CACHE_MISS_CAUSES`, `CacheMissRule`, `CachePredecessorPlace`, `CacheLifetimeSource` and `CACHE_LIFETIME_SOURCES`.** (#600)
 - **The composed cost view gains `CostView.misses`.** Numbers and closed words only. (#600)
+- **`cost.misses` gains `provider`:** what Anthropic itself said about a cache miss, beside Realm's own reason; `realm run inspect` prints it on the miss line. (#600)
 - **Core exports `discloseSplit`, `discloseSplitSize`, `discloseLeaf` and `renderStepPromptWithBoundary`,** with the types `DisclosedSplit`, `DisclosedSplitSize`, `StableBoundary`, `CacheSizeBlock` and `CacheLayoutBlock`, and `isSizeBlock`. (#600)
 - **`ProviderCapabilities.promptCache` may be `'provider'`** (the service caches by its own rules; the OpenAI providers declare it), and **`capabilities()` carries `endpoint`** (`default` or `custom`), resolved once from the SDK client. A provider module may declare `'provider'`. (#600)
 - **`callStepWithMeta` and `callStepWithTools` take `cachePrefixChars`,** where the prompt's stable start ends; the prompt is still sent whole, so a provider module that ignores it sends what it always sent. (#600)
