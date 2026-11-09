@@ -4,18 +4,16 @@
 // reader, keeps the same ten and the same total. A failure prints codes and counts only.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
-  JsonFileFailedAttemptStore,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD,
 } from '@sensigo/realm';
-import type { WorkflowDefinition } from '@sensigo/realm';
+import type { WorkflowDefinition, RunStore, WorkflowRegistrar } from '@sensigo/realm';
 import { handleExecuteStepTool } from './execute-step.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import type { FailedAttemptStoreLike } from './start-run.js';
 
 const fields = Array.from({ length: 13 }, (_, i) => `f${String(i + 1).padStart(2, '0')}`);
 const wf: WorkflowDefinition = {
@@ -39,9 +37,9 @@ const wf: WorkflowDefinition = {
 
 describe('issue #759 — the wire and the sidecar carry the same ten and the total', () => {
   let h: TempHome;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
-  let failedAttemptStore: JsonFileFailedAttemptStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
+  let failedAttemptStore: FailedAttemptStoreLike;
   let errSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {

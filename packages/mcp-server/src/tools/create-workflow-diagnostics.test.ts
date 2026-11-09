@@ -4,7 +4,8 @@
 // self-correct on code/key/did_you_mean instead of parsing text). The workflow is still created
 // either way; create_workflow never rejects on an unknown step key.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { JsonFileStore, JsonWorkflowStore, DEFAULT_POLICY } from '@sensigo/realm';
+import { DEFAULT_POLICY } from '@sensigo/realm';
+import type { RunStore, WorkflowRegistrar } from '@sensigo/realm';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Client } from '@modelcontextprotocol/sdk/client';
@@ -20,7 +21,7 @@ import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 describe('create_workflow — structured diagnostics (issue #169)', () => {
   let h: TempHome;
-  let stores: { runStore: JsonFileStore; workflowStore: JsonWorkflowStore };
+  let stores: { runStore: RunStore; workflowStore: WorkflowRegistrar };
 
   beforeEach(async () => {
     h = await makeTempHome();
@@ -167,7 +168,7 @@ describe('create_workflow — structured diagnostics (issue #169)', () => {
 // =================================================================================================
 describe('create_workflow — timeout keys (issue #412)', () => {
   let h: TempHome;
-  let stores: { runStore: JsonFileStore; workflowStore: JsonWorkflowStore };
+  let stores: { runStore: RunStore; workflowStore: WorkflowRegistrar };
 
   beforeEach(async () => {
     h = await makeTempHome();
@@ -305,7 +306,7 @@ describe('create_workflow — timeout keys (issue #412)', () => {
 // =================================================================================================
 describe('create_workflow — top-level and metadata unknown keys (issue #419)', () => {
   let h: TempHome;
-  let stores: { runStore: JsonFileStore; workflowStore: JsonWorkflowStore };
+  let stores: { runStore: RunStore; workflowStore: WorkflowRegistrar };
 
   beforeEach(async () => {
     h = await makeTempHome();

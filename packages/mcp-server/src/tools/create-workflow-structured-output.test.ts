@@ -1,12 +1,12 @@
 // create_workflow structured_output tests (issue #236, Deliverable 2 — the 4-touch-point wiring).
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { JsonFileStore, JsonWorkflowStore } from '@sensigo/realm';
+import type { RunStore, WorkflowRegistrar } from '@sensigo/realm';
 import { handleCreateWorkflow, type CreateWorkflowArgs } from './create-workflow.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 describe('create_workflow — structured_output (issue #236)', () => {
   let h: TempHome;
-  let stores: { runStore: JsonFileStore; workflowStore: JsonWorkflowStore };
+  let stores: { runStore: RunStore; workflowStore: WorkflowRegistrar };
 
   beforeEach(async () => {
     h = await makeTempHome();

@@ -11,16 +11,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
-  JsonFileStore,
   applyResume,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type WorkflowDefinition,
   type StepDefinition,
 } from '@sensigo/realm';
+import type { RunStore } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { printChildrenWhenATestFails } from '../test-support/child-output.js';
-import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
+import { createTestHome, type TestHome } from '@sensigo/realm-testing';
 import { makeTempHome } from '../test-support/temp-home.js';
 
 const SERVER_ENTRY =
@@ -73,7 +73,7 @@ function handlerEntry(home: string): string {
 
 async function withServer<T>(
   defs: WorkflowDefinition[],
-  fn: (client: Client, runs: JsonFileStore, clock?: TestLocation['clock']) => Promise<T>,
+  fn: (client: Client, runs: RunStore, clock?: TestHome['clock']) => Promise<T>,
   opts: { withHandler?: boolean; located?: true } = {},
 ): Promise<T> {
   // #616 PR-2b (b3): the stores come from the helper — a home of its own, whose root is the child's
@@ -84,7 +84,7 @@ async function withServer<T>(
   // cell moves the clock the spawned server reads instead of waiting on the real one.
   const loc =
     opts.located === true
-      ? await createTestLocation({ start: new Date(), root: join(home, '.realm') })
+      ? await createTestHome({ start: new Date(), root: join(home, '.realm') })
       : undefined;
   const h = own ?? (await makeTempHome({ home: join(home, '.realm') }));
   const workflows = h.stores.workflowStore;
@@ -160,7 +160,7 @@ const gate = (depends_on: string[], choices = ['approve', 'reject']): StepDefini
   gate: { choices },
 });
 
-async function phaseOf(runs: JsonFileStore, runId: string): Promise<string> {
+async function phaseOf(runs: RunStore, runId: string): Promise<string> {
   return (await runs.get(runId)).record.run_phase;
 }
 

@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  JsonFileStore,
   REALM_BRAND,
   RELEASE_LINE_KEY,
   createRealmBrand,
@@ -13,6 +12,7 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   WorkflowError,
 } from '@sensigo/realm';
+import type { RunStore } from '@sensigo/realm';
 import { createRealmMcpServer } from './server.js';
 import { handleGetRunState, registerGetRunState } from './tools/get-run-state.js';
 import { handleAdvanceRun, registerAdvanceRun } from './tools/advance-run.js';
@@ -549,7 +549,7 @@ describe('get_run_state: both catches around getWorkflowForRun rethrow a release
     declareReleaseLine(s);
     return s;
   }
-  async function makeRunIn(terminal: boolean): Promise<{ runStore: JsonFileStore; id: string }> {
+  async function makeRunIn(terminal: boolean): Promise<{ runStore: RunStore; id: string }> {
     const runStore = h.stores.runStore;
     const { record: run } = await runStore.create({
       workflowId: 'w',

@@ -19,7 +19,7 @@ import {
   type RunStore,
   type WorkflowDefinition,
 } from '@sensigo/realm';
-import { InMemoryStore, createTestLocation, settableClock } from '@sensigo/realm-testing';
+import { InMemoryStore, createTestHome, settableClock } from '@sensigo/realm-testing';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from './server.js';
@@ -110,7 +110,7 @@ describe('#715 (b) §C — what a reply’s instant stands on, and the test-loca
   it('(iii) a store at a test location: as_of_basis test_clock, and the notice once, at the first read’s reading', async () => {
     // (a) red when stampOf drops the basis, the server does not wrap its store with the notice, or the
     //     notice repeats per read; (b) prints the two bases and the notices.
-    const location = await createTestLocation({ start: T });
+    const location = await createTestHome({ start: T });
     const h = await makeTempHome({ home: location.root });
     try {
       const r = await twoCalls(h.stores.runStore);
