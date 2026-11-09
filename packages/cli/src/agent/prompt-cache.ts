@@ -28,6 +28,19 @@ export function parsePromptCache(value: string): PromptCacheSetting {
   throw new InvalidArgumentError('--prompt-cache must be auto, short, long or off.');
 }
 
+/** Caching 3-M (B2b): what an operator can state with `--cache-diagnostics`. */
+export type CacheDiagnosticsSetting = 'on' | 'off';
+
+/**
+ * Commander argParser for `--cache-diagnostics`, used by `realm agent` and `realm listen` beside
+ * {@link parsePromptCache}. Exactly the two words; anything else, `ON`, `true` and the empty string
+ * included, is refused. No Commander default: an unstated flag stays unstated.
+ */
+export function parseCacheDiagnostics(value: string): CacheDiagnosticsSetting {
+  if (value === 'on' || value === 'off') return value;
+  throw new InvalidArgumentError('--cache-diagnostics must be on or off.');
+}
+
 /**
  * The workflow's agent steps (`execution: 'agent'`), split by path: `singleShot` sends its
  * instructions in one request (no tools, or an empty list — `run-agent.ts`'s path test), and

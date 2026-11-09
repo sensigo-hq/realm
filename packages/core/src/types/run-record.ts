@@ -544,6 +544,45 @@ export interface PrefixParts {
 }
 
 /**
+ * Caching 3-M (piece B3a): Anthropic's reasons a request's cache read fell short, and `unknown` for a
+ * reason Realm does not know (recorded so, never verbatim).
+ */
+export const CACHE_MISS_TYPES = [
+  'messages_changed',
+  'model_changed',
+  'system_changed',
+  'tools_changed',
+  'previous_message_not_found',
+  'unavailable',
+  'unknown',
+] as const;
+export type CacheMissType = (typeof CACHE_MISS_TYPES)[number];
+
+/**
+ * Caching 3-M (piece B3a): what Anthropic said in words, for a request that named an earlier answer:
+ * `no_divergence` (it found none), `pending` (it has not worked it out yet), `not_returned` (the
+ * answer carried nothing Realm can read).
+ */
+export const CACHE_DIAGNOSTICS_WORDS = ['no_divergence', 'pending', 'not_returned'] as const;
+export type CacheDiagnosticsWord = (typeof CACHE_DIAGNOSTICS_WORDS)[number];
+
+/** Caching 3-M (piece B3a): Anthropic's reason for a miss, with its approximate token count if given. */
+export interface CacheMissReason {
+  type: CacheMissType;
+  cache_missed_input_tokens?: number;
+}
+
+/**
+ * Caching 3-M (piece B3a): a request's question to Anthropic about a cache miss, in one of three
+ * shapes: it did not ask because Anthropic refused the question in this drive; it asked with no
+ * earlier message (a call's first request); or it named an earlier answer, with what came back.
+ */
+export type CacheDiagnostics =
+  | { asked: false; cause: 'rejected' }
+  | { asked: true; reference_id: null }
+  | { asked: true; reference_id: string; result: CacheDiagnosticsWord | CacheMissReason };
+
+/**
  * Caching 3-M (piece A-1): where a request's copied predecessor (`UsageRecord.reference`) came from:
  * `run`, the run's own record — the first request of the same step's last call there, from an
  * earlier drive (piece A-1b); `earlier_run`, another run's record — the same step's first request
@@ -705,6 +744,14 @@ export interface UsageRecord {
    * module's own `response_id` obeys the same check.
    */
   response_id?: string;
+  /**
+   * Caching 3-M (piece B3a) — what this request asked Anthropic about a cache miss, and what Anthropic
+   * answered, in closed form. Absent on every request that was never going to ask: asking off, a
+   * custom address, another provider, a tool step's final extraction, a settled `off`. Kept only in
+   * one of {@link CacheDiagnostics}'s shapes where the record is written (`normalizeCacheDiagnostics`):
+   * every word is closed and the one id is checked, so no provider text reaches a broadcast surface.
+   */
+  cache_diagnostics?: CacheDiagnostics;
   /**
    * Caching 3-M (piece A-1b): this request's place, from 0, among the recorded requests of the one
    * provider call that made it. A call's first recorded request is 0: a single-shot step's request

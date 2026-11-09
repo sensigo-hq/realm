@@ -1419,6 +1419,41 @@ describe('--provider and --model on listen (issue #676)', () => {
     ]);
   });
 
+  // Caching 3-M B2b, check 5. Real case: an operator's `off` given to listen must reach every agent,
+  // and an unstated flag must leave each child's argv as it was. (a) red when the value is dropped
+  // at the mapping or always passed; (b) prints the argv.
+  it('WIRED — the spawn carries a stated --cache-diagnostics, and nothing when none was stated', async () => {
+    spawnMock.mockClear();
+    await makeAgentSpawner({ model: 'm-600', cacheDiagnostics: 'off' }, silentLogger)(
+      'run-45',
+      existingFolder(),
+    );
+    await makeAgentSpawner({ model: 'm-600' }, silentLogger)('run-46', existingFolder());
+    const argvs = spawnMock.mock.calls.map((c) => (c as unknown as [string, string[]])[1].slice(1));
+    expect(argvs).toEqual([
+      [
+        'agent',
+        '--run-id',
+        'run-45',
+        '--model',
+        'm-600',
+        '--cache-diagnostics',
+        'off',
+        '--spawned-by-listen',
+        '--no-release-line-advisory',
+      ],
+      [
+        'agent',
+        '--run-id',
+        'run-46',
+        '--model',
+        'm-600',
+        '--spawned-by-listen',
+        '--no-release-line-advisory',
+      ],
+    ]);
+  });
+
   // (a) red when makeAgentSpawner drops the stated value; (b) prints the argv.
   it('WIRED — the spawn carries a stated --prompt-cache, and nothing when none was stated', async () => {
     spawnMock.mockClear();
@@ -1765,6 +1800,13 @@ describe("issue #600 (the lifetime unit) — listen measures each workflow's tri
   it("the help: listen's --dedup-store says where each kind keeps its marks", () => {
     expect(listenCommand.helpInformation().replace(/\s+/g, ' ')).toContain(
       "Dedup store: file (kept in the home's store across restarts) | memory (this process only)",
+    );
+  });
+
+  // Caching 3-M B2b. (a) red when the description differs from the prompt's words; (b) prints it.
+  it("the help: listen's --cache-diagnostics description", () => {
+    expect(listenCommand.options.find((o) => o.long === '--cache-diagnostics')?.description).toBe(
+      "Whether to ask Anthropic why a request missed the cache: on or off. On by default at Anthropic's own address, for a request marked for caching. Each request that asks leaves a short-lived fingerprint of what it sent at Anthropic. Passed to each `realm agent` it starts.",
     );
   });
 

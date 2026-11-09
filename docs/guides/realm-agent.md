@@ -88,7 +88,7 @@ Ticket:
 I was charged twice this month.
 ```
 
-The request also offers the model one tool, `__realm_submit__`, whose input is the step's schema; the model can answer by calling it.
+The request also offers the model one tool, `__realm_submit__`, whose input is the step's schema; the model can answer by calling it. At Anthropic's own address the request also opts in to Anthropic's cache diagnostics, which leaves a short-lived fingerprint of what it sent at Anthropic and lets a later request of the same call ask why it missed the cache; `--cache-diagnostics off` stops that (added after version 0.48.0).
 
 The system prompt is the fixed part of the request, with the start of the step's prompt: both are the same for every request of the step. Realm sends the system prompt as one block that asks Anthropic to cache it, and keep it for 5 minutes (`--prompt-cache auto`, the default, on a drive you start):
 
