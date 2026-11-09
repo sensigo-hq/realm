@@ -10,6 +10,12 @@ import {
   composeRunCost,
   isAnswerEntry,
 } from './step-view.js';
+import {
+  priceFromEconomics,
+  type CacheEconomics,
+  type CacheEconomicsPrice,
+  type CacheEconomicsRates,
+} from '../economics/cache-economics.js';
 import type { PriceSource } from '../economics/price-source.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
@@ -1137,5 +1143,282 @@ describe('caching 3-M A-2b1 — CostView.misses', () => {
     // Whole statements, so a wrapped import is caught; a type-only import is refused too.
     const fromStepView = source.match(/import\s[^;]*?from\s*'\.\/step-view\.js'/g) ?? [];
     expect(fromStepView).toEqual([]);
+  });
+
+  // Caching 3-M A-2b3: what a miss cost, at the runner's own file's rates, through the real rule
+  // (`priceFromEconomics`). The rates are the documented example's
+  // (docs/reference/cache-economics.md). A failing cell prints the list's places and counts and the
+  // figure, never prompt text.
+  describe('caching 3-M A-2b3 — what a miss cost', () => {
+    const RATES: CacheEconomicsRates = {
+      input: 2,
+      output: 10,
+      cache_read: 0.1,
+      cache_write_5m: 2.5,
+      cache_write_1h: 4,
+    };
+    const fileOf = (model: string, price: CacheEconomicsPrice): CacheEconomics => ({
+      version: 1,
+      currency: 'USD',
+      models: { [model]: { prices: [price] } },
+    });
+    const sourceOf = (file: CacheEconomics): PriceSource => ({
+      price: (q) => priceFromEconomics(file, q.model, q.at, q.usage),
+    });
+    const SONNET = 'claude-sonnet-5-5';
+    const FILE = sourceOf(fileOf(SONNET, { per_million_tokens: RATES }));
+    /** The miss at `position`, composed with `source`. */
+    const missAt = (
+      list: readonly unknown[],
+      source: PriceSource,
+      position: number,
+    ): NonNullable<NonNullable<ReturnType<typeof composeCostView>>['misses']>[number] | undefined =>
+      composeCostView(list, undefined, { priceSource: source })?.misses?.find(
+        (m) => m.position === position,
+      );
+    /** Turn 4 of (a)'s list with its counts replaced. */
+    const withTurn4 = (counts: Partial<Turn>): Record<string, unknown>[] =>
+      toolTurns(pausedTurns().map((t, i) => (i === 4 ? { ...t, ...counts } : t)));
+    /** `false` when the miss is there and has no figure; a miss that is gone reads differently. */
+    const hasFigure = (m: ReturnType<typeof missAt>): boolean | string =>
+      m === undefined ? 'no miss at this place' : 'extra_usd' in m;
+
+    // (a) A-2b1's cell 1 (b) list: a tool turn after a pause re-wrote the whole entry at the
+    // 5-minute rate. Can fail: M12's first sketch, shortfall × (input − read) (0.0136439); or the
+    // full read leaving the write unchanged (a negative difference, so no figure).
+    it('(a) a miss that re-wrote the entry: the shortfall at the write rate less the read rate', () => {
+      const list = toolTurns(pausedTurns());
+      expect(missAt(list, FILE, 4)?.extra_usd, show(list)).toBeCloseTo(0.0172344, 10);
+    });
+
+    // (b) The same on a 1-hour write, so the entry had not expired after 420 s. Can fail: the write
+    // always priced at the 5-minute rate (0.0172344), or the 1-hour write left standing.
+    it('(b) a miss that re-wrote at the 1-hour rate: the figure is at that rate', () => {
+      const list = toolTurns(pausedTurns()).map((r) => ({
+        ...r,
+        cache_lifetime_s: 3600,
+        cache_creation: {
+          ephemeral_5m_input_tokens: 0,
+          ephemeral_1h_input_tokens: r['cache_creation_input_tokens'],
+        },
+      }));
+      const miss = missAt(list, FILE, 4);
+      expect(miss?.derived.cause, show(list)).toBe('unexplained');
+      expect(miss?.extra_usd, show(list)).toBeCloseTo(0.0280059, 10);
+    });
+
+    // (c) A miss that wrote nothing: the provider sent the whole prompt uncached. Can fail: the
+    // shortfall taken only from the writes (the full read keeps its uncached part).
+    it('(c) a miss that wrote nothing: the shortfall at the input rate less the read rate', () => {
+      const list = withTurn4({ uncached: 7277, write: 0 });
+      expect(missAt(list, FILE, 4)?.extra_usd, show(list)).toBeCloseTo(0.0136439, 10);
+    });
+
+    // (d) A partial write: 1000 tokens went to the cache, 6181 of the shortfall stayed uncached.
+    // Can fail: the part the writes cannot cover dropped (0.0024).
+    it('(d) a partial write: each part of the shortfall at its own rate, less the read rate', () => {
+      const list = withTurn4({ uncached: 6277, write: 1000 });
+      expect(missAt(list, FILE, 4)?.extra_usd, show(list)).toBeCloseTo(0.0141439, 10);
+    });
+
+    // (e) A long prompt: 120,000 tokens is above claude-haiku-5-5's tier, and the shortfall alone
+    // (89,996) is not. Can fail: a stand-in whose `prompt_tokens` is the shortfall (base rates,
+    // 0.01034954).
+    it("(e) a prompt above the model's tier: both sides at the tier's rates", () => {
+      const list = toolTurns([
+        {
+          start: '2026-11-08T05:00:00.000Z',
+          prompt: 90000,
+          uncached: 4,
+          read: 0,
+          write: 89996,
+          out: 47,
+        },
+        {
+          start: '2026-11-08T05:00:01.000Z',
+          prompt: 120000,
+          uncached: 4,
+          read: 0,
+          write: 119996,
+          out: 47,
+        },
+      ]).map((r) => ({ ...r, model: 'claude-haiku-5-5' }));
+      const source = sourceOf(
+        fileOf('claude-haiku-5-5', {
+          per_million_tokens: {
+            input: 0.1,
+            output: 0.5,
+            cache_read: 0.01,
+            cache_write_5m: 0.125,
+            cache_write_1h: 0.2,
+          },
+          tiers: [
+            {
+              above_prompt_tokens: 100000,
+              per_million_tokens: {
+                input: 0.5,
+                output: 2.5,
+                cache_read: 0.05,
+                cache_write_5m: 0.625,
+                cache_write_1h: 1,
+              },
+            },
+          ],
+        }),
+      );
+      expect(missAt(list, source, 1)?.extra_usd, show(list)).toBeCloseTo(0.0517477, 10);
+    });
+
+    /**
+     * An OpenAI GPT-5.6 explicit request against a reference: C1's first answer (read 0, wrote 3930;
+     * plans/issue-896/live-checks/results-gpt-5.6-luna.json). It records `cache_write_tokens`, no
+     * split and `cache_split_offered: false`. The capture holds no output count, and the figure
+     * does not depend on one. The rates are example rates: these cells test the route.
+     */
+    const GPT = 'gpt-5.6-luna';
+    const GPT_FILE = sourceOf(
+      fileOf(GPT, {
+        per_million_tokens: { input: 2, output: 10, cache_read: 0.2, cache_write: 2.5 },
+      }),
+    );
+    const gptRequest = (read: number, write: number): Record<string, unknown>[] => {
+      const facts = {
+        provider: 'openai',
+        model: GPT,
+        endpoint: 'default',
+        cache_requested: 'lifetime',
+        cache_lifetime_s: 1800,
+        cache_split_offered: false,
+        request_strict_sent: false,
+        prefix_parts: TOOL_PARTS,
+      };
+      return [
+        {
+          request_start: '2026-11-08T05:01:00.000Z',
+          request_index: 0,
+          request_in_call: 0,
+          ...facts,
+          prompt_tokens: 4015,
+          output_tokens: 40,
+          cache_read_input_tokens: read,
+          cache_write_tokens: write,
+          reference: {
+            from: 'run',
+            request_start: '2026-11-08T05:00:00.000Z',
+            ...facts,
+            cache_read_input_tokens: 0,
+            cache_write_tokens: 3930,
+          },
+        },
+      ];
+    };
+
+    // (f) The whole write falls. Can fail: a split assumed on a request that records none
+    // (`usage_incomplete`, so no figure).
+    it('(f) an OpenAI request with no split: the shortfall at its one write rate less the read rate', () => {
+      const list = gptRequest(0, 3930);
+      expect(missAt(list, GPT_FILE, 0)?.extra_usd, show(list)).toBeCloseTo(0.009039, 10);
+    });
+
+    // Added to the prompt's list: (f) empties the write, so it cannot tell a write reduced from a
+    // write emptied. Here 50 written tokens remain (constructed: read 930, wrote 3050). Can fail:
+    // the write counter emptied rather than reduced (0.006925), or a split written when the request
+    // has none (`usage_incomplete`, so no figure).
+    it('(f2) an OpenAI request whose write only partly falls: it still records no split', () => {
+      const list = gptRequest(930, 3050);
+      expect(missAt(list, GPT_FILE, 0)?.extra_usd, show(list)).toBeCloseTo(0.0069, 10);
+    });
+
+    // (g) No figure. Only the runner's own file counts: here a price list. Each side is the real
+    // rule's answer relabelled, so the two totals differ. Can fail: the `economics` test removed.
+    it('(g) a price that is not from the economics file: no figure', () => {
+      const file = fileOf(SONNET, { per_million_tokens: RATES });
+      const relabelled: PriceSource = {
+        price: (q) => {
+          const r = priceFromEconomics(file, q.model, q.at, q.usage);
+          return 'priced' in r
+            ? { ...r, priced_by: { ...r.priced_by, source_class: 'price_list' } }
+            : r;
+        },
+      };
+      const list = toolTurns(pausedTurns());
+      expect(hasFigure(missAt(list, relabelled, 4)), show(list)).toBe(false);
+    });
+
+    // (g) A file with no `cache_read` rate: the request read nothing, so it is priced; its full read
+    // is `rate_missing`. Can fail: a side not priced counted as 0 (the figure would be the total).
+    it('(g) a file with no cache_read rate: the request is priced, the full read is not, no figure', () => {
+      const { cache_read: _unused, ...withoutRead } = RATES;
+      const source = sourceOf(fileOf(SONNET, { per_million_tokens: withoutRead }));
+      const list = toolTurns(pausedTurns());
+      expect(hasFigure(missAt(list, source, 4)), show(list)).toBe(false);
+    });
+
+    // (g) A prompt edit shrank the prompt below what was expected: the full read would read more
+    // than the prompt holds (`usage_incomplete`). Can fail: a side not priced counted as 0.
+    it('(g) a full read that would exceed the prompt: no figure', () => {
+      const list = withTurn4({ prompt: 5000, uncached: 4, write: 4996 });
+      expect(hasFigure(missAt(list, FILE, 4)), show(list)).toBe(false);
+    });
+
+    const allRates = (rate: number): CacheEconomicsRates => ({
+      input: rate,
+      output: rate,
+      cache_read: rate,
+      cache_write_5m: rate,
+      cache_write_1h: rate,
+    });
+
+    // (g) A file whose rates are all 0 (the docs allow it): the two sides are equal. Can fail: the
+    // floor removed (`extra_usd` 0).
+    it('(g) rates all 0: no figure', () => {
+      const list = toolTurns(pausedTurns());
+      const source = sourceOf(fileOf(SONNET, { per_million_tokens: allRates(0) }));
+      expect(hasFigure(missAt(list, source, 4)), show(list)).toBe(false);
+    });
+
+    // (g) Equal rates leave float noise of 1.39e-17, above 0 and not a cost (the audit's case,
+    // A3MA2B3-12). Can fail: the floor loosened to `> 0`, or removed.
+    it('(g) equal rates that leave float noise above 0: no figure', () => {
+      const list = toolTurns([
+        {
+          start: '2026-11-08T05:00:00.000Z',
+          prompt: 56421,
+          uncached: 4,
+          read: 0,
+          write: 56417,
+          out: 47,
+        },
+        {
+          start: '2026-11-08T05:00:01.000Z',
+          prompt: 91706,
+          uncached: 17,
+          read: 776,
+          write: 90913,
+          out: 47,
+        },
+      ]);
+      const source = sourceOf(fileOf(SONNET, { per_million_tokens: allRates(1.169) }));
+      expect(hasFigure(missAt(list, source, 1)), show(list)).toBe(false);
+    });
+
+    // Added: the docs say `cost.misses` is absent "including when none could be compared". A list
+    // recorded before each request said its place in its call (read as not recorded, never
+    // compared), with a price source. Can fail: an empty list composed instead of no key.
+    it('a list none of whose requests could be compared has no misses key', () => {
+      const list = toolTurns(pausedTurns()).map(({ request_in_call: _gone, ...rest }) => rest);
+      const view = composeCostView(list, undefined, { priceSource: FILE });
+      expect(view !== undefined && 'misses' in view, show(list)).toBe(false);
+    });
+
+    // (h) Pricing a miss changes nothing stored, and the step's own money still prices every
+    // request. Can fail: the full read a shallow copy whose `cache_creation` is edited in place.
+    it('(h) the stored list is unchanged and the money still prices all six requests', () => {
+      const list = toolTurns(pausedTurns());
+      const before = structuredClone(list);
+      const view = composeCostView(list, undefined, { priceSource: FILE });
+      expect(list, show(list)).toEqual(before);
+      expect([view?.money?.priced, view?.money?.of], show(list)).toEqual([6, 6]);
+    });
   });
 });
