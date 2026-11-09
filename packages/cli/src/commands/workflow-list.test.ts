@@ -88,7 +88,7 @@ describe('realm workflow list (issue #427)', () => {
       undefinedWord: out.includes('undefined'),
       // #819 (U4): red when the ⚠ line names no way out.
       warned: stderr().includes(
-        '⚠ 1 file in the registry was registered by an older version of Realm: ancient.json; re-register each from its source (realm workflow register <path-to-workflow>) — realm cannot audit what it cannot read.',
+        '⚠ 1 workflow in the registry was registered by an older version of Realm: ancient; re-register each from its source (realm workflow register <path-to-workflow>) — realm cannot audit what it cannot read.',
       ),
     }).toEqual({ ancientRow: false, modern: true, undefinedWord: false, warned: true });
   });

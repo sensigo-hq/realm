@@ -6,8 +6,8 @@
 // asserts what the sentence states — so neither the page nor the behaviour can change alone.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
-import { describe, it, expect, afterEach } from 'vitest';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -997,13 +997,16 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
       gate_id: 'g',
       choice: 'x',
     });
-    mkdirSync(runStore.runsDirPath, { recursive: true });
-    writeFileSync(join(runStore.runsDirPath, 'broken.json'), '{not json');
+    // The store's read throws for this one call and is restored at once, so the next arm reads its run.
+    const failingRead = vi
+      .spyOn(runStore, 'get')
+      .mockRejectedValueOnce(new Error('the disk is gone'));
     const unreadable = await call('submit_human_response', {
       run_id: 'broken',
       gate_id: 'g',
       choice: 'x',
     });
+    failingRead.mockRestore();
     const { record: run } = await runStore.create({
       workflowId: 'never-registered',
       workflowVersion: 1,
@@ -1014,14 +1017,16 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
       gate_id: 'g',
       choice: 'x',
     });
-    // (a) red when one of these says submit_gate or a step; (b) prints them.
+    // (a) red when one of these says submit_gate or a step, or when the read that fails is not the
+    //     one answered (a run that is only missing says the same command, so the code tells them
+    //     apart); (b) prints them.
     expect([
       [missing['command'], missing['error_code']],
-      [unreadable['command'], unreadable['status']],
+      [unreadable['command'], unreadable['error_code']],
       [noWorkflow['command'], noWorkflow['status']],
     ]).toEqual([
       ['submit_human_response', 'STATE_RUN_NOT_FOUND'],
-      ['submit_human_response', 'error'],
+      ['submit_human_response', 'ENGINE_STORE_FAILED'],
       ['submit_human_response', 'error'],
     ]);
   });
@@ -2518,7 +2523,7 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
     ['advance_run', {}],
     ['get_run_state', {}],
   ] as const)(
-    'C172: %s on a run file that is not JSON — RESOURCE_FORMAT_INVALID naming the file, stop; an untyped failure — ENGINE_STORE_FAILED naming the cause',
+    'C172: %s on an untyped failure — ENGINE_STORE_FAILED naming the cause',
     async (tool, args) => {
       claim('mcp/tools.md', CANNOT_READ_MCP);
       claim(
@@ -2527,21 +2532,11 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
       );
       claim('mcp/tools.md', UNTYPED_MCP);
       const { call, runStore } = await connect();
-      mkdirSync(runStore.runsDirPath, { recursive: true });
-      writeFileSync(join(runStore.runsDirPath, 'broken.json'), '{not json');
-      const r = await call(tool, { run_id: 'broken', ...args });
-      // (a) red when the tool answers ENGINE_INTERNAL or the parser's text again, or drops the
-      //     file; (b) prints it.
-      expect([r['status'], r['error_code'], r['agent_action']]).toEqual([
-        'error',
-        'RESOURCE_FORMAT_INVALID',
-        'stop',
-      ]);
-      expect((r['errors'] as string[])[0]).toMatch(/^The run file '.*broken\.json' is not JSON\. /);
       runStore.get = async () => {
         throw new Error('the disk is gone');
       };
       const u = await call(tool, { run_id: 'broken', ...args });
+      // (a) red when the tool answers ENGINE_INTERNAL; (b) prints it.
       expect([u['status'], u['error_code'], (u['errors'] as string[])[0]]).toEqual([
         'error',
         'ENGINE_STORE_FAILED',
@@ -2554,7 +2549,7 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
     ['append_trace', { step_id: 'a', entries: [] }, 'ENGINE_INTERNAL'],
     ['abandon_run', {}, undefined],
   ] as const)(
-    'C172 (outside #706’s files, reported): %s on a run file that is not JSON — its code; on an untyped failure — the bare message',
+    'C172 (outside #706’s files, reported): %s on an untyped failure — the bare message',
     async (tool, args, code) => {
       claim('mcp/tools.md', CANNOT_READ_MCP);
       claim(
@@ -2562,17 +2557,11 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
         '`append_trace` refuses it with `ENGINE_INTERNAL`, and `abandon_run` with no code',
       );
       const { call, runStore } = await connect();
-      mkdirSync(runStore.runsDirPath, { recursive: true });
-      writeFileSync(join(runStore.runsDirPath, 'broken.json'), '{not json');
-      const r = await call(tool, { run_id: 'broken', ...args });
-      // (a) red when the damaged file loses its code, or the untyped failure gains one; (b)
-      //     prints the replies.
-      expect([r['status'], r['error_code']]).toEqual(['error', 'RESOURCE_FORMAT_INVALID']);
-      expect((r['errors'] as string[])[0]).toMatch(/^The run file '.*broken\.json' is not JSON\. /);
       runStore.get = async () => {
         throw new Error('the disk is gone');
       };
       const u = await call(tool, { run_id: 'broken', ...args });
+      // (a) red when the untyped failure gains a code; (b) prints the replies.
       expect([u['status'], u['error_code']]).toEqual(['error', code]);
       expect((u['errors'] as string[])[0]).not.toMatch(/^Failed to load run from store/);
     },

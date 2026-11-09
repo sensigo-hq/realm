@@ -803,19 +803,15 @@ function piped(args: string[], env: Record<string, string>, cwd: string = root) 
   });
 }
 
-/** A run of a registered workflow whose stored copy is damaged (not JSON), in `home`'s store. */
-async function damagedCopyRun(
-  h: TempHome & { readonly root: string },
-): Promise<{ runId: string; file: string }> {
-  const home = h.root;
+/** A run of a registered workflow whose stored copy is damaged (no steps), in the handle's store. */
+async function damagedCopyRun(h: TempHome & { readonly root: string }): Promise<{ runId: string }> {
   const workflows = h.home.workflowStore;
   await workflows.register(definitionAt(undefined, { id: 'blockedwf' }));
-  const file = join(home, '.realm', 'workflows', 'blockedwf.json');
-  writeFileSync(file, 'not json');
+  await workflows.register({ id: 'blockedwf', schema_version: 1 } as never);
   const runs = h.home.runStore;
   const runId = (await runs.create({ workflowId: 'blockedwf', workflowVersion: 1, params: {} }))
     .record.id;
-  return { runId, file };
+  return { runId };
 }
 
 describe("#729 PR-3 correction 2 (C1) — realm's own words print whole", () => {
@@ -854,45 +850,13 @@ describe("#729 PR-3 correction 2 (C1) — realm's own words print whole", () => 
     expect(r.stdout.split('\n').find((l) => l.startsWith('Phase:'))).toBe('Phase: abandoned');
   }, 60_000);
 
-  it('the damaged-copy repair command prints whole on every surface, and runs as copied', async () => {
-    const h = await makeTempHome();
-    homes.push(h);
-    const home = h.root;
-    const { runId, file } = await damagedCopyRun(h);
-    // HOME is not listed in REALM_NOT_SECRET: a path under it is hidden in a log (R31: except
-    // inside a printed command).
-    const env = { HOME: home };
-    const command = `rm ${file}`;
-    const inspected = piped(['run', 'inspect', runId], env);
-    const advanced = piped(['run', 'advance', runId], env);
-    const validated = piped(['workflow', 'validate', '--registered', 'blockedwf'], env);
-    // Correction 3: the command as each surface PRINTED it — `rm` and the word after it, ended by
-    // the bracket, space or line end around it — never the test's own string.
-    const printedCommand = (r: { stdout: string; stderr: string }): string | undefined =>
-      `${r.stdout}${r.stderr}`.match(/\brm [^\s)]+/)?.[0];
-    const surfaces = {
-      inspect: printedCommand(inspected),
-      advance: printedCommand(advanced),
-      validate: printedCommand(validated),
-    };
-    // It runs as copied from the printed output: the copy is gone.
-    spawnSync('sh', ['-c', surfaces.inspect ?? 'false']);
-    // (a) red when the command prints as plain text (the path under HOME is hidden: `rm
-    //     [REDACTED]/…`), or prints with anything glued to it (the copied command removes nothing);
-    //     (b) prints each surface's printed command (a fake path) and whether the copy is gone.
-    expect({ ...surfaces, removed: !existsSync(file) }).toEqual({
-      inspect: command,
-      advance: command,
-      validate: command,
-      removed: true,
-    });
-  }, 60_000);
+  // The damaged-copy `rm` command this block printed and ran has no SQLite form: item 10 (g)'s cells in answer-record-627 carry its purpose until c10a-4c's `validate --registered <id>`.
 
-  it("G7: the repair's command reaches the CLI as its own field (printed whole in a log); the agent's copy has its path masked", async () => {
+  it("G7: the repair's act reaches the CLI's log and the agent's reply; a copy in the store has no file, so neither names a command (#616 PR-2c c10a-3a)", async () => {
     const h = await makeTempHome();
     homes.push(h);
     const home = h.root;
-    const { runId, file } = await damagedCopyRun(h);
+    const { runId } = await damagedCopyRun(h);
     // Correction 3 (H-7): the run's record names an intact manifest, so its declared values are
     // known and nothing is withheld (a damaged copy whose record names none reads `load_failed`,
     // and the door withholds its reply's diagnostics: the H-11' cell).
@@ -942,13 +906,14 @@ describe("#729 PR-3 correction 2 (C1) — realm's own words print whole", () => 
       .then((raw) => (raw as { content: Array<{ text: string }> }).content[0]!.text)
       .finally(() => client.close());
     // Non-vacuity: the agent's reply names the repair.
-    // (a) red when the command is not carried as its own field (the log hides its path); (b)
-    //     prints three booleans.
+    // (a) red when the log or the reply drops the act, or either names an `rm` command again (there
+    //     is no file to remove); (b) prints four booleans.
     expect({
-      log: inspected.stdout.includes(`rm ${file}`),
-      agentNamesRepair: reply.includes('rm [REDACTED]/.realm/workflows/blockedwf.json'),
-      agentPathShown: reply.includes(file),
-    }).toEqual({ log: true, agentNamesRepair: true, agentPathShown: false });
+      log: inspected.stdout.includes('re-register the workflow from its source'),
+      logRm: /\brm [^\s)]+/.test(inspected.stdout),
+      agentNamesRepair: reply.includes('re-register the workflow from its source'),
+      agentRm: /\brm [^\s)]+/.test(reply),
+    }).toEqual({ log: true, logRm: false, agentNamesRepair: true, agentRm: false });
   }, 60_000);
 
   it('the record table classes `terminal_reason` by its value: a fixed sentence is shown, a templated one is masked', async () => {
@@ -1974,9 +1939,6 @@ describe('#729 PR-3 correction 4 — the read commands and the two un-read surfa
     const h = await makeTempHome();
     homes.push(h);
     const home = h.root;
-    // Kept (#616 PR-2c c0, R5 (i)): the sidecar is appended to before any run is written, and the
-    // attempt store's `append` makes no folder.
-    mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
     const sidecarOnly = randomUUID();
     await failedAttemptHolding(h, sidecarOnly);
     const missing = randomUUID();
@@ -2133,15 +2095,15 @@ describe('#729 PR-3 correction 4 — the read commands and the two un-read surfa
       stderr.split('. ').find((s) => /^(Repair|Restore|The run has no)/.test(s));
     // (a) red when the copy's arm is missing (the run is told to restore a manifest it never had),
     //     or widened to every failed read (the invalid manifest is told to repair the copy); (b)
-    //     prints the three remedies (realm's words, a fake id) and whether inspect names a command.
+    //     prints the three remedies (realm's words, a fake id) and whether inspect names the repair.
     expect({
       copy: remedy(copy.stderr)?.trim(),
-      inspectNamesCommand: /\brm [^\s)]+/.test(`${inspected.stdout}${inspected.stderr}`),
+      inspectNamesRepair: /[Rr]e-?register/.test(`${inspected.stdout}${inspected.stderr}`),
       invalid: remedy(invalidExport.stderr)?.split(',')[0],
       none: remedy(noneExport.stderr)?.split(',')[0],
     }).toEqual({
-      copy: `Repair the run's workflow copy first (realm run inspect ${runId} names the command), or pass --accept-partial-disclosure to write it masked with what is known; the last line it prints then names the state.`,
-      inspectNamesCommand: true,
+      copy: `Repair the run's workflow copy first (realm run inspect ${runId} names the repair), or pass --accept-partial-disclosure to write it masked with what is known; the last line it prints then names the state.`,
+      inspectNamesRepair: true,
       invalid: 'Restore the manifest the run used',
       none: 'The run has no manifest to restore',
     });
@@ -2160,7 +2122,7 @@ describe('#729 PR-3 correction 4 — the read commands and the two un-read surfa
     const firstA = stored.evidence.find((e) => e.step_id === 'a')!;
     await multiStore.update({
       ...stored,
-      evidence: [{ ...firstA, status: 'error' }, ...stored.evidence],
+      evidence: [...stored.evidence, { ...firstA, status: 'error' }],
     } as RunRecord);
     const attempts = read(multi.home, ['run', 'inspect', multi.runId])
       .stdout.split('\n')
@@ -2244,7 +2206,7 @@ describe('#729 PR-3 correction 4 — the read commands and the two un-read surfa
     const firstA = stored.evidence.find((e) => e.step_id === 'a')!;
     await multiStore.update({
       ...stored,
-      evidence: [{ ...firstA, status: 'error' }, ...stored.evidence],
+      evidence: [...stored.evidence, { ...firstA, status: 'error' }],
     } as RunRecord);
     const attempts = read(multi.home, ['run', 'inspect', multi.runId])
       .stdout.split('\n')

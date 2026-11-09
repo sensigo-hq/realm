@@ -63,9 +63,8 @@ function mcpServerSrcPath(file: string): string {
  *  argument must name — the exact source-text pin issue #616 PR-0 D5 requires. Read on `60a21eb`
  *  and on the D2-shaped build alike: the argument POSITION changed, the NAMES did not. */
 const HOSTS: Array<{ file: string; path: string; readerName: string }> = [
-  // #616 PR-2a (iii): the CLI's one door builds the trace buffer for run, agent, reclaim, purge and
-  // export (their five rows before), with its own run store as the reader.
-  { file: 'lib/home.ts', path: join(DIR, '..', 'lib', 'home.ts'), readerName: 'runStore' },
+  // #616 PR-2c c10a-3a: the CLI's door builds no trace buffer (the SQLite home holds it; its fence is
+  // the run's row in the same store), so its row went.
   // #616 PR-2a (ii-a): the `realm-mcp` program's opener (mcp-server's src/home.ts), its own run store
   // as the reader.
   { file: 'mcp-server home.ts', path: mcpServerSrcPath('home.ts'), readerName: 'runStore' },
