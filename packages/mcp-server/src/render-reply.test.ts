@@ -13,6 +13,7 @@ import {
   writtenSnapshot,
   executeStep,
   submitHumanResponse,
+  type DefinitionAbsence,
   type EngineReply,
   type RunRecord,
   type RunStore,
@@ -927,4 +928,68 @@ describe('#872 (a) — the hand-back hint: two or more steps that cannot run her
       s,
     }).toEqual({ opens: true, order: true, wayOut: 1, ends: true, s: expect.any(String) });
   });
+});
+
+describe('#616 PR-2c c10a-4c — a register way with no file, worded by the state of the copy', () => {
+  /** What the MCP door says of the register way when the copy has no file. */
+  const registerWords = (absent: DefinitionAbsence, withheld = false): string[] => {
+    const composed = composeWaysOn(
+      writtenSnapshot(openRun({ workflow_id: 'w' }), new Date('2026-11-09T12:00:00.000Z')),
+      {
+        definition: { absent, workflow_id: 'w' },
+        enactor: { kind: 'observer' },
+        store: { persistsClaims: true },
+      },
+    );
+    const reply = {
+      command: 'x',
+      run_id: 'r',
+      run_version: 1,
+      status: 'ok',
+      data: {},
+      evidence: [],
+      warnings: [],
+      errors: [],
+      context_hint: 'h.',
+      reply_kind: 'ok',
+      ...composed,
+    } as EngineReply;
+    const source = { kind: 'default' as const, ref: 'test' };
+    const answers = { value: 'withheld' as const, source, forms: { shown: false, source } };
+    const envelope = renderReply(reply, withheld ? { answers } : {}).envelope as {
+      elsewhere?: Array<{ verb: string; human_readable: string }>;
+    };
+    return (envelope.elsewhere ?? []).map((e) => `${e.verb}: ${e.human_readable}`);
+  };
+
+  // Real case: a SQLite copy that exists but cannot be used. It has no file to name, and it is
+  // still a copy to repair, never a workflow to register. (1) red when the door or `composeWaysOn`
+  // reads the path alone, or a class leaves the set. (2) prints what the door says.
+  it.each(['unreadable', 'format_invalid', 'legacy', 'newer'] as const)(
+    '%s: the copy cannot be used; under a door that withholds answers, the question waits too',
+    (absent) => {
+      const said =
+        "register: Workflow 'w''s registered copy cannot be used; an operator repairs it, outside this conversation.";
+      expect({
+        plain: registerWords(absent),
+        withheld: registerWords(absent, true),
+      }).toEqual({
+        plain: [said],
+        withheld: [
+          `${said} Once the copy is repaired, the question waits for an answer outside this conversation.`,
+        ],
+      });
+    },
+  );
+
+  // Real case: a workflow that was never registered: there is no copy to repair. (1) red when `copy`
+  // is set on a class with no copy, or the sentence changes. (2) prints what the door says.
+  it.each(['not_registered', 'not_read'] as const)(
+    '%s: an operator registers the workflow again',
+    (absent) => {
+      expect(registerWords(absent)).toEqual([
+        "register: An operator registers workflow 'w' again, outside this conversation.",
+      ]);
+    },
+  );
 });

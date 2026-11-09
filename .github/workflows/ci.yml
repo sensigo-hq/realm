@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # GitHub's merge queue runs a workflow only on this event, on the merge group it builds from the
+  # queue's head and the pull request: the required checks (`ci`, `Analyse TypeScript`, `CodeQL`) must
+  # report there, or the queue waits and then fails the merge.
+  merge_group:
 
 permissions:
   contents: read

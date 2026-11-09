@@ -196,11 +196,17 @@ export type AbandonWay = Base<'abandon'> & { run_id: string };
  * when the registry knows the file (T-21: the unreadable, invalid, legacy and newer copies carry
  * it): the registered COPY that cannot be used — never a file to register (correction 2, 3.2: each
  * door words it as a copy to repair).
+ *
+ * `copy` (#616 PR-2c c10a-4c) says the registered copy EXISTS but cannot be used, whether or not it
+ * has a file: a copy in a database has none, so `path` alone cannot tell it from a copy that is not
+ * there. The doors read it; the library's own words (`LIBRARY_WORDS`) do not, because the library's
+ * repair is the same act either way.
  */
 export type RegisterWay = Base<'register'> & {
   workflow_id: string;
   run_id?: string;
   path?: string;
+  copy?: 'unusable';
 };
 
 /**
@@ -317,6 +323,24 @@ export const DEFINITION_ABSENCES = [
   'newer',
 ] as const;
 export type DefinitionAbsence = (typeof DEFINITION_ABSENCES)[number];
+
+/**
+ * #616 PR-2c c10a-4c: whether an absence means the registered copy exists but cannot be used. The
+ * switch has no default, so a new absence does not compile until it is decided here.
+ */
+export function isUnusableCopy(absent: DefinitionAbsence): boolean {
+  switch (absent) {
+    case 'unreadable':
+    case 'format_invalid':
+    case 'legacy':
+    case 'newer':
+      return true;
+    case 'agent_copy_gone':
+    case 'not_registered':
+    case 'not_read':
+      return false;
+  }
+}
 
 /** The typed facts of each code (PR0-CONTRACT §1: `FactsOf<C>` typed per code). */
 export interface FactsByCode {
@@ -1331,13 +1355,19 @@ function advanceWayOf(
 }
 
 /** A register way for the run's workflow (A-10, T-21). */
-function registerWayOf(workflowId: string, runId: string, path?: string): RegisterWay {
+function registerWayOf(
+  workflowId: string,
+  runId: string,
+  path?: string,
+  absent?: DefinitionAbsence,
+): RegisterWay {
   return {
     verb: 'register',
     conditions: [],
     workflow_id: workflowId,
     run_id: runId,
     ...(path !== undefined ? { path } : {}),
+    ...(absent !== undefined && isUnusableCopy(absent) ? { copy: 'unusable' as const } : {}),
   };
 }
 
@@ -1448,7 +1478,12 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
 
   if (!('ok' in ctx.definition)) {
     // A-5, T-21: a way that reads the definition is offered only when it can be found.
-    const register = registerWayOf(ctx.definition.workflow_id, run.id, ctx.definition.path);
+    const register = registerWayOf(
+      ctx.definition.workflow_id,
+      run.id,
+      ctx.definition.path,
+      ctx.definition.absent,
+    );
     const facts: FactsOf<'definition_absent'> = {
       workflow_id: ctx.definition.workflow_id,
       cause: ctx.definition.absent,

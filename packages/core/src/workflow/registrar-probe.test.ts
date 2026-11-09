@@ -16,6 +16,9 @@ import {
   JsonWorkflowStore,
   definitionAbsenceOf,
   getWorkflowForRun,
+  legacyCopyError,
+  newerCopyError,
+  storedCopyFaultError,
   probeClassToError,
   parseFailureError,
   STUCK_DEFINITION_PARSE_CAP_BYTES,
@@ -485,7 +488,14 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
     // (3.1): it is the REPAIR, the listing's `register` way with the copy — never the answer, which
     // waits on the definition.
     expect(err.remedy).toEqual([
-      { verb: 'register', conditions: [], workflow_id: 'gate-558', run_id: 'run-1', path: file },
+      {
+        verb: 'register',
+        conditions: [],
+        workflow_id: 'gate-558',
+        run_id: 'run-1',
+        path: file,
+        copy: 'unusable',
+      },
     ]);
     expect(err.message).not.toContain('To end the run');
     expect(err.message).not.toContain('PR-V');
@@ -505,7 +515,14 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
     );
     // Correction 2 (3.1): the repair, with the copy.
     expect(err.remedy).toEqual([
-      { verb: 'register', conditions: [], workflow_id: 'gate-558', run_id: 'run-1', path: file },
+      {
+        verb: 'register',
+        conditions: [],
+        workflow_id: 'gate-558',
+        run_id: 'run-1',
+        path: file,
+        copy: 'unusable',
+      },
     ]);
     expect(err.message).not.toContain('This run cannot continue until the copy is repaired.');
   });
@@ -524,9 +541,59 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
     );
     // Correction 2 (3.1): the repair, with the copy.
     expect(err.remedy).toEqual([
-      { verb: 'register', conditions: [], workflow_id: 'gate-558', run_id: 'run-1', path: file },
+      {
+        verb: 'register',
+        conditions: [],
+        workflow_id: 'gate-558',
+        run_id: 'run-1',
+        path: file,
+        copy: 'unusable',
+      },
     ]);
     expect(err.message.split('realm workflow register').length - 1).toBe(1); // one remedy, never doubled
+  });
+
+  // Real case: every copy in the SQLite registry has no file, so its refusals carry no path, and the
+  // doors must still tell a copy that is damaged from one that is not there. The last row is the
+  // external registrar the registrar's own doctrine names. The not-registered way is hand-built,
+  // never through the gate remedy, and its exact pin (no `copy`) is unanswerable-819.test.ts:90-93;
+  // `agent_copy_gone` is not in this table because the remedy exists only at a live gate, where that
+  // class reads `not_registered`. (1) red when the field is dropped, or a class leaves the set.
+  // (2) prints the way the error carries.
+  it.each<[string, () => WorkflowError]>([
+    [
+      'JSON that is not a workflow',
+      () => storedCopyFaultError(ID, { kind: 'not_object', shape: 'array' }),
+    ],
+    ["an earlier Realm's format", () => legacyCopyError(ID)],
+    ["a later Realm's format", () => newerCopyError(ID, CURRENT_WORKFLOW_SCHEMA_VERSION + 1)],
+    [
+      'unreadable, with no path',
+      () =>
+        new WorkflowError('the registry could not read this copy', {
+          code: 'STATE_WORKFLOW_UNREADABLE',
+          category: 'STATE',
+          agentAction: 'stop',
+          retryable: false,
+        }),
+    ],
+  ])('#616 PR-2c c10a-4c the gate remedy on a pathless copy: %s', async (_name, refusal) => {
+    const pathless = new InMemoryWorkflowRegistrar();
+    pathless.get = async () => {
+      throw refusal();
+    };
+    const err = (await getWorkflowForRun(pathless, GATE_WAITING, RESPOND).catch(
+      (e: unknown) => e,
+    )) as WorkflowError;
+    expect(err.remedy).toEqual([
+      {
+        verb: 'register',
+        conditions: [],
+        workflow_id: 'gate-558',
+        run_id: 'run-1',
+        copy: 'unusable',
+      },
+    ]);
   });
 
   it('C-f the suffix heuristic: an agent-shaped id gets the no-source sentence, a plain id gets the T-21 sentence (#729 PR-0; was the #456 hedge), and a HUMAN id carrying a 16-hex suffix gets the agent one too (a SHAPE heuristic, stated)', async () => {
