@@ -19,6 +19,7 @@ import {
   endpointOf,
   openAiExplicitCacheModel,
   responseModel,
+  type CallCacheChoice,
   type PromptCacheRequest,
   type ProviderCapabilities,
 } from './llm-provider.js';
@@ -360,6 +361,11 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     return this.explicitChoice;
   }
 
+  /** Caching 3-M (D-1): the choice this call's requests follow: the call's own, else the provider's. */
+  private choiceFor(call: CallCacheChoice | undefined): CacheChoice {
+    return call?.choice ?? this.settledChoice();
+  }
+
   /** #896 unit B — whether an `auto` choice waits for {@link settleAutoChoice}. */
   isAutoChoicePending(): boolean {
     return this.explicitChoice === 'pending';
@@ -435,20 +441,23 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
    * sent (OpenAI has no default to leave out), or `off`; the setting's source facts when given.
    * Unit B: the settled choice (`auto` may choose `off`), and under `auto` also `cache_auto` — the
    * basis, the gaps read and, when a price was needed, where it came from (Anthropic's shape). A
-   * tool step records this only under a stated `off`, so never with `cache_auto`.
+   * tool step records this only under a stated `off`, so never with `cache_auto`. Caching 3-M (D-1):
+   * a call with its own choice records that choice and what it was chosen on.
    */
-  private explicitAskFacts(): Partial<UsageRecord> {
+  private explicitAskFacts(call?: CallCacheChoice): Partial<UsageRecord> {
     const p = this.promptCache;
-    const choice = this.settledChoice();
+    const choice = this.choiceFor(call);
     const basis = p?.auto ?? { basis: 'no_measurement' as const };
     const cacheAuto =
-      p?.value === 'auto'
-        ? normalizeCacheAuto({
-            basis: basis.basis,
-            ...(basis.gaps_s !== undefined ? { gaps_s: basis.gaps_s } : {}),
-            ...(this.autoPrices !== undefined ? { prices: this.autoPrices } : {}),
-          })
-        : undefined;
+      call !== undefined
+        ? normalizeCacheAuto(call.auto)
+        : p?.value === 'auto'
+          ? normalizeCacheAuto({
+              basis: basis.basis,
+              ...(basis.gaps_s !== undefined ? { gaps_s: basis.gaps_s } : {}),
+              ...(this.autoPrices !== undefined ? { prices: this.autoPrices } : {}),
+            })
+          : undefined;
     return {
       ...(choice === 'off'
         ? { cache_requested: 'off' as const }
@@ -491,7 +500,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     prompt: string,
     inputSchema?: Record<string, unknown>,
     agentProfileInstructions?: string,
-    callOpts?: { llmClock?: LlmClock; cachePrefixChars?: number },
+    callOpts?: { llmClock?: LlmClock; cachePrefixChars?: number; cacheChoice?: CallCacheChoice },
     // issue #600 PR 1a (D9): owned by the entry point so one `catch` there sees everything billed.
     billed?: UsageRecord[],
   ): Promise<{ output: Record<string, unknown>; usage?: UsageRecord[] }> {
@@ -536,7 +545,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     // #896: OpenAI's explicit cache controls, in the set (GPT-5.6+, OpenAI's own address); unit B:
     // `off` is stated or chosen by `auto` (a pending choice throws).
     const explicit = this.explicitCache();
-    const off = explicit && this.settledChoice() === 'off';
+    const off = explicit && this.choiceFor(callOpts?.cacheChoice) === 'off';
     // caching 3-B (D2, site 1): the cache key, on this request and on its JSON retry.
     const plan = this.explicitPlan(
       openAiCachePlan(prompt, callOpts?.cachePrefixChars, this.endpoint, this.promptCache),
@@ -573,7 +582,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       requests.push(
         toUsageRecord(requests.length, requestStart, readOpenAiUsage(response), {
           ...openAiRequestFacts(response, client),
-          ...(explicit ? this.explicitAskFacts() : {}),
+          ...(explicit ? this.explicitAskFacts(callOpts?.cacheChoice) : {}),
           ...openAiSplitFacts(opts, plan, systemPrompt, prompt),
           ...this.rejectedFact(),
         }),
@@ -656,7 +665,12 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     prompt: string,
     inputSchema?: Record<string, unknown>,
     agentProfileInstructions?: string,
-    opts?: { structuredOutputStrict?: boolean; llmClock?: LlmClock; cachePrefixChars?: number },
+    opts?: {
+      structuredOutputStrict?: boolean;
+      llmClock?: LlmClock;
+      cachePrefixChars?: number;
+      cacheChoice?: CallCacheChoice;
+    },
   ): Promise<{
     output: Record<string, unknown>;
     meta?: StructuredOutputMeta;
@@ -679,6 +693,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
             ...(opts?.cachePrefixChars !== undefined
               ? { cachePrefixChars: opts.cachePrefixChars }
               : {}),
+            ...(opts?.cacheChoice !== undefined ? { cacheChoice: opts.cacheChoice } : {}),
           },
           billed,
         );
@@ -726,7 +741,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
     // #896 (A1, A2): in the explicit set, the strict body and its drop retry carry the same marks;
     // unit B: `off` is stated or chosen by `auto`.
     const explicit = this.explicitCache();
-    const off = explicit && this.settledChoice() === 'off';
+    const off = explicit && this.choiceFor(opts.cacheChoice) === 'off';
     // caching 3-B (D2, site 2): the cache key, on the strict request and on its drop retry.
     const plan = this.explicitPlan(
       openAiCachePlan(prompt, opts.cachePrefixChars, this.endpoint, this.promptCache),
@@ -771,7 +786,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
         requests.push(
           toUsageRecord(requests.length, requestStart, readOpenAiUsage(response), {
             ...openAiRequestFacts(response, client),
-            ...(explicit ? this.explicitAskFacts() : {}),
+            ...(explicit ? this.explicitAskFacts(opts.cacheChoice) : {}),
             ...openAiSplitFacts(o, plan, systemPrompt, prompt),
             ...this.rejectedFact(),
           }),

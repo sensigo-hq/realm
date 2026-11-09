@@ -357,6 +357,8 @@ describe('#715 (a) — the docs sentences', () => {
 
   it('the CHANGELOG entries, sentence by sentence', () => {
     for (const sentence of [
+      // #616 PR-2c c10a-4d.
+      "**`realm run attempts`' ceiling note and `realm run export`'s help no longer name a \"sidecar\":** the store keeps a run's failed attempts as rows with a size ceiling; the export bundle's artifact labels and its `WAL steps` summary label are unchanged. (#616)",
       // #616 PR-2c c10a-4b.
       '**No command reports "run files that could not be read" any more:** on the SQLite store a run is a row, so `realm run list`, `cleanup`, `reclaim`, `drain`, `purge` and `run migrate` print no such line, and `realm listen`\'s sweeper logs no skipped files. (#616)',
       // A1–A10, B2, B10.

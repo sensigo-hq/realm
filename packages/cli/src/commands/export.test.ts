@@ -9,7 +9,7 @@ import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
-import { buildExportBundle, resolveExportPath } from './export.js';
+import { buildExportBundle, exportCommand, resolveExportPath } from './export.js';
 import {
   buildFailedAttemptRecord,
   serializeFailedAttemptLine,
@@ -797,6 +797,15 @@ describe('non-disclosure redaction (issue #197 PR-2, design §6)', () => {
     } finally {
       await cleanup();
     }
+  });
+});
+
+describe('realm run export --help', () => {
+  it("says what the bundle holds in the store's words", () => {
+    // (a) red when the old words come back (`sidecar`, `WAL traces`); (b) prints the description.
+    expect(exportCommand.description()).toContain(
+      "Archive a run's evidence (record + failed attempts + trace lines) into one inspectable JSON bundle — read-only",
+    );
   });
 });
 

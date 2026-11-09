@@ -1,4 +1,4 @@
-// attempts command — prints the durable failed agent-attempt sidecar for a run (observability P3).
+// attempts command — prints a run's durable failed agent-attempt records (observability P3).
 import chalk from 'chalk';
 import { Command } from 'commander';
 import type { FailedAttemptRecord, RunRecord } from '@sensigo/realm';
@@ -119,7 +119,7 @@ export const attemptsCommand = new Command('attempts')
         if (capped) {
           console.log(
             chalk.yellow(
-              'Note: the attempts sidecar reached its size ceiling; later attempts were dropped.',
+              "Note: the run's failed attempts reached their size ceiling; later attempts were dropped.",
             ),
           );
         }
@@ -142,7 +142,7 @@ export const attemptsCommand = new Command('attempts')
         console.log(
           '\n' +
             chalk.yellow(
-              'Note: the attempts sidecar reached its size ceiling; later attempts were dropped (append-and-stop keeps the first N).',
+              "Note: the run's failed attempts reached their size ceiling; later attempts were dropped (append-and-stop keeps the first N).",
             ),
         );
       }

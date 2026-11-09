@@ -26,6 +26,7 @@ All notable changes to this project are documented here.
 - **`realm run inspect` adds a line under a step's cost for each request that missed the cache.** The line names the first difference on the record, a pause longer than the entry's lifetime, or that the record shows no difference (never a proven cause), and what the miss cost when your economics file prices it. (#600)
 - **Core exports `CostMiss`, `CacheMissCause`, `CACHE_MISS_CAUSES`, `CacheMissRule`, `CachePredecessorPlace`, `CacheLifetimeSource` and `CACHE_LIFETIME_SOURCES`.** (#600)
 - **The composed cost view gains `CostView.misses`.** Numbers and closed words only. (#600)
+- **`cost.misses` gains `provider`:** what Anthropic itself said about a cache miss, beside Realm's own reason; `realm run inspect` prints it on the miss line. (#600)
 - **Core exports `discloseSplit`, `discloseSplitSize`, `discloseLeaf` and `renderStepPromptWithBoundary`,** with the types `DisclosedSplit`, `DisclosedSplitSize`, `StableBoundary`, `CacheSizeBlock` and `CacheLayoutBlock`, and `isSizeBlock`. (#600)
 - **`ProviderCapabilities.promptCache` may be `'provider'`** (the service caches by its own rules; the OpenAI providers declare it), and **`capabilities()` carries `endpoint`** (`default` or `custom`), resolved once from the SDK client. A provider module may declare `'provider'`. (#600)
 - **`callStepWithMeta` and `callStepWithTools` take `cachePrefixChars`,** where the prompt's stable start ends; the prompt is still sent whole, so a provider module that ignores it sends what it always sent. (#600)
@@ -272,6 +273,7 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
 - **BREAKING — `createRealmMcpServer` takes its stores (issue #616).** The library has no default store: pass `runStore`, `workflowStore`, `traceBufferStore` and `failedAttemptStore`, opened once per process; a JavaScript caller that omits one is refused at construction, before anything is opened. The published tool handlers require the stores their server passes them; a direct caller that omits one is refused by name.
 - **An `'in-transaction'` adapter of `fencedTraceBufferContract` gives `fenceRuns` as `{ put, remove }`, without `readCount`.** Such a store reads its runs inside its own transaction, so the contract does not count them. (#616)
 - **A damaged registered copy sends the operator to `realm workflow validate --registered <id>`** in the MCP server's way out (the operator's command on `realm mcp`'s and `realm serve`'s person line), also when the copy has no file (the SQLite store's copies); only a copy that is not there says `realm workflow register <file>`. (#616)
+- **`realm run attempts`' ceiling note and `realm run export`'s help no longer name a "sidecar":** the store keeps a run's failed attempts as rows with a size ceiling; the export bundle's artifact labels and its `WAL steps` summary label are unchanged. (#616)
 
 ### Removed
 
