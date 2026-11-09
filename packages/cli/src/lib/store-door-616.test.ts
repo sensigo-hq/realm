@@ -31,8 +31,8 @@ const PACKAGES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '
 const ALLOWED: Record<string, string[]> = {
   // #616 PR-2c c10a-3a: the door opens the SQLite home (`openRealmHome`); it constructs none of the six.
   cli: [],
-  // #616 PR-2a (ii-b): the `realm-mcp` program's opener; the library and its tools build none.
-  'mcp-server': ['home.ts'],
+  // #616 PR-2c c10b-2: the `realm-mcp` program's door opens the SQLite home; it constructs none of the six.
+  'mcp-server': [],
   // #616 PR-2c c1a: core opens no store; a host does.
   core: [],
 };

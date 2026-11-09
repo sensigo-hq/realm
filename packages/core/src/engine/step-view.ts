@@ -14,15 +14,18 @@
 // absence or an `'unknown'` field, never an exception that takes the whole render down with it.
 import {
   CACHE_MARKED_PARTS,
+  CACHE_MISS_TYPES,
   type CacheAuto,
   type CacheAutoPricesView,
   type CacheMarkedPart,
+  type CacheMissType,
   type RequestFactAbsentCause,
   type RunRecord,
 } from '../types/run-record.js';
 import { normalizeCacheAuto } from '../economics/cache-lifetime.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import {
+  counter,
   priceRequest,
   type NotPricedCause,
   type PricedBy,
@@ -129,8 +132,8 @@ export interface CostView {
  * Caching 3-M A-2b1 — one request that missed the cache. `derived` is worked out when the run is
  * read, never stored. Its `cause` is the first difference the record holds between the request
  * and the one it is compared with, or `possibly_expired` (a pause longer than the entry's
- * lifetime), or `unexplained` (no difference on the record): never a proven cause. Piece B adds
- * the provider's own reason beside `derived`, never inside it.
+ * lifetime), or `unexplained` (no difference on the record): never a proven cause. `provider`
+ * (piece B3b) is what the provider itself said, beside `derived` and never merged with it.
  */
 export interface CostMiss {
   /** The request's place in the attempt's (or failed drive's) list, from 0 — never `request_index`. */
@@ -146,6 +149,18 @@ export interface CostMiss {
     /** The predecessor's lifetime, present only with `lifetime_from`. */
     lifetime_s?: number;
     lifetime_from?: CacheLifetimeSource;
+  };
+  /**
+   * Caching 3-M B3b — what Anthropic itself said about this miss, when the request asked it to
+   * compare with the request before it in the same call and it answered. Beside `derived`, never
+   * merged with it: the record's difference and Anthropic's comparison are different evidence, and
+   * they can disagree. `reason` is Anthropic's reason or `no_divergence` (it found none), and
+   * `cache_missed_input_tokens` its approximate count of the tokens that would have been read had
+   * the request matched, when it gave one. Worked out when the run is read; never stored.
+   */
+  provider?: {
+    reason: CacheMissType | 'no_divergence';
+    cache_missed_input_tokens?: number;
   };
   /**
    * Caching 3-M A-2b3 — what this miss cost more than reading what was expected, in US dollars,
@@ -666,9 +681,37 @@ function missExtraUsd(
 }
 
 /**
+ * Caching 3-M B3b — what Anthropic said about one request, from its own `cache_diagnostics`: only
+ * an answer to a question that named an earlier request counts, never `pending`, `not_returned`, a
+ * refused question or a call's first request. This reads a stored record, and `realm run import`
+ * takes a file's values as they are: so `type` outside the list is `unknown`, a `type` that is not
+ * a string says nothing, and a count that is no counter goes alone.
+ */
+function providerSaid(request: unknown): CostMiss['provider'] {
+  const field = (entry: unknown, key: string): unknown =>
+    typeof entry === 'object' && entry !== null
+      ? (entry as Record<string, unknown>)[key]
+      : undefined;
+  const asked = field(request, 'cache_diagnostics');
+  if (field(asked, 'asked') !== true || typeof field(asked, 'reference_id') !== 'string') {
+    return undefined;
+  }
+  const result = field(asked, 'result');
+  if (result === 'no_divergence') return { reason: 'no_divergence' };
+  const type = field(result, 'type');
+  if (typeof type !== 'string') return undefined;
+  const reason = (CACHE_MISS_TYPES as readonly string[]).includes(type)
+    ? (type as CacheMissType)
+    : 'unknown';
+  const tokens = counter(field(result, 'cache_missed_input_tokens'));
+  return typeof tokens === 'number' ? { reason, cache_missed_input_tokens: tokens } : { reason };
+}
+
+/**
  * Caching 3-M A-2b1 — the requests of one list that missed the cache, composed from the miss
  * module's three readers (the verdict, the cause, the gap); `undefined` when none missed. A-2b3:
- * with a price source, each also carries what it cost when the runner's own file prices it.
+ * with a price source, each also carries what it cost when the runner's own file prices it. B3b:
+ * each also carries what Anthropic said, when it answered.
  */
 function composeMisses(
   requests: readonly unknown[],
@@ -687,6 +730,7 @@ function composeMisses(
       source !== undefined
         ? missExtraUsd(requests[position], verdict.shortfall_tokens, source)
         : undefined;
+    const said = providerSaid(requests[position]);
     misses.push({
       position,
       derived: {
@@ -697,6 +741,7 @@ function composeMisses(
         predecessor: verdict.predecessor,
         ...(gaps[position] ?? {}),
       },
+      ...(said !== undefined ? { provider: said } : {}),
       ...(extra !== undefined ? { extra_usd: extra } : {}),
     });
   });
