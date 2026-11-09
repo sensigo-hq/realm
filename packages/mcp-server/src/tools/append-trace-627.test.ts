@@ -12,7 +12,6 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: whether
 // the reply's hint and next_actions name an answer way, and the hint — never a token.
 import { describe, it, expect, afterEach } from 'vitest';
-import { join } from 'node:path';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION, loadWorkflowFromString } from '@sensigo/realm';
 import type { WorkflowDefinition, WorkflowRegistrar } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -88,7 +87,6 @@ async function atGate(gateAnswers: Door, forms = false) {
   };
   const gateId = (await runStore.get(started.run_id)).record.pending_gate!.gate_id;
   return {
-    copy: join(h.path, 'workflows', 'at627.json'),
     workflowStore,
     runId: started.run_id,
     gateId,
@@ -196,7 +194,7 @@ describe('#627 W correction 2 (3.1, MCP F7) — a copy Realm cannot read: the wa
       words: register?.human_readable,
       againFrom: register?.human_readable.includes('again from') ?? true,
     }).toEqual({
-      words: `Workflow 'at627''s registered copy (${s.copy}) cannot be used; an operator repairs it, outside this conversation. ${WAITS_ONCE_REPAIRED}`,
+      words: `Workflow 'at627''s registered copy cannot be used; an operator repairs it, outside this conversation. ${WAITS_ONCE_REPAIRED}`,
       againFrom: false,
     });
   });

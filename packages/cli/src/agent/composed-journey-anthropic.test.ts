@@ -24,11 +24,6 @@ import { startAnthropicStub } from './test-support/anthropic-stub.js';
 import { runComposedJourney } from './test-support/composed-journey.js';
 import { makeTempHome } from '../test-support/temp-home.js';
 import { resolveMcpServerEntry } from './test-support/mcp-server-entry.js';
-import { MCP_BIN_ON_JSON_UNTIL_C10B_DELTAS_57 } from './test-support/mcp-bin-on-json.js';
-
-// DELTAS 57 (#616 PR-2c c10a-3a; closed by c10b): the cells that start the `realm-mcp` bin. One name, so
-// a cell's only change is this token and prettier leaves its body as it was.
-const xit = it.skipIf(MCP_BIN_ON_JSON_UNTIL_C10B_DELTAS_57);
 
 const PROBE_WORKFLOW_ID = 'no-such-workflow-composed-journey';
 
@@ -44,7 +39,7 @@ const STUB_API_KEY = 'sk-ant-test-composed-journey-0000';
 resolveMcpServerEntry();
 
 describe('composed journey (Anthropic) — a politely-failed tool call, all the way to the operator', () => {
-  xit('runs the real provider against a real MCP child and records, persists and renders the failure', async () => {
+  it('runs the real provider against a real MCP child and records, persists and renders the failure', async () => {
     const h = await makeTempHome();
     const originalKey = process.env['ANTHROPIC_API_KEY'];
     const originalBaseUrl = process.env['ANTHROPIC_BASE_URL'];
