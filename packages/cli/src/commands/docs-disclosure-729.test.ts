@@ -123,10 +123,10 @@ const shown = (text: string, audience: DisclosureAudience, set = setFor(audience
 
 describe(`${ENV_PAGE} — REALM_NOT_SECRET`, () => {
   it('the count of the variables Realm reads by name matches its table, and its REALM_ names are the ones the code reads', () => {
-    claim(ENV_PAGE, "Realm's own code reads 11 variables by name:");
+    claim(ENV_PAGE, "Realm's own code reads 12 variables by name:");
     const lines = read(ENV_PAGE).split('\n');
     const start = lines.findIndex((l) =>
-      l.includes("Realm's own code reads 11 variables by name:"),
+      l.includes("Realm's own code reads 12 variables by name:"),
     );
     let rows = 0;
     const names: string[] = [];
@@ -137,13 +137,8 @@ describe(`${ENV_PAGE} — REALM_NOT_SECRET`, () => {
       names.push(lines[i]!.split('`')[1]!);
     }
     // #616 PR-1a unit 5: names core reads that the page does not document yet, each with its
-    // reason. An entry is deleted with the row that documents it.
-    const NOT_YET_ON_THE_PAGE: ReadonlyMap<string, string> = new Map([
-      [
-        'REALM_STORE_FS',
-        "read only by the unreleased SQLite package's filesystem check; the switch-over unit writes its row and deletes this entry",
-      ],
-    ]);
+    // reason. An entry is deleted with the row that documents it (c10a-3a wrote REALM_STORE_FS's).
+    const NOT_YET_ON_THE_PAGE: ReadonlyMap<string, string> = new Map();
     // (a) red when a row is added or removed without the count, or the table's REALM_ names part
     //     from the variables realm's code reads (core's two lists and REALM_NOT_SECRET, less the
     //     names not yet documented), or a name not yet documented is on the page (its entry here
@@ -153,7 +148,7 @@ describe(`${ENV_PAGE} — REALM_NOT_SECRET`, () => {
       realm: names.filter((n) => n.startsWith('REALM_')).sort(),
       exemptOnThePage: [...NOT_YET_ON_THE_PAGE.keys()].filter((n) => read(ENV_PAGE).includes(n)),
     }).toEqual({
-      rows: 11,
+      rows: 12,
       realm: [...REALM_SETTING_VARIABLES, ...REALM_CREDENTIAL_VARIABLES, 'REALM_NOT_SECRET']
         .filter((n) => !NOT_YET_ON_THE_PAGE.has(n))
         .sort(),
@@ -164,7 +159,7 @@ describe(`${ENV_PAGE} — REALM_NOT_SECRET`, () => {
   it("realm's own settings, the shell's PWD, OLDPWD and _, and npm's three, are not treated as secrets; REALM_SERVE_TOKEN is (D-14, D-6)", () => {
     claim(
       ENV_PAGE,
-      "Realm's own settings in this table (`REALM_DEV`, `REALM_NO_NUDGE`, `REALM_REQUIRE_WRITER_NONCE`, `REALM_OPERATOR`, `REALM_MCP_GATE_ANSWERS` and `REALM_MCP_FORM_WAIT_SECONDS`) are not treated as secrets, and neither are `PWD`, `OLDPWD` and `_`, which the shell sets to paths, nor `npm_package_name`, `npm_package_version` and `npm_lifecycle_event`, which npm sets; `REALM_SERVE_TOKEN`, a credential, is.",
+      "Realm's own settings in this table (`REALM_DEV`, `REALM_NO_NUDGE`, `REALM_REQUIRE_WRITER_NONCE`, `REALM_OPERATOR`, `REALM_MCP_GATE_ANSWERS`, `REALM_MCP_FORM_WAIT_SECONDS` and `REALM_STORE_FS`) are not treated as secrets, and neither are `PWD`, `OLDPWD` and `_`, which the shell sets to paths, nor `npm_package_name`, `npm_package_version` and `npm_lifecycle_event`, which npm sets; `REALM_SERVE_TOKEN`, a credential, is.",
     );
     const env = {
       REALM_OPERATOR: 'fake-operator-0729',
@@ -198,31 +193,30 @@ describe(`${ENV_PAGE} — REALM_NOT_SECRET`, () => {
       declaredState: 'resolved',
       audience: 'log',
     }).set;
-    // The home folder rule, executed: a damaged copy under HOME, inspected piped.
+    // The home folder rule, executed end to end (#616 PR-2c c10a-3a): a command Realm prints holds a
+    // path under HOME, beside a reason that holds one too. The rule's unit pin is writer.test.ts's
+    // U1-9c. A copy in the store has no file, so the damaged-copy `rm <path>` this cell used is gone;
+    // `realm run abandon`'s run-again line carries the copy's `source_dir`.
     const h = await makeTempHome();
     const home = h.root;
     try {
       const workflows = h.home.workflowStore;
+      const sourceDir = join(home, 'project');
       await workflows.register({
-        id: 'blockedwf',
-        name: 'b',
+        id: 'homerule',
+        name: 'h',
         version: 1,
         schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+        source_dir: sourceDir,
         steps: { a: { description: 'A.', execution: 'agent', depends_on: [] } },
       } as WorkflowDefinition);
-      const file = join(home, '.realm', 'workflows', 'blockedwf.json');
-      writeFileSync(file, 'not json');
       const runs = h.home.runStore;
-      const runId = (await runs.create({ workflowId: 'blockedwf', workflowVersion: 1, params: {} }))
+      const runId = (await runs.create({ workflowId: 'homerule', workflowVersion: 1, params: {} }))
         .record.id;
-      // A path under HOME in the run's reason, printed as text.
-      const { abandonRun } = await import('@sensigo/realm');
-      await abandonRun(runs, runId, `stopped: ${home}/data is gone`);
-      // Correction 3 (H-7''): the damaged copy's run reads `load_failed`, which withholds its
-      // values; the flag prints them at the log's tier, where the home folder rule applies.
+      // Piped (a log), HOME not named in REALM_NOT_SECRET: the reason is text, the command a span.
       const r = spawnSync(
         process.execPath,
-        [CLI_ENTRY, 'run', 'inspect', runId, '--accept-partial-disclosure'],
+        [CLI_ENTRY, 'run', 'abandon', runId, '--reason', `stopped: ${home}/data is gone`],
         {
           cwd: home,
           env: { PATH: process.env['PATH'] ?? '', HOME: home, NO_COLOR: '1' },
@@ -231,14 +225,14 @@ describe(`${ENV_PAGE} — REALM_NOT_SECRET`, () => {
         },
       );
       // (a) red when a setting's value is shown while another variable holds it, a path under HOME
-      //     shows in a log outside a command, or the printed command's path is hidden; (b) prints
-      //     three booleans.
+      //     shows in a log outside a command, or the printed command's path is hidden (the span
+      //     rendered as plain text); (b) prints three booleans.
       expect({
         shadowHidden: disclose('operator fake-operator-0729', set, 'all').text.includes(
           '[REDACTED]',
         ),
         homeHidden: r.stdout.includes('[REDACTED]/data') && !r.stdout.includes(`${home}/data`),
-        commandWhole: r.stdout.includes(`rm ${file}`),
+        commandWhole: r.stdout.includes(`realm workflow run ${sourceDir}`),
       }).toEqual({ shadowHidden: true, homeHidden: true, commandWhole: true });
     } finally {
       await h.cleanup();
@@ -1881,8 +1875,7 @@ describe('#729 PR-3 correction 2 — the pages this correction changes', () => {
         [CLI_ENTRY, 'mcp', '--check', '--gate-answers', 'withheld'],
         { cwd: home, env, encoding: 'utf8', timeout: 60_000 },
       );
-      const file = join(home, '.realm', 'workflows', 'words.json');
-      writeFileSync(file, 'not json');
+      await workflows.register({ id: 'words', schema_version: 1 } as never);
       const copyError = await getWorkflowForRun(workflows, done, {
         retryVerb: 'retry',
         verb: 'run',
@@ -1903,7 +1896,8 @@ describe('#729 PR-3 correction 2 — the pages this correction changes', () => {
         gateAnswers: true,
         unsetWarns: true,
         command: 'rm /p/w.json',
-        carried: `rm ${file}`,
+        // #616 PR-2c c10a-3a: a copy in the store has no file, so the error carries no command.
+        carried: undefined,
       });
     } finally {
       await h.cleanup();
@@ -2832,7 +2826,7 @@ describe('#729 PR-3 correction 4 — the pages this correction changes', () => {
   it("realm-run-reading.md: export's refusal for a run whose copy cannot be read and whose record names no manifest names the copy's repair", async () => {
     claim(
       READING_PAGE,
-      "For a run whose workflow copy cannot be read and whose record names no manifest, it reads `Repair the run's workflow copy first (realm run inspect <run-id> names the command), or pass --accept-partial-disclosure to write it masked with what is known; the last line it prints then names the state.`",
+      "For a run whose workflow copy cannot be read and whose record names no manifest, it reads `Repair the run's workflow copy first (realm run inspect <run-id> names the repair), or pass --accept-partial-disclosure to write it masked with what is known; the last line it prints then names the state.`",
     );
     const h = await makeTempHome();
     homes.push(h);
@@ -2844,7 +2838,7 @@ describe('#729 PR-3 correction 4 — the pages this correction changes', () => {
       schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
       steps: { a: { description: 'A.', execution: 'agent', depends_on: [] } },
     } as WorkflowDefinition);
-    writeFileSync(join(home, '.realm', 'workflows', 'c4copy.json'), 'not json');
+    await h.home.workflowStore.register({ id: 'c4copy', schema_version: 1 } as never);
     const { record: run } = await h.home.runStore.create({
       workflowId: 'c4copy',
       workflowVersion: 1,
@@ -2853,15 +2847,15 @@ describe('#729 PR-3 correction 4 — the pages this correction changes', () => {
     const refused = cli(home, ['run', 'export', run.id, '--out', join(base, 'copy.json')]);
     const inspected = cli(home, ['run', 'inspect', run.id]);
     // (a) red when the run is told to restore a manifest it never had; (b) prints the exit code,
-    //     the refusal's end (realm's words, a fake id) and whether inspect names a command.
+    //     the refusal's end (realm's words, a fake id) and whether inspect names the repair.
     expect({
       status: refused.status,
       end: refused.stderr.slice(refused.stderr.indexOf('Repair')).trim(),
-      inspectNamesCommand: /\brm [^\s)]+/.test(`${inspected.stdout}${inspected.stderr}`),
+      inspectNamesRepair: /[Rr]e-?register/.test(`${inspected.stdout}${inspected.stderr}`),
     }).toEqual({
       status: 1,
-      end: `Repair the run's workflow copy first (realm run inspect ${run.id} names the command), or pass --accept-partial-disclosure to write it masked with what is known; the last line it prints then names the state.`,
-      inspectNamesCommand: true,
+      end: `Repair the run's workflow copy first (realm run inspect ${run.id} names the repair), or pass --accept-partial-disclosure to write it masked with what is known; the last line it prints then names the state.`,
+      inspectNamesRepair: true,
     });
   }, 60_000);
 

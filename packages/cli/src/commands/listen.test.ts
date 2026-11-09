@@ -1760,6 +1760,14 @@ describe("issue #600 (the lifetime unit) — listen measures each workflow's tri
 
   // Cell 12; #898 S11. (a) red when the option's description differs from B4's words, or (#898) it
   // keeps the old words, with no price file and no fallback; (b) prints it.
+  // #616 PR-2c c10a-3a. (a) red when the help says where the marks are no longer kept, or drops what
+  // each kind means; (b) prints the help text.
+  it("the help: listen's --dedup-store says where each kind keeps its marks", () => {
+    expect(listenCommand.helpInformation().replace(/\s+/g, ' ')).toContain(
+      "Dedup store: file (kept in the home's store across restarts) | memory (this process only)",
+    );
+  });
+
   it("the help: listen's --prompt-cache description", () => {
     expect(listenCommand.options.find((o) => o.long === '--prompt-cache')?.description).toBe(
       "Passed to each realm agent it starts: auto, short, long or off. auto (the default): each agent asks Anthropic for off, 5 minutes or 1 hour, by the gaps between the recent triggers of its workflow, priced from runner.cache.economics (with no usable prices: 1 hour when a recent gap is under 54 minutes, else off). short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: nothing. With `--provider openai`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but `off`, and to another endpoint only for a setting you state other than `off`. On GPT-5.6 and later at OpenAI's own address, the agent also asks OpenAI to cache the fixed part of each step without tools for 30 minutes (under `auto`, 30 minutes or no caching for each workflow, by the gaps between its recent triggers and the prices in runner.cache.economics; without usable prices, 30 minutes when a recent gap is under 27 minutes), and `off` turns OpenAI's caching off. Other providers' own caching applies.",

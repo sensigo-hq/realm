@@ -6,7 +6,6 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: file
 // names, printed lines — never a token or an environment.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { join } from 'node:path';
 import { inspectRun } from './inspect.js';
 import { workflowListCommand } from './workflow-list.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
@@ -14,13 +13,11 @@ import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 describe('#819 U2 — a copy with no steps, on the CLI', () => {
   let h: TempHome & { readonly root: string };
   let home: string;
-  let wfDir: string;
   let originalHome: string | undefined;
 
   beforeEach(async () => {
     h = await makeTempHome();
     home = h.root;
-    wfDir = join(home, '.realm', 'workflows');
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     // W's walk 1: the copy at the current format, its `steps` key removed.
@@ -81,7 +78,7 @@ describe('#819 U2 — a copy with no steps, on the CLI', () => {
     await workflowListCommand.parseAsync(['--json'], { from: 'user' });
     const json = JSON.parse(out.join('\n')) as {
       workflows: unknown[];
-      unreadable: Array<{ file: string; class: string; reason: string; repair?: string }>;
+      unreadable: Array<{ workflow_id: string; class: string; reason: string; repair?: string }>;
     };
     // (a) red when the copy is listed as a workflow (W's walk 1), or its --json entry names no
     //     repair; (b) prints the table's count, the ⚠ line and the entry.
@@ -89,18 +86,21 @@ describe('#819 U2 — a copy with no steps, on the CLI', () => {
       registered: text.out.includes(
         '0 workflows registered; 1 entry in the registry could not be read.',
       ),
-      warned: text.err.includes('⚠ 1 file in the registry could not be parsed: plain-gate.json'),
-      entry: json.unreadable.find((u) => u.file === 'plain-gate.json'),
+      warned: text.err.includes(
+        '⚠ 1 workflow in the registry has a damaged stored copy: plain-gate',
+      ),
+      entry: json.unreadable.find((u) => u.workflow_id === 'plain-gate'),
       listed: json.workflows.length,
     }).toEqual({
       registered: true,
       warned: true,
       entry: {
-        file: 'plain-gate.json',
+        workflow_id: 'plain-gate',
         class: 'parse',
         reason:
           "the registered copy of 'plain-gate' is JSON but not a workflow object (its steps is not an object)",
-        repair: `re-register the workflow from its source (realm workflow register <path-to-workflow>); if it was never registered from a source, remove the file (rm ${join(wfDir, 'plain-gate.json')}) instead`,
+        repair:
+          're-register the workflow from its source (realm workflow register <path-to-workflow>)',
       },
       listed: 0,
     });

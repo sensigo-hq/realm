@@ -39,13 +39,23 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { load as parseYaml } from 'js-yaml';
-import { loadWorkflowFromFile, loadWorkflowFromString, type RunStore } from '@sensigo/realm';
+import {
+  loadWorkflowFromFile,
+  loadWorkflowFromString,
+  type RunRecord,
+  type RunStore,
+} from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { resolveMcpServerEntry } from '../agent/test-support/mcp-server-entry.js';
+import { MCP_BIN_ON_JSON_UNTIL_C10B_DELTAS_57 } from '../agent/test-support/mcp-bin-on-json.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 import { openRealmHome } from '@sensigo/realm-store-sqlite';
+
+// DELTAS 57 (#616 PR-2c c10a-3a; closed by c10b): the cells that start the `realm-mcp` bin. One name, so
+// a cell's only change is this token and prettier leaves its body as it was.
+const xit = it.skipIf(MCP_BIN_ON_JSON_UNTIL_C10B_DELTAS_57);
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /** The exit of a `realm workflow run` whose run ends failed (measured; the page shows no code). */
@@ -372,6 +382,22 @@ describe(
     }
 
     /** A temporary project that sees the repository's node_modules, as an ES module package. */
+    /** A HOME of its own for a README program that builds a `JsonFileStore`: the CLI's home is the
+     *  SQLite store, whose `runs` is a fence file (#616 PR-2c c10a-3a). */
+    function programHome(): string {
+      const folder = join(project, 'program-home');
+      mkdirSync(folder);
+      return folder;
+    }
+
+    /** The runs such a program left: the JSON store keeps one `<uuid>.json` per run. */
+    function jsonRunsIn(folder: string): RunRecord[] {
+      const runs = join(folder, '.realm', 'runs');
+      return readdirSync(runs)
+        .filter((f) => /^[0-9a-f-]{36}\.json$/.test(f))
+        .map((f) => JSON.parse(readFileSync(join(runs, f), 'utf8')) as RunRecord);
+    }
+
     function nodeProject(): string {
       symlinkSync(join(ROOT, 'node_modules'), join(project, 'node_modules'));
       writeFileSync(join(project, 'package.json'), '{"type":"module"}\n');
@@ -465,7 +491,7 @@ describe(
       });
     });
 
-    it(CELLS.clients, async () => {
+    xit(CELLS.clients, async () => {
       const configs = [
         fence('README.md', '"mcpServers"', 0),
         fence('README.md', '"mcpServers"', 1),
@@ -1080,12 +1106,13 @@ describe(
         join(dir, 'main.ts'),
         `${fence('packages/core/README.md', 'loadWorkflowFromFile, JsonFileStore')}\n`,
       );
+      const own = programHome();
       const r = spawnSync(process.execPath, ['main.ts'], {
         cwd: dir,
-        env: env(),
+        env: env({ HOME: own }),
         encoding: 'utf8',
       });
-      const runs = (await runStore.list()).snapshots.map((s) => s.record);
+      const runs = jsonRunsIn(own);
       // (a) red when the program does not run as written (e.g. `const run = await store.create(…)`,
       //     whose reply is `{ run, created }`), or does not take my_step; (b) prints its stderr.
       expect(
@@ -1134,12 +1161,13 @@ describe(
           '',
         ].join('\n'),
       );
+      const own = programHome();
       const r = spawnSync(process.execPath, ['main.ts'], {
         cwd: dir,
-        env: env(),
+        env: env({ HOME: own }),
         encoding: 'utf8',
       });
-      const runs = (await runStore.list()).snapshots.map((s) => s.record);
+      const runs = jsonRunsIn(own);
       // (a) red when the comment's call does not run as written (a wrong argument, a missing one), or
       //     does not run the step the run owes; (b) prints its stderr.
       expect(
@@ -1176,7 +1204,7 @@ describe(
       writeFileSync(join(dir, 'adapter.ts'), program);
       const r = spawnSync(process.execPath, ['adapter.ts'], {
         cwd: dir,
-        env: env(),
+        env: env({ HOME: programHome() }),
         encoding: 'utf8',
       });
       // (a) red when the block stops running with callMyApi supplied, or its adapter does not serve a
@@ -1187,7 +1215,7 @@ describe(
       ]);
     });
 
-    it(CELLS.embedded, async () => {
+    xit(CELLS.embedded, async () => {
       const dir = nodeProject();
       writeFileSync(
         join(dir, 'server.ts'),

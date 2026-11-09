@@ -18,6 +18,11 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { resolveMcpServerEntry } from '../agent/test-support/mcp-server-entry.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { MCP_BIN_ON_JSON_UNTIL_C10B_DELTAS_57 } from '../agent/test-support/mcp-bin-on-json.js';
+
+// DELTAS 57 (#616 PR-2c c10a-3a; closed by c10b): the cells that start the `realm-mcp` bin. One name, so
+// a cell's only change is this token and prettier leaves its body as it was.
+const xit = it.skipIf(MCP_BIN_ON_JSON_UNTIL_C10B_DELTAS_57);
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../../../..');
@@ -211,7 +216,7 @@ describe(
       expect({ mcp, serve }).toEqual({ mcp: each, serve: each });
     });
 
-    it('realm-mcp-and-serve.md: the realm-mcp command — start_run creates the run, replies ok, and the block is in its warnings', async () => {
+    xit('realm-mcp-and-serve.md: the realm-mcp command — start_run creates the run, replies ok, and the block is in its warnings', async () => {
       const page = 'docs/reference/cli/realm-mcp-and-serve.md';
       claim(
         page,

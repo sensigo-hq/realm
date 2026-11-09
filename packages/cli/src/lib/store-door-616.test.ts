@@ -1,8 +1,9 @@
 // store-door-616.test.ts — issue #616 PR-2a, unit (iii): the law that every store a host builds comes
 // through its one door. A source scan, table-driven by package: each row names the only files of that
-// package allowed to construct one of the six store classes. The CLI's row is the door
-// (`lib/home.ts`) alone, since 2c removed the two commands that kept their own constructions; unit
-// (ii-b) added the MCP package's row. Before this unit the CLI built its
+// package allowed to construct one of the six store classes. The CLI's row was the door
+// (`lib/home.ts`) alone, since 2c removed the two commands that kept their own constructions; since
+// #616 PR-2c c10a-3a the door opens the SQLite home (the store package builds its stores), so the
+// CLI's row is empty, as core's is. Unit (ii-b) added the MCP package's row. Before this unit the CLI built its
 // stores by hand in 60 places in 27 files, so a command could build one of them on a folder its
 // other stores do not read (the #188 mixed-wiring class).
 //
@@ -28,7 +29,8 @@ const PACKAGES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '
  *  The test helpers under `src/test-support/`, which
  *  the walker reads as non-test source, build none (#616 PR-2b, b3). */
 const ALLOWED: Record<string, string[]> = {
-  cli: ['lib/home.ts'],
+  // #616 PR-2c c10a-3a: the door opens the SQLite home (`openRealmHome`); it constructs none of the six.
+  cli: [],
   // #616 PR-2a (ii-b): the `realm-mcp` program's opener; the library and its tools build none.
   'mcp-server': ['home.ts'],
   // #616 PR-2c c1a: core opens no store; a host does.
@@ -56,7 +58,7 @@ const ALLOWED_TESTS: Record<string, Array<{ file: string; sites: number; subject
     },
     {
       file: 'multi-copy/multi-copy.test.ts',
-      sites: 11,
+      sites: 10,
       subject:
         "two copies of core on one home: the release-line law; its constructions through each copy's namespace ARE the subject; PR-3",
     },
@@ -371,6 +373,55 @@ describe('#616 PR-2a (iii) — every store comes through the one door', () => {
       ).toEqual([]);
     });
   }
+});
+
+/** #616 PR-2c c10a-3a correction 1: the SQLite openers the CLI's production source may call, each
+ *  with the only files allowed to: the door, and the two verbs that act on the store file. */
+const OPENERS: ReadonlyArray<{ opener: string; allowed: readonly string[] }> = [
+  { opener: 'openRealmHome', allowed: ['lib/home.ts'] },
+  {
+    opener: 'openRealmHomeForMaintenance',
+    allowed: ['commands/db-backup.ts', 'commands/db-migrate.ts'],
+  },
+];
+
+/** The calls of `opener` in the CLI's source: comment lines and the text of strings left out, so an
+ *  import (a plain name) or a mention is not a call. */
+function openerCalls(opener: string): Site[] {
+  const root = join(PACKAGES_DIR, 'cli', 'src');
+  const call = new RegExp(`\\b${opener}\\(`);
+  const sites: Site[] = [];
+  for (const path of sourceFiles('cli')) {
+    const file = relative(root, path).split(sep).join('/');
+    readFileSync(path, 'utf8')
+      .split('\n')
+      .forEach((text, i) => {
+        const trimmed = text.trim();
+        if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*')) return;
+        const code = text.replace(/(['"`])(?:\\.|(?!\1)[^\\])*\1/g, '""');
+        if (call.test(code)) sites.push({ file, line: i + 1, text: trimmed });
+      });
+  }
+  return sites;
+}
+
+describe("#616 PR-2c c10a-3a — the SQLite openers in the CLI's source", () => {
+  it('each opener is called only from its allowed files, and from every one of them', () => {
+    const report = OPENERS.map(({ opener, allowed }) => {
+      const sites = openerCalls(opener);
+      return {
+        opener,
+        strays: sites
+          .filter((s) => !allowed.includes(s.file))
+          .map((s) => `cli/src/${s.file}:${s.line}: ${s.text}`),
+        uncalled: allowed.filter((f) => !sites.some((s) => s.file === f)),
+      };
+    });
+    // (1) red when another file opens the store itself (the one-door rule), or an allowed file no
+    //     longer calls its opener (a stale row, or a pattern that matches nothing); (2) prints each
+    //     stray as file:line and its text, and each allowed file with no call.
+    expect(report).toEqual(OPENERS.map(({ opener }) => ({ opener, strays: [], uncalled: [] })));
+  });
 });
 
 describe('#616 PR-2b (A1) — a test opens its stores through the helper; the exceptions are listed', () => {

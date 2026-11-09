@@ -1735,7 +1735,7 @@ export const listenCommand = new Command('listen')
   )
   .option(
     '--dedup-store <kind>',
-    'Dedup store: file | memory',
+    "Dedup store: file (kept in the home's store across restarts) | memory (this process only)",
     parseOneOf('--dedup-store', ['file', 'memory']),
     'file',
   )
@@ -1882,8 +1882,8 @@ export const listenCommand = new Command('listen')
       }
 
       const dedupKind = opts['dedupStore'] ?? 'file';
-      // #616 PR-2a (iii): the one door, opened once, after every refusal above; its dedup marks sit
-      // under the home's `dedup` folder (`--dedup-store memory` keeps its in-memory map).
+      // #616 PR-2a (iii): the one door, opened once, after every refusal above; its dedup marks are
+      // rows in the home's store (`--dedup-store memory` keeps its in-memory map).
       const home = await openCliHome();
       const memoryStores = new Map<string, DedupStore>();
       const deps: ListenDeps = {

@@ -13,12 +13,11 @@
 // instead (its artifacts are read at slightly different instants and may be mid-flight); a terminal
 // run needs no warning, since nothing changes post-seal.
 //
-// The bundle deliberately excludes the idempotency-key pointer (`keys/<hash>.json`): that file is a
-// hash→run INDEX derived from the run records, not run evidence, and the key it maps is
-// already present on the run record itself (`run.idempotency_key`).
-import { existsSync, statSync } from 'node:fs';
+// The bundle carries no index of the idempotency key: the store derives a `key_hash` column on the
+// run's row to find a key's holder; the key itself is already on the record (`run.idempotency_key`).
+import { existsSync, realpathSync, statSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
-import { join, resolve, sep } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { Command } from 'commander';
 import type {
   RunRecord,
@@ -365,8 +364,27 @@ export interface ResolveExportPathOptions {
   runId: string;
   /** The raw `--out` flag value, if given. */
   out?: string | undefined;
-  /** `runStore.runsDirPath` — the export target must never resolve inside it. */
-  runsDir: string;
+  /** The Realm home (the folder holding `realm.db`) — the export target must never resolve inside it. */
+  home: string;
+}
+
+/**
+ * The real path of `path`: the system's answer, or, for a path that does not exist yet, its nearest
+ * existing folder's with the rest joined to it — as `realm db backup` resolves its target and the home.
+ */
+function realPathOf(path: string): string {
+  const rest: string[] = [];
+  let at = resolve(path);
+  for (;;) {
+    try {
+      return join(realpathSync.native(at), ...rest);
+    } catch {
+      const up = dirname(at);
+      if (up === at) return resolve(path);
+      rest.unshift(basename(at));
+      at = up;
+    }
+  }
 }
 
 /**
@@ -376,8 +394,11 @@ export interface ResolveExportPathOptions {
  *  2. `--out` names an EXISTING DIRECTORY → `<out>/<runId>.realm.json`.
  *  3. Otherwise `--out` is treated as the literal file path.
  * Then refuses (throws `WorkflowError`, code `VALIDATION_INPUT_SCHEMA`) if the resolved path is:
- *  - inside `runsDir` — export must never write into the store's own directory (would confuse
- *    `list()`'s naive `.json`-suffix filter, and clutters the space `purge` manages); or
+ *  - the Realm home, or inside it — the home holds the store (`realm.db`, its log and its fence
+ *    files), and an export is a file the operator keeps outside it. Both sides are judged by their
+ *    real paths, the nearest existing folder's plus the rest (a symlinked temp folder, as macOS's
+ *    `/tmp`, and a home that does not exist yet both compare), as `realm db backup` judges its
+ *    target; or
  *  - an already-existing file — export never clobbers; the operator picks a different `--out`.
  */
 export function resolveExportPath(opts: ResolveExportPathOptions): string {
@@ -391,10 +412,11 @@ export function resolveExportPath(opts: ResolveExportPathOptions): string {
   }
 
   const resolvedTarget = resolve(target);
-  const resolvedRunsDir = resolve(opts.runsDir);
-  if (resolvedTarget === resolvedRunsDir || resolvedTarget.startsWith(resolvedRunsDir + sep)) {
+  const realTarget = realPathOf(resolvedTarget);
+  const realHome = realPathOf(opts.home);
+  if (realTarget === realHome || realTarget.startsWith(realHome + sep)) {
     throw new WorkflowError(
-      `Refusing to write the export inside runsDir ('${resolvedRunsDir}') — choose a different --out.`,
+      `Refusing to write the export inside the Realm home ('${opts.home}') — choose a different --out.`,
       {
         code: 'VALIDATION_INPUT_SCHEMA',
         category: 'VALIDATION',
@@ -441,7 +463,7 @@ export function exportDisclosureRefusal(runId: string, manifest: RunManifest): s
       : // Correction 4 (I-8): a run whose copy cannot be read and whose record names no manifest has
         // none to restore — its copy is what to repair.
         manifest.copy_unread === true
-        ? `Repair the run's workflow copy first (realm run inspect ${runId} names the command), or pass --accept-partial-disclosure to write it masked with what is known; `
+        ? `Repair the run's workflow copy first (realm run inspect ${runId} names the repair), or pass --accept-partial-disclosure to write it masked with what is known; `
         : 'Restore the manifest the run used, or pass --accept-partial-disclosure to write it masked with what is known; ') +
     'the last line it prints then names the state.'
   );
@@ -499,7 +521,6 @@ export const exportCommand = new Command('export')
     // the registry is built on its first use.
     const home = await openCliHome();
     const runStore = home.runStore;
-    const runsDir = runStore.runsDirPath;
     const failedAttemptStore = home.failedAttemptStore;
     const traceBufferStore = home.traceBufferStore;
 
@@ -545,7 +566,7 @@ export const exportCommand = new Command('export')
         );
       }
 
-      const target = resolveExportPath({ runId, out: opts.out, runsDir });
+      const target = resolveExportPath({ runId, out: opts.out, home: home.path });
       const json = JSON.stringify(bundle, null, 2);
       await writeFile(target, json, 'utf8');
 

@@ -206,7 +206,8 @@ Re-run with --force to actually delete.
 Read the list, then run it again with `--force`:
 
 ```text
-Purged 6/6 run(s) (21.3 KB freed, store-reported). 0 already gone, 0 blocked, 0 failed.
+Purged 6/6 run(s) (21.3 KB freed, store-reported; realm.db shrank by 20.0 KB). 0 already gone, 0 blocked, 0 failed.
+Copies of the deleted runs in backups made before this purge are not touched.
 3 of 6 selected run(s) were resumable via 'realm run resume' — purging has destroyed that path for them.
 ```
 

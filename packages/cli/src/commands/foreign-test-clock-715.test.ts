@@ -167,12 +167,12 @@ const NO_MODE_BITS = process.platform === 'win32' || process.getuid?.() === 0;
 
 describe('#715 (a) correction 1 (C-10) — a ~/.realm this user cannot read, on the built CLI', () => {
   it.skipIf(NO_MODE_BITS)(
-    'realm run list: the typed line that the runs folder cannot be read, no stack, exit 1 (skipped as root or on Windows: mode bits do not bind there)',
+    'realm run list: the typed line that the home cannot be written, no stack, exit 1 (skipped as root or on Windows: mode bits do not bind there)',
     () => {
       // (a) red when only ENOENT counts as an absent clock file (the store's construction throws a
       // plain error with its stack); (b) prints the first stderr line and the exit code.
       const locked = join(scratch, 'home-locked');
-      mkdirSync(join(locked, '.realm', 'runs'), { recursive: true });
+      mkdirSync(join(locked, '.realm'), { recursive: true });
       chmodSync(join(locked, '.realm'), 0o000);
       try {
         const r = realm(['run', 'list'], locked);
@@ -180,7 +180,7 @@ describe('#715 (a) correction 1 (C-10) — a ~/.realm this user cannot read, on 
           {
             code: r.code,
             stdout: r.stdout,
-            folder: /The runs folder .* cannot be read \(EACCES\)/.test(r.stderr),
+            folder: /Realm cannot write to .*: permission denied\./.test(r.stderr),
             clockFile: r.stderr.includes('test clock file'),
             stack: STACK.test(r.stderr),
           },
@@ -192,4 +192,41 @@ describe('#715 (a) correction 1 (C-10) — a ~/.realm this user cannot read, on 
     },
     20_000,
   );
+});
+
+// #616 PR-2c c10a-3a correction 1: the CHANGELOG's "refuses with one line … and creates nothing", on
+// the built CLI, through the same printer as the copied test home's refusal above.
+describe('#616 PR-2c c10a-3a — a home that still holds the old JSON store, on the built CLI', () => {
+  it('realm workflow list: one Error line naming the old folder, no stack, nothing on stdout, exit 1, nothing created', () => {
+    const legacy = join(scratch, 'home-legacy');
+    mkdirSync(join(legacy, '.realm', 'runs'), { recursive: true });
+    const before = readdirSync(join(legacy, '.realm')).sort();
+    const r = realm(['workflow', 'list'], legacy);
+    const lines = r.stderr.split('\n').filter((l) => l !== '');
+    // (a) red when the refusal's code is not an expected one (index.ts rethrows it: a stack), or the
+    //     guard is bypassed (the open succeeds and `realm.db` appears); (b) prints the first stderr
+    //     line and the exit code, and the home's entries.
+    expect(
+      {
+        code: r.code,
+        stdout: r.stdout,
+        lines: lines.length,
+        starts: lines[0]?.startsWith(
+          'Error: This Realm keeps its store in realm.db and does not read the old JSON directories (runs) in ',
+        ),
+        stack: STACK.test(r.stderr),
+        before,
+        after: readdirSync(join(legacy, '.realm')).sort(),
+      },
+      r.shown,
+    ).toEqual({
+      code: 1,
+      stdout: '',
+      lines: 1,
+      starts: true,
+      stack: false,
+      before: ['runs'],
+      after: ['runs'],
+    });
+  }, 20_000);
 });
