@@ -4,16 +4,16 @@
 // command in a child with `HOME: root`; the command must read the same folder. The guard's: a test
 // file that forgets its HOME stub must never write into the developer's `~/.realm`.
 import { afterEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { realmHomePath, type RunStore } from '@sensigo/realm';
-import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
+import { createTestHome, type TestHome } from '@sensigo/realm-testing';
 import { makeTempHome, runCount, runIds, type TempHome } from './temp-home.js';
 
 const handles: TempHome[] = [];
 const scratches: string[] = [];
-const locations: TestLocation[] = [];
+const locations: TestHome[] = [];
 afterEach(async () => {
   for (const h of handles.splice(0)) await h.cleanup();
   for (const l of locations.splice(0)) await l.remove();
@@ -26,46 +26,54 @@ function scratch(): string {
 }
 
 describe('#616 PR-2b b1 — makeTempHome()', () => {
-  it('a fresh handle: root under the temp folder, the door on <root>/.realm, the runs a child with HOME: root opens', async () => {
+  it('a fresh handle: root under the temp folder, the door on <root>/.realm, the store a child with HOME: root opens', async () => {
     const h = await makeTempHome();
     handles.push(h);
     // (1) red when the door is opened on `root` instead of `<root>/.realm` (every path below loses
-    //     its `.realm`), or the root is made elsewhere or named otherwise;
-    // (2) prints the root's place and name, whether it exists, and the three paths.
+    //     its `.realm`, and `realm.db` is not under it), or the root is made elsewhere or named
+    //     otherwise; (2) prints the root's place and name, whether it exists, the two paths, and
+    //     whether `realm.db` is under the door's path.
     expect({
       underTmp: dirname(h.root) === tmpdir(),
       named: basename(h.root).startsWith('realm-temp-home-'),
       exists: existsSync(h.root),
       path: h.path,
       doorPath: h.home.path,
-      runsDir: h.home.runStore.runsDirPath,
+      db: existsSync(join(h.home.path, 'realm.db')),
     }).toEqual({
       underTmp: true,
       named: true,
       exists: true,
       path: join(h.root, '.realm'),
       doorPath: join(h.root, '.realm'),
-      runsDir: join(h.root, '.realm', 'runs'),
+      db: true,
     });
   });
 
-  it('a given .realm path: its parent is the root, the path as given, and nothing is created', async () => {
+  it('a given .realm path: its parent is the root, the path as given, and the open creates the store there', async () => {
     const s = scratch();
     const given = join(s, '.realm');
     const h = await makeTempHome({ home: given });
     handles.push(h);
-    // (1) red when `root` is undefined on every given path, or the helper or the door creates the
-    //     folder at the open; (2) prints `root`, `path` and whether the folder exists.
-    expect({ root: h.root, path: h.path, exists: existsSync(h.path) }).toEqual({
+    // (1) red when `root` is undefined on every given path, or the helper opens another folder than
+    //     the one given (the store is then not there); (2) prints `root`, `path` and the folder's
+    //     entries (the write-ahead log's two files, present while the store is open, left out).
+    expect({
+      root: h.root,
+      path: h.path,
+      entries: readdirSync(given)
+        .filter((e) => e !== 'realm.db-wal' && e !== 'realm.db-shm')
+        .sort(),
+    }).toEqual({
       root: s,
       path: given,
-      exists: false,
+      entries: ['dedup', 'realm.db', 'replays', 'runs', 'workflows'],
     });
   });
 
-  it('a test location by its own root: no root, the location’s runs, and its clock read at the open', async () => {
+  it('a test home by its own root: no root, the test home’s folder, and its clock read at the open', async () => {
     const T = '2031-04-05T06:07:08.000Z';
-    const location = await createTestLocation({ start: T, root: join(scratch(), 'loc') });
+    const location = await createTestHome({ start: T, root: join(scratch(), 'loc') });
     locations.push(location);
     const h = await makeTempHome({ home: location.root });
     handles.push(h);
@@ -75,16 +83,16 @@ describe('#616 PR-2b b1 — makeTempHome()', () => {
       params: {},
     });
     const { at } = await h.home.runStore.get(record.id);
-    // (1) red when `root` is `dirname(home)` on every given path (a location's parent is no child's
-    //     HOME), or the door opens another folder than the location's, or the run store runs on the
-    //     real clock (a handle opened before the location's clock file existed);
-    // (2) prints `root`, both runs folders and the snapshot's `at`.
+    // (1) red when `root` is `dirname(home)` on every given path (a test home's parent is no child's
+    //     HOME), or the door opens another folder than the test home's, or the run store runs on the
+    //     real clock (the clock file not read at the open);
+    // (2) prints `root`, the path, whether `realm.db` is in the test home, and the snapshot's `at`.
     expect({
       root: h.root,
       path: h.path,
-      runsDir: h.home.runStore.runsDirPath,
+      db: existsSync(join(location.root, 'realm.db')),
       at: at.toISOString(),
-    }).toEqual({ root: undefined, path: location.root, runsDir: location.runsDir, at: T });
+    }).toEqual({ root: undefined, path: location.root, db: true, at: T });
   });
 
   it('cleanup() removes the helper’s own root, and a second call resolves', async () => {
@@ -144,13 +152,16 @@ describe('#616 PR-2b b1 — the HOME guard (scripts/vitest-pin-environment.mjs)'
 
 describe('#616 PR-2c c0 — runCount and runIds read the runs through the store', () => {
   it('on a fresh home: 0 and [] with no runs folder made first; after two creates: 2 and both ids, ascending', async () => {
-    // Each reader takes its first look at a fresh home of its own: `list()` makes the runs folder,
-    // so a reader that runs after the other would find a folder already there.
+    // Each reader takes its first look at a fresh home of its own. #616 PR-2c c10a-3a: on the SQLite
+    // home `runs` is the store's fence FILE, never a folder.
     const counted = await makeTempHome();
     const listed = await makeTempHome();
     const h = await makeTempHome();
     handles.push(counted, listed, h);
-    const folderBefore = [counted, listed].map((t) => existsSync(join(t.path, 'runs')));
+    const folderBefore = [counted, listed].map((t) => {
+      const at = join(t.path, 'runs');
+      return existsSync(at) && statSync(at).isDirectory();
+    });
     const fresh = {
       count: await runCount(counted.home.runStore),
       ids: await runIds(listed.home.runStore),
@@ -161,8 +172,8 @@ describe('#616 PR-2c c0 — runCount and runIds read the runs through the store'
     const count = await runCount(store);
     const ids = await runIds(store);
     // (1) red when a reader counts the files in the runs folder (`readdir`) instead of asking the
-    //     store: the CLI door makes no runs folder at the open, so on the fresh home the read throws ENOENT;
-    //     `ascending` checks this store's listing only — the JSON store's `list()` already sorts, so
+    //     store: the home holds no runs folder (`runs` is a file), so on the fresh home the read throws;
+    //     `ascending` checks this store's listing only — the store's `list()` already sorts, so
     //     the order is guarded by the next cell, whose store answers out of order; (2) prints whether
     //     the folder was there first, the count
     //     and the ids before and after the two creates, and both created ids.

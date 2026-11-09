@@ -37,22 +37,20 @@ describe('#715 (a) — the docs sentences', () => {
     // B11 (an ordinary directory stamps with the wall clock).
     claim(
       ENV,
-      "The file store stamps the times it writes, such as a run's `created_at` and `updated_at`, with this computer's clock.",
+      "The store stamps the times it writes, such as a run's `created_at` and `updated_at`, with this computer's clock.",
     );
     // D6-29(a): a statement of support, pinned by this cell alone.
     claim(
       ENV,
-      'A file store on a folder that several computers share is not supported: each computer would stamp with its own clock.',
+      'A Realm home on a folder that several computers share is not supported: each computer would stamp with its own clock.',
     );
     // C4, C14 (the file beside runs/); correction 1 (C-2): the source scan in
     // lint-test-location-715.test.ts (only the testing package creates one); C1, C2 (the store reads).
+    // #616 PR-2c c10a-3a: the door's cell (e) and temp-home's test-home cell read the file on a SQLite home.
+    claim(ENV, 'A folder with a `.realm-test-clock` file is a test home.');
     claim(
       ENV,
-      'A folder with a `.realm-test-clock` file beside its `runs/` folder is a test location.',
-    );
-    claim(
-      ENV,
-      'Only `@sensigo/realm-testing` creates one, for tests; the file store only reads the file.',
+      'Only `@sensigo/realm-testing` creates one, for tests; the store only reads the file.',
     );
     // C2 (create), B2 (update, claimStep at a location), C15 (another process).
     claim(
@@ -71,29 +69,57 @@ describe('#715 (a) — the docs sentences', () => {
   });
 
   it('realm-run-acting.md: purge reports a run that changed after it was selected', () => {
-    // D2, D3, D5b; correction 1 (C-1): C-1a (the run file is kept, the freed bytes stay freed).
+    // #616 PR-2c c10a-3a: the store's path (purge-sqlite-616.test.ts: a blocked run keeps every row;
+    // `changed_since_selected` and `drain_pending` from the home's purge).
     claim(
       ACTING,
-      'A run that changed after `purge` selected it is reported `blocked`, and its run file is kept: a run that was resumed with the sentence that it is no longer terminal, and any other change, such as a cleanup step that completed, as `changed_since_selected` (added after version 0.48.0).',
+      'A run that changed after `purge` selected it is reported `blocked` and kept whole — a run that was resumed with the sentence that it is no longer terminal, and any other change, such as a cleanup step that completed, as `changed_since_selected` (added after version 0.48.0).',
     );
-    // C-1a, C-1b.
-    claim(ACTING, 'Files that an artifact store had already deleted stay deleted.');
-    // C-1a, C-1c; purge.test.ts "a FAILED run with a partial free is disclosed too".
     claim(
       ACTING,
-      'Any `blocked` or `failed` line of a run that had files deleted ends with `(<bytes> across <n> of its artifact stores were already freed before the refusal)`.',
+      'A blocked run keeps every row: a run that owes a cleanup step is blocked as `drain_pending` with its trace entries and refused answers kept, and a dry run lists it among the runs that would be purged.',
     );
-    // C-1c; correction 2 (R-2): purge.test.ts C-1d runs the dry run and the forced purge of a run
-    // that owes a cleanup step (both artifact stores freed, the run file kept).
     claim(
       ACTING,
-      'A run that owes a cleanup step is blocked as `drain_pending` after its trace files and refused answers were deleted, and a dry run lists it among the runs that would be purged.',
+      '| `blocked` | Runs kept. `drain_pending` means the run still owes a cleanup step; see [`drain`](#drain). |',
     );
-    // C-1a, C-1c.
+  });
+
+  it('#616 PR-2c c10a-3a: the purge lines on the store, the listen row, and the CHANGELOG entries', () => {
+    // The force line, the backups line and the log line: purge-sqlite-616.test.ts's print cells,
+    // the code's own format strings.
     claim(
       ACTING,
-      '| `blocked` | Runs whose run file was kept. `drain_pending` means the run still owes a cleanup step; see [`drain`](#drain). |',
+      'Purged 2/3 run(s) (4.9 KB freed, store-reported; realm.db shrank by 4.0 KB). 0 already gone, 1 blocked, 0 failed.',
     );
+    claim(ACTING, 'Copies of the deleted runs in backups made before this purge are not touched.');
+    claim(
+      ACTING,
+      "The bytes freed are what the store reports for the deleted runs; `realm.db shrank by` is what the file gave back on disk — a floor: SQLite gives back whole pages, and only once nothing is left on them — a page that still holds other rows stays, and so does each table's first page, so a few small runs often give back nothing — and pages still in the write-ahead log do not show in it yet. When another process was using the log, one more line says `realm.db's log was not reset: another process was using it. The space is returned at a later checkpoint; the deleted text may stay readable in realm.db-wal until a later purge resets the log.`",
+    );
+    claim(
+      'docs/guides/operate-runs.md',
+      'Purged 6/6 run(s) (21.3 KB freed, store-reported; realm.db shrank by 20.0 KB). 0 already gone, 0 blocked, 0 failed.',
+    );
+    claim(
+      'docs/guides/operate-runs.md',
+      'Copies of the deleted runs in backups made before this purge are not touched.',
+    );
+    // lib/home.test.ts (a): the dedup mark reads back from the home's store.
+    claim(
+      'docs/reference/cli/realm-listen.md',
+      "| `file` | In the Realm home's store (`realm.db`), one row for each ID. |",
+    );
+    for (const sentence of [
+      // lib/home.test.ts (a), (d); the store's sentence: store-sqlite/src/home.ts.
+      "**Every `realm` command keeps its store in `realm.db`**, one SQLite file in the Realm home (`~/.realm/realm.db`): runs, the workflow registry, replays, trace buffers, failed attempts and `realm listen`'s dedup marks.",
+      "The first command on a home that still holds the old JSON store's folders (`runs`, `workflows`, `replays`, `dedup`) refuses with one line — `This Realm keeps its store in realm.db and does not read the old JSON directories (…) in <home>. Move them out of the home, then import what you want to keep with save() or realm run import.` (the store's sentence; its own code spans dropped here) — and creates nothing.",
+      // packages/cli/package.json's engines.
+      'The `realm` command needs Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later. (#616)',
+      // purge-sqlite-616.test.ts.
+      '**`realm run purge` deletes on the store**, in bounded batches; the force line also reports what `realm.db` gave back on disk (`realm.db shrank by <bytes>`, a floor), copies in backups made before the purge are untouched, a blocked run keeps every row, and the log is reset once at the end — when another process was using it, one line says so. (#616)',
+    ])
+      claimChangelog(sentence);
   });
 
   it('core-library.md: the stores’ clock and a store’s clock functions', () => {

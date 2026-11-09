@@ -47,10 +47,10 @@ listen: binding to non-loopback host '0.0.0.0' — this server serves plaintext 
 
 ### `--dedup-store`
 
-| Kind     | IDs are kept                                              | After a restart                                                                                                                                                                                                                                               |
-| -------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `file`   | In `~/.realm/dedup/<workflow-id>/`, one file for each ID. | An event seen before the restart is still recognised.                                                                                                                                                                                                         |
-| `memory` | In the process.                                           | The list is empty, but the run store still knows the event's ID: the same request gets `200` `deduplicated` with the run it started, and no second agent starts. When that run's agent failed to start, it gets that first reply again: `500` `spawn_failed`. |
+| Kind     | IDs are kept                                                 | After a restart                                                                                                                                                                                                                                               |
+| -------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `file`   | In the Realm home's store (`realm.db`), one row for each ID. | An event seen before the restart is still recognised.                                                                                                                                                                                                         |
+| `memory` | In the process.                                              | The list is empty, but the run store still knows the event's ID: the same request gets `200` `deduplicated` with the run it started, and no second agent starts. When that run's agent failed to start, it gets that first reply again: `500` `spawn_failed`. |
 
 ### `--llm-timeout`
 

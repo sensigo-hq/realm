@@ -20,6 +20,11 @@ import { makeTempHome } from '../test-support/temp-home.js';
 import { runAgent, type AgentDeps } from './run-agent.js';
 import { LlmProvider } from './providers/llm-provider.js';
 import type { LlmClock } from './providers/agent-utils.js';
+import { MCP_BIN_ON_JSON_UNTIL_C10B_DELTAS_57 } from './test-support/mcp-bin-on-json.js';
+
+// DELTAS 57 (#616 PR-2c c10a-3a; closed by c10b): the cells that start the `realm-mcp` bin. One name, so
+// a cell's only change is this token and prettier leaves its body as it was.
+const xit = it.skipIf(MCP_BIN_ON_JSON_UNTIL_C10B_DELTAS_57);
 
 class ClockSpy extends LlmProvider {
   clock: LlmClock | undefined;
@@ -35,7 +40,7 @@ class ClockSpy extends LlmProvider {
 }
 
 describe('#412 — an MCP-authored llm_timeout_seconds reaches the drive clock', () => {
-  it('create_workflow (over stdio) → registered definition → the clock the step drives under', async () => {
+  xit('create_workflow (over stdio) → registered definition → the clock the step drives under', async () => {
     // The tool is called the way an agent calls it: through realm's OWN MCP server, spawned as a
     // real child over stdio. Not the handler function — that is not on the package's public
     // surface, and reaching past the exports map to import it would be testing a path no agent

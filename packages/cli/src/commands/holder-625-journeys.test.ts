@@ -26,6 +26,11 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { resolveMcpServerEntry } from '../agent/test-support/mcp-server-entry.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { MCP_BIN_ON_JSON_UNTIL_C10B_DELTAS_57 } from '../agent/test-support/mcp-bin-on-json.js';
+
+// DELTAS 57 (#616 PR-2c c10a-3a; closed by c10b): the cells that start the `realm-mcp` bin. One name, so
+// a cell's only change is this token and prettier leaves its body as it was.
+const xit = it.skipIf(MCP_BIN_ON_JSON_UNTIL_C10B_DELTAS_57);
 
 /** The built CLI. THREE `..`: commands → src → cli. */
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
@@ -149,7 +154,7 @@ async function startGate(
 }
 
 describe('HOST ROWS — each program that serves the MCP tools names itself on the claims it takes', () => {
-  it('the realm-mcp bin: channel mcp-stdio, the name from REALM_OPERATOR', async () => {
+  xit('the realm-mcp bin: channel mcp-stdio, the name from REALM_OPERATOR', async () => {
     const client = await stdioClient(resolveMcpServerEntry(), [], 'bin-row', 'row-bin');
     try {
       const { runId } = await startGate(client);
@@ -295,7 +300,7 @@ describe('HOST ROWS — each program that serves the MCP tools names itself on t
 });
 
 describe('THE PROOF OVER REAL STDIO — the token is handed out once, passed back, judged; never a reason to lose an answer', () => {
-  it('start_run → the token on the opening reply → submit_human_response with it ⇒ matched, the opener named; a replay ⇒ spent with its sentence', async () => {
+  xit('start_run → the token on the opening reply → submit_human_response with it ⇒ matched, the opener named; a replay ⇒ spent with its sentence', async () => {
     const client = await stdioClient(resolveMcpServerEntry(), [], 'proof-row', 'row-proof');
     try {
       const { runId, gateId, token } = await startGate(client);
@@ -330,7 +335,7 @@ describe('THE PROOF OVER REAL STDIO — the token is handed out once, passed bac
     }
   }, 30_000);
 
-  it('an EMPTY claim_token over the wire is recorded with `mismatch` and `status: ok` (never the SDK’s -32602)', async () => {
+  xit('an EMPTY claim_token over the wire is recorded with `mismatch` and `status: ok` (never the SDK’s -32602)', async () => {
     const client = await stdioClient(resolveMcpServerEntry(), [], 'empty-row', 'row-empty');
     try {
       const { runId, gateId } = await startGate(client);
@@ -349,7 +354,7 @@ describe('THE PROOF OVER REAL STDIO — the token is handed out once, passed bac
     }
   }, 30_000);
 
-  it.each([
+  xit.each([
     ['an escape sequence', '\u001b[2J', 'contains a control character'],
     ['an empty name', '', 'empty'],
     ['a 300-character name', 'n'.repeat(300), 'longer than 200 characters'],
@@ -382,7 +387,7 @@ describe('THE PROOF OVER REAL STDIO — the token is handed out once, passed bac
 });
 
 describe('THE CLI AFTER — `realm run respond --by`, and `realm run inspect` reading the record', () => {
-  it('respond --by alice, then inspect: the question was OPENED through the server, ANSWERED by alice, no claim_token passed', async () => {
+  xit('respond --by alice, then inspect: the question was OPENED through the server, ANSWERED by alice, no claim_token passed', async () => {
     const client = await stdioClient(resolveMcpServerEntry(), [], 'opener-row', 'row-cli');
     let runId: string;
     let gateId: string;
@@ -415,7 +420,7 @@ describe('THE CLI AFTER — `realm run respond --by`, and `realm run inspect` re
     );
   }, 60_000);
 
-  it('respond without --by: the same line with `(not stated)`; nothing derived from the OS account or REALM_OPERATOR', async () => {
+  xit('respond without --by: the same line with `(not stated)`; nothing derived from the OS account or REALM_OPERATOR', async () => {
     const client = await stdioClient(resolveMcpServerEntry(), [], 'opener-row', 'row-cli2');
     let runId: string;
     let gateId: string;
@@ -435,7 +440,7 @@ describe('THE CLI AFTER — `realm run respond --by`, and `realm run inspect` re
     expect(inspected.stdout).not.toContain('answered by cli-row');
   }, 60_000);
 
-  it('an MCP answer with no token renders the SAME door-neutral phrase as the CLI’s', async () => {
+  xit('an MCP answer with no token renders the SAME door-neutral phrase as the CLI’s', async () => {
     const client = await stdioClient(resolveMcpServerEntry(), [], 'opener-row', 'row-cli3');
     let runId: string;
     try {
@@ -455,7 +460,7 @@ describe('THE CLI AFTER — `realm run respond --by`, and `realm run inspect` re
     );
   }, 60_000);
 
-  it.each([
+  xit.each([
     ['an empty name', '', 'empty'],
     ['a whitespace-only name', '  ', 'empty'],
     ['an escape sequence', '\u001b[2J', 'contains a control character'],

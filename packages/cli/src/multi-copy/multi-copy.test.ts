@@ -1040,11 +1040,16 @@ describe('12 — the advisory: the project’s @sensigo/realm is another version
       const { workflowDir } = await writeFlakyProject(root);
       const { plain } = await writeProviders(await codeDir(layout.projectDir, 'providers'));
       const home = await tempDir('home');
-      const cliCore = await core(layout.cli.cliCore);
       const node = (args: string[]): ReturnType<typeof runNode> =>
         runNode([layout.file(layout.cli.cli, 'dist/index.js'), ...args], { cwd: root, home });
       expect(node(['workflow', 'register', workflowDir]).status).toBe(0);
-      const store = new cliCore.JsonFileStore(join(home, '.realm', 'runs'));
+      // #616 PR-2c c10a-3a: the child's HOME is a SQLite home; it is opened through the store package
+      // this CLI copy depends on.
+      const { openRealmHome } = await layout.load<typeof import('@sensigo/realm-store-sqlite')>(
+        layout.cli.cliStore,
+      );
+      const realmHome = await openRealmHome({ home: join(home, '.realm') });
+      const store = realmHome.runStore;
       const attach = async (flag: string[]): Promise<string> => {
         const { record: run } = await store.create({
           workflowId: 'flaky-flow',
@@ -1056,6 +1061,7 @@ describe('12 — the advisory: the project’s @sensigo/realm is another version
       };
       expect((await attach(['--no-release-line-advisory'])).split(advisory()).length - 1).toBe(0);
       expect((await attach([])).split(advisory()).length - 1).toBe(1);
+      realmHome.close();
     },
     TEST_TIMEOUT,
   );

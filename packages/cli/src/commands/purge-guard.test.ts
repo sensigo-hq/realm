@@ -93,10 +93,18 @@ function findDeclarers(): Declarer[] {
 // classified (it has a real deleteAllForRun declaration and its own TCK contract test — see
 // store-fs-guard.test.ts's WIRED⇒TCK check, which is UNCHANGED and still expects JsonFileStore
 // covered) — it just never appears in WIRED_ORDER or the array-literal check below.
-const WIRED_ORDER = ['JsonTraceBufferStore', 'JsonFileFailedAttemptStore'];
+// #616 PR-2c c10a-3a: the door's stores are the SQLite home's, so the array holds the SQLite classes
+// (also WIRED THROUGH THE HOME'S PURGE below: the classification is membership-or, no conflict).
+const WIRED_ORDER = ['SqliteTraceBufferStore', 'SqliteFailedAttemptStore'];
 const ANCHOR = 'JsonFileStore';
 const EXCLUDED: Record<string, string> = {
   InMemoryTraceBufferStore: 'test-only in-memory store — never purged (no on-disk artifacts)',
+  // #616 PR-2c c10a-3a: the door opens the SQLite home, so no command purges through these two; the
+  // MCP program has no purge. PR-3 deletes them with the JSON store.
+  JsonTraceBufferStore:
+    "the JSON store's class — no `realm` command purges through it since the door opened the SQLite home (#616 PR-2c c10a-3a); purge.test.ts drives the JSON per-store path until PR-3 deletes it",
+  JsonFileFailedAttemptStore:
+    "the JSON store's class — no `realm` command purges through it since the door opened the SQLite home (#616 PR-2c c10a-3a); purge.test.ts drives the JSON per-store path until PR-3 deletes it",
 };
 // #616 PR-2c c9 (SEAMS S15; MA 4's point 5: each store's own code deletes its own rows, called by
 // purge): on a SQLite home, purge hands the selected runs to the home's purge
@@ -182,30 +190,34 @@ describe('#107/#184 PerRunArtifactStore.deleteAllForRun — declarer enumeration
     ).not.toContain(ANCHOR);
   });
 
-  it('JsonFileStore is passed as the anchorStore argument to purgeRuns, not inside artifactStores (issue #184)', () => {
+  it("the door's run store is passed as the anchorStore argument to purgeRuns, not inside artifactStores, and the home's purge fourth (issue #184; #616 PR-2c c10a-3a)", () => {
     const purgeSrc = readFileSync(join(PACKAGES_DIR, 'cli', 'src', 'commands', 'purge.ts'), 'utf8');
-    // purgeRuns(<options object>, <anchorStore var>, <artifactStores var>)
-    const callMatch = /purgeRuns\(\s*\{[\s\S]*?\},\s*(\w+),\s*(\w+),?\s*\)/.exec(purgeSrc);
+    // purgeRuns(<options object>, <anchorStore var>, <artifactStores var>, home.purge) — #616 PR-2c
+    // c10a-3a: the fourth argument is the home's own purge (c9's store path).
+    const callMatch = /purgeRuns\(\s*\{[\s\S]*?\},\s*(\w+),\s*(\w+),\s*home\.purge,?\s*\)/.exec(
+      purgeSrc,
+    );
     expect(callMatch, 'purgeRuns(...) call site was not found').not.toBeNull();
     const anchorVarName = callMatch![1]!;
-    // #616 PR-2a (iii): the anchor is the one door's run store (`home.runStore`), and the door
-    // builds that store as the JsonFileStore (wrapped for the #715 (b) test-clock notice, which
-    // keeps the same instance kind). (1) red when purge.ts takes its anchor from anything but the
-    // door's run store, or the door's run store stops being the JsonFileStore; (2) prints the
-    // variable name, or the file that no longer matches.
+    // #616 PR-2a (iii): the anchor is the one door's run store (`home.runStore`); since #616 PR-2c
+    // c10a-3a the door takes that store from the SQLite home (`realmHome.runStore`, wrapped for the
+    // #715 (b) test-clock notice, which keeps the same instance kind). (1) red when purge.ts takes its
+    // anchor from anything but the door's run store, or hands purgeRuns no home purge, or the door's
+    // run store stops being the home's; (2) prints the variable name, or the file that no longer
+    // matches.
     const anchorDeclMatch = new RegExp(
       `\\bconst\\s+${anchorVarName}\\s*=\\s*home\\.runStore\\s*;`,
     ).exec(purgeSrc);
     expect(
       anchorDeclMatch,
       `expected purgeRuns's 2nd argument ('${anchorVarName}') to be the door's run store ` +
-        `('home.runStore') — the anchorStore param must be the JsonFileStore instance`,
+        `('home.runStore') — the anchorStore param must be the SQLite home's run store`,
     ).not.toBeNull();
     const homeSrc = readFileSync(join(PACKAGES_DIR, 'cli', 'src', 'lib', 'home.ts'), 'utf8');
     expect(
       homeSrc,
-      "lib/home.ts must build its run store as the JsonFileStore ('new JsonFileStore(…)')",
-    ).toMatch(/\bconst\s+runStore\s*=\s*withTestClockNotice\(\s*new\s+JsonFileStore\(/);
+      "lib/home.ts must take its run store from the SQLite home ('withTestClockNotice(realmHome.runStore, …)')",
+    ).toMatch(/\bconst\s+runStore\s*=\s*withTestClockNotice\(\s*realmHome\.runStore\b/);
   });
 
   it('#616 PR-2c c9: every store WIRED THROUGH THE HOME’S PURGE declares its one deleter, calls it from its own deleteAllForRun, and the home’s purge calls it', () => {

@@ -4,7 +4,7 @@
 // isolated tmp directory (NEVER `~/.realm/runs` or cwd's real files) — no console/exit-code
 // assertions (that thin formatting layer isn't unit-tested here either, per precedent).
 import { describe, it, expect } from 'vitest';
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, mkdir, symlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -803,7 +803,7 @@ describe('non-disclosure redaction (issue #197 PR-2, design §6)', () => {
 describe('resolveExportPath', () => {
   it('default (no --out): resolves to ./<id>.realm.json in the CURRENT working directory', () => {
     const runId = 'abc123';
-    const resolved = resolveExportPath({ runId, runsDir: '/some/unrelated/runs-dir' });
+    const resolved = resolveExportPath({ runId, home: '/some/unrelated/home' });
     expect(resolved).toBe(join(process.cwd(), `${runId}.realm.json`));
   });
 
@@ -814,7 +814,7 @@ describe('resolveExportPath', () => {
       const resolved = resolveExportPath({
         runId,
         out: outDir,
-        runsDir: '/some/unrelated/runs-dir',
+        home: '/some/unrelated/home',
       });
       expect(resolved).toBe(join(outDir, `${runId}.realm.json`));
     } finally {
@@ -829,7 +829,7 @@ describe('resolveExportPath', () => {
       const resolved = resolveExportPath({
         runId: 'abc123',
         out: target,
-        runsDir: '/some/unrelated/runs-dir',
+        home: '/some/unrelated/home',
       });
       expect(resolved).toBe(target);
     } finally {
@@ -844,7 +844,7 @@ describe('resolveExportPath', () => {
       await writeFile(target, 'pre-existing content', 'utf8');
 
       expect(() =>
-        resolveExportPath({ runId: 'abc123', out: target, runsDir: '/some/unrelated/runs-dir' }),
+        resolveExportPath({ runId: 'abc123', out: target, home: '/some/unrelated/home' }),
       ).toThrowError(/already-here\.json/);
 
       // original untouched
@@ -855,40 +855,66 @@ describe('resolveExportPath', () => {
     }
   });
 
-  it('refuses to resolve inside runsDir itself (the directory)', async () => {
-    const runsDir = await mkdtemp(join(tmpdir(), 'export-runsdir-'));
+  it('refuses to resolve inside the Realm home itself (the folder holding realm.db)', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'export-home-'));
     try {
-      expect(() => resolveExportPath({ runId: 'abc123', out: runsDir, runsDir })).toThrowError(
-        /runsDir/,
+      expect(() => resolveExportPath({ runId: 'abc123', out: home, home })).toThrowError(
+        /Realm home/,
       );
     } finally {
-      await rm(runsDir, { recursive: true, force: true });
+      await rm(home, { recursive: true, force: true });
     }
   });
 
-  it('refuses to resolve to a literal path INSIDE runsDir (not just the directory itself)', async () => {
-    const runsDir = await mkdtemp(join(tmpdir(), 'export-runsdir-'));
+  it('refuses to resolve to a literal path INSIDE the Realm home (not just the folder itself)', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'export-home-'));
     try {
-      const insidePath = join(runsDir, 'sneaky.realm.json');
-      expect(() => resolveExportPath({ runId: 'abc123', out: insidePath, runsDir })).toThrowError(
-        /runsDir/,
+      const insidePath = join(home, 'sneaky.realm.json');
+      expect(() => resolveExportPath({ runId: 'abc123', out: insidePath, home })).toThrowError(
+        /Realm home/,
       );
       expect(existsSync(insidePath)).toBe(false); // never created
     } finally {
-      await rm(runsDir, { recursive: true, force: true });
+      await rm(home, { recursive: true, force: true });
     }
   });
 
-  it("a directory INSIDE runsDir (e.g. keys/) is also refused, not just runsDir's own root", async () => {
-    const runsDir = await mkdtemp(join(tmpdir(), 'export-runsdir-'));
+  it('the home and the target are compared by their real paths: a home reached through a symlink, and a target named through one, are both refused', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'export-home-link-'));
     try {
-      const keysDir = join(runsDir, 'keys');
-      await mkdir(keysDir);
-      expect(() => resolveExportPath({ runId: 'abc123', out: keysDir, runsDir })).toThrowError(
-        /runsDir/,
+      const real = join(base, 'real-home');
+      await mkdir(real);
+      const link = join(base, 'linked-home');
+      await symlink(real, link);
+      // (a) red when either side is compared lexically (the link's text is not the real folder's);
+      //     (b) prints the thrown message, or that nothing was thrown.
+      const refusal = (out: string, home: string): string => {
+        try {
+          resolveExportPath({ runId: 'abc123', out, home });
+          return 'not refused';
+        } catch (err) {
+          return /Realm home/.test((err as Error).message) ? 'refused' : (err as Error).message;
+        }
+      };
+      expect({
+        homeThroughLink: refusal(join(real, 'x.realm.json'), link),
+        targetThroughLink: refusal(join(link, 'x.realm.json'), real),
+      }).toEqual({ homeThroughLink: 'refused', targetThroughLink: 'refused' });
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
+  it("a folder INSIDE the Realm home is also refused, not just the home's own root", async () => {
+    const home = await mkdtemp(join(tmpdir(), 'export-home-'));
+    try {
+      const inner = join(home, 'keys');
+      await mkdir(inner);
+      expect(() => resolveExportPath({ runId: 'abc123', out: inner, home })).toThrowError(
+        /Realm home/,
       );
     } finally {
-      await rm(runsDir, { recursive: true, force: true });
+      await rm(home, { recursive: true, force: true });
     }
   });
 });

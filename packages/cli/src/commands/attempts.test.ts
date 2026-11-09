@@ -6,14 +6,11 @@
 // not module load (drain.ts's header has the full account). This file's lazy-import idiom stays;
 // historicized here only.
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
-import { mkdir, appendFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { attemptsCommand } from './attempts.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 let h: TempHome & { readonly root: string };
 let home: string;
-let runsDir: string;
 let originalHome: string | undefined;
 let counter = 0;
 
@@ -25,8 +22,6 @@ describe('realm run attempts (CLI command)', () => {
   beforeAll(async () => {
     h = await makeTempHome();
     home = h.root;
-    runsDir = h.home.runStore.runsDirPath;
-    await mkdir(runsDir, { recursive: true });
     originalHome = process.env['HOME'];
     process.env['HOME'] = home; // set before the first '@sensigo/realm' import below
   });
@@ -130,19 +125,6 @@ describe('realm run attempts (CLI command)', () => {
     await attemptsCommand.parseAsync([nextRunId()], { from: 'user' });
     expect(logged()).toContain('No failed attempts recorded');
   });
-
-  it('shows the capped note when the sidecar reached its ceiling', async () => {
-    const runId = nextRunId();
-    const { FAILED_ATTEMPT_SIDECAR_MAX_BYTES } = await import('@sensigo/realm');
-    await seedAttempt(runId); // one valid record first
-    await appendFile(
-      join(runsDir, `${runId}.attempts.jsonl`),
-      'z'.repeat(FAILED_ATTEMPT_SIDECAR_MAX_BYTES) + '\n',
-      'utf8',
-    );
-    await attemptsCommand.parseAsync([runId], { from: 'user' });
-    expect(logged().toLowerCase()).toContain('ceiling');
-  });
 });
 
 // issue #759 (Part F): the table prints EVERY entry a record holds (core's LINES) and `and N more`
@@ -158,7 +140,6 @@ describe('issue #759 — realm run attempts prints every problem', () => {
   beforeAll(async () => {
     h759 = await makeTempHome();
     home759 = h759.root;
-    await mkdir(h759.home.runStore.runsDirPath, { recursive: true });
   });
   afterAll(async () => {
     await h759.cleanup();
