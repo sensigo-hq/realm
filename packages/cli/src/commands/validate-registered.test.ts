@@ -19,6 +19,7 @@ import {
 import { CONTEXT_DEPENDENT_CHECKS } from '../lib/admission-context.js';
 import type { CliHome } from '../lib/home.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { plantRegistryRow } from '../test-support/plant-registry-row.js';
 
 describe('validate --registered (issue #427)', () => {
   let home: string;
@@ -365,6 +366,34 @@ describe('validate --registered (issue #427)', () => {
     //     the pointer gets a repair act (the `fault` condition removed: "To repair: re-register …");
     //     (b) prints every line.
     expect(out()).toBe(`Error: ${err.message}\n${ENTRY}`);
+  });
+
+  // #616 PR-2c c10a-4a: the same arms on the real registry, planted on a foreign connection.
+  it('the pointer arm: its own sentence and the registry-entry line, exit 1, no repair and no `rm` (R9)', async () => {
+    await plantRegistryRow(h.path, { id: 'wf', text: '{ not json' });
+    await expect(
+      validateCommand.parseAsync(['--registered', 'wf'], { from: 'user' }),
+    ).rejects.toThrow('process.exit');
+    // (a) red when the pointer gains a repair act, the `rm` clause comes back, or the entry line is
+    //     dropped; (b) prints every line and the exit.
+    expect({ text: out(), exit: exitSpy.mock.calls[0]?.[0] }).toEqual({
+      text:
+        "Error: The registered copy of workflow 'wf' is missing from the store or is not JSON: something other than Realm changed the database. Register the workflow again from its source; if this message comes back, restore the database from a backup.\n" +
+        ENTRY,
+      exit: 1,
+    });
+  });
+
+  it('the checker arm: a stored copy that is the text null names itself, the entry line and the re-register act (T-U3)', async () => {
+    await plantRegistryRow(h.path, { id: 'wf', text: 'null' });
+    await expect(
+      validateCommand.parseAsync(['--registered', 'wf'], { from: 'user' }),
+    ).rejects.toThrow('process.exit');
+    // (a) red when `null` crashes the command or reads as another clause, or the act is dropped;
+    //     (b) prints every line.
+    expect(out()).toBe(
+      `Error: the registered copy of 'wf' is JSON but not a workflow object (it is null)\n${ENTRY}\nTo repair: ${REREGISTER}.`,
+    );
   });
 
   // -------------------------------------------------------------------------------------------
