@@ -413,6 +413,8 @@ describe('#920 C-2 — the other 19 options, one command family each (the built 
       '--params',
     );
     // #616 PR-2c, c10a-2b: through the store, not a folder (a fence FILE stands there at the flip).
+    // A belt, not a pin: the guard is a preAction hook and refuses before any run could be made, and
+    // with it off both commands refuse for other reasons first (P9) — the cell's pin is refusedBy.
     expect(await runIds(h.home.runStore), 'no run made').toEqual([]);
   }, 20_000);
 
@@ -445,6 +447,7 @@ describe('#920 C-2 — the other 19 options, one command family each (the built 
       '--register',
     ]);
     refusedBy(r, '--project <dir>', '--project', '--register');
+    // A belt, not a pin (see the cell above): no existing break reddens it; refusedBy is the pin.
     expect(await runIds(h.home.runStore), r.shown).toEqual([]);
   }, 20_000);
 

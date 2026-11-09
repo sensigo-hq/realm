@@ -548,7 +548,7 @@ describe('buildExportBundle', () => {
     }
   });
 
-  it('never writes to runsDir: directory is byte-unchanged after building the bundle', async () => {
+  it('never writes: what the three stores hold for the run is unchanged after building the bundle', async () => {
     const { runStore, failedAttemptStore, traceBufferStore, cleanup } = await makeStores();
     try {
       const run = makeRun({ run_phase: 'completed', terminal_state: true });

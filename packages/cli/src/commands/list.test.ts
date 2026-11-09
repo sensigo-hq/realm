@@ -973,7 +973,7 @@ describe('--stuck cause attribution end-to-end via listRuns (issue #219)', () =>
     }
   });
 
-  it('I/O failure is visible, not silent: an unreadable sidecar renders "cause: unavailable" for ITS run only, never conflated with absence, and the rest of the list still completes', async () => {
+  it('I/O failure is visible, not silent: an attempt record the store cannot read renders "cause: unavailable" for ITS run only, never conflated with absence, and the rest of the list still completes', async () => {
     const h = await makeTempHome();
     const brokenRunId = 'run-cause-ioerror-broken';
     const okRunId = 'run-cause-ioerror-ok';
