@@ -444,7 +444,7 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
     // extension-file proviso, on its no-elevation fixture).
     claim(
       PAGE,
-      "The claim then names what the check cannot read: that no program Realm runs can run code for the agent, that Realm's server runs the Node binary and Realm package the check ran from, that every Realm server on the machine starts with `--gate-answers withheld`, and, when the store cannot be read, that no registered workflow's extension file can be changed by this login.",
+      "The claim then names what the check cannot read: that no program Realm runs can run code for the agent, that Realm's server runs the Node binary and Realm package the check ran from, that every Realm server on the machine starts with `--gate-answers withheld`, and, when the store could not be opened read-only, that no registered workflow's extension file can be changed by this login.",
     );
   });
 });

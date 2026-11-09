@@ -41,7 +41,13 @@ import {
   type ProviderName,
 } from '../agent/providers/llm-provider.js';
 // issue #600 PR 2: the SAME parser `realm agent --prompt-cache` uses.
-import { autoFallbackWindowText, autoLongText, parsePromptCache } from '../agent/prompt-cache.js';
+import {
+  autoFallbackWindowText,
+  autoLongText,
+  parseCacheDiagnostics,
+  parsePromptCache,
+  type CacheDiagnosticsSetting,
+} from '../agent/prompt-cache.js';
 import {
   AUTO_GAPS_KEPT,
   CACHE_GAP_MAX_S,
@@ -1421,6 +1427,8 @@ export type AgentArgvOptions = {
   llmTimeoutSeconds?: number;
   /** Issue #600 PR 2: listen's `--prompt-cache`, only when the operator stated it. */
   promptCache?: PromptCacheSetting;
+  /** Caching 3-M (B2b): listen's `--cache-diagnostics`, only when the operator stated it. */
+  cacheDiagnostics?: CacheDiagnosticsSetting;
   /**
    * Issue #600 (the lifetime unit): the gaps, in whole seconds, between the recent triggers of the
    * child's workflow, when `auto` measures and at least one exists.
@@ -1458,6 +1466,9 @@ export function buildAgentArgv(runId: string, opts: AgentArgvOptions): string[] 
     argv.push('--llm-timeout', String(opts.llmTimeoutSeconds));
   }
   if (opts.promptCache !== undefined) argv.push('--prompt-cache', opts.promptCache);
+  if (opts.cacheDiagnostics !== undefined) {
+    argv.push('--cache-diagnostics', opts.cacheDiagnostics);
+  }
   if (opts.cacheGaps !== undefined && opts.cacheGaps.length > 0) {
     argv.push('--cache-gaps', opts.cacheGaps.join(','));
   }
@@ -1545,6 +1556,7 @@ export function makeAgentSpawner(
     provider?: ProviderName;
     llmTimeout?: number;
     promptCache?: PromptCacheSetting;
+    cacheDiagnostics?: CacheDiagnosticsSetting;
   },
   logger: Logger,
   spawnFn: typeof nodeSpawn = nodeSpawn,
@@ -1555,6 +1567,9 @@ export function makeAgentSpawner(
     ...(listenOpts.provider !== undefined ? { provider: listenOpts.provider } : {}),
     ...(listenOpts.llmTimeout !== undefined ? { llmTimeoutSeconds: listenOpts.llmTimeout } : {}),
     ...(listenOpts.promptCache !== undefined ? { promptCache: listenOpts.promptCache } : {}),
+    ...(listenOpts.cacheDiagnostics !== undefined
+      ? { cacheDiagnostics: listenOpts.cacheDiagnostics }
+      : {}),
   };
   const measures = listenOpts.promptCache === undefined || listenOpts.promptCache === 'auto';
   const starts = new Map<string, number[]>();
@@ -1776,6 +1791,12 @@ export const listenCommand = new Command('listen')
     `Passed to each realm agent it starts: auto, short, long or off. auto (the default): each agent asks Anthropic for off, 5 minutes or 1 hour, by the gaps between the recent triggers of its workflow, priced from runner.cache.economics (with no usable prices: ${autoLongText()} when a recent gap is under ${autoFallbackWindowText()}, else off). short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: nothing. With \`--provider openai\`, Realm sends a cache key, a hint: to OpenAI's own endpoint under every setting but \`off\`, and to another endpoint only for a setting you state other than \`off\`. On GPT-5.6 and later at OpenAI's own address, the agent also asks OpenAI to cache the fixed part of each step without tools for 30 minutes (under \`auto\`, 30 minutes or no caching for each workflow, by the gaps between its recent triggers and the prices in runner.cache.economics; without usable prices, 30 minutes when a recent gap is under 27 minutes), and \`off\` turns OpenAI's caching off. Other providers' own caching applies.`,
     parsePromptCache,
   )
+  // Caching 3-M (B2b): passed on only when stated, so an unstated flag leaves each child's argv as it was.
+  .option(
+    '--cache-diagnostics <on|off>',
+    "Whether to ask Anthropic why a request missed the cache: on or off. On by default at Anthropic's own address, for a request marked for caching. Each request that asks leaves a short-lived fingerprint of what it sent at Anthropic. Passed to each `realm agent` it starts.",
+    parseCacheDiagnostics,
+  )
   .option(
     '--sweep-expired-gates <seconds>',
     'OPT-IN (issue #291): store-wide sweep interval, a whole number of seconds from 1 to 2147483, ' +
@@ -1800,6 +1821,7 @@ export const listenCommand = new Command('listen')
         provider?: ProviderName;
         model?: string;
         promptCache?: PromptCacheSetting;
+        cacheDiagnostics?: CacheDiagnosticsSetting;
       },
     ) => {
       // issue #676: first, before any workflow is loaded, registered or mounted. Every run listen

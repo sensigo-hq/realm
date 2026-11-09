@@ -17,6 +17,7 @@ import {
 import type { UnreadableIdEntry, WorkflowDefinition } from '@sensigo/realm';
 import type { CliHome } from '../lib/home.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
+import { plantRegistryRow } from '../test-support/plant-registry-row.js';
 
 const TAIL = ' — realm cannot audit what it cannot read.';
 
@@ -77,6 +78,50 @@ describe('realm workflow list — one sentence per class (issue #558 PR-T)', () 
       ),
     }).toEqual({ row: false, footer: true, warned: true });
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  // #616 PR-2c c10a-4a: copies the registry cannot key, planted on a foreign connection beside one good
+  // registration: the arms 2c-ii unpinned, on the real registry.
+  const POINTER =
+    "The registered copy of workflow 'planted' is missing from the store or is not JSON: something other than Realm changed the database. Register the workflow again from its source; if this message comes back, restore the database from a backup.";
+
+  it('the pointer arm: the ⚠ line names the id and the count says one entry could not be read (K3)', async () => {
+    await h.home.workflowStore.register(definition('good') as never);
+    await plantRegistryRow(h.path, { id: 'planted', text: '{ not json' });
+    await workflowListCommand.parseAsync([], { from: 'user' });
+    const out = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    // (a) red when the arm's ⚠ line is dropped or names another class, or the count forgets the
+    //     entry; (b) prints the warnings and whether the count line is there.
+    expect({
+      warned: stderr(),
+      count: out.includes('1 workflow registered; 1 entry in the registry could not be read.'),
+    }).toEqual({
+      warned: `⚠ 1 workflow in the registry has a damaged stored copy: planted${TAIL}`,
+      count: true,
+    });
+  });
+
+  it('the pointer arm: --json carries the id, the class and the reason, and no repair (L4)', async () => {
+    await h.home.workflowStore.register(definition('good') as never);
+    await plantRegistryRow(h.path, { id: 'planted', text: '{ not json' });
+    await workflowListCommand.parseAsync(['--json'], { from: 'user' });
+    const parsed = JSON.parse(logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')) as {
+      unreadable: unknown[];
+    };
+    // (a) red when the entry gains a `repair` (a pathless pointer failure has none to name) or
+    //     loses its id or class; (b) prints the entries.
+    expect(parsed.unreadable).toEqual([
+      { workflow_id: 'planted', class: 'parse', reason: POINTER },
+    ]);
+  });
+
+  it('the checker arm: a stored copy that is the text null is named on the damaged ⚠ line (K4)', async () => {
+    await h.home.workflowStore.register(definition('good') as never);
+    await plantRegistryRow(h.path, { id: 'nul', text: 'null' });
+    await workflowListCommand.parseAsync([], { from: 'user' });
+    // (a) red when the text `null` is listed as a workflow, or read as another class; (b) prints the
+    //     warnings.
+    expect(stderr()).toBe(`⚠ 1 workflow in the registry has a damaged stored copy: nul${TAIL}`);
   });
 });
 
