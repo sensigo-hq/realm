@@ -147,6 +147,7 @@ const TCK_REFERENCE = {
  * shape with the most keys. Caching 3-M (piece A-1) adds `reference`, the copy of a request's
  * predecessor: `TCK_REFERENCE`, every one of its fields. Piece A-1b adds `request_in_call`, the
  * request's place in its provider call: a place other than 0, which no store default could produce.
+ * Piece B1 adds `response_id`, the id of the provider's answer: Anthropic's documented example id.
  */
 const TCK_REQUEST_FACTS: Required<
   Pick<
@@ -171,6 +172,7 @@ const TCK_REQUEST_FACTS: Required<
     | 'cache_key_sent'
     | 'reference'
     | 'request_in_call'
+    | 'response_id'
   >
 > = {
   model: 'tck-model-2026-01-01',
@@ -212,6 +214,8 @@ const TCK_REQUEST_FACTS: Required<
   reference: TCK_REFERENCE,
   // caching 3-M (piece A-1b): the request's place in its call
   request_in_call: 7,
+  // caching 3-M (piece B1): the answer's id, Anthropic's documented example (anth-pc@2026-10-09.md:1107)
+  response_id: 'msg_01XFDUDYJgAACzvnptvVoYEL',
 };
 
 /** The program the holder laws name — a synthetic label, never a real host or user. */
