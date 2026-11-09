@@ -933,7 +933,7 @@ const MISS_SENTENCES = {
       : ''),
 } satisfies Record<CacheMissCause, (prev: string, miss: CostMiss) => string>;
 
-/** Caching 3-M A-2b2 — the sentence a miss line ends in, for its cause and scope. */
+/** Caching 3-M A-2b2 — the sentence after a miss line's dash, for its cause and scope. */
 export function missSentence(miss: CostMiss): string {
   return MISS_SENTENCES[miss.derived.cause](predecessorWords(miss), miss);
 }
@@ -943,7 +943,8 @@ export function missSentence(miss: CostMiss): string {
  * attempt's line and the failure block's `usage:` line: one line per request that missed the
  * cache, in list order, from the cost view's `misses` (worked out in core; nothing here recomputes
  * them). The read count is what the request read: the expected count less the shortfall. A-2b2:
- * the line ends in its cause's sentence, after a dash.
+ * after a dash, its cause's sentence. A-2b3: then what the miss cost, when core priced it from the
+ * runner's economics file.
  */
 function missLines(cost: CostView | undefined): string[] {
   if (cost?.misses === undefined) return [];
@@ -952,7 +953,10 @@ function missLines(cost: CostView | undefined): string[] {
     return (
       `cache miss: request ${String(miss.position + 1)} of ${String(cost.requests)} ` +
       `read ${String(expected - shortfall)} of ${String(expected)} expected tokens — ` +
-      missSentence(miss)
+      missSentence(miss) +
+      (miss.extra_usd !== undefined
+        ? `; this miss cost about ${formatUsd(miss.extra_usd)} more than a full read (your economics file)`
+        : '')
     );
   });
 }
