@@ -9,6 +9,7 @@ import { gapWords, missSentence } from './inspect.js';
 
 type Derived = CostMiss['derived'];
 const REFERENCE = { from: 'reference' } as const;
+const EARLIER_RUN = { from: 'earlier_run' } as const;
 const list = (at: number): Derived['predecessor'] => ({ from: 'list', at });
 /** A miss whose counts the sentence does not read: only its cause, scope, gap and lifetime matter. */
 const miss = (
@@ -165,6 +166,74 @@ describe('caching 3-M A-2b2 — the sentence for each cause and scope', () => {
       'unexplained, a gap and a lifetime',
       miss({ cause: 'unexplained', predecessor: list(1), gap_s: 1.386, ...ANTHROPIC_5M }),
       'nothing the cache covers differs on the record from request 2; the provider may have dropped the entry; it started 2 seconds after that request',
+    ],
+  ])('%s', (_label, value, sentence) => {
+    expect(missSentence(value), JSON.stringify(value)).toBe(sentence);
+  });
+});
+
+describe('caching 3-M C1 — the sentence against an earlier run', () => {
+  // The real case, for every row: a second run of a step compared with the same step in an earlier
+  // run, which C2 will produce; nothing writes such a reference yet. Can fail: `predecessorWords`
+  // printing "an earlier drive's request" for every non-list place (every row that names the
+  // request); the `reference` sentence used for `earlier_run` (tools, endpoint_changed,
+  // provider_changed, cache_settings); strict_changed's or prompt's old sources kept. Prints the
+  // CostMiss and the sentence.
+  it.each<[string, CostMiss, string]>([
+    [
+      'provider_changed',
+      miss({ cause: 'provider_changed', rule: 'tolerance', predecessor: EARLIER_RUN }),
+      "the provider differs from an earlier run's request (another --provider, or the API key that chose the provider when none was given)",
+    ],
+    [
+      'endpoint_changed',
+      miss({ cause: 'endpoint_changed', predecessor: EARLIER_RUN }),
+      "the address moved between the provider's own and another one since an earlier run's request (ANTHROPIC_BASE_URL)",
+    ],
+    [
+      'model_changed',
+      miss({ cause: 'model_changed', predecessor: EARLIER_RUN }),
+      "a different model answered than for an earlier run's request (another --model, or the endpoint answered from another model)",
+    ],
+    [
+      'strict_changed',
+      miss({ cause: 'strict_changed', predecessor: EARLIER_RUN }),
+      "strict output was sent on only one of this request and an earlier run's request (a workflow edit, or Realm's own retries in either run)",
+    ],
+    [
+      'tools',
+      miss({ cause: 'tools', predecessor: EARLIER_RUN }),
+      "the tools differ from an earlier run's request (the step's schema, which Realm sends as its answer tool on Anthropic)",
+    ],
+    [
+      'system',
+      miss({ cause: 'system', predecessor: EARLIER_RUN }),
+      "the system text differs from an earlier run's request (the agent profile, the step's schema, or another Realm version)",
+    ],
+    [
+      'prompt',
+      miss({ cause: 'prompt', predecessor: EARLIER_RUN }),
+      "the prompt's fixed start differs from an earlier run's request (the workflow file or its context values)",
+    ],
+    [
+      'cache_settings',
+      miss({ cause: 'cache_settings', predecessor: EARLIER_RUN }),
+      "what was marked for caching differs from an earlier run's request (an edit that moved where the prompt's fixed start ends)",
+    ],
+    [
+      'possibly_expired',
+      miss({
+        cause: 'possibly_expired',
+        predecessor: EARLIER_RUN,
+        gap_s: 1200,
+        ...ANTHROPIC_5M,
+      }),
+      "possibly expired: it started 20 minutes after an earlier run's request, longer than the 5 minutes the provider granted",
+    ],
+    [
+      'unexplained',
+      miss({ cause: 'unexplained', predecessor: EARLIER_RUN, gap_s: 180 }),
+      "nothing the cache covers differs on the record from an earlier run's request; the provider may have dropped the entry; it started 3 minutes after that request",
     ],
   ])('%s', (_label, value, sentence) => {
     expect(missSentence(value), JSON.stringify(value)).toBe(sentence);
