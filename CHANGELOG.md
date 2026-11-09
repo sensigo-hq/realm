@@ -135,6 +135,7 @@ All notable changes to this project are documented here.
 - **`realm db migrate --backup <path> | --no-backup` upgrades the store file**: a backup first (or none, stated), then each pending schema step in its own transaction, checked, one line each, stopping at the first failure with the file at the last completed version; then every run stamped by another phase derivation re-stamped with the current one, and the count said (#616).
 - **Two error codes for it: `STATE_STORE_MIGRATE_REFUSED`** (a home with no store file, or an empty one; nothing is created or copied) **and `STATE_STORE_MIGRATE_FAILED`** (a schema step failed; the line names the version the file is at, and the backup's path when one was made) (#616).
 - **`realm run import <path…>` brings Realm's JSON run records and exports into the SQLite store:** one line per file (`imported`, `unchanged`, `diverged`, `purged`, `legacy`, `not_a_run`), a run already stored is never overwritten, and the exit code is 1 when any file was not imported (#616).
+- `@sensigo/realm-mcp/home` exports `createRealmMcpServerOnHome({ home?, … })`: it opens the Realm home's SQLite store once for the process and serves the MCP tools over it, returning `{ server, close }`; the `realm-mcp` command uses it. `createRealmMcpServer` with four injected stores is unchanged and loads no SQLite.
 
 ### Changed
 

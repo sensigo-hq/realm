@@ -35,23 +35,14 @@ Requires workflows to be registered first via `realm workflow register`.
 Create and connect a Realm MCP server inside your own application using any MCP-compatible transport.
 
 ```ts
-import { createRealmMcpServer } from '@sensigo/realm-mcp';
-import { JsonTraceBufferStore } from '@sensigo/realm-mcp';
-import { JsonFileFailedAttemptStore, JsonFileStore, JsonWorkflowStore } from '@sensigo/realm';
-// StdioServerTransport comes from the MCP SDK, not from @sensigo/realm-mcp
+import { createRealmMcpServerOnHome } from '@sensigo/realm-mcp/home';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 
-// The four stores, opened once per process: here the file stores under ~/.realm.
-const runStore = new JsonFileStore();
-const server = createRealmMcpServer({
-  runStore,
-  workflowStore: new JsonWorkflowStore(),
-  traceBufferStore: new JsonTraceBufferStore(runStore.runsDirPath, runStore),
-  failedAttemptStore: new JsonFileFailedAttemptStore(runStore.runsDirPath),
-});
-const transport = new StdioServerTransport();
-await server.connect(transport);
+const { server } = await createRealmMcpServerOnHome();
+await server.connect(new StdioServerTransport());
 ```
+
+This opens Realm's home (`~/.realm`, or the `home` you pass) and its SQLite store once for this process — the same store every `realm` command uses — and needs Node 22.22.3 or a later 22.x release, or Node 24.15.0 or later. To supply your own stores instead, call `createRealmMcpServer` with the four stores: the library then loads no SQLite and runs on any Node 22.
 
 The library has no default store: a JavaScript caller that omits one of the four is refused by name, before anything is opened.
 
@@ -60,6 +51,7 @@ The library has no default store: a JavaScript caller that omits one of the four
 | Symbol                                           | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `createRealmMcpServer(options)`                  | Creates the MCP server with its tools registered. A client is listed 11, or 10 under `withheld`; under `asked` both answer tools are registered, and the session's forms enable one. Returns `McpServer` — takes the four stores; no default.                                                                                                                                                                                                               |
+| `createRealmMcpServerOnHome(options?)`           | From `@sensigo/realm-mcp/home`; opens the Realm home's store and returns `{ server, close }`.                                                                                                                                                                                                                                                                                                                                                               |
 | `createDefaultRegistry()`                        | Returns an `ExtensionRegistry` pre-populated with built-in adapters.                                                                                                                                                                                                                                                                                                                                                                                        |
 | `generateProtocol(workflow)`                     | Generates a structured protocol description for a workflow.                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `RealmMcpServerOptions`                          | Type — the four stores, required: `runStore`, `workflowStore`, `traceBufferStore`, `failedAttemptStore`; optional config: `registry?`, `secrets?`, `gateAnswers?` (`asked`, `offered` or `withheld`), `formWaitSeconds?`, `principal?` (what the transport authenticated, stamped on every answer), `statelessHttp?` (pass `true` when a server is built per HTTP request, or a per-session transport with `enableJsonResponse`: no form can be held open). |

@@ -1,10 +1,10 @@
-// home.ts — issue #616 PR-2a, unit (ii-a); PR-2c c10b-2: the `realm-mcp` program's door. The program
-// opens realm's home once, at its edge, and hands the library the four stores it takes; the library
+// home.ts — issue #616 PR-2a, unit (ii-a); PR-2c c10b-2: this package's door to realm's home. It opens
+// the home once, at the package's edge, and returns the four stores the server takes; the server
 // selects nothing. Private: the package's index does not export it, and its `exports` map does not
 // reach it. It opens the SQLite home through the STORE package's `openRealmHome`, and it is the one
-// place this package opens a store: `bin.ts` (the program) and the test helper
-// (`test-support/temp-home.ts`) go through it. It is not the CLI's door (`lib/home.ts` in
-// `@sensigo/realm-cli`): one door per host package.
+// place this package opens a store: the library's home entry (`home-server.ts`, which the `realm-mcp`
+// program uses) and the test helper (`test-support/temp-home.ts`) go through it. It is not the CLI's
+// door (`lib/home.ts` in `@sensigo/realm-cli`): one door per host package.
 import { realmHomePath } from '@sensigo/realm';
 import { openRealmHome } from '@sensigo/realm-store-sqlite';
 import type { RealmMcpServerOptions } from './server.js';
