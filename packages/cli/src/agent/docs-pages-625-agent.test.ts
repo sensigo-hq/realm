@@ -1151,6 +1151,10 @@ describe(
         LISTEN_PAGE,
         'When it leaves the run with nothing that can run from here, the line adds `cannot_go_on`: each step that cannot run — with, for one that builds no input from an `input_map`, the fact that an operator supplies its input (added after version 0.47.0) — then the way out.',
       );
+      claim(
+        LISTEN_PAGE,
+        "A `--sweep-expired-gates` pass could not list the runs; `error` is the store's error as text (its name and message). The next pass tries again.",
+      );
       const shown = block(LISTEN_PAGE, '"cannot_go_on"').filter((l) => l !== '');
       const { runStore, workflowStore } = await fresh();
       const gated = (id: string, next: string[]) =>

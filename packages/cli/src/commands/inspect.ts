@@ -858,7 +858,8 @@ export function gapWords(seconds: number): string {
 /** Caching 3-M A-2b2 — the request a miss is compared with, numbered as the line numbers its own. */
 function predecessorWords(miss: CostMiss): string {
   const place = miss.derived.predecessor;
-  return place.from === 'list' ? `request ${String(place.at + 1)}` : "an earlier drive's request";
+  if (place.from === 'list') return `request ${String(place.at + 1)}`;
+  return place.from === 'earlier_run' ? "an earlier run's request" : "an earlier drive's request";
 }
 
 /** A miss's lifetime in words; one no whole-seconds word fits (only another writer's) as seconds. */
@@ -869,17 +870,24 @@ function missLifetimeWords(seconds: number): string {
 /**
  * Caching 3-M A-2b2 — THE sentence for each cause: what differs from the request it is compared
  * with (`prev`), and who or what could have changed it. Where a cause's sources differ by scope
- * (inside one list, or against an earlier drive's request), it has one sentence per scope. Only a
+ * (inside one list, against an earlier drive's request, or against an earlier run's), it has one
+ * sentence per scope. Only a
  * pause prints a lifetime, and only a pause or no difference prints the gap. Checked by the build
  * against the one cause list.
  */
 const MISS_SENTENCES = {
-  provider_changed: (prev) =>
-    `the provider differs from ${prev} (another --provider, the API key that chose the provider ` +
-    'when none was given, or an o1 model, which has its own provider)',
-  endpoint_changed: (prev) =>
-    `the address moved between the provider's own and another one since ${prev} ` +
-    '(--base-url, ANTHROPIC_BASE_URL or OPENAI_BASE_URL)',
+  provider_changed: (prev, miss) =>
+    miss.derived.predecessor.from === 'earlier_run'
+      ? `the provider differs from ${prev} (another --provider, or the API key that chose the ` +
+        'provider when none was given)'
+      : `the provider differs from ${prev} (another --provider, the API key that chose the provider ` +
+        'when none was given, or an o1 model, which has its own provider)',
+  endpoint_changed: (prev, miss) =>
+    miss.derived.predecessor.from === 'earlier_run'
+      ? `the address moved between the provider's own and another one since ${prev} ` +
+        '(ANTHROPIC_BASE_URL)'
+      : `the address moved between the provider's own and another one since ${prev} ` +
+        '(--base-url, ANTHROPIC_BASE_URL or OPENAI_BASE_URL)',
   model_changed: (prev, miss) =>
     miss.derived.predecessor.from === 'list'
       ? `a different model answered than for ${prev} (the endpoint answered from another model)`
@@ -891,28 +899,47 @@ const MISS_SENTENCES = {
   final_request: (prev) =>
     `Realm's own final request of a tool step sends no tools, so its start differs from what ${prev} cached`,
   strict_ladder: (prev) => `Realm switched strict output on or off after ${prev} (its own retries)`,
-  strict_changed: (prev) =>
-    `strict output was sent on only one of this request and ${prev} ` +
-    "(--strict-base-url, a workflow edit, or Realm's own retries in either drive)",
-  tools: (prev, miss) =>
-    miss.derived.predecessor.from === 'list'
-      ? `the tools differ from ${prev} (the MCP server listed different tools)`
-      : `the tools differ from ${prev} (the MCP server listed different tools, or the workflow ` +
-        "changed: the step's tools, or on Anthropic its schema, which Realm sends as its answer tool)",
+  strict_changed: (prev, miss) =>
+    miss.derived.predecessor.from === 'earlier_run'
+      ? `strict output was sent on only one of this request and ${prev} ` +
+        "(a workflow edit, or Realm's own retries in either run)"
+      : `strict output was sent on only one of this request and ${prev} ` +
+        "(--strict-base-url, a workflow edit, or Realm's own retries in either drive)",
+  tools: (prev, miss) => {
+    const from = miss.derived.predecessor.from;
+    if (from === 'list')
+      return `the tools differ from ${prev} (the MCP server listed different tools)`;
+    if (from === 'earlier_run') {
+      return `the tools differ from ${prev} (the step's schema, which Realm sends as its answer tool on Anthropic)`;
+    }
+    return (
+      `the tools differ from ${prev} (the MCP server listed different tools, or the workflow ` +
+      "changed: the step's tools, or on Anthropic its schema, which Realm sends as its answer tool)"
+    );
+  },
   system: (prev) =>
     `the system text differs from ${prev} (the agent profile, the step's schema, or another Realm version)`,
   repair_feedback: (prev) =>
     `Realm's own repair feedback, added after a rejected answer, changed the prompt ${prev} cached`,
-  prompt: (prev) =>
-    `the prompt differs from ${prev} ` +
-    "(the step's input, the workflow file, or that drive's repair feedback)",
+  prompt: (prev, miss) =>
+    miss.derived.predecessor.from === 'earlier_run'
+      ? `the prompt's fixed start differs from ${prev} (the workflow file or its context values)`
+      : `the prompt differs from ${prev} ` +
+        "(the step's input, the workflow file, or that drive's repair feedback)",
   format: (prev) => `the answer format differs from ${prev} (JSON mode moved with --base-url)`,
-  cache_settings: (prev, miss) =>
-    miss.derived.predecessor.from === 'list'
-      ? "Realm stopped sending OpenAI's cache key after the endpoint refused it"
-      : `what was marked for caching differs from ${prev} (--prompt-cache, Realm dropping ` +
-        "OpenAI's cache key after an endpoint refused it, or an edit that moved where the " +
-        "prompt's fixed start ends)",
+  cache_settings: (prev, miss) => {
+    const from = miss.derived.predecessor.from;
+    if (from === 'list')
+      return "Realm stopped sending OpenAI's cache key after the endpoint refused it";
+    if (from === 'earlier_run') {
+      return `what was marked for caching differs from ${prev} (an edit that moved where the prompt's fixed start ends)`;
+    }
+    return (
+      `what was marked for caching differs from ${prev} (--prompt-cache, Realm dropping ` +
+      "OpenAI's cache key after an endpoint refused it, or an edit that moved where the " +
+      "prompt's fixed start ends)"
+    );
+  },
   possibly_expired: (prev, miss) => {
     const { gap_s: gap, lifetime_s: lifetime, lifetime_from: from } = miss.derived;
     // One function feeds both this cause and its gap (A-2a3), so both are always present here.

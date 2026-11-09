@@ -1589,3 +1589,145 @@ describe('caching 3-M A-2a3 — possibly expired: the pause and the lifetime the
     expect(cacheMissGaps(undefined), 'requests: undefined').toEqual([]);
   });
 });
+
+// Piece C1: a request whose `reference` came from another run. No two-run capture exists (C3M6-30):
+// the counts below are real but paired by construction, 4,019 from `anthropic-miss-rule.out`
+// (PR3LC-08: wrote 4,019, read 4,019) and 6,897 from `plans/llm-prompt-caching/tools-path/live-899/`
+// (its first turn wrote 6,897).
+describe('caching 3-M C1 — a request judged against another run', () => {
+  /** An Anthropic single-shot step: the one shape on which a prompt's fixed start can be compared. */
+  const SINGLE_SHOT: Spec = {
+    provider: A,
+    asked: 'lifetime',
+    marked: ['system', 'prompt'],
+    prefix_chars: 900,
+    parts: { system: 'profile', prompt: 'head' },
+  };
+  /** The copy C2 will make of another run's request. */
+  const earlierRun = (before: Spec): Record<string, unknown> => ({
+    ...referenceOf(before),
+    from: 'earlier_run',
+  });
+  const against = (now: Spec, before: Spec): Record<string, unknown>[] =>
+    stored({ ...now, in_call: 0, reference: earlierRun(before) });
+  const WROTE: Spec = { ...SINGLE_SHOT, read: 0, write: 4019 };
+
+  // Check 1. Real case: a second run of a single-shot step reads nothing its earlier run wrote. Can
+  // fail: the place left as `reference`. Prints the entry and its reference, then the verdict.
+  it('a miss names the place earlier_run and the count that run wrote', () => {
+    const list = against({ ...SINGLE_SHOT, read: 0, write: 4019 }, WROTE);
+    expect(cacheReadVerdicts(list), show(list)).toEqual([
+      {
+        outcome: 'missed',
+        predecessor: { from: 'earlier_run' },
+        expected_tokens: 4019,
+        shortfall_tokens: 4019,
+        rule: 'exact',
+      },
+    ]);
+  });
+
+  // Check 1. Real case: the second run reads all of it. Can fail: as above. Prints the same.
+  it('reading all of it holds, with the place earlier_run; the predecessor is the very reference', () => {
+    const list = against({ ...SINGLE_SHOT, read: 4019, write: 0 }, WROTE);
+    expect(cacheReadVerdicts(list), show(list)).toEqual([
+      { outcome: 'held', predecessor: { from: 'earlier_run' } },
+    ]);
+    expect(cachePredecessor(list, 0), show(list)).toBe(list[0]!['reference']);
+  });
+
+  const NOT_COMPARED = [{ outcome: 'not_compared', cause: 'input_in_cached_part' }];
+  const CONVERSATION: Spec = { provider: A, asked: 'lifetime', marked: ['conversation'] };
+  const OPENAI_RULES: Spec = { provider: O, asked: 'provider_rules' };
+  const OPENAI_EXPLICIT: Spec = {
+    provider: O,
+    asked: 'lifetime',
+    lifetime_s: 1800,
+    marked: ['prompt'],
+  };
+
+  // Check 2. Real case: the cached part holds the run's own input, so a new input always reads less
+  // and the line would blame it on every run. Can fail: either shape's test removed; only one side
+  // read (the other side's rows); the counts read first (the `held` row). Prints the entry with its
+  // reference, then the verdict.
+  it.each<[string, Spec, Spec]>([
+    [
+      "this side conversation: a tool step's first turn after a new input",
+      { ...CONVERSATION, read: 0, write: 6897 },
+      { ...CONVERSATION, read: 0, write: 6897 },
+    ],
+    [
+      "only the reference conversation: a workflow edit removed the step's tools",
+      { ...SINGLE_SHOT, read: 0, write: 4019 },
+      { ...CONVERSATION, read: 0, write: 6897 },
+    ],
+    [
+      'this side provider_rules: an OpenAI request',
+      { ...OPENAI_RULES, read: 0, write: 4012 },
+      { ...OPENAI_EXPLICIT, read: 0, write: 4012 },
+    ],
+    [
+      'only the reference provider_rules: the model moved to GPT-5.6 or later',
+      { ...OPENAI_EXPLICIT, read: 0, write: 4012 },
+      { ...OPENAI_RULES, read: 0, write: 4012 },
+    ],
+    [
+      'counts that would have held: the same input again',
+      { ...CONVERSATION, read: 6897, write: 0 },
+      { ...CONVERSATION, read: 0, write: 6897 },
+    ],
+  ])('%s: not compared', (_label, now, before) => {
+    const list = against(now, before);
+    expect(cacheReadVerdicts(list), show(list)).toEqual(NOT_COMPARED);
+  });
+
+  // Check 3, both boundaries. Real cases: a reference that asked nothing has no bearing; a count the
+  // tool step's turn did not report must not hide why it is not compared. Can fail: the check moved
+  // before the predecessor search (the first row), or after the counts (the second). Prints the same.
+  it('a reference that did not ask stays no_earlier_request, whatever this side caches', () => {
+    const list = against(
+      { ...CONVERSATION, read: 0, write: 6897 },
+      { provider: A, asked: 'off', read: 0, write: 6897 },
+    );
+    expect(cacheReadVerdicts(list), show(list)).toEqual([
+      { outcome: 'not_compared', cause: 'no_earlier_request' },
+    ]);
+  });
+  it('this side caching its input with its read count absent is input_in_cached_part', () => {
+    const list = against(
+      { ...CONVERSATION, write: 6897 },
+      { ...CONVERSATION, read: 0, write: 6897 },
+    );
+    expect(cacheReadVerdicts(list), show(list)).toEqual(NOT_COMPARED);
+  });
+
+  // Check 4. Real case: a re-drive of the same run has the same input, so its turn is still judged.
+  // Can fail: the check applied to every reference. Prints the same.
+  it('a from: run reference on the same shape is judged as before', () => {
+    const list = againstReference(
+      { ...CONVERSATION, read: 0, write: 6897 },
+      { ...CONVERSATION, read: 0, write: 6897 },
+    );
+    expect(cacheReadVerdicts(list), show(list)).toEqual([
+      {
+        outcome: 'missed',
+        predecessor: { from: 'reference' },
+        expected_tokens: 6897,
+        shortfall_tokens: 6897,
+        rule: 'exact',
+      },
+    ]);
+  });
+
+  // Check 5. Real cases: a workflow edit that turned strict output on, and one that changed the
+  // prompt's fixed start. Can fail: a scope test left reading `from === 'reference'` (the row reads
+  // `unexplained`), or the list-only cause named instead. Prints the facts and the cause.
+  it('against another run strict output differing is strict_changed, never strict_ladder', () => {
+    const list = against({ ...WROTE, strict: true }, { ...WROTE, strict: false });
+    expect(cacheMissCauses(list), explain(list)).toEqual(['strict_changed']);
+  });
+  it('against another run the fixed start differing is prompt, never repair_feedback', () => {
+    const list = against({ ...WROTE, parts: { system: 'profile', prompt: 'another head' } }, WROTE);
+    expect(cacheMissCauses(list), explain(list)).toEqual(['prompt']);
+  });
+});

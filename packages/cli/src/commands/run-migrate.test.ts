@@ -334,8 +334,7 @@ describe('#367 part 3 — the report says no more than the branch it is printed 
     const lines = renderMigrateReport(await migrateStampSeals(store), {});
     const text = lines.join('\n');
     expect(text).toContain('WOULD be stamped');
-    // The phase the SHAPES row derives through `save()`; the `→` form (stored ≠ derived) is c10a-4a's
-    // tampered-row cell.
+    // The phase the SHAPES row derives through `save()`.
     expect(text).toContain('• spawn: spawn_failure (phase failed)');
     expect(text).toContain('Re-run with --force to actually stamp.');
   });

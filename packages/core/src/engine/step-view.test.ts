@@ -1092,6 +1092,42 @@ describe('caching 3-M A-2b1 — CostView.misses', () => {
     ]);
   });
 
+  // Caching 3-M C1, check 7: the one front door. A request whose reference came from another run
+  // reaches the cost view with that place; the counts are the real 4,019, paired by construction (no
+  // two-run capture exists). Can fail: the place left as `reference`. Prints the list.
+  it('a request against an earlier run: the carrier says earlier_run', () => {
+    const facts = {
+      provider: 'anthropic',
+      model: 'claude-sonnet-5-5',
+      endpoint: 'default',
+      cache_requested: 'lifetime',
+      cache_marked: ['system', 'prompt'],
+      prefix_chars: 900,
+      prefix_parts: TOOL_PARTS,
+    };
+    const list = [
+      {
+        request_start: '2026-11-08T05:00:00.000Z',
+        request_index: 0,
+        request_in_call: 0,
+        ...facts,
+        prompt_tokens: 4023,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 4019,
+        reference: {
+          from: 'earlier_run',
+          request_start: '2026-11-08T04:00:00.000Z',
+          ...facts,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 4019,
+        },
+      },
+    ];
+    expect(composeCostView(list)?.misses?.[0]?.derived.predecessor, show(list)).toEqual({
+      from: 'earlier_run',
+    });
+  });
+
   // 1 (d) (b)'s list where turn 2 also read only 1000 and wrote 6087 (constructed: a turn whose
   // cache lookback reached only an earlier breakpoint, as Anthropic's docs describe, #946); its
   // prompt stays 7089, so turn 3 holds as captured. Can fail: the entries reversed, or only the
