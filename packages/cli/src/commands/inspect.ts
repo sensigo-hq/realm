@@ -938,13 +938,44 @@ export function missSentence(miss: CostMiss): string {
   return MISS_SENTENCES[miss.derived.cause](predecessorWords(miss), miss);
 }
 
+/** Caching 3-M B3b — a reason Anthropic gives a count for: what changed, then the count if given. */
+const changedWords =
+  (what: string) =>
+  (tokens: number | undefined): string =>
+    tokens !== undefined ? `${what} (about ${String(tokens)} tokens it could not reuse)` : what;
+
+/**
+ * Caching 3-M B3b — THE words for what Anthropic said about a miss, one per reason. Only the four
+ * reasons Anthropic gives a count for can print one. Checked by the build against the one list.
+ */
+const ANTHROPIC_WORDS = {
+  messages_changed: changedWords('the messages changed'),
+  system_changed: changedWords('the system text changed'),
+  tools_changed: changedWords('the tools changed'),
+  model_changed: changedWords('the model changed'),
+  previous_message_not_found: () => 'it could not find the earlier request',
+  unavailable: () => 'it could not compare the two requests',
+  no_divergence: () => 'it found no difference between the two requests',
+  unknown: () => 'something Realm does not recognise yet',
+} satisfies Record<
+  NonNullable<CostMiss['provider']>['reason'],
+  (tokens: number | undefined) => string
+>;
+
+/** Caching 3-M B3b — a miss line's clause for what Anthropic said, or nothing when it said nothing. */
+export function anthropicClause(miss: CostMiss): string {
+  if (miss.provider === undefined) return '';
+  const { reason, cache_missed_input_tokens: tokens } = miss.provider;
+  return `; Anthropic says ${ANTHROPIC_WORDS[reason](tokens)}`;
+}
+
 /**
  * Caching 3-M A-2b1 — THE one composer of a cost's miss lines, shared by the step's line, each
  * attempt's line and the failure block's `usage:` line: one line per request that missed the
  * cache, in list order, from the cost view's `misses` (worked out in core; nothing here recomputes
  * them). The read count is what the request read: the expected count less the shortfall. A-2b2:
- * after a dash, its cause's sentence. A-2b3: then what the miss cost, when core priced it from the
- * runner's economics file.
+ * after a dash, its cause's sentence. B3b: then what Anthropic said, when it answered. A-2b3: last,
+ * what the miss cost, when core priced it from the runner's economics file.
  */
 function missLines(cost: CostView | undefined): string[] {
   if (cost?.misses === undefined) return [];
@@ -954,6 +985,7 @@ function missLines(cost: CostView | undefined): string[] {
       `cache miss: request ${String(miss.position + 1)} of ${String(cost.requests)} ` +
       `read ${String(expected - shortfall)} of ${String(expected)} expected tokens — ` +
       missSentence(miss) +
+      anthropicClause(miss) +
       (miss.extra_usd !== undefined
         ? `; this miss cost about ${formatUsd(miss.extra_usd)} more than a full read (your economics file)`
         : '')
