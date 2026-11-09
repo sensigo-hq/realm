@@ -2,8 +2,8 @@
 // Detection is DEFINITION-FREE (via findCapabilityBlockedSteps), so it must fire on the workflow_unresolved
 // path and behind a healthy in-progress sibling — the exact places a definition-keyed check would go silent.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { JsonFileStore, JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
-import type { WorkflowDefinition, RunRecord } from '@sensigo/realm';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
+import type { WorkflowDefinition, RunRecord, RunStore, WorkflowRegistrar } from '@sensigo/realm';
 import { handleGetRunState } from './get-run-state.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
@@ -33,8 +33,8 @@ const HANDLER_BLOCK: NonNullable<RunRecord['capability_blocks']> = {
 
 describe('get_run_state — blocked_on_capability (#134)', () => {
   let h: TempHome;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
 
   beforeEach(async () => {
     h = await makeTempHome();

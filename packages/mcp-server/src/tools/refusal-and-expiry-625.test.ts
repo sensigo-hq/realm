@@ -25,13 +25,12 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   ExtensionRegistry,
   executeStep,
   type WorkflowDefinition,
 } from '@sensigo/realm';
+import type { RunStore, WorkflowRegistrar } from '@sensigo/realm';
 import type { McpEnvelope } from '../render-reply.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -125,8 +124,8 @@ function routing(reply: McpEnvelope) {
 
 describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
   let h: TempHome;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
   beforeEach(async () => {
     h = await makeTempHome();
     runStore = h.stores.runStore;

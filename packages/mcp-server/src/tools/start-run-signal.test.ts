@@ -2,13 +2,11 @@
 // (deduped, run_phase, accurate context_hint, observational warnings) and run_phase on the envelope.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   buildPreExecutionErrorEnvelope,
   WorkflowError,
 } from '@sensigo/realm';
-import type { WorkflowDefinition } from '@sensigo/realm';
+import type { WorkflowDefinition, RunStore, WorkflowRegistrar } from '@sensigo/realm';
 import { handleStartRun } from './start-run.js';
 import { handleStartRunBatch } from './start-run-batch.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
@@ -38,8 +36,8 @@ const autoFirst: WorkflowDefinition = {
 
 describe('start_run idempotency signal', () => {
   let h: TempHome;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
 
   beforeEach(async () => {
     h = await makeTempHome();
@@ -132,8 +130,8 @@ describe('start_run idempotency signal', () => {
 
 describe('start_run_batch idempotency signal (per-item)', () => {
   let h: TempHome;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
 
   beforeEach(async () => {
     h = await makeTempHome();
@@ -202,8 +200,8 @@ describe('run_phase on the envelope', () => {
 
 describe('start_run / start_run_batch re-encounter policy (#92 PR 2)', () => {
   let h: TempHome;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
 
   beforeEach(async () => {
     h = await makeTempHome();

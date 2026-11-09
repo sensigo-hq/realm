@@ -8,12 +8,11 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type StepDefinition,
   type WorkflowDefinition,
 } from '@sensigo/realm';
+import type { RunStore, WorkflowRegistrar } from '@sensigo/realm';
 import { handleStartRun } from './start-run.js';
 import { handleGetRunState } from './get-run-state.js';
 import { handleExecuteStep } from './execute-step.js';
@@ -52,8 +51,8 @@ const tools = (actions: Array<{ instruction: { tool: string; call_with: unknown 
 
 describe('#625 PR-2a, C82 — an agent step refused before its claim, over the MCP tools', () => {
   let h: TempHome;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
   beforeEach(async () => {
     h = await makeTempHome();
     runStore = h.stores.runStore;

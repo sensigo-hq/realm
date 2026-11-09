@@ -1,31 +1,24 @@
 // issue #558 PR-T (review fold R5) — the agent's discovery surface names what it could not read.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
+import type { WorkflowRegistrar } from '@sensigo/realm';
 import { handleListWorkflows } from './list-workflows.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
-describe('list_workflows — every registered copy the listing could not read is named (issue #558 PR-T, R5)', () => {
+describe('list_workflows — a healthy registry lists its workflows and names nothing unreadable (issue #558 PR-T, R5)', () => {
   let h: TempHome;
-  let dir: string;
-  let store: JsonWorkflowStore;
+  let store: WorkflowRegistrar;
   const plant = (id: string): Promise<void> =>
-    writeFile(
-      join(dir, `${id}.json`),
-      JSON.stringify({
-        schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
-        id,
-        name: id,
-        version: 1,
-        steps: {},
-      }),
-      'utf8',
-    );
+    store.register({
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      id,
+      name: id,
+      version: 1,
+      steps: {},
+    });
 
   beforeEach(async () => {
     h = await makeTempHome();
-    dir = join(h.path, 'workflows');
     store = h.stores.workflowStore;
   });
   afterEach(async () => {
@@ -47,18 +40,14 @@ describe('list_workflows — every registered copy the listing could not read is
 describe('#627 W correction 2 (3.5) — list_workflows’ hint by class', () => {
   it('a copy a later version of Realm registered: class newer, no repair, and the hint names the other-version case', async () => {
     const h = await makeTempHome();
-    const dir = join(h.path, 'workflows');
     try {
-      await writeFile(
-        join(dir, 'w1.json'),
-        JSON.stringify({
-          schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION + 1,
-          id: 'w1',
-          name: 'w1',
-          version: 1,
-          steps: {},
-        }),
-      );
+      await h.stores.workflowStore.register({
+        schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION + 1,
+        id: 'w1',
+        name: 'w1',
+        version: 1,
+        steps: {},
+      });
       const r = await handleListWorkflows({ workflowStore: h.stores.workflowStore });
       if (r.status !== 'ok') throw new Error('fixture: the listing answers');
       // (a) red when the hint promises a repair for every entry (a newer copy carries none) and never

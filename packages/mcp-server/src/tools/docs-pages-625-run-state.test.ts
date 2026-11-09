@@ -28,7 +28,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
 import { handleGetRunState } from './get-run-state.js';
 import { POLL_CAP_MS } from '../render-reply.js';
-import { createTestLocation, type TestLocation } from '@sensigo/realm-testing';
+import { createTestHome, type TestHome } from '@sensigo/realm-testing';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 import { MCP_BIN_ON_JSON_UNTIL_C10B_DELTAS_57 } from '../test-support/mcp-bin-on-json.js';
 
@@ -40,14 +40,11 @@ const xit = it.skipIf(MCP_BIN_ON_JSON_UNTIL_C10B_DELTAS_57);
 // cell opens sits at a TEST LOCATION (`located`), and `passes(ms)` moves the clock of every location
 // the cell opened, in place of a real sleep; the in-process server (or a spawned child) reads that
 // clock from the location's file.
-const OPENED: TestLocation[] = [];
-async function located(dir: string): Promise<string> {
+const OPENED: TestHome[] = [];
+async function located(dir: string): Promise<void> {
   // A second server on the same folder in one cell shares its location (and its clock).
-  const open = OPENED.find((l) => l.root === dir);
-  if (open !== undefined) return open.runsDir;
-  const loc = await createTestLocation({ start: new Date(), root: dir });
-  OPENED.push(loc);
-  return loc.runsDir;
+  if (OPENED.some((l) => l.root === dir)) return;
+  OPENED.push(await createTestHome({ start: new Date(), root: dir }));
 }
 async function passes(ms: number): Promise<void> {
   for (const loc of OPENED) await loc.clock.advance(ms);

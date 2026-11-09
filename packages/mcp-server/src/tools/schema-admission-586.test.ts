@@ -5,8 +5,8 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
-import { JsonFileStore, JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
-import type { WorkflowDefinition } from '@sensigo/realm';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
+import type { WorkflowDefinition, RunStore, WorkflowRegistrar } from '@sensigo/realm';
 import { WorkflowError } from '@sensigo/realm';
 import { handleStartRun } from './start-run.js';
 import { handleStartRunBatch } from './start-run-batch.js';
@@ -28,8 +28,8 @@ const workflow: WorkflowDefinition = {
 
 describe('#586 params_schema on the MCP run-creation surfaces', () => {
   let h: TempHome;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
 
   beforeEach(async () => {
     h = await makeTempHome();
@@ -117,7 +117,7 @@ describe('#586 params_schema on the MCP run-creation surfaces', () => {
 
 describe('#586 create_workflow — its own admission door', () => {
   let h: TempHome;
-  let stores: { runStore: JsonFileStore; workflowStore: JsonWorkflowStore };
+  let stores: { runStore: RunStore; workflowStore: WorkflowRegistrar };
 
   beforeEach(async () => {
     h = await makeTempHome();

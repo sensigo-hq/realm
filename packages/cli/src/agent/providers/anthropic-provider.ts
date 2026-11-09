@@ -179,12 +179,17 @@ function userContentWithHead(
  * only a checked id.
  */
 function responseIdFacts(response: unknown): Partial<UsageRecord> {
+  const id = checkedResponseId(response);
+  return id !== undefined ? { response_id: id } : {};
+}
+
+/** Caching 3-M (B1, B2a): the answer's id, when it passes core's one check; else nothing. */
+function checkedResponseId(response: unknown): string | undefined {
   const raw =
     typeof response === 'object' && response !== null
       ? (response as Record<string, unknown>)['id']
       : undefined;
-  const id = normalizeResponseId(raw);
-  return id !== undefined ? { response_id: id } : {};
+  return normalizeResponseId(raw);
 }
 
 /**
@@ -474,11 +479,49 @@ export function readAnthropicUsage(response: unknown): AnthropicUsage | undefine
   return u as AnthropicUsage;
 }
 
+/**
+ * Caching 3-M (piece B2a): one drive's state of asking Anthropic why a request's cache read fell
+ * short, one per provider instance as {@link CacheFieldMemory} is. Set on only at Anthropic's own
+ * address; `resolveProvider` turns it on in B2b.
+ */
+interface CacheAsk {
+  /** The question still goes out; cleared when a re-send without it is what Anthropic accepted. */
+  asking: boolean;
+  /** The drive's one re-send without the question has been made, however it ended. */
+  probed: boolean;
+}
+
+/**
+ * Caching 3-M (piece B2a): the first send of a request that may carry the question. A 400 on a
+ * request that carried it is re-sent once in the drive without it, before any strict ladder, so a
+ * refused question is never read as a refused schema. The rule keys on the status alone: the text
+ * an account that may not ask receives is not captured. If the re-send is accepted the drive stops
+ * asking; if it fails, its error goes on to whatever handling the first would have met, and the
+ * drive goes on asking with no second probe. Any other failure is not probed and spends nothing.
+ */
+async function sendAsking<T>(
+  ask: CacheAsk,
+  body: Rec,
+  post: (body: Rec) => Promise<T>,
+  withoutQuestion: () => Rec,
+): Promise<T> {
+  try {
+    return await post(body);
+  } catch (err) {
+    if (!('diagnostics' in body) || ask.probed || extractHttpStatus(err) !== 400) throw err;
+    ask.probed = true;
+    const response = await post(withoutQuestion());
+    ask.asking = false;
+    return response;
+  }
+}
+
 async function createMessageWithLadder(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   client: any,
-  // caching 3-B (E3): `withCache` false sends the request without Realm's cache markers.
-  buildOpts: (strict: boolean, withCache: boolean) => Record<string, unknown>,
+  // caching 3-B (E3): `withCache` false sends the request without Realm's cache markers. Caching
+  // 3-M (B2a): `asks` false leaves the question out, whatever the drive's state.
+  buildOpts: (strict: boolean, withCache: boolean, asks?: boolean) => Record<string, unknown>,
   state: LadderState,
   // issue #401: the per-create ceiling and the wire counters. Absent for a caller that has no
   // clock (a bare unit test) — driveCreate is then bypassed and behaviour is as before.
@@ -487,6 +530,8 @@ async function createMessageWithLadder(
   // caching 3-B (E1, E3): the drive's memory of a gateway's refusal, and the endpoint; absent, the
   // request is on Anthropic's own endpoint, where a 400 surfaces as before.
   gateway?: { memory: CacheFieldMemory; endpoint: RequestEndpoint },
+  // caching 3-M (B2a): the drive's state of asking why a request missed.
+  ask: CacheAsk = { asking: false, probed: false },
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Promise<any> {
   // ONE signature fits every create site: the body, plus the per-create options driveCreate adds.
@@ -497,9 +542,11 @@ async function createMessageWithLadder(
       : rawCreate(body, {});
 
   const send = async (withCache: boolean): Promise<unknown> => {
-    if (!state.strict) return bounded(buildOpts(false, withCache));
-    const response = await bounded(buildOpts(true, withCache));
-    state.meta = { requested: true, sent: true };
+    const strict = state.strict;
+    const response = await sendAsking(ask, buildOpts(strict, withCache), bounded, () =>
+      buildOpts(strict, withCache, false),
+    );
+    if (strict) state.meta = { requested: true, sent: true };
     return response;
   };
   // #236's ladder: a 400/503 on a strict-carrying request drops strict and retries ONCE; anything
@@ -559,6 +606,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
   private readonly endpoint: RequestEndpoint;
   /** Caching 3-B (E3): this drive's memory of a gateway's refusal of the cache fields. */
   private readonly cacheFields: CacheFieldMemory = {};
+  /** Caching 3-M (B2a): this drive's state of asking why a request missed. */
+  private readonly cacheAsk: CacheAsk;
   /** Issue #898 — where the settled `auto` choice took its prices; absent when none was needed. */
   private autoPrices: CacheAutoPrices | undefined;
 
@@ -582,10 +631,17 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       /** Caching 3-B (D1): the endpoint `resolveProvider` resolved once; absent reads as `default`
        *  (a client without a string `baseURL` is only built by a test double). */
       endpoint?: RequestEndpoint;
+      /** Caching 3-M (B2a): ask Anthropic why a request's cache read fell short, at its own address
+       *  only. Absent, no request carries the question and every body is byte-identical. */
+      cacheDiagnostics?: boolean;
     },
   ) {
     super();
     this.endpoint = opts?.endpoint ?? 'default';
+    this.cacheAsk = {
+      asking: opts?.cacheDiagnostics === true && this.endpoint === 'default',
+      probed: false,
+    };
     this.promptCache = opts?.promptCache ?? { value: 'off' };
     const { value } = this.promptCache;
     this.cacheChoice =
@@ -606,6 +662,16 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
   private settledChoice(): CacheChoice {
     if (this.cacheChoice === 'pending') throw new Error(AUTO_CHOICE_PENDING);
     return this.cacheChoice;
+  }
+
+  /**
+   * Caching 3-M (B2a): whether a request this provider marks for caching carries the question: the
+   * drive is still asking and the settled choice asks to cache something (a request that asks to
+   * cache nothing is never judged, so it leaves no fingerprint at Anthropic). Read when a body is
+   * built.
+   */
+  private asksWhy(): boolean {
+    return this.cacheAsk.asking && this.settledChoice() !== 'off';
   }
 
   /** Issue #898 — whether an `auto` choice waits for {@link settleAutoChoice}. */
@@ -844,6 +910,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     // the provider accumulates — a single usage object for a step that bills 1-21 requests is a
     // false number by construction.
     const requests: UsageRecord[] = billed ?? [];
+    // Caching 3-M (B2a): this call's last checked answer id; `null` opts the call's first request in.
+    let previousAnswerId: string | null = null;
     const makeRequest = async (userContent: string): Promise<CallResult> => {
       const requestStart = new Date().toISOString();
       // caching 3-B (C3): the head block, when the step's prompt was split. The JSON retry and a
@@ -854,7 +922,11 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       let sent: Record<string, unknown> = {};
       // caching 3-B (E3; MA2-3B-IA1-12): whether the request that answered carried the cache fields.
       let sentWithCache = true;
-      const buildOpts = (strict: boolean, withCache: boolean): Record<string, unknown> => {
+      const buildOpts = (
+        strict: boolean,
+        withCache: boolean,
+        asks = true,
+      ): Record<string, unknown> => {
         const submitTool = hasSchema
           ? buildSubmitTool(inputSchema!, strict ? { strict: true } : undefined)
           : undefined;
@@ -868,14 +940,25 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
           opts['tools'] = [submitTool];
           opts['tool_choice'] = { type: 'auto' };
         }
+        // Caching 3-M (B2a): last, and only when asking; the JSON retry names the first answer.
+        if (asks && this.asksWhy()) {
+          opts['diagnostics'] = { previous_message_id: previousAnswerId };
+        }
         sent = opts;
         sentWithCache = withCache;
         return opts;
       };
-      const response = await createMessageWithLadder(client, buildOpts, state, clock, counters, {
-        memory: this.cacheFields,
-        endpoint: this.endpoint,
-      });
+      const response = await createMessageWithLadder(
+        client,
+        buildOpts,
+        state,
+        clock,
+        counters,
+        { memory: this.cacheFields, endpoint: this.endpoint },
+        this.cacheAsk,
+      );
+      // Caching 3-M (B2a): whichever send answered (a ladder's retry included); a refused send has no id.
+      previousAnswerId = checkedResponseId(response) ?? null;
       const blocks = response.content as Array<{
         type: string;
         text?: string;
@@ -1107,6 +1190,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     });
     assertMaxTokensCoherent(resolveMaxTokens(this.model), clock);
 
+    // Caching 3-M (B2a): this call's last checked answer id; `null` opts the call's first turn in.
+    let previousAnswerId: string | null = null;
     // ONE signature fits every create site on this path (issue #401): body + the per-create
     // options driveCreate adds (the abort signal). Bypassed when no clock was threaded — a
     // direct caller of this provider gets the record, never the bound (record R-14).
@@ -1133,6 +1218,8 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
           ...responseIdFacts(response),
         }),
       );
+      // Caching 3-M (B2a): whichever send answered (#311's retry included); a refused send has no id.
+      previousAnswerId = checkedResponseId(response) ?? null;
       return response;
     };
 
@@ -1278,6 +1365,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
      *  the exact list this request sends (after a #311 drop, the stripped copies). */
     const buildMainCallOpts = (
       withCache = true,
+      asks = true,
     ): { body: Record<string, unknown>; key: string } => {
       let requestTools: unknown;
       if (anthropicTools.length > 0) {
@@ -1308,6 +1396,10 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
             : markLastMessage(messagesFor(key), cacheControlFor(choice)),
       };
       if (requestTools !== undefined) opts['tools'] = requestTools;
+      // Caching 3-M (B2a): last, and only when asking; a turn names the answer before it.
+      if (asks && this.asksWhy()) {
+        opts['diagnostics'] = { previous_message_id: previousAnswerId };
+      }
       return { body: opts, key };
     };
 
@@ -1356,8 +1448,16 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const send = async (withCache: boolean): Promise<{ response: any; key: string }> => {
         const sentStrict = toolArgsStrictActive;
-        const request = buildMainCallOpts(withCache);
-        const response = await bounded(request.body, facts(withCache, request.body));
+        let request = buildMainCallOpts(withCache);
+        const response = await sendAsking(
+          this.cacheAsk,
+          request.body,
+          (body) => bounded(body, facts(withCache, body)),
+          () => {
+            request = buildMainCallOpts(withCache, false);
+            return request.body;
+          },
+        );
         // Only a strict-DECORATED request that came back 200 counts toward the disclosed
         // "turns before drop" — that is exactly what the number claims.
         if (sentStrict) strictTurnsBeforeDrop += 1;

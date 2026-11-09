@@ -226,3 +226,5 @@ A file that is not valid prices nothing, so no figure mixes your prices with the
 | Is not YAML                                             | The YAML error, with its line and column.                                                                                         |
 
 A figure from the list adds `list price, your endpoint may bill differently` when the request went to an endpoint other than the provider's own, such as one set with `--base-url`. On `get_run_state`, the same figures are unrounded numbers: see [Run state and health findings](mcp/run-state-and-health.md). On the step line, see [`realm run`: commands that read](cli/realm-run-reading.md#inspect).
+
+A request that missed the cache has its own line on `realm run inspect`. When the file prices both the request and a full read of what it missed, that line ends with what the miss cost.

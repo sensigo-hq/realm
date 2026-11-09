@@ -4,13 +4,16 @@
 // in execute_step; it wins over the construction-time registry when both are supplied.
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import {
-  JsonFileStore,
-  JsonWorkflowStore,
   ExtensionRegistry,
   createDefaultRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
 } from '@sensigo/realm';
-import type { WorkflowDefinition, ServiceAdapter } from '@sensigo/realm';
+import type {
+  WorkflowDefinition,
+  ServiceAdapter,
+  RunStore,
+  WorkflowRegistrar,
+} from '@sensigo/realm';
 import { handleStartRun } from './start-run.js';
 import { handleStartRunBatch } from './start-run-batch.js';
 import { handleExecuteStep } from './execute-step.js';
@@ -44,8 +47,8 @@ function makeRecordingAdapter(calls: string[]): ServiceAdapter {
 
 describe('registryProvider', () => {
   let h: TempHome;
-  let runStore: JsonFileStore;
-  let workflowStore: JsonWorkflowStore;
+  let runStore: RunStore;
+  let workflowStore: WorkflowRegistrar;
 
   beforeEach(async () => {
     h = await makeTempHome();
@@ -122,7 +125,7 @@ describe('registryProvider', () => {
 
 describe('create_workflow extensions rejection', () => {
   let h: TempHome;
-  let stores: { runStore: JsonFileStore; workflowStore: JsonWorkflowStore };
+  let stores: { runStore: RunStore; workflowStore: WorkflowRegistrar };
 
   beforeEach(async () => {
     h = await makeTempHome();
