@@ -546,16 +546,17 @@ export interface PrefixParts {
 /**
  * Caching 3-M (piece A-1): where a request's copied predecessor (`UsageRecord.reference`) came from:
  * `run`, the run's own record — the first request of the same step's last call there, from an
- * earlier drive (piece A-1b). A later piece adds its own member. Normalised at the write: any other
- * word drops the reference.
+ * earlier drive (piece A-1b); `earlier_run`, another run's record — the same step's first request
+ * there (piece C2 writes it). Normalised at the write: any other word drops the reference.
  */
-export const CACHE_REFERENCE_SOURCES = ['run'] as const;
+export const CACHE_REFERENCE_SOURCES = ['run', 'earlier_run'] as const;
 export type CacheReferenceSource = (typeof CACHE_REFERENCE_SOURCES)[number];
 
 /**
  * Caching 3-M (piece A-1): a copy of a request's predecessor — the same step's previous request —
  * made where the predecessor is not an earlier entry of the same stored list: the first request of
- * the step's last call on the run's record (piece A-1b). `from` says where it was found,
+ * the step's last call on the run's record (piece A-1b), or the same step's first request in another
+ * run (`earlier_run`, piece C2). `from` says where it was found,
  * `request_start` is required, and each other field is the predecessor's own, copied when it had
  * one; `cache_requested` says whether it asked the provider to cache (piece A-1b). `prefix_sha256`
  * is not copied (it equals `prefix_parts.prompt` on both providers). Never a `reference` of its own,
@@ -749,7 +750,8 @@ export interface UsageRecord {
    * Caching 3-M (piece A-1): a copy of this request's predecessor, the same step's previous
    * request. Set only on a step's first request in a drive, when its predecessor is on the run's
    * record (an earlier drive that failed the step, or a step resumed and driven again): the first
-   * request of the step's last call there (piece A-1b), `from: 'run'`. Every other request's
+   * request of the step's last call there (piece A-1b), `from: 'run'`; or on another run's record,
+   * `from: 'earlier_run'` (piece C2 writes it). Every other request's
    * predecessor is an earlier entry of the same stored list, so nothing is copied for it. It never
    * holds a `reference` of its own, never `request_index` (an index is not identity, #715's rule),
    * and never `request_in_call` (the copy is always a call's first request). Minted by `realm
