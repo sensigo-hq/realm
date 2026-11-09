@@ -1,17 +1,16 @@
 // settlement-282-cli-integration.test.ts — CLI integration pins for the #282 class closure (issue
-// #279, increment 2, PR-C — design record §8, "CLI integration"). Raw run-file writing per the
-// purge.test.ts / export.test.ts idiom (bypassing store.create/update so the fixture's own
-// run_phase can be deliberately stale — the whole point of a #282 "G" fixture).
+// #279, increment 2, PR-C — design record §8, "CLI integration"). The G fixtures are seeded through
+// the store's `save()` (#616 PR-2c, c10a-2b), bypassing create/update: it keeps the record — its
+// `pending_gate` included — and derives `run_phase`, so a stale label cannot outlive the seed on
+// either store; the kept cells pin the disclosure and the gate line, never the label.
 import { describe, it, expect } from 'vitest';
-import { writeFile, mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import { resumeRun } from './resume.js';
 import { buildExportBundle } from './export.js';
 import { listRuns } from './list.js';
-import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION, deriveRunPhase } from '@sensigo/realm';
 import type { RunRecord, WorkflowDefinition } from '@sensigo/realm';
-import { makeTempHome } from '../test-support/temp-home.js';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 const def: WorkflowDefinition = {
   id: 'wf-282',
@@ -54,9 +53,9 @@ function makeGrandfatheredFixture(
     created_at: now,
     updated_at: now,
     terminal_state: true,
-    // issue #367: deliberately UNSTAMPED. This factory is injected by `injectRun`'s direct
-    // writeFile — the sanctioned channel for seeding pre-#367 shapes past the store boundary — and
-    // its whole purpose is to be a grandfathered record whose phase must be recovered by
+    // issue #367: deliberately UNSTAMPED. This factory is seeded through the store's `save()` — the
+    // import channel, which takes pre-#367 shapes past create/update's checks (#616 PR-2c, c10a-2b) —
+    // and its whole purpose is to be a grandfathered record whose phase must be recovered by
     // `classifyLegacySeal`. A stamp here would decide the phase the test exists to derive.
     ...(terminalReasonOverride !== undefined
       ? { terminal_reason: terminalReasonOverride }
@@ -74,15 +73,15 @@ function makeGrandfatheredFixture(
   };
 }
 
-async function injectRun(dir: string, run: RunRecord): Promise<void> {
-  await writeFile(join(dir, `${run.id}.json`), JSON.stringify(run, null, 2), 'utf8');
+/** Save a G fixture through the store's `save`, its phase the one the store derives (computed
+ *  last: a fixture plants no label by hand). */
+async function injectRun(store: TempHome['home']['runStore'], run: RunRecord): Promise<void> {
+  await store.save({ ...run, run_phase: deriveRunPhase(run) });
 }
 
 describe('RESUME_STRIPS_ZOMBIE_GATE / RESUME_ADMITS_GRANDFATHERED (issue #279, increment 2, PR-C)', () => {
   it('resume, through the CLI admission gate, ADMITS a grandfathered G fixture and strips its zombie gate — the disclosure is returned for the CLI to print', async () => {
     const h = await makeTempHome();
-    const dir = h.home.runStore.runsDirPath;
-    await mkdir(dir, { recursive: true });
     try {
       const runStore = h.home.runStore;
       const workflowStore = h.home.workflowStore;
@@ -93,7 +92,7 @@ describe('RESUME_STRIPS_ZOMBIE_GATE / RESUME_ADMITS_GRANDFATHERED (issue #279, i
         terminal_reason: undefined,
         run_phase: 'gate_waiting', // stale — RESUMABLE_PHASES.has(deriveRunPhase(run)) must admit it
       });
-      await injectRun(dir, run);
+      await injectRun(runStore, run);
 
       const { voided, disclosures } = await resumeRun(run.id, 'a', runStore, workflowStore);
 
@@ -144,14 +143,13 @@ describe('EXPORT_TERMINAL_KEYED (issue #279, increment 2, PR-C)', () => {
 describe('list/inspect render pins (issue #279, increment 2, PR-C)', () => {
   it('list.ts renders the DERIVED phase for a grandfathered G fixture, and shows no live-looking gate line', async () => {
     const h = await makeTempHome();
-    const dir = h.home.runStore.runsDirPath;
-    await mkdir(dir, { recursive: true });
     try {
       const runStore = h.home.runStore;
       const run = makeGrandfatheredFixture({});
-      await injectRun(dir, run);
+      await injectRun(runStore, run);
 
       const output = await listRuns(undefined, runStore);
+      // The derived-phase half is vacuous once `save()` derives (it does today): the gate line is the pin.
       expect(output).toContain('completed');
       expect(output).not.toContain('gate_waiting');
       expect(output).not.toContain('gate:');
@@ -164,9 +162,7 @@ describe('list/inspect render pins (issue #279, increment 2, PR-C)', () => {
 describe('SAVE_DERIVES_ON_IMPORT (issue #279, increment 2, PR-C)', () => {
   it('a G record imported via save() persists the DERIVED phase on get(); pending_gate itself is NOT stripped (a verbatim import, not a resume)', async () => {
     const h = await makeTempHome();
-    const dir = h.home.runStore.runsDirPath;
     try {
-      await mkdir(dir, { recursive: true });
       const runStore = h.home.runStore;
       const run = makeGrandfatheredFixture({
         completed_steps: [],

@@ -15,7 +15,9 @@ import { fileURLToPath } from 'node:url';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   advanceRun,
+  deriveRunPhase,
   executeStep,
+  type RunRecord,
   type WorkflowDefinition,
   type RunStore,
 } from '@sensigo/realm';
@@ -31,7 +33,6 @@ beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'realm-c5-words-'));
   h = await makeTempHome();
   home = h.root;
-  mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
 });
 afterEach(async () => {
   await h.cleanup();
@@ -53,8 +54,9 @@ function piped(args: string[], env: Record<string, string>, cwd: string = root) 
   };
 }
 
-/** A run record written verbatim into HOME's store (the sanctioned legacy channel). */
-function seed(id: string, fields: Record<string, unknown>): string {
+/** A run record saved into HOME's store through the handle's `save()` (#616 PR-2c, c10a-2b): the
+ *  child reads what the store wrote; its phase is the one the store derives (computed last). */
+async function seed(id: string, fields: Record<string, unknown>): Promise<string> {
   const record = {
     id,
     workflow_id: 'c5wf',
@@ -73,8 +75,8 @@ function seed(id: string, fields: Record<string, unknown>): string {
     updated_at: AT,
     terminal_state: false,
     ...fields,
-  };
-  writeFileSync(join(home, '.realm', 'runs', `${id}.json`), JSON.stringify(record, null, 2));
+  } as unknown as RunRecord;
+  await h.home.runStore.save({ ...record, run_phase: deriveRunPhase(record) });
   return id;
 }
 
@@ -101,8 +103,8 @@ const lineWith = (lines: string[], marker: string): string | undefined =>
   lines.find((l) => l.includes(marker));
 
 describe('#729 PR-3 correction 5 (J-2) — the sweep commands print the phase whole', () => {
-  it('resume.ts — `is in phase …, which is not resumable`', () => {
-    const id = seed('c5-resume', COMPLETED);
+  it('resume.ts — `is in phase …, which is not resumable`', async () => {
+    const id = await seed('c5-resume', COMPLETED);
     const r = piped(['run', 'resume', id, '--from', 'a'], { STATUS_X: 'completed' });
     // (a) red when the phase prints as plain text (`'[REDACTED]'`); (b) prints the line.
     expect(lineWith(r.lines, 'not resumable')).toBe(
@@ -110,8 +112,8 @@ describe('#729 PR-3 correction 5 (J-2) — the sweep commands print the phase wh
     );
   }, 60_000);
 
-  it('reclaim.ts — `is terminal (…)`', () => {
-    const id = seed('c5-reclaim-ended', COMPLETED);
+  it('reclaim.ts — `is terminal (…)`', async () => {
+    const id = await seed('c5-reclaim-ended', COMPLETED);
     const r = piped(['run', 'reclaim', id], { STATUS_X: 'completed' });
     // (a) red when the phase prints as plain text; (b) prints the line.
     expect(lineWith(r.lines, 'is terminal')).toBe(
@@ -119,8 +121,8 @@ describe('#729 PR-3 correction 5 (J-2) — the sweep commands print the phase wh
     );
   }, 60_000);
 
-  it('reclaim.ts — `(…) has no in-progress claims`', () => {
-    const id = seed('c5-reclaim-none', GATE_WAITING);
+  it('reclaim.ts — `(…) has no in-progress claims`', async () => {
+    const id = await seed('c5-reclaim-none', GATE_WAITING);
     const r = piped(['run', 'reclaim', id], { STATUS_X: 'gate_waiting' });
     // (a) red when the phase prints as plain text; (b) prints the line.
     expect(lineWith(r.lines, 'no in-progress claims')).toBe(
@@ -128,8 +130,8 @@ describe('#729 PR-3 correction 5 (J-2) — the sweep commands print the phase wh
     );
   }, 60_000);
 
-  it('reclaim.ts — `(…) — in-progress claims:`', () => {
-    const id = seed('c5-reclaim-held', {
+  it('reclaim.ts — `(…) — in-progress claims:`', async () => {
+    const id = await seed('c5-reclaim-held', {
       ...GATE_WAITING,
       in_progress_steps: ['b'],
       claims: { b: { claimed_at: AT } },
@@ -141,8 +143,8 @@ describe('#729 PR-3 correction 5 (J-2) — the sweep commands print the phase wh
     );
   }, 60_000);
 
-  it('export.ts — `is still …` (the best-effort snapshot line)', () => {
-    const id = seed('c5-export', GATE_WAITING);
+  it('export.ts — `is still …` (the best-effort snapshot line)', async () => {
+    const id = await seed('c5-export', GATE_WAITING);
     const r = piped(
       ['run', 'export', id, '--out', join(root, 'b.json'), '--accept-partial-disclosure'],
       { STATUS_X: 'gate_waiting' },
@@ -154,8 +156,8 @@ describe('#729 PR-3 correction 5 (J-2) — the sweep commands print the phase wh
     );
   }, 60_000);
 
-  it('purge.ts — `not terminal (phase: …)` (the single-run refusal)', () => {
-    const id = seed('c5-purge-live', GATE_WAITING);
+  it('purge.ts — `not terminal (phase: …)` (the single-run refusal)', async () => {
+    const id = await seed('c5-purge-live', GATE_WAITING);
     const r = piped(['run', 'purge', id], { STATUS_X: 'gate_waiting' });
     // (a) red when the phase prints as plain text; (b) prints the exit code and the line.
     expect([r.status, lineWith(r.lines, 'Refusing to purge')]).toEqual([
@@ -164,16 +166,16 @@ describe('#729 PR-3 correction 5 (J-2) — the sweep commands print the phase wh
     ]);
   }, 60_000);
 
-  it('purge.ts — `• <id>  (…, <size>)` (the dry-run list)', () => {
-    const id = seed('c5-purge-old', COMPLETED);
+  it('purge.ts — `• <id>  (…, <size>)` (the dry-run list)', async () => {
+    const id = await seed('c5-purge-old', COMPLETED);
     const r = piped(['run', 'purge', '--older-than', '1m'], { STATUS_X: 'completed' });
     const line = lineWith(r.lines, `• ${id}`) ?? '';
     // (a) red when the phase prints as plain text; (b) prints the line up to its size.
     expect(line.slice(0, line.indexOf(','))).toBe(`  • ${id}  (completed`);
   }, 60_000);
 
-  it('drain.ts — `is not terminal (phase: …) — nothing to drain` (the dry run)', () => {
-    const id = seed('c5-drain-dry', GATE_WAITING);
+  it('drain.ts — `is not terminal (phase: …) — nothing to drain` (the dry run)', async () => {
+    const id = await seed('c5-drain-dry', GATE_WAITING);
     const r = piped(['run', 'drain', id], { STATUS_X: 'gate_waiting' });
     const line = lineWith(r.lines, 'nothing to drain') ?? '';
     // (a) red when the phase prints as plain text; (b) prints the line up to its way out.
@@ -182,8 +184,8 @@ describe('#729 PR-3 correction 5 (J-2) — the sweep commands print the phase wh
     );
   }, 60_000);
 
-  it('drain.ts — `is not terminal (phase: …) — nothing to drain` (--force)', () => {
-    const id = seed('c5-drain-force', GATE_WAITING);
+  it('drain.ts — `is not terminal (phase: …) — nothing to drain` (--force)', async () => {
+    const id = await seed('c5-drain-force', GATE_WAITING);
     const r = piped(['run', 'drain', id, '--force'], { STATUS_X: 'gate_waiting' });
     const line = lineWith(r.lines, 'nothing to drain') ?? '';
     // (a) red when the phase prints as plain text; (b) prints the exit code and the line's start.
@@ -193,8 +195,8 @@ describe('#729 PR-3 correction 5 (J-2) — the sweep commands print the phase wh
     ]);
   }, 60_000);
 
-  it('drain.ts — `(…) — pending finalizers, rank order:`', () => {
-    const id = seed('c5-drain-fin', {
+  it('drain.ts — `(…) — pending finalizers, rank order:`', async () => {
+    const id = await seed('c5-drain-fin', {
       ...COMPLETED,
       finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
     });
@@ -205,8 +207,8 @@ describe('#729 PR-3 correction 5 (J-2) — the sweep commands print the phase wh
     );
   }, 60_000);
 
-  it('run-migrate.ts — `(phase …)` in the incoherent bucket (phaseLabel)', () => {
-    const id = seed('c5-migrate-incoherent', {
+  it('run-migrate.ts — `(phase …)` in the incoherent bucket (phaseLabel)', async () => {
+    const id = await seed('c5-migrate-incoherent', {
       run_phase: 'abandoned',
       terminal_state: true,
       terminal_reason: 'Abandoned by the operator',
@@ -223,10 +225,10 @@ describe('#729 PR-3 correction 5 (J-2) — the sweep commands print the phase wh
     );
   }, 60_000);
 
-  it('run-migrate.ts — `(phase …)` in the stamped bucket: a phase the stamp keeps prints as one word', () => {
+  it('run-migrate.ts — `(phase …)` in the stamped bucket: a phase the stamp keeps prints as one word', async () => {
     // A record whose phase the stamp keeps (the branch every stamped run reaches once the phase is
     // derived, never stored; the `→` branch's stored ≠ derived case is c10a-4's, on a tampered row).
-    const same = seed('c5-migrate-same', {
+    const same = await seed('c5-migrate-same', {
       run_phase: 'abandoned',
       terminal_state: true,
       terminal_reason: 'Abandoned by the operator',
@@ -243,13 +245,13 @@ describe('#729 PR-3 correction 5 (J-2) — the sweep commands print the phase wh
 });
 
 describe("#729 PR-3 correction 5 (J-3) — migrate prints an unclassifiable record's fixed sentence whole", () => {
-  it('a fixed sentence whole while a variable holds its word; a templated reason stays a bounded value', () => {
-    const fixed = seed('c5-migrate-fixed', {
+  it('a fixed sentence whole while a variable holds its word; a templated reason stays a bounded value', async () => {
+    const fixed = await seed('c5-migrate-fixed', {
       run_phase: 'abandoned',
       terminal_state: true,
       terminal_reason: 'Abandoned via realm run abandon',
     });
-    const templated = seed('c5-migrate-templated', {
+    const templated = await seed('c5-migrate-templated', {
       run_phase: 'abandoned',
       terminal_state: true,
       terminal_reason: 'Abandoned via realm run abandon FAKE-C5-J3-CANARY',
@@ -277,8 +279,8 @@ describe('#729 PR-3 correction 5 (J-2, J-4) — list and abandon', () => {
     ]);
   }, 60_000);
 
-  it("abandon.ts — the verb `abandoned` in `Run '…' abandoned (phase: …)`", () => {
-    const id = seed('c5-abandon', {});
+  it("abandon.ts — the verb `abandoned` in `Run '…' abandoned (phase: …)`", async () => {
+    const id = await seed('c5-abandon', {});
     const r = piped(['run', 'abandon', id], { STATUS_X: 'abandoned' });
     const first = lineWith(r.lines, `Run '${id}'`) ?? '';
     // (a) red when the verb prints as plain text (`Run '…' [REDACTED] (phase: …`); (b) prints the
@@ -352,7 +354,7 @@ const A_AUTO = { a: { description: 'A.', execution: 'auto', depends_on: [] } };
 describe('#729 PR-3 correction 5 (J-2) — `realm run advance` prints the phase whole', () => {
   it("run-advance.ts — an operator's ending: `the run has ended (…). An operator ended this run`", async () => {
     await registered(A_AUTO);
-    const id = seed('c5-adv-abandoned', {
+    const id = await seed('c5-adv-abandoned', {
       run_phase: 'abandoned',
       terminal_state: true,
       terminal_reason: 'Held.',
@@ -399,7 +401,7 @@ describe('#729 PR-3 correction 5 (J-2) — `realm run advance` prints the phase 
 
   it('run-advance.ts — decision C37: a run the call completes gets no `Stopped:` line, while a variable holds `completed`', async () => {
     await registered(A_AUTO);
-    const id = seed('c5-adv-completes', {});
+    const id = await seed('c5-adv-completes', {});
     const r = piped(['run', 'advance', id], { STATUS_X: 'completed' });
     // (a) red when the filter compares the plain sentence with the spanned reason (`Stopped: the run
     //     has ended (completed)` printed); (b) prints the Stopped lines and the last line.

@@ -4,13 +4,11 @@
 // test that passed against a vehicle which did nothing at all — green on inertness. So every cell
 // here is written to FAIL against an inert sweep, and the red-first run is in the report.
 //
-// The corpus is seeded through the sanctioned channel — direct `writeFile` into a scratch runsDir
-// — because these are pre-#367 shapes the store boundary would refuse if they were written through
-// it. That is the point: they are what real legacy records look like.
+// The corpus is seeded through the store's `save()` — the import channel, which keeps a record as it
+// is given and derives only its `run_phase` (#616 PR-2c, c10a-2b) — because these are pre-#367 shapes
+// `create`/`update` would refuse. That is the point: they are what real legacy records look like.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { writeFile, readFile, mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
-import type { RunRecord, RunStore, SealArm } from '@sensigo/realm';
+import { deriveRunPhase, type RunRecord, type RunStore, type SealArm } from '@sensigo/realm';
 import {
   migrateStampSeals,
   migrateExitCode,
@@ -22,13 +20,10 @@ import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 import type { CliHome } from '../lib/home.js';
 
 let h: TempHome;
-let dir: string;
 let store: CliHome['runStore'];
 
 beforeEach(async () => {
   h = await makeTempHome();
-  dir = h.home.runStore.runsDirPath;
-  await mkdir(dir, { recursive: true });
   store = h.home.runStore;
 });
 afterEach(async () => {
@@ -37,7 +32,8 @@ afterEach(async () => {
 
 const AT = '2026-01-01T00:00:00.000Z';
 
-/** Seeds a record verbatim — the sanctioned legacy channel. */
+/** Seeds a record through the store's `save()`, its phase the one the store derives (computed last:
+ *  a fixture plants no label by hand). */
 async function seed(id: string, fields: Partial<RunRecord>): Promise<RunRecord> {
   const record = {
     id,
@@ -58,12 +54,14 @@ async function seed(id: string, fields: Partial<RunRecord>): Promise<RunRecord> 
     terminal_state: true,
     ...fields,
   } as RunRecord;
-  await writeFile(join(dir, `${id}.json`), JSON.stringify(record, null, 2));
-  return record;
+  const derived = { ...record, run_phase: deriveRunPhase(record) };
+  await store.save(derived);
+  return derived;
 }
 
-async function onDisk(id: string): Promise<RunRecord> {
-  return JSON.parse(await readFile(join(dir, `${id}.json`), 'utf8')) as RunRecord;
+/** The record as the store holds it. */
+async function stored(id: string): Promise<RunRecord> {
+  return (await store.get(id)).record;
 }
 
 /** Every classifiable legacy shape, with the arm it must receive. */
@@ -186,7 +184,7 @@ describe('#367 part 3 — the migration vehicle stamps every classifiable shape'
     await seedCorpus();
     const buckets = await migrateStampSeals(store, { force: true });
     for (const [id, , arm] of SHAPES) {
-      const record = await onDisk(id);
+      const record = await stored(id);
       expect(record.sealed_by?.arm, `${id} should be stamped '${arm}'`).toBe(arm);
     }
     expect(buckets.stamped).toHaveLength(SHAPES.length);
@@ -196,7 +194,7 @@ describe('#367 part 3 — the migration vehicle stamps every classifiable shape'
     await seedCorpus();
     await migrateStampSeals(store, { force: true });
     for (const [id] of SHAPES) {
-      const record = await onDisk(id);
+      const record = await stored(id);
       expect(record.sealed_by?.classified).toBe(true);
       expect(record.sealed_by?.step).toBeUndefined();
     }
@@ -211,33 +209,33 @@ describe('#367 part 3 — the migration vehicle stamps every classifiable shape'
       sealed_by: { arm: 'complete' },
     });
     await migrateStampSeals(store, { force: true });
-    expect((await onDisk('writer-sealed')).sealed_by?.classified).toBeUndefined();
+    expect((await stored('writer-sealed')).sealed_by?.classified).toBeUndefined();
   });
 
   it('`updated_at` is BYTE-preserved on every record — the whole reason this is not `gc --heal`', async () => {
     await seedCorpus();
     await migrateStampSeals(store, { force: true });
     for (const [id] of SHAPES) {
-      expect((await onDisk(id)).updated_at, `${id} retention clock`).toBe(AT);
+      expect((await stored(id)).updated_at, `${id} retention clock`).toBe(AT);
     }
   });
 
   it('`version` is bumped ONLY on records that were actually stamped', async () => {
     await seedCorpus();
     await migrateStampSeals(store, { force: true });
-    for (const [id] of SHAPES) expect((await onDisk(id)).version, id).toBe(2);
+    for (const [id] of SHAPES) expect((await stored(id)).version, id).toBe(2);
     // Untouched records keep their version.
-    expect((await onDisk('unclassifiable')).version).toBe(1);
-    expect((await onDisk('live-control')).version).toBe(1);
-    expect((await onDisk('incoherent-prose')).version).toBe(1);
+    expect((await stored('unclassifiable')).version).toBe(1);
+    expect((await stored('live-control')).version).toBe(1);
+    expect((await stored('incoherent-prose')).version).toBe(1);
   });
 
   it('an UNCLASSIFIABLE record is bucketed, printed, and never written', async () => {
     await seedCorpus();
-    const before = await onDisk('unclassifiable');
+    const before = await stored('unclassifiable');
     const buckets = await migrateStampSeals(store, { force: true });
     expect(buckets.unclassifiable.map((e) => e.id)).toEqual(['unclassifiable']);
-    expect(await onDisk('unclassifiable')).toEqual(before); // byte-identical
+    expect(await stored('unclassifiable')).toEqual(before); // byte-identical
     // Exit 0 by default: the command did its job and said so loudly. Residue is chronic — an
     // unclassifiable record stays unclassifiable — so a nonzero exit here would make every
     // scheduled run fail forever, and a chronic alarm gets silenced.
@@ -248,11 +246,11 @@ describe('#367 part 3 — the migration vehicle stamps every classifiable shape'
 
   it('BOTH incoherent shapes are bucketed and never auto-rewritten', async () => {
     await seedCorpus();
-    const before = await onDisk('incoherent-abandon');
+    const before = await stored('incoherent-abandon');
     const buckets = await migrateStampSeals(store, { force: true });
     const ids = buckets.incoherent.map((e) => e.id).sort();
     expect(ids).toEqual(['incoherent-abandon', 'incoherent-prose']);
-    expect(await onDisk('incoherent-abandon')).toEqual(before);
+    expect(await stored('incoherent-abandon')).toEqual(before);
     expect(migrateExitCode(buckets)).toBe(0);
     expect(migrateExitCode(buckets, { detailed: true })).toBe(2);
   });
@@ -285,32 +283,32 @@ describe('#367 part 3 — the migration vehicle stamps every classifiable shape'
 
   it('the NON-TERMINAL control is byte-identical after the sweep', async () => {
     await seedCorpus();
-    const before = await onDisk('live-control');
+    const before = await stored('live-control');
     await migrateStampSeals(store, { force: true });
-    expect(await onDisk('live-control')).toEqual(before);
+    expect(await stored('live-control')).toEqual(before);
   });
 
   it('IDEMPOTENT: a second run stamps nothing and leaves the corpus byte-identical', async () => {
     await seedCorpus();
     await migrateStampSeals(store, { force: true });
     const snapshot: Record<string, RunRecord> = {};
-    for (const [id] of SHAPES) snapshot[id] = await onDisk(id);
+    for (const [id] of SHAPES) snapshot[id] = await stored(id);
 
     const second = await migrateStampSeals(store, { force: true });
     expect(second.stamped).toEqual([]);
     // Every previously-stamped record now enters the STAMPED arm, agrees, and reports so.
     for (const [id] of SHAPES) {
       expect(second.already_stamped.map((e) => e.id)).toContain(id);
-      expect(await onDisk(id)).toEqual(snapshot[id]);
+      expect(await stored(id)).toEqual(snapshot[id]);
     }
   });
 
   it('DRY RUN is the default: it reports what it would do and writes nothing', async () => {
     await seedCorpus();
-    const before = await onDisk('spawn');
+    const before = await stored('spawn');
     const buckets = await migrateStampSeals(store);
     expect(buckets.stamped).toHaveLength(SHAPES.length);
-    expect(await onDisk('spawn')).toEqual(before);
+    expect(await stored('spawn')).toEqual(before);
   });
 
   it('a store without `stampSeal` refuses the batch and points at its own tooling', async () => {
@@ -336,7 +334,9 @@ describe('#367 part 3 — the report says no more than the branch it is printed 
     const lines = renderMigrateReport(await migrateStampSeals(store), {});
     const text = lines.join('\n');
     expect(text).toContain('WOULD be stamped');
-    expect(text).toContain('• spawn: spawn_failure (phase abandoned → failed)');
+    // The phase the SHAPES row derives through `save()`; the `→` form (stored ≠ derived) is c10a-4a's
+    // tampered-row cell.
+    expect(text).toContain('• spawn: spawn_failure (phase failed)');
     expect(text).toContain('Re-run with --force to actually stamp.');
   });
 
@@ -685,7 +685,7 @@ describe("#367 part 5 — the operator's loop, end to end", () => {
 
     // Leg 2: the operator reads it and rules. There was no arm to correct, so the only truthful
     // provenance is `previous_arm: null` — the first-stamp form.
-    const parked = await onDisk('halted-in-migration');
+    const parked = await stored('halted-in-migration');
     const result = await store.stampSeal(
       'halted-in-migration',
       {
