@@ -49,13 +49,13 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { resolveMcpServerEntry } from '../agent/test-support/mcp-server-entry.js';
-import { MCP_BIN_ON_JSON_UNTIL_C10B_DELTAS_57 } from '../agent/test-support/mcp-bin-on-json.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 import { openRealmHome } from '@sensigo/realm-store-sqlite';
+import { MCP_README_EMBEDDING_UNTIL_C10B3 } from '../agent/test-support/mcp-readme-embedding.js';
 
-// DELTAS 57 (#616 PR-2c c10a-3a; closed by c10b): the cells that start the `realm-mcp` bin. One name, so
-// a cell's only change is this token and prettier leaves its body as it was.
-const xit = it.skipIf(MCP_BIN_ON_JSON_UNTIL_C10B_DELTAS_57);
+// DELTAS 58c and 58e (#616 PR-2c c10b-2; closed by c10b-3): the cell that runs the package README's
+// program. One name, so the cell's only change is this token and prettier leaves its body as it was.
+const xit = it.skipIf(MCP_README_EMBEDDING_UNTIL_C10B3);
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /** The exit of a `realm workflow run` whose run ends failed (measured; the page shows no code). */
@@ -491,7 +491,7 @@ describe(
       });
     });
 
-    xit(CELLS.clients, async () => {
+    it(CELLS.clients, async () => {
       const configs = [
         fence('README.md', '"mcpServers"', 0),
         fence('README.md', '"mcpServers"', 1),
