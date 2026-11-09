@@ -16,7 +16,7 @@ import { respondCommand } from './respond.js';
 import { inspectRun } from './inspect.js';
 import type { CliHome } from '../lib/home.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
-import { plantRegistryRow } from '../test-support/plant-registry-row.js';
+import { plantRegistryRow } from '@sensigo/realm-store-sqlite/test-support';
 
 /** An id the registrar's shape test reads as an agent's (`<slug>-<16 hex>`): here a person's. */
 const HEX_ID = 'ops-review-0123456789abcdef';

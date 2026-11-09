@@ -1,6 +1,7 @@
 // foreign-connection.ts — issue #616 PR-1a unit 10 (SEAMS S15), test support only (the package's
-// `files` leave `dist/**/test-support/**` out except this file and the `./test-support` entry that
-// re-exports it, #616 PR-2c c9a, and the source law that keeps one opener of the store file scans
+// `files` leave `dist/**/test-support/**` out except this file, the registry-row planter beside it and
+// the `./test-support` entry that re-exports both, #616 PR-2c c9a and c10b-2b, and the source law that
+// keeps one opener of the store file scans
 // production code only): a SECOND connection on a home's `realm.db`, opened through the one
 // loader. It is the hostile writer of the guard cells, and the connection PR-1b's in-transaction fence
 // adapter puts runs on (`BEGIN IMMEDIATE`, `insertRunRecord`, `COMMIT`). The open is async; every

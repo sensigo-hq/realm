@@ -1,16 +1,25 @@
-// plant-registry-row.ts — test support (issue #616 PR-2c, c10a-4a): a registered copy the store can
-// never write itself, planted as plain SQL on a foreign connection, for the cells that pin what a
-// surface says about one. `register()` keys a copy on its `id`, so a text with no `id` (not JSON, empty,
-// the text `null`) can only reach the registry from outside Realm. Not published: the package's `files`
-// leaves out `dist/**/test-support/**`.
+// plant-registry-row.ts — test support (issue #616 PR-2c, c10a-4a; moved here from the CLI's test
+// support by c10b-2b, DELTAS 58e), published through the package's `./test-support` entry. It is not a
+// production API and may change with any release.
+//
+// It plants a registered copy the store can never write itself, as plain SQL on a foreign connection,
+// for the cells that pin what a surface says about one. `register()` keys a copy on its `id`, so a text
+// with no `id` (not JSON, empty, the text `null`) can only reach the registry from outside Realm. The
+// store then reads a `'{ not json'` or `''` copy as the registry's pointer arm, and a `'null'` copy as
+// the checker's "it is null" clause.
 //
 // The registry's guard trigger refuses such text and survives `ignore_check_constraints`, so the plant
 // drops it and re-creates it with its exact statement, in one transaction: every later open of the file
-// compares the schema text object by object and refuses a missing trigger as tampered. The registry's
-// tables and the trigger are named here and nowhere else in the CLI's tests.
-import { createHash } from 'node:crypto';
+// compares the schema text object by object and refuses a missing trigger as tampered. The file is
+// reached only through `openForeignConnection` (DELTAS 58e R2), and the two time columns take a fixed
+// instant.
+//
+// One text plants ONCE per home: the version row's hash is its primary key and
+// `workflow_versions_insert_once` refuses a second, so a second plant of the same text in one home rolls
+// back.
 import { REALM_STORE_SCHEMA } from '@sensigo/realm';
-import { openForeignConnection } from '@sensigo/realm-store-sqlite/test-support';
+import { workflowVersionHash } from '../workflow-store.js';
+import { openForeignConnection } from './foreign-connection.js';
 
 const VERSION_GUARD = 'workflow_versions_insert_valid';
 /** Any time column: a fixed instant, read by nothing a planted-row cell asserts. */
@@ -28,7 +37,7 @@ export async function plantRegistryRow(
 ): Promise<void> {
   const guard = REALM_STORE_SCHEMA.find((s) => s.startsWith(`CREATE TRIGGER ${VERSION_GUARD} `));
   if (guard === undefined) throw new Error(`the store's schema holds no ${VERSION_GUARD} trigger`);
-  const hash = createHash('sha256').update(row.text, 'utf8').digest('hex');
+  const hash = workflowVersionHash(row.text);
   const connection = await openForeignConnection(home);
   try {
     connection.exec('BEGIN IMMEDIATE');

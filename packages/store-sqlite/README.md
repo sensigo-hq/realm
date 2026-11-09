@@ -44,4 +44,4 @@ The store uses Node's built-in SQLite, which Node 22 labels as in development an
 
 ## Test support
 
-`@sensigo/realm-store-sqlite/test-support` exports one function, `openForeignConnection(home)`: a second, raw connection on a home's `realm.db`, opened through the package's one loader, for tests that need a hostile writer or reader beside the store (a held lock, a foreign write, a raised schema version). It is test support, not a production API, and it may change with any release.
+`@sensigo/realm-store-sqlite/test-support` exports two functions, `openForeignConnection(home)` — a second, raw connection on a home's `realm.db`, opened through the package's one loader, for tests that need a hostile writer or reader beside the store (a held lock, a foreign write, a raised schema version) — and `plantRegistryRow(home, { id, text })` — a registered copy written as raw text under its hash, the version guard dropped and put back around the write, so a test can give the store a copy it must refuse. Both are test support, not a production API, and may change with any release.
