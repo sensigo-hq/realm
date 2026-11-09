@@ -396,6 +396,8 @@ describe('#616 PR-2c c8a1 — the report on a healthy home, and the WAL counts',
       findings: report.findings,
       not_run: report.not_run,
       not_checked: report.not_checked.map((n) => n.check),
+      // #616 PR-2c c8b1: the entries' words too (the narrowed data_checks sentence among them).
+      not_checked_words: report.not_checked,
       facts: {
         sqlite_version: typeof f.sqlite_version,
         node_version: f.node_version,
@@ -421,6 +423,24 @@ describe('#616 PR-2c c8a1 — the report on a healthy home, and the WAL counts',
       not_run: [],
       // #616 PR-2c c8b1: the two not-checked entries of the data pass.
       not_checked: ['other_processes', 'tombstone_phase', 'purged_key_hash', 'data_checks'],
+      not_checked_words: [
+        {
+          check: 'other_processes',
+          why: "Other Realm processes' connection settings cannot be read from here.",
+        },
+        {
+          check: 'tombstone_phase',
+          why: "A purged run's phase cannot be verified: its record is gone.",
+        },
+        {
+          check: 'purged_key_hash',
+          why: "A purged run's key hash cannot be recomputed: no key is kept.",
+        },
+        {
+          check: 'data_checks',
+          why: 'The checks on tombstones, orphaned rows, workflow pointers and workflow version hashes are not built in this version yet.',
+        },
+      ],
       facts: {
         sqlite_version: 'string',
         node_version: process.version,
