@@ -27,7 +27,13 @@ import type { RealmDb } from './connection.js';
 import type { DatabaseLike } from './driver.js';
 import { runPhaseDerivationFingerprint } from '@sensigo/realm';
 import { META_ROW_PART, type CheckedFile, type FileOutcome } from './open-file.js';
-import { corruptCode, readRecords, type RecordPass } from './store-check-records.js';
+import {
+  corruptCode,
+  ORPHAN_TABLES,
+  readRecords,
+  type PointerWrong,
+  type RecordPass,
+} from './store-check-records.js';
 
 /** The checks, in the order they run and are reported: one `as const` list (framework R3; c8b adds its own). */
 export const CHECK_IDS = [
@@ -45,6 +51,11 @@ export const CHECK_IDS = [
   'key_hashes',
   'filter_columns',
   'placeholders',
+  // c8b2: the comparisons across tables.
+  'tombstones',
+  'orphans',
+  'workflow_pointers',
+  'workflow_version_hashes',
   'data_read',
 ] as const;
 /** A check's id. */
@@ -69,6 +80,11 @@ export const CHECK_FINDING_CODES = [
   'key_hash_mismatch',
   'filter_column_differs',
   'placeholder_mismatch',
+  // c8b2.
+  'purged_count_mismatch',
+  'orphaned_rows',
+  'workflow_pointer_mismatch',
+  'workflow_version_hash_mismatch',
   'data_unreadable',
 ] as const;
 /** A finding's code. */
@@ -82,6 +98,10 @@ const DATA_CHECKS: readonly CheckId[] = [
   'key_hashes',
   'filter_columns',
   'placeholders',
+  'tombstones',
+  'orphans',
+  'workflow_pointers',
+  'workflow_version_hashes',
   'data_read',
 ];
 
@@ -90,7 +110,7 @@ export const NOT_CHECKED_IDS = [
   'other_processes',
   'tombstone_phase',
   'purged_key_hash',
-  'data_checks',
+  'finalizer_after_delete',
 ] as const;
 /** A `not_checked` entry's check. */
 export type NotCheckedId = (typeof NOT_CHECKED_IDS)[number];
@@ -113,6 +133,9 @@ export interface CheckFinding {
   readonly count_is_lower_bound?: true;
   /** At most {@link MAX_EXAMPLES} of what was found, in SQLite's words. */
   readonly examples?: readonly string[];
+  /** How many examples exist in all, present only when that differs from `count` (`orphaned_rows`,
+   *  whose `count` is rows and whose examples are per table and run; DELTAS "Row 51 addendum"). */
+  readonly examples_of?: number;
 }
 
 /** A check that did not run, or ran in part, and the finding that says why. */
@@ -170,6 +193,13 @@ export interface CheckFacts {
   /** How many runs another phase derivation stamped (c8b1): an upgrade's normal state, never a
    *  finding (`realm db migrate` re-stamps them). Counted by the data pass; absent when it did not run. */
   readonly phase_other_stamps?: number;
+  /** Every run purged after this instant keeps its tombstone: the store's creation instant until a
+   *  compaction runs (c8b2). */
+  readonly tombstones_since?: string;
+  /** The last purge seq a compaction removed, 0 today; every tombstone above it is kept. */
+  readonly tombstones_through_seq?: number;
+  /** Every id ever purged (never compacted). */
+  readonly purged_ids?: number;
 }
 
 /** The report `check()` resolves to: the published contract (DELTAS 51). */
@@ -212,10 +242,8 @@ const NOT_CHECKED: readonly CheckNotChecked[] = [
     why: "A purged run's key hash cannot be recomputed: no key is kept.",
   },
   {
-    check: 'data_checks',
-    why:
-      'The checks on tombstones, orphaned rows, workflow pointers and workflow version hashes are ' +
-      'not built in this version yet.',
+    check: 'finalizer_after_delete',
+    why: 'A run deleted while a finalizer was still owed cannot be detected: the purge record keeps no finalizer field.',
   },
 ];
 
@@ -460,11 +488,35 @@ function dataFinding(
   return { check, code, message, count, examples: examples.slice(0, MAX_EXAMPLES) };
 }
 
+/** One side of a pointer example: `pointer <h> at <t>`, or `pointer none` (c8b2). */
+function pointerExample(wrong: PointerWrong): string {
+  const pointer =
+    wrong.pointer === null
+      ? 'pointer none'
+      : `pointer ${wrong.pointer} at ${plain(wrong.pointerAt)}`;
+  const copy = wrong.pointer !== null && !wrong.copy ? ', copy none' : '';
+  const newest =
+    wrong.newest === null ? 'newest none' : `newest ${wrong.newest} at ${plain(wrong.newestAt)}`;
+  return `workflow ${wrong.workflowId}: ${pointer}${copy}, ${newest}`;
+}
+
+/** An integer fact, or nothing when the stored value is not one (c8b2). */
+function integerFact(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) ? value : undefined;
+}
+
 /** The checks each scan of the pass stops when it cannot finish (Behaviour 4; correction 1). */
-const SCAN_STOPS: Record<'runs' | 'evidence' | 'blobs', readonly CheckId[]> = {
+const SCAN_STOPS: Record<
+  'runs' | 'evidence' | 'blobs' | 'tombstones' | 'orphans' | 'pointers' | 'versions',
+  readonly CheckId[]
+> = {
   runs: ['records', 'phase_index', 'key_hashes', 'filter_columns', 'placeholders'],
   evidence: ['evidence_hashes', 'placeholders'],
   blobs: ['placeholders'],
+  tombstones: ['tombstones'],
+  orphans: ['orphans'],
+  pointers: ['workflow_pointers'],
+  versions: ['workflow_version_hashes'],
 };
 
 /**
@@ -592,9 +644,79 @@ function recordFindings(pass: RecordPass): {
       ),
     );
   }
-  // A scan that could not finish: one finding, the first stopped scan's words; its checks not run.
+  // c8b2: the comparisons across tables, each only when its own reads finished.
   const notRun: CheckNotRun[] = [];
-  const stopped = (['runs', 'evidence', 'blobs'] as const).filter((scan) => !pass[scan].done);
+  if (pass.tombstones.done) {
+    if (pass.horizon === undefined) {
+      // No meta row: c8a3's settings finding names it, and the counter cannot be compared.
+      notRun.push({ check: 'tombstones', because: 'settings_differ' });
+    } else if (pass.horizon.purgedIds !== pass.horizon.tombSeq) {
+      findings.push({
+        check: 'tombstones',
+        code: 'purged_count_mismatch',
+        message: `The purged-run count (${plain(pass.horizon.purgedIds)}) differs from the purge counter (${plain(pass.horizon.tombSeq)}).`,
+      });
+    }
+  }
+  if (pass.orphans.done && pass.orphanRows.length > 0) {
+    const count = pass.orphanRows.reduce((sum, row) => sum + row.rows, 0);
+    const perTable = ORPHAN_TABLES.flatMap((table) => {
+      const rows = pass.orphanRows.filter((r) => r.table === table);
+      return rows.length === 0
+        ? []
+        : [`${table} ${String(rows.reduce((sum, r) => sum + r.rows, 0))}`];
+    });
+    const pairs = pass.orphanRows.length;
+    findings.push({
+      check: 'orphans',
+      code: 'orphaned_rows',
+      message:
+        count === 1
+          ? `1 row belongs to a run that is gone: ${perTable.join(', ')}.`
+          : `${String(count)} rows belong to runs that are gone: ${perTable.join(', ')}.`,
+      count,
+      examples: pass.orphanRows
+        .slice(0, MAX_EXAMPLES)
+        .map((r) => `${r.table}, run ${r.runId}: ${counted(r.rows, '1 row', 'rows')}`),
+      ...(pairs === count ? {} : { examples_of: pairs }),
+    });
+  }
+  if (pass.pointers.done && pass.pointerWrong.length > 0) {
+    const n = pass.pointerWrong.length;
+    findings.push(
+      dataFinding(
+        'workflow_pointers',
+        'workflow_pointer_mismatch',
+        counted(
+          n,
+          "1 workflow's pointer does not match its newest registration.",
+          "workflows' pointers do not match their newest registration.",
+        ),
+        n,
+        pass.pointerWrong.map(pointerExample),
+      ),
+    );
+  }
+  if (pass.versions.done && pass.versionWrong.length > 0) {
+    const n = pass.versionWrong.length;
+    findings.push(
+      dataFinding(
+        'workflow_version_hashes',
+        'workflow_version_hash_mismatch',
+        counted(
+          n,
+          '1 stored workflow version does not match its hash.',
+          'stored workflow versions do not match their hash.',
+        ),
+        n,
+        pass.versionWrong.map((v) => `workflow ${v.workflowId}, hash ${v.hash}`),
+      ),
+    );
+  }
+  // A scan that could not finish: one finding, the first stopped scan's words; its checks not run.
+  const stopped = (
+    ['runs', 'evidence', 'blobs', 'tombstones', 'orphans', 'pointers', 'versions'] as const
+  ).filter((scan) => !pass[scan].done);
   if (stopped.length > 0) {
     const first = pass[stopped[0]!];
     findings.push({
@@ -739,6 +861,7 @@ export async function runCheck(file: CheckedFile, context: CheckContext): Promis
   const read = measuredOn?.read;
   const wal = measuredOn?.wal;
   const pass = measuredOn?.pass;
+  const horizon = pass?.tombstones.done === true ? pass.horizon : undefined;
   if (measuredOn !== undefined) findings.push(...measuredOn.findings);
   if (pass !== undefined) {
     const data = recordFindings(pass);
@@ -762,6 +885,9 @@ export async function runCheck(file: CheckedFile, context: CheckContext): Promis
     ...optional('wal_frames', walFrames),
     ...optional('wal_frames_copied', walFramesCopied),
     ...optional('phase_other_stamps', pass?.runs.done === true ? pass.otherStamps : undefined),
+    ...(typeof horizon?.since === 'string' ? { tombstones_since: horizon.since } : {}),
+    ...optional('tombstones_through_seq', integerFact(horizon?.throughSeq)),
+    ...optional('purged_ids', integerFact(horizon?.purgedIds)),
   };
   return {
     status: findings.length === 0 && notRun.length === 0 ? 'ok' : 'findings',
