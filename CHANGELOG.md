@@ -22,6 +22,7 @@ All notable changes to this project are documented here.
 - **`UsageRecord` gains `response_id`:** each Anthropic request records the id of the answer (`msg_…`), kept only when it starts with `msg_`, is at most 256 characters and has no control character, and the store contract (`USAGE_RECORD_ROUNDTRIP`) holds it. (#600)
 - **Core exports `normalizeResponseId`,** the one check a request's `response_id` passes. (#600)
 - **`UsageRecord` gains `cache_diagnostics`:** what a request asked Anthropic about a cache miss and what Anthropic answered, in closed words and numbers with the checked id it named, and the store contract (`USAGE_RECORD_ROUNDTRIP`) holds it. (#600)
+- **`realm agent` and `realm listen` take `--cache-diagnostics on|off`.** On by default at Anthropic's own address: Realm asks Anthropic why a request missed the cache, and each request that asks leaves a short-lived fingerprint at Anthropic. (#600)
 - **`realm run inspect` adds a line under a step's cost for each request that missed the cache.** The line names the first difference on the record, a pause longer than the entry's lifetime, or that the record shows no difference (never a proven cause), and what the miss cost when your economics file prices it. (#600)
 - **Core exports `CostMiss`, `CacheMissCause`, `CACHE_MISS_CAUSES`, `CacheMissRule`, `CachePredecessorPlace`, `CacheLifetimeSource` and `CACHE_LIFETIME_SOURCES`.** (#600)
 - **The composed cost view gains `CostView.misses`.** Numbers and closed words only. (#600)

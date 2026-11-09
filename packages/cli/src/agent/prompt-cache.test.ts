@@ -7,6 +7,7 @@ import { InvalidArgumentError } from 'commander';
 import type { StepDefinition, WorkflowDefinition } from '@sensigo/realm';
 import {
   cacheableStepCounts,
+  parseCacheDiagnostics,
   parsePromptCache,
   resolvePromptCache,
   type ResolvedPromptCache,
@@ -155,5 +156,41 @@ describe('cacheableStepCounts (issue #600 PR 2, C1)', () => {
       singleShot: 0,
       withTools: 1,
     });
+  });
+});
+
+describe('parseCacheDiagnostics (caching 3-M B2b, check 1)', () => {
+  // Real case: an operator's `ON` or `true` must not pass as a setting. (a) red when the parser is
+  // case-insensitive (the `ON` row) or takes any word; (b) prints the value and what the parser did.
+  it.each(['ON', 'true', ''])('refuses %j with the flag message', (value) => {
+    let thrown: unknown;
+    try {
+      parseCacheDiagnostics(value);
+    } catch (err) {
+      thrown = err;
+    }
+    expect({
+      value,
+      refused: thrown instanceof InvalidArgumentError,
+      message: (thrown as Error)?.message,
+    }).toEqual({ value, refused: true, message: '--cache-diagnostics must be on or off.' });
+  });
+
+  // (a) red when a stated word is refused or changed; (b) prints the value.
+  it.each(['on', 'off'])('accepts %j', (value) => {
+    expect(parseCacheDiagnostics(value)).toBe(value);
+  });
+
+  // Real case: an unstated flag must stay unstated, or listen's argv and the re-attach command would
+  // carry a value nobody typed. (a) red when a command takes another parser or gives the flag a
+  // default; (b) prints which commands carry it and their defaults.
+  it('both commands parse --cache-diagnostics with this one parser, and neither gives it a default', () => {
+    const of = (cmd: typeof agentCommand) =>
+      cmd.options.find((o) => o.long === '--cache-diagnostics');
+    expect({
+      agent: of(agentCommand)?.parseArg === parseCacheDiagnostics,
+      listen: of(listenCommand)?.parseArg === parseCacheDiagnostics,
+      defaults: [of(agentCommand)?.defaultValue, of(listenCommand)?.defaultValue],
+    }).toEqual({ agent: true, listen: true, defaults: [undefined, undefined] });
   });
 });
