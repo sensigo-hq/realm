@@ -6,7 +6,6 @@
 import { declared } from '../test-support/declared.js';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,13 +23,6 @@ import type { RunRecord, RunStore, PerRunArtifactStore } from '@sensigo/realm';
 import { JsonTraceBufferStore } from '@sensigo/realm-mcp';
 import { snap } from '../test-support/snapshot-double.js';
 import { writtenSnapshot } from '@sensigo/realm';
-
-/** Recompute the pointer-file path the store uses (sha256 of workflowId\0key) — test-side only,
- *  mirroring json-file-store.test.ts's own helper; NOT a production code path. */
-function keyPointerPath(dir: string, workflowId: string, key: string): string {
-  const hash = createHash('sha256').update(`${workflowId}\0${key}`).digest('hex');
-  return join(dir, 'keys', `${hash}.json`);
-}
 
 /** Save a RunRecord verbatim through the store's `save` (#616 PR-2c, c0), bypassing create/update
  *  (full field control: update() always stamps updated_at=now, which would defeat the batch
@@ -610,8 +602,8 @@ describe('purgeRuns — batch mode (--older-than)', () => {
 });
 
 describe('purgeRuns — supersede soundness (mutation-probe #2 companion, at the orchestrator level)', () => {
-  it('purging a superseded (old) run never deletes the live successor’s pointer', async () => {
-    const { dir, runStore, artifactStores, cleanup } = await makeStores();
+  it('purging a superseded (old) run never deletes the live successor: its key still answers it', async () => {
+    const { runStore, artifactStores, cleanup } = await makeStores();
     try {
       const { record: oldRun } = await runStore.create({
         workflowId: 'wf-1',
@@ -636,8 +628,20 @@ describe('purgeRuns — supersede soundness (mutation-probe #2 companion, at the
       const result = await purgeRuns({ runId: oldRun.id, dryRun: false }, runStore, artifactStores);
 
       expect(result.purged).toEqual([oldRun.id]);
-      const ptr = JSON.parse(await readFile(keyPointerPath(dir, 'wf-1', 'k1'), 'utf8'));
-      expect(ptr.run_id).toBe(newRun.id);
+      // The live successor, read through the store (#616 PR-2c, c10a-2b): a keyed create with the
+      // same key answers it, and makes no third run.
+      const again = await runStore.create({
+        workflowId: 'wf-1',
+        workflowVersion: 1,
+        params: {},
+        idempotencyKey: 'k1',
+      });
+      // (a) red when the purge deletes the successor's record too (the keyed create then makes a
+      //     third run); (b) prints whether it created and the run it answered.
+      expect({ created: again.created, id: again.record.id }).toEqual({
+        created: false,
+        id: newRun.id,
+      });
       expect((await runStore.get(newRun.id)).record.id).toBe(newRun.id);
     } finally {
       await cleanup();

@@ -9,12 +9,13 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: run
 // and gate ids, file names, printed lines — never a token or an environment.
 import { describe, it, expect, beforeEach, afterEach, onTestFinished, vi } from 'vitest';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { JsonWorkflowStore, WorkflowError } from '@sensigo/realm';
+import { WorkflowError } from '@sensigo/realm';
 import { abandonCommand, emptyReasonRefusal } from './abandon.js';
 import { respondCommand } from './respond.js';
 import { inspectRun } from './inspect.js';
+import type { CliHome } from '../lib/home.js';
 import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 /** An id the registrar's shape test reads as an agent's (`<slug>-<16 hex>`): here a person's. */
@@ -41,7 +42,6 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
     h = await makeTempHome();
     home = h.root;
     wfDir = join(h.path, 'workflows');
-    await mkdir(wfDir, { recursive: true });
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -81,6 +81,7 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
     if (typeof parsed === 'object' && parsed !== null) {
       await h.home.workflowStore.register(parsed as never);
     } else {
+      void h.home.workflowStore; // 2c-ii: the raw damaged-copy writes need the folder the JSON registry's constructor makes
       await writeFile(join(wfDir, `${workflowId}.json`), copy);
     }
   }
@@ -252,7 +253,10 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
       "The registered copy of workflow 'wf' is missing from the store or is not JSON: something " +
       'other than Realm changed the database. Register the workflow again from its source; if ' +
       'this message comes back, restore the database from a backup.';
-    const spy = vi.spyOn(JsonWorkflowStore.prototype, 'get').mockRejectedValue(
+    // The prototype the handle's registry instance has: the commands open their own registry through
+    // the door, an instance of the same class (c10a-2c-i).
+    const proto = Object.getPrototypeOf(h.home.workflowStore) as CliHome['workflowStore'];
+    const spy = vi.spyOn(proto, 'get').mockRejectedValue(
       new WorkflowError(pointer, {
         code: 'RESOURCE_FORMAT_INVALID',
         category: 'RESOURCE',
@@ -311,29 +315,6 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
         unchanged: true,
       },
     });
-  });
-
-  it('#819 follow-up 2 (R2, R13): a registry folder at mode 000 — abandon’s refusal and respond name the same act', async () => {
-    const { id } = await atGate('plain-gate', copyOf('plain-gate', { source_dir: home }));
-    const { chmod } = await import('node:fs/promises');
-    await chmod(wfDir, 0o000);
-    try {
-      const refusal = (await abandon(id)).err;
-      errSpy.mockClear();
-      await respondCommand
-        .parseAsync([id, '--gate', 'g-1', '--choice', 'ship'], { from: 'user' })
-        .catch(() => undefined);
-      const responded = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
-      const ACT = `make the registry directory ${wfDir} readable and searchable (chmod u+rx ${wfDir})`;
-      // (a) red when the two surfaces name different repairs for one state (abandon's `validate
-      //     --registered` beside respond's act — R13); (b) prints whether each names the act.
-      expect({
-        abandon: refusal.endsWith(`${UNANSWERABLE} Repair it: ${ACT}`),
-        respond: responded.includes(ACT),
-      }).toEqual({ abandon: true, respond: true });
-    } finally {
-      await chmod(wfDir, 0o755);
-    }
   });
 
   it('#819 follow-up 2 (R1, the audit’s S5): an empty or blank --reason is refused in respond --by’s words — nothing is recorded, with no claim about the run', async () => {

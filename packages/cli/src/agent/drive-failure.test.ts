@@ -5,8 +5,6 @@
 // of it. Most of these cells are about that discipline rather than about the happy path.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { WorkflowError, ExtensionRegistry } from '@sensigo/realm';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import type { RunRecord, DriveFailureRecord, WorkflowDefinition } from '@sensigo/realm';
 import {
   recordDriveFailure,
@@ -463,12 +461,22 @@ describe('W1 — real SDK error objects classify by their CONSTRUCTOR', () => {
 describe('issue #719 — the fence names why, when the store refused with a Realm error', () => {
   it('the failure being recorded IS the store’s refusal (the same file failed both reads): its message said once (C6)', async () => {
     const h = await makeTempHome();
-    const runsDir = h.home.runStore.runsDirPath;
-    mkdirSync(runsDir, { recursive: true });
     try {
-      writeFileSync(join(runsDir, 'bad.json'), '{not json');
-      const store = h.home.runStore;
-      const refusal = await store.get('bad').catch((e: unknown) => e);
+      // The store refuses the read with a Realm error (#616 PR-2c, c10a-2b: a double over the
+      // handle's run store, its `get` rejecting with the SAME error the entry is built from).
+      const refusal = new WorkflowError('The store could not read run bad: a fake refusal.', {
+        code: 'ENGINE_STORE_FAILED',
+        category: 'ENGINE',
+        agentAction: 'stop',
+        retryable: false,
+      });
+      const store = new Proxy(h.home.runStore, {
+        get(target, prop) {
+          if (prop === 'get') return async (): Promise<never> => Promise.reject(refusal);
+          const v = Reflect.get(target, prop, target) as unknown;
+          return typeof v === 'function' ? (v as (...x: unknown[]) => unknown).bind(target) : v;
+        },
+      });
       await recordDriveFailure(
         store,
         'bad',
@@ -478,10 +486,12 @@ describe('issue #719 — the fence names why, when the store refused with a Real
       // (a) red when the store's message is appended to an entry that already carries it (the
       //     fault printed twice on one line); (b) prints the line count and how often the fault
       //     appears.
-      expect({ lines: errors.length, faultTimes: line.split('is not JSON').length - 1 }).toEqual({
-        lines: 1,
-        faultTimes: 1,
-      });
+      expect({ lines: errors.length, faultTimes: line.split('a fake refusal').length - 1 }).toEqual(
+        {
+          lines: 1,
+          faultTimes: 1,
+        },
+      );
     } finally {
       await h.cleanup();
     }

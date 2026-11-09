@@ -5,7 +5,7 @@
 // import time), so pointing $HOME at a temp dir before parseAsync isolates it safely (same
 // technique as abandon.test.ts).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { registerCommand } from './register.js';
@@ -16,7 +16,6 @@ describe('register — description echo (issue #144 correction)', () => {
 
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), 'realm-register-description-'));
-    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
   });

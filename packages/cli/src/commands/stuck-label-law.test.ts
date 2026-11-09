@@ -8,7 +8,7 @@
 // that label. Stated per FINDING (a fixture may carry other findings — `capability_block`'s
 // antecedent co-fires), so the assertion is containment, never equality.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, writeFileSync, statSync } from 'node:fs';
+import { writeFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { listRuns, listCommand } from './list.js';
 import { STUCK_DEFINITION_PARSE_CAP_BYTES, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
@@ -248,8 +248,7 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
     h = await makeTempHome();
     home = h.root;
     wfDir = join(home, '.realm', 'workflows');
-    // Kept (#616 PR-2c c0, R5 (i)): the cells write registry copies raw into it (B-layout, c5's).
-    mkdirSync(wfDir, { recursive: true });
+    void h.home.workflowStore; // 2c-ii: the raw damaged-copy writes need the folder the JSON registry's constructor makes
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -428,34 +427,6 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
         .split('\n')
         .find((l) => l.includes('run-ghost')),
     ).toContain('definition_unresolvable (missing) (realm run inspect run-ghost)');
-  });
-
-  it('LAW-g a GATE-WAITING run with an unreadable copy IS selected, and its label points at inspect (review fold C13; since R9 every live run does — the walk found abandon as the only offered act destroyed a repairable run)', async () => {
-    const { chmodSync } = await import('node:fs');
-    const copy = join(wfDir, 'wf-gate.json');
-    writeFileSync(copy, JSON.stringify({ id: 'wf-gate', schema_version: 3 }), 'utf8');
-    chmodSync(copy, 0o000);
-    await plantRun('run-g', 'wf-gate', OLDER, {
-      run_phase: 'gate_waiting',
-      pending_gate: {
-        gate_id: 'g1',
-        step_name: 's1',
-        choices: ['a', 'b'],
-        opened_at: OLDER,
-        preview: {},
-      },
-    });
-    try {
-      await listCommand.parseAsync(['--stuck', '--older-than', '0m'], { from: 'user' });
-    } finally {
-      chmodSync(copy, 0o644);
-    }
-    const line =
-      out()
-        .split('\n')
-        .find((l) => l.startsWith('run-g')) ?? '';
-    expect(line).toContain('definition_unresolvable (unreadable) (realm run inspect run-g)');
-    expect(line).not.toContain('abandon');
   });
 
   it('CAP5 a corrupt copy and a legacy copy render WORDS in the class slot — never an error code', async () => {

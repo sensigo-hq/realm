@@ -4,7 +4,7 @@
 // `retry` key stays a warning (an unknown step key is refused first). Beside the cell: (a) what turns
 // it red; (b) what it prints on failure — the warning lines (the key is fake).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { registerCommand } from './register.js';
@@ -16,7 +16,6 @@ describe('#872 (b1) B8 — the CLI’s unknown-key line', () => {
 
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), 'realm-unknown-key-872-'));
-    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     printed.length = 0;

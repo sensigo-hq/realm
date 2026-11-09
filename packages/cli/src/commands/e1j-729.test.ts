@@ -13,6 +13,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { sealRunLevel } from '@sensigo/realm';
 import { makeTempHome, type TempHome, runIds } from '../test-support/temp-home.js';
 
 const mocks = vi.hoisted(() => ({ question: vi.fn(), close: vi.fn() }));
@@ -102,7 +103,6 @@ describe(
     });
 
     const errored = (): string[] => errSpy.mock.calls.map((c: unknown[]) => String(c[0]));
-    const runsDir = () => join(home, '.realm', 'runs');
     const abortError = () =>
       Object.assign(new Error('The operation was aborted'), {
         name: 'AbortError',
@@ -149,7 +149,12 @@ describe(
         // Another terminal purged the run while this prompt sat open (the #291 race the fresh
         // read exists for): the record is gone before the cancel.
         id = (await runIds(h.home.runStore))[0];
-        rmSync(join(runsDir(), `${id}.json`), { force: true });
+        // Through the store (#616 PR-2c, c10a-2b): the run sealed, then its record deleted.
+        const { record } = await h.home.runStore.get(id!);
+        await h.home.runStore.update(
+          sealRunLevel(record, 'abandon_requested', 'Purged elsewhere.', new Date()),
+        );
+        await h.home.runStore.deleteAllForRun(id!);
         // The text the store itself gives for the vanished record — the line must carry it as is.
         storeMessage = await h.home.runStore
           .get(id!)
@@ -180,7 +185,12 @@ describe(
           throw new Error(`fixture: an unexpected prompt: ${prompt}`);
         }
         id = (await runIds(h.home.runStore))[0];
-        rmSync(join(runsDir(), `${id}.json`), { force: true });
+        // Through the store (#616 PR-2c, c10a-2b): the run sealed, then its record deleted.
+        const { record } = await h.home.runStore.get(id!);
+        await h.home.runStore.update(
+          sealRunLevel(record, 'abandon_requested', 'Purged elsewhere.', new Date()),
+        );
+        await h.home.runStore.deleteAllForRun(id!);
         storeMessage = await h.home.runStore
           .get(id!)
           .then(() => 'fixture: the record was still readable')

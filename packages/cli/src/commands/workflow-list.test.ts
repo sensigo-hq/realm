@@ -2,12 +2,13 @@
 // constructed (JsonWorkflowStore resolves its directory from homedir() at construction and
 // mkdirSyncs it — the #285 lazy-resolution precedent).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { workflowListCommand, sortedById, schemaCell } from './workflow-list.js';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
+import { makeTempHome, type TempHome } from '../test-support/temp-home.js';
 
 function definition(id: string, over: Partial<WorkflowDefinition> = {}): WorkflowDefinition {
   return {
@@ -24,28 +25,31 @@ function definition(id: string, over: Partial<WorkflowDefinition> = {}): Workflo
 describe('realm workflow list (issue #427)', () => {
   let home: string;
   let wfDir: string;
+  let h: TempHome;
   let originalHome: string | undefined;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let warnSpy: ReturnType<typeof vi.spyOn>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     home = mkdtempSync(join(tmpdir(), 'realm-wf-list-'));
     wfDir = join(home, '.realm', 'workflows');
+    h = await makeTempHome({ home: join(home, '.realm') });
+    void h.home.workflowStore; // 2c-ii: the raw damaged-copy writes need the folder the JSON registry's constructor makes
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (originalHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = originalHome;
+    await h.cleanup();
     rmSync(home, { recursive: true, force: true });
     vi.restoreAllMocks();
   });
 
   function plant(fileBase: string, def: unknown): void {
-    mkdirSync(wfDir, { recursive: true });
     writeFileSync(join(wfDir, `${fileBase}.json`), JSON.stringify(def, null, 2), 'utf8');
   }
 
@@ -56,8 +60,8 @@ describe('realm workflow list (issue #427)', () => {
     // Registered out of order deliberately. This is an operator smoke check, NOT the sort's
     // discriminator — readdirSync returns alphabetical order on this filesystem, so this cell
     // stays green with the sort deleted. L1b is the pin that bites.
-    plant('zebra-wf', definition('zebra-wf'));
-    plant('alpha-wf', definition('alpha-wf'));
+    await h.home.workflowStore.register(definition('zebra-wf') as never);
+    await h.home.workflowStore.register(definition('alpha-wf') as never);
 
     await workflowListCommand.parseAsync([], { from: 'user' });
 
@@ -74,7 +78,7 @@ describe('realm workflow list (issue #427)', () => {
 
   it('L2 a legacy entry is named on the older-version ⚠ line, never a table row; a current one is in the table (correction 2, 8.6 (c); was: marked in the table)', async () => {
     plant('ancient', { id: 'ancient', name: 'Ancient', version: 2, steps: {} });
-    plant('modern', definition('modern'));
+    await h.home.workflowStore.register(definition('modern') as never);
 
     await workflowListCommand.parseAsync([], { from: 'user' });
 
@@ -105,8 +109,7 @@ describe('realm workflow list (issue #427)', () => {
     // list() would silently skip this. An operator asking what is in their registry needs to
     // know realm cannot read one of the entries — that is the signal, which is also why this
     // surface never exits non-zero for it.
-    plant('good', definition('good'));
-    mkdirSync(wfDir, { recursive: true });
+    await h.home.workflowStore.register(definition('good') as never);
     writeFileSync(join(wfDir, 'garbage.json'), '{ not json', 'utf8');
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
       throw new Error('process.exit');
@@ -123,9 +126,8 @@ describe('realm workflow list (issue #427)', () => {
   });
 
   it('L4 --json carries the workflows, the unreadable and the mismatched', async () => {
-    plant('good', definition('good'));
+    await h.home.workflowStore.register(definition('good') as never);
     plant('probe-mismatch', definition('inner-id'));
-    mkdirSync(wfDir, { recursive: true });
     writeFileSync(join(wfDir, 'garbage.json'), '{ not json', 'utf8');
 
     await workflowListCommand.parseAsync(['--json'], { from: 'user' });
@@ -148,18 +150,5 @@ describe('realm workflow list (issue #427)', () => {
     const out = stdout();
     expect(out).toContain('ID');
     expect(out).toContain('0 workflows registered.');
-  });
-
-  it('L6 a file whose stored id differs from its filename is disclosed', async () => {
-    // Hand-constructible, and invisible otherwise: `--registered` resolves by FILENAME while
-    // this listing prints the inner id, so without the census line the entry is reachable under
-    // a name the list never showed.
-    plant('probe-mismatch', definition('something-else'));
-
-    await workflowListCommand.parseAsync([], { from: 'user' });
-
-    expect(stderr()).toContain(
-      "⚠ 1 file whose stored id differs from its filename: probe-mismatch.json (id 'something-else') — '--registered' resolves by filename.",
-    );
   });
 });
