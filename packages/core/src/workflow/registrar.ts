@@ -14,6 +14,7 @@ import { CURRENT_WORKFLOW_SCHEMA_VERSION } from './yaml-loader.js';
 import { deriveRunPhase } from '../engine/eligibility.js';
 import { withFullStop } from '../engine/pending.js';
 import {
+  isUnusableCopy,
   renderDefinitionAbsent,
   type DefinitionAbsence,
   type RegisterWay,
@@ -1076,13 +1077,17 @@ export async function getWorkflowForRun(
     const gateRemedy = (): readonly WayOn[] | undefined => {
       const live = run.terminal_state === true ? undefined : run.pending_gate;
       if (live === undefined) return undefined;
-      const path = definitionAbsenceOf(err, run)?.path;
+      const absence = definitionAbsenceOf(err, run);
+      const path = absence?.path;
       const register: RegisterWay = {
         verb: 'register',
         conditions: [],
         workflow_id: run.workflow_id,
         run_id: run.id,
         ...(path !== undefined ? { path } : {}),
+        ...(absence !== undefined && isUnusableCopy(absence.absent)
+          ? { copy: 'unusable' as const }
+          : {}),
       };
       return [register];
     };

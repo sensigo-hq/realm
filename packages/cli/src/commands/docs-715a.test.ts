@@ -347,6 +347,14 @@ describe('#715 (a) — the docs sentences', () => {
       claimChangelog(sentence);
   });
 
+  it('#616 PR-2c c10a-4c: the CHANGELOG entry', () => {
+    // ways-renderer.test.ts's and render-reply.test.ts's c10a-4c cells: each door's way out for a
+    // copy with no file; answer-record-627.test.ts runs the printed command on a SQLite home.
+    claimChangelog(
+      "**A damaged registered copy sends the operator to `realm workflow validate --registered <id>`** in the MCP server's way out (the operator's command on `realm mcp`'s and `realm serve`'s person line), also when the copy has no file (the SQLite store's copies); only a copy that is not there says `realm workflow register <file>`. (#616)",
+    );
+  });
+
   it('the CHANGELOG entries, sentence by sentence', () => {
     for (const sentence of [
       // #616 PR-2c c10a-4b.
