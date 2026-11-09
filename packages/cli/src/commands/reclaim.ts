@@ -9,7 +9,6 @@ import { Command } from 'commander';
 import { cliCommandOf, writerHost } from './ways-renderer.js';
 import type { RunRecord, StepDefinition, InProgressClaimInfo, ReclaimResult } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
-import { listRunsDiagnosed, unreadableRunLines } from './list.js';
 import { RUN_PHASE_WORDS, writerCtx } from '../output/writer.js';
 import { formatInstantWords, overdueOf } from '@sensigo/realm';
 import { openCliHome } from '../lib/home.js';
@@ -159,14 +158,7 @@ export const reclaimCommand = new Command('reclaim')
         // #715 (b) (D-26): no clock read here — each row is judged at its own snapshot's `at`.
         const selected: Array<{ runId: string; claim: InProgressClaimInfo; at: Date }> = [];
         try {
-          // issue #719 (B3): act on the readable runs; a damaged run file is reported, not acted on.
-          const { snapshots, unreadable } = await listRunsDiagnosed(store, opts.workflow);
-          for (const line of unreadableRunLines(
-            unreadable,
-            '; realm run reclaim --all did not act on them.',
-          )) {
-            console.error(line);
-          }
+          const { snapshots } = await store.list(opts.workflow);
           for (const { record: run, at } of snapshots) {
             if (run.terminal_state) continue;
             const claims = classifyInProgressClaims(writtenSnapshot(run, at));

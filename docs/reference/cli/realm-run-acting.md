@@ -17,7 +17,7 @@
 | [`migrate`](#migrate) | Records the ending of runs that were written by old versions.  | Only with `--force`         |
 | [`import`](#import)   | Brings run records and exports from JSON files into the store. | Always                      |
 
-A duration is a whole number followed by `d`, `h` or `m`: `30d`, `6h`, `10m`. A run ID that is not in the store gets `Run not found: <id>` and exit code 1. A run ID whose file cannot be read as a run (empty, not JSON, not a run record, holding another run, in the format of an earlier Realm, or not readable) gets a message naming the file, what is wrong with it and the way out, and exit code 1 (added after version 0.47.0); `purge <id> --force` then deletes nothing, as before.
+A duration is a whole number followed by `d`, `h` or `m`: `30d`, `6h`, `10m`. A run ID that is not in the store gets `Run not found: <id>` and exit code 1.
 
 When the `@sensigo/realm` the workflow's code imports is not the version the command runs, the command prints [`REALM_RELEASE_LINE_MISMATCH`](../workflow/loader-diagnostics.md#warning-codes) to stderr once per copy and goes on. This was added in 0.46.0.
 
@@ -343,7 +343,7 @@ abandon is a kill — declared finalizers (if any) did NOT run and will not for 
 
 Without `--dry-run`, the first line reads `Marked 4 run(s) as abandoned.` A run it abandons shows `Sealed by: cleanup_sweep` and `Cause: Marked abandoned by realm cleanup` in `realm run inspect`.
 
-**Exit code:** 0, also when no run matches. 1 for a duration that cannot be read. A run file that cannot be read as a run, except a copy of a run whose own file reads, is not acted on: it is named on standard error with what is wrong with it and the way out, then `⚠ <n> run file(s) in '<runs folder>' could not be read; realm run cleanup did not act on them.`, and the exit code is that of the runs acted on (added after version 0.47.0).
+**Exit code:** 0, also when no run matches. 1 for a duration that cannot be read.
 
 ## `reclaim`
 
@@ -420,7 +420,7 @@ Reclaimed 1/1 selected claim(s).
 
 When nothing is selected, it prints `No auto-reclaimable claims found (idempotent ∧ concrete-past-deadline ∧ non-gated).` A run with no step in progress gets `Run '<id>' (running) has no in-progress claims. Nothing to reclaim.`, and a run that has ended gets `Run '<id>' is terminal (completed); it has no reclaimable claim.`
 
-**Exit code:** 0, also when there is nothing to free. With `--all`, a run file that cannot be read as a run, except a copy of a run whose own file reads, is not acted on: it is named on standard error with what is wrong with it and the way out, then `⚠ <n> run file(s) in '<runs folder>' could not be read; realm run reclaim --all did not act on them.`, and the exit code is that of the runs acted on (added after version 0.47.0). 1 for a combination that cannot be used:
+**Exit code:** 0, also when there is nothing to free. 1 for a combination that cannot be used:
 
 ```text
 Provide a <run-id> to inspect/reclaim, or use --all for batch mode.
@@ -592,7 +592,7 @@ The runs after the second — the work the engine owes, a step that cannot run a
 
 In the `To run … the engine owes` line of a run still going, `, from a program that has handler '<name>'` (or `adapter '<name>'`) comes before the `:` when a step it names needs a handler or adapter other than the `filesystem` adapter and the `check_quotes` handler, which every Realm program has. Added after version 0.48.0.
 
-**Exit code:** 0 if every cleanup step it tried ran, and when there is nothing to do. With `--all`, a run file that cannot be read as a run, except a copy of a run whose own file reads, is not acted on: it is named on standard error with what is wrong with it and the way out, then `⚠ <n> run file(s) in '<runs folder>' could not be read; realm run drain --all did not act on them.`, and the exit code is that of the runs acted on (added after version 0.47.0, which crashed). 1 if a cleanup step is left owed after `--force`, if `--force` prints one of the seven `is not terminal … nothing to drain` lines above, or for one of:
+**Exit code:** 0 if every cleanup step it tried ran, and when there is nothing to do. 1 if a cleanup step is left owed after `--force`, if `--force` prints one of the seven `is not terminal … nothing to drain` lines above, or for one of:
 
 ```text
 Provide a <run-id>, or use --all for batch mode.
@@ -666,7 +666,7 @@ Re-run with --force to actually delete.
 
 When no run is old enough, it prints `No eligible runs found to purge.`
 
-**Exit code:** 0, also when a run was blocked or nothing matched. With `--older-than`, a run file that cannot be read as a run, except a copy of a run whose own file reads, is not acted on: it is named on standard error with what is wrong with it and the way out, then `⚠ <n> run file(s) in '<runs folder>' could not be read; realm run purge did not act on them.`, and the exit code is that of the runs acted on (added after version 0.47.0). 1 if a run could not be deleted because of an error, or for one of:
+**Exit code:** 0, also when a run was blocked or nothing matched. 1 if a run could not be deleted because of an error, or for one of:
 
 ```text
 Provide a <run-id> to purge, or use --older-than for batch mode.
@@ -682,11 +682,11 @@ realm run migrate --stamp-seals [--force] [--detailed-exitcode]
 
 Since version 0.39, a run that ends records what ended it, which `realm run inspect` prints as `Sealed by`. `migrate --stamp-seals` works out that value for finished runs written by older versions and stores it. It does not change a run's time of last change.
 
-| Flag                  | Required | What it does                                                                                                                                                                                                       |
-| --------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `--stamp-seals`       | Yes      | The only kind of migration.                                                                                                                                                                                        |
-| `--force`             | No       | Writes. Without it, `migrate` lists what it would write.                                                                                                                                                           |
-| `--detailed-exitcode` | No       | Exits with 2 if a finished run is left whose ending cannot be worked out, or whose record disagrees with its stored ending, or if a run file cannot be read as a run, except a copy of a run whose own file reads. |
+| Flag                  | Required | What it does                                                                                                                |
+| --------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `--stamp-seals`       | Yes      | The only kind of migration.                                                                                                 |
+| `--force`             | No       | Writes. Without it, `migrate` lists what it would write.                                                                    |
+| `--detailed-exitcode` | No       | Exits with 2 if a finished run is left whose ending cannot be worked out, or whose record disagrees with its stored ending. |
 
 On two runs written by version 0.38:
 
@@ -721,7 +721,7 @@ Nothing would be stamped — every terminal run already carries its seal arm.
 Residue: 0 terminal run(s) still without a recorded seal arm.
 ```
 
-**Exit code:** 0. 1 if a write failed, or if `--stamp-seals` was not given. 2 only with `--detailed-exitcode`, as described above. A run file that cannot be read as a run, except a copy of a run whose own file reads, is listed in its own group (`<n> run file(s) could not be read and were left untouched:`) with what is wrong with it, and named on standard error with its way out; the residue line counts it apart from the terminal runs (`Residue: <n> terminal run(s) still without a recorded seal arm; <m> run file(s) could not be read.`), and it makes `--detailed-exitcode` give 2 (added after version 0.47.0).
+**Exit code:** 0. 1 if a write failed, or if `--stamp-seals` was not given. 2 only with `--detailed-exitcode`, as described above.
 
 ## `import`
 

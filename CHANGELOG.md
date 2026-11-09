@@ -285,6 +285,7 @@ get_run_state.` It repeated one whole sentence, way out included, for every step
   stops with `error: unknown command '<name>'` on stderr and exit code 1. With gc, the `run_absent`
   fence leaves the `FencePredicate` union (purge's `run_absent_or_terminal` stays, and the published
   trace-buffer contract passes on it) and `STATE_RUN_RESURRECTED` leaves the error codes.
+- **No command reports "run files that could not be read" any more:** on the SQLite store a run is a row, so `realm run list`, `cleanup`, `reclaim`, `drain`, `purge` and `run migrate` print no such line, and `realm listen`'s sweeper logs no skipped files. (#616)
 
 ### Fixed
 

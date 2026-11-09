@@ -349,6 +349,8 @@ describe('#715 (a) — the docs sentences', () => {
 
   it('the CHANGELOG entries, sentence by sentence', () => {
     for (const sentence of [
+      // #616 PR-2c c10a-4b.
+      '**No command reports "run files that could not be read" any more:** on the SQLite store a run is a row, so `realm run list`, `cleanup`, `reclaim`, `drain`, `purge` and `run migrate` print no such line, and `realm listen`\'s sweeper logs no skipped files. (#616)',
       // A1–A10, B2, B10.
       "**A run store's clock (issue #715).** `@sensigo/realm` exports `Clock`, `createSystemClock`, `systemClock`, `takeReading` and `floorAtHolder`.",
       '`JsonFileStore` and `InMemoryStore` have a `clock`, the time they stamp their writes with; `InMemoryStore` takes one: `new InMemoryStore({ clock })`.',
